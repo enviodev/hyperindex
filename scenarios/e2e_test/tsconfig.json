@@ -2,7 +2,7 @@
   "compilerOptions": {
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "target": "es2022",
+    "target": "es2023",
     "allowJs": true,
     "resolveJsonModule": true,
     "moduleDetection": "force",
@@ -14,7 +14,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "noEmit": true,
-    "lib": ["es2022"],
+    "lib": ["es2023"],
     "types": ["node"]
   },
   "include": ["src", "envio-env.d.ts"]

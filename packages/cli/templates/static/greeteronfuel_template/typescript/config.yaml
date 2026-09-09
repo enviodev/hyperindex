@@ -1,6 +1,11 @@
 # yaml-language-server: $schema=./node_modules/envio/fuel.schema.json
 name: Fuel Greeter Indexer
 ecosystem: fuel
+# Entities and effect caches are per-chain: the same id on two chains is two
+# independent rows. Recommended for multichain indexers since v3.6.0. Opt a
+# single entity back into a shared row with `@crossChain` in schema.graphql, or
+# an effect with `crossChain: true`.
+disable_default_cross_chain: true
 chains:
   - id: 0
     start_block: 0

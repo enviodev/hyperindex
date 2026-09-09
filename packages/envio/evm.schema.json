@@ -49,6 +49,13 @@
         }
       ]
     },
+    "disable_default_cross_chain": {
+      "description": "Make entities and effect caches per-chain instead of shared across every chain (recommended). Sharing then becomes explicit — add `@crossChain` to an entity in schema.graphql or `crossChain: true` to an effect. (default: false)",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "ecosystem": {
       "description": "Ecosystem of the project.",
       "anyOf": [
@@ -114,6 +121,17 @@
       "anyOf": [
         {
           "$ref": "#/$defs/AddressFormat"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bytes_type": {
+      "description": "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps 0x-prefixed hex strings stored as text, `uint8array` exposes `Uint8Array` values in handlers and stores raw bytes (BYTEA in Postgres, String in ClickHouse). (default: hex)",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BytesType"
         },
         {
           "type": "null"
@@ -476,10 +494,8 @@
           "minimum": 0
         },
         "start_block": {
-          "description": "The block at which the indexer should start ingesting data",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "description": "The block at which the indexer should start ingesting data, or \"latest\" to start from the chain's current head block when the indexer is first deployed. Once resolved, the concrete block is persisted and reused every time the indexer resumes normally (for example recovering from a crash), so downtime is backfilled instead of skipped. Running `envio start`/`dev` with -r (--restart) resets this like any other config change: \"latest\" resolves again, against the head at that time.",
+          "$ref": "#/$defs/StartBlock"
         },
         "end_block": {
           "description": "The block at which the indexer should terminate.",
@@ -547,6 +563,16 @@
             "string",
             "null"
           ]
+        },
+        "headers": {
+          "description": "Optional HTTP headers sent with every request to this RPC endpoint, e.g. an Authorization bearer token for gated endpoints. Values support ${ENV_VAR} interpolation.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         "initial_block_interval": {
           "description": "The starting interval in range of blocks per query",
@@ -657,6 +683,25 @@
         "url"
       ]
     },
+    "StartBlock": {
+      "description": "A chain's configured start block: either a concrete block number or the\nliteral \"latest\". Config parsing never touches the network, so `Latest`\nstays unresolved here — it's resolved once at runtime, right before the\nindexer's first-ever persisted state is written, and never re-resolved\non a normal resume (see packages/envio/src/sources/StartBlockResolver.res).\nNote: this repo's `-r`/`--restart` CLI flag wipes the DB and re-deploys\nfrom scratch, so it re-resolves \"latest\" too — \"resume\" here means the\nopposite: recovering from a crash or process restart without `-r`.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "$ref": "#/$defs/StartBlockTag"
+        }
+      ]
+    },
+    "StartBlockTag": {
+      "type": "string",
+      "enum": [
+        "latest"
+      ]
+    },
     "ChainContract": {
       "type": "object",
       "properties": {
@@ -740,6 +785,21 @@
       "enum": [
         "checksum",
         "lowercase"
+      ]
+    },
+    "BytesType": {
+      "description": "How the schema.graphql `Bytes` scalar reaches handlers and storage.",
+      "oneOf": [
+        {
+          "description": "`0x`-prefixed hex strings, stored as text.",
+          "type": "string",
+          "const": "hex"
+        },
+        {
+          "description": "`Uint8Array` values, stored as raw bytes (`BYTEA` in Postgres, `String` in ClickHouse).",
+          "type": "string",
+          "const": "uint8array"
+        }
       ]
     }
   }

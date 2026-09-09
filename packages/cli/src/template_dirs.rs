@@ -159,7 +159,6 @@ pub struct TemplateDirs<'a> {
 #[strum(serialize_all = "lowercase")]
 enum TemplateType {
     Static,
-    Dynamic,
 }
 
 impl<'a> TemplateDirs<'a> {
@@ -197,55 +196,6 @@ impl<'a> TemplateDirs<'a> {
         self.get_shared_static_dir()?
             .get_dir(".claude/skills")
             .ok_or_else(|| anyhow!("Unexpected, shared .claude/skills dir does not exist"))
-    }
-
-    ///Gets directories within dynamic
-    fn get_dynamic_dir<T: Display>(&self, dirname: T) -> Result<RelativeDir<'a>> {
-        let template_dir = self
-            .get_template_dir(TemplateType::Dynamic)
-            .context("Failed getting template dir")?;
-
-        template_dir.get_dir(dirname.to_string()).ok_or_else(|| {
-            anyhow!(
-                "Unexpected, dynamic {} dir does not exist at {:?}",
-                dirname,
-                template_dir.parent_path
-            )
-        })
-    }
-
-    ///Gets template from templates/dynamic/contract_import_templates/{template}
-    fn get_contract_import_dynamic_dir<T: Display>(&self, template: T) -> Result<RelativeDir<'a>> {
-        let template_dir = self
-            .get_dynamic_dir("contract_import_templates")
-            .context("Failed getting template dir")?;
-
-        template_dir.get_dir(template.to_string()).ok_or_else(|| {
-            anyhow!(
-                "Unexpected, dynamic {} dir does not exist at {:?}",
-                template,
-                template_dir.parent_path
-            )
-        })
-    }
-
-    ///Gets template from templates/dynamic/contract_import_templates/shared
-    pub fn get_contract_import_shared_dir(&self) -> Result<RelativeDir<'a>> {
-        self.get_contract_import_dynamic_dir("shared")
-    }
-
-    ///Gets dir at templates/dynamic/init_templates/shared
-    pub fn get_init_template_dynamic_shared(&self) -> Result<RelativeDir<'a>> {
-        let template_dir = self
-            .get_dynamic_dir("init_templates")
-            .context("Failed getting template dir")?;
-
-        template_dir.get_dir("shared").ok_or_else(|| {
-            anyhow!(
-                "Unexpected, dynamic shared dir does not exist at {:?}",
-                template_dir.parent_path
-            )
-        })
     }
 
     ///Gets template from templates/static/{init_template}
@@ -409,6 +359,7 @@ mod test {
         assert_eq!(
             names,
             vec![
+                "envio-cloud-cli",
                 "envio-docs",
                 "indexer-blocks",
                 "indexer-configuration",
@@ -416,6 +367,7 @@ mod test {
                 "indexer-factory",
                 "indexer-filters",
                 "indexer-handlers",
+                "indexer-local-parallel",
                 "indexer-multichain",
                 "indexer-performance",
                 "indexer-schema",
@@ -460,10 +412,6 @@ mod test {
                 // Svm templates don't require a shared folder
             }
         }
-
-        template_dirs
-            .get_init_template_dynamic_shared()
-            .expect("dynami shared init template");
     }
 
     #[test]
@@ -501,6 +449,84 @@ mod test {
         }
     }
 
+    /// Every Svm template is a config a user runs on day one, so each one has
+    /// to parse and resolve to a HyperSync source: it is the only Svm source.
+    /// A template may not carry `rpc` either — the field is accepted and
+    /// ignored, so shipping one tells the reader it picks the data source.
+    #[test]
+    fn svm_template_configs_sync_over_hypersync() {
+        use crate::config_parsing::system_config::{DataSource, SystemConfig};
+        use std::collections::HashMap;
+
+        let static_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("templates/static");
+        let mut sources = Vec::new();
+        for entry in std::fs::read_dir(&static_dir).expect("read templates/static") {
+            let template = entry.expect("dir entry").path();
+            let config_path = template.join("typescript/config.yaml");
+            if !config_path.exists() {
+                continue;
+            }
+            let yaml = std::fs::read_to_string(&config_path).expect("read config.yaml");
+            // Evm and Fuel templates keep their abis beside a shared schema,
+            // which only a full project checkout resolves; this case is about
+            // the Svm ones, whose config, schema and idls sit together.
+            if !yaml.contains("ecosystem: svm") {
+                continue;
+            }
+            let name = template
+                .file_name()
+                .and_then(|n| n.to_str())
+                .expect("template name")
+                .to_string();
+            let schema = std::fs::read_to_string(template.join("typescript/schema.graphql"))
+                .expect("read schema.graphql");
+
+            let config = SystemConfig::parse_yaml(
+                &yaml,
+                Some(&schema),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )
+            .unwrap_or_else(|e| panic!("template '{name}' config.yaml must parse: {e:?}"));
+
+            let human: crate::config_parsing::human_config::svm::HumanConfig =
+                serde_yaml::from_str(&yaml).expect("svm human config");
+            for chain in &human.chains {
+                assert!(
+                    chain.rpc.is_none(),
+                    "template '{name}' sets `rpc`, which the runtime ignores. Drop it: the \
+                     chain syncs over HyperSync."
+                );
+            }
+
+            for chain in config.get_chains() {
+                let DataSource::Svm {
+                    hypersync_endpoint_url,
+                } = &chain.sync_source
+                else {
+                    panic!("template '{name}' must sync an Svm chain over HyperSync");
+                };
+                sources.push((name.clone(), hypersync_endpoint_url.clone()));
+            }
+        }
+
+        sources.sort();
+        assert_eq!(
+            sources,
+            vec![
+                (
+                    "svm_metaplex_template".to_string(),
+                    "https://solana.hypersync.xyz".to_string()
+                ),
+                (
+                    "svmblock_template".to_string(),
+                    "https://solana.hypersync.xyz".to_string()
+                ),
+            ]
+        );
+    }
+
     #[test]
     fn blank_templates_exist() {
         let template_dirs = TemplateDirs::new();
@@ -515,29 +541,5 @@ mod test {
                 .get_blank_lang_dir(lang)
                 .expect("static blank lang");
         }
-    }
-
-    #[test]
-    fn contract_import_templates_exist() {
-        let template_dirs = TemplateDirs::new();
-        template_dirs
-            .get_contract_import_shared_dir()
-            .expect("contract import shared");
-    }
-
-    #[test]
-    #[should_panic]
-    fn bad_dynamic_dir() {
-        let template_dirs = TemplateDirs::new();
-        template_dirs.get_dynamic_dir("bad_dynamic_path").unwrap();
-    }
-
-    #[test]
-    #[should_panic]
-    fn bad_dynamic_contract_dir() {
-        let template_dirs = TemplateDirs::new();
-        template_dirs
-            .get_contract_import_dynamic_dir("bad_dynamic_path")
-            .unwrap();
     }
 }

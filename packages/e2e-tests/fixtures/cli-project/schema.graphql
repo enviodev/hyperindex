@@ -1,0 +1,6 @@
+type Gravatar {
+  id: ID!
+  owner: String!
+  displayName: String!
+  imageUrl: String!
+}

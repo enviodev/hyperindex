@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{
     cli_args::{clap_definitions::ProjectPaths, init_config::InitConfig},
@@ -58,10 +58,16 @@ impl ParsedProjectPaths {
         Self::new(project_root, DEFAULT_CONFIG_PATH)
     }
 
+    /// The form consumers need when the project root acts as cwd. `None` when
+    /// the path sits outside the root, which has no such form.
+    pub fn relative_to_root(&self, path: &Path) -> Option<PathBuf> {
+        let normalized_root = path_utils::normalize_path(self.project_root.clone());
+        pathdiff::diff_paths(path, &normalized_root).filter(|relative| !relative.starts_with(".."))
+    }
+
     /// The form consumers need when the project root acts as cwd.
     pub fn config_relative_to_root(&self) -> PathBuf {
-        let normalized_root = path_utils::normalize_path(self.project_root.clone());
-        pathdiff::diff_paths(&self.config, &normalized_root)
+        self.relative_to_root(&self.config)
             .expect("config is validated to live under the project root")
     }
 
@@ -198,6 +204,26 @@ mod tests {
         assert_eq!(
             paths.config_relative_to_root(),
             PathBuf::from("configs/config.yaml")
+        );
+    }
+
+    #[test]
+    fn test_relative_to_root_with_default_relative_root() {
+        // The default root is the raw `.`, which a component-wise prefix strip
+        // never matches against a normalized path.
+        let paths = ParsedProjectPaths::new(".", "nested/config.yaml").unwrap();
+        assert_eq!(
+            paths.relative_to_root(&PathBuf::from("nested/schema.graphql")),
+            Some(PathBuf::from("nested/schema.graphql"))
+        );
+    }
+
+    #[test]
+    fn test_relative_to_root_rejects_path_outside_root() {
+        let paths = ParsedProjectPaths::new("my_dir/my_project", "config.yaml").unwrap();
+        assert_eq!(
+            paths.relative_to_root(&PathBuf::from("elsewhere/schema.graphql")),
+            None
         );
     }
 

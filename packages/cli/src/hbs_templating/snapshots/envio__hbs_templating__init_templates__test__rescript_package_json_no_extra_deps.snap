@@ -1,0 +1,29 @@
+---
+source: packages/cli/src/hbs_templating/init_templates.rs
+expression: "template(true, \"latest\", vec![]).render_package_json()"
+---
+{
+  "name": "my-project",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "clean": "rescript clean",
+    "build": "rescript",
+    "watch": "rescript watch",
+    "codegen": "envio codegen",
+    "dev": "pnpm build && envio dev",
+    "start": "pnpm build && envio start",
+    "test": "pnpm build && vitest run --test-timeout=20000"
+  },
+  "devDependencies": {
+    "rescript": "12.2.0",
+    "@rescript/runtime": "12.2.0",
+    "vitest": "4.1.0"
+  },
+  "dependencies": {
+    "envio": "latest"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

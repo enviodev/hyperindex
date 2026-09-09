@@ -2,7 +2,7 @@
 name: indexer-troubleshooting
 description: >-
   Use when the indexer fails to start, codegen errors, types are stale,
-  Docker or database issues, RPC errors, or something is not working.
+  Docker or database issues, or something is not working.
   Common error messages and fixes.
 metadata:
   managed-by: envio
@@ -44,15 +44,11 @@ rpc:
   - url: ${ENVIO_RPC_URL}
 ```
 
-## RPC / HyperSync Errors
-
-**"rate limited" or timeout errors:** See `indexer-performance` skill for RPC tuning parameters.
+## HyperSync Errors
 
 **Missing `ENVIO_API_TOKEN`:** Required for HyperSync. Get an Envio API token at https://envio.dev/app/api-tokens, then set it in `.env` or shell environment.
 
 ## Common Runtime Errors
-
-**"field not indexed"** — `getWhere` only works on `id` and fields with `@index` in `schema.graphql`.
 
 **"entity is read-only"** — Entities from `context.Entity.get()` are frozen. Spread to update: `context.Entity.set({ ...entity, field: newValue })`.
 

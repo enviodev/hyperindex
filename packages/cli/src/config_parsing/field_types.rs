@@ -10,6 +10,7 @@ use crate::utils::text::Capitalize;
 pub enum Primitive {
     Boolean,
     String,
+    Bytes,
     Int32,
     BigInt { precision: Option<u32> },
     BigDecimal(Option<(u32, u32)>), // (precision, scale)
@@ -18,7 +19,6 @@ pub enum Primitive {
     Json,
     Date,
     Enum(String),
-    Entity(String),
 }
 
 impl Primitive {
@@ -26,6 +26,7 @@ impl Primitive {
         match &self {
             Self::Boolean => "Boolean".to_string(),
             Self::String => "String".to_string(),
+            Self::Bytes => "Bytea".to_string(),
             Self::Int32 => "Int32".to_string(),
             Self::BigInt { precision: None } => "BigInt({})".to_string(),
             Self::BigInt {
@@ -43,9 +44,11 @@ impl Primitive {
             Self::Number => "Number".to_string(),
             Self::Enum(enum_name) => {
                 let capitalized_enum_name = enum_name.capitalize();
-                format!("Enum({{config: Enums.{capitalized_enum_name}.config->Table.fromGenericEnumConfig}})")
+                format!(
+                    "Enum({{config: \
+                     Enums.{capitalized_enum_name}.config->Table.fromGenericEnumConfig}})"
+                )
             }
-            Self::Entity(entity_name) => format!("Entity({{name: \"{entity_name}\"}})"),
         }
     }
 }

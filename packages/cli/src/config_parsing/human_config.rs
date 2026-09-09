@@ -1,3 +1,4 @@
+use crate::config_parsing::entity_parsing::DefaultChainScope;
 use crate::utils::normalized_list::{NormalizedList, SingleOrList};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
@@ -58,6 +59,86 @@ impl JsonSchema for Addresses {
 
 type ChainId = u64;
 
+/// A chain's configured start block: either a concrete block number or the
+/// literal "latest". Config parsing never touches the network, so `Latest`
+/// stays unresolved here — it's resolved once at runtime, right before the
+/// indexer's first-ever persisted state is written, and never re-resolved
+/// on a normal resume (see packages/envio/src/sources/StartBlockResolver.res).
+/// Note: this repo's `-r`/`--restart` CLI flag wipes the DB and re-deploys
+/// from scratch, so it re-resolves "latest" too — "resume" here means the
+/// opposite: recovering from a crash or process restart without `-r`.
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum StartBlock {
+    Number(u64),
+    Tag(StartBlockTag),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum StartBlockTag {
+    Latest,
+}
+
+impl Default for StartBlock {
+    fn default() -> Self {
+        StartBlock::Number(0)
+    }
+}
+
+// A hand-written impl (instead of relying on `#[derive(Deserialize)]` +
+// `#[serde(untagged)]`) so an invalid value gets a specific, actionable error
+// - untagged enums otherwise report only "data did not match any variant",
+// losing the field path and the reason a value was rejected.
+impl<'de> serde::Deserialize<'de> for StartBlock {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct StartBlockVisitor;
+
+        impl serde::de::Visitor<'_> for StartBlockVisitor {
+            type Value = StartBlock;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "u64 or the string \"latest\"")
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(StartBlock::Number(v))
+            }
+
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                u64::try_from(v).map(StartBlock::Number).map_err(|_| {
+                    serde::de::Error::invalid_value(serde::de::Unexpected::Signed(v), &self)
+                })
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v == "latest" {
+                    Ok(StartBlock::Tag(StartBlockTag::Latest))
+                } else {
+                    Err(serde::de::Error::invalid_value(
+                        serde::de::Unexpected::Str(v),
+                        &self,
+                    ))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(StartBlockVisitor)
+    }
+}
+
 /// Base configuration fields shared across all ecosystems
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
 pub struct BaseConfig {
@@ -71,13 +152,15 @@ pub struct BaseConfig {
     pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Optional relative path to handlers directory for auto-loading. Defaults \
-                   to 'src/handlers' if not specified."
+        description = "Optional relative path to handlers directory for auto-loading. Defaults to \
+                       'src/handlers' if not specified."
     )]
     pub handlers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)"
+        description = "Target number of events to be processed per batch. Set it to smaller \
+                       number if you have many Effect API calls which are slow to resolve and \
+                       can't be batched. (Default: 5000)"
     )]
     pub full_batch_size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -89,6 +172,27 @@ pub struct BaseConfig {
                        {default: true}`."
     )]
     pub storage: Option<StorageConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Make entities and effect caches per-chain instead of shared across every \
+                       chain (recommended). Sharing then becomes explicit — add `@crossChain` to \
+                       an entity in schema.graphql or `crossChain: true` to an effect. (default: \
+                       false)"
+    )]
+    pub disable_default_cross_chain: Option<bool>,
+}
+
+impl BaseConfig {
+    /// Entities and effect caches are shared across chains unless the config
+    /// opts out. Decides which entities get an appended chain-id column, so the
+    /// schema parser and the validators have to agree on it.
+    pub fn default_chain_scope(&self) -> DefaultChainScope {
+        if self.disable_default_cross_chain.unwrap_or(false) {
+            DefaultChainScope::PerChain
+        } else {
+            DefaultChainScope::CrossChain
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -123,6 +227,17 @@ pub enum ColumnNameFormat {
     Original,
     #[serde(rename = "snake_case")]
     SnakeCase,
+}
+
+/// How the schema.graphql `Bytes` scalar reaches handlers and storage.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum BytesType {
+    /// `0x`-prefixed hex strings, stored as text.
+    #[default]
+    Hex,
+    /// `Uint8Array` values, stored as raw bytes (`BYTEA` in Postgres, `String` in ClickHouse).
+    Uint8Array,
 }
 
 // Hand-rolled instead of #[serde(untagged)]: the untagged derive swallows
@@ -382,6 +497,17 @@ impl HumanConfig {
             HumanConfig::Svm(human_config) => &human_config.base,
         }
     }
+
+    /// Only EVM and Fuel can pick: their existing projects predate raw bytes and
+    /// keep hex strings unless they opt in. SVM shipped with `Uint8Array` and has
+    /// nothing to keep compatible with.
+    pub fn bytes_type(&self) -> BytesType {
+        match &self {
+            HumanConfig::Evm(human_config) => human_config.bytes_type.unwrap_or_default(),
+            HumanConfig::Fuel(human_config) => human_config.bytes_type.unwrap_or_default(),
+            HumanConfig::Svm(_) => BytesType::Uint8Array,
+        }
+    }
 }
 
 impl Display for HumanConfig {
@@ -399,8 +525,8 @@ impl Display for HumanConfig {
 }
 
 pub mod evm {
-    use super::{ChainContract, ChainId, GlobalContract};
-    use crate::config_parsing::human_config::BaseConfig;
+    use super::{ChainContract, ChainId, GlobalContract, StartBlock};
+    use crate::config_parsing::human_config::{BaseConfig, BytesType};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -463,6 +589,14 @@ pub mod evm {
         #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
                                   'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps \
+                           0x-prefixed hex strings stored as text, `uint8array` exposes \
+                           `Uint8Array` values in handlers and stores raw bytes (BYTEA in \
+                           Postgres, String in ClickHouse). (default: hex)"
+        )]
+        pub bytes_type: Option<BytesType>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -497,6 +631,11 @@ pub mod evm {
         pub block_fields: Option<Vec<BlockField>>,
     }
 
+    // `RpcTransactionField` is the subset an RPC-synced chain can deliver:
+    // every field `eth_getTransactionByHash` or `eth_getTransactionReceipt`
+    // returns, which is all of them except the two array-shaped ones that have
+    // no parser in the runtime's field registry (`RpcSource.res`). Kept in step
+    // with that registry by `RpcFieldSelection_test.res`.
     #[subenum(RpcTransactionField)]
     #[derive(
         Debug,
@@ -521,6 +660,7 @@ pub mod evm {
         From,
         #[subenum(RpcTransactionField)]
         To,
+        #[subenum(RpcTransactionField)]
         Gas,
         #[subenum(RpcTransactionField)]
         GasPrice,
@@ -528,31 +668,50 @@ pub mod evm {
         MaxPriorityFeePerGas,
         #[subenum(RpcTransactionField)]
         MaxFeePerGas,
+        #[subenum(RpcTransactionField)]
         CumulativeGasUsed,
+        #[subenum(RpcTransactionField)]
         EffectiveGasPrice,
+        #[subenum(RpcTransactionField)]
         GasUsed,
         #[subenum(RpcTransactionField)]
         Input,
+        #[subenum(RpcTransactionField)]
         Nonce,
         #[subenum(RpcTransactionField)]
         Value,
+        #[subenum(RpcTransactionField)]
         V,
+        #[subenum(RpcTransactionField)]
         R,
+        #[subenum(RpcTransactionField)]
         S,
         #[subenum(RpcTransactionField)]
         ContractAddress,
+        #[subenum(RpcTransactionField)]
         LogsBloom,
+        #[subenum(RpcTransactionField)]
         Root,
+        #[subenum(RpcTransactionField)]
         Status,
+        #[subenum(RpcTransactionField)]
         YParity,
         AccessList,
+        #[subenum(RpcTransactionField)]
         MaxFeePerBlobGas,
+        #[subenum(RpcTransactionField)]
         BlobVersionedHashes,
+        #[subenum(RpcTransactionField)]
         Type,
+        #[subenum(RpcTransactionField)]
         L1Fee,
+        #[subenum(RpcTransactionField)]
         L1GasPrice,
+        #[subenum(RpcTransactionField)]
         L1GasUsed,
+        #[subenum(RpcTransactionField)]
         L1FeeScalar,
+        #[subenum(RpcTransactionField)]
         GasUsedForL1,
         AuthorizationList,
         // We want to encourage the use of context.chain.id instead
@@ -563,7 +722,6 @@ pub mod evm {
         // BlockNumber,
     }
 
-    #[subenum(RpcBlockField)]
     #[derive(
         Debug,
         Serialize,
@@ -579,30 +737,21 @@ pub mod evm {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum BlockField {
-        #[subenum(RpcBlockField)]
         ParentHash,
-        #[subenum(RpcBlockField)]
         Nonce,
         Sha3Uncles,
         LogsBloom,
         TransactionsRoot,
-        #[subenum(RpcBlockField)]
         StateRoot,
         ReceiptsRoot,
-        #[subenum(RpcBlockField)]
         Miner,
-        #[subenum(RpcBlockField)]
         Difficulty,
         TotalDifficulty,
-        #[subenum(RpcBlockField)]
         ExtraData,
         Size,
-        #[subenum(RpcBlockField)]
         GasLimit,
-        #[subenum(RpcBlockField)]
         GasUsed,
         Uncles,
-        #[subenum(RpcBlockField)]
         BaseFeePerGas,
         BlobGasUsed,
         ExcessBlobGas,
@@ -649,8 +798,8 @@ pub mod evm {
         Fallback,
         #[schemars(
             description = "Use RPC for real-time indexing only. HyperSync will be used for \
-                           historical sync, then automatically switch to this RPC once synced \
-                           for lower latency."
+                           historical sync, then automatically switch to this RPC once synced for \
+                           lower latency."
         )]
         Realtime,
     }
@@ -668,12 +817,18 @@ pub mod evm {
         #[serde(rename = "for", skip_serializing_if = "Option::is_none")]
         pub source_for: Option<For>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional WebSocket endpoint URL (wss:// or ws://) for real-time block \
-                           header notifications via eth_subscribe(\"newHeads\"). Provides lower \
-                           latency than HTTP polling for detecting new blocks."
-        )]
+        #[schemars(description = "Optional WebSocket endpoint URL (wss:// or ws://) for \
+                                  real-time block header notifications via \
+                                  eth_subscribe(\"newHeads\"). Provides lower latency than HTTP \
+                                  polling for detecting new blocks.")]
         pub ws: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional HTTP headers sent with every request to this RPC endpoint, \
+                           e.g. an Authorization bearer token for gated endpoints. Values support \
+                           ${ENV_VAR} interpolation."
+        )]
+        pub headers: Option<std::collections::BTreeMap<String, String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The starting interval in range of blocks per query")]
         pub initial_block_interval: Option<u32>,
@@ -727,14 +882,14 @@ pub mod evm {
         #[schemars(description = "The public blockchain chain ID.")]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Excludes the chain from indexing and migrations. \
-                           Code generation is unaffected. \
-                           For testing, prefer using a test framework instead.")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. Code \
+                                  generation is unaffected. For testing, prefer using a test \
+                                  framework instead.")]
         pub skip: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "RPC configuration for your indexer. If not specified \
-                                  otherwise, for chains supported by HyperSync, RPC serves as \
-                                  a fallback for added reliability. For others, it acts as the \
+                                  otherwise, for chains supported by HyperSync, RPC serves as a \
+                                  fallback for added reliability. For others, it acts as the \
                                   primary data-source. HyperSync offers significant performance \
                                   improvements, up to a 1000x faster than traditional RPC.")]
         pub rpc: Option<RpcSelection>,
@@ -749,12 +904,22 @@ pub mod evm {
         pub max_reorg_depth: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The number of blocks behind the chain head that the indexer should lag. \
-                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+            description = "The number of blocks behind the chain head that the indexer should \
+                           lag. Useful for avoiding reorg issues by indexing slightly behind the \
+                           tip."
         )]
         pub block_lag: Option<u32>,
-        #[schemars(description = "The block at which the indexer should start ingesting data")]
-        pub start_block: u64,
+        #[schemars(
+            description = "The block at which the indexer should start ingesting data, or \
+                           \"latest\" to start from the chain's current head block when the \
+                           indexer is first deployed. Once resolved, the concrete block is \
+                           persisted and reused every time the indexer resumes normally (for \
+                           example recovering from a crash), so downtime is backfilled instead \
+                           of skipped. Running `envio start`/`dev` with -r (--restart) resets \
+                           this like any other config change: \"latest\" resolves again, \
+                           against the head at that time."
+        )]
+        pub start_block: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<u64>,
@@ -773,11 +938,9 @@ pub mod evm {
         )]
         pub abi_file_path: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to a file where handlers are registered for the \
-                           given contract. If not provided, handlers can be auto-loaded from src \
-                           directory."
-        )]
+        #[schemars(description = "Optional relative path to a file where handlers are \
+                                  registered for the given contract. If not provided, handlers \
+                                  can be auto-loaded from src directory.")]
         pub handler: Option<String>,
         #[schemars(description = "A list of events that should be indexed on this contract")]
         pub events: Vec<EventConfig>,
@@ -810,9 +973,9 @@ pub mod evm {
 pub mod fuel {
     use std::fmt::Display;
 
-    use crate::config_parsing::human_config::BaseConfig;
+    use crate::config_parsing::human_config::{BaseConfig, BytesType};
 
-    use super::{ChainContract, ChainId, GlobalContract};
+    use super::{ChainContract, ChainId, GlobalContract, StartBlock};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use strum::Display;
@@ -847,6 +1010,14 @@ pub mod fuel {
                            false)"
         )]
         pub raw_events: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps \
+                           0x-prefixed hex strings stored as text, `uint8array` exposes \
+                           `Uint8Array` values in handlers and stores raw bytes (BYTEA in \
+                           Postgres, String in ClickHouse). (default: hex)"
+        )]
+        pub bytes_type: Option<BytesType>,
     }
 
     impl Display for HumanConfig {
@@ -882,12 +1053,21 @@ pub mod fuel {
         #[schemars(description = "Public chain id")]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Excludes the chain from indexing and migrations. \
-                           Code generation is unaffected. \
-                           For testing, prefer using a test framework instead.")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. Code \
+                                  generation is unaffected. For testing, prefer using a test \
+                                  framework instead.")]
         pub skip: Option<bool>,
-        #[schemars(description = "The block at which the indexer should start ingesting data")]
-        pub start_block: u64,
+        #[schemars(
+            description = "The block at which the indexer should start ingesting data, or \
+                           \"latest\" to start from the chain's current head block when the \
+                           indexer is first deployed. Once resolved, the concrete block is \
+                           persisted and reused every time the indexer resumes normally (for \
+                           example recovering from a crash), so downtime is backfilled instead \
+                           of skipped. Running `envio start`/`dev` with -r (--restart) resets \
+                           this like any other config change: \"latest\" resolves again, \
+                           against the head at that time."
+        )]
+        pub start_block: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<u64>,
@@ -902,8 +1082,9 @@ pub mod fuel {
         pub max_reorg_depth: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The number of blocks behind the chain head that the indexer should lag. \
-                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+            description = "The number of blocks behind the chain head that the indexer should \
+                           lag. Useful for avoiding reorg issues by indexing slightly behind the \
+                           tip."
         )]
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -917,11 +1098,9 @@ pub mod fuel {
         #[schemars(description = "Relative path (from config) to a json abi.")]
         pub abi_file_path: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to a file where handlers are registered for the \
-                           given contract. If not provided, handlers can be auto-loaded from src \
-                           directory."
-        )]
+        #[schemars(description = "Optional relative path to a file where handlers are \
+                                  registered for the given contract. If not provided, handlers \
+                                  can be auto-loaded from src directory.")]
         pub handler: Option<String>,
         #[schemars(description = "A list of events that should be indexed on this contract")]
         pub events: Vec<EventConfig>,
@@ -960,71 +1139,280 @@ pub mod fuel {
 }
 
 pub mod svm {
+    use std::borrow::Cow;
     use std::fmt::Display;
 
-    use super::BaseConfig;
-    use schemars::JsonSchema;
-    use serde::{Deserialize, Serialize};
+    use super::{BaseConfig, StartBlock};
+    use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
+    use serde::{de, Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
         #[schemars(
-            description = "URL of the HyperSync endpoint (default: the public Solana HyperSync \
-                           endpoint at https://solana.hypersync.xyz)"
+            description = "URL of the HyperSync endpoint (defaults to the public endpoint of the \
+                           chain id: https://solana.hypersync.xyz for `solana`, \
+                           https://solana-devnet.hypersync.xyz for `solana-devnet`)"
         )]
         pub url: String,
+    }
+
+    /// Svm clusters have no native numeric chain id, so Envio assigns its own.
+    /// These are the ids HyperSync already stamps onto usage rows (HOS-1682);
+    /// they are Envio-internal, not a cross-vendor standard.
+    pub const SOLANA_MAINNET_CHAIN_ID: u64 = 7565164;
+    pub const SOLANA_DEVNET_CHAIN_ID: u64 = 7565165;
+
+    /// The chain id of an Svm chain: either a known cluster label or an
+    /// explicit number (for private chains, rollups, or custom clusters).
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum ChainId {
+        Label(ChainLabel),
+        // The ceiling matches ChainIdMode::resolve: chain ids live in JS
+        // numbers downstream, so anything above MAX_SAFE_INTEGER is rejected.
+        Id(#[schemars(range(max = 9_007_199_254_740_991u64))] u64),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum ChainLabel {
+        Solana,
+        SolanaDevnet,
+    }
+
+    impl ChainId {
+        /// Reads the token a `program_id` mapping key carries. Mirrors the
+        /// `id` grammar: a cluster label, or a plain number.
+        pub fn parse(token: &str) -> Option<Self> {
+            match token {
+                "solana" => Some(Self::Label(ChainLabel::Solana)),
+                "solana-devnet" => Some(Self::Label(ChainLabel::SolanaDevnet)),
+                _ => token.parse::<u64>().ok().map(Self::Id),
+            }
+        }
+
+        /// How this chain is named back to the user: the label they can write,
+        /// or the number.
+        pub fn token(&self) -> String {
+            match self {
+                Self::Label(ChainLabel::Solana) => "solana".to_string(),
+                Self::Label(ChainLabel::SolanaDevnet) => "solana-devnet".to_string(),
+                Self::Id(id) => id.to_string(),
+            }
+        }
+
+        pub fn to_u64(&self) -> u64 {
+            match self {
+                ChainId::Label(ChainLabel::Solana) => SOLANA_MAINNET_CHAIN_ID,
+                ChainId::Label(ChainLabel::SolanaDevnet) => SOLANA_DEVNET_CHAIN_ID,
+                ChainId::Id(id) => *id,
+            }
+        }
+    }
+
+    /// The public HyperSync endpoint for a cluster Envio knows by id, so
+    /// `hypersync_config` can be omitted for Solana mainnet and devnet.
+    pub fn default_hypersync_endpoint(chain_id: u64) -> Option<String> {
+        match chain_id {
+            SOLANA_MAINNET_CHAIN_ID => Some("https://solana.hypersync.xyz".to_string()),
+            SOLANA_DEVNET_CHAIN_ID => Some("https://solana-devnet.hypersync.xyz".to_string()),
+            _ => None,
+        }
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Chain {
-        // #[schemars(
-        //     description = "The cluster's genesis hash used to identify the Svm blockchain."
-        // )]
-        // pub id: String,
+        #[schemars(
+            description = "Identifies the Svm cluster: the label \"solana\" (7565164) or \
+                           \"solana-devnet\" (7565165), or an explicit number of your choosing \
+                           for other clusters (up to Number.MAX_SAFE_INTEGER). Svm has no native \
+                           numeric chain id, so the label ids are assigned by Envio and match the \
+                           ids used for HyperSync usage attribution."
+        )]
+        pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Excludes the chain from indexing and migrations. \
-                           Code generation is unaffected. \
-                           For testing, prefer using a test framework instead.")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. Code \
+                                  generation is unaffected. For testing, prefer using a test \
+                                  framework instead.")]
         pub skip: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain \
-                           data. Required unless `experimental` is set, in which case it is \
-                           ignored in favour of the experimental HyperSync source."
+            description = "RPC endpoint URL for the Svm cluster. Accepted but unused: instruction \
+                           sync is served by HyperSync."
         )]
         pub rpc: Option<String>,
         #[schemars(
-            description = "The slot number at which the indexer should start ingesting data"
+            description = "The slot at which the indexer should start ingesting data, or \
+                           \"latest\" to start from the chain's current slot when the indexer \
+                           is first deployed. Once resolved, the concrete slot is persisted and \
+                           reused every time the indexer resumes normally (for example \
+                           recovering from a crash), so downtime is backfilled instead of \
+                           skipped. Running `envio start`/`dev` with -r (--restart) resets this \
+                           like any other config change: \"latest\" resolves again, against the \
+                           head at that time."
         )]
-        pub start_block: u64,
+        pub start_slot: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "The slot number at which the indexer should terminate.")]
-        pub end_block: Option<u64>,
+        #[schemars(description = "The slot at which the indexer should terminate.")]
+        pub end_slot: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The number of blocks behind the chain head that the indexer should lag. \
-                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+            description = "The number of blocks behind the chain head that the indexer should \
+                           lag. Useful for avoiding reorg issues by indexing slightly behind the \
+                           tip."
         )]
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Experimental HyperSync-backed instruction indexing. This config shape \
-                           Veil change in future releases."
+            description = "HyperSync Config for fetching historical instructions on this chain. \
+                           Optional for the `solana` and `solana-devnet` chain ids, which default \
+                           to their public HyperSync endpoints; required for any other chain id."
         )]
-        pub experimental: Option<Experimental>,
+        pub hypersync_config: Option<HypersyncConfig>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct Experimental {
-        #[schemars(
-            description = "HyperSync Config for fetching historical instructions on this chain."
-        )]
-        pub hypersync_config: HypersyncConfig,
-        #[schemars(description = "Solana programs to index on this chain.")]
-        pub programs: Vec<Program>,
+    /// The program id of one chain: a base58 pubkey, or `_` for a chain the
+    /// program is not deployed on.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum ChainProgramId {
+        NotDeployed,
+        Address(String),
+    }
+
+    impl Display for ChainProgramId {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            match self {
+                Self::NotDeployed => f.write_str("_"),
+                Self::Address(address) => f.write_str(address),
+            }
+        }
+    }
+
+    impl Serialize for ChainProgramId {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.collect_str(self)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for ChainProgramId {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let value = String::deserialize(deserializer)?;
+            Ok(match value.as_str() {
+                "_" => Self::NotDeployed,
+                _ => Self::Address(value),
+            })
+        }
+    }
+
+    /// A program id as written in YAML: one pubkey shared by the only chain, or
+    /// one entry per chain. `BTreeMap` orders the entries by chain id token,
+    /// which is not the `chains` order — resolution walks `chains` instead, so
+    /// diagnostics keep the order the user wrote their chains in.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum ProgramId {
+        Single(String),
+        PerChain(std::collections::BTreeMap<String, ChainProgramId>),
+    }
+
+    impl Serialize for ProgramId {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            match self {
+                Self::Single(address) => serializer.serialize_str(address),
+                Self::PerChain(map) => map.serialize(serializer),
+            }
+        }
+    }
+
+    impl<'de> Deserialize<'de> for ProgramId {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct ProgramIdVisitor;
+
+            impl<'de> de::Visitor<'de> for ProgramIdVisitor {
+                type Value = ProgramId;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("a base58 program id, or a mapping of chain id to program id")
+                }
+
+                fn visit_str<E: de::Error>(self, value: &str) -> Result<ProgramId, E> {
+                    if value == "_" {
+                        return Err(de::Error::custom(
+                            "`_` marks a chain the program is not deployed on, so it is only \
+                             meaningful inside a per-chain `program_id` mapping",
+                        ));
+                    }
+                    Ok(ProgramId::Single(value.to_string()))
+                }
+
+                /// A pubkey of nothing but digits is a YAML integer, and one
+                /// of nothing but `0`/`1` past a leading digit still has to
+                /// reach the base58 check that names it rather than dying as a
+                /// type error.
+                fn visit_u64<E: de::Error>(self, value: u64) -> Result<ProgramId, E> {
+                    self.visit_str(&value.to_string())
+                }
+
+                fn visit_i64<E: de::Error>(self, value: i64) -> Result<ProgramId, E> {
+                    self.visit_str(&value.to_string())
+                }
+
+                fn visit_u128<E: de::Error>(self, value: u128) -> Result<ProgramId, E> {
+                    self.visit_str(&value.to_string())
+                }
+
+                fn visit_i128<E: de::Error>(self, value: i128) -> Result<ProgramId, E> {
+                    self.visit_str(&value.to_string())
+                }
+
+                fn visit_map<A: de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<ProgramId, A::Error> {
+                    let mut entries = std::collections::BTreeMap::new();
+                    while let Some((chain, program_id)) =
+                        map.next_entry::<String, ChainProgramId>()?
+                    {
+                        if entries.insert(chain.clone(), program_id).is_some() {
+                            return Err(de::Error::custom(format!(
+                                "chain {chain:?} is listed more than once"
+                            )));
+                        }
+                    }
+                    Ok(ProgramId::PerChain(entries))
+                }
+            }
+
+            deserializer.deserialize_any(ProgramIdVisitor)
+        }
+    }
+
+    impl JsonSchema for ProgramId {
+        fn schema_name() -> Cow<'static, str> {
+            "SvmProgramId".into()
+        }
+
+        fn json_schema(_: &mut SchemaGenerator) -> Schema {
+            json_schema!({
+                "title": "Program id",
+                "description": "Base58-encoded program id (32 bytes).\n\
+                    A single value is allowed only when the config defines one chain.\n\
+                    With several chains, give a mapping keyed by chain id that names every \
+                    one of them; write `_` for a chain the program is not deployed on.",
+                "anyOf": [
+                    { "type": "string" },
+                    {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                    },
+                ],
+                "examples": [
+                    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+                    { "solana": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s", "solana-devnet": "_" },
+                ],
+            })
+        }
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -1034,24 +1422,38 @@ pub mod svm {
             description = "A unique project-wide name for this program (used in generated code)."
         )]
         pub name: String,
-        #[schemars(description = "Base58-encoded program id (32 bytes).")]
-        pub program_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional relative path to a file where handlers are registered for \
-                           the given program. If not provided, handlers can be auto-loaded from \
-                           the src directory."
+            description = "Base58-encoded program id (32 bytes). A single value is allowed only \
+                           when the config defines one chain; with several, give a mapping keyed \
+                           by chain id that names every one of them, writing `_` for a chain the \
+                           program is not deployed on."
         )]
+        pub program_id: ProgramId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Optional relative path to a file where handlers are \
+                                  registered for the given program. If not provided, handlers \
+                                  can be auto-loaded from the src directory.")]
         pub handler: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON \
-                           file. When present, codegen parses the IDL and derives \
-                           `accounts`/`args` for every named instruction. Mutually \
-                           exclusive with per-instruction `accounts`/`args` overrides."
+            description = "Optional path (relative to config.yaml) to an IDL JSON file (Anchor \
+                           0.30+, legacy Anchor, Shank, or Codama). When present, every usable \
+                           instruction is in the catalog and `onInstruction` selects by name. \
+                           Omit YAML `instructions` to take that catalog as-is. A YAML row \
+                           overwrites the IDL instruction of the same name, or adds a name the \
+                           IDL did not declare."
         )]
         pub idl: Option<String>,
-        #[schemars(description = "A list of instructions that should be indexed on this program.")]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schemars(
+            description = "Instructions to index. With `idl:`, omit this list to take the full \
+                           usable IDL catalog. A row whose name the IDL declares replaces that \
+                           instruction, and must spell out `accounts` and `args`; every other row \
+                           adds one. Give `accounts` where you want the slots named — an empty \
+                           list names none, the same as leaving it out. `args` is not the same \
+                           shape: setting it attaches a decoder that also filters, so leaving it \
+                           out and setting it to `[]` are different asks."
+        )]
         pub instructions: Vec<Instruction>,
     }
 
@@ -1063,51 +1465,182 @@ pub mod svm {
                            unique per program."
         )]
         pub name: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Hex-encoded instruction-data prefix used as the discriminator \
-                           (\"0x\" optional). Must be 1, 2, 4, or 8 bytes after decoding. \
-                           An 8-byte value matches the standard Anchor discriminator."
+            description = "0x-prefixed hex instruction-data prefix to dispatch on, of any whole \
+                           number of bytes; an 8-byte value matches the standard Anchor \
+                           discriminator. The empty prefix, written \"0x\", is carried by every \
+                           call, so it is how a row matches every instruction of the program. \
+                           This is the form `instruction.discriminator` reads back, so a config \
+                           value and a handler comparison are the same string. Every instruction \
+                           whose prefix an on-chain call carries \
+                           receives it, so a program-wide entry fires alongside a keyed one, and \
+                           two entries may share a prefix (say, the layouts before and after a \
+                           program upgrade): each decodes with its own `args`, and one whose \
+                           layout rejects the data is skipped for that call."
         )]
-        pub discriminator: Option<String>,
+        pub discriminator: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Filter on inner-vs-outer instructions. None / absent matches both."
+            description = "Optional positional account slots, in the order the program expects \
+                           them. The Nth entry names account slot N on the dispatched \
+                           instruction; named slots surface as `instruction.accounts.<name>` \
+                           when `fields.instruction` includes `accounts`. The raw slots are \
+                           available either way, so this only adds the names. Required on a row \
+                           that replaces an instruction the IDL declares."
         )]
-        pub is_inner: Option<bool>,
+        pub accounts: Option<Vec<AccountSlot>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional positional account filters. Two shapes are accepted: a flat \
-                           list of `{position, values}` entries (AND across positions, OR within \
-                           `values`); or `{any_of: [[...]] }`, a list of AND-groups that are \
-                           OR-ed together. Positions must be in 0..=5; positions 6..=9 are \
-                           reserved for a future extension."
-        )]
-        pub account_filters: Option<AccountFilters>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Select which additional data to fetch for each matched instruction. \
-                           Each key accepts `true` (include all fields) or a list of field \
-                           names (per-field selection, not yet supported). When absent, only \
-                           the instruction itself is included."
-        )]
-        pub field_selection: Option<SvmFieldSelection>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional positional account names. The Nth entry names \
-                           account slot N on the dispatched instruction; surfaces as \
-                           `event.instruction.decoded.accounts.<name>`. Accounts beyond \
-                           the named list become `extra_accounts`."
-        )]
-        pub accounts: Option<Vec<String>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional Borsh argument schema. Each entry names one arg and \
-                           gives its type; the decoder walks the instruction data after \
-                           the discriminator in declared order. Mutually exclusive with \
-                           the program-level `idl` field."
+            description = "Borsh argument schema. Each entry names one arg and gives its type; \
+                           the decoder walks the instruction data after the discriminator in \
+                           declared order, and a call whose data the layout rejects is skipped. \
+                           Setting it is therefore also a filter: `[]` says the instruction takes \
+                           no arguments, so only calls carrying nothing past the discriminator \
+                           are indexed. Omit it instead to attach no decoder at all — every \
+                           matched call is indexed and the payload stays raw, reachable as \
+                           `instruction.data`. An `idl` always declares the layout of the \
+                           instructions it names, empty included. Required on a row that replaces \
+                           an instruction the IDL declares."
         )]
         pub args: Option<Vec<ArgDef>>,
+    }
+
+    /// One positional account slot of an instruction.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum AccountSlot {
+        /// Holds a position without naming it: never surfaced to a handler,
+        /// never filterable. The slots after it keep their positions.
+        Unnamed,
+        Required(String),
+        /// Absent when the call carries no such slot, or fills it with the id
+        /// of the program being invoked — the convention Anchor and Codama
+        /// both use.
+        Optional(String),
+    }
+
+    impl AccountSlot {
+        pub fn name(&self) -> Option<&str> {
+            match self {
+                Self::Unnamed => None,
+                Self::Required(name) | Self::Optional(name) => Some(name),
+            }
+        }
+
+        pub fn is_optional(&self) -> bool {
+            matches!(self, Self::Optional(_))
+        }
+
+        /// The YAML slot grammar: `payer`, `?authority`, `_`.
+        fn parse(token: &str) -> Result<Self, String> {
+            let name = |name: &str| {
+                let readable = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && name.chars().any(|c| c.is_ascii_alphabetic());
+                if readable {
+                    Ok(name.to_string())
+                } else {
+                    Err(format!(
+                        "account slot '{token}' is not a name: expected letters, digits and \
+                         underscores, at least one of them a letter. Prefix a name with '?' to \
+                         mark the slot optional, or write '_' to hold a position without naming \
+                         it."
+                    ))
+                }
+            };
+            match token {
+                "_" => Ok(Self::Unnamed),
+                "?_" => Err(
+                    "account slot '?_' marks an unnamed slot optional, which nothing can \
+                     observe. Write '_' to hold the position, or name the slot."
+                        .to_string(),
+                ),
+                _ => match token.strip_prefix('?') {
+                    Some(optional) => Ok(Self::Optional(name(optional)?)),
+                    None => Ok(Self::Required(name(token)?)),
+                },
+            }
+        }
+    }
+
+    impl Display for AccountSlot {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            match self {
+                Self::Unnamed => f.write_str("_"),
+                Self::Required(name) => f.write_str(name),
+                Self::Optional(name) => write!(f, "?{name}"),
+            }
+        }
+    }
+
+    impl Serialize for AccountSlot {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.collect_str(self)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for AccountSlot {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct SlotVisitor;
+
+            impl<'de> de::Visitor<'de> for SlotVisitor {
+                type Value = AccountSlot;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("an account name, `?name` for an optional slot, or `_`")
+                }
+
+                fn visit_str<E: de::Error>(self, value: &str) -> Result<AccountSlot, E> {
+                    AccountSlot::parse(value).map_err(de::Error::custom)
+                }
+
+                /// `- ? authority` and the flow-style `[?authority]` are YAML's
+                /// explicit-key syntax, which parses as a one-entry mapping with
+                /// no value rather than as the string a reader sees.
+                fn visit_map<A: de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<AccountSlot, A::Error> {
+                    let Some((name, value)) = map.next_entry::<String, Option<de::IgnoredAny>>()?
+                    else {
+                        return Err(de::Error::custom(
+                            "expected an account name, got an empty mapping",
+                        ));
+                    };
+                    if value.is_some() || map.next_key::<de::IgnoredAny>()?.is_some() {
+                        return Err(de::Error::custom(format!(
+                            "expected an account name, got a mapping. To mark '{name}' optional, \
+                             write \"?{name}\"."
+                        )));
+                    }
+                    AccountSlot::parse(&format!("?{name}")).map_err(de::Error::custom)
+                }
+            }
+
+            deserializer.deserialize_any(SlotVisitor)
+        }
+    }
+
+    impl JsonSchema for AccountSlot {
+        fn schema_name() -> Cow<'static, str> {
+            "SvmAccountSlot".into()
+        }
+
+        fn json_schema(_: &mut SchemaGenerator) -> Schema {
+            json_schema!({
+                "title": "Account slot",
+                "description": "One positional account slot of the instruction.\n\
+                    - `payer` names a slot the call always carries; it surfaces as \
+                    `instruction.accounts.payer`.\n\
+                    - `?authority` names an optional slot: the key is absent from \
+                    `instruction.accounts` when the call leaves the slot out or fills it with \
+                    the program id.\n\
+                    - `_` holds a position without naming it, so the slots after it keep \
+                    theirs. It is never surfaced and never filterable, and the list may not \
+                    end with one.",
+                "type": "string",
+                "pattern": "^(?:_|\\??[A-Za-z0-9_]*[A-Za-z][A-Za-z0-9_]*)$",
+                "examples": ["payer", "?authority", "_"],
+            })
+        }
     }
 
     /// One named argument of an instruction. Mirrors
@@ -1122,21 +1655,102 @@ pub mod svm {
         pub ty: ArgType,
     }
 
+    /// Elements an `array` may declare. The decoder preallocates from this
+    /// length rather than from the bytes on the wire, so an unbounded one is an
+    /// out-of-memory abort on every matched instruction, not a decode failure.
+    pub const MAX_ARRAY_LEN: usize = 65_536;
+
+    /// Borsh selects an enum variant with a one-byte tag, so a variant past
+    /// this many is unreachable.
+    pub const MAX_ENUM_VARIANTS: usize = 256;
+
+    /// The names a bare string may take, in the order they are offered back
+    /// when one is misspelled.
+    const PRIMITIVE_NAMES: &str = "bool, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, \
+                                   f64, string, bytes, pubkey, publicKey";
+    /// The keys a one-key mapping may take. `defined` is deliberately absent;
+    /// see `ArgComposite::Defined`.
+    const COMPOSITE_NAMES: &str = "option, vec, array, struct, enum";
+
     /// User-facing Borsh type grammar. Mirrors
     /// `hypersync_client_solana::decode::FieldType`. The YAML accepts either:
-    /// - A bare string for primitives (`"u64"`, `"pubkey"`, `"bool"`, ...).
-    /// - A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,
-    ///   `{ array: [u8, 32] }`, `{ defined: "DataV2" }`).
-    /// - An object with `kind: struct` or `kind: enum` for nominal types
-    ///   declared inline on this field. Most users will use `defined` and
-    ///   declare the nominal types under the program's `types:` block (Anchor
-    ///   IDL shape) once that lands; for now inline `struct` / `enum` is the
-    ///   only way to express nominal shapes ad-hoc.
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    /// - A bare string for a primitive (`u64`, `pubkey`, `bool`, ...).
+    /// - A one-key mapping for a composite (`{ vec: u8 }`, `{ option: pubkey }`,
+    ///   `{ array: [u8, 32] }`, `{ struct: [...] }`, `{ enum: [...] }`).
+    ///
+    /// A nominal type is declared inline with `struct` / `enum` at the field
+    /// that uses it. There is no way to name one and refer to it: attach an
+    /// `idl` to the program when its types are shared between instructions.
+    #[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
     #[serde(untagged)]
     pub enum ArgType {
         Primitive(ArgPrimitive),
         Composite(ArgComposite),
+    }
+
+    /// Hand-written so a misspelled type is answered with the names it could
+    /// have been. `#[serde(untagged)]` would report only that the value
+    /// matched no variant, naming neither the type nor the alternatives.
+    impl<'de> Deserialize<'de> for ArgType {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            deserializer.deserialize_any(ArgTypeVisitor)
+        }
+    }
+
+    struct ArgTypeVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for ArgTypeVisitor {
+        type Value = ArgType;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "a Borsh type")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, name: &str) -> Result<ArgType, E> {
+            let as_primitive: serde::de::value::StrDeserializer<E> =
+                serde::de::IntoDeserializer::into_deserializer(name);
+            ArgPrimitive::deserialize(as_primitive)
+                .map(ArgType::Primitive)
+                .map_err(|_: E| {
+                    E::custom(format!(
+                        "unknown type '{name}', expected one of {PRIMITIVE_NAMES}, or a composite \
+                         such as {{vec: u8}}, {{option: pubkey}}, {{array: [u8, 32]}}, {{struct: \
+                         [...]}}, {{enum: [...]}}"
+                    ))
+                })
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<ArgType, A::Error> {
+            use serde::de::Error;
+            let Some(key) = map.next_key::<String>()? else {
+                return Err(A::Error::custom(format!(
+                    "a composite type needs exactly one of {COMPOSITE_NAMES}"
+                )));
+            };
+            let composite = match key.as_str() {
+                "option" => ArgComposite::Option(map.next_value()?),
+                "vec" => ArgComposite::Vec(map.next_value()?),
+                "array" => {
+                    let (ty, len) = map.next_value::<(Box<ArgType>, usize)>()?;
+                    ArgComposite::Array(ty, len)
+                }
+                "struct" => ArgComposite::Struct(map.next_value()?),
+                "enum" => ArgComposite::Enum(map.next_value()?),
+                "defined" => ArgComposite::Defined(map.next_value()?),
+                other => {
+                    return Err(A::Error::custom(format!(
+                        "unknown composite type '{other}', expected one of {COMPOSITE_NAMES}"
+                    )))
+                }
+            };
+            if let Some(extra) = map.next_key::<String>()? {
+                return Err(A::Error::custom(format!(
+                    "a composite type takes exactly one of {COMPOSITE_NAMES}, got both '{key}' \
+                     and '{extra}'"
+                )));
+            }
+            Ok(ArgType::Composite(composite))
+        }
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -1162,8 +1776,9 @@ pub mod svm {
         PublicKey,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
+    // Deserialized through `ArgTypeVisitor` rather than by serde, so the
+    // variant names here only drive serialization and the JSON schema.
+    #[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
     pub enum ArgComposite {
         #[serde(rename = "option")]
         Option(Box<ArgType>),
@@ -1172,17 +1787,21 @@ pub mod svm {
         /// `[ <element type>, <length> ]` — same shape Anchor IDLs use.
         #[serde(rename = "array")]
         Array(Box<ArgType>, usize),
-        /// Reference to a nominal type defined in the program-level
-        /// `defined_types` registry (populated from an Anchor IDL `types:`
-        /// block or the bundled-Metaplex registry).
+        /// Reference into the program-level `defined_types` registry, which
+        /// only an IDL's `types` block ever populates. It exists to carry an
+        /// IDL's nominal types through `internal_config.json`, not as part of
+        /// the config.yaml grammar, so it stays out of the published JSON
+        /// schema and a config naming one is refused.
         #[serde(rename = "defined")]
+        #[schemars(skip)]
         Defined(String),
-        /// Inline-or-registry struct. Used as a nominal type definition in
-        /// the `defined_types` registry; rarely seen at the field level.
+        /// A struct, declared inline at the field that uses it or held in the
+        /// `defined_types` registry.
         #[serde(rename = "struct")]
         Struct(Vec<ArgDef>),
-        /// Inline-or-registry enum. Same role as `Struct`: a nominal type
-        /// definition in the `defined_types` registry.
+        /// An enum, declared inline at the field that uses it or held in the
+        /// `defined_types` registry. Borsh selects a variant by its position
+        /// here, with a one-byte tag.
         #[serde(rename = "enum")]
         Enum(Vec<ArgEnumVariant>),
     }
@@ -1196,97 +1815,6 @@ pub mod svm {
         /// 1-byte tag), but the distinction is preserved for round-tripping.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub fields: Option<Vec<ArgDef>>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct AccountFilter {
-        #[schemars(description = "Account position within the instruction (0..=5).")]
-        pub position: u8,
-        #[schemars(description = "Allowed base58 pubkeys for this account position.")]
-        pub values: Vec<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct AnyOfAccountFilters {
-        #[schemars(
-            description = "A non-empty list of AND-groups. Each group is itself a non-empty list \
-                           of `{position, values}` entries that must all match the same \
-                           instruction. An instruction matches `any_of` when any one group \
-                           matches."
-        )]
-        pub any_of: Vec<Vec<AccountFilter>>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(untagged)]
-    pub enum AccountFilters {
-        Flat(Vec<AccountFilter>),
-        AnyOf(AnyOfAccountFilters),
-    }
-
-    impl AccountFilters {
-        pub fn groups(&self) -> Vec<&[AccountFilter]> {
-            match self {
-                AccountFilters::Flat(entries) => vec![entries.as_slice()],
-                AccountFilters::AnyOf(any_of) => {
-                    any_of.any_of.iter().map(|g| g.as_slice()).collect()
-                }
-            }
-        }
-    }
-
-    /// Selectable parent-transaction field names (camelCase), matching the
-    /// public `svmTransaction` shape. `tokenBalances` is selected via the
-    /// separate `token_balance_fields` toggle, so it isn't listed here.
-    #[derive(
-        Debug,
-        Serialize,
-        Deserialize,
-        Clone,
-        PartialEq,
-        Eq,
-        Hash,
-        JsonSchema,
-        strum::Display,
-        strum::EnumIter,
-    )]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    #[strum(serialize_all = "camelCase")]
-    pub enum SvmTransactionField {
-        TransactionIndex,
-        Signatures,
-        FeePayer,
-        Success,
-        Err,
-        Fee,
-        ComputeUnitsConsumed,
-        AccountKeys,
-        RecentBlockhash,
-        Version,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct SvmFieldSelection {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Parent-transaction fields to include on each matched \
-                           instruction, as a list of field names. Omit (or pass an \
-                           empty list) to include no transaction.")]
-        pub transaction_fields: Option<Vec<SvmTransactionField>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Set to `true` to include program logs scoped to each \
-                           matched instruction.")]
-        pub log_fields: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Set to `true` to include SPL Token / Token-2022 balance \
-                           snapshots for the parent transaction, exposed as \
-                           `transaction.tokenBalances`. Independent of \
-                           `transaction_fields`."
-        )]
-        pub token_balance_fields: Option<bool>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -1304,6 +1832,12 @@ pub mod svm {
             description = "Configuration of the blockchain chains that the project is deployed on."
         )]
         pub chains: Vec<Chain>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schemars(
+            description = "Solana programs to index. Programs are defined once for the whole \
+                           project; `program_id` says where each one lives on every chain."
+        )]
+        pub programs: Vec<Program>,
     }
 
     impl Display for HumanConfig {
@@ -1327,8 +1861,8 @@ pub mod svm {
 #[cfg(test)]
 mod tests {
     use super::{
-        evm::{Chain, ContractConfig, HumanConfig},
-        ChainContract,
+        evm::{ContractConfig, HumanConfig},
+        ChainContract, StartBlock,
     };
     use crate::{
         config_parsing::human_config::{fuel, BaseConfig},
@@ -1350,6 +1884,28 @@ mod tests {
         assert_eq!(
             npm_schema, actual_schema,
             "Please run 'make update-generated-docs'"
+        );
+    }
+
+    /// The slot text is the config's own surface, so what a writer emits has
+    /// to read back as the same slots.
+    #[test]
+    fn svm_account_slots_round_trip_through_yaml() {
+        use super::svm::AccountSlot;
+
+        let slots = vec![
+            AccountSlot::Required("payer".to_string()),
+            AccountSlot::Optional("authority".to_string()),
+            AccountSlot::Unnamed,
+        ];
+        let yaml = serde_yaml::to_string(&slots).unwrap();
+
+        assert_eq!(
+            (
+                yaml.as_str(),
+                serde_yaml::from_str::<Vec<AccountSlot>>(&yaml).unwrap()
+            ),
+            ("- payer\n- ?authority\n- _\n", slots)
         );
     }
 
@@ -1380,6 +1936,60 @@ mod tests {
         assert_eq!(
             npm_schema, actual_schema,
             "Please run 'make update-generated-docs'"
+        );
+    }
+
+    #[test]
+    fn bytes_type_is_hex_unless_evm_or_fuel_opt_in_and_always_raw_on_svm() {
+        let evm = |extra: &str| {
+            super::HumanConfig::Evm(
+                serde_yaml::from_str::<HumanConfig>(&format!("name: t\nchains: []\n{extra}"))
+                    .unwrap(),
+            )
+        };
+        let fuel = |extra: &str| {
+            super::HumanConfig::Fuel(
+                serde_yaml::from_str::<fuel::HumanConfig>(&format!(
+                    "name: t\necosystem: fuel\nchains: []\n{extra}"
+                ))
+                .unwrap(),
+            )
+        };
+        let svm = |extra: &str| {
+            serde_yaml::from_str::<super::svm::HumanConfig>(&format!(
+                "name: t\necosystem: svm\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Svm)
+            .map(|config: super::HumanConfig| config.bytes_type())
+            .map_err(|error: serde_yaml::Error| error.to_string())
+        };
+        assert_eq!(
+            (
+                evm("").bytes_type(),
+                evm("bytes_type: hex").bytes_type(),
+                evm("bytes_type: uint8array").bytes_type(),
+                fuel("").bytes_type(),
+                fuel("bytes_type: uint8array").bytes_type(),
+                svm(""),
+                svm("bytes_type: hex"),
+                serde_yaml::from_str::<HumanConfig>("name: t\nchains: []\nbytes_type: raw")
+                    .map(|_| ())
+                    .map_err(|error: serde_yaml::Error| error.to_string()),
+            ),
+            (
+                super::BytesType::Hex,
+                super::BytesType::Hex,
+                super::BytesType::Uint8Array,
+                super::BytesType::Hex,
+                super::BytesType::Uint8Array,
+                Ok(super::BytesType::Uint8Array),
+                Err("unknown field `bytes_type`".to_string()),
+                Err(
+                    "bytes_type: unknown variant `raw`, expected `hex` or `uint8array` at line 3 \
+                     column 13"
+                        .to_string()
+                ),
+            )
         );
     }
 
@@ -1547,70 +2157,24 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             format!("# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{raw}");
         assert_eq!(
             out, expected,
-            "Display output must remain byte-identical for config_hash stability — header and body both."
+            "Display output must remain byte-identical for config_hash stability — header and \
+             body both."
         );
     }
 
-    // libyaml tags unquoted `0x…` as int. A 20-byte address overflows u64
-    // but serde_yaml hands the raw scalar text to the String visitor
-    // unchanged — locking that contract guards against a future YAML
-    // library that would coerce through f64 instead.
     #[test]
-    fn deserialize_unquoted_hex_address_yaml() {
-        let single = "address: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n";
-        #[derive(serde::Deserialize)]
-        struct Wrap {
-            address: NormalizedList<String>,
-        }
-        let de: Wrap = serde_yaml::from_str(single).unwrap();
+    fn evm_human_config_display_does_not_alter_serde_yaml_output_for_latest_start_block() {
+        let yaml = "name: t\nschema: ./s.graphql\ncontracts:\n  - name: C\n    handler: ./h.js\n    events:\n      - event: E\nchains:\n  - id: 1\n    rpc:\n      url: https://x\n    start_block: latest\n    contracts:\n      - name: C\n        address: \"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"\n";
+        let cfg: super::evm::HumanConfig = serde_yaml::from_str(yaml).unwrap();
+        let out = cfg.to_string();
+        let raw = serde_yaml::to_string(&cfg).unwrap();
+        let expected =
+            format!("# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{raw}");
         assert_eq!(
-            Vec::<String>::from(de.address),
-            vec!["0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string()]
+            out, expected,
+            "Display output must remain byte-identical for config_hash stability with a \
+             `latest` start block too."
         );
-
-        let list = "address:\n  - 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n  - 0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74\n";
-        let de: Wrap = serde_yaml::from_str(list).unwrap();
-        assert_eq!(
-            Vec::<String>::from(de.address),
-            vec![
-                "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string(),
-                "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn deserializes_factory_contract_config() {
-        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/configs/factory-contract-config.yaml");
-
-        let file_str = std::fs::read_to_string(config_path).unwrap();
-
-        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
-
-        let contracts = cfg.chains[0].contracts.as_ref().unwrap();
-        println!("{:?}", contracts[0]);
-
-        assert!(contracts[0].config.is_some());
-        assert!(contracts[1].config.is_some());
-        assert_eq!(contracts[1].address, None.into());
-    }
-
-    #[test]
-    fn deserializes_dynamic_contract_config() {
-        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/configs/dynamic-address-config.yaml");
-
-        let file_str = std::fs::read_to_string(config_path).unwrap();
-
-        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
-
-        assert!(cfg.chains[0].contracts.as_ref().unwrap()[0]
-            .config
-            .is_some());
-        assert!(cfg.chains[1].contracts.as_ref().unwrap()[0]
-            .config
-            .is_none());
     }
 
     #[test]
@@ -1630,14 +2194,16 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 handlers: None,
                 full_batch_size: None,
                 storage: None,
+                disable_default_cross_chain: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            bytes_type: None,
             chains: vec![fuel::Chain {
                 id: 0,
                 skip: None,
-                start_block: 0,
+                start_block: StartBlock::Number(0),
                 end_block: None,
                 hyperfuel_config: None,
                 max_reorg_depth: None,
@@ -1682,183 +2248,18 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 handlers: None,
                 full_batch_size: None,
                 storage: None,
+                disable_default_cross_chain: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            bytes_type: None,
             chains: vec![],
         };
 
         assert_eq!(
             serde_yaml::to_string(&cfg).unwrap(),
             "name: Fuel indexer\necosystem: fuel\nchains: []\n"
-        );
-    }
-
-    #[test]
-    fn deserialize_storage_config() {
-        use super::{ColumnNameFormat, StorageBackendConfig, StorageBackendOptions, StorageConfig};
-
-        // Both fields present
-        let yaml = "postgres: true\nclickhouse: true\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: Some(StorageBackendConfig::Enabled(true)),
-                clickhouse: Some(StorageBackendConfig::Enabled(true)),
-            }
-        );
-
-        // Only clickhouse set
-        let yaml = "clickhouse: true\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: None,
-                clickhouse: Some(StorageBackendConfig::Enabled(true)),
-            }
-        );
-
-        // Backend configured with an options object
-        let yaml = "postgres:\n  column_name_format: snake_case\nclickhouse: {}\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: Some(StorageBackendConfig::Options(StorageBackendOptions {
-                    default: None,
-                    column_name_format: Some(ColumnNameFormat::SnakeCase),
-                })),
-                clickhouse: Some(StorageBackendConfig::Options(StorageBackendOptions {
-                    default: None,
-                    column_name_format: None,
-                })),
-            }
-        );
-
-        // Unknown backend option should fail (deny_unknown_fields)
-        let yaml = "postgres:\n  table_naming: snake_case\n";
-        assert!(serde_yaml::from_str::<StorageConfig>(yaml).is_err());
-
-        // Unknown column_name_format value should fail
-        let yaml = "postgres:\n  column_name_format: kebab-case\n";
-        assert!(serde_yaml::from_str::<StorageConfig>(yaml).is_err());
-
-        // Unknown field should fail (deny_unknown_fields)
-        let yaml = "postgres: true\nbigquery: true\n";
-        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
-        assert!(
-            err.to_string().contains("unknown field `bigquery`"),
-            "Unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn deserialize_storage_backend_options() {
-        use super::{StorageBackendConfig, StorageBackendOptions, StorageConfig};
-
-        let yaml = "postgres: true\nclickhouse:\n  default: true\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: Some(StorageBackendConfig::Enabled(true)),
-                clickhouse: Some(StorageBackendConfig::Options(StorageBackendOptions {
-                    default: Some(true),
-                    column_name_format: None,
-                })),
-            }
-        );
-
-        // Empty object form implies enabled with no default override
-        let yaml = "postgres: {}\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: Some(StorageBackendConfig::Options(StorageBackendOptions {
-                    default: None,
-                    column_name_format: None,
-                })),
-                clickhouse: None,
-            }
-        );
-
-        // A typo inside the options object surfaces the precise
-        // unknown-field error, not a generic match-no-variant one
-        let yaml = "clickhouse:\n  defautl: true\n";
-        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("unknown field `defautl`, expected `default` or `column_name_format`"),
-            "Unexpected error: {err}"
-        );
-
-        // A value of the wrong type names the accepted shapes
-        let yaml = "clickhouse: enabled\n";
-        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("expected a boolean or an options object like `{default: true}`"),
-            "Unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn deserialize_evm_config_with_storage() {
-        use super::evm::HumanConfig as EvmConfig;
-        let yaml = r#"
-name: storage-test
-storage:
-  postgres: true
-  clickhouse:
-    default: true
-chains:
-  - id: 1
-    start_block: 0
-"#;
-        let cfg: EvmConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            cfg.base.storage,
-            Some(super::StorageConfig {
-                postgres: Some(super::StorageBackendConfig::Enabled(true)),
-                clickhouse: Some(super::StorageBackendConfig::Options(
-                    super::StorageBackendOptions {
-                        default: Some(true),
-                        column_name_format: None,
-                    }
-                )),
-            })
-        );
-    }
-
-    #[test]
-    fn deserialize_underscores_between_numbers() {
-        let num = serde_json::json!(2_000_000);
-        let de: i32 = serde_json::from_value(num).unwrap();
-        assert_eq!(2_000_000, de);
-    }
-
-    #[test]
-    fn deserialize_chain_with_underscores_between_numbers() {
-        let chain_json = serde_json::json!({"id": 1, "start_block": 2_000, "end_block": 2_000_000, "contracts": []});
-        let de: Chain = serde_json::from_value(chain_json).unwrap();
-
-        assert_eq!(
-            Chain {
-                id: 1,
-                skip: None,
-                hypersync_config: None,
-                rpc: None,
-                start_block: 2_000,
-                max_reorg_depth: None,
-                block_lag: None,
-                end_block: Some(2_000_000),
-                contracts: Some(vec![])
-            },
-            de
         );
     }
 
@@ -1870,73 +2271,89 @@ chains:
 name: metaplex-token-metadata
 ecosystem: svm
 chains:
-  - start_block: 200000000
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: TokenMetadata
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: CreateMetadataAccountV3
-              discriminator: "0x21"
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
-              account_filters:
-                - position: 0
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-              field_selection:
-                transaction_fields: [signatures, feePayer]
+  - id: solana
+    start_slot: 200000000
+    hypersync_config:
+      url: https://solana.hypersync.xyz
+programs:
+  - name: TokenMetadata
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    instructions:
+      - name: CreateMetadataAccountV3
+        discriminator: "0x21"
+      - name: UpdateMetadataAccountV2
+        discriminator: "0x0f"
 "#;
+
+        #[test]
+        fn chain_id_accepts_labels_and_numbers_and_round_trips() {
+            let parse_chain = |id_yaml: &str| -> Chain {
+                let yaml = format!(
+                    "name: x\necosystem: svm\nchains:\n  - id: {id_yaml}\n    start_slot: 0\n"
+                );
+                let mut cfg: HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                cfg.chains.remove(0)
+            };
+
+            let cases = [
+                (
+                    "solana",
+                    ChainId::Label(ChainLabel::Solana),
+                    SOLANA_MAINNET_CHAIN_ID,
+                ),
+                (
+                    "solana-devnet",
+                    ChainId::Label(ChainLabel::SolanaDevnet),
+                    SOLANA_DEVNET_CHAIN_ID,
+                ),
+                ("42", ChainId::Id(42), 42),
+            ];
+            for (id_yaml, expected, expected_u64) in cases {
+                let chain = parse_chain(id_yaml);
+                assert_eq!(chain.id, expected, "parsing id: {id_yaml}");
+                assert_eq!(chain.id.to_u64(), expected_u64, "resolving id: {id_yaml}");
+                // Round trip: serialization preserves the label-vs-number form.
+                let reparsed: Chain =
+                    serde_yaml::from_str(&serde_yaml::to_string(&chain).unwrap()).unwrap();
+                assert_eq!(reparsed, chain, "round trip for id: {id_yaml}");
+            }
+
+            // `id` is required: omitting it is a parse error.
+            let missing: Result<HumanConfig, _> =
+                serde_yaml::from_str("name: x\necosystem: svm\nchains:\n  - start_slot: 0\n");
+            assert!(missing.is_err(), "config without chain id must be rejected");
+        }
 
         #[test]
         fn deserialize_metaplex_yaml() {
             let cfg: HumanConfig = serde_yaml::from_str(METAPLEX_YAML).unwrap();
             assert_eq!(cfg.chains.len(), 1);
             let chain = &cfg.chains[0];
-            let experimental = chain.experimental.as_ref().unwrap();
             assert_eq!(
-                experimental.hypersync_config.url.as_str(),
+                chain.hypersync_config.as_ref().unwrap().url.as_str(),
                 "https://solana.hypersync.xyz"
             );
-            let programs = &experimental.programs;
-            assert_eq!(programs.len(), 1);
-            let program = &programs[0];
+            assert_eq!(cfg.programs.len(), 1);
+            let program = &cfg.programs[0];
             assert_eq!(
                 program,
                 &Program {
                     name: "TokenMetadata".to_string(),
-                    program_id: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
+                    program_id: ProgramId::Single(
+                        "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string()
+                    ),
                     handler: None,
                     idl: None,
                     instructions: vec![
                         Instruction {
                             name: "CreateMetadataAccountV3".to_string(),
-                            discriminator: Some("0x21".to_string()),
-                            is_inner: None,
-                            account_filters: None,
-                            field_selection: None,
+                            discriminator: "0x21".to_string(),
                             accounts: None,
                             args: None,
                         },
                         Instruction {
                             name: "UpdateMetadataAccountV2".to_string(),
-                            discriminator: Some("0x0f".to_string()),
-                            is_inner: None,
-                            account_filters: Some(AccountFilters::Flat(vec![AccountFilter {
-                                position: 0,
-                                values: vec![
-                                    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
-                                ],
-                            }])),
-                            field_selection: Some(SvmFieldSelection {
-                                transaction_fields: Some(vec![
-                                    SvmTransactionField::Signatures,
-                                    SvmTransactionField::FeePayer,
-                                ]),
-                                log_fields: None,
-                                token_balance_fields: None,
-                            }),
+                            discriminator: "0x0f".to_string(),
                             accounts: None,
                             args: None,
                         },
@@ -1944,24 +2361,66 @@ chains:
                 }
             );
         }
+    }
+
+    mod start_block_yaml {
+        use super::super::{evm, fuel, svm, StartBlock, StartBlockTag};
+        use pretty_assertions::assert_eq;
 
         #[test]
-        fn rejects_unknown_fields() {
-            let bad = r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 1
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          bogus_extra: true
-          instructions: []
-"#;
-            assert!(serde_yaml::from_str::<HumanConfig>(bad).is_err());
+        fn evm_start_block_accepts_number_and_latest_and_round_trips() {
+            let parse = |sb_yaml: &str| -> StartBlock {
+                let yaml = format!("name: x\nchains:\n  - id: 1\n    start_block: {sb_yaml}\n");
+                let mut cfg: evm::HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                cfg.chains.remove(0).start_block
+            };
+
+            assert_eq!(parse("12345"), StartBlock::Number(12345));
+            assert_eq!(parse("latest"), StartBlock::Tag(StartBlockTag::Latest));
+
+            for start_block in [
+                StartBlock::Number(12345),
+                StartBlock::Tag(StartBlockTag::Latest),
+            ] {
+                let reparsed: StartBlock =
+                    serde_yaml::from_str(&serde_yaml::to_string(&start_block).unwrap()).unwrap();
+                assert_eq!(reparsed, start_block, "round trip for {start_block:?}");
+            }
+        }
+
+        #[test]
+        fn evm_start_block_rejects_unknown_tag() {
+            let yaml = "name: x\nchains:\n  - id: 1\n    start_block: lastest\n";
+            let result: Result<evm::HumanConfig, _> = serde_yaml::from_str(yaml);
+            assert!(result.is_err(), "a typo'd start_block tag must be rejected");
+        }
+
+        #[test]
+        fn fuel_start_block_accepts_number_and_latest() {
+            let parse = |sb_yaml: &str| -> StartBlock {
+                let yaml = format!(
+                    "name: x\necosystem: fuel\nchains:\n  - id: 0\n    start_block: {sb_yaml}\n"
+                );
+                let mut cfg: fuel::HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                cfg.chains.remove(0).start_block
+            };
+
+            assert_eq!(parse("12345"), StartBlock::Number(12345));
+            assert_eq!(parse("latest"), StartBlock::Tag(StartBlockTag::Latest));
+        }
+
+        #[test]
+        fn svm_start_slot_accepts_number_and_latest() {
+            let parse = |sb_yaml: &str| -> StartBlock {
+                let yaml = format!(
+                    "name: x\necosystem: svm\nchains:\n  - id: 42\n    start_slot: {sb_yaml}\n"
+                );
+                let mut cfg: svm::HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                cfg.chains.remove(0).start_slot
+            };
+
+            assert_eq!(parse("12345"), StartBlock::Number(12345));
+            assert_eq!(parse("latest"), StartBlock::Tag(StartBlockTag::Latest));
         }
     }
 }

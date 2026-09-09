@@ -1,0 +1,160 @@
+name: Announce release to Telegram
+
+on:
+  release:
+    types: [published]
+  # Render a past release on demand, so the message can be checked without
+  # waiting for a real one. Defaults to printing the message in the job log
+  # rather than sending it. Release events ignore both inputs and always send.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to render, for example v3.0.0'
+        required: true
+      dry_run:
+        description: 'Print the message in the log instead of sending it'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.release.draft == false
+    steps:
+      # Announce major and minor releases only. A release qualifies when the
+      # tag is an exact "X.Y.0" (strip a leading "v"): patch is 0, and there is
+      # no pre-release suffix. This skips patch releases and release candidates
+      # such as v3.0.0-rc.1, which GitHub does not always flag as prereleases.
+      # (Same gate as .github/workflows/discord-release.yml.)
+      - name: Check if release is major or minor
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          # A manual run has no release payload, so read the flag off the tag to
+          # keep the gate identical to a real release.
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            IS_PRERELEASE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json isPrerelease -q .isPrerelease)"
+          fi
+          version="${TAG#v}"
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            echo "$TAG is a prerelease; skipping"
+            echo "announce=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
+            echo "$TAG is a major/minor release; announcing"
+            echo "announce=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$TAG is a patch release; skipping"
+            echo "announce=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post release to Telegram
+        if: steps.classify.outputs.announce == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_RELEASE_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_RELEASE_CHAT_ID }}
+          TOPIC_ID: ${{ secrets.TELEGRAM_RELEASE_TOPIC_ID }}
+          TITLE: ${{ github.event.release.name || github.event.release.tag_name }}
+          BODY: ${{ github.event.release.body }}
+          URL: ${{ github.event.release.html_url }}
+          INPUT_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # A manual run pulls the notes for the requested tag. jq keeps the
+          # body out of the command line, so notes cannot run as shell.
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            gh release view "$INPUT_TAG" --repo "$GITHUB_REPOSITORY" \
+              --json name,tagName,body,url > "$RUNNER_TEMP/release.json"
+            TITLE="$(jq -r '.name // .tagName' "$RUNNER_TEMP/release.json")"
+            BODY="$(jq -r '.body' "$RUNNER_TEMP/release.json")"
+            URL="$(jq -r '.url' "$RUNNER_TEMP/release.json")"
+          fi
+
+          # Render the GitHub release notes into Telegram HTML. Telegram caps
+          # messages at 4096 chars. We size the notes budget against the actual
+          # header and link, truncate the raw notes to that (never mid-tag), then
+          # HTML-escape and add only well-formed tags, so escaping cannot produce
+          # a stray < >, and any code block left open by truncation is auto-closed.
+          esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+          title="$(printf '%s' "$TITLE" | esc)"
+          url="$(printf '%s' "$URL" | esc)"
+          header="🚢 <b>HyperIndex ${title} released</b>"
+          link="<a href=\"${url}\">View on GitHub</a>"
+
+          # Body budget = 4096 minus the fixed parts, separators, and a margin,
+          # then capped at a conservative ceiling that leaves headroom for the
+          # tags and escaping added later (so normal releases stay HTML). The
+          # dynamic term only bites when the title or URL is unusually long.
+          overhead=$(( ${#header} + ${#link} + 8 ))
+          max_body=$(( 4096 - overhead - 64 ))
+          (( max_body > 3000 )) && max_body=3000
+          (( max_body < 0 )) && max_body=0
+          body="$BODY"
+          if [[ ${#body} -gt $max_body ]]; then
+            body="${body:0:$max_body}"$'\n'"… read the full notes on GitHub"
+          fi
+
+          # fenced ``` blocks -> <pre>; "## heading" -> <b>heading</b> (outside code)
+          # shellcheck disable=SC2016  # $0 below is awk's field var, not a shell expansion
+          notes="$(printf '%s\n' "$body" | esc | awk '
+            BEGIN { inpre = 0 }
+            /^```/ { if (inpre) { print "</pre>"; inpre = 0 } else { print "<pre>"; inpre = 1 } next }
+            inpre == 0 && /^[[:space:]]*#{1,6}[[:space:]]+/ {
+              sub(/^[[:space:]]*#+[[:space:]]+/, ""); print "<b>" $0 "</b>"; next
+            }
+            { print }
+            END { if (inpre) print "</pre>" }
+          ' | sed -E 's/`([^`]+)`/<code>\1<\/code>/g; s/\*\*//g')"
+
+          message="$(printf '%s\n\n%s\n\n%s' "$header" "$notes" "$link")"
+          parse_mode="HTML"
+
+          # Safety net: if escaping still pushed the HTML past the hard limit,
+          # fall back to plain text, which a hard cut cannot break.
+          # Telegram measures against 4096 UTF-16 units, where a non-BMP char
+          # (emoji) costs 2 but Bash's ${#var} and slices count 1, so every
+          # measurement and cut here runs on the UTF-16 encoding. "ignore" drops
+          # the dangling half when a cut lands inside a surrogate pair.
+          utf16_len() { python3 -c 'import sys; print(len(sys.stdin.read().encode("utf-16-le")) // 2)'; }
+          utf16_cut() { python3 -c 'import sys; sys.stdout.write(sys.stdin.read().encode("utf-16-le")[: int(sys.argv[1]) * 2].decode("utf-16-le", "ignore"))' "$1"; }
+
+          if (( $(printf '%s' "$message" | utf16_len) > 4096 )); then
+            # Budget the notes against the header and link rather than cutting
+            # the assembled message, which would drop the link off the end and
+            # leave no way back to the release.
+            plain_header="$(printf '🚢 HyperIndex %s released' "$TITLE")"
+            plain_budget=$(( 4096
+              - $(printf '%s' "$plain_header" | utf16_len)
+              - $(printf '%s' "$URL" | utf16_len)
+              - 4 ))
+            (( plain_budget < 0 )) && plain_budget=0
+            plain_notes="$(printf '%s' "$BODY" | utf16_cut "$plain_budget")"
+            message="$(printf '%s\n\n%s\n\n%s' "$plain_header" "$plain_notes" "$URL")"
+            parse_mode=""
+          fi
+
+          # Gate on the event, not just the input. dry_run defaults to true, and
+          # a release must never inherit that default and go quiet.
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN" == "true" ]]; then
+            echo "Dry run. Nothing sent. parse_mode=${parse_mode:-none (plain text)}"
+            echo "--- message below ---"
+            printf '%s\n' "$message"
+            exit 0
+          fi
+
+          args=(--data-urlencode "chat_id=${CHAT_ID}"
+                --data-urlencode "text=${message}"
+                -d "disable_web_page_preview=false")
+          [[ -n "$parse_mode" ]] && args+=(-d "parse_mode=${parse_mode}")
+          [[ -n "${TOPIC_ID}" ]] && args+=(-d "message_thread_id=${TOPIC_ID}")
+
+          curl -fsS --connect-timeout 10 --max-time 30 \
+            "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" "${args[@]}"

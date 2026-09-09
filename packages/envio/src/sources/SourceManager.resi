@@ -21,9 +21,39 @@ let make: (
 
 let getActiveSource: t => Source.t
 
+type requestStatSample = {
+  sourceName: string,
+  chainId: ChainId.t,
+  method: string,
+  count: int,
+  seconds: float,
+}
+
+let getRequestStatSamples: t => array<requestStatSample>
+
+type sourceHeightSample = {
+  sourceName: string,
+  chainId: ChainId.t,
+  height: int,
+}
+
+let getSourceHeightSamples: t => array<sourceHeightSample>
+
+type heightStreamSample = {
+  sourceName: string,
+  chainId: ChainId.t,
+  stream: HeightFeed.streamSample,
+}
+
+let getHeightStreamSamples: t => array<heightStreamSample>
+
+let idleSeconds: t => float
+let waitingForNewBlockSeconds: t => float
+let queryingSeconds: t => float
+
 let inFlightCount: t => int
 
-let onReorg: (t, ~rollbackTargetBlock: int) => unit
+let onReorg: t => unit
 
 let dispatch: (
   t,
@@ -55,11 +85,7 @@ let makeGetHeightRetryInterval: (
   ~maxRetryInterval: int,
 ) => (~retry: int) => int
 
-let getBlockHashes: (
-  t,
-  ~blockNumbers: array<int>,
-  ~isRealtime: bool,
-) => promise<array<ReorgDetection.blockDataWithTimestamp>>
+let getBlockHashes: (t, ~blockNumbers: array<int>, ~isRealtime: bool) => promise<BlockStore.t>
 
 // Total time the indexer spent waiting on rate limits, including any
 // currently-in-progress window measured against Date.now() at call time.

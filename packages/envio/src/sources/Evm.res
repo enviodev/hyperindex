@@ -6,53 +6,64 @@ type payload = {
   contractName: string,
   eventName: string,
   params: Internal.eventParams,
-  chainId: int,
+  chainId: ChainId.t,
   srcAddress: Address.t,
   logIndex: int,
   transaction?: Internal.eventTransaction,
-  block: Internal.eventBlock,
+  // HyperSync omits `block` (it lives raw in the per-chain store and is written
+  // onto the payload at batch prep); RPC/simulate build it inline.
+  block?: Internal.eventBlock,
 }
 external fromPayload: payload => Internal.eventPayload = "%identity"
 external toPayload: Internal.eventPayload => payload = "%identity"
 
-// Ordered transaction field names. The index of each is the field code shared
-// with the Rust store (`EvmTxField`) — keep this order in sync.
-let transactionFields = [
-  "transactionIndex",
+// Ordered transaction field names, the field codes shared with the Rust store
+// (`EvmTxField`). Derived from the typed field list so the two can't drift;
+// `Internal.allEvmTransactionFields` is pinned to the Rust ordinal order by a test.
+let transactionFields =
+  Internal.allEvmTransactionFields->(
+    Utils.magic: array<Internal.evmTransactionField> => array<string>
+  )
+
+// One event's selected transaction fields → store selection bitmask. Computed
+// per event at config build and cached on the event config.
+let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+
+// Ordered block field names. The index of each is the field code shared with the
+// Rust store (`EvmBlockField`) — keep this order in sync.
+let blockFields = [
+  "number",
+  "timestamp",
   "hash",
-  "from",
-  "to",
-  "gas",
-  "gasPrice",
-  "maxPriorityFeePerGas",
-  "maxFeePerGas",
-  "cumulativeGasUsed",
-  "effectiveGasPrice",
-  "gasUsed",
-  "input",
+  "parentHash",
   "nonce",
-  "value",
-  "v",
-  "r",
-  "s",
-  "contractAddress",
+  "sha3Uncles",
   "logsBloom",
-  "root",
-  "status",
-  "yParity",
-  "maxFeePerBlobGas",
-  "blobVersionedHashes",
-  "type",
-  "l1Fee",
-  "l1GasPrice",
-  "l1GasUsed",
-  "l1FeeScalar",
-  "gasUsedForL1",
-  "accessList",
-  "authorizationList",
+  "transactionsRoot",
+  "stateRoot",
+  "receiptsRoot",
+  "miner",
+  "difficulty",
+  "totalDifficulty",
+  "extraData",
+  "size",
+  "gasLimit",
+  "gasUsed",
+  "uncles",
+  "baseFeePerGas",
+  "blobGasUsed",
+  "excessBlobGas",
+  "parentBeaconBlockRoot",
+  "withdrawalsRoot",
+  "l1BlockNumber",
+  "sendCount",
+  "sendRoot",
+  "mixHash",
 ]
 
-let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+// One event's selected block fields → store selection bitmask. Computed per
+// event at config build and cached on the event config.
+let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
@@ -65,8 +76,9 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   blockNumberName: "number",
   blockTimestampName: "timestamp",
   blockHashName: "hash",
-  cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onBlock",
+  contractNoun: "contract",
+  eventNoun: "event",
   // EVM filter shape: `{block: {number: {_gte?, _lte?, _every?}}}`.
   // The inner range chunk is returned as raw `S.unknown` and parsed a
   // second time in `Main.res` by the shared `blockRangeSchema`.
@@ -79,11 +91,13 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // range chunk is validated by `eventBlockRangeSchema` in
   // `LogSelection.res` which rejects `_lte`/`_every` (use `onBlock` for
   // stride- and endBlock-based block handlers).
+  // `S.strict` on the inner object rejects unknown `block` fields (e.g. a
+  // `numbre` typo or `block: {timestamp: ...}`) instead of silently
+  // ignoring them.
   onEventBlockFilterSchema: S.object(s =>
-    s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
+    s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))->S.strict))
   ),
   logger,
-  transactionFieldMask,
   // The payload carries `transaction` by batch prep (HyperSync) or inline
   // (RPC/simulate), so the event is the payload as-is.
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
@@ -91,9 +105,9 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     Logging.createChildFrom(
       ~logger,
       ~params={
-        "contract": eventItem.eventConfig.contractName,
-        "event": eventItem.eventConfig.name,
-        "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+        "contract": eventItem.onEventRegistration.eventConfig.contractName,
+        "event": eventItem.onEventRegistration.eventConfig.name,
+        "chainId": eventItem.chainId,
         "block": eventItem.blockNumber,
         "logIndex": eventItem.logIndex,
         "address": (eventItem.payload->toPayload).srcAddress,
@@ -102,7 +116,17 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
     let eventConfig =
-      eventItem.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+      eventItem.onEventRegistration.eventConfig->(
+        Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+      )
+    // Store-backed payloads get `block` written at batch prep and inline
+    // sources carry it from the start, with hash/timestamp always selected —
+    // so both are present by the time a raw event is built.
+    let header = switch payload.block {
+    | Some(block) => block->(Utils.magic: Internal.eventBlock => {"hash": string, "timestamp": int})
+    | None =>
+      JsError.throwWithMessage("Unexpected case: The event block is missing for a raw event")
+    }
     eventItem->RawEvent.make(
       ~block=payload.block,
       ~transaction=payload.transaction,
@@ -112,6 +136,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
         ? ()->(Utils.magic: unit => Internal.eventParams)
         : payload.params,
       ~srcAddress=payload.srcAddress,
+      ~blockHash=header["hash"],
+      ~blockTimestamp=header["timestamp"],
       ~cleanUpRawEventFieldsInPlace,
     )
   },

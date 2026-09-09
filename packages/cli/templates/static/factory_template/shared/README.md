@@ -15,18 +15,24 @@ To index contracts deployed from a factory, use the `contractRegister` handler o
 Example:
 
 ```ts
-<contract-name>.<event-name>.contractRegister(({ event, context }) => {
-  context.add<your-contract-name>(<address-of-the-contract>);
-});
+indexer.contractRegister(
+  { contract: "<contract-name>", event: "<event-name>" },
+  async ({ event, context }) => {
+    context.chain.<your-contract-name>.add(<address-of-the-contract>);
+  },
+);
 ```
 
 In the case of **Uniswap V3 Factory**, the handler looks like this:
 
 ```ts
 // src/handlers/UniswapV3Factory.ts
-UniswapV3Factory.PoolCreated.contractRegister(({ event, context }) => {
-  context.addUniswapV3Pool(event.params.pool);
-});
+indexer.contractRegister(
+  { contract: "UniswapV3Factory", event: "PoolCreated" },
+  async ({ event, context }) => {
+    context.chain.UniswapV3Pool.add(event.params.pool);
+  },
+);
 ```
 
 ## Prerequisites

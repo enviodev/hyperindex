@@ -33,15 +33,15 @@ let make = (
   }
 }
 
-let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int) => {
+let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int): option<
+  Internal.checkpointId,
+> => {
   let safeBlockNumber = sourceBlockNumber - safeCheckpointTracking.maxReorgDepth
 
   switch safeCheckpointTracking.checkpointIds {
-  | [] => 0n
-  | _
-    if safeCheckpointTracking.checkpointBlockNumbers->Array.getUnsafe(0) >
-      safeBlockNumber => 0n
-  | [checkpointId] => checkpointId
+  | [] => None
+  | _ if safeCheckpointTracking.checkpointBlockNumbers->Array.getUnsafe(0) > safeBlockNumber => None
+  | [checkpointId] => Some(checkpointId)
   | _ => {
       let trackingCheckpointsCount = safeCheckpointTracking.checkpointIds->Array.length
       let result = ref(None)
@@ -52,16 +52,15 @@ let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int) =
           safeCheckpointTracking.checkpointBlockNumbers->Array.getUnsafe(idx.contents) >
             safeBlockNumber
         ) {
-          result :=
-            Some(safeCheckpointTracking.checkpointIds->Array.getUnsafe(idx.contents - 1))
+          result := Some(safeCheckpointTracking.checkpointIds->Array.getUnsafe(idx.contents - 1))
         }
         idx := idx.contents + 1
       }
 
       switch result.contents {
-      | Some(checkpointId) => checkpointId
+      | Some(_) => result.contents
       | None =>
-        safeCheckpointTracking.checkpointIds->Array.getUnsafe(trackingCheckpointsCount - 1)
+        Some(safeCheckpointTracking.checkpointIds->Array.getUnsafe(trackingCheckpointsCount - 1))
       }
     }
   }
@@ -70,12 +69,13 @@ let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int) =
 let updateOnNewBatch = (
   safeCheckpointTracking: t,
   ~sourceBlockNumber: int,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~batchCheckpointIds: array<bigint>,
   ~batchCheckpointBlockNumbers: array<int>,
-  ~batchCheckpointChainIds: array<int>,
+  ~batchCheckpointChainIds: array<ChainId.t>,
 ) => {
-  let safeCheckpointId = getSafeCheckpointId(safeCheckpointTracking, ~sourceBlockNumber)
+  let safeCheckpointId =
+    getSafeCheckpointId(safeCheckpointTracking, ~sourceBlockNumber)->Option.getOr(0n)
 
   let mutCheckpointIds = []
   let mutCheckpointBlockNumbers = []

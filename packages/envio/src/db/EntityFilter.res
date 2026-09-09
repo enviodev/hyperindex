@@ -1,13 +1,17 @@
-// Serializes a filter value for the in-memory cache key. Built once per
-// getWhere registration, never per entity, so a single generic pass is fine —
-// it only has to be unambiguous across distinct values. bigint stringifies
-// natively, bignumber.js and Date are objects with a toString, arrays recurse.
-let serializeValue: unknown => string = %raw(`function ser(v) {
+let serializeRaw: unknown => string = %raw(`function ser(v) {
   if (v === undefined || v === null) return "undefined";
   if (Array.isArray(v)) return "[" + v.map(ser).join(",") + "]";
   if (typeof v === "object") return v.toString();
   return String(v);
 }`)
+
+// Built once per getWhere registration, never per entity, so a single generic
+// pass is fine — it only has to be unambiguous across distinct values.
+let serializeValue = (value: unknown) =>
+  switch value->Utils.Bytes.asUint8Array {
+  | Some(bytes) => bytes->Utils.Bytes.toHex
+  | None => value->serializeRaw
+  }
 
 // The And case requires at least one nested filter (storage throws otherwise),
 // while In with an empty array matches nothing.
@@ -126,10 +130,6 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
     | Some(DerivedFrom(_)) =>
       JsError.throwWithMessage(
         `The field "${apiFieldName}" on entity "${entityName}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
-      )
-    | Some(Field({isPrimaryKey: false, isIndex: false, linkedEntity: None})) =>
-      JsError.throwWithMessage(
-        `The field "${apiFieldName}" on entity "${entityName}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${apiFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
       )
     | Some(Field(_)) => ()
     }
@@ -365,23 +365,32 @@ let json = {
   lt: (a, b) => !(a->nullish) && a < b,
 }
 
+let asBytes = (v: unknown) => v->(Utils.magic: unknown => Uint8Array.t)
+let bytes = {
+  eq: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) === 0.,
+  gt: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) > 0.,
+  lt: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) < 0.,
+}
+
 let scalarCompare = (fieldType: Table.fieldType): valueCompare =>
   switch fieldType {
   | BigDecimal(_) => bigDecimal
   | Date => date
   | Json => json
+  | Bytea => bytes
   | String
   | Boolean
   | Uint32
   | UInt52
+  | SmallInt
   | UInt64
   | Int32
+  | ChainId
   | Number
   | BigInt(_)
   | Serial
   | BigSerial
-  | Enum(_)
-  | Entity(_) => native
+  | Enum(_) => native
   }
 
 let asArray = (v: unknown) => v->(Utils.magic: unknown => array<unknown>)
@@ -396,32 +405,35 @@ let arrayCompare = (element: valueCompare): valueCompare => {
       let b = b->asArray
       let len = a->Array.length
       len === b->Array.length && {
+          let rec go = i =>
+            i >= len || (element.eq(a->Array.getUnsafe(i), b->Array.getUnsafe(i)) && go(i + 1))
+          go(0)
+        }
+    }
+  let order = (~gt) =>
+    (a, b) =>
+      !(a->nullish) && {
+        let a = a->asArray
+        let b = b->asArray
+        let la = a->Array.length
+        let lb = b->Array.length
+        let len = la < lb ? la : lb
         let rec go = i =>
-          i >= len || (element.eq(a->Array.getUnsafe(i), b->Array.getUnsafe(i)) && go(i + 1))
+          if i >= len {
+            gt ? la > lb : la < lb
+          } else {
+            let x = a->Array.getUnsafe(i)
+            let y = b->Array.getUnsafe(i)
+            if element.eq(x, y) {
+              go(i + 1)
+            } else if gt {
+              element.gt(x, y)
+            } else {
+              element.lt(x, y)
+            }
+          }
         go(0)
       }
-    }
-  let order = (~gt) => (a, b) =>
-    !(a->nullish) && {
-      let a = a->asArray
-      let b = b->asArray
-      let la = a->Array.length
-      let lb = b->Array.length
-      let len = la < lb ? la : lb
-      let rec go = i =>
-        if i >= len {
-          gt ? la > lb : la < lb
-        } else {
-          let x = a->Array.getUnsafe(i)
-          let y = b->Array.getUnsafe(i)
-          if element.eq(x, y) {
-            go(i + 1)
-          } else {
-            gt ? element.gt(x, y) : element.lt(x, y)
-          }
-        }
-      go(0)
-    }
   {eq, gt: order(~gt=true), lt: order(~gt=false)}
 }
 

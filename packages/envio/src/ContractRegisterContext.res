@@ -22,18 +22,8 @@ let makeAddFunction = (~params: contractRegisterParams, ~contractName: string): 
         ~logger=Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem),
       )
     }
-    let validatedAddress = if params.config.ecosystem.name === Evm {
-      // The value is passed from the user-land,
-      // so we need to validate and checksum/lowercase the address.
-      if params.config.lowercaseAddresses {
-        contractAddress->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        contractAddress->Address.Evm.fromAddressOrThrow
-      }
-    } else {
-      // TODO: Ideally we should do the same for other ecosystems
-      contractAddress
-    }
+    // The value is passed from user-land, so validate and checksum/lowercase it.
+    let validatedAddress = params.config->Config.normalizeUserAddress(contractAddress)
 
     params.onRegister(~item=params.item, ~contractAddress=validatedAddress, ~contractName)
   }
@@ -46,7 +36,7 @@ let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
     switch prop {
     | "id" =>
       let eventItem = params.item->Internal.castUnsafeEventItem
-      eventItem.chain->ChainMap.Chain.toChainId->(Utils.magic: int => unknown)
+      eventItem.chainId->(Utils.magic: ChainId.t => unknown)
     | _ =>
       // Look up the contract name directly in config contracts across all chains.
       let contractName = prop

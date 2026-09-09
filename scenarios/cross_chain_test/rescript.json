@@ -1,0 +1,22 @@
+{
+  "name": "cross_chain_test",
+  "sources": [
+    {
+      "dir": "src",
+      "subdirs": true
+    },
+    {
+      "dir": "test",
+      "subdirs": true
+    }
+  ],
+  "suffix": ".res.mjs",
+  "package-specs": {
+    "module": "esmodule",
+    "in-source": true
+  },
+  "dependencies": ["envio"],
+  "warnings": {
+    "error": "+a"
+  }
+}

@@ -15,7 +15,6 @@ type cfg = {
   /** Milliseconds to wait for a response before timing out. Default: 30000. */
   httpReqTimeoutMillis?: int,
   /** Number of retries to attempt before returning error. Default: 12. */
-  maxNumRetries?: int,
   /** Milliseconds that would be used for retry backoff increasing. Default: 500. */
   retryBackoffMs?: int,
   /** Initial wait time for request backoff. Default: 200. */
@@ -169,153 +168,150 @@ module QueryTypes = {
   }
 }
 
-module ResponseTypes = {
-  type withdrawal = {
-    index?: string,
-    validatorIndex?: string,
-    address?: Address.t,
-    amount?: string,
-  }
-
-  type block = {
-    number?: int,
-    hash?: string,
-    parentHash?: string,
-    nonce?: bigint,
-    sha3Uncles?: string,
-    logsBloom?: string,
-    transactionsRoot?: string,
-    stateRoot?: string,
-    receiptsRoot?: string,
-    miner?: Address.t,
-    difficulty?: bigint,
-    totalDifficulty?: bigint,
-    extraData?: string,
-    size?: bigint,
-    gasLimit?: bigint,
-    gasUsed?: bigint,
-    timestamp?: int,
-    uncles?: array<string>,
-    baseFeePerGas?: bigint,
-    blobGasUsed?: bigint,
-    excessBlobGas?: bigint,
-    parentBeaconBlockRoot?: string,
-    withdrawalsRoot?: string,
-    withdrawals?: array<withdrawal>,
-    l1BlockNumber?: int,
-    sendCount?: string,
-    sendRoot?: string,
-    mixHash?: string,
-  }
-
-  type log = {
-    removed?: bool,
-    @as("logIndex") index?: int,
-    transactionIndex?: int,
-    transactionHash?: string,
-    blockHash?: string,
-    blockNumber?: int,
-    address?: Address.t,
-    data?: string,
-    topics?: array<Nullable.t<EvmTypes.Hex.t>>,
-  }
-
-  // Only the log is needed for decoding; the transaction/block are served from
-  // the store (event items) or unused (block-hash query).
-  type event = {log: log}
-
-  type rollbackGuard = {
-    blockNumber: int,
-    timestamp: int,
-    hash: string,
-    firstBlockNumber: int,
-    firstParentHash: string,
-  }
-}
-
 type query = QueryTypes.query
 
-type queryResponseData = {blocks: array<ResponseTypes.block>}
+module Registration = {
+  // One topic position of the resolved `where`: static topic values, or
+  // `None` — the "currently registered addresses of this contract" marker,
+  // expanded to padded address topics when Rust builds a query.
+  type topicFilterInput = option<array<string>>
 
-type queryResponse = {
-  archiveHeight: option<int>,
-  nextBlock: int,
-  totalExecutionTime: int,
-  data: queryResponseData,
-  rollbackGuard: option<ResponseTypes.rollbackGuard>,
-}
+  type topicSelectionInput = {
+    topic0: array<string>,
+    topic1: topicFilterInput,
+    topic2: topicFilterInput,
+    topic3: topicFilterInput,
+  }
 
-module Decoder = {
-  type eventParamsInput = {
+  // The full per-(event, chain) registration passed to the Rust clients at
+  // construction: decode metadata, routing identity, and the fetch state
+  // queries are built from.
+  type input = {
+    // Chain-scoped sequential registration index, echoed back on routed items.
+    index: int,
     sighash: string,
     topicCount: int,
     eventName: string,
     contractName: string,
+    isWildcard: bool,
+    dependsOnAddresses: bool,
+    // Earliest block this registration accepts; `None` is unrestricted. The
+    // address store's start block is contract-wide, so it can't hold one
+    // registration back when a sibling declares no start block.
+    startBlock: option<int>,
     params: array<Internal.paramMeta>,
+    topicSelections: array<topicSelectionInput>,
+    // Capitalized field names matching the Rust BlockField/TransactionField
+    // string enums.
+    blockFields: array<string>,
+    transactionFields: array<string>,
   }
 
-  // Decoded params keyed by contract name. Contracts that emit the same-signature
-  // event share one decode but get their own param names, so the caller picks the
-  // entry for the contract its router resolved the log to.
-  type tWithParams = {
-    decodeLogs: array<ResponseTypes.event> => promise<
-      array<Nullable.t<dict<Internal.eventParams>>>,
-    >,
+  let toTopicFilterInput = (filter: Internal.topicFilter): topicFilterInput =>
+    switch filter {
+    | Values(values) => Some(values->EvmTypes.Hex.toStrings)
+    | ContractAddresses(_) => None
+    }
+
+  let fromOnEventRegistrations = (
+    onEventRegistrations: array<Internal.evmOnEventRegistration>,
+  ): array<input> => {
+    onEventRegistrations->Array.map(reg => {
+      let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+      {
+        index: reg.index,
+        sighash: event.sighash,
+        topicCount: event.topicCount,
+        eventName: event.name,
+        contractName: event.contractName,
+        isWildcard: reg.isWildcard,
+        dependsOnAddresses: reg.dependsOnAddresses,
+        startBlock: reg.startBlock,
+        params: event.paramsMetadata,
+        topicSelections: reg.resolvedWhere.topicSelections->Array.map((ts): topicSelectionInput => {
+          topic0: ts.topic0->EvmTypes.Hex.toStrings,
+          topic1: ts.topic1->toTopicFilterInput,
+          topic2: ts.topic2->toTopicFilterInput,
+          topic3: ts.topic3->toTopicFilterInput,
+        }),
+        // Capitalized to match the Rust BlockField/TransactionField string
+        // enums.
+        blockFields: reg.fieldSelection.blockFields
+        ->Utils.Set.toArray
+        ->Array.map(Utils.String.capitalize),
+        transactionFields: reg.fieldSelection.transactionFields
+        ->Utils.Set.toArray
+        ->Array.map(Utils.String.capitalize),
+      }
+    })
   }
-
-  @send
-  external classFromParams: (
-    Core.evmDecoderCtor,
-    array<eventParamsInput>,
-    ~checksumAddresses: bool=?,
-  ) => tWithParams = "fromParams"
-
-  let fromParams = (eventParams, ~checksumAddresses=?) =>
-    Core.getAddon().evmDecoder->classFromParams(eventParams, ~checksumAddresses?)
 }
 
 module EventItems = {
+  // The whole per-query input beside the partition's address set: block range
+  // and the registration selection (by id). Log selections, field selection,
+  // and the routing index are derived on the Rust side.
+  type query = {
+    fromBlock: int,
+    // Inclusive; None queries to the end of available data.
+    toBlock: option<int>,
+    // Absent means no server-side cap on the number of logs returned.
+    maxNumLogs?: int,
+    registrationIndexes: array<int>,
+    // Contract names to fetch address-free even though their registrations
+    // depend on addresses (client-side filtering). None/empty means
+    // every address-dependent contract is filtered server-side.
+    clientFilteredContracts: option<array<string>>,
+  }
+
   type item = {
     logIndex: int,
     srcAddress: Address.t,
-    topic0: EvmTypes.Hex.t,
-    topicCount: int,
     // Number of the block this log belongs to; the block itself is resolved from
     // `response.blocks`, deduplicated across items sharing a block.
     blockNumber: int,
     // Key (with the block number) into the transaction store; the transaction
     // is resolved from the store on demand.
     transactionIndex: int,
-    params: Nullable.t<dict<Internal.eventParams>>,
+    // The registration this log routed to, by chain-scoped index. Logs that
+    // route to no registration never cross the boundary.
+    onEventRegistrationIndex: int,
+    params: Internal.eventParams,
   }
 
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    // One entry per block number referenced by `items`.
-    blocks: array<ResponseTypes.block>,
     items: array<item>,
-    rollbackGuard: option<ResponseTypes.rollbackGuard>,
   }
 }
 
 type t = {
-  get: (~query: query) => promise<queryResponse>,
-  // Returns the response plus a page store owning this page's raw transactions.
-  getEventItems: (~query: query) => promise<(EventItems.response, TransactionStore.t)>,
+  // Block-hash query construction and pagination live in Rust; only the
+  // aggregate response store crosses the boundary.
+  getBlockHashes: (
+    ~blockNumbers: array<int>,
+  ) => promise<(BlockStore.t, array<RequestStat.t>)>,
+  // Returns the response plus page stores owning this page's raw transactions
+  // and blocks.
+  getEventItems: (
+    ~query: EventItems.query,
+    ~addressSet: AddressSet.t,
+  ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
 }
 
 @send
 external classNew: (
-  Core.evmHypersyncClientCtor,
+  Core.evmHyperSyncClientCtor,
   cfg,
   string,
-  array<Decoder.eventParamsInput>,
+  array<Registration.input>,
+  AddressStore.t,
 ) => t = "new"
 
-let makeWithAgent = (cfg, ~userAgent, ~eventParams) =>
-  Core.getAddon().evmHypersyncClient->classNew(cfg, userAgent, eventParams)
+let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations, ~addressStore) =>
+  Core.getAddon().evmHyperSyncClient->classNew(cfg, userAgent, eventRegistrations, addressStore)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
@@ -333,7 +329,7 @@ let make = (
   ~url,
   ~apiToken,
   ~httpReqTimeoutMillis,
-  ~eventParams,
+  ~eventRegistrations,
   ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
@@ -341,6 +337,7 @@ let make = (
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
   ~logLevel=#info,
+  ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   makeWithAgent(
@@ -349,8 +346,6 @@ let make = (
       enableChecksumAddresses,
       apiToken,
       httpReqTimeoutMillis,
-      // Retries are handled internally by the indexer, not the binary client
-      maxNumRetries: 0,
       ?serializationFormat,
       ?enableQueryCaching,
       ?retryBaseMs,
@@ -359,6 +354,7 @@ let make = (
       logLevel: logLevelToString(logLevel),
     },
     ~userAgent=`hyperindex/${envioVersion}`,
-    ~eventParams,
+    ~eventRegistrations,
+    ~addressStore,
   )
 }

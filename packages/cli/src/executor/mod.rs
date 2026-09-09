@@ -84,7 +84,7 @@ pub async fn execute(
 
         CommandType::Metrics(metrics_args) => {
             let runtime = matches!(metrics_args.subcommand, Some(MetricsSubcommand::Runtime));
-            metrics::run(runtime).await?;
+            metrics::run(runtime, &parsed_project_paths.project_root).await?;
             Ok(None)
         }
 

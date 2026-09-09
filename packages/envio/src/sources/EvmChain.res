@@ -3,6 +3,7 @@ type rpc = {
   sourceFor: Source.sourceFor,
   syncConfig?: Config.sourceSyncOptions,
   ws?: string,
+  headers?: dict<string>,
 }
 
 let getSyncConfig = (
@@ -31,74 +32,49 @@ let getSyncConfig = (
     intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getOr(
       intervalCeiling->Option.getOr(10_000),
     ),
-    backoffMillis: backoffMillis->Option.getOr(5000),
+    backoffMillis: backoffMillis->Option.getOr(2000),
     queryTimeoutMillis,
     fallbackStallTimeout: fallbackStallTimeout->Option.getOr(queryTimeoutMillis / 2),
     pollingInterval: pollingInterval->Option.getOr(1000),
   }
 }
 
-let collectEventParams = (contracts: array<Internal.evmContractConfig>): array<
-  HyperSyncClient.Decoder.eventParamsInput,
-> => {
-  let result = []
-  contracts->Array.forEach(contract => {
-    contract.events->Array.forEach(event => {
-      result
-      ->Array.push({
-        HyperSyncClient.Decoder.sighash: event.sighash,
-        topicCount: event.topicCount,
-        eventName: event.name,
-        contractName: contract.name,
-        params: event.paramsMetadata,
-      })
-      ->ignore
-    })
-  })
-  result
-}
-
 let makeSources = (
-  ~chain,
-  ~contracts: array<Internal.evmContractConfig>,
+  ~chainId,
+  ~onEventRegistrations: array<Internal.evmOnEventRegistration>,
   ~hyperSync,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
+  ~addressStore,
 ) => {
-  let eventRouter =
-    contracts
-    ->Array.flatMap(contract => contract.events)
-    ->EventRouter.fromEvmEventModsOrThrow(~chain)
-
-  let allEventParams = collectEventParams(contracts)
-
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
-      HyperSyncSource.make({
-        chain,
+      EvmHyperSyncSource.make({
+        chainId,
         endpointUrl,
-        allEventParams,
-        eventRouter,
+        onEventRegistrations,
         apiToken: Env.envioApiToken,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         lowercaseAddresses,
         serializationFormat: Env.hypersyncClientSerializationFormat,
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
         logLevel: Env.hypersyncLogLevel,
+        addressStore,
       }),
     ]
   | _ => []
   }
-  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws}) => {
+  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws, ?headers}) => {
     let source = RpcSource.make({
-      chain,
+      chainId,
       sourceFor,
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),
       url,
-      eventRouter,
-      allEventParams,
+      onEventRegistrations,
       lowercaseAddresses,
+      addressStore,
       ?ws,
+      ?headers,
     })
     let _ = sources->Array.push(source)
   })

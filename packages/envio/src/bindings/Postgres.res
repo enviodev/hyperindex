@@ -99,6 +99,13 @@ external makeSql: (~config: poolConfig) => sql = "default"
 // @send @variadic
 // external sql:  array<string>  => (sql, array<string>) => int = "sql"
 
+// postgres.js infers a Buffer array's type from its first element, so a bytea
+// column's array parameter comes out typed `bytea` and the server refuses the
+// cast. Naming the array type explicitly is what makes it bind. 1001 is
+// Postgres' `bytea[]` OID.
+let byteaArrayOid = 1001
+@send external typed: (sql, 'a, int) => unknown = "typed"
+
 @send external unsafe: (sql, string) => promise<'a> = "unsafe"
 @send external unpreparedUnsafe: (sql, string, unknown) => promise<'a> = "unsafe"
 @send
@@ -107,8 +114,10 @@ external preparedUnsafe: (sql, string, unknown, @as(json`{prepare: true}`) _) =>
 
 @unboxed
 type columnType =
+  | @as("SMALLINT") SmallInt
   | @as("INTEGER") Integer
   | @as("BIGINT") BigInt
+  | @as("BYTEA") Bytea
   | @as("BOOLEAN") Boolean
   | @as("NUMERIC") Numeric
   | @as("DOUBLE PRECISION") DoublePrecision

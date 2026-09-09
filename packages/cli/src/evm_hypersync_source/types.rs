@@ -1,23 +1,12 @@
-use std::ffi::CString;
-
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Signed, U256};
+use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use hypersync_client::{
     format::{self, FixedSizeData, Hex},
     net_types, simple_types,
 };
-use napi::bindgen_prelude::{BigInt, FromNapiValue, ToNapiValue};
+use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
-
-/// Data relating to a single event (log). Only the log is needed: params are
-/// decoded from it, and the transaction/block are served from the store.
-#[napi(object)]
-#[derive(Default, Clone)]
-pub struct Event {
-    /// Evm log data
-    pub log: Log,
-}
 
 /// Evm log object
 ///
@@ -249,38 +238,6 @@ impl Block {
     }
 }
 
-impl Log {
-    pub fn from_simple(l: &simple_types::Log, should_checksum: bool) -> Result<Self> {
-        Ok(Self {
-            removed: l.removed,
-            log_index: l
-                .log_index
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping log.log_index")?,
-            transaction_index: l
-                .transaction_index
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping log.transaction_index")?,
-            transaction_hash: map_hex_string(&l.transaction_hash),
-            block_hash: map_hex_string(&l.block_hash),
-            block_number: l
-                .block_number
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping log.block_number")?,
-            address: map_address_string(&l.address, should_checksum),
-            data: map_hex_string(&l.data),
-            topics: l
-                .topics
-                .iter()
-                .map(|t| t.as_ref().map(|v| v.encode_hex()))
-                .collect(),
-        })
-    }
-}
-
 #[napi(object)]
 pub struct RollbackGuard {
     /// Block number of the last scanned block
@@ -330,64 +287,38 @@ pub struct ParamMeta {
     pub components: Option<Vec<ParamMeta>>,
 }
 
+/// The full per-(event, chain) registration crossing the boundary once at
+/// client construction: decode metadata (`sighash`/`topic_count`/`params`),
+/// routing identity (`id`/`contract_name`/`is_wildcard`), and the fetch state
+/// queries are built from (`topic_selections`, field selections).
 #[napi(object)]
-pub struct EventParamsInput {
+pub struct OnEventRegistrationInput {
+    /// Chain-scoped sequential registration index; returned on every routed
+    /// item so JS resolves the registration by array index.
+    pub index: i64,
     pub sighash: String,
     pub topic_count: i32,
     pub event_name: String,
     pub contract_name: String,
+    pub is_wildcard: bool,
+    /// Whether the query for this event must be scoped to (or derived from)
+    /// the contract's registered addresses.
+    pub depends_on_addresses: bool,
+    /// Earliest block this registration accepts; absent is unrestricted. See
+    /// `crate::registration_start_block`.
+    pub start_block: Option<i64>,
     pub params: Vec<ParamMeta>,
+    /// The registration's resolved `where` in disjunctive normal form (outer
+    /// array is OR). Empty means the event is never fetched.
+    pub topic_selections: Vec<crate::evm_hypersync_source::selection::TopicSelectionInput>,
+    /// Block fields this event's handler reads (HyperSync field selection).
+    pub block_fields: Vec<crate::evm_hypersync_source::query::BlockField>,
+    /// Transaction fields this event's handler reads (HyperSync field
+    /// selection).
+    pub transaction_fields: Vec<crate::evm_hypersync_source::query::TransactionField>,
 }
 
-pub enum ParamValue {
-    Bool(bool),
-    BigInt(BigInt),
-    Str(String),
-    Arr(Vec<ParamValue>),
-    Obj(Vec<(String, ParamValue)>),
-}
-
-impl FromNapiValue for ParamValue {
-    unsafe fn from_napi_value(
-        _env: napi::sys::napi_env,
-        _val: napi::sys::napi_value,
-    ) -> napi::Result<Self> {
-        Err(napi::Error::from_reason(
-            "ParamValue is decode-only; it cannot be constructed from JS",
-        ))
-    }
-}
-
-impl ToNapiValue for ParamValue {
-    unsafe fn to_napi_value(
-        raw_env: napi::sys::napi_env,
-        val: Self,
-    ) -> napi::Result<napi::sys::napi_value> {
-        match val {
-            ParamValue::Bool(v) => bool::to_napi_value(raw_env, v),
-            ParamValue::BigInt(v) => BigInt::to_napi_value(raw_env, v),
-            ParamValue::Str(v) => String::to_napi_value(raw_env, v),
-            ParamValue::Arr(items) => Vec::<ParamValue>::to_napi_value(raw_env, items),
-            ParamValue::Obj(entries) => {
-                let mut obj = std::ptr::null_mut();
-                assert_eq!(
-                    napi::sys::napi_create_object(raw_env, &mut obj),
-                    napi::sys::Status::napi_ok
-                );
-                for (key, val) in entries {
-                    let js_val = ParamValue::to_napi_value(raw_env, val)?;
-                    let c_key = CString::new(key)
-                        .map_err(|_| napi::Error::from_reason("invalid param name"))?;
-                    assert_eq!(
-                        napi::sys::napi_set_named_property(raw_env, obj, c_key.as_ptr(), js_val),
-                        napi::sys::Status::napi_ok,
-                    );
-                }
-                Ok(obj)
-            }
-        }
-    }
-}
+pub use crate::param_value::ParamValue;
 
 pub fn sol_value_to_param(
     val: DynSolValue,
@@ -423,8 +354,17 @@ pub fn sol_value_to_param(
 fn sol_value_to_leaf(val: DynSolValue, checksummed: bool) -> ParamValue {
     match val {
         DynSolValue::Bool(b) => ParamValue::Bool(b),
-        DynSolValue::Int(v, _) => ParamValue::BigInt(convert_bigint_signed(v)),
-        DynSolValue::Uint(v, _) => ParamValue::BigInt(convert_bigint_unsigned(v)),
+        DynSolValue::Int(v, _) => {
+            let (sign, abs) = v.into_sign_and_abs();
+            ParamValue::BigInt {
+                sign_bit: sign.is_negative(),
+                words: abs.into_limbs().to_vec(),
+            }
+        }
+        DynSolValue::Uint(v, _) => ParamValue::BigInt {
+            sign_bit: false,
+            words: v.into_limbs().to_vec(),
+        },
         DynSolValue::FixedBytes(bytes, _) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
         DynSolValue::Address(addr) => {
             if checksummed {
@@ -451,14 +391,6 @@ fn sol_value_to_leaf(val: DynSolValue, checksummed: bool) -> ParamValue {
                 .map(|v| sol_value_to_leaf(v, checksummed))
                 .collect(),
         ),
-    }
-}
-
-fn convert_bigint_signed(v: Signed<256, 4>) -> BigInt {
-    let (sign, abs) = v.into_sign_and_abs();
-    BigInt {
-        sign_bit: sign.is_negative(),
-        words: abs.into_limbs().to_vec(),
     }
 }
 

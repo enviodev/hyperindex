@@ -10,16 +10,14 @@ use crate::{
         human_config::HumanConfig,
         system_config::{get_envio_version, SystemConfig},
     },
-    hbs_templating::{
-        contract_import_templates, hbs_dir_generator::HandleBarsDirGenerator,
-        init_templates::InitTemplates,
-    },
+    hbs_templating::{contract_import_templates, init_templates::InitTemplates},
     project_paths::ParsedProjectPaths,
     template_dirs::TemplateDirs,
     utils::file_system,
 };
 use anyhow::{Context, Result};
 
+use std::fs;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 
@@ -76,7 +74,7 @@ pub async fn run_init_args(
                 )
                 .context(format!(
                     "Failed initializing Fuel template {} at path {:?}",
-                    &template, &parsed_project_paths.project_root,
+                    template, parsed_project_paths.project_root,
                 ))?;
         }
         Ecosystem::Svm {
@@ -90,7 +88,7 @@ pub async fn run_init_args(
                 )
                 .context(format!(
                     "Failed initializing Svm template {} at path {:?}",
-                    &template, &parsed_project_paths.project_root,
+                    template, parsed_project_paths.project_root,
                 ))?;
         }
         Ecosystem::Evm {
@@ -104,7 +102,7 @@ pub async fn run_init_args(
                 )
                 .context(format!(
                     "Failed initializing Evm template {} at path {:?}",
-                    &template, &parsed_project_paths.project_root,
+                    template, parsed_project_paths.project_root,
                 ))?;
         }
         Ecosystem::Fuel {
@@ -169,7 +167,7 @@ pub async fn run_init_args(
                 .context(format!(
                     "Failed initializing blank template for Contract Import with language {} at \
                      path {:?}",
-                    &init_config.language, &parsed_project_paths.project_root,
+                    init_config.language, parsed_project_paths.project_root,
                 ))?;
 
             auto_schema_handler_template
@@ -233,7 +231,7 @@ pub async fn run_init_args(
                 .context(format!(
                     "Failed initializing blank template for Contract Import with language {} at \
                      path {:?}",
-                    &init_config.language, &parsed_project_paths.project_root,
+                    init_config.language, parsed_project_paths.project_root,
                 ))?;
 
             auto_schema_handler_template
@@ -254,11 +252,11 @@ pub async fn run_init_args(
         Ecosystem::Evm {
             init_flow:
                 init_config::evm::InitFlow::Template(init_config::evm::Template::FeatureExternalCalls),
-        } => vec![("viem".to_string(), "^2.0.0".to_string())],
+        } => vec![("viem".to_string(), "2.54.0".to_string())],
         _ => vec![],
     };
 
-    let hbs_template = InitTemplates::new(
+    let init_template = InitTemplates::new(
         init_config.name.clone(),
         &init_config.language,
         envio_version.clone(),
@@ -266,15 +264,14 @@ pub async fn run_init_args(
         extra_dependencies,
     );
 
-    let init_shared_template_dir = template_dirs.get_init_template_dynamic_shared()?;
-
-    let hbs_generator = HandleBarsDirGenerator::new(
-        &init_shared_template_dir,
-        &hbs_template,
-        &parsed_project_paths.project_root,
-    );
-
-    hbs_generator.generate_hbs_templates()?;
+    let project_root = &parsed_project_paths.project_root;
+    fs::write(project_root.join(".env"), init_template.render_env())
+        .context("Failed writing .env")?;
+    fs::write(
+        project_root.join("package.json"),
+        init_template.render_package_json(),
+    )
+    .context("Failed writing package.json")?;
 
     println!("Project template ready");
     println!("Running codegen");
@@ -401,8 +398,8 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
 
     let mut out = String::new();
     out.push_str(
-        "Welcome to Envio Indexer! Let's set up an indexer that will become a reliable \
-         blockchain backend you trust, love, and own.\n\n",
+        "Welcome to Envio Indexer! Let's set up an indexer that will become a reliable blockchain \
+         backend you trust, love, and own.\n\n",
     );
     out.push_str("Leave the rest to your favorite agent:\n\n");
 
@@ -417,8 +414,8 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
     }
     let _ = writeln!(
         out,
-        "  {step}. Prompt the user for the project intent if it is missing from context \
-         (what should the indexer track and surface?)."
+        "  {step}. Prompt the user for the project intent if it is missing from context (what \
+         should the indexer track and surface?)."
     );
     step += 1;
     let _ = writeln!(

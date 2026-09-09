@@ -402,6 +402,18 @@ impl FuelAbi {
             .to_string();
         let raw = fs::read_to_string(&path_buf)
             .context(format!("Failed to read Fuel ABI file at \"{}\"", path))?;
+        Self::parse_raw(path_buf, path_relative_to_root, raw)
+    }
+
+    pub fn parse_raw(
+        path_buf: PathBuf,
+        path_relative_to_root: String,
+        raw: String,
+    ) -> Result<Self> {
+        let path = path_buf
+            .to_str()
+            .context("The ABI file path is invalid Unicode")?
+            .to_string();
         let program = Self::decode_program(&raw).context(format!(
             "Failed to decode Fuel ABI file at \"{}\". Make sure you built your program with the \
              forc v0.33.0 or higher.",

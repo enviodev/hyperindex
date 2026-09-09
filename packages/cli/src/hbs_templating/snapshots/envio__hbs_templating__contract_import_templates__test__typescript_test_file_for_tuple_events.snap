@@ -41,7 +41,7 @@ describe("SablierLockupTranched contract CreateLockupTranchedStream event tests"
     let actualSablierLockupTranchedCreateLockupTranchedStream = await indexer.SablierLockupTranched_CreateLockupTranchedStream.getOrThrow("1_0_0");
 
     // Creating the expected entity
-    const expectedSablierLockupTranchedCreateLockupTranchedStream: SablierLockupTranched_CreateLockupTranchedStream = {
+    const expectedSablierLockupTranchedCreateLockupTranchedStream = {
       id: "1_0_0",
       streamId: event.params.streamId,
       funder: event.params.funder,
@@ -54,6 +54,7 @@ describe("SablierLockupTranched contract CreateLockupTranchedStream event tests"
       tranches: event.params.tranches,
       timestamps: event.params.timestamps,
       broker: event.params.broker,
+      chainId: 1,
     };
     // Asserting that the entity in the mock database is the same as the expected entity
     t.expect(actualSablierLockupTranchedCreateLockupTranchedStream, "Actual SablierLockupTranchedCreateLockupTranchedStream should be the same as the expected SablierLockupTranchedCreateLockupTranchedStream").toEqual(expectedSablierLockupTranchedCreateLockupTranchedStream);

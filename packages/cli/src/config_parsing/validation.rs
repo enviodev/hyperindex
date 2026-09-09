@@ -1,12 +1,9 @@
 // use super::chain_helpers;
-use super::human_config::{self, evm::HumanConfig};
-use crate::constants::reserved_keywords::{
-    ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
-    TYPESCRIPT_RESERVED_WORDS,
-};
+use super::human_config::svm::{ArgDef, ArgType};
+use super::human_config::{self, evm::HumanConfig, StartBlock};
+use crate::constants::reserved_keywords::RESERVED_NAMES;
 use anyhow::{anyhow, Context};
 use regex::Regex;
-use std::collections::HashSet;
 
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
@@ -36,27 +33,14 @@ fn are_contract_names_unique(contract_names: &[String]) -> bool {
     true
 }
 
-// Check for reserved words in a string, to be applied for schema and config.
-// Words from config and schema are used in the codegen and eventually in eventHandlers for the user, thus cannot contain any reserved words.
-fn check_reserved_words(words: &Vec<String>) -> Vec<String> {
-    let mut flagged_words = Vec::new();
-    // Creating a deduplicated set of reserved words from javascript, typescript and rescript
-    let mut set = HashSet::new();
-    set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
-    set.extend(TYPESCRIPT_RESERVED_WORDS.iter());
-    set.extend(RESCRIPT_RESERVED_WORDS.iter());
-
-    let words_set: Vec<&str> = set.into_iter().cloned().collect();
-
-    // Find all alphanumeric words in the YAML string
-    for word in words {
-        let word = word.as_str();
-        if words_set.contains(&word) {
-            flagged_words.push(word.to_string());
-        }
-    }
-
-    flagged_words
+// Names from the config and the schema both become generated identifiers, so
+// they are held to the same list.
+fn check_reserved_words(words: &[String]) -> Vec<String> {
+    words
+        .iter()
+        .filter(|word| RESERVED_NAMES.contains(&word.as_str()))
+        .cloned()
+        .collect()
 }
 
 fn is_valid_identifier(s: &str) -> bool {
@@ -84,15 +68,15 @@ fn is_valid_identifier(s: &str) -> bool {
 
 // Check if all names in the config file are valid.
 pub fn validate_names_valid_rescript(
-    names_from_config: &Vec<String>,
+    names_from_config: &[String],
     part_of_config: String,
 ) -> anyhow::Result<()> {
     let detected_reserved_words = check_reserved_words(names_from_config);
     if !detected_reserved_words.is_empty() {
         return Err(anyhow!(
-            "The config contains reserved words for {} names: {}. They are used for the \
-             generated code and must be valid identifiers, containing only alphanumeric \
-             characters and underscores.",
+            "The config contains reserved words for {} names: {}. They are used for the generated \
+             code and must be valid identifiers, containing only alphanumeric characters and \
+             underscores.",
             part_of_config,
             detected_reserved_words
                 .iter()
@@ -110,8 +94,8 @@ pub fn validate_names_valid_rescript(
     }
     if !invalid_names.is_empty() {
         return Err(anyhow!(
-            "The config contains invalid characters for {} names: {}. They are used for \
-             the generated code and must be valid identifiers, containing only alphanumeric \
+            "The config contains invalid characters for {} names: {}. They are used for the \
+             generated code and must be valid identifiers, containing only alphanumeric \
              characters and underscores.",
             part_of_config,
             invalid_names
@@ -125,22 +109,76 @@ pub fn validate_names_valid_rescript(
     Ok(())
 }
 
+// A contract can't start before its chain, and a `latest` chain start block is
+// only known once the indexer first runs - so any contract-level start_block is
+// guaranteed to be in the past relative to it. Shared by the ecosystems whose
+// chains carry contracts; svm programs have no start_block of their own.
+pub fn validate_no_contract_start_block_with_latest<T>(
+    chain_id: u64,
+    start_block: StartBlock,
+    contracts: Option<&Vec<human_config::ChainContract<T>>>,
+) -> anyhow::Result<()> {
+    if let StartBlock::Tag(_) = start_block {
+        if let Some(contract) = contracts
+            .into_iter()
+            .flatten()
+            .find(|contract| contract.start_block.is_some())
+        {
+            return Err(anyhow!(
+                "Contract {:?} on chain {} sets start_block, but the chain's start_block is \
+                 \"latest\". A contract can't start before its chain does, and \"latest\" \
+                 isn't known until the indexer first runs. Remove the contract's start_block, \
+                 or pin the chain's start_block to a fixed value.",
+                contract.name,
+                chain_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_deserialized_fuel_config_yaml(
+    fuel_config: &human_config::fuel::HumanConfig,
+) -> anyhow::Result<()> {
+    for chain in &fuel_config.chains {
+        validate_no_contract_start_block_with_latest(
+            chain.id,
+            chain.start_block,
+            chain.contracts.as_ref(),
+        )?;
+    }
+    Ok(())
+}
+
 impl human_config::evm::Chain {
     pub fn validate_finite_endblock_networks(&self) -> anyhow::Result<()> {
         Ok(())
     }
 
     pub fn validate_endblock_lte_startblock(&self) -> anyhow::Result<()> {
-        if let Some(network_endblock) = self.end_block {
-            if network_endblock < self.start_block {
+        // A `latest` start block isn't known until runtime, so it can't be
+        // checked here - the indexer re-validates once it resolves "latest"
+        // to a concrete block (see StartBlockResolver.res).
+        if let (Some(network_endblock), StartBlock::Number(start_block)) =
+            (self.end_block, self.start_block)
+        {
+            if network_endblock < start_block {
                 return Err(anyhow!(
-                    "The config file has an endBlock that is less than the startBlock for \
-                     network id: {}. The endBlock must be greater than the startBlock.",
-                    &self.id.to_string()
+                    "The config has an end_block smaller than start_block for chain {}. end_block \
+                     must be greater than or equal to start_block.",
+                    self.id
                 ));
             }
         }
         Ok(())
+    }
+
+    pub fn validate_no_contract_start_block_with_latest(&self) -> anyhow::Result<()> {
+        validate_no_contract_start_block_with_latest(
+            self.id,
+            self.start_block,
+            self.contracts.as_ref(),
+        )
     }
 }
 
@@ -156,13 +194,15 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     for chain in &evm_config.chains {
         // validate endblock is a greater than the startblock
         chain.validate_endblock_lte_startblock()?;
+        chain.validate_no_contract_start_block_with_latest()?;
         chain.validate_finite_endblock_networks()?;
 
         // Addresses are compared case-insensitively: checksum and lowercase
-        // spellings of the same address collide on the (chainId, address)
-        // primary key of envio_addresses at runtime.
-        let mut contract_by_address: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        // spellings of the same address are one address at runtime. The same
+        // address under two different contracts is allowed — each contract
+        // indexes it with its own events.
+        let mut addresses_by_contract: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
 
         for contract in chain.contracts.as_ref().unwrap_or(&vec![]) {
             if contract.config.as_ref().is_some() {
@@ -173,35 +213,24 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
             for contract_address in contract.address.clone().into_iter() {
                 if !is_valid_ethereum_address(&contract_address) {
                     return Err(anyhow!(
-                        "One of the contract addresses in the config file isn't valid",
+                        "Contract {:?} on chain {} has invalid address {:?}. Expected a 20-byte \
+                         hex string starting with 0x.",
+                        contract.name,
+                        chain.id,
+                        contract_address,
                     ));
                 }
 
-                match contract_by_address
-                    .insert(contract_address.to_lowercase(), contract.name.clone())
+                if !addresses_by_contract
+                    .insert((contract_address.to_lowercase(), contract.name.clone()))
                 {
-                    Some(existing_contract) if existing_contract == contract.name => {
-                        return Err(anyhow!(
-                            "Address {} is listed multiple times for the contract {} on chain {}. \
-                             Please remove the duplicate from your config.",
-                            contract_address,
-                            contract.name,
-                            chain.id
-                        ));
-                    }
-                    Some(existing_contract) => {
-                        return Err(anyhow!(
-                            "Address {} on chain {} is configured for multiple contracts: {} and \
-                             {}. Indexing the same address with multiple contract definitions is \
-                             not supported. Please define the events on a single contract \
-                             definition instead.",
-                            contract_address,
-                            chain.id,
-                            existing_contract,
-                            contract.name
-                        ));
-                    }
-                    None => {}
+                    return Err(anyhow!(
+                        "Address {} is listed multiple times for the contract {} on chain {}. \
+                         Please remove the duplicate from your config.",
+                        contract_address,
+                        contract.name,
+                        chain.id
+                    ));
                 }
             }
         }
@@ -220,30 +249,26 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
 }
 
 pub fn is_valid_solana_pubkey(s: &str) -> bool {
-    // Base58 alphabet: 1-9, A-H, J-N, P-Z, a-k, m-z (no 0, O, I, l).
-    // Encoded 32-byte values are 32-44 chars (typically 43-44).
-    let len = s.len();
-    if !(32..=44).contains(&len) {
-        return false;
-    }
-    s.bytes().all(|b| {
-        matches!(b,
-            b'1'..=b'9'
-            | b'A'..=b'H'
-            | b'J'..=b'N'
-            | b'P'..=b'Z'
-            | b'a'..=b'k'
-            | b'm'..=b'z'
-        )
-    })
+    let mut decoded = [0_u8; 32];
+    bs58::decode(s)
+        .onto(&mut decoded)
+        .is_ok_and(|decoded_len| decoded_len == decoded.len())
 }
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
-    let hex = s.strip_prefix("0x").unwrap_or(s);
-    if !matches!(hex.len(), 2 | 4 | 8 | 16) {
+    // The prefix is what a handler reads back, so a config that carries it too
+    // compares equal to `instruction.discriminator` rather than off by "0x".
+    let Some(hex) = crate::hex::strip_prefix(s) else {
         return Err(anyhow!(
-            "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits \
-             after stripping a `0x` prefix), got {} digits",
+            "discriminator {s:?} must be written as 0x-prefixed hex. Write \"0x\" to match every \
+             instruction of the program"
+        ));
+    };
+    if !hex.len().is_multiple_of(2) {
+        return Err(anyhow!(
+            "discriminator {:?} must be a whole number of bytes (an even count of hex digits \
+             after the `0x` prefix), got {} digits. Write \"0x\" to match every instruction of \
+             the program.",
             s,
             hex.len()
         ));
@@ -254,149 +279,187 @@ pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every name a config.yaml gives an Svm program, instruction or arg becomes a
+/// property of the generated types, so they are held to one rule. Account
+/// slots carry their own grammar, read where the config is deserialized.
+/// Unlike EVM and Fuel, none of them reaches generated ReScript, so the
+/// reserved-word list does not apply.
+fn validate_svm_name(name: &str, what: &str) -> anyhow::Result<()> {
+    if is_valid_identifier(name) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{what} must be an identifier: letters, digits and underscores only, not starting with a \
+         digit, got '{name}'"
+    ))
+}
+
+/// One instruction's Borsh args, as a config.yaml row wrote them. Every defect
+/// here would otherwise reach the decoder, which answers a layout it cannot
+/// walk by dropping the instruction — so a config that can never decode must
+/// not get past parsing. IDL-declared args come with their own checks in
+/// `svm_idl`, which set the instruction aside with a reason instead.
+pub fn validate_svm_args(args: &[ArgDef]) -> anyhow::Result<()> {
+    validate_svm_named_fields(args, "an arg name", "args")
+}
+
+fn validate_svm_named_fields(fields: &[ArgDef], what: &str, path: &str) -> anyhow::Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for field in fields {
+        validate_svm_name(&field.name, what).with_context(|| path.to_string())?;
+        if !seen.insert(field.name.as_str()) {
+            return Err(anyhow!(
+                "{path}: '{}' is declared more than once",
+                field.name
+            ));
+        }
+    }
+    for field in fields {
+        validate_svm_arg_type(&field.ty, &format!("{path}.{}", field.name))?;
+    }
+    Ok(())
+}
+
+fn validate_svm_arg_type(ty: &ArgType, path: &str) -> anyhow::Result<()> {
+    use super::human_config::svm::{ArgComposite as C, MAX_ARRAY_LEN, MAX_ENUM_VARIANTS};
+    let ArgType::Composite(composite) = ty else {
+        return Ok(());
+    };
+    match composite {
+        C::Defined(_) => Err(anyhow!(
+            "{path}: 'defined' is not supported in config.yaml: declare the type inline with \
+             'struct' or 'enum', or take the instruction from an 'idl'"
+        )),
+        C::Option(inner) => {
+            let path = format!("{path}.option");
+            if matches!(**inner, ArgType::Composite(C::Option(_))) {
+                return Err(anyhow!(
+                    "{path}: a nested 'option' is not supported: Borsh tags each level with one \
+                     byte, so Some(None) and None would decode the same"
+                ));
+            }
+            validate_svm_arg_type(inner, &path)
+        }
+        C::Vec(inner) => validate_svm_arg_type(inner, &format!("{path}.vec")),
+        C::Array(inner, len) => {
+            let path = format!("{path}.array");
+            if *len > MAX_ARRAY_LEN {
+                return Err(anyhow!(
+                    "{path}: {len} elements is more than the {MAX_ARRAY_LEN} an array may declare"
+                ));
+            }
+            validate_svm_arg_type(inner, &path)
+        }
+        C::Struct(fields) => {
+            validate_svm_named_fields(fields, "a field name", &format!("{path}.struct"))
+        }
+        C::Enum(variants) => {
+            let path = format!("{path}.enum");
+            if variants.is_empty() {
+                return Err(anyhow!("{path}: an enum needs at least one variant"));
+            }
+            if variants.len() > MAX_ENUM_VARIANTS {
+                return Err(anyhow!(
+                    "{path}: {} variants is more than the {MAX_ENUM_VARIANTS} a one-byte Borsh \
+                     tag can address",
+                    variants.len()
+                ));
+            }
+            let mut seen = std::collections::HashSet::new();
+            for variant in variants {
+                validate_svm_name(&variant.name, "a variant name").with_context(|| path.clone())?;
+                if !seen.insert(variant.name.as_str()) {
+                    return Err(anyhow!(
+                        "{path}: '{}' is declared more than once",
+                        variant.name
+                    ));
+                }
+            }
+            for variant in variants {
+                if let Some(fields) = &variant.fields {
+                    validate_svm_named_fields(
+                        fields,
+                        "a field name",
+                        &format!("{path}.{}", variant.name),
+                    )?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 pub fn validate_deserialized_svm_config_yaml(
     svm_config: &super::human_config::svm::HumanConfig,
 ) -> anyhow::Result<()> {
+    use super::human_config::svm::{ChainProgramId, ProgramId};
+
     let mut all_program_names: Vec<String> = Vec::new();
 
-    for chain in &svm_config.chains {
-        if chain.experimental.is_none() && chain.rpc.is_none() {
-            return Err(anyhow!(
-                "A chain must define a data source: either an `rpc` endpoint or an \
-                 `experimental` HyperSync config. Both are missing."
-            ));
+    for program in &svm_config.programs {
+        validate_svm_name(&program.name, "a program name")?;
+        // A per-chain mapping has one address per chain, so the chain key is
+        // what tells the user which entry to go fix.
+        let addresses: Vec<(Option<&str>, &String)> = match &program.program_id {
+            ProgramId::Single(address) => vec![(None, address)],
+            ProgramId::PerChain(by_chain) => by_chain
+                .iter()
+                .filter_map(|(chain, id)| match id {
+                    ChainProgramId::Address(address) => Some((Some(chain.as_str()), address)),
+                    ChainProgramId::NotDeployed => None,
+                })
+                .collect(),
+        };
+        for (chain, address) in addresses {
+            if !is_valid_solana_pubkey(address) {
+                return Err(match chain {
+                    Some(chain) => anyhow!(
+                        "Program {:?} has an invalid program_id {:?} for chain {:?}: must be a \
+                         base58-encoded 32-byte Solana pubkey",
+                        program.name,
+                        address,
+                        chain
+                    ),
+                    None => anyhow!(
+                        "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
+                         32-byte Solana pubkey",
+                        program.name,
+                        address
+                    ),
+                });
+            }
         }
+        all_program_names.push(program.name.clone());
 
-        let programs = chain
-            .experimental
-            .as_ref()
-            .map(|e| e.programs.as_slice())
-            .unwrap_or(&[]);
-        for program in programs {
-            if !is_valid_solana_pubkey(&program.program_id) {
+        let mut instruction_names = std::collections::HashSet::new();
+        for instr in &program.instructions {
+            validate_svm_name(&instr.name, "an instruction name")
+                .with_context(|| format!("Program '{}'", program.name))?;
+            if !instruction_names.insert(instr.name.clone()) {
                 return Err(anyhow!(
-                    "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
-                     32-byte Solana pubkey",
+                    "Program {:?} declares the instruction {:?} more than once",
                     program.name,
-                    program.program_id
+                    instr.name
                 ));
             }
-            all_program_names.push(program.name.clone());
-
-            let mut instruction_names = std::collections::HashSet::new();
-            for instr in &program.instructions {
-                if !instruction_names.insert(instr.name.clone()) {
-                    return Err(anyhow!(
-                        "Program {:?} declares the instruction {:?} more than once",
-                        program.name,
-                        instr.name
-                    ));
-                }
-                if let Some(discriminator) = &instr.discriminator {
-                    validate_svm_discriminator(discriminator).with_context(|| {
-                        format!("instruction {:?} in program {:?}", instr.name, program.name)
-                    })?;
-                }
-                if let Some(filters) = instr.account_filters.as_ref() {
-                    if let crate::config_parsing::human_config::svm::AccountFilters::AnyOf(any_of) =
-                        filters
-                    {
-                        if any_of.any_of.is_empty() {
-                            return Err(anyhow!(
-                                "`any_of` account filter on instruction {:?} (program {:?}) is \
-                                 empty; remove the `account_filters` field instead, or add at \
-                                 least one AND-group",
-                                instr.name,
-                                program.name
-                            ));
-                        }
-                    }
-                    let groups = filters.groups();
-                    for (group_idx, group) in groups.iter().enumerate() {
-                        if group.is_empty() {
-                            return Err(anyhow!(
-                                "Account filter group {} in instruction {:?} (program {:?}) is \
-                                 empty; each `any_of` branch must contain at least one entry",
-                                group_idx,
-                                instr.name,
-                                program.name
-                            ));
-                        }
-                        let mut seen_positions = std::collections::HashSet::new();
-                        for filter in group.iter() {
-                            if filter.position > 5 {
-                                return Err(anyhow!(
-                                    "Account filter position {} in instruction {:?} (program \
-                                     {:?}) must be in 0..=5 (positions 6..=9 are reserved for a \
-                                     future extension)",
-                                    filter.position,
-                                    instr.name,
-                                    program.name
-                                ));
-                            }
-                            if !seen_positions.insert(filter.position) {
-                                return Err(anyhow!(
-                                    "Duplicate position {} in account filter group {} of \
-                                     instruction {:?} (program {:?}); combine the pubkeys into a \
-                                     single `values` list, or use `any_of` to express OR across \
-                                     positions",
-                                    filter.position,
-                                    group_idx,
-                                    instr.name,
-                                    program.name
-                                ));
-                            }
-                            for value in &filter.values {
-                                if !is_valid_solana_pubkey(value) {
-                                    return Err(anyhow!(
-                                        "Account filter on instruction {:?} (program {:?}) has \
-                                         an invalid base58 pubkey {:?}",
-                                        instr.name,
-                                        program.name,
-                                        value
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            validate_svm_discriminator(&instr.discriminator).with_context(|| {
+                format!("instruction {:?} in program {:?}", instr.name, program.name)
+            })?;
         }
     }
 
     if !are_contract_names_unique(&all_program_names) {
         return Err(anyhow!(
-            "Duplicate program names detected. All program names must be unique across all \
-             chains and are case-insensitive."
+            "Duplicate program names detected. All program names must be unique and are \
+             case-insensitive."
         ));
     }
-    validate_names_valid_rescript(&all_program_names, "program".to_string())?;
 
     Ok(())
 }
 
-pub fn check_enums_for_internal_reserved_words(enum_name_words: Vec<String>) -> Vec<String> {
-    enum_name_words
-        .into_iter()
-        .filter(|word| ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES.contains(&word.as_str()))
-        .collect()
-}
-
-// Checking that schema does not include any reserved words
 pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> Vec<String> {
-    // Checking that schema does not include any reserved words
-    let mut detected_reserved_words_in_schema = Vec::new();
-    // Creating a deduplicated set of reserved words from javascript or rescript
-    let mut word_set: HashSet<&str> = HashSet::new();
-    word_set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
-    word_set.extend(RESCRIPT_RESERVED_WORDS.iter());
-    for word in schema_words {
-        if word_set.contains(word.as_str()) {
-            detected_reserved_words_in_schema.push(word);
-        }
-    }
-
-    detected_reserved_words_in_schema
+    check_reserved_words(&schema_words)
 }
 
 pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<String> {
@@ -412,6 +475,116 @@ pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<St
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
+
+    fn make_chain(
+        start_block: super::StartBlock,
+        end_block: Option<u64>,
+    ) -> super::human_config::evm::Chain {
+        super::human_config::evm::Chain {
+            id: 1,
+            skip: None,
+            rpc: None,
+            hypersync_config: None,
+            max_reorg_depth: None,
+            block_lag: None,
+            start_block,
+            end_block,
+            contracts: None,
+        }
+    }
+
+    #[test]
+    fn endblock_lte_startblock_rejects_number_start_block_above_end_block() {
+        let chain = make_chain(super::StartBlock::Number(100), Some(50));
+        assert!(chain.validate_endblock_lte_startblock().is_err());
+    }
+
+    #[test]
+    fn endblock_lte_startblock_accepts_number_start_block_at_or_below_end_block() {
+        let chain = make_chain(super::StartBlock::Number(50), Some(100));
+        assert!(chain.validate_endblock_lte_startblock().is_ok());
+    }
+
+    #[test]
+    fn endblock_lte_startblock_cannot_check_latest_statically_so_it_always_passes() {
+        // "latest" isn't known until runtime - the indexer re-validates once
+        // it resolves to a concrete block (see StartBlockResolver.res).
+        let chain = make_chain(
+            super::StartBlock::Tag(super::human_config::StartBlockTag::Latest),
+            Some(1),
+        );
+        assert!(chain.validate_endblock_lte_startblock().is_ok());
+
+        let chain_no_end_block = make_chain(
+            super::StartBlock::Tag(super::human_config::StartBlockTag::Latest),
+            None,
+        );
+        assert!(chain_no_end_block
+            .validate_endblock_lte_startblock()
+            .is_ok());
+    }
+
+    #[test]
+    fn latest_start_block_rejects_a_contract_level_start_block() {
+        let contracts = Some(vec![super::human_config::ChainContract {
+            name: "C".to_string(),
+            address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+                .to_string()
+                .into(),
+            start_block: Some(100),
+            config: None,
+        }]);
+
+        let mut latest = make_chain(
+            super::StartBlock::Tag(super::human_config::StartBlockTag::Latest),
+            None,
+        );
+        latest.contracts = contracts.clone();
+
+        let mut numeric = make_chain(super::StartBlock::Number(0), None);
+        numeric.contracts = contracts;
+
+        assert_eq!(
+            (
+                latest
+                    .validate_no_contract_start_block_with_latest()
+                    .is_err(),
+                numeric
+                    .validate_no_contract_start_block_with_latest()
+                    .is_ok(),
+            ),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn fuel_latest_start_block_rejects_a_contract_level_start_block() {
+        // Parsed rather than constructed, so this also pins that a fuel config
+        // accepts `start_block: latest` in the first place.
+        let config = |start_block: &str| -> super::human_config::fuel::HumanConfig {
+            let yaml = [
+                "name: x",
+                "ecosystem: fuel",
+                "chains:",
+                "  - id: 0",
+                &format!("    start_block: {start_block}"),
+                "    contracts:",
+                "      - name: C",
+                "        address: \"0x1234\"",
+                "        start_block: 100",
+            ]
+            .join("\n");
+            serde_yaml::from_str(&yaml).unwrap()
+        };
+
+        assert_eq!(
+            (
+                super::validate_deserialized_fuel_config_yaml(&config("latest")).is_err(),
+                super::validate_deserialized_fuel_config_yaml(&config("0")).is_ok(),
+            ),
+            (true, true)
+        );
+    }
 
     #[test]
     fn valid_postgres_db_name() {
@@ -501,8 +674,8 @@ mod tests {
             "like".to_string(),
             "break".to_string(),
             "import".to_string(),
-            "and".to_string(),
-            "symbol".to_string(),
+            "constructor".to_string(),
+            "enum".to_string(),
             "plus".to_string(),
             "unreserved".to_string(),
             "word".to_string(),
@@ -510,10 +683,7 @@ mod tests {
             "match.".to_string(),
         ];
         let flagged_words = super::check_reserved_words(&words);
-        assert_eq!(
-            flagged_words,
-            vec!["string", "with", "break", "import", "and", "symbol"]
-        );
+        assert_eq!(flagged_words, vec!["constructor", "enum"]);
     }
 
     #[test]
@@ -541,18 +711,32 @@ mod tests {
 
     #[test]
     fn test_names_from_schema_for_reserved_words() {
-        let names_from_schema = "Greeting id greetings lastGreeting lazy open catch"
+        let names_from_schema = "Greeting id greetings lastGreeting lazy open constructor"
             .split(" ")
             .map(|s| s.to_string())
             .collect();
         let flagged_words = super::check_names_from_schema_for_reserved_words(names_from_schema);
-        assert_eq!(flagged_words, vec!["lazy", "open", "catch"]);
+        assert_eq!(flagged_words, vec!["constructor"]);
+    }
+
+    #[test]
+    fn contract_named_like_a_prototype_key_is_rejected() {
+        let result = super::validate_names_valid_rescript(
+            &["MyContract".to_string(), "__proto__".to_string()],
+            "contract".to_string(),
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "The config contains reserved words for contract names: \"__proto__\". They are used \
+             for the generated code and must be valid identifiers, containing only alphanumeric \
+             characters and underscores."
+        );
     }
 
     #[test]
     fn test_contract_names_validation() {
         let valid_result = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -562,26 +746,26 @@ mod tests {
         assert!(valid_result.is_ok());
 
         let reserved_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
-                "Let".to_string(),
                 "module".to_string(),
-                "this".to_string(),
+                "constructor".to_string(),
+                "enum".to_string(),
                 "1".to_string(),
             ],
             "contract".to_string(),
         );
         assert_eq!(
             reserved_names.unwrap_err().to_string(),
-            "The config contains reserved words for contract names: \"module\", \"this\". \
+            "The config contains reserved words for contract names: \"constructor\", \"enum\". \
              They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
 
         let invalid_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -597,91 +781,11 @@ mod tests {
         );
         assert_eq!(
             invalid_names.unwrap_err().to_string(),
-            "The config contains invalid characters for contract names: \
-             \"1StartsWithNumber\", \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". \
-             They are used for the generated code and must be valid identifiers, containing only \
-             alphanumeric characters and underscores."
+            "The config contains invalid characters for contract names: \"1StartsWithNumber\", \
+             \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". They are used for the \
+             generated code and must be valid identifiers, containing only alphanumeric \
+             characters and underscores."
         );
-    }
-
-    mod evm {
-        use crate::config_parsing::human_config::evm::HumanConfig;
-        use crate::config_parsing::validation::validate_deserialized_config_yaml;
-
-        fn parse(yaml: &str) -> HumanConfig {
-            serde_yaml::from_str(yaml).unwrap()
-        }
-
-        #[test]
-        fn validation_rejects_same_address_on_two_contracts_of_one_chain() {
-            let cfg = parse(
-                r#"
-name: x
-chains:
-  - id: 1
-    start_block: 0
-    contracts:
-      - name: AaveToken
-        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-      - name: AaveV3
-        address:
-          - "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-"#,
-            );
-            let err = validate_deserialized_config_yaml(&cfg).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "Address 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9 on chain 1 is configured for \
-                 multiple contracts: AaveToken and AaveV3. Indexing the same address with \
-                 multiple contract definitions is not supported. Please define the events on a \
-                 single contract definition instead."
-            );
-        }
-
-        #[test]
-        fn validation_rejects_address_listed_twice_for_one_contract() {
-            // Case-insensitive: checksum and lowercase spellings are the same address
-            let cfg = parse(
-                r#"
-name: x
-chains:
-  - id: 1
-    start_block: 0
-    contracts:
-      - name: AaveToken
-        address:
-          - "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-          - "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"
-"#,
-            );
-            let err = validate_deserialized_config_yaml(&cfg).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "Address 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9 is listed multiple times for \
-                 the contract AaveToken on chain 1. Please remove the duplicate from your config."
-            );
-        }
-
-        #[test]
-        fn validation_accepts_same_address_on_different_chains() {
-            let cfg = parse(
-                r#"
-name: x
-chains:
-  - id: 1
-    start_block: 0
-    contracts:
-      - name: AaveToken
-        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-  - id: 137
-    start_block: 0
-    contracts:
-      - name: AaveToken
-        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-"#,
-            );
-            validate_deserialized_config_yaml(&cfg).unwrap();
-        }
     }
 
     mod svm {
@@ -710,26 +814,49 @@ chains:
             ));
             // Too long.
             assert!(!is_valid_solana_pubkey(&"1".repeat(64)));
+            // Valid base58 syntax and plausible encoded length, but decodes to 33 bytes.
+            assert!(!is_valid_solana_pubkey(&"1".repeat(33)));
         }
 
         #[test]
-        fn discriminator_accepts_valid_lengths() {
-            for s in ["0x0f", "0x0fff", "0x0fffffff", "0x0fffffffffffffff"] {
+        fn discriminator_accepts_any_whole_byte_length() {
+            // Serum v3 dispatches on a version byte plus a 4-byte tag: 5 bytes.
+            for s in [
+                "0x0f",
+                "0x0fff",
+                "0x0fffff",
+                "0x000a000000",
+                "0x0fffffffffffffff",
+            ] {
                 assert!(
                     validate_svm_discriminator(s).is_ok(),
                     "expected {s:?} to be valid"
                 );
             }
-            // Prefix is optional.
-            assert!(validate_svm_discriminator("0f").is_ok());
+            // Either spelling of the prefix, read the same way.
+            assert!(validate_svm_discriminator("0X0f").is_ok());
         }
 
         #[test]
-        fn discriminator_rejects_invalid_lengths_and_chars() {
-            for s in ["0x", "0x0", "0x012", "0xggggggg"] {
+        fn discriminator_rejects_anything_but_prefixed_whole_bytes() {
+            for s in ["", "21", "0x0", "0x012", "0xgggggggg"] {
                 assert!(
                     validate_svm_discriminator(s).is_err(),
                     "expected {s:?} to be rejected"
+                );
+            }
+        }
+
+        /// The empty prefix is what every call carries, so it is the value a
+        /// row gives to match every instruction of the program. It is spelled
+        /// the way every other value is, so there is one spelling and it is
+        /// the one a handler reads back for a zero-byte key.
+        #[test]
+        fn discriminator_accepts_the_empty_prefix() {
+            for s in ["0x", "0X"] {
+                assert!(
+                    validate_svm_discriminator(s).is_ok(),
+                    "expected {s:?} to be accepted"
                 );
             }
         }
@@ -745,250 +872,32 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: TokenMetadata
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
+  - id: solana
+    start_slot: 0
+programs:
+  - name: TokenMetadata
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    instructions:
+      - name: UpdateMetadataAccountV2
+        discriminator: "0x0f"
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();
         }
 
         #[test]
-        fn validation_rejects_duplicate_instruction_names() {
+        fn validation_accepts_a_chain_without_programs() {
             let cfg = parse(
                 r#"
 name: x
 ecosystem: svm
 chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - { name: Foo, discriminator: "0x0f" }
-            - { name: Foo, discriminator: "0x21" }
-"#,
-            );
-            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
-            assert!(err.to_string().contains("more than once"), "{err}");
-        }
-
-        #[test]
-        fn validation_rejects_duplicate_program_names_across_chains() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: shared
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions: []
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: SHARED
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions: []
-"#,
-            );
-            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
-            assert!(err.to_string().contains("Duplicate program names"), "{err}");
-        }
-
-        #[test]
-        fn validation_rejects_account_filter_position_out_of_range() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: I
-              account_filters:
-                - position: 6
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-"#,
-            );
-            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
-            assert!(err.to_string().contains("0..=5"), "{err}");
-        }
-
-        #[test]
-        fn validation_rejects_duplicate_position_within_group() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: I
-              account_filters:
-                - position: 1
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-                - position: 1
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-"#,
-            );
-            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
-            assert!(err.to_string().contains("Duplicate position"), "{err}");
-        }
-
-        #[test]
-        fn validation_rejects_empty_any_of() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: I
-              account_filters:
-                any_of: []
-"#,
-            );
-            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
-            assert!(err.to_string().contains("`any_of`"), "{err}");
-            assert!(err.to_string().contains("empty"), "{err}");
-        }
-
-        #[test]
-        fn validation_rejects_empty_any_of_group() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: I
-              account_filters:
-                any_of:
-                  - []
-"#,
-            );
-            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
-            assert!(err.to_string().contains("group"), "{err}");
-            assert!(err.to_string().contains("empty"), "{err}");
-        }
-
-        #[test]
-        fn validation_accepts_any_of_with_cross_group_duplicate_positions() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: I
-              account_filters:
-                any_of:
-                  - - position: 2
-                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-                  - - position: 2
-                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-"#,
-            );
-            assert!(validate_deserialized_svm_config_yaml(&cfg).is_ok());
-        }
-
-        #[test]
-        fn validation_rejects_bad_program_id() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: not_a_pubkey
-          instructions: []
-"#,
-            );
-            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
-            assert!(err.to_string().contains("invalid program_id"), "{err}");
-        }
-
-        #[test]
-        fn validation_accepts_rpc_only_chain() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - rpc: https://api.mainnet-beta.solana.com
-    start_block: 0
+  - id: solana
+    rpc: https://api.mainnet-beta.solana.com
+    start_slot: 0
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();
-        }
-
-        #[test]
-        fn validation_rejects_chain_without_data_source() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 0
-"#,
-            );
-            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
-            assert!(err.to_string().contains("data source"), "{err}");
         }
     }
 }

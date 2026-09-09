@@ -4,236 +4,227 @@ type cfg = {
   /** Optional bearer token for the HyperSync server. */
   apiToken?: string,
   httpReqTimeoutMillis?: int,
-  maxNumRetries?: int,
   retryBaseMs?: int,
   retryCeilingMs?: int,
-  /// Per-program Borsh schema descriptors (JSON, one per program). The Rust
-  /// client builds these into decoders at creation and decodes matching
-  /// instructions inline on `get`.
-  programSchemas?: array<string>,
 }
 
-module QueryTypes = {
-  type blockField =
-    | @as("slot") Slot
-    | @as("blockhash") Blockhash
-    | @as("parent_slot") ParentSlot
-    | @as("parent_blockhash") ParentBlockhash
-    | @as("block_time") BlockTime
-    | @as("block_height") BlockHeight
-
-  type transactionField =
-    | @as("slot") Slot
-    | @as("transaction_index") TransactionIndex
-    | @as("signatures") Signatures
-    | @as("fee_payer") FeePayer
-    | @as("success") Success
-    | @as("err") Err
-    | @as("fee") Fee
-    | @as("compute_units_consumed") ComputeUnitsConsumed
-    | @as("account_keys") AccountKeys
-    | @as("recent_blockhash") RecentBlockhash
-    | @as("version") Version
-    | @as("loaded_addresses_writable") LoadedAddressesWritable
-    | @as("loaded_addresses_readonly") LoadedAddressesReadonly
-
-  type instructionField =
-    | @as("slot") Slot
-    | @as("transaction_index") TransactionIndex
-    | @as("instruction_address") InstructionAddress
-    | @as("program_id") ProgramId
-    | @as("accounts") Accounts
-    | @as("data") Data
-    | @as("d1") D1
-    | @as("d2") D2
-    | @as("d4") D4
-    | @as("d8") D8
-    | @as("a0") A0
-    | @as("a1") A1
-    | @as("a2") A2
-    | @as("a3") A3
-    | @as("a4") A4
-    | @as("a5") A5
-    | @as("a6") A6
-    | @as("a7") A7
-    | @as("a8") A8
-    | @as("a9") A9
-    | @as("is_inner") IsInner
-    | @as("is_committed") IsCommitted
-
-  type logField =
-    | @as("slot") Slot
-    | @as("transaction_index") TransactionIndex
-    | @as("instruction_address") InstructionAddress
-    | @as("program_id") ProgramId
-    | @as("kind") Kind
-    | @as("message") Message
-
-  type tokenBalanceField =
-    | @as("slot") Slot
-    | @as("transaction_index") TransactionIndex
-    | @as("account") Account
-    | @as("mint") Mint
-    | @as("owner") Owner
-    | @as("pre_amount") PreAmount
-    | @as("post_amount") PostAmount
-
-  type fieldSelection = {
-    block?: array<blockField>,
-    transaction?: array<transactionField>,
-    instruction?: array<instructionField>,
-    log?: array<logField>,
-    tokenBalance?: array<tokenBalanceField>,
+module Registration = {
+  type accountFilter = {
+    position: int,
+    values: array<string>,
   }
 
-  /** Filter for selecting instructions. All non-empty fields are AND-ed: an
-   instruction must match at least one value in every non-empty field.
-
-   Discriminator filters (d1..d8) take hex-encoded byte prefixes ("0x" optional).
-   Account filters (a0..a9) take base58 pubkey strings. */
-  type instructionSelection = {
-    programId?: array<string>,
-    d1?: array<string>,
-    d2?: array<string>,
-    d4?: array<string>,
-    d8?: array<string>,
-    a0?: array<string>,
-    a1?: array<string>,
-    a2?: array<string>,
-    a3?: array<string>,
-    a4?: array<string>,
-    a5?: array<string>,
-    a6?: array<string>,
-    a7?: array<string>,
-    a8?: array<string>,
-    a9?: array<string>,
+  // One `onInstruction`/`contractRegister` binding of an instruction on a
+  // chain: the handler-specific routing state and the fetch state queries are
+  // built from. Chain-scoped `index` is echoed back on routed items.
+  type input = {
+    index: int,
+    isWildcard: bool,
+    // Earliest slot this registration accepts; `None` is unrestricted.
+    startBlock: option<int>,
     isInner?: bool,
+    // DNF: outer array is OR of AND-groups.
+    accountFilters: array<array<accountFilter>>,
+    // camelCase Internal.svmTransactionField / svmBlockField names.
+    transactionFields: array<string>,
+    blockFields: array<string>,
+    accountActivityFields: array<string>,
+    logFields: array<string>,
+    instructionFields: array<string>,
   }
 
-  type transactionSelection = {
-    feePayer?: array<string>,
-    success?: bool,
+  // One config instruction: its identity (data prefix of any length; absent
+  // matches every instruction of the program) and Borsh layout, shared by
+  // every registration bound to it.
+  type instruction = {
+    name: string,
+    discriminator?: string,
+    argsJson?: string,
+    registrations: array<input>,
   }
 
-  type logSelection = {
-    programId?: array<string>,
-    kind?: array<string>,
+  type program = {
+    // The config's program name.
+    name: string,
+    programId: string,
+    definedTypesJson?: string,
+    instructions: array<instruction>,
   }
 
-  type query = {
-    fromSlot: int,
-    toSlot?: int,
-    instructions?: array<instructionSelection>,
-    transactions?: array<transactionSelection>,
-    logs?: array<logSelection>,
-    includeAllBlocks?: bool,
-    includeTokenBalances?: bool,
-    fields?: fieldSelection,
-    maxNumBlocks?: int,
-    maxNumTransactions?: int,
-    maxNumInstructions?: int,
-    maxNumLogs?: int,
-    maxNumTokenBalances?: int,
+  // Groups a chain's registrations under the config instruction each was
+  // built from, so the Rust client holds one layout per instruction rather
+  // than a copy per registration.
+  let fromOnEventRegistrations = (
+    onEventRegistrations: array<Internal.svmOnEventRegistration>,
+  ): array<program> => {
+    let programs: array<program> = []
+    onEventRegistrations->Array.forEach(reg => {
+      let eventConfig =
+        reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+      let program = switch programs->Array.find(p => p.name === eventConfig.contractName) {
+      | Some(program) => program
+      | None =>
+        let program = {
+          name: eventConfig.contractName,
+          programId: eventConfig.programId->SvmTypes.Pubkey.toString,
+          definedTypesJson: ?switch eventConfig.definedTypes {
+          | JSON.Null => None
+          | definedTypes => Some(definedTypes->JSON.stringify)
+          },
+          instructions: [],
+        }
+        programs->Array.push(program)->ignore
+        program
+      }
+      let instruction = switch program.instructions->Array.find(i => i.name === eventConfig.name) {
+      | Some(instruction) => instruction
+      | None =>
+        let instruction = {
+          name: eventConfig.name,
+          discriminator: ?eventConfig.discriminator,
+          argsJson: ?switch eventConfig.args {
+          | JSON.Null => None
+          | args => Some(args->JSON.stringify)
+          },
+          registrations: [],
+        }
+        program.instructions->Array.push(instruction)->ignore
+        instruction
+      }
+      instruction.registrations
+      ->Array.push({
+        index: reg.index,
+        isWildcard: reg.isWildcard,
+        startBlock: reg.startBlock,
+        isInner: ?reg.isInner,
+        accountFilters: reg.accountFilters->Array.map(group =>
+          group->Array.map(
+            (filter): accountFilter => {
+              position: filter.position,
+              values: filter.values->SvmTypes.Pubkey.toStrings,
+            },
+          )
+        ),
+        transactionFields: reg.fieldSelection.transactionFields->Utils.Set.toArray,
+        blockFields: reg.fieldSelection.blockFields->Utils.Set.toArray,
+        accountActivityFields: reg.fieldSelection.accountActivityFields->Utils.Set.toArray,
+        logFields: reg.fieldSelection.logFields->Utils.Set.toArray,
+        instructionFields: reg.fieldSelection.instructionFields->Utils.Set.toArray,
+      })
+      ->ignore
+    })
+    programs
   }
 }
 
 module ResponseTypes = {
+  // Lean per-slot header for reorg detection and each item's slot/time; the
+  // selectable fields live in the block store and are materialised on demand.
   type block = {
     slot: int,
     blockhash: string,
-    parentSlot?: int,
-    parentBlockhash?: string,
-    blockTime?: int,
-    blockHeight?: int,
-  }
-
-  /// Borsh-decoded view attached by the Rust client. `argsJson`/`accountsJson`
-  /// are stringified to side-step napi-rs's lack of native JSON passthrough.
-  /** Solana instruction record.
-
-   `data` is the raw instruction byte buffer, hex-encoded with a `0x` prefix.
-   `d1`..`d8` are the same byte prefix as `data` but truncated to N bytes
-   (only `Some` when the instruction is at least that long), exposed for
-   handler-dispatch convenience.
-   `accounts` is the full positional account list in base58. */
-  type decodedInstruction = {
-    name: string,
-    argsJson: string,
-    accountsJson: string,
-    extraAccounts: array<string>,
-  }
-
-  type instruction = {
-    slot: int,
-    transactionIndex: int,
-    instructionAddress: array<int>,
-    programId: string,
-    accounts: array<string>,
-    data: string,
-    d1?: string,
-    d2?: string,
-    d4?: string,
-    d8?: string,
-    isInner: bool,
-    isCommitted: bool,
-    decoded?: decodedInstruction,
-  }
-
-  type log = {
-    slot: int,
-    transactionIndex?: int,
-    instructionAddress?: array<int>,
-    programId?: string,
-    kind?: string,
-    message?: string,
-  }
-
-  type queryResponseData = {
-    blocks: array<block>,
-    instructions: array<instruction>,
-    logs: array<log>,
-  }
-
-  type queryResponse = {
-    nextSlot: int,
-    responseBytes: int,
-    data: queryResponseData,
+    blockTime: Null.t<int>,
   }
 }
 
-type query = QueryTypes.query
-type queryResponse = ResponseTypes.queryResponse
+module EventItems = {
+  // The whole per-query input: slot range, the partition's registration
+  // selection (by index), and its current addresses (program ids per program
+  // name). Instruction selections, field selection, and routing are derived
+  // on the Rust side.
+  type query = {
+    fromSlot: int,
+    // Inclusive; None queries to the end of available data.
+    toSlot: option<int>,
+    // Absent means no server-side cap on the number of instructions returned.
+    maxNumInstructions?: int,
+    registrationIndexes: array<int>,
+    // Program names to fetch address-free even though their registrations
+    // depend on addresses (client-side filtering). None/empty means every
+    // address-dependent program is filtered server-side.
+    clientFilteredContracts: option<array<string>>,
+  }
+
+  // NAPI encodes Rust `None` as `null`, never `undefined`, so an unselected
+  // key arrives as an explicit null rather than a missing field.
+  type log = {
+    kind: Null.t<string>,
+    message: Null.t<string>,
+  }
+
+  // One routed instruction; `block` and `transaction` are materialised from
+  // the per-chain stores at batch prep.
+  type item = {
+    onEventRegistrationIndex: int,
+    slot: int,
+    transactionIndex: int,
+    path: array<int>,
+    programId: string,
+    accounts: array<string>,
+    data: Uint8Array.t,
+    isInner: bool,
+    // Borsh-decoded args as a JS value tree (wide integers as bigint).
+    // Non-null exactly when the routed registration selected `args`: an
+    // instruction its layout rejects is dropped in Rust.
+    args: Null.t<unknown>,
+    // Non-null only when the routed registration selected `fields.log`.
+    logs: Null.t<array<log>>,
+  }
+
+  type response = {
+    nextSlot: int,
+    // One lean header per returned slot, including slots no item references —
+    // reorg detection and the batch's latest timestamp read them all. The full
+    // blocks live in the block store returned alongside, which keeps only the
+    // slots items reference.
+    blocks: array<ResponseTypes.block>,
+    items: array<item>,
+  }
+}
 
 type t = {
   getHeight: unit => promise<int>,
-  // Returns the response plus a page of raw transactions (kept in Rust),
-  // keyed by (slot, transactionIndex), materialised at batch prep.
-  get: (~query: query) => promise<(queryResponse, TransactionStore.t)>,
+  // Block-hash query construction, pagination, and cursor-backed skipped-slot
+  // coverage live in Rust.
+  getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
+  // Returns the routed items plus pages of raw transactions and blocks (kept
+  // in Rust), keyed by (slot, transactionIndex) / slot, materialised at batch
+  // prep.
+  getEventItems: (
+    ~query: EventItems.query,
+    ~addressSet: AddressSet.t,
+  ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
 }
 
 @send
-external classFromConfig: (Core.svmHypersyncClientCtor, cfg, string) => t = "fromConfig"
+external classFromConfig: (
+  Core.svmHyperSyncClientCtor,
+  cfg,
+  string,
+  array<Registration.program>,
+  AddressStore.t,
+) => t = "fromConfig"
 
 let make = (
   ~url,
   ~apiToken=?,
   ~httpReqTimeoutMillis=?,
-  ~maxNumRetries=?,
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
-  ~programSchemas=?,
+  ~programs=[],
+  ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
-  Core.getAddon().svmHypersyncClient->classFromConfig(
+  Core.getAddon().svmHyperSyncClient->classFromConfig(
     {
       url,
       ?apiToken,
       ?httpReqTimeoutMillis,
-      ?maxNumRetries,
       ?retryBaseMs,
       ?retryCeilingMs,
-      ?programSchemas,
     },
     `hyperindex/${envioVersion}`,
+    programs,
+    addressStore,
   )
 }

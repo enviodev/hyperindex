@@ -281,6 +281,19 @@ let createSelectPermission = async (
   )
 }
 
+// The column_mapping references columns by their db names. A reference between
+// two per-chain entities is only meaningful within one chain, so the chain-id
+// column joins alongside the id — without it the relationship would resolve to
+// another chain's row with the same id.
+let makeColumnMapping = (~relationalKey, ~isDerivedFrom, ~chainIdColumn) => {
+  let pairs = [isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}": "id"`]
+  switch chainIdColumn {
+  | Some(column) => pairs->Array.push(`"${column}": "${column}"`)->ignore
+  | None => ()
+  }
+  `{${pairs->Array.joinUnsafe(", ")}}`
+}
+
 let createEntityRelationship = async (
   ~endpoint,
   ~auth,
@@ -291,11 +304,9 @@ let createEntityRelationship = async (
   ~objectName: string,
   ~mappedEntity: string,
   ~isDerivedFrom: bool,
+  ~chainIdColumn: option<string>,
   ~comment: option<string>=?,
 ) => {
-  // The column_mapping references columns by their db names
-  let derivedFromTo = isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}" : "id"`
-
   let tableJson = {
     "schema": pgSchema,
     "name": tableName,
@@ -306,7 +317,9 @@ let createEntityRelationship = async (
         "schema": pgSchema,
         "name": mappedEntity,
       },
-      "column_mapping": JSON.parseOrThrow(`{${derivedFromTo}}`),
+      "column_mapping": JSON.parseOrThrow(
+        makeColumnMapping(~relationalKey, ~isDerivedFrom, ~chainIdColumn),
+      ),
     },
   }->(Utils.magic: {..} => JSON.t)
 
@@ -331,15 +344,7 @@ let createEntityRelationship = async (
   )
 }
 
-let trackDatabase = async (
-  ~endpoint,
-  ~auth,
-  ~pgSchema,
-  ~userEntities: array<Internal.entityConfig>,
-  ~aggregateEntities,
-  ~responseLimit,
-  ~schema,
-) => {
+let makeTableConfigs = (~userEntities: array<Internal.entityConfig>) => {
   let exposedInternalTableConfigs = [
     {
       tableName: InternalTable.RawEvents.table.tableName,
@@ -357,12 +362,27 @@ let trackDatabase = async (
       columnConfigs: dict{},
     },
   ]
-  let userTableConfigs = userEntities->Array.map(entity => {
-    tableName: entity.table.tableName,
-    description: entity.table.description,
-    columnConfigs: entity.table->makeColumnConfigs,
-  })
-  let tableConfigs = [exposedInternalTableConfigs, userTableConfigs]->Array.flat
+  let userTableConfigs =
+    userEntities
+    ->Array.filter(entity => !entity.internal)
+    ->Array.map(entity => {
+      tableName: entity.table.tableName,
+      description: entity.table.description,
+      columnConfigs: entity.table->makeColumnConfigs,
+    })
+  [exposedInternalTableConfigs, userTableConfigs]->Array.flat
+}
+
+let trackDatabase = async (
+  ~endpoint,
+  ~auth,
+  ~pgSchema,
+  ~userEntities: array<Internal.entityConfig>,
+  ~aggregateEntities,
+  ~responseLimit,
+  ~schema,
+) => {
+  let tableConfigs = makeTableConfigs(~userEntities)
   let tableNames = tableConfigs->Array.map(c => c.tableName)
 
   Logging.info("Tracking tables in Hasura")
@@ -388,9 +408,29 @@ let trackDatabase = async (
     )
   }
 
-  for i in 0 to userEntities->Array.length - 1 {
-    let entityConfig = userEntities->Array.getUnsafe(i)
+  // Both sides of a relationship must be per-chain for the chain to be part of
+  // the join; a per-chain entity referencing a cross-chain one resolves by id
+  // alone. The reverse (cross-chain referencing per-chain) is rejected at
+  // codegen, so it can't reach here.
+  let chainIdColumnOf = (entityName: string) =>
+    userEntities
+    ->Array.find((e: Internal.entityConfig) => e.name === entityName)
+    ->Option.flatMap(e => e.table->Table.getChainIdField)
+    ->Option.map(Table.getPgDbFieldName)
+
+  // Relationships to an @internal entity can't exist here: codegen rejects a
+  // reference from an exposed entity to an @internal one.
+  let exposedEntities = userEntities->Array.filter(e => !e.internal)
+  for i in 0 to exposedEntities->Array.length - 1 {
+    let entityConfig = exposedEntities->Array.getUnsafe(i)
     let {tableName} = entityConfig.table
+    let ownChainIdColumn =
+      entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+    let sharedChainIdColumn = mappedEntity =>
+      switch (ownChainIdColumn, chainIdColumnOf(mappedEntity)) {
+      | (Some(column), Some(_)) => Some(column)
+      | _ => None
+      }
 
     //Set array relationships
     let derivedFromFields = entityConfig.table->Table.getDerivedFromFields
@@ -410,6 +450,7 @@ let trackDatabase = async (
         ~objectName=derivedFromField.fieldName,
         ~relationalKey=relationalFieldName,
         ~mappedEntity=derivedFromField.derivedFromEntity,
+        ~chainIdColumn=sharedChainIdColumn(derivedFromField.derivedFromEntity),
         ~comment=?derivedFromField.description,
       )
     }
@@ -428,6 +469,7 @@ let trackDatabase = async (
         ~objectName=field.fieldName,
         ~relationalKey=field->Table.getPgDbFieldName,
         ~mappedEntity=linkedEntityName,
+        ~chainIdColumn=sharedChainIdColumn(linkedEntityName),
         ~comment=?field.description,
       )
     }

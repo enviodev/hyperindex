@@ -1,5 +1,5 @@
 // Live E2E test against solana.hypersync.xyz. Drives the SVM stack end-to-end:
-// SvmHyperSyncSource -> EventRouter -> indexer.onInstruction dispatch ->
+// SvmHyperSyncSource -> Rust-side routing -> indexer.onInstruction dispatch ->
 // entity writes. The slot window is pinned in config.test.yaml.
 process.env.ENVIO_CONFIG = "config.test.yaml";
 
@@ -14,7 +14,9 @@ describe("Flow X-Ray indexer (live)", () => {
     "indexes a multi-protocol CPI window into flat flow rows",
     async () => {
       const indexer = createTestIndexer();
-      const result = await indexer.process({ chains: { 0: {} } });
+      // Without an explicit endBlock `process` auto-exits at the first slot
+      // carrying events, which would leave most of the pinned window unread.
+      const result = await indexer.process({ chains: { 7565164: { endBlock: END_SLOT } } });
 
       const nodes: any[] = [];
       const deltas: any[] = [];

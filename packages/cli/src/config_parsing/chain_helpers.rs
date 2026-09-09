@@ -155,7 +155,7 @@ pub enum Network {
     )]
     EthereumMainnet = 1,
 
-    #[subenum(HypersyncChain)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Etherlink = 42793,
 
     #[subenum(NetworkWithExplorer)]
@@ -221,7 +221,10 @@ pub enum Network {
     #[subenum(HypersyncChain)]
     Katana = 747474,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    // HyperSync no longer serves Kroma (255.hypersync.xyz refuses
+    // connections and it's gone from active_chains), so it's not a
+    // HypersyncChain. Still resolvable via explorer.
+    #[subenum(NetworkWithExplorer)]
     Kroma = 255,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -343,6 +346,9 @@ pub enum Network {
     Rinkeby = 4,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
+    Robinhood = 4663,
+
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Rsk = 30,
 
     #[subenum(NetworkWithExplorer)]
@@ -382,8 +388,8 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Sophon = 50104,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
-    SophonTestnet = 531050104,
+    #[subenum(HypersyncChain)]
+    StablesKinshipGrass = 988,
 
     StatusSepolia = 1660990954,
 
@@ -401,6 +407,9 @@ pub enum Network {
 
     #[subenum(HypersyncChain)]
     Tempo = 4217,
+
+    #[subenum(HypersyncChain)]
+    Tron = 728126428,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Unichain = 130,
@@ -554,7 +563,6 @@ impl Network {
             | Network::Sepolia
             | Network::ShimmerEvm
             | Network::Sophon
-            | Network::SophonTestnet
             | Network::XLayer
             | Network::XLayerTestnet
             | Network::Zeta
@@ -602,8 +610,11 @@ impl Network {
             | Network::Injective
             | Network::Megaeth
             | Network::SeiTestnet
+            | Network::StablesKinshipGrass
             | Network::StatusSepolia
-            | Network::Tempo => None,
+            | Network::Tempo
+            | Network::Tron
+            | Network::Robinhood => None,
         }
     }
 }
