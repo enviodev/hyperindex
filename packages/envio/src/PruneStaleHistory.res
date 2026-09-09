@@ -97,7 +97,7 @@ let selectFrom = (
 
 let select = (state: IndexerState.t, ~writtenEntityNames, ~isRollback) => {
   let config = state->IndexerState.config
-  if config->HistoryPolicy.mayPrune(~keepsHistory=state->IndexerState.keepsHistory) {
+  if config->HistoryPolicy.mayPrune(~shouldSaveHistory=state->IndexerState.shouldSaveHistory) {
     state
     ->selectSafeCheckpoints
     ->Option.map(safeCheckpoints =>

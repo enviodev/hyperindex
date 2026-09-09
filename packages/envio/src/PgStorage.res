@@ -1139,7 +1139,7 @@ let rec writeBatch = async (
       }
     }
 
-    let setEntities = updatedEntities->Array.map(({entityConfig, scope, changes, keepsHistory}) => {
+    let setEntities = updatedEntities->Array.map(({entityConfig, scope, changes, shouldSaveHistory}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
@@ -1199,7 +1199,7 @@ let rec writeBatch = async (
           orderedIds->Array.push(entityId)
         }
         latestChangeById->Dict.set(entityKey, change)
-        if keepsHistory {
+        if shouldSaveHistory {
           if Some(change->Change.getCheckpointId) === diffCheckpointId {
             idsWithDiff->Utils.Set.add(entityKey)->ignore
           } else {
@@ -1222,7 +1222,7 @@ let rec writeBatch = async (
         }
 
         // An id needs a history backfill iff none of its changes is the diff.
-        if keepsHistory && !(idsWithDiff->Utils.Set.has(entityKey)) {
+        if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityKey)) {
           backfillHistoryIds->Utils.Set.add(entityId)->ignore
         }
       })
@@ -1236,7 +1236,7 @@ let rec writeBatch = async (
         try {
           let promises = []
 
-          if keepsHistory {
+          if shouldSaveHistory {
             if backfillHistoryIds->Utils.Set.size !== 0 {
               // This must run before updating entity or entity history tables
               await EntityHistory.backfillHistory(

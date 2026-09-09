@@ -123,7 +123,7 @@ let runOneWrite = async (state: IndexerState.t) => {
               entityConfig,
               scope,
               changes,
-              keepsHistory: batch.history->HistoryPolicy.forScope(~scope),
+              shouldSaveHistory: batch.history->HistoryPolicy.forScope(~scope),
             }: Persistence.updatedEntity
           ),
         )

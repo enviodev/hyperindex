@@ -355,7 +355,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
           entityConfig,
           scope: Internal.CrossChain,
           changes: [Change.Delete({entityId, checkpointId: 1n})],
-          keepsHistory: true,
+          shouldSaveHistory: true,
         },
       ],
       ~checkpointIds=[1n],

@@ -55,8 +55,8 @@ let targetBufferSize = (crossChainState: t) => crossChainState.targetBufferSize
 
 // Whether each chain's writes still need history, keyed by chain id — what the
 // history policy is built from.
-let keepsHistory = (crossChainState: t) =>
-  crossChainState.chainStates->Utils.Dict.mapValues(ChainState.keepsHistory)
+let shouldSaveHistory = (crossChainState: t) =>
+  crossChainState.chainStates->Utils.Dict.mapValues(ChainState.shouldSaveHistory)
 
 // Ready-to-process items across every chain — the live draw against
 // targetBufferSize, which is a budget of processable events (items stuck behind
@@ -109,7 +109,7 @@ let createBatch = (
 ): Batch.t => {
   Batch.make(
     ~sequence=config.checkpointSequence,
-    ~history=config->HistoryPolicy.decide(~keepsHistory=crossChainState->keepsHistory),
+    ~history=config->HistoryPolicy.decide(~shouldSaveHistory=crossChainState->shouldSaveHistory),
     ~frontier,
     ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues(
       ChainState.toChainBeforeBatch,

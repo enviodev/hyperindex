@@ -5,19 +5,19 @@
 type t = dict<bool>
 
 %%private(
-  let anyChainKeeps = (keepsHistory: dict<bool>) =>
-    keepsHistory->Dict.valuesToArray->Array.some(keeps => keeps)
+  let anyChainSaves = (shouldSaveHistory: dict<bool>) =>
+    shouldSaveHistory->Dict.valuesToArray->Array.some(saves => saves)
 )
 
-let decide = (config: Config.t, ~keepsHistory: dict<bool>): t =>
+let decide = (config: Config.t, ~shouldSaveHistory: dict<bool>): t =>
   if config.shouldSaveFullHistory {
-    keepsHistory->Utils.Dict.mapValues(_ => true)
+    shouldSaveHistory->Utils.Dict.mapValues(_ => true)
   } else {
     switch config.checkpointSequence {
     | Global =>
-      let keeps = keepsHistory->anyChainKeeps
-      keepsHistory->Utils.Dict.mapValues(_ => keeps)
-    | PerChain => keepsHistory
+      let saves = shouldSaveHistory->anyChainSaves
+      shouldSaveHistory->Utils.Dict.mapValues(_ => saves)
+    | PerChain => shouldSaveHistory
     }
   }
 
@@ -26,7 +26,7 @@ let decide = (config: Config.t, ~keepsHistory: dict<bool>): t =>
 // back to.
 let forChain = (t: t, chainId: ChainId.t): bool =>
   switch t->ChainId.Dict.dangerouslyGetNonOption(chainId) {
-  | Some(keeps) => keeps
+  | Some(saves) => saves
   | None =>
     JsError.throwWithMessage(
       `Internal error: no history decision for chain ${chainId->ChainId.toString}. The policy is decided for every chain the run indexes.`,
@@ -37,10 +37,10 @@ let forChain = (t: t, chainId: ChainId.t): bool =>
 let forScope = (t: t, ~scope: Internal.chainScope): bool =>
   switch scope {
   | Chain(chainId) => t->forChain(chainId)
-  | CrossChain => t->anyChainKeeps
+  | CrossChain => t->anyChainSaves
   }
 
 // Whether a run has stale history to prune at all: history it keeps but doesn't
 // keep forever.
-let mayPrune = (config: Config.t, ~keepsHistory: dict<bool>) =>
-  !config.shouldSaveFullHistory && keepsHistory->anyChainKeeps
+let mayPrune = (config: Config.t, ~shouldSaveHistory: dict<bool>) =>
+  !config.shouldSaveFullHistory && shouldSaveHistory->anyChainSaves

@@ -86,9 +86,9 @@ describe("ChainState history reachability", () => {
     let belowThreshold = makeChainState(resumed(~maxReorgDepth=200))
     let noDepth = makeChainState(resumed(~maxReorgDepth=0), ~isInReorgThreshold=true)
     t.expect((
-      inThreshold->ChainState.keepsHistory,
-      belowThreshold->ChainState.keepsHistory,
-      noDepth->ChainState.keepsHistory,
+      inThreshold->ChainState.shouldSaveHistory,
+      belowThreshold->ChainState.shouldSaveHistory,
+      noDepth->ChainState.shouldSaveHistory,
     )).toEqual((true, false, false))
   })
 
@@ -103,9 +103,9 @@ describe("ChainState history reachability", () => {
     let entering = makeChainState(resumed(~maxReorgDepth=200))
     [noDepth, noRollback, entering]->Array.forEach(ChainState.enterReorgThreshold)
     t.expect((
-      noDepth->ChainState.keepsHistory,
-      noRollback->ChainState.keepsHistory,
-      entering->ChainState.keepsHistory,
+      noDepth->ChainState.shouldSaveHistory,
+      noRollback->ChainState.shouldSaveHistory,
+      entering->ChainState.shouldSaveHistory,
     )).toEqual((false, false, true))
   })
 })

@@ -2,7 +2,7 @@ open Vitest
 
 // What a write keeps follows the schema's checkpoint sequence and, chain by
 // chain, whether a rollback can still reach what that chain writes.
-// `ChainState.keepsHistory` is what answers the latter — see ChainState_test.
+// `ChainState.shouldSaveHistory` is what answers the latter — see ChainState_test.
 
 let schema = `
 type Counter {
@@ -48,17 +48,17 @@ let config = (~schema, ~extra="") =>
 let chain1 = 1->ChainId.fromInt
 let chain137 = 137->ChainId.fromInt
 
-let keepsHistory = entries => {
+let shouldSaveHistory = entries => {
   let dict = Dict.make()
   entries->Array.forEach(((chainId, keeps)) => dict->ChainId.Dict.set(chainId, keeps))
   dict
 }
 
 // Only chain 1 is still reachable by a rollback.
-let onlyChain1 = keepsHistory([(chain1, true), (chain137, false)])
+let onlyChain1 = shouldSaveHistory([(chain1, true), (chain137, false)])
 
-let decisions = (config: Config.t, ~keepsHistory) => {
-  let policy = config->HistoryPolicy.decide(~keepsHistory)
+let decisions = (config: Config.t, ~shouldSaveHistory) => {
+  let policy = config->HistoryPolicy.decide(~shouldSaveHistory)
   (policy->HistoryPolicy.forChain(chain1), policy->HistoryPolicy.forChain(chain137))
 }
 
@@ -67,7 +67,7 @@ describe("HistoryPolicy", () => {
   // nothing can reach keeps nothing.
   it("Decides per chain when each chain counts its own checkpoints", t => {
     let config = config(~schema)
-    t.expect((config.checkpointSequence, config->decisions(~keepsHistory=onlyChain1))).toEqual((
+    t.expect((config.checkpointSequence, config->decisions(~shouldSaveHistory=onlyChain1))).toEqual((
       PerChain,
       (true, false),
     ))
@@ -77,7 +77,7 @@ describe("HistoryPolicy", () => {
   // so the whole run keeps history as soon as one chain can be rolled back.
   it("Keeps every chain's rows once one chain's are reachable under a shared sequence", t => {
     let config = config(~schema=crossChainSchema)
-    t.expect((config.checkpointSequence, config->decisions(~keepsHistory=onlyChain1))).toEqual((
+    t.expect((config.checkpointSequence, config->decisions(~shouldSaveHistory=onlyChain1))).toEqual((
       Global,
       (true, true),
     ))
@@ -85,9 +85,9 @@ describe("HistoryPolicy", () => {
 
   it("Keeps nothing when no chain's rows are reachable", t => {
     t.expect((
-      config(~schema)->decisions(~keepsHistory=keepsHistory([(chain1, false), (chain137, false)])),
+      config(~schema)->decisions(~shouldSaveHistory=shouldSaveHistory([(chain1, false), (chain137, false)])),
       config(~schema=crossChainSchema)->decisions(
-        ~keepsHistory=keepsHistory([(chain1, false), (chain137, false)]),
+        ~shouldSaveHistory=shouldSaveHistory([(chain1, false), (chain137, false)]),
       ),
     )).toEqual(((false, false), (false, false)))
   })
@@ -95,7 +95,7 @@ describe("HistoryPolicy", () => {
   it("Keeps everything with save_full_history, reachable or not", t => {
     t.expect(
       config(~schema, ~extra="\nsave_full_history: true")->decisions(
-        ~keepsHistory=keepsHistory([(chain1, false), (chain137, false)]),
+        ~shouldSaveHistory=shouldSaveHistory([(chain1, false), (chain137, false)]),
       ),
     ).toEqual((true, true))
   })
@@ -103,7 +103,7 @@ describe("HistoryPolicy", () => {
   // The policy is decided for every chain the run indexes, so a chain it
   // doesn't name is a bug — not a chain that quietly keeps nothing.
   it("Refuses a chain it was never decided for", t => {
-    let policy = config(~schema)->HistoryPolicy.decide(~keepsHistory=onlyChain1)
+    let policy = config(~schema)->HistoryPolicy.decide(~shouldSaveHistory=onlyChain1)
     t->toThrowErrorEqual(
       () => policy->HistoryPolicy.forChain(999->ChainId.fromInt),
       "Internal error: no history decision for chain 999. The policy is decided for every chain the run indexes.",
@@ -111,8 +111,8 @@ describe("HistoryPolicy", () => {
   })
 
   it("Reads a chain scope's decision off the sequence it was built for", t => {
-    let perChain = config(~schema)->HistoryPolicy.decide(~keepsHistory=onlyChain1)
-    let shared = config(~schema=crossChainSchema)->HistoryPolicy.decide(~keepsHistory=onlyChain1)
+    let perChain = config(~schema)->HistoryPolicy.decide(~shouldSaveHistory=onlyChain1)
+    let shared = config(~schema=crossChainSchema)->HistoryPolicy.decide(~shouldSaveHistory=onlyChain1)
     t.expect((
       perChain->HistoryPolicy.forScope(~scope=Chain(chain137)),
       shared->HistoryPolicy.forScope(~scope=Chain(chain137)),

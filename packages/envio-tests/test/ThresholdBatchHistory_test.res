@@ -102,7 +102,7 @@ describe("A batch keeps the history decision it was created with", () => {
         writes
         ->Array.push(
           `${batch.history->showPolicy}/${updatedEntities
-            ->Array.map(updated => updated.keepsHistory->showKeep)
+            ->Array.map(updated => updated.shouldSaveHistory->showKeep)
             ->Array.join(",")}`,
         )
         ->ignore

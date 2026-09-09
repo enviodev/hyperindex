@@ -17,7 +17,7 @@ let isRealtime: t => bool
 let isCaughtUp: t => bool
 let isInReorgThreshold: t => bool
 let targetBufferSize: t => int
-let keepsHistory: t => dict<bool>
+let shouldSaveHistory: t => dict<bool>
 
 // Derived (pure).
 let nextItemIsNone: t => bool

@@ -96,7 +96,7 @@ type updatedEntity = {
   entityConfig: Internal.entityConfig,
   scope: Internal.chainScope,
   changes: array<Change.t<Internal.entity>>,
-  keepsHistory: bool,
+  shouldSaveHistory: bool,
 }
 
 // An id the rollback must delete, together with the scope its row lives in.

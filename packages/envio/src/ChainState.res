@@ -944,7 +944,7 @@ let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
 // Whether the chain's writes need history: only what a rollback could still
 // reach. A chain with no reorg depth is never rolled back, however far its
 // progress has run.
-let keepsHistory = (cs: t) =>
+let shouldSaveHistory = (cs: t) =>
   cs.shouldRollbackOnReorg && cs.maxReorgDepth > 0 && cs.isInReorgThreshold
 
 // Snapshot the chain's metadata fields for staging into the chains table.

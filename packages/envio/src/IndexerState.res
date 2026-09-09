@@ -489,7 +489,7 @@ let chainMetaThrottler = (state: t) => state.chainMetaThrottler
 let crossChainState = (state: t) => state.crossChainState
 let chainStates = (state: t) => state.crossChainState->CrossChainState.chainStates
 let isInReorgThreshold = (state: t) => state.crossChainState->CrossChainState.isInReorgThreshold
-let keepsHistory = (state: t) => state.crossChainState->CrossChainState.keepsHistory
+let shouldSaveHistory = (state: t) => state.crossChainState->CrossChainState.shouldSaveHistory
 let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
 
 // The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only
