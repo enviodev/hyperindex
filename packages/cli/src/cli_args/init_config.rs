@@ -17,7 +17,7 @@ pub mod evm {
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
                 evm::{Chain, ContractConfig, EventConfig, HumanConfig, RpcSelection},
-                BaseConfig, ChainContract, GlobalContract,
+                BaseConfig, ChainContract, GlobalContract, StartBlock,
             },
             system_config::EvmAbi,
         },
@@ -131,7 +131,9 @@ pub mod evm {
                                 skip: None,
                                 hypersync_config: None,
                                 rpc,
-                                start_block: selected_chain.network.get_start_block(),
+                                start_block: StartBlock::Number(
+                                    selected_chain.network.get_start_block(),
+                                ),
                                 end_block,
                                 max_reorg_depth: None,
                                 block_lag: None,
@@ -216,7 +218,7 @@ pub mod fuel {
     use crate::{
         config_parsing::human_config::{
             fuel::{Chain as ChainConfig, ContractConfig, EcosystemTag, EventConfig, HumanConfig},
-            BaseConfig, ChainContract,
+            BaseConfig, ChainContract, StartBlock,
         },
         fuel::{abi::FuelAbi, address::Address},
     };
@@ -274,7 +276,7 @@ pub mod fuel {
                     Some(contracts) => network_configs.push(ChainConfig {
                         id: network as u64,
                         skip: None,
-                        start_block: 0,
+                        start_block: StartBlock::Number(0),
                         end_block: None,
                         hyperfuel_config: None,
                         max_reorg_depth: None,
@@ -339,7 +341,7 @@ pub mod svm {
 
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
     pub enum Template {
-        #[strum(serialize = "Metaplex Token Metadata (instructions) (Experimental)")]
+        #[strum(serialize = "Metaplex Token Metadata (instructions)")]
         MetaplexTokenMetadata,
         #[strum(serialize = "Feature: Block Handler (onSlot)")]
         FeatureBlockHandler,
@@ -362,7 +364,7 @@ impl Ecosystem {
     pub fn uses_hypersync(&self) -> bool {
         match self {
             Self::Evm { init_flow } => init_flow.uses_hypersync(),
-            Self::Svm { .. } => false,
+            Self::Svm { .. } => true,
             Self::Fuel { .. } => true,
         }
     }

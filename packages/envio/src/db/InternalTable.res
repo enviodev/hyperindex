@@ -282,7 +282,7 @@ module Chains = {
     {
       id: chainConfig.id,
       ecosystem: (chainConfig.ecosystem: Ecosystem.name :> string),
-      startBlock: chainConfig.startBlock,
+      startBlock: chainConfig->Config.startBlockOrThrow,
       endBlock: chainConfig.endBlock->Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
       blockHeight: 0,

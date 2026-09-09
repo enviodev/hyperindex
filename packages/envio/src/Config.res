@@ -26,10 +26,18 @@ type evmRpcConfig = {
   headers: option<dict<string>>,
 }
 
+// Unboxed so the runtime value is exactly what the public config JSON holds -
+// a number, or the string "latest" - which is why `startBlockSchema` only has
+// to validate it rather than convert it.
+@unboxed
+type startBlock =
+  | Block(int)
+  | @as("latest") Latest
+
 type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
-  | SvmSourceConfig({hypersync: option<string>, rpc: option<string>})
+  | SvmSourceConfig({hypersync: string})
   // A `simulate` run: the items the test fed in, parsed against the chain's
   // registrations. The source itself is built with the chain's address store,
   // like every other source, so it can apply the same gates.
@@ -46,7 +54,11 @@ type chain = {
   name: string,
   id: ChainId.t,
   ecosystem: Ecosystem.name,
-  startBlock: int,
+  // What config.yaml says, never rewritten. Once `Latest` is resolved against
+  // the chain's head the block lives in the database
+  // (`envio_chains.start_block`), and that is what every consumer past startup
+  // reads.
+  startBlock: startBlock,
   endBlock?: int,
   maxReorgDepth: int,
   blockLag: int,
@@ -161,10 +173,36 @@ let chainContractSchema = S.schema(s =>
   }
 )
 
+// For everything downstream of `StartBlockResolver`, which rewrites `Latest`
+// into the chain's head before storage is initialized. The throw is an
+// invariant check, not a case a user can reach.
+let startBlockOrThrow = (chain: chain) =>
+  switch chain.startBlock {
+  | Block(startBlock) => startBlock
+  | Latest =>
+    JsError.throwWithMessage(
+      `Chain ${chain.id->ChainId.toString}: the "latest" start block was read before it was resolved. This is a bug in envio - please report it.`,
+    )
+  }
+
+// For the paths that have no chain to read a head from - the test indexer and
+// simulated items - where `Latest` never gets resolved and every simulated
+// block should be in range.
+let startBlockOrZero = (chain: chain) =>
+  switch chain.startBlock {
+  | Block(startBlock) => startBlock
+  | Latest => 0
+  }
+
+let startBlockSchema = S.union([
+  S.int->S.shape(n => Block(n)),
+  S.literal("latest")->S.shape(_ => Latest),
+])
+
 let publicConfigChainSchema = S.schema(s =>
   {
     "id": s.matches(ChainId.schema),
-    "startBlock": s.matches(S.int),
+    "startBlock": s.matches(startBlockSchema),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
     "blockLag": s.matches(S.option(S.int)),
@@ -172,7 +210,6 @@ let publicConfigChainSchema = S.schema(s =>
     "hypersync": s.matches(S.option(S.string)),
     "rpcs": s.matches(S.option(S.array(rpcConfigSchema))),
     // SVM source config
-    "rpc": s.matches(S.option(S.string)),
     // Per-chain contract data (addresses and optional start block)
     "contracts": s.matches(S.option(S.dict(chainContractSchema))),
   }
@@ -204,7 +241,6 @@ let svmEventDescriptorSchema = S.schema(s =>
 
 let svmAbiSchema = S.schema(s =>
   {
-    "programId": s.matches(S.string),
     "definedTypes": s.matches(S.json(~validate=false)),
     "source": s.matches(S.string),
   }
@@ -660,7 +696,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     "eventSignatures": array<string>,
     "events": option<array<_>>,
     "svmAbi": option<{
-      "programId": string,
       "definedTypes": JSON.t,
       "source": string,
     }>,
@@ -680,7 +715,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         contractConfig->(
           Utils.magic: _ => {
             "svmAbi": option<{
-              "programId": string,
               "definedTypes": JSON.t,
               "source": string,
             }>,
@@ -827,6 +861,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       let contracts =
         contractDataByName
         ->Dict.toArray
+        // Svm programs are defined once for the project and placed per chain by
+        // `program_id`. A program the config left off this chain has nothing to
+        // index here, and no dynamic registration can add it later.
+        ->Array.filter(((capitalizedName, _)) =>
+          switch ecosystemName {
+          | Ecosystem.Svm => chainContracts->Dict.get(capitalizedName)->Option.isSome
+          | _ => true
+          }
+        )
         ->Array.map(((capitalizedName, contractData)) => {
           let chainContract = chainContracts->Dict.get(capitalizedName)
           let rawAddresses =
@@ -934,14 +977,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
       | Ecosystem.Svm =>
-        let hypersync = publicChainConfig["hypersync"]
-        let rpc = publicChainConfig["rpc"]
-        if hypersync->Option.isNone && rpc->Option.isNone {
-          JsError.throwWithMessage(
-            `Chain ${chainName} is missing a data source: provide either an rpc endpoint or an experimental hypersync config`,
-          )
+        switch publicChainConfig["hypersync"] {
+        | Some(hypersync) => SvmSourceConfig({hypersync: hypersync})
+        | None =>
+          JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
-        SvmSourceConfig({hypersync, rpc})
       }
 
       {
@@ -1166,7 +1206,6 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
           switch chainJson {
           | Object(chain) => {
               chain->Utils.Dict.deleteInPlace("rpcs")
-              chain->Utils.Dict.deleteInPlace("rpc")
               chain->Utils.Dict.deleteInPlace("hypersync")
             }
           | _ => ()

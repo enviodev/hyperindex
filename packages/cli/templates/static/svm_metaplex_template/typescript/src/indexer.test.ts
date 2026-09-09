@@ -1,7 +1,7 @@
 import { describe, it } from "vitest";
 import { createTestIndexer } from "envio";
 
-// `start_block` from config.yaml. Simulated instructions are placed by slot and
+// `start_slot` from config.yaml. Simulated instructions are placed by slot and
 // only run when the slot is inside the configured range.
 const START_SLOT = 417_920_000;
 

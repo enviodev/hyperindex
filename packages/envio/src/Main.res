@@ -126,7 +126,9 @@ let buildChainsObject = (~config: Config.t) => {
         get: () => {
           switch getInitialChainState(~chainId=chainConfig.id) {
           | Some(chainState) => chainState.startBlock
-          | None => chainConfig.startBlock
+          // Only before persistence is ready, which in a real run is before any
+          // handler module has loaded. The test indexer sits here for good.
+          | None => chainConfig->Config.startBlockOrZero
           }
         },
       },
@@ -589,6 +591,10 @@ let migrate = async (~reset) => {
     ~envioInfo=getEnvioInfo(),
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
+    ~lowercaseAddresses=config.lowercaseAddresses,
+    // A migration command runs once and exits, with nobody watching it recover:
+    // an unreachable chain should say so now rather than hold the command open.
+    ~startBlockRetry=StartBlockResolver.Once,
   )
   await persistence.storage.close()
 }
@@ -641,6 +647,7 @@ let start = async (
     ~envioInfo=getEnvioInfo(),
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
+    ~lowercaseAddresses=config.lowercaseAddresses,
   )
 
   // Loads user handler files, which register handler/contractRegister/where

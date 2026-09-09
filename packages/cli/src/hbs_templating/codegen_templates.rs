@@ -10,7 +10,7 @@ use crate::{
         entity_parsing::{Entity, Field, GraphQLEnum, IndexField},
         event_parsing::abi_to_rescript_type,
         field_types,
-        human_config::HumanConfig,
+        human_config::{HumanConfig, StartBlock},
         system_config::{
             self, Abi, ChainIdMode, Ecosystem, EventKind, FuelEventKind, SelectedField,
             SystemConfig,
@@ -767,7 +767,7 @@ struct NetworkTemplate {
     pub id: u64,
     max_reorg_depth: Option<u32>,
     block_lag: Option<u32>,
-    start_block: u64,
+    start_block: StartBlock,
     end_block: Option<u64>,
 }
 
@@ -3755,16 +3755,13 @@ name: svm-no-rescript
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Swapper
-          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
+    start_slot: 0
+programs:
+  - name: Swapper
+    program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+    instructions:
+      - name: swap
+        discriminator: "0x09"
 "#;
         let schema = r#"
 type Swap {

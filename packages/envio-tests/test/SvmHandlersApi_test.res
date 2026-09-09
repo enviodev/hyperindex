@@ -5,31 +5,28 @@ name: svm-api-types
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Swapper
-          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              args:
-                - { name: amountIn, type: u64 }
-                - { name: minAmountOut, type: u64 }
-              accounts:
-                - source
-                - destination
-            - name: shape
-              discriminator: "0x0a"
-              args:
-                - { name: hash, type: { array: [u8, 32] } }
-                - { name: pair, type: { array: [u16, 2] } }
-                - { name: ids, type: { vec: u64 } }
-                - { name: payload, type: bytes }
-              accounts:
-                - source
+    start_slot: 0
+programs:
+  - name: Swapper
+    program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+    instructions:
+      - name: swap
+        discriminator: "0x09"
+        args:
+          - { name: amountIn, type: u64 }
+          - { name: minAmountOut, type: u64 }
+        accounts:
+          - source
+          - destination
+      - name: shape
+        discriminator: "0x0a"
+        args:
+          - { name: hash, type: { array: [u8, 32] } }
+          - { name: pair, type: { array: [u16, 2] } }
+          - { name: ids, type: { vec: u64 } }
+          - { name: payload, type: bytes }
+        accounts:
+          - source
 `
 
 let check = handlers =>
@@ -40,18 +37,15 @@ name: svm-yaml-field-selection
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Swapper
-          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              field_selection:
-                transaction_fields: [signature]
+    start_slot: 0
+programs:
+  - name: Swapper
+    program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+    instructions:
+      - name: swap
+        discriminator: "0x09"
+        field_selection:
+          transaction_fields: [signature]
 `
 
 InternalTestIndexer.fromUserApi(

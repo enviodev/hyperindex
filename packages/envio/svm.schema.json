@@ -66,6 +66,13 @@
       "items": {
         "$ref": "#/$defs/Chain"
       }
+    },
+    "programs": {
+      "description": "Solana programs to index. Programs are defined once for the whole project; `program_id` says where each one lives on every chain.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Program"
+      }
     }
   },
   "additionalProperties": false,
@@ -224,20 +231,18 @@
           ]
         },
         "rpc": {
-          "description": "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data. Required unless `experimental` is set, in which case it is ignored in favour of the experimental HyperSync source.",
+          "description": "RPC endpoint URL for the Svm cluster. Accepted but unused: instruction sync is served by HyperSync.",
           "type": [
             "string",
             "null"
           ]
         },
-        "start_block": {
-          "description": "The slot number at which the indexer should start ingesting data",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+        "start_slot": {
+          "description": "The slot at which the indexer should start ingesting data, or \"latest\" to start from the chain's current slot when the indexer is first deployed. Once resolved, the concrete slot is persisted and reused every time the indexer resumes normally (for example recovering from a crash), so downtime is backfilled instead of skipped. Running `envio start`/`dev` with -r (--restart) resets this like any other config change: \"latest\" resolves again, against the head at that time.",
+          "$ref": "#/$defs/StartBlock"
         },
-        "end_block": {
-          "description": "The slot number at which the indexer should terminate.",
+        "end_slot": {
+          "description": "The slot at which the indexer should terminate.",
           "type": [
             "integer",
             "null"
@@ -254,11 +259,11 @@
           "format": "uint32",
           "minimum": 0
         },
-        "experimental": {
-          "description": "Experimental HyperSync-backed instruction indexing. This config shape Veil change in future releases.",
+        "hypersync_config": {
+          "description": "HyperSync Config for fetching historical instructions on this chain. Optional for the `solana` and `solana-devnet` chain ids, which default to their public HyperSync endpoints; required for any other chain id.",
           "anyOf": [
             {
-              "$ref": "#/$defs/Experimental"
+              "$ref": "#/$defs/HypersyncConfig"
             },
             {
               "type": "null"
@@ -269,7 +274,7 @@
       "additionalProperties": false,
       "required": [
         "id",
-        "start_block"
+        "start_slot"
       ]
     },
     "ChainId": {
@@ -293,31 +298,23 @@
         "solana-devnet"
       ]
     },
-    "Experimental": {
-      "type": "object",
-      "properties": {
-        "hypersync_config": {
-          "description": "HyperSync Config for fetching historical instructions on this chain. Optional for the `solana` and `solana-devnet` chain ids, which default to their public HyperSync endpoints; required for any other chain id.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/HypersyncConfig"
-            },
-            {
-              "type": "null"
-            }
-          ]
+    "StartBlock": {
+      "description": "A chain's configured start block: either a concrete block number or the\nliteral \"latest\". Config parsing never touches the network, so `Latest`\nstays unresolved here — it's resolved once at runtime, right before the\nindexer's first-ever persisted state is written, and never re-resolved\non a normal resume (see packages/envio/src/sources/StartBlockResolver.res).\nNote: this repo's `-r`/`--restart` CLI flag wipes the DB and re-deploys\nfrom scratch, so it re-resolves \"latest\" too — \"resume\" here means the\nopposite: recovering from a crash or process restart without `-r`.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
         },
-        "programs": {
-          "description": "Solana programs to index on this chain.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Program"
-          }
+        {
+          "$ref": "#/$defs/StartBlockTag"
         }
-      },
-      "additionalProperties": false,
-      "required": [
-        "programs"
+      ]
+    },
+    "StartBlockTag": {
+      "type": "string",
+      "enum": [
+        "latest"
       ]
     },
     "HypersyncConfig": {
@@ -341,8 +338,8 @@
           "type": "string"
         },
         "program_id": {
-          "description": "Base58-encoded program id (32 bytes).",
-          "type": "string"
+          "description": "Base58-encoded program id (32 bytes). A single value is allowed only when the config defines one chain; with several, give a mapping keyed by chain id that names every one of them, writing `_` for a chain the program is not deployed on.",
+          "$ref": "#/$defs/SvmProgramId"
         },
         "handler": {
           "description": "Optional relative path to a file where handlers are registered for the given program. If not provided, handlers can be auto-loaded from the src directory.",
@@ -370,6 +367,28 @@
       "required": [
         "name",
         "program_id"
+      ]
+    },
+    "SvmProgramId": {
+      "title": "Program id",
+      "description": "Base58-encoded program id (32 bytes).\nA single value is allowed only when the config defines one chain.\nWith several chains, give a mapping keyed by chain id that names every one of them; write `_` for a chain the program is not deployed on.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      ],
+      "examples": [
+        "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+        {
+          "solana": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+          "solana-devnet": "_"
+        }
       ]
     },
     "Instruction": {

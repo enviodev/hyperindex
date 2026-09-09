@@ -9,7 +9,7 @@ Solana mainnet via HyperSync, and writes one row per metadata PDA.
 ```bash
 pnpm install
 
-# Adjust config.yaml `start_block` to ~30k slots below current head:
+# Adjust config.yaml `start_slot` to ~30k slots below current head:
 curl -s https://solana.hypersync.xyz/height
 
 pnpm envio local docker up    # Postgres + Hasura
@@ -31,7 +31,7 @@ Open the GraphQL playground at `http://localhost:8080` and query:
 ## What this teaches
 
 - Declaring a Solana program + its instructions in `config.yaml`
-  (`ecosystem: svm`, `experimental.programs[].instructions[]`).
+  (`ecosystem: svm`, `programs[].instructions[]`).
 - Using `indexer.onInstruction({program, instruction}, handler)` to receive
   an instruction's accounts under the names `config.yaml` gives its slots.
 - Persisting per-instruction state to a typed entity (`TokenMetadataAccount`)
