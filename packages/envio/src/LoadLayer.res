@@ -112,6 +112,7 @@ let callEffect = (
   effect.handler(arg)
   ->Promise.thenResolve(output => {
     inMemTable->InMemoryStore.setEffectOutput(
+      ~chainId=arg.chainId,
       ~checkpointId=arg.checkpointId,
       ~cacheKey=arg.cacheKey,
       ~output,
@@ -297,7 +298,11 @@ let loadEffect = (
         try {
           let output = dbEntity.output->S.parseOrThrow(outputSchema)
           idsFromCache->Utils.Set.add(dbEntity.id)->ignore
-          inMemTable->InMemoryStore.initEffectOutputFromDb(~cacheKey=dbEntity.id, ~output)
+          inMemTable->InMemoryStore.initEffectOutputFromDb(
+            ~chainId=item->Internal.getItemChainId,
+            ~cacheKey=dbEntity.id,
+            ~output,
+          )
         } catch {
         | S.Raised(error) =>
           inMemTable->EffectState.recordInvalidation

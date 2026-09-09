@@ -42,12 +42,10 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
     switch idsToStore {
     | [] => ()
     | ids =>
-      let items = ids->Array.filterMap((id): option<Internal.effectCacheItem> =>
-        switch dict->Dict.getUnsafe(id) {
-        | Set({entity: output}) => Some({id, output})
-        | Delete(_) => None
-        }
-      )
+      let items = ids->Array.map((id): Internal.effectCacheItem => {
+        id,
+        output: (dict->Dict.getUnsafe(id)).output,
+      })
       let effectName = effect.name
       let tableName = table.tableName
       let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(tableName) {
@@ -244,7 +242,7 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
   ->IndexerState.effectState
   ->EffectState.forEach(inMemTable =>
     inMemTable->InMemoryStore.dropCommittedEffects(
-      ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope=inMemTable.scope),
+      ~committedFrontier=state->IndexerState.committedFrontier,
       ~keepLoadedFromDb,
     )
   )

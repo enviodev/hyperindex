@@ -36,15 +36,24 @@ type effectStats = {
   mutable hasCache: bool,
 }
 
+// A handler output, stamped with the checkpoint that produced it on the chain
+// whose handler ran it. A cross-chain effect's entries come from several
+// chains, and under per-chain sequences an id only compares against its own
+// chain's committed one.
+type cacheEntry = {
+  output: Internal.effectOutput,
+  chainId: ChainId.t,
+  checkpointId: Internal.checkpointId,
+}
+
 type effectCacheInMemTable = {
   // Cache keys whose handler output is persisted on the next write. Drained
   // each write; eviction is driven by the per-entry checkpointId instead.
   mutable idsToStore: array<string>,
   mutable invalidationsCount: int,
-  // Each entry is stamped with the checkpoint that referenced it (or
-  // loadedFromDbCheckpointId for db reads), so committed entries can be
-  // dropped once persisted/re-derivable, mirroring entity changes.
-  mutable dict: dict<Change.t<Internal.effectOutput>>,
+  // Committed entries are dropped once persisted or re-derivable, mirroring
+  // entity changes; a db read is stamped loadedFromDbCheckpointId.
+  mutable dict: dict<cacheEntry>,
   mutable changesCount: float,
   effect: Internal.effect,
   // The scope this cache is for and its resolved db table (the address). The
