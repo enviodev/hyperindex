@@ -133,7 +133,7 @@ let queueProcessedBatch: (t, ~batch: Batch.t) => unit
 let drainBatchRun: t => Batch.t
 let pendingRollback: t => option<Persistence.rollback>
 let takeRollback: t => option<Persistence.rollback>
-let markCommitted: (t, ~upToFrontier: Frontier.t) => unit
+let markCommitted: (t, ~writtenFrontier: Frontier.t) => unit
 let beginRollbackDiff: (
   t,
   ~floors: RollbackFloors.t,

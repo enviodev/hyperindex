@@ -1138,7 +1138,10 @@ chains:
 
     // Chain 1337 committed the entry's checkpoint; chain 1 is only at its second.
     indexerState->IndexerState.markCommitted(
-      ~upToFrontier=Frontier.fromEntries([(1->ChainId.fromInt, 2n), (1337->ChainId.fromInt, 5n)]),
+      ~writtenFrontier=Frontier.fromEntries([
+        (1->ChainId.fromInt, 2n),
+        (1337->ChainId.fromInt, 5n),
+      ]),
     )
     indexerState->Writing.dropCommitted(~keepLoadedFromDb=false)
 
@@ -1184,7 +1187,7 @@ chains:
     let _ =
       indexerState->IndexerState.beginRollbackDiff(
         ~floors=RollbackFloors.make(
-          ~sequence=Global,
+          ~sequence=SharedAcrossChains,
           ~chainIds=[],
           ~floorCheckpointId=0n,
           ~reorgChainId=1->ChainId.fromInt,

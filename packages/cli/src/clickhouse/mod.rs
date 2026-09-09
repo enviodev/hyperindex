@@ -756,7 +756,7 @@ impl ClickHouseSink {
                 ))
                 .await?;
             let (first_uncovered, highest) = read_aggregates(&answer);
-            return Ok(ResumeBounds::Shared(
+            return Ok(ResumeBounds::SharedAcrossChains(
                 safe_of(first_uncovered, highest, committed).to_string(),
             ));
         }

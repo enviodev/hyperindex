@@ -104,7 +104,7 @@ let runOneWrite = async (state: IndexerState.t) => {
     let rollback = state->IndexerState.takeRollback
 
     // Entity changes above it stay queued for the next write.
-    let upToFrontier = Persistence.writtenFrontier(~batch, ~rollback)
+    let writtenFrontier = Persistence.writtenFrontier(~batch, ~rollback)
 
     let updatedEntities = []
     state->IndexerState.eachEntityTable((~entityConfig, ~scope, ~table) => {
@@ -112,7 +112,7 @@ let runOneWrite = async (state: IndexerState.t) => {
         table->InMemoryTable.Entity.snapshotChanges(
           ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
           ~upToCheckpointId=config.checkpointSequence->CheckpointSequence.forScope(
-            upToFrontier,
+            writtenFrontier,
             ~scope,
           ),
         )
@@ -164,7 +164,7 @@ let runOneWrite = async (state: IndexerState.t) => {
       PruneStaleHistory.runConcurrent(state, ~targets=pruneTargets),
     ))
 
-    state->IndexerState.markCommitted(~upToFrontier)
+    state->IndexerState.markCommitted(~writtenFrontier)
 
     switch rollback {
     | Some({progressedChains}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>

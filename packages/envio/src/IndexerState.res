@@ -824,8 +824,8 @@ let takeRollback = (state: t): option<Persistence.rollback> => {
 // committed. A failed write keeps them, and re-inserting a row the database
 // already has is a no-op. Rows staged while the write was in flight belong to
 // later checkpoints — ids only ever grow — so this can't drop one unwritten.
-let markCommitted = (state: t, ~upToFrontier) => {
-  state.committedFrontier = Frontier.mergeMax(state.committedFrontier, upToFrontier)
+let markCommitted = (state: t, ~writtenFrontier) => {
+  state.committedFrontier = Frontier.mergeMax(state.committedFrontier, writtenFrontier)
 }
 
 // Reset the in-memory tables and arm the rollback diff that the next write
@@ -842,7 +842,7 @@ let beginRollbackDiff = (
   let diffFrontier = {
     let cursor =
       state.config.checkpointSequence->CheckpointSequence.cursor(~frontier=state.committedFrontier)
-    floors.floors.byChain
+    floors.checkpointBounds.byChain
     ->Frontier.chainIds
     ->Array.map(chainId => (chainId, cursor->CheckpointSequence.next(~chainId)))
     ->Frontier.fromEntries

@@ -3,7 +3,7 @@
 // reorg left valid. Superseding an unwritten rollback with a new one is a
 // pointwise minimum, so a merge can neither lose a chain's floor nor raise it.
 type t = {
-  floors: CheckpointSequence.bounds,
+  checkpointBounds: CheckpointSequence.checkpointBoundsByChain,
   // Progress recomputed from the surviving checkpoints alone can land above the
   // fork: the blocks between it and the chain's next checkpoint carried no
   // events on the orphaned chain, but the chain replacing it can have its own.
@@ -21,21 +21,22 @@ let make = (
   ~floorCheckpointId,
   ~forkBlockNumber,
 ) => {
-  floors: CheckpointSequence.bounds(
-    sequence,
-    switch sequence {
-    | Global => chainIds->Array.map(chainId => (chainId, floorCheckpointId))->Frontier.fromEntries
+  checkpointBounds: {
+    CheckpointSequence.sequence,
+    byChain: switch sequence {
+    | SharedAcrossChains =>
+      chainIds->Array.map(chainId => (chainId, floorCheckpointId))->Frontier.fromEntries
     | PerChain => Frontier.fromEntries([(reorgChainId, floorCheckpointId)])
     },
-  ),
+  },
   forkBlockNumberByChain: Dict.fromArray([(reorgChainId->ChainId.toString, forkBlockNumber)]),
 }
 
 let merge = (pending: t, next: t) => {
-  floors: CheckpointSequence.bounds(
-    next.floors.sequence,
-    Frontier.mergeMin(pending.floors.byChain, next.floors.byChain),
-  ),
+  checkpointBounds: {
+    CheckpointSequence.sequence: next.checkpointBounds.sequence,
+    byChain: Frontier.mergeMin(pending.checkpointBounds.byChain, next.checkpointBounds.byChain),
+  },
   forkBlockNumberByChain: Utils.Dict.mergeWith(
     pending.forkBlockNumberByChain,
     next.forkBlockNumberByChain,

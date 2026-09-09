@@ -581,10 +581,10 @@ describe("Per-chain history prune", () => {
           ~chainIdColumn=entityConfig.table
           ->Table.getChainIdField
           ->Option.map(Table.getPgDbFieldName),
-          ~safeCheckpoints=CheckpointSequence.bounds(
-            Global,
-            Frontier.fromEntries([(1->ChainId.fromInt, 30n)]),
-          ),
+          ~safeCheckpoints={
+            CheckpointSequence.sequence: SharedAcrossChains,
+            byChain: Frontier.fromEntries([(1->ChainId.fromInt, 30n)]),
+          },
         )
       await prune(entityConfig)
       await prune(globalEntityConfig)

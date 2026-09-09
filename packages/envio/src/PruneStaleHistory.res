@@ -12,7 +12,7 @@ let maxEntitiesPerWrite = 5
 let forcedIntervalMultiplier = 5.
 
 type targets = {
-  safeCheckpoints: CheckpointSequence.bounds,
+  safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
   concurrent: array<Internal.entityConfig>,
   forced: array<Internal.entityConfig>,
 }
@@ -38,9 +38,9 @@ let selectSafeCheckpoints = (state: IndexerState.t) => {
   // exists once every chain has one.
   let hasBound = switch sequence {
   | PerChain => safe->Utils.Array.notEmpty
-  | Global => safe->Array.length === byChain->Array.length
+  | SharedAcrossChains => safe->Array.length === byChain->Array.length
   }
-  hasBound ? Some(CheckpointSequence.bounds(sequence, Frontier.fromEntries(safe))) : None
+  hasBound ? Some({CheckpointSequence.sequence, byChain: Frontier.fromEntries(safe)}) : None
 }
 
 let selectFrom = (

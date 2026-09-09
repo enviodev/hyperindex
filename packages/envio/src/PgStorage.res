@@ -1089,7 +1089,7 @@ let rec writeBatch = async (
         Some(CheckpointIndexes(indexes))
       }
     }
-    let movedFrontier = Persistence.writtenFrontier(~batch, ~rollback)
+    let writtenFrontier = Persistence.writtenFrontier(~batch, ~rollback)
 
     let specificError = ref(None)
 
@@ -1139,7 +1139,12 @@ let rec writeBatch = async (
       }
     }
 
-    let setEntities = updatedEntities->Array.map(({entityConfig, scope, changes, shouldSaveHistory}) => {
+    let setEntities = updatedEntities->Array.map(({
+      entityConfig,
+      scope,
+      changes,
+      shouldSaveHistory,
+    }) => {
       let entitiesToSet = []
       let idsToDelete = []
 
@@ -1440,11 +1445,11 @@ let rec writeBatch = async (
             )
           }
 
-          if !(movedFrontier->Utils.Dict.isEmpty) {
+          if !(writtenFrontier->Utils.Dict.isEmpty) {
             setOperations->Array.push(sql =>
               sql->InternalTable.Chains.setCheckpointFrontier(
                 ~pgSchema,
-                ~frontier=movedFrontier,
+                ~frontier=writtenFrontier,
                 ~chainIdMode,
               )
             )
@@ -1572,7 +1577,7 @@ let makeGetRollbackPreTargetRowsQuery = (
   let keyMatch =
     keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
   let bounds =
-    floors.floors->CheckpointSequence.sql(
+    floors.checkpointBounds->CheckpointSequence.sql(
       ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
       ~tableRef,
     )
@@ -1605,7 +1610,7 @@ let makeGetRollbackRemovedIdsQuery = (
   let keyMatch =
     keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
   let bounds =
-    floors.floors->CheckpointSequence.sql(
+    floors.checkpointBounds->CheckpointSequence.sql(
       ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
       ~tableRef,
     )
@@ -2477,7 +2482,7 @@ let make = (
     InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~floors)
 
   let getRollbackData = async (~entityConfig: Internal.entityConfig, ~floors: RollbackFloors.t) => {
-    let params = floors.floors->CheckpointSequence.params
+    let params = floors.checkpointBounds->CheckpointSequence.params
     let (removedIdRows, rollbackRows) = await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql

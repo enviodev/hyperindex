@@ -188,7 +188,7 @@ describe("Test PgStorage SQL generation functions", () => {
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
-          ~checkpointSequence=Global,
+          ~checkpointSequence=SharedAcrossChains,
           ~entities,
           ~enums,
           ~chainConfigs=[
@@ -361,7 +361,7 @@ FROM "test_schema"."envio_chains";`
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
           ~pgUser="postgres",
-          ~checkpointSequence=Global,
+          ~checkpointSequence=SharedAcrossChains,
           ~entities,
           ~enums=[],
           ~isHasuraEnabled=false,
@@ -435,7 +435,7 @@ FROM "public"."envio_chains";`
           PgStorage.makeInitializeTransaction(
             ~pgSchema="test_schema",
             ~pgUser="postgres",
-            ~checkpointSequence=Global,
+            ~checkpointSequence=SharedAcrossChains,
             ~entities,
             ~enums=[],
             ~isHasuraEnabled=false,
@@ -1055,17 +1055,17 @@ SELECT * FROM unnest($1::BIGINT[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INT
       async t => {
         let query = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
           ~pgSchema="test_schema",
-          ~safeCheckpoints=CheckpointSequence.bounds(
-            Global,
-            Frontier.fromEntries([(1->ChainId.fromInt, 10n)]),
-          ),
+          ~safeCheckpoints={
+            CheckpointSequence.sequence: SharedAcrossChains,
+            byChain: Frontier.fromEntries([(1->ChainId.fromInt, 10n)]),
+          },
         )
         let narrowed = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
           ~pgSchema="test_schema",
-          ~safeCheckpoints=CheckpointSequence.bounds(
-            PerChain,
-            Frontier.fromEntries([(137->ChainId.fromInt, 20n)]),
-          ),
+          ~safeCheckpoints={
+            CheckpointSequence.sequence: PerChain,
+            byChain: Frontier.fromEntries([(137->ChainId.fromInt, 20n)]),
+          },
         )
 
         t.expect(
@@ -1112,7 +1112,7 @@ LIMIT 1;`
           )
         let query = makeQuery(
           RollbackFloors.make(
-            ~sequence=Global,
+            ~sequence=SharedAcrossChains,
             ~chainIds=[1->ChainId.fromInt, 137->ChainId.fromInt],
             ~floorCheckpointId=10n,
             ~reorgChainId=137->ChainId.fromInt,

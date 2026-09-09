@@ -11,7 +11,10 @@ let frontier = Frontier.fromEntries([(chain1, 9n), (chain137, 2n)])
 describe("CheckpointSequence.forScope", () => {
   it("Reads a chain scope's own id under either sequence", t => {
     t.expect((
-      CheckpointSequence.Global->CheckpointSequence.forScope(frontier, ~scope=Chain(chain137)),
+      CheckpointSequence.SharedAcrossChains->CheckpointSequence.forScope(
+        frontier,
+        ~scope=Chain(chain137),
+      ),
       CheckpointSequence.PerChain->CheckpointSequence.forScope(frontier, ~scope=Chain(chain137)),
     )).toEqual((2n, 2n))
   })
@@ -23,7 +26,10 @@ describe("CheckpointSequence.forScope", () => {
   // committed, and the effect caches this bounds would be freed early.
   it("Takes the highest id for a cross-chain scope under one shared sequence", t => {
     t.expect(
-      CheckpointSequence.Global->CheckpointSequence.forScope(frontier, ~scope=CrossChain),
+      CheckpointSequence.SharedAcrossChains->CheckpointSequence.forScope(
+        frontier,
+        ~scope=CrossChain,
+      ),
     ).toEqual(9n)
   })
 
@@ -48,7 +54,7 @@ describe("CheckpointSequence.params", () => {
   // paired with another chain's bound would narrow the wrong rows.
   it("Pairs each chain with its own id, in one order", t => {
     t.expect(
-      CheckpointSequence.bounds(PerChain, frontier)
+      {CheckpointSequence.sequence: PerChain, byChain: frontier}
       ->CheckpointSequence.params
       ->(Utils.magic: unknown => array<array<unknown>>),
     ).toEqual([
@@ -61,7 +67,7 @@ describe("CheckpointSequence.params", () => {
   // lowest: a higher one would leave another chain's rows above its own bound.
   it("Collapses to the lowest id under one shared sequence", t => {
     t.expect(
-      CheckpointSequence.bounds(Global, frontier)
+      {CheckpointSequence.sequence: SharedAcrossChains, byChain: frontier}
       ->CheckpointSequence.params
       ->(Utils.magic: unknown => array<string>),
     ).toEqual(["2"])
@@ -74,7 +80,7 @@ describe("CheckpointSequence.params", () => {
 // behind its sibling would otherwise be handed an id the sibling already used.
 describe("CheckpointSequence.cursor", () => {
   it("Hands two chains distinct ids above every committed one under a shared sequence", t => {
-    let cursor = CheckpointSequence.Global->CheckpointSequence.cursor(~frontier)
+    let cursor = CheckpointSequence.SharedAcrossChains->CheckpointSequence.cursor(~frontier)
     let ids = [chain1, chain137]->Array.map(chainId => cursor->CheckpointSequence.next(~chainId))
     t.expect((ids, cursor.frontier->Frontier.entries)).toEqual((
       [10n, 11n],

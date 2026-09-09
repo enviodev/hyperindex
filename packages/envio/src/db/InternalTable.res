@@ -693,7 +693,7 @@ module Checkpoints = {
 
   let tableFor = (sequence: CheckpointSequence.t) =>
     switch sequence {
-    | Global => globalTable
+    | SharedAcrossChains => globalTable
     | PerChain => table
     }
 
@@ -775,16 +775,19 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
 
   let rollback = (sql, ~pgSchema, ~floors: RollbackFloors.t) => {
     let tableRef = `"${pgSchema}"."${table.tableName}"`
-    let bounds = floors.floors->CheckpointSequence.sql(~chainIdColumn, ~tableRef)
+    let bounds = floors.checkpointBounds->CheckpointSequence.sql(~chainIdColumn, ~tableRef)
     sql
     ->Postgres.preparedUnsafe(
       `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" > ${bounds.checkpointId}${bounds.usingMatch};`,
-      floors.floors->CheckpointSequence.params,
+      floors.checkpointBounds->CheckpointSequence.params,
     )
     ->Utils.Promise.ignoreValue
   }
 
-  let makePruneStaleCheckpointsQuery = (~pgSchema, ~safeCheckpoints: CheckpointSequence.bounds) => {
+  let makePruneStaleCheckpointsQuery = (
+    ~pgSchema,
+    ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
+  ) => {
     let tableRef = `"${pgSchema}"."${table.tableName}"`
     let bounds = safeCheckpoints->CheckpointSequence.sql(~chainIdColumn, ~tableRef)
     `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" < ${bounds.checkpointId}${bounds.usingMatch};`
@@ -826,7 +829,7 @@ LIMIT 1;`
   }
 
   let makeGetRollbackProgressDiffQuery = (~pgSchema, ~floors: RollbackFloors.t) => {
-    let bounds = floors.floors->CheckpointSequence.sql(~chainIdColumn, ~tableRef="t")
+    let bounds = floors.checkpointBounds->CheckpointSequence.sql(~chainIdColumn, ~tableRef="t")
     `SELECT 
   t."${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
   SUM(t."${(#events_processed: field :> string)}") as events_processed_diff,
@@ -840,7 +843,7 @@ GROUP BY t."${(#chain_id: field :> string)}";`
     sql
     ->Postgres.preparedUnsafe(
       makeGetRollbackProgressDiffQuery(~pgSchema, ~floors),
-      floors.floors->CheckpointSequence.params,
+      floors.checkpointBounds->CheckpointSequence.params,
     )
     ->(
       Utils.magic: promise<unknown> => promise<

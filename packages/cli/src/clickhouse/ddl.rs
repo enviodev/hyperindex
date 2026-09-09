@@ -65,7 +65,7 @@ pub struct HistorySchema {
 /// about another's, so one bound cannot stand for all of them.
 #[derive(Debug, Clone)]
 pub enum ResumeBounds {
-    Shared(String),
+    SharedAcrossChains(String),
     PerChain(Vec<(String, String)>),
 }
 
@@ -77,7 +77,7 @@ impl ResumeBounds {
         chain_ids: impl Iterator<Item = &'a str>,
     ) -> Vec<(String, String)> {
         match self {
-            ResumeBounds::Shared(checkpoint_id) => chain_ids
+            ResumeBounds::SharedAcrossChains(checkpoint_id) => chain_ids
                 .map(|chain_id| (chain_id.to_string(), checkpoint_id.clone()))
                 .collect(),
             ResumeBounds::PerChain(bounds) => bounds.clone(),
@@ -90,7 +90,9 @@ impl ResumeBounds {
     pub fn above(&self, chain_column: Option<&str>, checkpoint_column: &str) -> Result<String> {
         let checkpoint = quoted(checkpoint_column);
         match self {
-            ResumeBounds::Shared(checkpoint_id) => Ok(format!("{checkpoint} > {checkpoint_id}")),
+            ResumeBounds::SharedAcrossChains(checkpoint_id) => {
+                Ok(format!("{checkpoint} > {checkpoint_id}"))
+            }
             ResumeBounds::PerChain(bounds) => {
                 let Some(chain_column) = chain_column else {
                     bail!(
@@ -1035,7 +1037,7 @@ mod tests {
     #[test]
     fn trims_history_and_checkpoints_past_a_checkpoint() {
         let history = history_schema();
-        let bounds = ResumeBounds::Shared("42".to_string());
+        let bounds = ResumeBounds::SharedAcrossChains("42".to_string());
         let above = |column: &str| bounds.above(None, column).unwrap();
         assert_eq!(
             (

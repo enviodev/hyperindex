@@ -67,25 +67,27 @@ describe("HistoryPolicy", () => {
   // nothing can reach keeps nothing.
   it("Decides per chain when each chain counts its own checkpoints", t => {
     let config = config(~schema)
-    t.expect((config.checkpointSequence, config->decisions(~shouldSaveHistory=onlyChain1))).toEqual((
-      PerChain,
-      (true, false),
-    ))
+    t.expect((
+      config.checkpointSequence,
+      config->decisions(~shouldSaveHistory=onlyChain1),
+    )).toEqual((PerChain, (true, false)))
   })
 
   // One cross-chain entity makes any chain's rollback reach every chain's rows,
   // so the whole run keeps history as soon as one chain can be rolled back.
   it("Keeps every chain's rows once one chain's are reachable under a shared sequence", t => {
     let config = config(~schema=crossChainSchema)
-    t.expect((config.checkpointSequence, config->decisions(~shouldSaveHistory=onlyChain1))).toEqual((
-      Global,
-      (true, true),
-    ))
+    t.expect((
+      config.checkpointSequence,
+      config->decisions(~shouldSaveHistory=onlyChain1),
+    )).toEqual((SharedAcrossChains, (true, true)))
   })
 
   it("Keeps nothing when no chain's rows are reachable", t => {
     t.expect((
-      config(~schema)->decisions(~shouldSaveHistory=shouldSaveHistory([(chain1, false), (chain137, false)])),
+      config(~schema)->decisions(
+        ~shouldSaveHistory=shouldSaveHistory([(chain1, false), (chain137, false)]),
+      ),
       config(~schema=crossChainSchema)->decisions(
         ~shouldSaveHistory=shouldSaveHistory([(chain1, false), (chain137, false)]),
       ),
@@ -112,7 +114,8 @@ describe("HistoryPolicy", () => {
 
   it("Reads a chain scope's decision off the sequence it was built for", t => {
     let perChain = config(~schema)->HistoryPolicy.decide(~shouldSaveHistory=onlyChain1)
-    let shared = config(~schema=crossChainSchema)->HistoryPolicy.decide(~shouldSaveHistory=onlyChain1)
+    let shared =
+      config(~schema=crossChainSchema)->HistoryPolicy.decide(~shouldSaveHistory=onlyChain1)
     t.expect((
       perChain->HistoryPolicy.forScope(~scope=Chain(chain137)),
       shared->HistoryPolicy.forScope(~scope=Chain(chain137)),

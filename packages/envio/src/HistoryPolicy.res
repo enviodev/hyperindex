@@ -14,7 +14,7 @@ let decide = (config: Config.t, ~shouldSaveHistory: dict<bool>): t =>
     shouldSaveHistory->Utils.Dict.mapValues(_ => true)
   } else {
     switch config.checkpointSequence {
-    | Global =>
+    | SharedAcrossChains =>
       let saves = shouldSaveHistory->anyChainSaves
       shouldSaveHistory->Utils.Dict.mapValues(_ => saves)
     | PerChain => shouldSaveHistory

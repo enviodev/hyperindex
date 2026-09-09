@@ -105,7 +105,7 @@ let makePruneStaleEntityHistoryQuery = (
   ~entityIndex,
   ~pgSchema,
   ~chainIdColumn,
-  ~safeCheckpoints: CheckpointSequence.bounds,
+  ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
 ) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   let keyColumns = makeKeyColumns(~chainIdColumn)
@@ -224,11 +224,12 @@ let rollback = (
   ~floors: RollbackFloors.t,
 ) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
-  let bounds = floors.floors->CheckpointSequence.sql(~chainIdColumn, ~tableRef=historyTableRef)
+  let bounds =
+    floors.checkpointBounds->CheckpointSequence.sql(~chainIdColumn, ~tableRef=historyTableRef)
   sql
   ->Postgres.preparedUnsafe(
     `DELETE FROM ${historyTableRef}${bounds.using} WHERE "${checkpointIdFieldName}" > ${bounds.checkpointId}${bounds.usingMatch};`,
-    floors.floors->CheckpointSequence.params,
+    floors.checkpointBounds->CheckpointSequence.params,
   )
   ->Utils.Promise.ignoreValue
 }

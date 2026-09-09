@@ -161,13 +161,15 @@ type storage = {
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
-  pruneStaleCheckpoints: (~safeCheckpoints: CheckpointSequence.bounds) => promise<unit>,
+  pruneStaleCheckpoints: (
+    ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
+  ) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
     ~chainIdColumn: option<string>,
-    ~safeCheckpoints: CheckpointSequence.bounds,
+    ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (

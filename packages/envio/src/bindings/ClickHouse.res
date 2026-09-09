@@ -438,7 +438,7 @@ let resume = async (
   try await sink->ClickHouseSink.resume({
     perChain: switch sequence {
     | PerChain => true
-    | Global => false
+    | SharedAcrossChains => false
     },
     chainProgress,
     historyTables: entities->Array.map(entityConfig => {
