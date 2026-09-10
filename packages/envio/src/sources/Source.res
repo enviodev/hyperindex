@@ -8,9 +8,10 @@ type blockRangeFetchStats = {
 }
 
 // A single backend request a source method actually made (cache/dedup hits
-// aren't requests), with the time it took. SourceManager aggregates these
-// per (source, method) into the envio_source_request_* metrics.
-type requestStat = RequestStat.t = {method: string, seconds: float}
+// aren't requests), with the time it took and how much it brought back.
+// SourceManager aggregates these per (source, method) into the
+// envio_source_request_* and envio_source_response_* metrics.
+type requestStat = RequestStat.t = {method: string, seconds: float, responseBlocks?: int}
 
 // Native clients wrap a failure of a multi-request operation in a structured
 // payload, so the source can still return timings when SourceManager retries
