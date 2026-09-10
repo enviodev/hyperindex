@@ -45,15 +45,14 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}${chainYaml(
 
 let aBIdIndexName = IndexDefinition.single(~tableName="A", ~column="b_id")->IndexDefinition.name
 
-let indexNames = async (~sql, ~pgSchema) => {
+let hasSchemaIndex = async (~sql, ~pgSchema) => {
   let rows =
     (await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
       IndexCatalog.rowsSchema,
     )
   IndexCatalog.fromRows(~rows)
   ->IndexCatalog.entries
-  ->Array.filter((entry: IndexCatalog.entry) => entry.name === aBIdIndexName)
-  ->Array.map((entry: IndexCatalog.entry) => entry.name)
+  ->Array.some((entry: IndexCatalog.entry) => entry.name === aBIdIndexName)
 }
 
 // `ready_at` still means what it always did: the schema's indexes are committed.
@@ -93,9 +92,9 @@ describe("envio start --chain", () => {
       await catchUp(~indexer=running, ~source=sourceOne)
 
       t.expect(
-        await indexNames(~sql, ~pgSchema),
+        await hasSchemaIndex(~sql, ~pgSchema),
         ~message="Chain 137 is behind, so this pass leaves the indexes alone",
-      ).toEqual([])
+      ).toEqual(false)
 
       // Chain 137's own process reaching its head, which this one only ever
       // sees as the row that process committed.
@@ -109,9 +108,9 @@ describe("envio start --chain", () => {
       await running.waitUntilIdle()
 
       t.expect(
-        (await indexNames(~sql, ~pgSchema), await readyByChainId(~sql, ~pgSchema)),
+        (await hasSchemaIndex(~sql, ~pgSchema), await readyByChainId(~sql, ~pgSchema)),
         ~message="The same process picks the debt back up, with no restart",
-      ).toEqual(([aBIdIndexName], [("1", true), ("137", true)]))
+      ).toEqual((true, [("1", true), ("137", true)]))
     },
   )
 
@@ -124,17 +123,29 @@ describe("envio start --chain", () => {
       await catchUp(~indexer=first, ~source=source(1))
 
       t.expect(
-        (await indexNames(~sql, ~pgSchema), await readyByChainId(~sql, ~pgSchema)),
-        ~message="Chain 1 finished its backfill, but chain 137 is still behind, so nothing builds the indexes and no chain is ready",
-      ).toEqual(([], [("1", false), ("137", false)]))
+        (
+          await hasSchemaIndex(~sql, ~pgSchema),
+          await readyByChainId(~sql, ~pgSchema),
+          await first.metric("envio_schema_indexes_pending"),
+        ),
+        ~message="Chain 1 finished its backfill, but chain 137 is still behind, so nothing builds the indexes, no chain is ready, and the gauge says the indexes are outstanding",
+      ).toEqual((
+        false,
+        [("1", false), ("137", false)],
+        [{value: "1", labels: dict{}}],
+      ))
 
       let second = await first.restart(~chains=[ChainId.fromInt(137)], ())
       await catchUp(~indexer=second, ~source=source(137))
 
       t.expect(
-        (await indexNames(~sql, ~pgSchema), await readyByChainId(~sql, ~pgSchema)),
-        ~message="The last chain to catch up finds every chain at its head, builds the indexes, and readiness lands on every chain at once",
-      ).toEqual(([aBIdIndexName], [("1", true), ("137", true)]))
+        (
+          await hasSchemaIndex(~sql, ~pgSchema),
+          await readyByChainId(~sql, ~pgSchema),
+          await second.metric("envio_schema_indexes_pending"),
+        ),
+        ~message="The last chain to catch up finds every chain at its head, builds the indexes, readiness lands on every chain at once, and the gauge clears",
+      ).toEqual((true, [("1", true), ("137", true)], [{value: "0", labels: dict{}}]))
     },
   )
 })

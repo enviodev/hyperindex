@@ -112,7 +112,7 @@ pub async fn execute(
 
             // Before codegen, so a mistyped `--chain` fails in the moment rather
             // than after a full regeneration.
-            validate_chain_selection(&config, &start_args.chains)?;
+            validate_chain_selection(&config, &start_args.chains, start_args.restart)?;
 
             // Always regenerate so the runtime never boots against stale
             // codegen output (e.g. after an `envio` package upgrade).
@@ -124,7 +124,6 @@ pub async fn execute(
 
             // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
-
             Ok(Some(build_start_command(
                 &config,
                 start_args.restart,
@@ -221,9 +220,24 @@ pub fn build_start_command(
 /// hold, and both are cheaper to reject here than to discover at runtime: every
 /// id has to name a configured chain, and no entity may be shared across chains,
 /// since separate processes each advance their own checkpoint sequence.
-fn validate_chain_selection(config: &SystemConfig, chains: &[String]) -> Result<()> {
+fn validate_chain_selection(
+    config: &SystemConfig,
+    chains: &[String],
+    restart: bool,
+) -> Result<()> {
     if chains.is_empty() {
         return Ok(());
+    }
+
+    // Clap could reject this as a conflict, but the generic message wouldn't say
+    // what to do instead, and a reset is the one thing a `--chain` process can't
+    // do for itself: it would wipe the chains other processes are driving.
+    if restart {
+        anyhow::bail!(
+            "`envio start --chain` can't restart from scratch, because the database it clears \
+             holds the chains other processes are driving. Stop every chain's process, run \
+             `envio local db-migrate setup` once with the full config, then start them again."
+        );
     }
 
     let mut shared: Vec<&str> = config
@@ -332,20 +346,32 @@ chains:
     #[test]
     fn accepts_configured_chains_of_a_per_chain_schema() {
         let config = config(true);
-        assert!(validate_chain_selection(&config, &["137".to_string()]).is_ok());
+        assert!(validate_chain_selection(&config, &["137".to_string()], false).is_ok());
         assert!(
-            validate_chain_selection(&config, &["1".to_string(), "137".to_string()]).is_ok()
+            validate_chain_selection(&config, &["1".to_string(), "137".to_string()], false).is_ok()
         );
     }
 
     #[test]
     fn accepts_a_run_without_the_flag_whatever_the_schema() {
-        assert!(validate_chain_selection(&config(false), &[]).is_ok());
+        assert!(validate_chain_selection(&config(false), &[], false).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_restart_and_says_what_to_do_instead() {
+        let err = validate_chain_selection(&config(true), &["1".to_string()], true)
+            .expect_err("a restart under --chain should be rejected");
+        assert_eq!(
+            err.to_string(),
+            "`envio start --chain` can't restart from scratch, because the database it clears \
+             holds the chains other processes are driving. Stop every chain's process, run \
+             `envio local db-migrate setup` once with the full config, then start them again."
+        );
     }
 
     #[test]
     fn rejects_a_chain_the_config_does_not_declare() {
-        let err = validate_chain_selection(&config(true), &["42".to_string()])
+        let err = validate_chain_selection(&config(true), &["42".to_string()], false)
             .expect_err("an unconfigured chain should be rejected");
         assert_eq!(
             err.to_string(),
@@ -356,7 +382,7 @@ chains:
 
     #[test]
     fn rejects_a_schema_that_shares_entities_across_chains() {
-        let err = validate_chain_selection(&config(false), &["1".to_string()])
+        let err = validate_chain_selection(&config(false), &["1".to_string()], false)
             .expect_err("a cross-chain schema should be rejected");
         assert_eq!(
             err.to_string(),

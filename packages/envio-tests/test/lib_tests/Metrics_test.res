@@ -68,6 +68,7 @@ let baseMetrics: Metrics.t = {
   elapsedSeconds: 0.,
   targetBufferSize: 0,
   isInReorgThreshold: false,
+  owesSchemaIndexes: false,
   rollbackEnabled: false,
   maxBatchSize: 0,
   preloadSeconds: 0.,
@@ -197,6 +198,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       elapsedSeconds: 123.456,
       targetBufferSize: 5000,
       isInReorgThreshold: true,
+      owesSchemaIndexes: false,
       rollbackEnabled: true,
       maxBatchSize: 5000,
       preloadSeconds: 12.3456,
@@ -364,6 +366,10 @@ envio_processing_stalled_on_fetch_seconds 6.02
 # HELP envio_processing_stalled_on_storage_write_seconds Time the indexer paused processing because too many changes were still waiting to be written. A high rate means storage writes are the bottleneck: check envio_storage_write_seconds and the database performance.
 # TYPE envio_processing_stalled_on_storage_write_seconds counter
 envio_processing_stalled_on_storage_write_seconds 1.33
+
+# HELP envio_schema_indexes_pending Whether the indexes the schema declares have yet to be built. They are deferred until every chain in the database has finished backfilling, so this staying at 1 means some chain is still behind - with one indexer process per chain, most likely one whose process was never started. Queries relying on those indexes run unindexed while it holds.
+# TYPE envio_schema_indexes_pending gauge
+envio_schema_indexes_pending 0
 
 # HELP envio_progress_ready Whether the chain is fully synced to the head.
 # TYPE envio_progress_ready gauge

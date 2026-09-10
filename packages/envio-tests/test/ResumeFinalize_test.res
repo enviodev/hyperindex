@@ -271,9 +271,8 @@ describe("Resuming a backfill that never finalized", () => {
       ).toEqual((1, false))
 
       let restarted = await indexer.restart()
-      let restartedSource = source
-      restartedSource.resolveGetHeightOrThrow(101)
-      restartedSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
+      source.resolveGetHeightOrThrow(101)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
       await restarted.waitUntilReady()
       await restarted.waitUntilIdle()
 

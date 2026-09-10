@@ -95,6 +95,7 @@ let isFinalizingIndexes: t => bool
 let shouldRunFinalize: t => bool
 let recordFinalizeCheck: t => unit
 let clearSchemaIndexDebt: t => unit
+let schemaIndexWaitMillis: t => float
 let markCaughtUpIfSettled: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit
 let rollbackState: t => rollbackState

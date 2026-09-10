@@ -2117,6 +2117,14 @@ let make = (
       })
       switch outcome {
       | LockBusy =>
+        // Otherwise a sibling's multi-minute build leaves this process looking
+        // frozen, with nothing in its logs to say why.
+        if retryMillis === indexLockRetryMillis {
+          Logging.info({
+            "storage": storageName,
+            "msg": `Waiting on another process building the schema's indexes before "${name}".`,
+          })
+        }
         await Utils.delay(retryMillis)
         // Backs off, because each attempt reserves a pooled connection for its
         // transaction and the holder's build can run for minutes.

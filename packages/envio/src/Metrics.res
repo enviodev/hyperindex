@@ -114,6 +114,10 @@ type t = {
   elapsedSeconds: float,
   targetBufferSize: int,
   isInReorgThreshold: bool,
+  // The schema's deferred indexes are still owed, because some chain hasn't
+  // finished backfilling. Under `envio start --chain` that chain is usually
+  // another process's, so this is how an operator sees one waiting on a sibling.
+  owesSchemaIndexes: bool,
   rollbackEnabled: bool,
   maxBatchSize: int,
   preloadSeconds: float,
@@ -337,6 +341,12 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~help="Time the indexer paused processing because too many changes were still waiting to be written. A high rate means storage writes are the bottleneck: check envio_storage_write_seconds and the database performance.",
     ~kind="counter",
     ~value=metrics.processingStalledOnStorageWriteSeconds,
+  )
+  b->single(
+    ~name="envio_schema_indexes_pending",
+    ~help="Whether the indexes the schema declares have yet to be built. They are deferred until every chain in the database has finished backfilling, so this staying at 1 means some chain is still behind - with one indexer process per chain, most likely one whose process was never started. Queries relying on those indexes run unindexed while it holds.",
+    ~kind="gauge",
+    ~value=metrics.owesSchemaIndexes ? 1. : 0.,
   )
   b->series(
     ~name="envio_progress_ready",

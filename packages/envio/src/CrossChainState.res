@@ -21,6 +21,9 @@ type t = {
   // chain that read as behind for a moment leaves the debt to a later pass.
   // While it holds, the loop keeps re-entering the FinalizingIndexes phase.
   mutable owesSchemaIndexes: bool,
+  // When this run first found the indexes owed but not buildable, so a wait
+  // that goes on too long can be escalated from debug to warn.
+  mutable schemaIndexDebtSinceMillis: option<float>,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
 }
@@ -36,6 +39,7 @@ let make = (~chainStates, ~isRealtime, ~targetBufferSize=calculateTargetBufferSi
   {
     chainStates,
     owesSchemaIndexes: !isRealtime,
+    schemaIndexDebtSinceMillis: None,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isCaughtUp: isRealtime,
@@ -208,7 +212,23 @@ let markCaughtUpOnResume = (crossChainState: t) => {
 }
 
 let owesSchemaIndexes = (crossChainState: t) => crossChainState.owesSchemaIndexes
-let clearSchemaIndexDebt = (crossChainState: t) => crossChainState.owesSchemaIndexes = false
+
+let clearSchemaIndexDebt = (crossChainState: t) => {
+  crossChainState.owesSchemaIndexes = false
+  crossChainState.schemaIndexDebtSinceMillis = None
+}
+
+// How long the indexes have been owed and unbuildable, starting the clock on the
+// first pass that had to wait.
+let schemaIndexWaitMillis = (crossChainState: t) => {
+  let now = Date.now()
+  switch crossChainState.schemaIndexDebtSinceMillis {
+  | Some(since) => now -. since
+  | None =>
+    crossChainState.schemaIndexDebtSinceMillis = Some(now)
+    0.
+  }
+}
 
 // Concludes the FinalizingIndexes phase and switches the indexer to realtime.
 // Under `envio start --chain` it is reached whether or not this process was the

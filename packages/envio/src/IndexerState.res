@@ -524,6 +524,9 @@ let recordFinalizeCheck = (state: t) => state.lastFinalizeCheckMillis = Date.now
 let clearSchemaIndexDebt = (state: t) =>
   state.crossChainState->CrossChainState.clearSchemaIndexDebt
 
+let schemaIndexWaitMillis = (state: t) =>
+  state.crossChainState->CrossChainState.schemaIndexWaitMillis
+
 let markCaughtUpIfSettled = (state: t) =>
   state.crossChainState->CrossChainState.markCaughtUpIfSettled
 
@@ -544,6 +547,7 @@ let simulateDeadInputTracker = (state: t) => state.simulateDeadInputTracker
 // counters for the /metrics endpoint, the TUI and the console API.
 let toMetrics = (state: t): Metrics.t => {
   let chainStates = state.crossChainState->CrossChainState.chainStates
+  let owesSchemaIndexes = state.crossChainState->CrossChainState.owesSchemaIndexes
   let sourceRequests = []
   let sourceHeights = []
   let sourceHeightStreams = []
@@ -594,6 +598,7 @@ let toMetrics = (state: t): Metrics.t => {
     elapsedSeconds: state.indexerStartTimeRef->Performance.secondsSince,
     targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
     isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
+    owesSchemaIndexes,
     rollbackEnabled: state.config.shouldRollbackOnReorg,
     maxBatchSize: state.config.batchSize,
     preloadSeconds: state.preloadSeconds,

@@ -1,11 +1,11 @@
 // The FinalizingIndexes phase. Reached from the processing loop when this
 // process's chains have caught up: processing is already paused (the loop awaits
-// this), pending writes are flushed, the chains are marked caught up, and then
-// — only if no chain in the schema is still backfilling — storage builds every
-// missing schema-defined index and, once they all verify, commits `ready_at`.
-// A failure part-way leaves the indexes built so far in place and reaches the
-// processing loop's error boundary; the retry only owes what's left. Either way
-// no chain carries `ready_at` while an index the schema promised is missing.
+// this), pending writes are flushed, and then — only if no chain in the schema
+// is still backfilling — storage builds every missing schema-defined index and,
+// once they all verify, commits `ready_at`. A failure part-way leaves the
+// indexes built so far in place and reaches the processing loop's error
+// boundary; the retry only owes what's left. Either way no chain carries
+// `ready_at` while an index the schema promised is missing.
 
 // Whether a chain still has backfill left, judged from what it last committed
 // rather than from a stamp: `progress_block` and `source_block` are written as
@@ -32,7 +32,7 @@
 
 // The barrier `envio start --chain` turns on: the schema's indexes are global
 // objects on shared tables, so the process that finds no chain left backfilling
-// is the one that builds them.
+// is the one that builds them, and clears the debt once it has.
 //
 // Every caller reads the chains strictly after flushing its own writes, never
 // before. Two processes finishing together would otherwise each see the other
@@ -40,22 +40,15 @@
 // least one of them sees every chain caught up, and that one is still running
 // at the moment it reads.
 %%private(
-  let buildSchemaIndexesIfLast = async (
-    persistence: Persistence.t,
-    ~config: Config.t,
-    ~readyAt,
-    ~announce,
-  ) => {
+  let settleSchemaIndexDebt = async (state: IndexerState.t, ~readyAt, ~announce) => {
+    let persistence = state->IndexerState.persistence
     let storage = persistence->Persistence.getInitializedStorageOrThrow
-    let blockLagById = Dict.make()
-    config.configuredChains->Array.forEach(chain =>
-      blockLagById->ChainId.Dict.set(chain.id, chain.blockLag)
-    )
+    let blockLagByChainId = (state->IndexerState.config).blockLagByChainId
     let pending =
       (await storage.readChainProgress())
       ->Array.filter(progress =>
         progress->isStillBackfilling(
-          ~blockLag=blockLagById
+          ~blockLag=blockLagByChainId
           ->ChainId.Dict.dangerouslyGetNonOption(progress.id)
           ->Option.getOr(0),
         )
@@ -65,17 +58,35 @@
     switch pending {
     | [] =>
       await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt)
-      true
+      state->IndexerState.clearSchemaIndexDebt
     | _ =>
-      // At info the first time and at debug on every pass after it: the retry
-      // runs on each batch while the debt stands, and a chain can be behind for
-      // hours.
+      // The retry comes back every `finalizeRetryIntervalMillis` while the debt
+      // stands, so most passes are quiet: info to announce it, debug while the
+      // wait is still reasonable. Once it has gone on too long the operator
+      // needs telling, because everything else about this process looks healthy
+      // while its queries run unindexed.
+      let waitMillis = state->IndexerState.schemaIndexWaitMillis
+      let hasWaitedTooLong =
+        waitMillis >= (state->IndexerState.config).finalizeWaitWarnAfterMillis
       let message = {
-        "msg": `Leaving the schema's indexes to whichever chain finishes last. Still backfilling: ${pending->Array.joinUnsafe(", ")}.`,
+        "msg": hasWaitedTooLong
+          ? `The indexes the schema declares still aren't built after ${(waitMillis /.
+              60_000.)->Float.toFixed(~digits=0)} minutes, because these chains haven't finished backfilling: ${pending->Array.joinUnsafe(
+              ", ",
+            )}. Queries relying on those indexes run unindexed until they do. If a chain is listed that nothing is indexing, start its process.`
+          : `Leaving the schema's indexes to whichever chain finishes last. Still backfilling: ${pending->Array.joinUnsafe(
+              ", ",
+            )}.`,
         "pendingChains": pending,
+        "waitedSeconds": waitMillis /. 1000.,
       }
-      announce ? Logging.info(message) : Logging.debug(message)
-      false
+      if hasWaitedTooLong {
+        Logging.warn(message)
+      } else if announce {
+        Logging.info(message)
+      } else {
+        Logging.debug(message)
+      }
     }
   }
 )
@@ -85,7 +96,6 @@ let runOnce = async (state: IndexerState.t) => {
   // once-only half — announcing, flushing, and switching to realtime — is gated
   // on this being the first pass.
   let isFirstPass = !(state->IndexerState.isRealtime)
-  state->IndexerState.recordFinalizeCheck
 
   if isFirstPass {
     Logging.info(
@@ -103,15 +113,7 @@ let runOnce = async (state: IndexerState.t) => {
   if !(state->IndexerState.hasFailedWrite) {
     let readyAt = Date.make()
 
-    if (
-      await state->IndexerState.persistence->buildSchemaIndexesIfLast(
-        ~config=state->IndexerState.config,
-        ~readyAt,
-        ~announce=isFirstPass,
-      )
-    ) {
-      state->IndexerState.clearSchemaIndexDebt
-    }
+    await state->settleSchemaIndexDebt(~readyAt, ~announce=isFirstPass)
 
     if isFirstPass {
       // Only after the build: in-memory readiness must never claim indexes the
@@ -132,42 +134,31 @@ let run = (state: IndexerState.t) =>
   switch state->IndexerState.finalizeFiber {
   | Some(fiber) => fiber
   | None =>
+    state->IndexerState.recordFinalizeCheck
     let fiber = runOnce(state)->Promise.finally(() => state->IndexerState.endFinalizeFiber)
     state->IndexerState.beginFinalizeFiber(fiber)
     fiber
   }
 
-// An indexer that resumes with its chains already caught up never reaches `run`,
-// so this is the only pass that can build an index the schema promises —
-// `ensureQueryIndexes` only covers what a getWhere actually asks for. Three
-// cases reach it: an index the database lost while the indexer was down, a
-// finalize that died between marking the chains caught up and committing the
-// indexes, and an `envio start --chain` process that resumes after the sibling
-// holding up the barrier has since finished.
+// An indexer that resumes with its chains already caught up never reaches `run`
+// from the processing loop, so `IndexerLoop` calls it once at startup instead.
+// It is the same pass: `isFirstPass` is false on a resumed realtime run, so it
+// skips the announcing and the switch to realtime and does only the part that
+// matters here — building whatever the schema is still missing.
+//
+// Three cases reach it: an index the database lost while the indexer was down, a
+// finalize that died before committing them, and an `envio start --chain`
+// process that resumes after the sibling holding up the barrier has finished.
 //
 // Best-effort and not awaited by the loop: indexing is already live and correct
 // without the indexes, just slower, and a failure here must not take the indexer
-// down. Whatever it fails to build, the next restart owes again.
-let repairSchemaIndexes = async (state: IndexerState.t) => {
-  let persistence = state->IndexerState.persistence
-  // Nothing awaits this, so a rejection escaping here would reach the process's
-  // unhandled-rejection handler and take the indexer down. The whole body is
-  // guarded, the barrier's own query included.
-  try {
-    if (
-      await persistence->buildSchemaIndexesIfLast(
-        ~config=state->IndexerState.config,
-        ~readyAt=Date.make(),
-        ~announce=true,
-      )
-    ) {
-      state->IndexerState.clearSchemaIndexDebt
-    }
-  } catch {
-  | exn =>
+// down — nothing awaits this, so a rejection would otherwise reach the process's
+// unhandled-rejection handler. Whatever it fails to build, the next restart owes
+// again.
+let repairSchemaIndexes = (state: IndexerState.t) =>
+  run(state)->Promise.catch(async exn =>
     Logging.warn({
       "msg": "Failed to restore the indexes the schema promises. Queries relying on them run unindexed until the next restart.",
       "err": exn->Utils.prettifyExn,
     })
-  }
-}
+  )

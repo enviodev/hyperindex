@@ -119,10 +119,11 @@ type t = {
   // they can express fits an INTEGER.
   chainIdMode: ChainId.mode,
   chainMap: ChainMap.t<chain>,
-  // Every chain config.yaml declares, before `envio start --chain` narrows
-  // `chainMap` to the ones this process drives. The schema is migrated for all
-  // of them, so anything reasoning about the whole indexer reads this.
-  configuredChains: array<chain>,
+  // Every chain config.yaml declares and its block lag, kept whole while
+  // `envio start --chain` narrows `chainMap` to the ones this process drives.
+  // The schema is migrated for all of them, so judging whether the indexer as a
+  // whole has caught up needs the lag of chains this process never sees.
+  blockLagByChainId: dict<int>,
   // Derived from every chain's contracts, so an id means the same contract on
   // every chain and on every restart.
   contractMapping: ContractMapping.t,
@@ -142,6 +143,11 @@ type t = {
   // before asking again. Only the retries are held back, so this never delays a
   // run whose chains are all its own. Overridable in tests.
   finalizeRetryIntervalMillis: float,
+  // How long the schema's indexes may stay owed before each retry says so at
+  // warn rather than debug. An operator who forgot to start a chain otherwise
+  // sees a healthy realtime indexer whose queries are quietly unindexed.
+  // Overridable in tests.
+  finalizeWaitWarnAfterMillis: float,
   lowercaseAddresses: bool,
   isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
@@ -1086,7 +1092,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     storage: globalStorage,
     chainIdMode: publicConfig["chainIdMode"]->Option.getOr(Int32),
     chainMap,
-    configuredChains: chains,
+    blockLagByChainId: {
+      let byId = Dict.make()
+      chains->Array.forEach(chain => byId->ChainId.Dict.set(chain.id, chain.blockLag))
+      byId
+    },
     contractMapping: contractMappingOf(~chainConfigs=chains),
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
@@ -1096,6 +1106,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,
     finalizeRetryIntervalMillis: 30_000.,
+    finalizeWaitWarnAfterMillis: 15. *. 60. *. 1000.,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,

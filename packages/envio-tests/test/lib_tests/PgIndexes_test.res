@@ -481,12 +481,7 @@ describe("Indexes built against a real schema", () => {
 
     t.expect(
       (
-        fresh
-        ->Array.map((progress: Persistence.chainProgress) => (
-          progress.progressBlockNumber,
-          progress.sourceBlockNumber,
-        ))
-        ->Array.length,
+        fresh->Array.length,
         fresh->Array.every((progress: Persistence.chainProgress) =>
           progress.progressBlockNumber === -1 && progress.sourceBlockNumber === 0
         ),

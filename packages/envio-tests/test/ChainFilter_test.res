@@ -82,6 +82,8 @@ describe("Config.filterChains", () => {
     let before = Config.hasChainFilter()
     Config.setActiveChains([chainId(1), chainId(137)])
     let namingAll = Config.hasChainFilter()
+    // Put back before asserting, so a failure can't leak the filter into the
+    // rest of the suite.
     Config.setActiveChains([])
     t.expect((before, namingAll, Config.hasChainFilter())).toEqual((false, true, false))
   })
