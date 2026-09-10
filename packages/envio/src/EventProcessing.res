@@ -157,9 +157,9 @@ let preloadBatchOrThrow = async (
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
     let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpointIdx)
-    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpointIdx)
+    let checkpointItemsCount = batch.checkpointItemsCount->Array.getUnsafe(checkpointIdx)
 
-    for idx in 0 to checkpointEventsProcessed - 1 {
+    for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
       | Event(_) =>
@@ -233,7 +233,7 @@ let preloadBatchOrThrow = async (
       }
     }
 
-    itemIdx := itemIdx.contents + checkpointEventsProcessed
+    itemIdx := itemIdx.contents + checkpointItemsCount
   }
 
   let _ = await Promise.all(promises)
@@ -251,9 +251,9 @@ let runBatchHandlersOrThrow = async (
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
     let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpointIdx)
-    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpointIdx)
+    let checkpointItemsCount = batch.checkpointItemsCount->Array.getUnsafe(checkpointIdx)
 
-    for idx in 0 to checkpointEventsProcessed - 1 {
+    for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
 
       await runHandlerOrThrow(
@@ -266,7 +266,7 @@ let runBatchHandlersOrThrow = async (
         ~chains,
       )
     }
-    itemIdx := itemIdx.contents + checkpointEventsProcessed
+    itemIdx := itemIdx.contents + checkpointItemsCount
   }
 }
 
