@@ -6,8 +6,7 @@ import { indexer, type SvmInstruction, type Transfer } from "envio";
 /** USD Coin. Swap in any SPL mint to follow that token instead. */
 const MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-/** Only the fields listed here are fetched, so keep the list to what the
- *  handlers read — every extra field is bandwidth on every instruction. */
+/** Only the listed fields are fetched, so keep it to what the handlers read. */
 const fields = {
   instruction: ["accounts", "args", "path"],
   transaction: ["signature", "transactionIndex"],
@@ -19,8 +18,6 @@ type TokenTransfer =
   | SvmInstruction<typeof fields, "SplToken", "transfer">
   | SvmInstruction<typeof fields, "SplToken", "transferChecked">;
 
-/** `path` locates the instruction inside its transaction's CPI tree, so
- *  (slot, transaction, path) is unique for top-level and inner calls alike. */
 const toTransfer = (instruction: TokenTransfer, checked: boolean): Transfer => ({
   id: `${instruction.block.slot}-${instruction.transaction.transactionIndex}-${instruction.path.join(".")}`,
   amount: instruction.args.amount,
@@ -33,8 +30,7 @@ const toTransfer = (instruction: TokenTransfer, checked: boolean): Transfer => (
   checked,
 });
 
-// `transferChecked` names the mint in its account list, so `where` narrows the
-// stream server-side and nothing arrives that has to be thrown away.
+// `transferChecked` names its mint, so `where` filters server-side.
 indexer.onInstruction(
   {
     program: "SplToken",
@@ -47,13 +43,9 @@ indexer.onInstruction(
   },
 );
 
-// Plain `transfer` carries no mint — its accounts are (source, destination,
-// authority) — so which token moved is only knowable from the transaction's
-// token balances, which `fields.accountActivity` joins onto the named accounts.
-// Either account answers it, since SPL Token rejects a transfer between
-// different mints, and reading only the source would lose the transfers whose
-// source the transaction itself opened: an account with no balance before the
-// transaction is absent from the records.
+// Plain `transfer` does not, so the mint comes from the token balances
+// `fields.accountActivity` joins onto the accounts. Either one answers it, and a
+// source the transaction itself opened has no balance to report — hence both.
 indexer.onInstruction(
   { program: "SplToken", instruction: "transfer", fields },
   async ({ instruction, context }) => {
