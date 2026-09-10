@@ -8,7 +8,7 @@ module ChainLine = {
     ~stdoutColumns: int,
     ~progressBlock: int,
     ~bufferBlock: int,
-    ~sourceBlock: int,
+    ~toBlock: int,
     ~startBlock,
     ~endBlock,
     ~poweredByHyperSync,
@@ -18,10 +18,6 @@ module ChainLine = {
     let chainsWidth = Pervasives.min(stdoutColumns - 2, 60)
     let headerWidth = maxChainIdLength + 10 // 10 for additional text
 
-    let toBlock = switch endBlock {
-    | Some(endBlock) => Pervasives.min(sourceBlock, endBlock)
-    | None => sourceBlock
-    }
     let progressBlockStr = progressBlock->TuiData.formatLocaleString
     let toBlockStr = toBlock->TuiData.formatLocaleString
     let eventsStr = eventsProcessed->TuiData.formatFloatLocaleString
@@ -170,8 +166,8 @@ module App = {
           chainId={chainData.chainId}
           maxChainIdLength={maxChainIdLength}
           progressBlock={chainData.progressBlock}
-          bufferBlock={chainData.latestFetchedBlockNumber}
-          sourceBlock={chainData.sourceBlock}
+          bufferBlock={chainData.bufferBlock}
+          toBlock={chainData.toBlock}
           startBlock={chainData.startBlock}
           endBlock={chainData.endBlock}
           stdoutColumns={stdoutColumns}

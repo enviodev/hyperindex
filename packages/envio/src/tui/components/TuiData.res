@@ -13,8 +13,12 @@ type progress = SearchingForEvents | Syncing(syncing) | Synced(synced)
 type chain = {
   chainId: string,
   eventsProcessed: float,
+  // Clamped into [startBlock, toBlock]: the source height is 0 until the first
+  // height fetch lands, and the buffer starts one block below startBlock, so raw
+  // values can fall outside the range the progress bar counts up to.
   progressBlock: int,
-  sourceBlock: int,
+  bufferBlock: int,
+  toBlock: int,
   startBlock: int,
   endBlock: option<int>,
   poweredByHyperSync: bool,
@@ -58,12 +62,23 @@ let fromChainMetrics = (m: Metrics.chainMetrics, ~blockUnit): chain => {
     }
   }
 
+  let toBlock = Pervasives.max(
+    switch m.endBlock {
+    | Some(endBlock) => Pervasives.min(m.sourceBlockNumber, endBlock)
+    | None => m.sourceBlockNumber
+    },
+    m.startBlock,
+  )
+  let clampToRange = blockNumber =>
+    blockNumber->Pervasives.max(m.startBlock)->Pervasives.min(toBlock)
+
   {
     progress,
     chainId: m.chainId->ChainId.toString,
     eventsProcessed: m.numEventsProcessed,
-    progressBlock: Pervasives.max(m.progressBlockNumber, m.startBlock),
-    sourceBlock: m.sourceBlockNumber,
+    progressBlock: m.progressBlockNumber->clampToRange,
+    bufferBlock: m.latestFetchedBlockNumber->clampToRange,
+    toBlock,
     startBlock: m.startBlock,
     endBlock: m.endBlock,
     poweredByHyperSync: m.poweredByHyperSync,

@@ -39,6 +39,7 @@ let make = (
   ~progressBlockNumber,
   ~firstEventBlockNumber,
   ~timestampCaughtUpToHeadOrEndblock=None,
+  ~sourceBlockNumber=1000,
 ): Metrics.chainMetrics =>
   ChainState.makeFromDbState(
     chainConfig,
@@ -52,7 +53,7 @@ let make = (
       firstEventBlockNumber,
       timestampCaughtUpToHeadOrEndblock,
       addressRows: AddressRows.emptySeedRows(),
-      sourceBlockNumber: 1000,
+      sourceBlockNumber,
     },
     ~reorgCheckpoints=[],
     ~isInReorgThreshold=false,

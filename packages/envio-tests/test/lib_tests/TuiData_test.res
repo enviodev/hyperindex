@@ -39,6 +39,19 @@ describe("TuiData.fromChainMetrics", () => {
     ])
   })
 
+  // The source height is unknown until the first height fetch lands, so a
+  // resumed chain would otherwise render progress beyond the block it counts up to.
+  it("Keeps the rendered blocks inside the range the bar counts up to", t => {
+    let chain =
+      make(
+        ~progressBlockNumber=400,
+        ~firstEventBlockNumber=Some(150),
+        ~sourceBlockNumber=0,
+      )->TuiData.fromChainMetrics(~blockUnit="Block")
+
+    t.expect((chain.progressBlock, chain.bufferBlock, chain.toBlock)).toStrictEqual((100, 100, 100))
+  })
+
   it("Clamps the displayed progress block to the chain's start block", t => {
     t.expect(
       make(~progressBlockNumber=-1, ~firstEventBlockNumber=None)->TuiData.fromChainMetrics(
@@ -48,7 +61,8 @@ describe("TuiData.fromChainMetrics", () => {
       TuiData.chainId: "1",
       eventsProcessed: 7.,
       progressBlock: 100,
-      sourceBlock: 1000,
+      bufferBlock: 1000,
+      toBlock: 1000,
       startBlock: 100,
       endBlock: None,
       poweredByHyperSync: false,
