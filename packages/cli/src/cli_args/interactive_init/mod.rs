@@ -179,7 +179,7 @@ fn get_svm_ecosystem(init_flow: Option<clap_definitions::svm::InitFlow>) -> Resu
         },
         None => Ecosystem::Svm {
             init_flow: crate::init_config::svm::InitFlow::Template(
-                crate::init_config::svm::Template::FeatureBlockHandler,
+                crate::init_config::svm::Template::UsdcTransfers,
             ),
         },
     })
