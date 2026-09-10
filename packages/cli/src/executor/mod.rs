@@ -220,11 +220,7 @@ pub fn build_start_command(
 /// hold, and both are cheaper to reject here than to discover at runtime: every
 /// id has to name a configured chain, and no entity may be shared across chains,
 /// since separate processes each advance their own checkpoint sequence.
-fn validate_chain_selection(
-    config: &SystemConfig,
-    chains: &[String],
-    restart: bool,
-) -> Result<()> {
+fn validate_chain_selection(config: &SystemConfig, chains: &[String], restart: bool) -> Result<()> {
     if chains.is_empty() {
         return Ok(());
     }
