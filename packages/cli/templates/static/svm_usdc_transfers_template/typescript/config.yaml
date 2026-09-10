@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=./node_modules/envio/svm.schema.json
+name: solana-usdc-transfers
+description: Every USDC transfer through the SPL Token program on Solana.
+ecosystem: svm
+chains:
+  - id: solana
+    # Solana produces ~2.5 slots a second, so this is a few days of history.
+    # `curl -s https://solana.hypersync.xyz/height` gives the current head if
+    # you want a shorter backfill, and `latest` starts at the head instead.
+    start_slot: 445000000
+programs:
+  - name: SplToken
+    program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+    # SPL Token dispatches on a single leading byte, and two instructions move
+    # tokens. `transferChecked` names the mint it moves in account slot 1;
+    # `transfer` does not, which is what the handler works around.
+    instructions:
+      - name: transfer
+        discriminator: "0x03"
+        accounts: [source, destination, authority]
+        args:
+          - name: amount
+            type: u64
+      - name: transferChecked
+        discriminator: "0x0c"
+        accounts: [source, mint, destination, authority]
+        args:
+          - name: amount
+            type: u64
+          - name: decimals
+            type: u8
