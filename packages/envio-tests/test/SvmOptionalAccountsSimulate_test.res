@@ -86,8 +86,14 @@ describe("SVM optional accounts through simulate", () => {
       },
     });
     t.expect([await indexer.Swap.getOrThrow("1"), await indexer.Swap.getOrThrow("2")]).toEqual([
-      { id: "1", payer: "${payerPk}", authority: "absent", mint: "${mintPk}" },
-      { id: "2", payer: "${payerPk}", authority: "${authorityPk}", mint: "${mintPk}" },
+      { id: "1", payer: "${payerPk}", authority: "absent", mint: "${mintPk}", chainId: 7565164 },
+      {
+        id: "2",
+        payer: "${payerPk}",
+        authority: "${authorityPk}",
+        mint: "${mintPk}",
+        chainId: 7565164,
+      },
     ]);
   });
 
@@ -117,8 +123,14 @@ describe("SVM optional accounts through simulate", () => {
       },
     });
     t.expect([await indexer.Swap.getOrThrow("1"), await indexer.Swap.getOrThrow("2")]).toEqual([
-      { id: "1", payer: "${payerPk}", authority: "absent", mint: "${mintPk}" },
-      { id: "2", payer: "${payerPk}", authority: "${authorityPk}", mint: "${mintPk}" },
+      { id: "1", payer: "${payerPk}", authority: "absent", mint: "${mintPk}", chainId: 7565164 },
+      {
+        id: "2",
+        payer: "${payerPk}",
+        authority: "${authorityPk}",
+        mint: "${mintPk}",
+        chainId: 7565164,
+      },
     ]);
   });
 
@@ -145,6 +157,7 @@ describe("SVM optional accounts through simulate", () => {
       payer: "${programId}",
       authority: "absent",
       mint: "${mintPk}",
+      chainId: 7565164,
     });
   });
 });

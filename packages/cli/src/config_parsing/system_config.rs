@@ -1027,7 +1027,7 @@ impl SystemConfig {
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
-        let default_scope = base_config.default_chain_scope();
+        let default_scope = human_config.default_chain_scope();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
         validate_relationship_storage(&storage, &schema)?;
@@ -1566,7 +1566,7 @@ impl SystemConfig {
         };
 
         let base_config = human_config.get_base_config();
-        let default_scope = base_config.default_chain_scope();
+        let default_scope = human_config.default_chain_scope();
         let schema = source.load_schema(
             &base_config.schema,
             default_scope,

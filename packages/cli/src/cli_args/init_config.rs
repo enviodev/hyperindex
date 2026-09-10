@@ -169,9 +169,6 @@ pub mod evm {
                     handlers: None,
                     full_batch_size: None,
                     storage: None,
-                    // The recommended mode for a new indexer: an entity id is
-                    // scoped to its chain unless it opts into `@crossChain`.
-                    disable_default_cross_chain: Some(true),
                 },
                 ecosystem: None,
                 contracts,
@@ -182,6 +179,9 @@ pub mod evm {
                 raw_events: None,
                 bytes_type: None,
                 address_format: None,
+                // The recommended mode for a new indexer: an entity id is
+                // scoped to its chain unless it opts into `@crossChain`.
+                disable_default_cross_chain: Some(true),
             })
         }
 
@@ -314,14 +314,14 @@ pub mod fuel {
                     handlers: None,
                     full_batch_size: None,
                     storage: None,
-                    // The recommended mode for a new indexer: an entity id is
-                    // scoped to its chain unless it opts into `@crossChain`.
-                    disable_default_cross_chain: Some(true),
                 },
                 ecosystem: EcosystemTag::Fuel,
                 contracts: None,
                 raw_events: None,
                 bytes_type: None,
+                // The recommended mode for a new indexer: an entity id is
+                // scoped to its chain unless it opts into `@crossChain`.
+                disable_default_cross_chain: Some(true),
                 chains: network_configs,
             }
         }

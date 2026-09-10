@@ -48,6 +48,10 @@ type GlobalCounter @crossChain {   # one row shared by every chain
 `@crossChain` is only valid when `disable_default_cross_chain: true` — without
 the flag entities are already cross-chain and codegen rejects the directive.
 
+SVM indexers are always in per-chain mode: `disable_default_cross_chain` is not
+a key of an `ecosystem: svm` config.yaml, and `@crossChain` works there without
+it.
+
 Per-chain entities reserve the `chainId` column name (`chain_id` under
 `column_name_format: snake_case`), so a schema field can't claim it.
 

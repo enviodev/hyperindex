@@ -172,27 +172,6 @@ pub struct BaseConfig {
                        {default: true}`."
     )]
     pub storage: Option<StorageConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(
-        description = "Make entities and effect caches per-chain instead of shared across every \
-                       chain (recommended). Sharing then becomes explicit — add `@crossChain` to \
-                       an entity in schema.graphql or `crossChain: true` to an effect. (default: \
-                       false)"
-    )]
-    pub disable_default_cross_chain: Option<bool>,
-}
-
-impl BaseConfig {
-    /// Entities and effect caches are shared across chains unless the config
-    /// opts out. Decides which entities get an appended chain-id column, so the
-    /// schema parser and the validators have to agree on it.
-    pub fn default_chain_scope(&self) -> DefaultChainScope {
-        if self.disable_default_cross_chain.unwrap_or(false) {
-            DefaultChainScope::PerChain
-        } else {
-            DefaultChainScope::CrossChain
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -498,6 +477,24 @@ impl HumanConfig {
         }
     }
 
+    /// Only EVM and Fuel can pick: their existing projects predate cross-chain
+    /// being opt-out and keep sharing unless they opt out. SVM shipped per-chain
+    /// and has nothing to keep compatible with. Decides which entities get an
+    /// appended chain-id column, so the schema parser and the validators have to
+    /// agree on it.
+    pub fn default_chain_scope(&self) -> DefaultChainScope {
+        let disabled = match &self {
+            HumanConfig::Evm(human_config) => human_config.disable_default_cross_chain,
+            HumanConfig::Fuel(human_config) => human_config.disable_default_cross_chain,
+            HumanConfig::Svm(_) => return DefaultChainScope::PerChain,
+        };
+        if disabled.unwrap_or(false) {
+            DefaultChainScope::PerChain
+        } else {
+            DefaultChainScope::CrossChain
+        }
+    }
+
     /// Only EVM and Fuel can pick: their existing projects predate raw bytes and
     /// keep hex strings unless they opt in. SVM shipped with `Uint8Array` and has
     /// nothing to keep compatible with.
@@ -597,6 +594,14 @@ pub mod evm {
                            Postgres, String in ClickHouse). (default: hex)"
         )]
         pub bytes_type: Option<BytesType>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Make entities and effect caches per-chain instead of shared across \
+                           every chain (recommended). Sharing then becomes explicit — add \
+                           `@crossChain` to an entity in schema.graphql or `crossChain: true` to \
+                           an effect. (default: false)"
+        )]
+        pub disable_default_cross_chain: Option<bool>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -1018,6 +1023,14 @@ pub mod fuel {
                            Postgres, String in ClickHouse). (default: hex)"
         )]
         pub bytes_type: Option<BytesType>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Make entities and effect caches per-chain instead of shared across \
+                           every chain (recommended). Sharing then becomes explicit — add \
+                           `@crossChain` to an entity in schema.graphql or `crossChain: true` to \
+                           an effect. (default: false)"
+        )]
+        pub disable_default_cross_chain: Option<bool>,
     }
 
     impl Display for HumanConfig {
@@ -1865,6 +1878,7 @@ mod tests {
         ChainContract, StartBlock,
     };
     use crate::{
+        config_parsing::entity_parsing::DefaultChainScope,
         config_parsing::human_config::{fuel, BaseConfig},
         utils::normalized_list::NormalizedList,
     };
@@ -1989,6 +2003,54 @@ mod tests {
                      column 13"
                         .to_string()
                 ),
+            )
+        );
+    }
+
+    #[test]
+    fn default_chain_scope_is_cross_chain_unless_evm_or_fuel_opt_out_and_always_per_chain_on_svm() {
+        let evm = |extra: &str| {
+            super::HumanConfig::Evm(
+                serde_yaml::from_str::<HumanConfig>(&format!("name: t\nchains: []\n{extra}"))
+                    .unwrap(),
+            )
+            .default_chain_scope()
+        };
+        let fuel = |extra: &str| {
+            super::HumanConfig::Fuel(
+                serde_yaml::from_str::<fuel::HumanConfig>(&format!(
+                    "name: t\necosystem: fuel\nchains: []\n{extra}"
+                ))
+                .unwrap(),
+            )
+            .default_chain_scope()
+        };
+        let svm = |extra: &str| {
+            serde_yaml::from_str::<super::svm::HumanConfig>(&format!(
+                "name: t\necosystem: svm\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Svm)
+            .map(|config: super::HumanConfig| config.default_chain_scope())
+            .map_err(|error: serde_yaml::Error| error.to_string())
+        };
+        assert_eq!(
+            (
+                evm(""),
+                evm("disable_default_cross_chain: true"),
+                fuel(""),
+                fuel("disable_default_cross_chain: true"),
+                svm(""),
+                svm("disable_default_cross_chain: true"),
+                svm("disable_default_cross_chain: false"),
+            ),
+            (
+                DefaultChainScope::CrossChain,
+                DefaultChainScope::PerChain,
+                DefaultChainScope::CrossChain,
+                DefaultChainScope::PerChain,
+                Ok(DefaultChainScope::PerChain),
+                Err("unknown field `disable_default_cross_chain`".to_string()),
+                Err("unknown field `disable_default_cross_chain`".to_string()),
             )
         );
     }
@@ -2194,12 +2256,12 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 handlers: None,
                 full_batch_size: None,
                 storage: None,
-                disable_default_cross_chain: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
             bytes_type: None,
+            disable_default_cross_chain: None,
             chains: vec![fuel::Chain {
                 id: 0,
                 skip: None,
@@ -2248,12 +2310,12 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 handlers: None,
                 full_batch_size: None,
                 storage: None,
-                disable_default_cross_chain: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
             bytes_type: None,
+            disable_default_cross_chain: None,
             chains: vec![],
         };
 

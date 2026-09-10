@@ -54,6 +54,7 @@ describe("USDC transfers", () => {
         slot: START_SLOT,
         timestamp: 1_800_000_000,
         checked: true,
+        chainId: SOLANA,
       },
     ]);
   });
@@ -98,6 +99,7 @@ describe("USDC transfers", () => {
         slot: START_SLOT,
         timestamp: 1_800_000_000,
         checked: false,
+        chainId: SOLANA,
       },
     ]);
   });

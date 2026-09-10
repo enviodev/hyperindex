@@ -141,8 +141,8 @@ describe("SVM instruction layout through the user API", () => {
       await indexer.Call.getOrThrow("1"),
       await indexer.Call.getOrThrow("2"),
     ]).toEqual([
-      { id: "1", discriminator: "0x09ab" },
-      { id: "2", discriminator: "0xff" },
+      { id: "1", discriminator: "0x09ab", chainId: 7565164 },
+      { id: "2", discriminator: "0xff", chainId: 7565164 },
     ]);
   });
 
@@ -163,7 +163,7 @@ describe("SVM instruction layout through the user API", () => {
         },
       },
     });
-    t.expect(await indexer.Named.getOrThrow("1")).toEqual({ id: "1", source: "${sourcePk}" });
+    t.expect(await indexer.Named.getOrThrow("1")).toEqual({ id: "1", source: "${sourcePk}", chainId: 7565164 });
   });
 
   // \`args\` alone attaches the decoder; the slots stay positional.
@@ -188,6 +188,7 @@ describe("SVM instruction layout through the user API", () => {
       id: "1",
       amount: 42n,
       firstAccount: "${destinationPk}",
+      chainId: 7565164,
     });
   });
 
@@ -202,7 +203,7 @@ describe("SVM instruction layout through the user API", () => {
         },
       },
     });
-    t.expect(await indexer.Bare.getOrThrow("1")).toEqual({ id: "1" });
+    t.expect(await indexer.Bare.getOrThrow("1")).toEqual({ id: "1", chainId: 7565164 });
   });
 });
 `,

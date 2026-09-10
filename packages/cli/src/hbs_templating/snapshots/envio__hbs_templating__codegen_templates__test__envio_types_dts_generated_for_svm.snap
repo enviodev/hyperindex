@@ -32,7 +32,7 @@ declare module "envio" {
         };
       } };
       entities: Entities;
-      perChainEntities: never;
+      perChainEntities: "EmptyEntity";
       enums: Enums;
     };
   }

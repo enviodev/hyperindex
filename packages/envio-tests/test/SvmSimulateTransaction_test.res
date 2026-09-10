@@ -125,6 +125,7 @@ describe("SVM simulate transaction fields", () => {
       accountKeys: [feePayerAddr],
       recentBlockhash: blockhash,
       version: "legacy",
+      chainId: 7565164,
     });
   });
 });

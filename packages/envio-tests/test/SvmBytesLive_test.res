@@ -86,7 +86,7 @@ describe("SVM bytes args (live)", () => {
 
       const messages = await indexer.Message.getAll();
       t.expect(
-        messages.map(({ id: _, ...rest }) => rest),
+        messages.map(({ id: _id, chainId: _chainId, ...rest }) => rest),
       ).toEqual([
         {
           payloadIsUint8Array: true,
