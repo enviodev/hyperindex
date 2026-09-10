@@ -2087,7 +2087,17 @@ let make = (
   // read-back safe — a verification failure rolls the DDL back with it, instead
   // of leaving behind an index the catalog doesn't know about, which is why
   // nothing here has to repair the catalog after a failure.
-  let buildIndex = async (~definition, ~coverage, ~startMessage, ~doneNote="") => {
+  // `~giveUpAfterMillis` bounds the wait for the lock, for callers a handler is
+  // awaiting: a sibling process's build can run for minutes, and a getWhere is
+  // promised its query will run unindexed rather than block on one. The finalize
+  // path passes none and waits, since nothing is waiting on it.
+  let buildIndex = async (
+    ~definition,
+    ~coverage,
+    ~startMessage,
+    ~doneNote="",
+    ~giveUpAfterMillis=?,
+  ) => {
     let name = definition->IndexDefinition.name
     let timeRef = Performance.now()
     let rec attempt = async (~retryMillis) => {
@@ -2117,18 +2127,27 @@ let make = (
       })
       switch outcome {
       | LockBusy =>
-        // Otherwise a sibling's multi-minute build leaves this process looking
-        // frozen, with nothing in its logs to say why.
-        if retryMillis === indexLockRetryMillis {
+        let waited = timeRef->Performance.secondsSince *. 1000.
+        switch giveUpAfterMillis {
+        | Some(limit) if waited >= limit =>
           Logging.info({
             "storage": storageName,
-            "msg": `Waiting on another process building the schema's indexes before "${name}".`,
+            "msg": `Another process is still building the schema's indexes, so "${name}" is left to it.`,
           })
+        | _ =>
+          // Otherwise a sibling's multi-minute build leaves this process looking
+          // frozen, with nothing in its logs to say why.
+          if retryMillis === indexLockRetryMillis {
+            Logging.info({
+              "storage": storageName,
+              "msg": `Waiting on another process building the schema's indexes before "${name}".`,
+            })
+          }
+          await Utils.delay(retryMillis)
+          // Backs off, because each attempt reserves a pooled connection for its
+          // transaction and the holder's build can run for minutes.
+          await attempt(~retryMillis=Pervasives.min(retryMillis * 2, indexLockMaxRetryMillis))
         }
-        await Utils.delay(retryMillis)
-        // Backs off, because each attempt reserves a pooled connection for its
-        // transaction and the holder's build can run for minutes.
-        await attempt(~retryMillis=Pervasives.min(retryMillis * 2, indexLockMaxRetryMillis))
       | AlreadyBuilt => ()
       | Built(entry) =>
         // Recorded only once the commit made the DDL durable.
@@ -2153,6 +2172,8 @@ let make = (
           ~definition,
           ~coverage=LeadingColumns,
           ~doneNote=" Resuming indexing.",
+          // A handler is awaiting this one.
+          ~giveUpAfterMillis=5_000.,
           ~startMessage=(prepared: IndexManager.prepared) => {
             let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating index"
             `${verb} "${prepared.name}" to serve a getWhere query on "${table.tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`

@@ -97,7 +97,7 @@
           ? `The indexes the schema declares still aren't built after ${(waitMillis /.
               60_000.)->Float.toFixed(~digits=0)} minutes, because these chains haven't finished backfilling: ${pending->Array.joinUnsafe(
               ", ",
-            )}. Queries relying on those indexes run unindexed until they do. If a chain is listed that nothing is indexing, start its process.`
+            )}. Queries relying on those indexes run unindexed until they do. Start a process for any chain listed here that nothing is indexing. A chain whose start block is above the current head has nothing to commit and will hold this open until it does — index it in this process instead.`
           : `Leaving the schema's indexes to whichever chain finishes last. Still backfilling: ${pending->Array.joinUnsafe(
               ", ",
             )}.`,
