@@ -1430,11 +1430,6 @@ pub mod svm {
         )]
         pub program_id: ProgramId,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Optional relative path to a file where handlers are \
-                                  registered for the given program. If not provided, handlers \
-                                  can be auto-loaded from the src directory.")]
-        pub handler: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Optional path (relative to config.yaml) to an IDL JSON file (Anchor \
                            0.30+, legacy Anchor, Shank, or Codama). When present, every usable \
@@ -2342,7 +2337,6 @@ programs:
                     program_id: ProgramId::Single(
                         "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string()
                     ),
-                    handler: None,
                     idl: None,
                     instructions: vec![
                         Instruction {
