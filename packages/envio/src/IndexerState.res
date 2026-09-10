@@ -524,6 +524,9 @@ let recordFinalizeCheck = (state: t) => state.lastFinalizeCheckMillis = Date.now
 let clearSchemaIndexDebt = (state: t) =>
   state.crossChainState->CrossChainState.clearSchemaIndexDebt
 
+let markSchemaIndexDebt = (state: t) =>
+  state.crossChainState->CrossChainState.markSchemaIndexDebt
+
 let schemaIndexWaitMillis = (state: t) =>
   state.crossChainState->CrossChainState.schemaIndexWaitMillis
 

@@ -16,6 +16,7 @@ let chainStates: t => dict<ChainState.t>
 let isRealtime: t => bool
 let isCaughtUp: t => bool
 let owesSchemaIndexes: t => bool
+let markSchemaIndexDebt: t => unit
 let schemaIndexWaitMillis: t => float
 let isInReorgThreshold: t => bool
 let targetBufferSize: t => int

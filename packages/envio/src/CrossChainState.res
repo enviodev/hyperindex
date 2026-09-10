@@ -213,6 +213,11 @@ let markCaughtUpOnResume = (crossChainState: t) => {
 
 let owesSchemaIndexes = (crossChainState: t) => crossChainState.owesSchemaIndexes
 
+// A pass that found another chain behind may be owing indexes it didn't know
+// about — a run resumed realtime starts with no debt, and only the barrier can
+// tell it otherwise. Recording it here is what brings the loop back round.
+let markSchemaIndexDebt = (crossChainState: t) => crossChainState.owesSchemaIndexes = true
+
 let clearSchemaIndexDebt = (crossChainState: t) => {
   crossChainState.owesSchemaIndexes = false
   crossChainState.schemaIndexDebtSinceMillis = None

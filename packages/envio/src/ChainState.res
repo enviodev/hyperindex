@@ -1152,12 +1152,12 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
   }
 }
 
-// Mark the chain caught up to head/endblock. Called by CrossChainState only once
-// every chain in the indexer is caught up and the deferred schema indexes are
-// committed, so no chain flips to ready while another is still backfilling or
-// while an index the schema promises is still missing. `readyAt` is the
-// timestamp already committed to `envio_chains.ready_at` in that same
-// transaction. Sticky: a chain stays ready once set.
+// Mark the chain caught up to head/endblock. Called by CrossChainState once
+// every chain this process drives is caught up. That is not the same as the
+// indexer's `ready_at`, which is committed only when the deferred schema indexes
+// are: under `envio start --chain` this process can be caught up and realtime
+// while a chain another process drives is still backfilling, and the column
+// stays null until it finishes. Sticky: a chain stays ready once set.
 let markReady = (cs: t, ~readyAt) =>
   if !(cs->isReady) {
     cs.timestampCaughtUpToHeadOrEndblock = Some(readyAt)

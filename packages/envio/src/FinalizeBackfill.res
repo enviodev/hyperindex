@@ -7,12 +7,11 @@
 // boundary; the retry only owes what's left. Either way no chain carries
 // `ready_at` while an index the schema promised is missing.
 
-// Whether a chain still has backfill left, judged from what it last committed
-// rather than from a stamp: `progress_block` and `source_block` are written as
-// one group by the batch write, so the pair a sibling reads is always consistent
-// with itself. This is `ChainState.isDurablyCaughtUp` over persisted rows, and
-// it holds still while the head runs on — a chain that reached its head keeps
-// reading as caught up, whoever asks and whenever.
+// Whether a chain another process drives still has backfill left, judged from
+// what it last committed rather than from a stamp: `progress_block` and
+// `source_block` are written as one group by the batch write, so the pair read
+// here is always consistent with itself, and it holds still while the head runs
+// on — a chain that reached its head keeps reading as caught up, whenever asked.
 %%private(
   let isStillBackfilling = (progress: Persistence.chainProgress, ~blockLag) => {
     // A chain nothing has ever fetched for has no head to be measured against.
@@ -43,23 +42,48 @@
   let settleSchemaIndexDebt = async (state: IndexerState.t, ~readyAt, ~announce) => {
     let persistence = state->IndexerState.persistence
     let storage = persistence->Persistence.getInitializedStorageOrThrow
-    let blockLagByChainId = (state->IndexerState.config).blockLagByChainId
-    let pending =
+    let config = state->IndexerState.config
+
+    // Only the chains this process doesn't drive. Its own are caught up by
+    // definition — that is the condition it is here under — and they are also
+    // the ones a row can't speak for: a chain with nothing to index never has a
+    // batch to write one, and a chain resumed at a head that has since run on
+    // is still caught up as of the progress it committed.
+    let isOwnChain = Dict.make()
+    state
+    ->IndexerState.chainStates
+    ->Dict.valuesToArray
+    ->Array.forEach(cs => isOwnChain->ChainId.Dict.set((cs->ChainState.chainConfig).id, true))
+
+    let others =
+      config.blockLagByChainId
+      ->Dict.keysToArray
+      ->Array.filter(id => isOwnChain->Dict.get(id)->Option.isNone)
+
+    // A run driving every chain has nobody to wait for, so it never asks.
+    let pending = switch others {
+    | [] => []
+    | _ =>
       (await storage.readChainProgress())
       ->Array.filter(progress =>
-        progress->isStillBackfilling(
-          ~blockLag=blockLagByChainId
-          ->ChainId.Dict.dangerouslyGetNonOption(progress.id)
-          ->Option.getOr(0),
-        )
+        isOwnChain->ChainId.Dict.dangerouslyGetNonOption(progress.id)->Option.isNone &&
+          progress->isStillBackfilling(
+            ~blockLag=config.blockLagByChainId
+            ->ChainId.Dict.dangerouslyGetNonOption(progress.id)
+            ->Option.getOr(0),
+          )
       )
       ->Array.map(progress => progress.id->ChainId.toString)
+    }
 
     switch pending {
     | [] =>
       await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt)
       state->IndexerState.clearSchemaIndexDebt
     | _ =>
+      // Recorded even on a run that resumed with no debt: a sibling being behind
+      // is how it learns the indexes might still be owed.
+      state->IndexerState.markSchemaIndexDebt
       // The retry comes back every `finalizeRetryIntervalMillis` while the debt
       // stands, so most passes are quiet: info to announce it, debug while the
       // wait is still reasonable. Once it has gone on too long the operator
