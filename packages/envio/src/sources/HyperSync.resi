@@ -2,6 +2,7 @@ type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
   nextBlock: int,
   archiveHeight: int,
+  responseBlocks: int,
   transactionStore: TransactionStore.t,
   blockStore: BlockStore.t,
 }

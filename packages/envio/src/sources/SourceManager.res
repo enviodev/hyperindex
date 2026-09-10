@@ -1,9 +1,14 @@
 type sourceManagerStatus = Idle | WaitingForNewBlock | Querying
 
-// Cumulative per-method request count/time for a source, aggregated from the
-// requestStat arrays returned by its methods. Rendered into
-// envio_source_request_* by Metrics.renderSourceRequests.
-type requestStatAgg = {mutable count: int, mutable seconds: float}
+// Cumulative per-method request stats for a source, aggregated from the
+// requestStat arrays returned by its methods. Rendered into the
+// envio_source_request_* and envio_source_response_* metrics.
+type requestStatAgg = {
+  mutable count: int,
+  mutable seconds: float,
+  mutable responseBlocks: option<int>,
+  mutable emptyResponseCount: int,
+}
 
 type sourceState = {
   source: Source.t,
@@ -19,12 +24,23 @@ let recordStatsInto = (
   aggregates: dict<requestStatAgg>,
   requestStats: array<Source.requestStat>,
 ) => {
-  requestStats->Array.forEach(({method, seconds}) => {
-    switch aggregates->Utils.Dict.dangerouslyGetNonOption(method) {
-    | Some(agg) =>
-      agg.count = agg.count + 1
-      agg.seconds = agg.seconds +. seconds
-    | None => aggregates->Dict.set(method, {count: 1, seconds})
+  requestStats->Array.forEach(({method, seconds, responseBlocks: ?responseBlocks}) => {
+    let agg = switch aggregates->Utils.Dict.dangerouslyGetNonOption(method) {
+    | Some(agg) => agg
+    | None =>
+      let agg = {count: 0, seconds: 0., responseBlocks: None, emptyResponseCount: 0}
+      aggregates->Dict.set(method, agg)
+      agg
+    }
+    agg.count = agg.count + 1
+    agg.seconds = agg.seconds +. seconds
+    switch responseBlocks {
+    | Some(responseBlocks) =>
+      agg.responseBlocks = Some(agg.responseBlocks->Option.getOr(0) + responseBlocks)
+      if responseBlocks === 0 {
+        agg.emptyResponseCount = agg.emptyResponseCount + 1
+      }
+    | None => ()
     }
   })
 }
@@ -40,6 +56,8 @@ type requestStatSample = {
   method: string,
   count: int,
   seconds: float,
+  responseBlocks: option<int>,
+  emptyResponseCount: int,
 }
 
 // Encapsulates the fetching logic for a chain's sources.
@@ -93,6 +111,8 @@ let getRequestStatSamples = (sourceManager: t): array<requestStatSample> => {
         method,
         count: agg.count,
         seconds: agg.seconds,
+        responseBlocks: agg.responseBlocks,
+        emptyResponseCount: agg.emptyResponseCount,
       })
       ->ignore
     })
