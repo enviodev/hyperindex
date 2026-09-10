@@ -11,6 +11,7 @@ chains:
 programs:
   - name: SplToken
     program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+    # idl: ./idls/my-program.json # You can also use your Codama/Anchor IDL directly
     # SPL Token dispatches on a single leading byte, and two instructions move
     # tokens. `transferChecked` names the mint it moves in account slot 1;
     # `transfer` does not, which is what the handler works around.
