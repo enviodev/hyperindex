@@ -2053,10 +2053,21 @@ let make = (
   // The key is derived here rather than with Postgres' `hashtext`, which is an
   // internal function carrying no compatibility promise. Namespaced by the
   // schema name, so two indexers sharing a database never wait on each other.
+  //
+  // Taken with `try`, not by waiting: the transaction has already reserved a
+  // pooled connection by the time the lock is asked for, and blocking inside
+  // Postgres would pin it for as long as a sibling's build takes. With
+  // `ENVIO_PG_MAX_CONNECTIONS` at its default of 2 that starves the writes this
+  // indexer is trying to make. Failing to acquire ends the transaction, hands
+  // the connection back, and the caller comes round again.
   let indexLockQuery = {
     let key = IndexDefinition.fnv1a(pgSchema, ~seed=IndexDefinition.fnvOffsetBasis)
-    `SELECT pg_advisory_xact_lock(${envioAdvisoryLockNamespace->Int.toString}, ${key->Int.toString});`
+    `SELECT pg_try_advisory_xact_lock(${envioAdvisoryLockNamespace->Int.toString}, ${key->Int.toString}) AS "locked";`
   }
+
+  // Long enough that a contended build isn't polling hard, short enough to be
+  // lost in the seconds-to-minutes an index takes.
+  let indexLockRetryMillis = 250
 
   // Builds one index, unless the database already holds it. Every build goes
   // through here, so the lock and the re-read under it are not something a
@@ -2071,22 +2082,39 @@ let make = (
   let buildIndex = async (~definition, ~coverage, ~startMessage, ~doneNote="") => {
     let name = definition->IndexDefinition.name
     let timeRef = Performance.now()
-    let built = await sql->Postgres.beginSql(async sql => {
-      let _ = await sql->Postgres.unsafe(indexLockQuery)
-      // Under the lock: a sibling process may have built this one while we
-      // waited, and a previous attempt of our own may have committed DDL it
-      // never got to read back.
-      indexManager->IndexManager.resync(~name, ~rows=await sql->loadCatalogRows(~indexName=name))
-      switch indexManager->IndexManager.prepare(~definition, ~coverage, ~pgSchema) {
-      | None => None
-      | Some(prepared) =>
-        // Logged from inside the build so it reports the one attempt that
-        // actually creates the index, not the ones waiting on it.
-        Logging.info({"storage": storageName, "msg": prepared->startMessage})
-        Some(await sql->runAndVerify(prepared))
+    let rec attempt = async () => {
+      let outcome = await sql->Postgres.beginSql(async sql => {
+        let rows: array<{"locked": bool}> = await sql->Postgres.unsafe(indexLockQuery)
+        if !(rows->Array.getUnsafe(0))["locked"] {
+          // Someone else is building. Whatever they build, the re-read on the
+          // next attempt sees, so this terminates either way.
+          None
+        } else {
+          // Under the lock: a sibling process may have built this one while we
+          // waited, and a previous attempt of our own may have committed DDL it
+          // never got to read back.
+          indexManager->IndexManager.resync(
+            ~name,
+            ~rows=await sql->loadCatalogRows(~indexName=name),
+          )
+          switch indexManager->IndexManager.prepare(~definition, ~coverage, ~pgSchema) {
+          | None => Some(None)
+          | Some(prepared) =>
+            // Logged from inside the build so it reports the one attempt that
+            // actually creates the index, not the ones waiting on it.
+            Logging.info({"storage": storageName, "msg": prepared->startMessage})
+            Some(Some(await sql->runAndVerify(prepared)))
+          }
+        }
+      })
+      switch outcome {
+      | None =>
+        await Utils.delay(indexLockRetryMillis)
+        await attempt()
+      | Some(built) => built
       }
-    })
-    switch built {
+    }
+    switch await attempt() {
     // Recorded only once the commit made the DDL durable.
     | Some(entry) =>
       indexManager->IndexManager.record(entry)
@@ -2163,7 +2191,8 @@ let make = (
   // per-table queue is only there to stop two requests in this process building
   // the same index at once, and `buildIndex` already rules that out for every
   // process sharing the schema. So this is safe to run alongside a live indexer,
-  // which is what the resume path needs.
+  // which is what the resume path needs — and why the logging here can't claim
+  // that writes are paused or that the indexer has yet to report ready.
   let finalizeBackfill = async (~entities: array<Internal.entityConfig>, ~readyAt: Date.t) => {
     let schemaIndexes = getSchemaIndexes(
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
@@ -2195,7 +2224,7 @@ let make = (
 
     switch missing {
     | [] =>
-      Logging.info({
+      Logging.debug({
         "storage": storageName,
         "msg": `All ${schemaIndexes
           ->Array.length
@@ -2206,7 +2235,7 @@ let make = (
         "storage": storageName,
         "msg": `Creating the ${missing
           ->Array.length
-          ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
+          ->Int.toString} schema indexes the database is missing. Writes to a table are paused while its index is built. ${slowOnLargeDatabaseNotice}`,
         "indexes": missing->Array.map((prepared: IndexManager.prepared) => prepared.name),
       })
     }
@@ -2231,12 +2260,16 @@ let make = (
       [readyAt->(Utils.magic: Date.t => unknown)]->(Utils.magic: array<unknown> => unknown),
     )
 
-    Logging.info({
-      "storage": storageName,
-      "msg": `Committed ${missing
-        ->Array.length
-        ->Int.toString} schema indexes and the ready timestamp in ${timeRef->formatSeconds}s.`,
-    })
+    switch missing {
+    | [] => ()
+    | _ =>
+      Logging.info({
+        "storage": storageName,
+        "msg": `Committed ${missing
+          ->Array.length
+          ->Int.toString} schema indexes in ${timeRef->formatSeconds}s. Every chain that had none is now ready.`,
+      })
+    }
   }
 
   let setOrThrow = (

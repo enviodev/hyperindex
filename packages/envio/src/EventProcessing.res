@@ -8,6 +8,10 @@ let computeChainsState = (chainStates: dict<ChainState.t>): Internal.chains => {
   let chains = Dict.make()
 
   let values = chainStates->Dict.valuesToArray
+  // Deliberately the chains' own caught-up state, not the indexer's realtime
+  // flag: a handler asking whether it is on live data wants to know that the
+  // chains reached their heads, not whether the schema's indexes have been
+  // committed on top.
   let isRealtime = values->Array.every(cs => cs->ChainState.isReady)
 
   values->Array.forEach(cs => {
