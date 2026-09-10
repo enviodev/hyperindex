@@ -147,8 +147,8 @@ pub struct StartArgs {
     ///Index only this chain, leaving the others to their own `envio start --chain` processes.
     ///Repeat the flag for several chains. Requires a schema whose entities are all per-chain,
     ///created for every chain by `envio local db-migrate up` before any process starts.
-    ///Run exactly one process per chain, and start every chain: the schema's indexes are built,
-    ///and the chains reported ready, only once the last of them has finished backfilling.
+    ///Assign each configured chain to exactly one process, and start every chain: the schema's
+    ///indexes are built, and the chains reported ready, only once the last has finished backfilling.
     #[arg(long = "chain", value_name = "CHAIN_ID")]
     pub chains: Vec<String>,
 }

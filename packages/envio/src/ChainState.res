@@ -655,8 +655,12 @@ let isDurablyCaughtUp = (cs: t) => {
   // carries maxReorgDepth, which would read a chain a whole reorg depth behind
   // the head as caught up.
   | _ =>
+    // Clamped at zero: a chain younger than its own lag would otherwise have a
+    // negative threshold, and the -1 a run that has processed nothing carries
+    // would clear it. Not `fetchCeiling`, whose lag also folds in maxReorgDepth.
     fetchState.knownHeight > 0 &&
-      committedProgressBlockNumber >= fetchState.knownHeight - cs.chainConfig.blockLag
+      committedProgressBlockNumber >=
+        Pervasives.max(0, fetchState.knownHeight - cs.chainConfig.blockLag)
   }
 }
 

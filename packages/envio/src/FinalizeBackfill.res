@@ -17,7 +17,8 @@
     // A chain nothing has ever fetched for has no head to be measured against.
     let atHead =
       progress.sourceBlockNumber > 0 &&
-        progress.progressBlockNumber >= progress.sourceBlockNumber - blockLag
+        progress.progressBlockNumber >=
+          Pervasives.max(0, progress.sourceBlockNumber - blockLag)
     // Either one, matching what the indexer itself counts as caught up. An
     // `end_block` above the head is never reached, and testing only for it would
     // leave such a chain owing its indexes for good.

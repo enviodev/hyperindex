@@ -51,6 +51,35 @@ let makeResumedChainState = (
   sourceBlockNumber: 1000,
 }
 
+// https://github.com/enviodev/hyperindex/pull/1637
+describe("Durably caught up", () => {
+  it("Doesn't count a chain younger than its own block lag as caught up", t => {
+    // The lagged head is 5 - 10, so an unclamped comparison would let the -1 a
+    // run that has processed nothing carries clear it.
+    let chainConfig = {...baseChainConfig, blockLag: 10}
+    let cs = ChainState.makeFromDbState(
+      chainConfig,
+      ~resumedChainState={
+        ...makeResumedChainState(
+          ~progressBlockNumber=-1,
+          ~numEventsProcessed=0.,
+          ~firstEventBlockNumber=None,
+        ),
+        sourceBlockNumber: 5,
+      },
+      ~reorgCheckpoints=[],
+      ~isInReorgThreshold=false,
+      ~isRealtime=false,
+      ~config=TestConfig.default,
+      ~contractMapping=TestConfig.default.contractMapping,
+      ~registrationsByChainId,
+    )
+    cs->ChainState.updateKnownHeight(~knownHeight=5)
+
+    t.expect(cs->ChainState.isDurablyCaughtUp).toBe(false)
+  })
+})
+
 let makeChainState = (
   resumedChainState,
   ~reorgCheckpoints=[],
