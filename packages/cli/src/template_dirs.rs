@@ -36,8 +36,7 @@ impl Template for fuel::Template {
 impl Template for svm::Template {
     fn to_dir_name(&self) -> String {
         match self {
-            svm::Template::MetaplexTokenMetadata => "svm_metaplex",
-            svm::Template::FeatureBlockHandler => "svmblock",
+            svm::Template::UsdcTransfers => "svm_usdc_transfers",
         }
         .to_string()
     }
@@ -514,16 +513,10 @@ mod test {
         sources.sort();
         assert_eq!(
             sources,
-            vec![
-                (
-                    "svm_metaplex_template".to_string(),
-                    "https://solana.hypersync.xyz".to_string()
-                ),
-                (
-                    "svmblock_template".to_string(),
-                    "https://solana.hypersync.xyz".to_string()
-                ),
-            ]
+            vec![(
+                "svm_usdc_transfers_template".to_string(),
+                "https://solana.hypersync.xyz".to_string()
+            )]
         );
     }
 

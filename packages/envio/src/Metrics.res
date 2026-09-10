@@ -100,6 +100,10 @@ type sourceRequestMetrics = {
   method: string,
   count: int,
   seconds: float,
+  // None for methods whose responses aren't measured in blocks; they render no
+  // block series at all.
+  responseBlocks: option<int>,
+  emptyResponseCount: int,
 }
 
 type sourceHeightMetrics = {
@@ -259,7 +263,16 @@ let renderMetrics = (b: builder, metrics: t) => {
       | Some(existing) =>
         byLabels->Dict.set(
           labels,
-          {...existing, count: existing.count + s.count, seconds: existing.seconds +. s.seconds},
+          {
+            ...existing,
+            count: existing.count + s.count,
+            seconds: existing.seconds +. s.seconds,
+            responseBlocks: switch (existing.responseBlocks, s.responseBlocks) {
+            | (Some(a), Some(b)) => Some(a + b)
+            | (some, None) | (None, some) => some
+            },
+            emptyResponseCount: existing.emptyResponseCount + s.emptyResponseCount,
+          },
         )
       | None => byLabels->Dict.set(labels, s)
       }
@@ -518,6 +531,23 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~kind="counter",
     ~entries=sourceRequests,
     ~value=s => s.seconds !== 0. ? Some(s.seconds) : None,
+  )
+  b->seriesOpt(
+    ~name="envio_source_response_blocks_total",
+    ~help="The number of blocks a data source returned, summed over its responses. Counted as the source sent them, before the indexer drops the blocks no event needs. Only sources whose responses are measured in blocks report it.",
+    ~kind="counter",
+    ~entries=sourceRequests,
+    ~value=s => s.responseBlocks->Option.map(Int.toFloat),
+  )
+  // Rendered flat at zero for any method that reports blocks: a chain scanning
+  // ranges it finds nothing in is the reading this exists for, and a series
+  // that only appears once the first empty response lands can't be alerted on.
+  b->seriesOpt(
+    ~name="envio_source_response_empty_total",
+    ~help="The number of responses that came back with no blocks at all — a range the source scanned and matched nothing in. Compare against envio_source_request_total for the share of requests that returned nothing.",
+    ~kind="counter",
+    ~entries=sourceRequests,
+    ~value=s => s.responseBlocks->Option.map(_ => s.emptyResponseCount->Int.toFloat),
   )
   if heightStreamConnects->Array.length > 0 {
     b->series(
