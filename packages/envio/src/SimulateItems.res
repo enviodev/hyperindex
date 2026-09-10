@@ -273,6 +273,8 @@ type svmSimTransaction = {
   fee?: bigint,
   computeUnitsConsumed?: bigint,
   accountKeys?: array<string>,
+  loadedAddressesWritable?: array<string>,
+  loadedAddressesReadonly?: array<string>,
   recentBlockhash?: string,
   version?: string,
   accountActivities?: array<svmSimActivity>,
@@ -417,6 +419,8 @@ let parse = (
         fee: ?transaction.fee,
         computeUnitsConsumed: ?transaction.computeUnitsConsumed,
         accountKeys: ?transaction.accountKeys,
+        loadedAddressesWritable: ?transaction.loadedAddressesWritable,
+        loadedAddressesReadonly: ?transaction.loadedAddressesReadonly,
         recentBlockhash: ?transaction.recentBlockhash,
         version: ?transaction.version,
       })

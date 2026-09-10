@@ -133,6 +133,8 @@ pub enum SvmTxField {
     Version = 9,
     AllSignatures = 10,
     AccountActivities = 11,
+    LoadedAddressesWritable = 12,
+    LoadedAddressesReadonly = 13,
 }
 
 impl SvmTxField {
@@ -152,6 +154,8 @@ impl SvmTxField {
             Version => "version",
             AllSignatures => "allSignatures",
             AccountActivities => "accountActivities",
+            LoadedAddressesWritable => "loadedAddressesWritable",
+            LoadedAddressesReadonly => "loadedAddressesReadonly",
         }
     }
 }
@@ -292,6 +296,16 @@ fn svm_tx_col(field: SvmTxField, txs: &[solana_simple::Transaction]) -> Option<A
         }),
         RecentBlockhash => base58_col(txs, |t| t.recent_blockhash),
         Version => var_from(txs, |t| t.version.as_ref().map(|s| s.as_bytes())),
+        LoadedAddressesWritable => str_list_from(txs, |t| {
+            t.loaded_addresses_writable
+                .as_ref()
+                .map(|keys| keys.iter().map(|key| key.to_string()).collect())
+        }),
+        LoadedAddressesReadonly => str_list_from(txs, |t| {
+            t.loaded_addresses_readonly
+                .as_ref()
+                .map(|keys| keys.iter().map(|key| key.to_string()).collect())
+        }),
         AccountActivities => None,
     }
 }
@@ -329,7 +343,9 @@ fn decode_svm_field(
                 .map(|(&i, &m)| (m & bit != 0).then_some(i as i64))
                 .collect(),
         ),
-        AllSignatures | AccountKeys => Column::StrVec(str_list_cells(col, len)),
+        AllSignatures | AccountKeys | LoadedAddressesWritable | LoadedAddressesReadonly => {
+            Column::StrVec(str_list_cells(col, len))
+        }
         Signature | FeePayer | Err | RecentBlockhash | Version => {
             Column::Str(bytes_cells(col, len, |b| Ok(Some(utf8(b))))?)
         }
@@ -466,6 +482,8 @@ pub struct SvmTxInput {
     pub fee: Option<BigInt>,
     pub compute_units_consumed: Option<BigInt>,
     pub account_keys: Option<Vec<String>>,
+    pub loaded_addresses_writable: Option<Vec<String>>,
+    pub loaded_addresses_readonly: Option<Vec<String>>,
     pub recent_blockhash: Option<String>,
     pub version: Option<String>,
 }
@@ -705,6 +723,14 @@ impl TransactionStore {
                         .map(|v| bigint_to_u64(v, "computeUnitsConsumed"))
                         .transpose()?,
                     account_keys: parse_base58_list(t.account_keys.as_deref(), "accountKeys")?,
+                    loaded_addresses_writable: parse_base58_list(
+                        t.loaded_addresses_writable.as_deref(),
+                        "loadedAddressesWritable",
+                    )?,
+                    loaded_addresses_readonly: parse_base58_list(
+                        t.loaded_addresses_readonly.as_deref(),
+                        "loadedAddressesReadonly",
+                    )?,
                     recent_blockhash: parse_base58(
                         t.recent_blockhash.as_deref(),
                         "recentBlockhash",
@@ -1116,6 +1142,46 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn svm_loaded_addresses_decode_as_separate_base58_lists() {
+        // The two ALT lists share `accountKeys`' shape but are distinct
+        // selection bits, so a mask covering both must keep them apart and
+        // must not pull in the static key list.
+        let store = TransactionStore::new_svm();
+        let mut tx = raw_svm_tx(5, 0);
+        tx.account_keys = Some(vec![svm_key(1)]);
+        tx.loaded_addresses_writable = Some(vec![svm_key(2)]);
+        tx.loaded_addresses_readonly = Some(vec![svm_key(3), svm_key(4)]);
+        store.insert_svm_txs(vec![tx]);
+
+        let mask = ((1u64 << (SvmTxField::LoadedAddressesWritable as u32))
+            | (1u64 << (SvmTxField::LoadedAddressesReadonly as u32))) as f64;
+        let cols = store
+            .materialize(vec![5], vec![0], vec![mask])
+            .await
+            .expect("materialize");
+
+        let summary = (
+            match column(&cols, "loadedAddressesWritable") {
+                Some(Column::StrVec(v)) => v.clone(),
+                _ => panic!("expected loadedAddressesWritable column"),
+            },
+            match column(&cols, "loadedAddressesReadonly") {
+                Some(Column::StrVec(v)) => v.clone(),
+                _ => panic!("expected loadedAddressesReadonly column"),
+            },
+            column(&cols, "accountKeys").is_some(),
+        );
+        assert_eq!(
+            summary,
+            (
+                vec![Some(vec![svm_key(2).to_string()])],
+                vec![Some(vec![svm_key(3).to_string(), svm_key(4).to_string()])],
+                false
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn account_activities_gather_by_key_range_and_index_order() {
         let store = TransactionStore::new_svm();
         store.insert_svm_txs(vec![raw_svm_tx(5, 0)]);
@@ -1419,6 +1485,8 @@ mod tests {
                 "version",
                 "allSignatures",
                 "accountActivities",
+                "loadedAddressesWritable",
+                "loadedAddressesReadonly",
             ]
         );
     }

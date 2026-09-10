@@ -1220,6 +1220,8 @@ export type SvmAllTransactionFields = {
   readonly recentBlockhash: string;
   readonly version: string | undefined;
   readonly allSignatures: readonly string[];
+  readonly loadedAddressesWritable: readonly string[];
+  readonly loadedAddressesReadonly: readonly string[];
 };
 
 export type SvmInstructionFieldName =
@@ -1241,7 +1243,9 @@ export type SvmTransactionFieldName =
   | "accountKeys"
   | "recentBlockhash"
   | "version"
-  | "allSignatures";
+  | "allSignatures"
+  | "loadedAddressesWritable"
+  | "loadedAddressesReadonly";
 export type SvmAccountActivityFieldName =
   | "address"
   | "transactionAccountIndex"

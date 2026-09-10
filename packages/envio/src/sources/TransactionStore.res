@@ -42,6 +42,8 @@ type svmTxInput = {
   fee?: bigint,
   computeUnitsConsumed?: bigint,
   accountKeys?: array<string>,
+  loadedAddressesWritable?: array<string>,
+  loadedAddressesReadonly?: array<string>,
   recentBlockhash?: string,
   version?: string,
 }

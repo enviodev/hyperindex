@@ -151,6 +151,8 @@ type svmTransactionField =
   | @as("version") Version
   | @as("allSignatures") AllSignatures
   | @as("accountActivities") AccountActivities
+  | @as("loadedAddressesWritable") LoadedAddressesWritable
+  | @as("loadedAddressesReadonly") LoadedAddressesReadonly
 
 let allSvmTransactionFields: array<svmTransactionField> = [
   TransactionIndex,
@@ -165,6 +167,8 @@ let allSvmTransactionFields: array<svmTransactionField> = [
   Version,
   AllSignatures,
   AccountActivities,
+  LoadedAddressesWritable,
+  LoadedAddressesReadonly,
 ]
 
 // All SVM block fields. `slot` is always included (the item's key); the rest
