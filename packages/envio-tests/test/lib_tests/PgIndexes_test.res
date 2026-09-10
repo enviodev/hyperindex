@@ -158,16 +158,6 @@ let aBIdName = aBId->IndexDefinition.name
 
 let readyAt = Date.fromString("2024-01-01T00:00:00Z")
 
-let backfillCompletedByChainId = async pgSchema => {
-  let rows: array<{
-    "id": ChainId.t,
-    "backfill_completed_at": Null.t<Date.t>,
-  }> = await sql->Postgres.unsafe(
-    `SELECT "id", "backfill_completed_at" FROM "${pgSchema}"."${InternalTable.Chains.table.tableName}" ORDER BY "id";`,
-  )
-  rows->Array.map(row => (row["id"], row["backfill_completed_at"]->Null.toOption->Option.isSome))
-}
-
 let readyAtByChainId = async pgSchema => {
   let rows: array<{
     "id": ChainId.t,
@@ -453,67 +443,60 @@ describe("Indexes built against a real schema", () => {
     ).toEqual((indexNames->Array.toSorted(String.compare), indexNames->Array.slice(~start=1, ~end=3)))
   })
 
-  // `markChainsCaughtUp` commits before the index build, and the build can take
-  // minutes. A chain-metadata write landing in that window must not clear the
-  // stamp: under `--chain` a sibling reads it to decide whether the indexes are
-  // owed, and a cleared stamp holds the barrier shut for good.
-  Async.it("Keeps the caught-up stamp across a chain-metadata write", async t => {
-    let pgSchema = testSchema("meta_write")
-    let storage = await setup(~pgSchema)
-    let chainIds = config.chainMap->ChainMap.values->Array.map(chain => chain.id)
-
-    await storage.markChainsCaughtUp(~chainIds, ~caughtUpAt=readyAt)
-
-    let meta = Dict.make()
-    chainIds->Array.forEach(chainId =>
-      meta->Dict.set(
-        chainId->ChainId.toString,
-        (
-          {
-            firstEventBlockNumber: Null.null,
-            latestFetchedBlockNumber: 10,
-            isHyperSync: false,
-          }: InternalTable.Chains.metaFields
-        ),
-      )
-    )
-    let _ = await storage.setChainMeta(meta)
-
-    t.expect(
-      (await backfillCompletedByChainId(pgSchema), await storage.countChainsNotCaughtUp()),
-      ~message="The metadata write leaves the stamp alone, so the barrier stays open",
-    ).toEqual((chainIds->Array.map(id => (id, true)), 0))
-  })
-
   // What `envio start --chain` reads to decide whether it is the last process
-  // still backfilling, and so the one that owes the schema its indexes.
-  Async.it("Counts the chains that haven't caught up, and stamps only its own", async t => {
-    let pgSchema = testSchema("caught_up")
+  // still backfilling, and so the one that owes the schema its indexes. Judged
+  // from committed progress rather than a stamp, so nothing has to be kept in
+  // step with it — including a chain-metadata write, which can't reach these
+  // columns at all.
+  Async.it("Reports each chain's committed position against its head", async t => {
+    let pgSchema = testSchema("chain_progress")
     let storage = await setup(~pgSchema)
     let chainIds = config.chainMap->ChainMap.values->Array.map(chain => chain.id)
     let first = chainIds->Array.getUnsafe(0)
 
-    let before = await storage.countChainsNotCaughtUp()
-    await storage.markChainsCaughtUp(~chainIds=[first], ~caughtUpAt=readyAt)
-    let afterFirst = await storage.countChainsNotCaughtUp()
-    await storage.markChainsCaughtUp(~chainIds, ~caughtUpAt=readyAt)
+    let fresh = await storage.readChainProgress()
+
+    // Stands in for the batch write that carries a chain to its head: progress
+    // and source are written as one group, so they move together.
+    let _ = await sql->Postgres.unsafe(
+      `UPDATE "${pgSchema}"."${InternalTable.Chains.table.tableName}"
+       SET "progress_block" = 500, "source_block" = 500 WHERE "id" = ${first->ChainId.toString};`,
+    )
+    let meta = Dict.make()
+    meta->Dict.set(
+      first->ChainId.toString,
+      (
+        {
+          firstEventBlockNumber: Null.null,
+          latestFetchedBlockNumber: 10,
+          isHyperSync: false,
+        }: InternalTable.Chains.metaFields
+      ),
+    )
+    let _ = await storage.setChainMeta(meta)
+
+    let caughtUp = (await storage.readChainProgress())->Array.filter(progress =>
+      progress.id === first
+    )
 
     t.expect(
       (
-        before,
-        afterFirst,
-        await storage.countChainsNotCaughtUp(),
-        await backfillCompletedByChainId(pgSchema),
-        await readyAtByChainId(pgSchema),
+        fresh
+        ->Array.map((progress: Persistence.chainProgress) => (
+          progress.progressBlockNumber,
+          progress.sourceBlockNumber,
+        ))
+        ->Array.length,
+        fresh->Array.every((progress: Persistence.chainProgress) =>
+          progress.progressBlockNumber === -1 && progress.sourceBlockNumber === 0
+        ),
+        caughtUp->Array.map((progress: Persistence.chainProgress) => (
+          progress.progressBlockNumber,
+          progress.sourceBlockNumber,
+        )),
       ),
-      ~message="Only the named chains are stamped, the count falls to zero once every chain is, and readiness is left to the index build",
-    ).toEqual((
-      chainIds->Array.length,
-      chainIds->Array.length - 1,
-      0,
-      chainIds->Array.map(id => (id, true)),
-      chainIds->Array.map(id => (id, false)),
-    ))
+      ~message="A fresh chain has no head to be measured against; a caught-up one reads level, and a metadata write doesn't disturb it",
+    ).toEqual((chainIds->Array.length, true, [(500, 500)]))
   })
 
   Async.it("Skips the schema index an automatic build already created", async t => {

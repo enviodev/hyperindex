@@ -27,15 +27,20 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  // When the schema's indexes were committed. Set only once every chain has
-  // finished backfill, so a chain can carry a caught-up timestamp and still have
-  // this unset — a finalize that died before committing, or an
-  // `envio start --chain` process whose siblings are still backfilling.
-  indexesReadyAt: option<Date.t>,
   // Every address the chain indexes, columnar — config-declared and dynamically
   // registered alike. The chain's address store seeds straight from it.
   addressRows: AddressRows.seedRows,
   sourceBlockNumber: int,
+}
+
+// A chain's committed position, as the barrier reads it. Judged rather than
+// stamped: `progress_block` and `source_block` are written as one group by the
+// batch write, so this is always a consistent pair from the last commit.
+type chainProgress = {
+  id: ChainId.t,
+  progressBlockNumber: int,
+  sourceBlockNumber: int,
+  endBlock: option<int>,
 }
 
 type initialState = {
@@ -145,13 +150,10 @@ type storage = {
   // once they're queryable. Best-effort: it resolves even when a build fails,
   // leaving the query to run unindexed rather than failing the handler.
   ensureQueryIndexes: (~table: Table.table, ~filters: array<EntityFilter.t>) => promise<unit>,
-  // Records that each of these chains reached its head or end block. Only the
-  // chains this process drives.
-  markChainsCaughtUp: (~chainIds: array<ChainId.t>, ~caughtUpAt: Date.t) => promise<unit>,
-  // How many chains in the schema have yet to finish backfill. Under
-  // `envio start --chain` the other processes' chains are counted too, so zero
-  // means the schema's indexes are owed and this is the process that owes them.
-  countChainsNotCaughtUp: unit => promise<int>,
+  // How far every chain in the schema has committed, the ones other
+  // `envio start --chain` processes drive included. Read to decide whether any
+  // chain is still backfilling, and so whether the schema's indexes are owed.
+  readChainProgress: unit => promise<array<chainProgress>>,
   // Creates every schema-defined index still missing, then stamps `ready_at` on
   // every chain. Called once every chain has finished backfill. The indexes are
   // committed one at a time so a failure part way through doesn't undo the ones

@@ -243,14 +243,11 @@ let makeFromDbState = (
     )
   }
 
-  // `ready_at` is durable: a chain that once caught up with the schema's indexes
-  // committed resumes realtime, and those indexes are not owed again. Read from
-  // `indexesReadyAt` rather than the caught-up timestamp so a resume that still
-  // owes them re-enters the finalize phase, where the processing loop awaits it,
-  // instead of leaving it to the best-effort repair pass.
+  // `ready_at` is durable: a chain that once caught up resumes realtime, and the
+  // deferred indexes committed alongside that stamp are not owed again.
   let isRealtime =
     initialState.chains->Array.length > 0 &&
-      initialState.chains->Array.every(c => c.indexesReadyAt->Option.isSome)
+      initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
 
   let chainStates = Dict.make()
   initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {

@@ -269,7 +269,6 @@ let makeInitialState = (
       numEventsProcessed: 0.,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
-      indexesReadyAt: None,
       addressRows,
     }
   })
@@ -601,8 +600,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     ->(Utils.magic: array<Internal.entity> => array<unknown>),
   // The in-memory storage has no indexes to build, and it's always ready.
   ensureQueryIndexes: async (~table as _, ~filters as _) => (),
-  markChainsCaughtUp: async (~chainIds as _, ~caughtUpAt as _) => (),
-  countChainsNotCaughtUp: async () => 0,
+  readChainProgress: async () => [],
   finalizeBackfill: async (~entities as _, ~readyAt as _) => (),
   writeBatch: async (
     ~batch,

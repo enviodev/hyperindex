@@ -141,8 +141,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
         ->ignore
         Promise.resolve()
       },
-      markChainsCaughtUp: (~chainIds as _, ~caughtUpAt as _) => Promise.resolve(),
-      countChainsNotCaughtUp: () => Promise.resolve(0),
+      readChainProgress: () => Promise.resolve([]),
       finalizeBackfill: (~entities as _, ~readyAt as _) => Promise.resolve(),
       reset: () => JsError.throwWithMessage("Not implemented"),
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),

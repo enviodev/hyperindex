@@ -7,23 +7,59 @@
 // processing loop's error boundary; the retry only owes what's left. Either way
 // no chain carries `ready_at` while an index the schema promised is missing.
 
+// Whether a chain still has backfill left, judged from what it last committed
+// rather than from a stamp: `progress_block` and `source_block` are written as
+// one group by the batch write, so the pair a sibling reads is always consistent
+// with itself. This is `ChainState.isDurablyCaughtUp` over persisted rows, and
+// it holds still while the head runs on — a chain that reached its head keeps
+// reading as caught up, whoever asks and whenever.
+%%private(
+  let isStillBackfilling = (progress: Persistence.chainProgress, ~blockLag) =>
+    switch progress.endBlock {
+    | Some(endBlock) => progress.progressBlockNumber < endBlock
+    // A chain nothing has ever fetched for has no head to be measured against.
+    | None =>
+      progress.sourceBlockNumber <= 0 ||
+        progress.progressBlockNumber < progress.sourceBlockNumber - blockLag
+    }
+)
+
 // The barrier `envio start --chain` turns on: the schema's indexes are global
 // objects on shared tables, so the process that finds no chain left backfilling
 // is the one that builds them.
 //
-// Every caller reads the count strictly after committing its own chains'
-// stamps, never before. Two processes finishing together would otherwise each
-// see the other still pending and neither would build; reading after its own
-// commit means at least one of them sees a fully stamped table, and that one is
-// still running at the moment it reads.
+// Every caller reads the chains strictly after flushing its own writes, never
+// before. Two processes finishing together would otherwise each see the other
+// still behind and neither would build; reading after its own commit means at
+// least one of them sees every chain caught up, and that one is still running
+// at the moment it reads.
 %%private(
-  let buildSchemaIndexesIfLast = async (persistence: Persistence.t, ~readyAt) => {
+  let buildSchemaIndexesIfLast = async (
+    persistence: Persistence.t,
+    ~config: Config.t,
+    ~readyAt,
+  ) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
-    switch await storage.countChainsNotCaughtUp() {
-    | 0 => await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt)
-    | pending =>
+    let blockLagById = Dict.make()
+    config.configuredChains->Array.forEach(chain =>
+      blockLagById->ChainId.Dict.set(chain.id, chain.blockLag)
+    )
+    let pending =
+      (await storage.readChainProgress())
+      ->Array.filter(progress =>
+        progress->isStillBackfilling(
+          ~blockLag=blockLagById
+          ->ChainId.Dict.dangerouslyGetNonOption(progress.id)
+          ->Option.getOr(0),
+        )
+      )
+      ->Array.map(progress => progress.id->ChainId.toString)
+
+    switch pending {
+    | [] => await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt)
+    | _ =>
       Logging.info({
-        "msg": `Leaving the schema's indexes to whichever chain finishes last: ${pending->Int.toString} of this schema's chains are still backfilling in other processes.`,
+        "msg": `Leaving the schema's indexes to whichever chain finishes last: ${pending->Array.joinUnsafe(", ")} are still backfilling in other processes.`,
         "pendingChains": pending,
       })
     }
@@ -44,15 +80,10 @@ let runOnce = async (state: IndexerState.t) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let readyAt = Date.make()
 
-    await storage.markChainsCaughtUp(
-      ~chainIds=state
-      ->IndexerState.chainStates
-      ->Dict.valuesToArray
-      ->Array.map(cs => (cs->ChainState.chainConfig).id),
-      ~caughtUpAt=readyAt,
+    await persistence->buildSchemaIndexesIfLast(
+      ~config=state->IndexerState.config,
+      ~readyAt,
     )
-
-    await persistence->buildSchemaIndexesIfLast(~readyAt)
 
     // Only after the build: in-memory readiness must never claim indexes the
     // database doesn't hold. With chains left backfilling elsewhere there is no
@@ -92,7 +123,10 @@ let repairSchemaIndexes = async (state: IndexerState.t) => {
   // unhandled-rejection handler and take the indexer down. The whole body is
   // guarded, the barrier's own query included.
   try {
-    await persistence->buildSchemaIndexesIfLast(~readyAt=Date.make())
+    await persistence->buildSchemaIndexesIfLast(
+      ~config=state->IndexerState.config,
+      ~readyAt=Date.make(),
+    )
   } catch {
   | exn =>
     Logging.warn({

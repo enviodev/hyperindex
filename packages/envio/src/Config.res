@@ -119,6 +119,10 @@ type t = {
   // they can express fits an INTEGER.
   chainIdMode: ChainId.mode,
   chainMap: ChainMap.t<chain>,
+  // Every chain config.yaml declares, before `envio start --chain` narrows
+  // `chainMap` to the ones this process drives. The schema is migrated for all
+  // of them, so anything reasoning about the whole indexer reads this.
+  configuredChains: array<chain>,
   // Derived from every chain's contracts, so an id means the same contract on
   // every chain and on every restart.
   contractMapping: ContractMapping.t,
@@ -1078,6 +1082,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     storage: globalStorage,
     chainIdMode: publicConfig["chainIdMode"]->Option.getOr(Int32),
     chainMap,
+    configuredChains: chains,
     contractMapping: contractMappingOf(~chainConfigs=chains),
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),

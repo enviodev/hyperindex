@@ -49,7 +49,7 @@ let makeResumedChainState = (
   timestampCaughtUpToHeadOrEndblock: None,
   addressRows: AddressRows.emptySeedRows(),
   sourceBlockNumber: 1000,
-  indexesReadyAt: None,
+
 }
 
 let makeChainState = (

@@ -1981,7 +1981,6 @@ let make = (
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        indexesReadyAt: None,
         addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf,
         sourceBlockNumber: 0,
       }),
@@ -2165,35 +2164,19 @@ let make = (
     ->Promise.all
   }
 
-  // Records that each of these chains reached its head or end block. Under
-  // `envio start --chain` the schema holds rows for chains other processes own,
-  // and those keep whatever they already carry.
-  //
-  // One transaction for the whole set, so a crash part way through can't leave
-  // some of this process's chains stamped and some not.
-  let markChainsCaughtUp = async (~chainIds: array<ChainId.t>, ~caughtUpAt: Date.t) => {
-    let query = InternalTable.Chains.makeSetBackfillCompletedQuery(~pgSchema)
-    let _ = await sql->Postgres.beginSql(async sql => {
-      for idx in 0 to chainIds->Array.length - 1 {
-        let _ = await sql->Postgres.preparedUnsafe(
-          query,
-          [
-            caughtUpAt->(Utils.magic: Date.t => unknown),
-            chainIds->Array.getUnsafe(idx)->(Utils.magic: ChainId.t => unknown),
-          ]->(Utils.magic: array<unknown> => unknown),
-        )
-      }
+  let readChainProgress = async (): array<Persistence.chainProgress> => {
+    let rows: array<{
+      "id": ChainId.t,
+      "progressBlockNumber": int,
+      "sourceBlockNumber": int,
+      "endBlock": Null.t<int>,
+    }> = await sql->Postgres.unsafe(InternalTable.Chains.makeReadProgressQuery(~pgSchema))
+    rows->Array.map(row => {
+      Persistence.id: row["id"],
+      progressBlockNumber: row["progressBlockNumber"],
+      sourceBlockNumber: row["sourceBlockNumber"],
+      endBlock: row["endBlock"]->Null.toOption,
     })
-  }
-
-  let countChainsNotCaughtUp = async () => {
-    let rows: array<{"count": int}> = await sql->Postgres.unsafe(
-      InternalTable.Chains.makeCountNotCaughtUpQuery(~pgSchema),
-    )
-    switch rows->Array.get(0) {
-    | Some(row) => row["count"]
-    | None => 0
-    }
   }
 
   // Doesn't go through `IndexManager.ensure`, unlike `ensureQueryIndexes`: the
@@ -2409,7 +2392,6 @@ let make = (
             maxReorgDepth: rawInitialState.maxReorgDepth,
             firstEventBlockNumber: rawInitialState.firstEventBlockNumber->Null.toOption,
             timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
-            indexesReadyAt: rawInitialState.indexesReadyAt->Null.toOption,
             numEventsProcessed: rawInitialState.numEventsProcessed,
             progressBlockNumber: rawInitialState.progressBlockNumber,
             addressRows: rawInitialState.addressRows,
@@ -2634,8 +2616,7 @@ let make = (
     resumeInitialState,
     loadOrThrow,
     ensureQueryIndexes,
-    markChainsCaughtUp,
-    countChainsNotCaughtUp,
+    readChainProgress,
     finalizeBackfill,
     dumpEffectCache,
     reset,

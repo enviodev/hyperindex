@@ -56,20 +56,14 @@ let indexNames = async (~sql, ~pgSchema) => {
   ->Array.map((entry: IndexCatalog.entry) => entry.name)
 }
 
-// `backfill_completed_at` is what each process stamps for its own chains;
-// `ready_at` lands on every chain at once, when the last of them builds the
-// schema's indexes.
-let stampsByChainId = async (~sql, ~pgSchema) => {
-  let rows: array<{
-    "id": ChainId.t,
-    "backfill_completed_at": Null.t<Date.t>,
-    "ready_at": Null.t<Date.t>,
-  }> = await sql->Postgres.unsafe(
-    `SELECT "id", "backfill_completed_at", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
+// `ready_at` still means what it always did: the schema's indexes are committed.
+// It lands on every chain at once, when the last of them finishes backfilling.
+let readyByChainId = async (~sql, ~pgSchema) => {
+  let rows: array<{"id": ChainId.t, "ready_at": Null.t<Date.t>}> = await sql->Postgres.unsafe(
+    `SELECT "id", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (
     row["id"]->ChainId.toString,
-    row["backfill_completed_at"]->Null.toOption->Option.isSome,
     row["ready_at"]->Null.toOption->Option.isSome,
   ))
 }
@@ -91,17 +85,17 @@ describe("envio start --chain", () => {
       await catchUp(~indexer=first, ~source=source(1))
 
       t.expect(
-        (await indexNames(~sql, ~pgSchema), await stampsByChainId(~sql, ~pgSchema)),
-        ~message="Chain 1 finished its backfill, but chain 137 is still pending, so nothing builds the indexes and no chain is ready",
-      ).toEqual(([], [("1", true, false), ("137", false, false)]))
+        (await indexNames(~sql, ~pgSchema), await readyByChainId(~sql, ~pgSchema)),
+        ~message="Chain 1 finished its backfill, but chain 137 is still behind, so nothing builds the indexes and no chain is ready",
+      ).toEqual(([], [("1", false), ("137", false)]))
 
       let second = await first.restart(~chains=[ChainId.fromInt(137)], ())
       await catchUp(~indexer=second, ~source=source(137))
 
       t.expect(
-        (await indexNames(~sql, ~pgSchema), await stampsByChainId(~sql, ~pgSchema)),
-        ~message="The last chain to catch up finds a fully stamped table, builds the indexes, and readiness lands on every chain at once",
-      ).toEqual(([aBIdIndexName], [("1", true, true), ("137", true, true)]))
+        (await indexNames(~sql, ~pgSchema), await readyByChainId(~sql, ~pgSchema)),
+        ~message="The last chain to catch up finds every chain at its head, builds the indexes, and readiness lands on every chain at once",
+      ).toEqual(([aBIdIndexName], [("1", true), ("137", true)]))
     },
   )
 })
