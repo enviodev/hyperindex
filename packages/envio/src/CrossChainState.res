@@ -150,7 +150,6 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
 
   crossChainState.isCaughtUp =
     crossChainState.isCaughtUp || (crossChainState->nextItemIsNone && everyChainCaughtUp.contents)
-
 }
 
 // Every chain has buffered up to its head (or endblock) with nothing

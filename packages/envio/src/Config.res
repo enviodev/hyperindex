@@ -136,11 +136,6 @@ type t = {
   reorgThresholdReadyTolerance: int,
   lowercaseAddresses: bool,
   isDev: bool,
-  // True when `envio start --chain` narrowed `chainMap` to a subset of what the
-  // schema was migrated for. The storage holds rows for the chains left out, so
-  // this is what tells a resume to leave them alone instead of reporting them
-  // as a config that no longer matches the database.
-  isChainSubset: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
@@ -1093,7 +1088,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
-    isChainSubset: false,
     userEntitiesByName,
     userEntities,
     allEnums,
@@ -1192,9 +1186,18 @@ let filterChains = (config: t, ~chainIds: array<ChainId.t>) => {
   switch config.userEntities->Array.filter(entityConfig => entityConfig.crossChain) {
   | [] => ()
   | shared =>
-    let names = shared->Array.map(entityConfig => entityConfig.name)->Array.joinUnsafe(", ")
+    // Naming all of them is only useful when some are per-chain. Without
+    // `disable_default_cross_chain` every entity is shared, and the list is just
+    // the schema read back. Kept in step with the CLI's own check, which is what
+    // a user normally hits first.
+    let remedy = if shared->Array.length === config.userEntities->Array.length {
+      "Every entity in this schema is cross-chain, because config.yaml doesn't set `disable_default_cross_chain: true`. Set it, then run every chain in its own process."
+    } else {
+      let names = shared->Array.map(entityConfig => entityConfig.name)->Array.joinUnsafe(", ")
+      `Entities shared across chains: ${names}. Drop \`@crossChain\` from them, or run every chain in one process.`
+    }
     JsError.throwWithMessage(
-      `\`envio start --chain\` needs every entity to be per-chain, because chains indexed in separate processes can't share a checkpoint sequence. Entities shared across chains: ${names}. Drop \`@crossChain\` from them, or run every chain in one process.`,
+      `\`envio start --chain\` needs every entity to be per-chain, because chains indexed in separate processes can't share a checkpoint sequence. ${remedy}`,
     )
   }
 
@@ -1223,7 +1226,6 @@ let filterChains = (config: t, ~chainIds: array<ChainId.t>) => {
     ...config,
     chainMap: chains->Array.map(chain => (chain.id, chain))->ChainMap.fromArrayUnsafe,
     defaultChain: chains->Array.get(0),
-    isChainSubset: chains->Array.length < config.chainMap->ChainMap.keys->Array.length,
   }
 }
 
@@ -1242,6 +1244,12 @@ let setActiveChains = (chainIds: array<ChainId.t>) => {
   activeChains := chainIds
   cached := None
 }
+
+// Whether `--chain` was given at all, which is a different question from whether
+// it happened to name fewer chains than the config declares: naming every one of
+// them is still a `--chain` run, and still needs the database the migration
+// built.
+let hasChainFilter = () => activeChains.contents->Array.length > 0
 
 let prime = (json: JSON.t): unit => {
   primedJson := Some(json)

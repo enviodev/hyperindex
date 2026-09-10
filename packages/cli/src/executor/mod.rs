@@ -110,6 +110,10 @@ pub async fn execute(
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
+            // Before codegen, so a mistyped `--chain` fails in the moment rather
+            // than after a full regeneration.
+            validate_chain_selection(&config, &start_args.chains)?;
+
             // Always regenerate so the runtime never boots against stale
             // codegen output (e.g. after an `envio` package upgrade).
             // Mirrors `envio dev`; the JS side handles DB compat via
@@ -120,7 +124,6 @@ pub async fn execute(
 
             // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
-            validate_chain_selection(&config, &start_args.chains)?;
 
             Ok(Some(build_start_command(
                 &config,
@@ -232,12 +235,23 @@ fn validate_chain_selection(config: &SystemConfig, chains: &[String]) -> Result<
         .collect();
     if !shared.is_empty() {
         shared.sort_unstable();
+        // Naming all of them is only useful when some are per-chain. Without
+        // `disable_default_cross_chain` every entity is shared, and the list is
+        // just the schema read back.
+        let remedy = if shared.len() == config.schema.entities.len() {
+            "Every entity in this schema is cross-chain, because config.yaml doesn't set \
+             `disable_default_cross_chain: true`. Set it, then run every chain in its own process."
+                .to_string()
+        } else {
+            format!(
+                "Entities shared across chains: {}. Drop `@crossChain` from them, or run every \
+                 chain in one process.",
+                shared.join(", ")
+            )
+        };
         anyhow::bail!(
             "`envio start --chain` needs every entity to be per-chain, because chains indexed in \
-             separate processes can't share a checkpoint sequence. Entities shared across chains: \
-             {}. Drop `@crossChain` from them and set `disable_default_cross_chain: true` in \
-             config.yaml, or run every chain in one process.",
-            shared.join(", ")
+             separate processes can't share a checkpoint sequence. {remedy}"
         );
     }
 
@@ -347,9 +361,9 @@ chains:
         assert_eq!(
             err.to_string(),
             "`envio start --chain` needs every entity to be per-chain, because chains indexed in \
-             separate processes can't share a checkpoint sequence. Entities shared across chains: \
-             Counter. Drop `@crossChain` from them and set \
-             `disable_default_cross_chain: true` in config.yaml, or run every chain in one process."
+             separate processes can't share a checkpoint sequence. Every entity in this schema is \
+             cross-chain, because config.yaml doesn't set `disable_default_cross_chain: true`. Set \
+             it, then run every chain in its own process."
         );
     }
 }

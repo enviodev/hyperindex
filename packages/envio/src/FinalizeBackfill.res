@@ -7,6 +7,29 @@
 // processing loop's error boundary; the retry only owes what's left. Either way
 // no chain carries `ready_at` while an index the schema promised is missing.
 
+// The barrier `envio start --chain` turns on: the schema's indexes are global
+// objects on shared tables, so the process that finds no chain left backfilling
+// is the one that builds them.
+//
+// Every caller reads the count strictly after committing its own chains'
+// stamps, never before. Two processes finishing together would otherwise each
+// see the other still pending and neither would build; reading after its own
+// commit means at least one of them sees a fully stamped table, and that one is
+// still running at the moment it reads.
+%%private(
+  let buildSchemaIndexesIfLast = async (persistence: Persistence.t, ~readyAt) => {
+    let storage = persistence->Persistence.getInitializedStorageOrThrow
+    switch await storage.countChainsNotCaughtUp() {
+    | 0 => await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt)
+    | pending =>
+      Logging.info({
+        "msg": `Leaving the schema's indexes to whichever chain finishes last: ${pending->Int.toString} of this schema's chains are still backfilling in other processes.`,
+        "pendingChains": pending,
+      })
+    }
+  }
+)
+
 let runOnce = async (state: IndexerState.t) => {
   Logging.info(
     "This indexer's chains are caught up. Finalizing before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
@@ -29,19 +52,7 @@ let runOnce = async (state: IndexerState.t) => {
       ~caughtUpAt=readyAt,
     )
 
-    // Read strictly after the stamp above has committed, never before. Two
-    // `envio start --chain` processes finishing together would otherwise each
-    // see the other still pending and neither would build. Reading after its own
-    // commit means at least one of them sees a fully stamped table, and that one
-    // is still running at the moment it reads.
-    switch await storage.countChainsNotCaughtUp() {
-    | 0 => await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt)
-    | pending =>
-      Logging.info({
-        "msg": `Leaving the schema's indexes to whichever chain finishes last: ${pending->Int.toString} of this schema's chains are still backfilling in other processes.`,
-        "pendingChains": pending,
-      })
-    }
+    await persistence->buildSchemaIndexesIfLast(~readyAt)
 
     // Only after the build: in-memory readiness must never claim indexes the
     // database doesn't hold. With chains left backfilling elsewhere there is no
@@ -77,19 +88,11 @@ let run = (state: IndexerState.t) =>
 // down. Whatever it fails to build, the next restart owes again.
 let repairSchemaIndexes = async (state: IndexerState.t) => {
   let persistence = state->IndexerState.persistence
-  let storage = persistence->Persistence.getInitializedStorageOrThrow
   // Nothing awaits this, so a rejection escaping here would reach the process's
   // unhandled-rejection handler and take the indexer down. The whole body is
-  // guarded, the count included.
+  // guarded, the barrier's own query included.
   try {
-    // A `--chain` process resumes caught up as soon as its own chains are, which
-    // says nothing about the ones other processes drive. Building here would put
-    // the schema's indexes in place while another chain is still backfilling
-    // into them.
-    switch await storage.countChainsNotCaughtUp() {
-    | 0 => await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt=Date.make())
-    | _ => ()
-    }
+    await persistence->buildSchemaIndexesIfLast(~readyAt=Date.make())
   } catch {
   | exn =>
     Logging.warn({

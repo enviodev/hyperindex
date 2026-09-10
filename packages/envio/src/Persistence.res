@@ -253,9 +253,13 @@ let make = (
   }
 }
 
-// Keeps only what the given chains own. The checkpoint frontier is left whole:
-// under the per-chain sequence a subset run requires, a chain only ever reads
-// its own position out of it.
+// Keeps only what the chains this run drives own. Unconditional, because
+// "resume the chains I was given" holds in every mode — with the full set it is
+// a no-op, and a config that genuinely disagrees with the database was already
+// rejected by `throwIfResumeIncompatible`, which compares the stored chain list.
+//
+// The checkpoint frontier is left whole: under the per-chain sequence a subset
+// run requires, a chain only ever reads its own position out of it.
 %%private(
   let narrowToChains = (initialState: initialState, ~chainConfigs: array<Config.chain>) => {
     let isActive = Dict.make()
@@ -281,11 +285,10 @@ let init = {
     ~runCommand,
     ~reset=false,
     ~lowercaseAddresses=false,
-    // `envio start --chain` drives a subset of the chains the schema was
-    // migrated for. The rows belonging to the chains this process left out are
-    // another process's to advance, so they're dropped from what this one
-    // resumes rather than reported as a database that no longer matches.
-    ~isChainSubset=false,
+    // `envio start --chain` needs the schema to exist already: initializing
+    // under it would create rows for this process's chains only, leaving the
+    // ones it skipped with no state for their own processes to resume.
+    ~requireInitialized=false,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
   ) => {
     try {
@@ -304,10 +307,7 @@ let init = {
         })
         persistence.storageStatus = Initializing(promise)
         if reset || !(await persistence.storage.isInitialized()) {
-          // Initializing here would create rows for this process's chains only,
-          // and the chains left out would have no state for their own processes
-          // to resume. The migration is what creates the schema for all of them.
-          if isChainSubset {
+          if requireInitialized {
             JsError.throwWithMessage(
               "`envio start --chain` needs a database that already holds every chain. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
             )
@@ -351,9 +351,7 @@ let init = {
                 ~runCommand,
               ),
           )
-          let initialState = isChainSubset
-            ? initialState->narrowToChains(~chainConfigs)
-            : initialState
+          let initialState = initialState->narrowToChains(~chainConfigs)
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

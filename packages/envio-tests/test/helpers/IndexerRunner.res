@@ -145,7 +145,7 @@ let run = async (
       ~runCommand=Some("envio dev"),
       ~reset,
       ~lowercaseAddresses=config.lowercaseAddresses,
-      ~isChainSubset=config.isChainSubset,
+      
     )
 
     // Same order as `Main.start`: storage is initialized - which is where a

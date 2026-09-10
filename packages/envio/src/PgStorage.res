@@ -28,6 +28,13 @@ let formatSeconds = (timeRef: Performance.timeRef) =>
 // stalled-looking indexer is explainable from the logs alone.
 let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
+// What one attempt at building an index came back with. `LockBusy` is another
+// process holding the schema's index lock, not a failure.
+type indexBuildAttempt =
+  | LockBusy
+  | AlreadyBuilt
+  | Built(IndexCatalog.entry)
+
 // First key of every `pg_advisory_lock` envio takes, so its locks can never
 // collide with an application's own. "envi" as ASCII, which fits int4.
 let envioAdvisoryLockNamespace = 0x656e7669
@@ -2066,8 +2073,10 @@ let make = (
   }
 
   // Long enough that a contended build isn't polling hard, short enough to be
-  // lost in the seconds-to-minutes an index takes.
+  // lost in the seconds-to-minutes an index takes. Doubles up to the ceiling
+  // while the lock stays held.
   let indexLockRetryMillis = 250
+  let indexLockMaxRetryMillis = 4000
 
   // Builds one index, unless the database already holds it. Every build goes
   // through here, so the lock and the re-read under it are not something a
@@ -2082,13 +2091,13 @@ let make = (
   let buildIndex = async (~definition, ~coverage, ~startMessage, ~doneNote="") => {
     let name = definition->IndexDefinition.name
     let timeRef = Performance.now()
-    let rec attempt = async () => {
+    let rec attempt = async (~retryMillis) => {
       let outcome = await sql->Postgres.beginSql(async sql => {
         let rows: array<{"locked": bool}> = await sql->Postgres.unsafe(indexLockQuery)
         if !(rows->Array.getUnsafe(0))["locked"] {
           // Someone else is building. Whatever they build, the re-read on the
           // next attempt sees, so this terminates either way.
-          None
+          LockBusy
         } else {
           // Under the lock: a sibling process may have built this one while we
           // waited, and a previous attempt of our own may have committed DDL it
@@ -2098,32 +2107,32 @@ let make = (
             ~rows=await sql->loadCatalogRows(~indexName=name),
           )
           switch indexManager->IndexManager.prepare(~definition, ~coverage, ~pgSchema) {
-          | None => Some(None)
+          | None => AlreadyBuilt
           | Some(prepared) =>
             // Logged from inside the build so it reports the one attempt that
             // actually creates the index, not the ones waiting on it.
             Logging.info({"storage": storageName, "msg": prepared->startMessage})
-            Some(Some(await sql->runAndVerify(prepared)))
+            Built(await sql->runAndVerify(prepared))
           }
         }
       })
       switch outcome {
-      | None =>
-        await Utils.delay(indexLockRetryMillis)
-        await attempt()
-      | Some(built) => built
+      | LockBusy =>
+        await Utils.delay(retryMillis)
+        // Backs off, because each attempt reserves a pooled connection for its
+        // transaction and the holder's build can run for minutes.
+        await attempt(~retryMillis=Pervasives.min(retryMillis * 2, indexLockMaxRetryMillis))
+      | AlreadyBuilt => ()
+      | Built(entry) =>
+        // Recorded only once the commit made the DDL durable.
+        indexManager->IndexManager.record(entry)
+        Logging.info({
+          "storage": storageName,
+          "msg": `Index "${name}" is ready after ${timeRef->formatSeconds}s.${doneNote}`,
+        })
       }
     }
-    switch await attempt() {
-    // Recorded only once the commit made the DDL durable.
-    | Some(entry) =>
-      indexManager->IndexManager.record(entry)
-      Logging.info({
-        "storage": storageName,
-        "msg": `Index "${name}" is ready after ${timeRef->formatSeconds}s.${doneNote}`,
-      })
-    | None => ()
-    }
+    await attempt(~retryMillis=indexLockRetryMillis)
   }
 
   let ensureQueryIndexes = async (~table: Table.table, ~filters: array<EntityFilter.t>) => {
