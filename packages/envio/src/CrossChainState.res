@@ -270,6 +270,10 @@ let idleOrWaitAction = (cs: ChainState.t) =>
     ? FetchState.NothingToQuery
     : FetchState.WaitingForNewBlock
 
+// How far past the alignment anchor's frontier progress a follower may fetch,
+// as a fraction of its own alignable range.
+let alignmentMargin = 0.2
+
 // Dispatch a fetch tick across the whole indexer from one shared pool of
 // ~targetBufferSize ready events, as a waterfall: visit chains furthest-behind
 // first, hand each the budget remaining at that point (plus its own
@@ -353,11 +357,14 @@ let checkAndFetch = async (
         (isCold ? Pervasives.min(remaining.contents, coldChainBudget) : remaining.contents) +.
         cs->ChainState.pendingBudget
       let maxTargetBlock = switch alignment {
-      // 10% margin past the anchor's line: chains whose progress tracks the
+      // 20% margin past the anchor's line: chains whose progress tracks the
       // anchor closely would otherwise flap in and out of the clamp on every
-      // small frontier move, stalling their pipeline every other tick.
+      // small frontier move, stalling their pipeline every other tick. The
+      // margin is also the headroom a follower keeps buffered while the anchor
+      // is mid-fetch, so it has to outlast a slow anchor response, not just
+      // absorb frontier jitter.
       | Some((anchorChainId, progress)) if anchorChainId !== chainId =>
-        Some(cs->ChainState.blockAtProgress(~progress=progress +. 0.1))
+        Some(cs->ChainState.blockAtProgress(~progress=progress +. alignmentMargin))
       | _ => None
       }
       switch cs->ChainState.getNextQuery(~chainTargetItems, ~maxTargetBlock?) {
