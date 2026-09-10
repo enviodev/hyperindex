@@ -283,6 +283,9 @@ module EventItems = {
     archiveHeight: option<int>,
     nextBlock: int,
     items: array<item>,
+    // Blocks the server returned for the query, counted before routing drops
+    // the ones no item joins to.
+    responseBlocks: int,
   }
 }
 
