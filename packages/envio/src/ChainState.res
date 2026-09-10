@@ -646,11 +646,15 @@ let hasProcessedToEndblock = (cs: t) => {
 let isDurablyCaughtUp = (cs: t) => {
   let {committedProgressBlockNumber, fetchState} = cs
   switch fetchState.endBlock {
-  | Some(endBlock) => committedProgressBlockNumber >= endBlock
-  | None =>
-    // The configured lag, not the fetch state's: pre-threshold that one also
-    // carries maxReorgDepth, which would read a chain a whole reorg depth behind
-    // the head as caught up.
+  | Some(endBlock) if committedProgressBlockNumber >= endBlock => true
+  // Either one, like `isFetchingAtHead`: an `end_block` above the head is never
+  // reached, and testing only for it would leave such a chain reading as behind
+  // however long it sits at the head.
+  //
+  // The configured lag, not the fetch state's: pre-threshold that one also
+  // carries maxReorgDepth, which would read a chain a whole reorg depth behind
+  // the head as caught up.
+  | _ =>
     fetchState.knownHeight > 0 &&
       committedProgressBlockNumber >= fetchState.knownHeight - cs.chainConfig.blockLag
   }

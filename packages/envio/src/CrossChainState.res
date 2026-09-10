@@ -207,13 +207,13 @@ let markCaughtUpOnResume = (crossChainState: t) => {
   }
 }
 
+let owesSchemaIndexes = (crossChainState: t) => crossChainState.owesSchemaIndexes
+let clearSchemaIndexDebt = (crossChainState: t) => crossChainState.owesSchemaIndexes = false
+
 // Concludes the FinalizingIndexes phase and switches the indexer to realtime.
 // Under `envio start --chain` it is reached whether or not this process was the
 // one that built the schema's indexes: a chain that has caught up is realtime
 // regardless of how far its siblings have got.
-let owesSchemaIndexes = (crossChainState: t) => crossChainState.owesSchemaIndexes
-let clearSchemaIndexDebt = (crossChainState: t) => crossChainState.owesSchemaIndexes = false
-
 let markReady = (crossChainState: t, ~readyAt) => {
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     crossChainState

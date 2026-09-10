@@ -93,6 +93,7 @@ let shouldSaveHistory: t => dict<bool>
 let isRealtime: t => bool
 let isFinalizingIndexes: t => bool
 let shouldRunFinalize: t => bool
+let recordFinalizeCheck: t => unit
 let clearSchemaIndexDebt: t => unit
 let markCaughtUpIfSettled: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit

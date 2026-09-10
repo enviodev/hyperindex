@@ -83,6 +83,9 @@ describe("envio start --chain", () => {
   scenario->Scenario.it(
     "Comes back to the indexes once the chain that was behind catches up",
     ~sources=[{chain: 1}, {chain: 137}],
+    // The retry is throttled in production, where the chain it waits on can be
+    // behind for hours. This test drives it a batch at a time.
+    ~finalizeRetryIntervalMillis=0.,
     async (~t, ~indexer, ~source) => {
       let running = await indexer.restart(~chains=[ChainId.fromInt(1)], ())
       let {sql, pgSchema} = running.pg

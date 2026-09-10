@@ -2165,14 +2165,16 @@ let make = (
   }
 
   let readChainProgress = async (): array<Persistence.chainProgress> => {
+    // Raw read, so the chain id goes through `normalizeOrThrow` rather than
+    // trusting what the driver made of a BIGINT column.
     let rows: array<{
-      "id": ChainId.t,
+      "id": unknown,
       "progressBlockNumber": int,
       "sourceBlockNumber": int,
       "endBlock": Null.t<int>,
     }> = await sql->Postgres.unsafe(InternalTable.Chains.makeReadProgressQuery(~pgSchema))
     rows->Array.map(row => {
-      Persistence.id: row["id"],
+      Persistence.id: row["id"]->ChainId.normalizeOrThrow,
       progressBlockNumber: row["progressBlockNumber"],
       sourceBlockNumber: row["sourceBlockNumber"],
       endBlock: row["endBlock"]->Null.toOption,

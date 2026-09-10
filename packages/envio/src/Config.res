@@ -138,6 +138,10 @@ type t = {
   // ready to enter the reorg threshold, absorbing head advances between catch-up
   // and the entry check. Overridable in tests.
   reorgThresholdReadyTolerance: int,
+  // How long a finalize pass that found another chain still backfilling waits
+  // before asking again. Only the retries are held back, so this never delays a
+  // run whose chains are all its own. Overridable in tests.
+  finalizeRetryIntervalMillis: float,
   lowercaseAddresses: bool,
   isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
@@ -1091,6 +1095,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     clientFilterAddressThreshold: Env.clientFilterAddressThreshold,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,
+    finalizeRetryIntervalMillis: 30_000.,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,

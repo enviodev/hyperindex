@@ -97,6 +97,9 @@ type t = {
   // When an entity's history was last pruned. No key = never pruned yet,
   // which counts as overdue.
   lastPrunedAtMillis: dict<float>,
+  // When the finalize barrier last read the chains. Only throttles the retry
+  // passes; the first one is never held back.
+  mutable lastFinalizeCheckMillis: float,
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
   exitAfterFirstEventBlock: bool,
@@ -185,6 +188,7 @@ let make = (
     indexerStartTimeRef: Performance.now(),
     rollbackState: NoRollback,
     lastPrunedAtMillis: Dict.make(),
+    lastFinalizeCheckMillis: 0.,
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
@@ -499,13 +503,23 @@ let isFinalizingIndexes = (state: t) =>
   state.crossChainState->CrossChainState.isCaughtUp &&
     !(state.crossChainState->CrossChainState.isRealtime)
 
+// A chain another process drives can be behind for hours, and the retry runs off
+// the processing loop, so without the interval it would query the chains table
+// on every batch for the whole time.
+//
 // Whether the loop should run a finalize pass. Wider than the phase above,
 // because a pass that found another chain still backfilling leaves the schema's
 // indexes owed while this process goes realtime — the loop has to come back and
-// ask again rather than leaving them unbuilt for the rest of the run.
+// ask again rather than leaving them unbuilt for the rest of the run. Only those
+// retries are throttled; the first pass holds the run short of realtime, so it
+// runs the moment the chains are caught up.
 let shouldRunFinalize = (state: t) =>
   state.crossChainState->CrossChainState.isCaughtUp &&
-    state.crossChainState->CrossChainState.owesSchemaIndexes
+  state.crossChainState->CrossChainState.owesSchemaIndexes &&
+  (!(state.crossChainState->CrossChainState.isRealtime) ||
+    Date.now() -. state.lastFinalizeCheckMillis >= state.config.finalizeRetryIntervalMillis)
+
+let recordFinalizeCheck = (state: t) => state.lastFinalizeCheckMillis = Date.now()
 
 let clearSchemaIndexDebt = (state: t) =>
   state.crossChainState->CrossChainState.clearSchemaIndexDebt

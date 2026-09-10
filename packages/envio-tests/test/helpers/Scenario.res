@@ -149,6 +149,7 @@ let withInternalOverrides = (
   ~maxAddrInPartition,
   ~clientFilterAddressThreshold,
   ~reorgThresholdReadyTolerance,
+  ~finalizeRetryIntervalMillis,
 ) => {
   ...config,
   maxAddrInPartition: maxAddrInPartition->Option.getOr(config.maxAddrInPartition),
@@ -157,6 +158,9 @@ let withInternalOverrides = (
   ),
   reorgThresholdReadyTolerance: reorgThresholdReadyTolerance->Option.getOr(
     config.reorgThresholdReadyTolerance,
+  ),
+  finalizeRetryIntervalMillis: finalizeRetryIntervalMillis->Option.getOr(
+    config.finalizeRetryIntervalMillis,
   ),
 }
 
@@ -168,6 +172,7 @@ let run = async (
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
   ~reorgThresholdReadyTolerance=?,
+  ~finalizeRetryIntervalMillis=?,
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
@@ -200,6 +205,7 @@ let run = async (
       ~maxAddrInPartition,
       ~clientFilterAddressThreshold,
       ~reorgThresholdReadyTolerance,
+      ~finalizeRetryIntervalMillis,
     )
 
   // `~index` picks between several mocks given for one chain, in the order
@@ -267,6 +273,7 @@ let it = (
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
   ~reorgThresholdReadyTolerance=?,
+  ~finalizeRetryIntervalMillis=?,
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
@@ -293,6 +300,7 @@ let it = (
         ~maxAddrInPartition?,
         ~clientFilterAddressThreshold?,
         ~reorgThresholdReadyTolerance?,
+        ~finalizeRetryIntervalMillis?,
         ~onError?,
         ~onExit?,
         ~mapStorage?,

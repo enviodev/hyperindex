@@ -85,13 +85,18 @@ let runOnce = async (state: IndexerState.t) => {
   // once-only half — announcing, flushing, and switching to realtime — is gated
   // on this being the first pass.
   let isFirstPass = !(state->IndexerState.isRealtime)
+  state->IndexerState.recordFinalizeCheck
 
   if isFirstPass {
     Logging.info(
       "This indexer's chains are caught up. Finalizing before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
     )
-    await Writing.flush(state)
   }
+
+  // Every pass, not just the first: the barrier below reads this process's own
+  // row along with the rest, and a batch whose write is still queued would have
+  // it reading its own stale progress.
+  await Writing.flush(state)
 
   // A failed write already surfaced through onError; committing ready_at on top
   // of an incomplete write would claim progress that isn't durable.
