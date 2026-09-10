@@ -90,6 +90,7 @@ type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
   nextBlock: int,
   archiveHeight: int,
+  responseBlocks: int,
   // Page store owning this page's raw transactions.
   transactionStore: TransactionStore.t,
   // Page store owning this page's raw blocks.
@@ -165,6 +166,7 @@ module GetLogs = {
     {
       items: res.items,
       nextBlock: res.nextBlock,
+      responseBlocks: res.responseBlocks,
       archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
       transactionStore,
       blockStore,

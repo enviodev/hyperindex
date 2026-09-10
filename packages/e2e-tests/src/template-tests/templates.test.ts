@@ -54,15 +54,9 @@ const TEMPLATES: TemplateConfig[] = [
   },
   // SVM Templates
   {
-    name: "svm-metaplex",
-    initArgs: ["svm", "template", "-t", "metaplex-token-metadata", "-l", "typescript"],
+    name: "svm-usdc-transfers",
+    initArgs: ["svm", "template", "-t", "usdc-transfers", "-l", "typescript"],
     hasTests: true,
-  },
-  {
-    // No test file in the template: `onSlot` needs a live Solana RPC, which
-    // `simulate` cannot stand in for.
-    name: "svm-block-handler",
-    initArgs: ["svm", "template", "-t", "feature-block-handler", "-l", "typescript"],
   },
   // EVM Contract Import (explorer)
   {

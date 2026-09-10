@@ -27,6 +27,8 @@ type requestStatSample = {
   method: string,
   count: int,
   seconds: float,
+  responseBlocks: option<int>,
+  emptyResponseCount: int,
 }
 
 let getRequestStatSamples: t => array<requestStatSample>
