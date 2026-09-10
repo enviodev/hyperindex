@@ -453,6 +453,38 @@ describe("Indexes built against a real schema", () => {
     ).toEqual((indexNames->Array.toSorted(String.compare), indexNames->Array.slice(~start=1, ~end=3)))
   })
 
+  // `markChainsCaughtUp` commits before the index build, and the build can take
+  // minutes. A chain-metadata write landing in that window must not clear the
+  // stamp: under `--chain` a sibling reads it to decide whether the indexes are
+  // owed, and a cleared stamp holds the barrier shut for good.
+  Async.it("Keeps the caught-up stamp across a chain-metadata write", async t => {
+    let pgSchema = testSchema("meta_write")
+    let storage = await setup(~pgSchema)
+    let chainIds = config.chainMap->ChainMap.values->Array.map(chain => chain.id)
+
+    await storage.markChainsCaughtUp(~chainIds, ~caughtUpAt=readyAt)
+
+    let meta = Dict.make()
+    chainIds->Array.forEach(chainId =>
+      meta->Dict.set(
+        chainId->ChainId.toString,
+        (
+          {
+            firstEventBlockNumber: Null.null,
+            latestFetchedBlockNumber: 10,
+            isHyperSync: false,
+          }: InternalTable.Chains.metaFields
+        ),
+      )
+    )
+    let _ = await storage.setChainMeta(meta)
+
+    t.expect(
+      (await backfillCompletedByChainId(pgSchema), await storage.countChainsNotCaughtUp()),
+      ~message="The metadata write leaves the stamp alone, so the barrier stays open",
+    ).toEqual((chainIds->Array.map(id => (id, true)), 0))
+  })
+
   // What `envio start --chain` reads to decide whether it is the last process
   // still backfilling, and so the one that owes the schema its indexes.
   Async.it("Counts the chains that haven't caught up, and stamps only its own", async t => {

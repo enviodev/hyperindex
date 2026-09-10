@@ -246,6 +246,48 @@ describe("Resuming a backfill that never finalized", () => {
     },
   )
 
+  // The head moving on is what used to hide the debt: a resumed run seeds its
+  // chains' caught-up timestamps from the database, and inferring "realtime"
+  // from those would flip the run past the FinalizingIndexes phase the moment a
+  // batch progressed, leaving the indexes it still owes unbuilt.
+  let (finalizeCalls, mapStorage) = makeFlakyFinalize(~failCount=1)
+
+  scenario->Scenario.it(
+    "Finalizes after the resumed run processes a fresh block",
+    ~sources=[{chain: 1337, methods}],
+    ~mapStorage,
+    ~onError=_ => (),
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      let {sql, pgSchema} = indexer.pg
+
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        (finalizeCalls.contents, await hasIndex(aBIdIndex, ~sql, ~pgSchema)),
+        ~message="The first run reached the head, then died before committing the indexes",
+      ).toEqual((1, false))
+
+      let restarted = await indexer.restart()
+      let restartedSource = source
+      restartedSource.resolveGetHeightOrThrow(101)
+      restartedSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
+      await restarted.waitUntilReady()
+      await restarted.waitUntilIdle()
+
+      t.expect(
+        (
+          finalizeCalls.contents,
+          await hasIndex(aBIdIndex, ~sql, ~pgSchema),
+          await persistedChains(~sql, ~pgSchema),
+        ),
+        ~message="A progressing batch doesn't excuse the indexes the resumed run still owes",
+      ).toEqual((2, true, [{id: 1337, progressBlock: 101, isReady: true}]))
+    },
+  )
+
   // Same crash, but "caught up" is the configured endBlock rather than a live
   // head — so the resumed run doesn't need a height response at all.
   let (finalizeCalls, mapStorage) = makeFlakyFinalize(~failCount=1)

@@ -78,20 +78,23 @@ let run = (state: IndexerState.t) =>
 let repairSchemaIndexes = async (state: IndexerState.t) => {
   let persistence = state->IndexerState.persistence
   let storage = persistence->Persistence.getInitializedStorageOrThrow
-  // A `--chain` process resumes caught up as soon as its own chains are, which
-  // says nothing about the ones other processes drive. Building here would put
-  // the schema's indexes in place while another chain is still backfilling into
-  // them.
-  switch await storage.countChainsNotCaughtUp() {
-  | 0 =>
-    switch await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt=Date.make()) {
-    | () => ()
-    | exception exn =>
-      Logging.warn({
-        "msg": "Failed to restore the indexes the schema promises. Queries relying on them run unindexed until the next restart.",
-        "err": exn->Utils.prettifyExn,
-      })
+  // Nothing awaits this, so a rejection escaping here would reach the process's
+  // unhandled-rejection handler and take the indexer down. The whole body is
+  // guarded, the count included.
+  try {
+    // A `--chain` process resumes caught up as soon as its own chains are, which
+    // says nothing about the ones other processes drive. Building here would put
+    // the schema's indexes in place while another chain is still backfilling
+    // into them.
+    switch await storage.countChainsNotCaughtUp() {
+    | 0 => await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt=Date.make())
+    | _ => ()
     }
-  | _ => ()
+  } catch {
+  | exn =>
+    Logging.warn({
+      "msg": "Failed to restore the indexes the schema promises. Queries relying on them run unindexed until the next restart.",
+      "err": exn->Utils.prettifyExn,
+    })
   }
 }

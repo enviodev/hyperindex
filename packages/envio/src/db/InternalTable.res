@@ -216,8 +216,6 @@ module Chains = {
       int,
     >,
     @as("buffer_block") latestFetchedBlockNumber: int,
-    @as("backfill_completed_at")
-    timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     @as("_is_hyper_sync") isHyperSync: bool,
   }
 
@@ -231,8 +229,13 @@ module Chains = {
     @as("progress_block") progressBlockNumber: int,
     @as("events_processed") numEventsProcessed: float,
     @as("checkpoint_id") checkpointId: Internal.checkpointId,
-    // Written only by `finalizeBackfill`, never by a chain-metadata update, so
-    // it isn't part of `metaFields`.
+    // Neither of these is a `metaFields` member, so a chain-metadata update
+    // can't touch them. Each has exactly one writer, and both are sticky: a
+    // chain keeps the timestamp it first earned. That matters most for
+    // `backfill_completed_at` — an `envio start --chain` sibling reads it to
+    // decide whether the schema's indexes are owed, and a metadata write
+    // clearing it would hold that barrier shut for good.
+    @as("backfill_completed_at") backfillCompletedAt: Null.t<Date.t>,
     @as("ready_at") readyAt: Null.t<Date.t>,
     ...metaFields,
   }
@@ -304,7 +307,7 @@ module Chains = {
       blockHeight: 0,
       firstEventBlockNumber: Null.null,
       latestFetchedBlockNumber: -1,
-      timestampCaughtUpToHeadOrEndblock: Null.null,
+      backfillCompletedAt: Null.null,
       readyAt: Null.null,
       progressBlockNumber: -1,
       isHyperSync: false,
@@ -349,7 +352,6 @@ VALUES ${valuesRows->Array.joinUnsafe(",\n       ")};`,
   let metaFields: array<field> = [
     #buffer_block,
     #first_event_block,
-    #backfill_completed_at,
     #_is_hyper_sync,
   ]
 

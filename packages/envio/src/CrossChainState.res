@@ -151,16 +151,6 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
   crossChainState.isCaughtUp =
     crossChainState.isCaughtUp || (crossChainState->nextItemIsNone && everyChainCaughtUp.contents)
 
-  // A run resumed with every chain already stamped ready needs no finalize —
-  // the indexes were committed together with those stamps.
-  let allChainsReady = ref(true)
-  for i in 0 to chainIds->Array.length - 1 {
-    if !(crossChainState->getChainState(chainIds->Array.getUnsafe(i))->ChainState.isReady) {
-      allChainsReady := false
-    }
-  }
-
-  crossChainState.isRealtime = crossChainState.isRealtime || allChainsReady.contents
 }
 
 // Every chain has buffered up to its head (or endblock) with nothing

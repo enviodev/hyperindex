@@ -801,8 +801,7 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
 SET "buffer_block" = $2,
     "first_event_block" = $3,
-    "backfill_completed_at" = $4,
-    "_is_hyper_sync" = $5
+    "_is_hyper_sync" = $4
 WHERE "id" = $1;`
 
         t.expect(

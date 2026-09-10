@@ -917,10 +917,7 @@ let addCommitWaiter = (state: t, resolve) => state.commitWaiters->Array.push(res
 let metaFieldsEqual = (a: InternalTable.Chains.metaFields, b: InternalTable.Chains.metaFields) =>
   a.firstEventBlockNumber == b.firstEventBlockNumber &&
   a.latestFetchedBlockNumber == b.latestFetchedBlockNumber &&
-  a.isHyperSync == b.isHyperSync &&
-  // Date is boxed; compare epoch ms.
-  a.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime) ==
-    b.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime)
+  a.isHyperSync == b.isHyperSync
 
 // Stage per-chain metadata, dirtying only on a real change so restages are no-ops.
 let stageChainMeta = (state: t, chainsData: dict<InternalTable.Chains.metaFields>) =>

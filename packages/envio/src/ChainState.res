@@ -952,7 +952,6 @@ let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
   firstEventBlockNumber: cs.fetchState.firstEventBlock->Null.fromOption,
   isHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
   latestFetchedBlockNumber: cs.fetchState->FetchState.bufferBlockNumber,
-  timestampCaughtUpToHeadOrEndblock: cs.timestampCaughtUpToHeadOrEndblock->Null.fromOption,
 }
 
 let toMetrics = (cs: t): Metrics.chainMetrics => {
