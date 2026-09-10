@@ -184,6 +184,7 @@ module Chains = {
     | #source_block
     | #first_event_block
     | #buffer_block
+    | #backfill_completed_at
     | #ready_at
     | #_is_hyper_sync
     | #checkpoint_id
@@ -199,6 +200,7 @@ module Chains = {
     #first_event_block,
     #buffer_block,
     #progress_block,
+    #backfill_completed_at,
     #ready_at,
     #events_processed,
     #_is_hyper_sync,
@@ -214,7 +216,7 @@ module Chains = {
       int,
     >,
     @as("buffer_block") latestFetchedBlockNumber: int,
-    @as("ready_at")
+    @as("backfill_completed_at")
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     @as("_is_hyper_sync") isHyperSync: bool,
   }
@@ -229,6 +231,9 @@ module Chains = {
     @as("progress_block") progressBlockNumber: int,
     @as("events_processed") numEventsProcessed: float,
     @as("checkpoint_id") checkpointId: Internal.checkpointId,
+    // Written only by `finalizeBackfill`, never by a chain-metadata update, so
+    // it isn't part of `metaFields`.
+    @as("ready_at") readyAt: Null.t<Date.t>,
     ...metaFields,
   }
 
@@ -255,8 +260,19 @@ module Chains = {
         ~fieldSchema=S.null(S.int),
         ~isNullable,
       ),
-      // Used to show how much time historical sync has taken, so we need a timezone here (TUI and Hosted Service)
-      // null during historical sync, set to current time when sync is complete
+      // When this chain reached its head or end block. Used to show how much
+      // time historical sync has taken, so it needs a timezone (TUI and Hosted
+      // Service). Null during historical sync.
+      mkField(
+        (#backfill_completed_at: field :> string),
+        Date,
+        ~fieldSchema=S.null(Utils.Schema.dbDate),
+        ~isNullable,
+      ),
+      // When the schema's indexes were committed, which only happens once every
+      // chain has finished backfill. Under `envio start --chain` a chain can sit
+      // with `backfill_completed_at` set and this still null, waiting on the
+      // chains other processes drive.
       mkField(
         (#ready_at: field :> string),
         Date,
@@ -289,6 +305,7 @@ module Chains = {
       firstEventBlockNumber: Null.null,
       latestFetchedBlockNumber: -1,
       timestampCaughtUpToHeadOrEndblock: Null.null,
+      readyAt: Null.null,
       progressBlockNumber: -1,
       isHyperSync: false,
       numEventsProcessed: 0.,
@@ -329,7 +346,12 @@ VALUES ${valuesRows->Array.joinUnsafe(",\n       ")};`,
   }
 
   // Fields that can be updated outside of the batch transaction
-  let metaFields: array<field> = [#buffer_block, #first_event_block, #ready_at, #_is_hyper_sync]
+  let metaFields: array<field> = [
+    #buffer_block,
+    #first_event_block,
+    #backfill_completed_at,
+    #_is_hyper_sync,
+  ]
 
   let makeMetaFieldsUpdateQuery = (~pgSchema) => {
     // Generate SET clauses with parameter placeholders
@@ -351,14 +373,31 @@ WHERE "${(#id: field :> string)}" = $1;`
   //
   // `IS NULL` so a chain keeps the timestamp it first caught up at, matching the
   // sticky in-memory `ChainState.markReady`. Without it a partial recovery (eg a
-  // chain added to an already-synced indexer) would restamp the ready chains in
-  // the database while their in-memory copies kept the old value — and the next
-  // chain-metadata write would push the stale value back over the committed one.
+  // chain added to an already-synced indexer) would restamp the caught-up chains
+  // in the database while their in-memory copies kept the old value — and the
+  // next chain-metadata write would push the stale value back over the committed
+  // one.
+  let makeSetBackfillCompletedQuery = (~pgSchema) =>
+    `UPDATE "${pgSchema}"."${table.tableName}"
+SET "${(#backfill_completed_at: field :> string)}" = $1
+WHERE "${(#id: field :> string)}" = $2
+  AND "${(#backfill_completed_at: field :> string)}" IS NULL;`
+
+  // Every chain at once and without naming any: this only runs once the schema's
+  // indexes are committed, which is a fact about the whole indexer rather than
+  // about the chains the process running it happens to drive.
   let makeSetReadyAtQuery = (~pgSchema) =>
     `UPDATE "${pgSchema}"."${table.tableName}"
 SET "${(#ready_at: field :> string)}" = $1
-WHERE "${(#id: field :> string)}" = $2
-  AND "${(#ready_at: field :> string)}" IS NULL;`
+WHERE "${(#ready_at: field :> string)}" IS NULL;`
+
+  // How many chains have yet to finish backfill. Under `envio start --chain`
+  // each process drives only some of them, so this is what tells one whether it
+  // is the last to catch up and so the one that owes the schema its indexes.
+  let makeCountNotCaughtUpQuery = (~pgSchema) =>
+    `SELECT count(*)::INT AS "count"
+FROM "${pgSchema}"."${table.tableName}"
+WHERE "${(#backfill_completed_at: field :> string)}" IS NULL;`
 
   type rawInitialState = {
     id: ChainId.t,
@@ -367,6 +406,7 @@ WHERE "${(#id: field :> string)}" = $2
     maxReorgDepth: int,
     firstEventBlockNumber: Null.t<int>,
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
+    indexesReadyAt: Null.t<Date.t>,
     numEventsProcessed: float,
     progressBlockNumber: int,
     addressRows: AddressRows.seedRows,
@@ -381,7 +421,8 @@ WHERE "${(#id: field :> string)}" = $2
 "${(#end_block: field :> string)}" as "endBlock",
 "${(#max_reorg_depth: field :> string)}" as "maxReorgDepth",
 "${(#first_event_block: field :> string)}" as "firstEventBlockNumber",
-"${(#ready_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
+"${(#backfill_completed_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
+"${(#ready_at: field :> string)}" as "indexesReadyAt",
 "${(#events_processed: field :> string)}"::float8 as "numEventsProcessed",
 "${(#progress_block: field :> string)}" as "progressBlockNumber",
 "${(#source_block: field :> string)}" as "sourceBlockNumber",
@@ -911,6 +952,7 @@ SELECT
   "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
   "${(#events_processed: Chains.field :> string)}"::float4 AS "eventsProcessed",
   "${(#source_block: Chains.field :> string)}" AS "sourceBlock",
+  "${(#backfill_completed_at: Chains.field :> string)}" AS "backfillCompletedAt",
   "${(#ready_at: Chains.field :> string)}" AS "readyAt",
   ("${(#ready_at: Chains.field :> string)}" IS NOT NULL) AS "isReady"
 FROM "${pgSchema}"."${Chains.table.tableName}"
@@ -931,7 +973,7 @@ SELECT
   0 AS "num_batches_fetched",
   "${(#events_processed: Chains.field :> string)}"::float4 AS "num_events_processed",
   "${(#start_block: Chains.field :> string)}" AS "start_block",
-  "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
+  "${(#backfill_completed_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "${pgSchema}"."${Chains.table.tableName}";`
   }
 }

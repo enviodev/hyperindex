@@ -243,11 +243,14 @@ let makeFromDbState = (
     )
   }
 
-  // `ready_at` is durable: a chain that once caught up resumes realtime, and the
-  // deferred indexes committed alongside that stamp are not owed again.
+  // `ready_at` is durable: a chain that once caught up with the schema's indexes
+  // committed resumes realtime, and those indexes are not owed again. Read from
+  // `indexesReadyAt` rather than the caught-up timestamp so a resume that still
+  // owes them re-enters the finalize phase, where the processing loop awaits it,
+  // instead of leaving it to the best-effort repair pass.
   let isRealtime =
     initialState.chains->Array.length > 0 &&
-      initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
+      initialState.chains->Array.every(c => c.indexesReadyAt->Option.isSome)
 
   let chainStates = Dict.make()
   initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {
@@ -493,8 +496,9 @@ let shouldSaveHistory = (state: t) => state.crossChainState->CrossChainState.sho
 let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
 
 // The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only
-// in the middle phase: every chain has caught up, but the deferred schema
-// indexes and `ready_at` haven't been committed yet.
+// in the middle phase: this process's chains have caught up, but it hasn't yet
+// settled what it owes the schema — building the deferred indexes, or finding
+// that another chain is still backfilling and they aren't owed yet.
 let isFinalizingIndexes = (state: t) =>
   state.crossChainState->CrossChainState.isCaughtUp &&
     !(state.crossChainState->CrossChainState.isRealtime)

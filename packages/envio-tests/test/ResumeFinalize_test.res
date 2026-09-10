@@ -118,12 +118,12 @@ let makeFlakyFinalize = (~failCount) => {
   let calls = ref(0)
   let mapStorage = (storage: Persistence.storage) => {
     ...storage,
-    finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
+    finalizeBackfill: (~entities, ~readyAt) => {
       calls := calls.contents + 1
       if calls.contents <= failCount {
         Promise.reject(Utils.Error.make("simulated crash before commit"))
       } else {
-        storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
+        storage.finalizeBackfill(~entities, ~readyAt)
       }
     },
   }
@@ -238,8 +238,11 @@ describe("Resuming a backfill that never finalized", () => {
           await persistedReadyAt(~sql, ~pgSchema),
           await restarted.metric("envio_progress_ready"),
         ),
+        // The resumed run still checks what the schema holds — that pass is the
+        // one that rebuilds an index lost while it was down — but it finds
+        // nothing missing and `ready_at` keeps the timestamp it already carries.
         ~message="A restart inherits the readiness it already earned",
-      ).toEqual((1, readyAtBefore, [{value: "1", labels: dict{"chainId": "1337"}}]))
+      ).toEqual((2, readyAtBefore, [{value: "1", labels: dict{"chainId": "1337"}}]))
     },
   )
 
@@ -493,8 +496,8 @@ describe("Resuming a backfill that never finalized", () => {
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           await persistedReadyAt(~sql, ~pgSchema),
         ),
-        ~message="The index is restored without re-running finalization or moving readiness",
-      ).toEqual((1, true, readyAtBefore))
+        ~message="The index is restored without moving readiness",
+      ).toEqual((2, true, readyAtBefore))
     },
   )
 
@@ -508,12 +511,12 @@ describe("Resuming a backfill that never finalized", () => {
   let finalizeCalls = ref(0)
   let mapStorage = (storage: Persistence.storage) => {
     ...storage,
-    finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
+    finalizeBackfill: (~entities, ~readyAt) => {
       finalizeCalls := finalizeCalls.contents + 1
       if finalizeCalls.contents == 1 {
         Promise.reject(Utils.Error.make("simulated crash before commit"))
       } else {
-        gate.wait()->Promise.then(() => storage.finalizeBackfill(~entities, ~chainIds, ~readyAt))
+        gate.wait()->Promise.then(() => storage.finalizeBackfill(~entities, ~readyAt))
       }
     },
   }

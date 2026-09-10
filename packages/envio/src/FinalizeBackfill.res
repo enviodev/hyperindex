@@ -1,14 +1,15 @@
-// The FinalizingIndexes phase. Reached from the processing loop when every
-// chain has caught up: processing is already paused (the loop awaits this),
-// pending writes are flushed, then storage builds every missing schema-defined
-// index and, once they all verify, commits `ready_at`. A failure part-way
-// leaves the indexes built so far in place and reaches the processing loop's
-// error boundary; the retry only owes what's left. Either way the indexer never
-// reports ready with an index the schema promised still missing.
+// The FinalizingIndexes phase. Reached from the processing loop when this
+// process's chains have caught up: processing is already paused (the loop awaits
+// this), pending writes are flushed, the chains are marked caught up, and then
+// — only if no chain in the schema is still backfilling — storage builds every
+// missing schema-defined index and, once they all verify, commits `ready_at`.
+// A failure part-way leaves the indexes built so far in place and reaches the
+// processing loop's error boundary; the retry only owes what's left. Either way
+// no chain carries `ready_at` while an index the schema promised is missing.
 
 let runOnce = async (state: IndexerState.t) => {
   Logging.info(
-    "All chains are caught up. Finalizing the indexer before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
+    "This indexer's chains are caught up. Finalizing before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
   )
 
   await Writing.flush(state)
@@ -20,17 +21,31 @@ let runOnce = async (state: IndexerState.t) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let readyAt = Date.make()
 
-    await storage.finalizeBackfill(
-      ~entities=persistence.allEntities,
+    await storage.markChainsCaughtUp(
       ~chainIds=state
       ->IndexerState.chainStates
       ->Dict.valuesToArray
       ->Array.map(cs => (cs->ChainState.chainConfig).id),
-      ~readyAt,
+      ~caughtUpAt=readyAt,
     )
 
-    // Only after the commit: in-memory readiness must never run ahead of the
-    // `ready_at` a restart would read back.
+    // Read strictly after the stamp above has committed, never before. Two
+    // `envio start --chain` processes finishing together would otherwise each
+    // see the other still pending and neither would build. Reading after its own
+    // commit means at least one of them sees a fully stamped table, and that one
+    // is still running at the moment it reads.
+    switch await storage.countChainsNotCaughtUp() {
+    | 0 => await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt)
+    | pending =>
+      Logging.info({
+        "msg": `Leaving the schema's indexes to whichever chain finishes last: ${pending->Int.toString} of this schema's chains are still backfilling in other processes.`,
+        "pendingChains": pending,
+      })
+    }
+
+    // Only after the build: in-memory readiness must never claim indexes the
+    // database doesn't hold. With chains left backfilling elsewhere there is no
+    // build to wait for, and this process is genuinely realtime without one.
     state->IndexerState.markReady(~readyAt)
     Logging.info("The indexer is ready. Switching to realtime indexing.")
   }
@@ -49,13 +64,34 @@ let run = (state: IndexerState.t) =>
     fiber
   }
 
-// An indexer resumed already ready never reaches `run`, so nothing above would
-// notice an index the schema promises being dropped or invalidated while it was
-// down — `ensureQueryIndexes` only covers what a getWhere actually asks for.
+// An indexer that resumes with its chains already caught up never reaches `run`,
+// so this is the only pass that can build an index the schema promises —
+// `ensureQueryIndexes` only covers what a getWhere actually asks for. Three
+// cases reach it: an index the database lost while the indexer was down, a
+// finalize that died between marking the chains caught up and committing the
+// indexes, and an `envio start --chain` process that resumes after the sibling
+// holding up the barrier has since finished.
+//
 // Best-effort and not awaited by the loop: indexing is already live and correct
-// without the index, just slower.
-let repairSchemaIndexes = (state: IndexerState.t) => {
+// without the indexes, just slower, and a failure here must not take the indexer
+// down. Whatever it fails to build, the next restart owes again.
+let repairSchemaIndexes = async (state: IndexerState.t) => {
   let persistence = state->IndexerState.persistence
   let storage = persistence->Persistence.getInitializedStorageOrThrow
-  storage.ensureSchemaIndexes(~entities=persistence.allEntities)
+  // A `--chain` process resumes caught up as soon as its own chains are, which
+  // says nothing about the ones other processes drive. Building here would put
+  // the schema's indexes in place while another chain is still backfilling into
+  // them.
+  switch await storage.countChainsNotCaughtUp() {
+  | 0 =>
+    switch await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt=Date.make()) {
+    | () => ()
+    | exception exn =>
+      Logging.warn({
+        "msg": "Failed to restore the indexes the schema promises. Queries relying on them run unindexed until the next restart.",
+        "err": exn->Utils.prettifyExn,
+      })
+    }
+  | _ => ()
+  }
 }

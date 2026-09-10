@@ -194,9 +194,9 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 1337}],
     ~mapStorage=storage => {
       ...storage,
-      finalizeBackfill: (~entities, ~chainIds, ~readyAt) =>
+      finalizeBackfill: (~entities, ~readyAt) =>
         gate.contents.wait()->Promise.then(() =>
-          storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
+          storage.finalizeBackfill(~entities, ~readyAt)
         ),
     },
     async (~t, ~indexer, ~source) => {
@@ -245,10 +245,10 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 1337}],
     ~mapStorage=storage => {
       ...storage,
-      finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
+      finalizeBackfill: (~entities, ~readyAt) => {
         joinFinalizeCalls := joinFinalizeCalls.contents + 1
         joinGate.contents.wait()->Promise.then(() =>
-          storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
+          storage.finalizeBackfill(~entities, ~readyAt)
         )
       },
     },
@@ -305,9 +305,9 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 100}, {chain: 1337}],
     ~mapStorage=storage => {
       ...storage,
-      finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
+      finalizeBackfill: (~entities, ~readyAt) => {
         multichainFinalizeCalls := multichainFinalizeCalls.contents + 1
-        storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
+        storage.finalizeBackfill(~entities, ~readyAt)
       },
     },
     async (~t, ~indexer, ~source) => {

@@ -41,6 +41,6 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
     // reads `envio_info`, compares against the current config, and either
     // reuses the existing schema, initializes a fresh one, or errors out on
     // incompatible changes. `restart` only forces a reset.
-    build_start_command(&config, restart, true, &up_result.indexer_env)
+    build_start_command(&config, restart, true, &up_result.indexer_env, Vec::new())
         .context("Failed building start command")
 }

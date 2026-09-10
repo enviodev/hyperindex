@@ -136,6 +136,11 @@ type t = {
   reorgThresholdReadyTolerance: int,
   lowercaseAddresses: bool,
   isDev: bool,
+  // True when `envio start --chain` narrowed `chainMap` to a subset of what the
+  // schema was migrated for. The storage holds rows for the chains left out, so
+  // this is what tells a resume to leave them alone instead of reporting them
+  // as a config that no longer matches the database.
+  isChainSubset: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
@@ -1088,6 +1093,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
+    isChainSubset: false,
     userEntitiesByName,
     userEntities,
     allEnums,
@@ -1173,11 +1179,70 @@ let getChain = (config, ~chainId) =>
         "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
       )
 
+// Narrows a config to the chains one `envio start --chain` process drives.
+// `contractMapping` is deliberately left whole: its ids are what the migration
+// that created the schema stored, and one rebuilt from a subset would hand the
+// same contract a different id.
+let filterChains = (config: t, ~chainIds: array<ChainId.t>) => {
+  if chainIds->Array.length === 0 {
+    JsError.throwWithMessage("`envio start --chain` needs at least one chain to index.")
+  }
+  // Chains indexed in separate processes each advance their own checkpoint
+  // counter, which only holds while no entity has rows another chain can reach.
+  switch config.userEntities->Array.filter(entityConfig => entityConfig.crossChain) {
+  | [] => ()
+  | shared =>
+    let names = shared->Array.map(entityConfig => entityConfig.name)->Array.joinUnsafe(", ")
+    JsError.throwWithMessage(
+      `\`envio start --chain\` needs every entity to be per-chain, because chains indexed in separate processes can't share a checkpoint sequence. Entities shared across chains: ${names}. Drop \`@crossChain\` from them, or run every chain in one process.`,
+    )
+  }
+
+  let configured = config.chainMap->ChainMap.keys->Array.map(ChainId.toString)
+  let selected = Dict.make()
+  chainIds->Array.forEach(chainId =>
+    if config.chainMap->ChainMap.has(chainId) {
+      selected->ChainId.Dict.set(chainId, true)
+    } else {
+      let id = chainId->ChainId.toString
+      JsError.throwWithMessage(
+        `Chain ${id} is not configured, so \`envio start --chain ${id}\` has nothing to index. Configured chains: ${configured->Array.joinUnsafe(", ")}.`,
+      )
+    }
+  )
+
+  // Filtered out of the config's own chain order rather than built from the
+  // argument order, so a repeated `--chain` collapses and `defaultChain` doesn't
+  // depend on how the flags were typed.
+  let chains =
+    config.chainMap
+    ->ChainMap.values
+    ->Array.filter(chain => selected->ChainId.Dict.dangerouslyGetNonOption(chain.id)->Option.isSome)
+
+  {
+    ...config,
+    chainMap: chains->Array.map(chain => (chain.id, chain))->ChainMap.fromArrayUnsafe,
+    defaultChain: chains->Array.get(0),
+    isChainSubset: chains->Array.length < config.chainMap->ChainMap.keys->Array.length,
+  }
+}
+
 // A CLI command payload already contains the resolved JSON; priming lets
 // downstream callers skip the NAPI `getConfigJson` round-trip. Calling
 // `prime` again invalidates the memo.
 %%private(let primedJson: ref<option<JSON.t>> = ref(None))
 %%private(let cached: ref<option<t>> = ref(None))
+
+// Applied inside `load` rather than by the caller, because the memoized config
+// is what the exported `generated` indexer reads for `indexer.chains` — patching
+// the record afterwards would leave that advertising chains this process never
+// drives. Empty means every chain, which is what a run without `--chain` does.
+%%private(let activeChains: ref<array<ChainId.t>> = ref([]))
+let setActiveChains = (chainIds: array<ChainId.t>) => {
+  activeChains := chainIds
+  cached := None
+}
+
 let prime = (json: JSON.t): unit => {
   primedJson := Some(json)
   cached := None
@@ -1416,6 +1481,10 @@ let load = () =>
   | Some(c) => c
   | None => {
       let c = getPublicConfigJson()->fromPublic
+      let c = switch activeChains.contents {
+      | [] => c
+      | chainIds => c->filterChains(~chainIds)
+      }
       cached := Some(c)
       c
     }

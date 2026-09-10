@@ -27,6 +27,11 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  // When the schema's indexes were committed. Set only once every chain has
+  // finished backfill, so a chain can carry a caught-up timestamp and still have
+  // this unset — a finalize that died before committing, or an
+  // `envio start --chain` process whose siblings are still backfilling.
+  indexesReadyAt: option<Date.t>,
   // Every address the chain indexes, columnar — config-declared and dynamically
   // registered alike. The chain's address store seeds straight from it.
   addressRows: AddressRows.seedRows,
@@ -140,19 +145,19 @@ type storage = {
   // once they're queryable. Best-effort: it resolves even when a build fails,
   // leaving the query to run unindexed rather than failing the handler.
   ensureQueryIndexes: (~table: Table.table, ~filters: array<EntityFilter.t>) => promise<unit>,
-  // Creates every schema-defined index still missing, without touching
-  // `ready_at`. For a resumed indexer that is already ready and so never runs
-  // `finalizeBackfill`: an index dropped or invalidated while it was down would
-  // otherwise never be rebuilt. Best-effort, and safe to run with indexing live.
-  ensureSchemaIndexes: (~entities: array<Internal.entityConfig>) => promise<unit>,
+  // Records that each of these chains reached its head or end block. Only the
+  // chains this process drives.
+  markChainsCaughtUp: (~chainIds: array<ChainId.t>, ~caughtUpAt: Date.t) => promise<unit>,
+  // How many chains in the schema have yet to finish backfill. Under
+  // `envio start --chain` the other processes' chains are counted too, so zero
+  // means the schema's indexes are owed and this is the process that owes them.
+  countChainsNotCaughtUp: unit => promise<int>,
   // Creates every schema-defined index still missing, then stamps `ready_at` on
-  // the given chains. Called once, when backfill completes. The indexes are
+  // every chain. Called once every chain has finished backfill. The indexes are
   // committed one at a time so a failure part way through doesn't undo the ones
-  // already built; `ready_at` is only written once they all verify, and all
-  // chains are stamped together.
+  // already built; `ready_at` is only written once they all verify.
   finalizeBackfill: (
     ~entities: array<Internal.entityConfig>,
-    ~chainIds: array<ChainId.t>,
     ~readyAt: Date.t,
   ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
@@ -248,6 +253,24 @@ let make = (
   }
 }
 
+// Keeps only what the given chains own. The checkpoint frontier is left whole:
+// under the per-chain sequence a subset run requires, a chain only ever reads
+// its own position out of it.
+%%private(
+  let narrowToChains = (initialState: initialState, ~chainConfigs: array<Config.chain>) => {
+    let isActive = Dict.make()
+    chainConfigs->Array.forEach(chain => isActive->ChainId.Dict.set(chain.id, true))
+    let has = chainId => isActive->ChainId.Dict.dangerouslyGetNonOption(chainId)->Option.isSome
+    {
+      ...initialState,
+      chains: initialState.chains->Array.filter(chain => has(chain.id)),
+      reorgCheckpoints: initialState.reorgCheckpoints->Array.filter(checkpoint =>
+        has(checkpoint.chainId)
+      ),
+    }
+  }
+)
+
 let init = {
   async (
     persistence,
@@ -258,6 +281,11 @@ let init = {
     ~runCommand,
     ~reset=false,
     ~lowercaseAddresses=false,
+    // `envio start --chain` drives a subset of the chains the schema was
+    // migrated for. The rows belonging to the chains this process left out are
+    // another process's to advance, so they're dropped from what this one
+    // resumes rather than reported as a database that no longer matches.
+    ~isChainSubset=false,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
   ) => {
     try {
@@ -276,6 +304,14 @@ let init = {
         })
         persistence.storageStatus = Initializing(promise)
         if reset || !(await persistence.storage.isInitialized()) {
+          // Initializing here would create rows for this process's chains only,
+          // and the chains left out would have no state for their own processes
+          // to resume. The migration is what creates the schema for all of them.
+          if isChainSubset {
+            JsError.throwWithMessage(
+              "`envio start --chain` needs a database that already holds every chain. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+            )
+          }
           Logging.info(`Initializing the indexer storage...`)
           // Only runs once per schema (this branch is the "first deploy or
           // reset" gate), which is exactly when a `latest` start block must be
@@ -315,6 +351,9 @@ let init = {
                 ~runCommand,
               ),
           )
+          let initialState = isChainSubset
+            ? initialState->narrowToChains(~chainConfigs)
+            : initialState
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

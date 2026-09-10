@@ -378,6 +378,7 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
+* `--chain <CHAIN_ID>` — Index only this chain, leaving the others to their own `envio start --chain` processes. Repeat the flag for several chains. Requires a schema whose entities are all per-chain, and a database `envio local db-migrate up` has already created for every chain
 
 
 
