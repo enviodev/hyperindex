@@ -6,9 +6,9 @@ module ChainLine = {
     ~chainId,
     ~maxChainIdLength,
     ~stdoutColumns: int,
-    ~progressBlock,
-    ~bufferBlock,
-    ~sourceBlock,
+    ~progressBlock: int,
+    ~bufferBlock: int,
+    ~sourceBlock: int,
     ~startBlock,
     ~endBlock,
     ~poweredByHyperSync,
@@ -18,65 +18,49 @@ module ChainLine = {
     let chainsWidth = Pervasives.min(stdoutColumns - 2, 60)
     let headerWidth = maxChainIdLength + 10 // 10 for additional text
 
-    switch (progressBlock, bufferBlock, sourceBlock) {
-    | (Some(progressBlock), Some(bufferBlock), Some(sourceBlock)) =>
-      let toBlock = switch endBlock {
-      | Some(endBlock) => Pervasives.min(sourceBlock, endBlock)
-      | None => sourceBlock
-      }
-      let progressBlockStr = progressBlock->TuiData.formatLocaleString
-      let toBlockStr = toBlock->TuiData.formatLocaleString
-      let eventsStr = eventsProcessed->TuiData.formatFloatLocaleString
-
-      let endLabel = ` (End ${blockUnit})`
-      let blocksText =
-        `${blockUnit}s: ${progressBlockStr} / ${toBlockStr}` ++
-        (endBlock->Option.isSome ? endLabel : "") ++ `  `
-      let eventsText = `Events: ${eventsStr}`
-
-      let fitsSameLine = blocksText->String.length + eventsText->String.length <= chainsWidth
-
-      <Box flexDirection={Column}>
-        <Box flexDirection=Row width=Num(chainsWidth)>
-          <Box width={Num(headerWidth)}>
-            <Text> {"Chain: "->React.string} </Text>
-            <Text bold=true> {chainId->React.string} </Text>
-            <Text> {" "->React.string} </Text>
-            {poweredByHyperSync ? <Text color=Secondary> {"⚡"->React.string} </Text> : React.null}
-          </Box>
-          <BufferedProgressBar
-            barWidth={chainsWidth - headerWidth}
-            loaded={progressBlock - startBlock}
-            buffered={bufferBlock - startBlock}
-            outOf={toBlock - startBlock}
-            loadingColor={Secondary}
-          />
-        </Box>
-        <Box flexDirection={Row}>
-          <Text color={Gray}> {blocksText->React.string} </Text>
-          {fitsSameLine ? <Text color={Gray}> {eventsText->React.string} </Text> : React.null}
-        </Box>
-        {fitsSameLine
-          ? React.null
-          : <Box flexDirection={Row}>
-              <Text color={Gray}> {eventsText->String.trim->React.string} </Text>
-            </Box>}
-        <Newline />
-      </Box>
-    | (_, _, _) =>
-      <>
-        <Box flexDirection=Row width=Num(chainsWidth)>
-          <Box width={Num(headerWidth)}>
-            <Text> {"Chain: "->React.string} </Text>
-            <Text bold=true> {chainId->React.string} </Text>
-            <Text> {" "->React.string} </Text>
-            {poweredByHyperSync ? <Text color=Secondary> {"⚡"->React.string} </Text> : React.null}
-          </Box>
-          <Text> {"Loading progress..."->React.string} </Text>
-        </Box>
-        <Newline />
-      </>
+    let toBlock = switch endBlock {
+    | Some(endBlock) => Pervasives.min(sourceBlock, endBlock)
+    | None => sourceBlock
     }
+    let progressBlockStr = progressBlock->TuiData.formatLocaleString
+    let toBlockStr = toBlock->TuiData.formatLocaleString
+    let eventsStr = eventsProcessed->TuiData.formatFloatLocaleString
+
+    let endLabel = ` (End ${blockUnit})`
+    let blocksText =
+      `${blockUnit}s: ${progressBlockStr} / ${toBlockStr}` ++
+      (endBlock->Option.isSome ? endLabel : "") ++ `  `
+    let eventsText = `Events: ${eventsStr}`
+
+    let fitsSameLine = blocksText->String.length + eventsText->String.length <= chainsWidth
+
+    <Box flexDirection={Column}>
+      <Box flexDirection=Row width=Num(chainsWidth)>
+        <Box width={Num(headerWidth)}>
+          <Text> {"Chain: "->React.string} </Text>
+          <Text bold=true> {chainId->React.string} </Text>
+          <Text> {" "->React.string} </Text>
+          {poweredByHyperSync ? <Text color=Secondary> {"⚡"->React.string} </Text> : React.null}
+        </Box>
+        <BufferedProgressBar
+          barWidth={chainsWidth - headerWidth}
+          loaded={progressBlock - startBlock}
+          buffered={bufferBlock - startBlock}
+          outOf={toBlock - startBlock}
+          loadingColor={Secondary}
+        />
+      </Box>
+      <Box flexDirection={Row}>
+        <Text color={Gray}> {blocksText->React.string} </Text>
+        {fitsSameLine ? <Text color={Gray}> {eventsText->React.string} </Text> : React.null}
+      </Box>
+      {fitsSameLine
+        ? React.null
+        : <Box flexDirection={Row}>
+            <Text color={Gray}> {eventsText->String.trim->React.string} </Text>
+          </Box>}
+      <Newline />
+    </Box>
   }
 }
 
@@ -132,13 +116,13 @@ module TotalEventsProcessed = {
 
 module App = {
   @react.component
-  let make = (~getState) => {
+  let make = (~config: Config.t, ~getMetrics) => {
     let stdoutColumns = Hooks.useStdoutColumns()
-    // IndexerState is mutated in place — passing the same ref to useState
-    // would bail out via Object.is and skip the re-render. Tick a counter
-    // instead and read state freshly from getState() on every render.
+    // Metrics are rebuilt from state mutated in place — passing the same value
+    // to useState would bail out via Object.is and skip the re-render. Tick a
+    // counter instead and read metrics freshly on every render.
     let (tick, setTick) = React.useState(() => 0)
-    let state: IndexerState.t = getState()
+    let metrics: Metrics.t = getMetrics()
 
     React.useEffect(() => {
       let intervalId = setInterval(() => {
@@ -150,80 +134,13 @@ module App = {
           clearInterval(intervalId)
         },
       )
-    }, [getState])
+    }, [getMetrics])
 
-    let chains =
-      state
-      ->IndexerState.chainStates
-      ->Dict.valuesToArray
-      ->Array.map(cs => {
-        let data = cs->ChainState.toMetrics
-        let numEventsProcessed = data.numEventsProcessed
-        let committedProgressBlockNumber = cs->ChainState.committedProgressBlockNumber
-        let timestampCaughtUpToHeadOrEndblock = data.timestampCaughtUpToHeadOrEndblock
-        let sourceManager = cs->ChainState.sourceManager
-        let latestFetchedBlockNumber = data.latestFetchedBlockNumber
-        let hasProcessedToEndblock = cs->ChainState.hasProcessedToEndblock
-
-        let firstEventBlock = data.firstEventBlockNumber
-        let progress: TuiData.progress = if hasProcessedToEndblock {
-          // If the endblock has been reached then set the progress to synced.
-          // if there's chains that have no events in the block range start->end,
-          // it's possible there are no events in that block  range (ie firstEventBlock = None)
-          // This ensures TUI still displays synced in this case
-          Synced({
-            firstEventBlockNumber: firstEventBlock->Option.getOr(0),
-            latestProcessedBlock: committedProgressBlockNumber,
-            timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getOr(
-              Date.now()->Date.fromTime,
-            ),
-            numEventsProcessed,
-          })
-        } else {
-          switch (firstEventBlock, timestampCaughtUpToHeadOrEndblock) {
-          | (Some(firstEventBlockNumber), Some(timestampCaughtUpToHeadOrEndblock)) =>
-            Synced({
-              firstEventBlockNumber,
-              latestProcessedBlock: committedProgressBlockNumber,
-              timestampCaughtUpToHeadOrEndblock,
-              numEventsProcessed,
-            })
-          | (Some(firstEventBlockNumber), None) =>
-            Syncing({
-              firstEventBlockNumber,
-              latestProcessedBlock: committedProgressBlockNumber,
-              numEventsProcessed,
-            })
-          | (None, _) => SearchingForEvents
-          }
-        }
-
-        (
-          {
-            progress,
-            knownHeight: data.knownHeight,
-            latestFetchedBlockNumber,
-            eventsProcessed: numEventsProcessed,
-            chainId: (cs->ChainState.chainConfig).id->ChainId.toString,
-            progressBlock: committedProgressBlockNumber < data.startBlock
-              ? Some(data.startBlock)
-              : Some(committedProgressBlockNumber),
-            bufferBlock: Some(latestFetchedBlockNumber),
-            sourceBlock: Some(cs->ChainState.knownHeight),
-            firstEventBlockNumber: firstEventBlock,
-            startBlock: data.startBlock,
-            endBlock: data.endBlock,
-            poweredByHyperSync: data.poweredByHyperSync,
-            blockUnit: switch (state->IndexerState.config).ecosystem.name {
-            | Svm => "Slot"
-            | Evm | Fuel => "Block"
-            },
-            rateLimitTimeMs: sourceManager->SourceManager.getRateLimitTimeMs,
-            isRateLimited: sourceManager->SourceManager.isRateLimited,
-            rateLimitResetInMs: sourceManager->SourceManager.getRateLimitResetInMs,
-          }: TuiData.chain
-        )
-      })
+    let blockUnit = switch config.ecosystem.name {
+    | Svm => "Slot"
+    | Evm | Fuel => "Block"
+    }
+    let chains = metrics.chains->Array.map(m => m->TuiData.fromChainMetrics(~blockUnit))
 
     let totalEventsProcessed = chains->Array.reduce(0., (acc, chain) => {
       acc +. chain.eventsProcessed
@@ -253,7 +170,7 @@ module App = {
           chainId={chainData.chainId}
           maxChainIdLength={maxChainIdLength}
           progressBlock={chainData.progressBlock}
-          bufferBlock={chainData.bufferBlock}
+          bufferBlock={chainData.latestFetchedBlockNumber}
           sourceBlock={chainData.sourceBlock}
           startBlock={chainData.startBlock}
           endBlock={chainData.endBlock}
@@ -268,7 +185,7 @@ module App = {
         totalEventsProcessed
         eventsPerSecond={SyncETA.isIndexerFullySynced(chains) ? None : eventsPerSecond}
       />
-      <SyncETA chains indexerStartTime={state->IndexerState.indexerStartTime} />
+      <SyncETA chains indexerStartTime={metrics.startTime} />
       {
         let maxRateLimitTimeMs =
           chains->Array.reduce(0., (acc, chain) => Pervasives.max(acc, chain.rateLimitTimeMs))
@@ -314,7 +231,7 @@ module App = {
           }
         }
       </Box>
-      {if (state->IndexerState.config).isDev {
+      {if config.isDev {
         <Box flexDirection={Row}>
           <Text> {"Dev Console: "->React.string} </Text>
           <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
@@ -322,7 +239,7 @@ module App = {
       } else {
         React.null
       }}
-      {switch ((state->IndexerState.config).storage.clickhouse, Env.ClickHouse.host()) {
+      {switch (config.storage.clickhouse, Env.ClickHouse.host()) {
       | (true, Some(host)) =>
         <Box flexDirection={Row}>
           <Text> {"ClickHouse: "->React.string} </Text>
@@ -330,14 +247,14 @@ module App = {
         </Box>
       | _ => React.null
       }}
-      <Messages config={state->IndexerState.config} />
+      <Messages config />
     </Box>
   }
 }
 
-let start = (~getState) => {
-  let {rerender} = render(<App getState />)
+let start = (~config, ~getMetrics) => {
+  let {rerender} = render(<App config getMetrics />)
   () => {
-    rerender(<App getState />)
+    rerender(<App config getMetrics />)
   }
 }

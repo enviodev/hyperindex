@@ -240,6 +240,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           reorgCount: 2,
           reorgDetectedBlock: Some(199),
           rollbackTargetBlock: Some(180),
+          rateLimitTimeMs: 0.,
+          rateLimitResetInMs: None,
         },
       ],
       handlers: [

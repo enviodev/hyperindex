@@ -36,7 +36,17 @@ type chainMetrics = {
   reorgCount: int,
   reorgDetectedBlock: option<int>,
   rollbackTargetBlock: option<int>,
+  rateLimitTimeMs: float,
+  rateLimitResetInMs: option<float>,
 }
+
+// Mirrors `ChainState.hasProcessedToEndblock`, which is what clamps
+// `knownHeight` to the end block — the two must agree.
+let hasProcessedToEndblock = (m: chainMetrics) =>
+  switch m.endBlock {
+  | Some(endBlock) => m.progressBlockNumber >= endBlock
+  | None => false
+  }
 
 type handlerMetrics = {
   contract: string,

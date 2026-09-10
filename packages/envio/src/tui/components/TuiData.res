@@ -10,22 +10,13 @@ type synced = {
 
 type progress = SearchingForEvents | Syncing(syncing) | Synced(synced)
 
-let getNumberOfEventsProccessed = (progress: progress) => {
-  switch progress {
-  | SearchingForEvents => 0.
-  | Syncing(syncing) => syncing.numEventsProcessed
-  | Synced(synced) => synced.numEventsProcessed
-  }
-}
 type chain = {
   chainId: string,
   eventsProcessed: float,
-  progressBlock: option<int>,
-  bufferBlock: option<int>,
-  sourceBlock: option<int>,
+  progressBlock: int,
+  sourceBlock: int,
   startBlock: int,
   endBlock: option<int>,
-  firstEventBlockNumber: option<int>,
   poweredByHyperSync: bool,
   progress: progress,
   latestFetchedBlockNumber: int,
@@ -34,14 +25,53 @@ type chain = {
    `"Blocks"` everywhere else. Drives the per-chain progress label. */
   blockUnit: string,
   rateLimitTimeMs: float,
-  isRateLimited: bool,
   rateLimitResetInMs: option<float>,
 }
 
-let minOfOption: (int, option<int>) => int = (a: int, b: option<int>) => {
-  switch (a, b) {
-  | (a, Some(b)) => min(a, b)
-  | (a, None) => a
+let fromChainMetrics = (m: Metrics.chainMetrics, ~blockUnit): chain => {
+  // A chain can reach its end block without ever matching an event, so it
+  // still has to render as synced with no first event block to report.
+  let firstEventBlockNumber = m.firstEventBlockNumber->Option.getOr(0)
+  let syncing: syncing = {
+    firstEventBlockNumber,
+    latestProcessedBlock: m.progressBlockNumber,
+    numEventsProcessed: m.numEventsProcessed,
+  }
+  let synced = (~timestampCaughtUpToHeadOrEndblock): progress => Synced({
+    firstEventBlockNumber,
+    latestProcessedBlock: m.progressBlockNumber,
+    numEventsProcessed: m.numEventsProcessed,
+    timestampCaughtUpToHeadOrEndblock,
+  })
+  let progress = if m->Metrics.hasProcessedToEndblock {
+    synced(
+      ~timestampCaughtUpToHeadOrEndblock=m.timestampCaughtUpToHeadOrEndblock->Option.getOr(
+        Date.now()->Date.fromTime,
+      ),
+    )
+  } else {
+    switch (m.firstEventBlockNumber, m.timestampCaughtUpToHeadOrEndblock) {
+    | (Some(_), Some(timestampCaughtUpToHeadOrEndblock)) =>
+      synced(~timestampCaughtUpToHeadOrEndblock)
+    | (Some(_), None) => Syncing(syncing)
+    | (None, _) => SearchingForEvents
+    }
+  }
+
+  {
+    progress,
+    chainId: m.chainId->ChainId.toString,
+    eventsProcessed: m.numEventsProcessed,
+    progressBlock: Pervasives.max(m.progressBlockNumber, m.startBlock),
+    sourceBlock: m.sourceBlockNumber,
+    startBlock: m.startBlock,
+    endBlock: m.endBlock,
+    poweredByHyperSync: m.poweredByHyperSync,
+    latestFetchedBlockNumber: m.latestFetchedBlockNumber,
+    knownHeight: m.knownHeight,
+    blockUnit,
+    rateLimitTimeMs: m.rateLimitTimeMs,
+    rateLimitResetInMs: m.rateLimitResetInMs,
   }
 }
 
