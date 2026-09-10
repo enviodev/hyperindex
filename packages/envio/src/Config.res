@@ -713,12 +713,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       }
       let widened =
         contractConfig->(
-          Utils.magic: _ => {
-            "svmAbi": option<{
-              "definedTypes": JSON.t,
-              "source": string,
-            }>,
-          }
+          Utils.magic: _ => {"svmAbi": option<{"definedTypes": JSON.t, "source": string}>}
         )
       contractDataByName->Dict.set(
         capitalizedName,
@@ -1243,83 +1238,109 @@ let rec canonicalJson = (json: JSON.t): JSON.t =>
   | _ => json
   }
 
-// Returns dotted leaf paths (`a.b[i].c`) where `stored` differs from
-// `current`, restricted to the highest-priority top-level tier with any
-// diff. Tiers in order: version → name → storage → ecosystem
-// (evm/fuel/svm) → entities → other top-level keys. The first tier
-// containing a diff is the only one rendered; lower tiers are silenced
-// so a single noisy section doesn't bury the actionable change.
-let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
+%%private(
+  let getTopKey = (json: JSON.t, key: string) =>
+    switch json {
+    | Object(d) => d->Dict.get(key)
+    | _ => None
+    }
+
   let canonEq = (a: JSON.t, b: JSON.t) =>
     JSON.stringify(canonicalJson(a)) === JSON.stringify(canonicalJson(b))
 
-  let acc = []
-  let rec go = (s: JSON.t, c: JSON.t, prefix: string) => {
-    if canonEq(s, c) {
-      ()
-    } else {
-      switch (s, c) {
-      | (Object(sObj), Object(cObj)) =>
-        let keys = Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
-        keys
-        ->Utils.Set.toArray
-        ->Array.toSorted(String.compare)
-        ->Array.forEach(k => {
-          let p = prefix === "" ? k : `${prefix}.${k}`
-          switch (sObj->Dict.get(k), cObj->Dict.get(k)) {
-          | (None, None) => ()
-          | (None, _) | (_, None) => acc->Array.push(p)->ignore
-          | (Some(sv), Some(cv)) => go(sv, cv, p)
+  // Dotted leaf paths (`a.b[i].c`) under `keys` where `stored` differs from
+  // `current`.
+  let collectDiffPaths = (~stored: JSON.t, ~current: JSON.t, ~keys: array<string>): array<
+    string,
+  > => {
+    let acc = []
+    let rec go = (s: JSON.t, c: JSON.t, prefix: string) =>
+      if !canonEq(s, c) {
+        switch (s, c) {
+        | (Object(sObj), Object(cObj)) =>
+          Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
+          ->Utils.Set.toArray
+          ->Array.toSorted(String.compare)
+          ->Array.forEach(k => {
+            let p = prefix === "" ? k : `${prefix}.${k}`
+            switch (sObj->Dict.get(k), cObj->Dict.get(k)) {
+            | (None, None) => ()
+            | (None, _) | (_, None) => acc->Array.push(p)->ignore
+            | (Some(sv), Some(cv)) => go(sv, cv, p)
+            }
+          })
+        | (Array(sArr), Array(cArr)) =>
+          for i in 0 to Math.Int.max(sArr->Array.length, cArr->Array.length) - 1 {
+            let p = `${prefix}[${Int.toString(i)}]`
+            switch (sArr->Array.get(i), cArr->Array.get(i)) {
+            | (None, _) | (_, None) => acc->Array.push(p)->ignore
+            | (Some(sv), Some(cv)) => go(sv, cv, p)
+            }
           }
-        })
-      | (Array(sArr), Array(cArr)) =>
-        let maxLen = Math.Int.max(sArr->Array.length, cArr->Array.length)
-        for i in 0 to maxLen - 1 {
-          let p = `${prefix}[${Int.toString(i)}]`
-          switch (sArr->Array.get(i), cArr->Array.get(i)) {
-          | (None, _) | (_, None) => acc->Array.push(p)->ignore
-          | (Some(sv), Some(cv)) => go(sv, cv, p)
-          }
+        | _ => acc->Array.push(prefix === "" ? "<root>" : prefix)->ignore
         }
-      | _ => acc->Array.push(prefix === "" ? "<root>" : prefix)->ignore
       }
-    }
-  }
 
-  let getTopKey = (j: JSON.t, k: string) =>
-    switch j {
-    | Object(d) => d->Dict.get(k)
-    | _ => None
-    }
-  let topKeyDiffers = (k: string) =>
-    switch (getTopKey(stored, k), getTopKey(current, k)) {
-    | (None, None) => false
-    | (None, _) | (_, None) => true
-    | (Some(s), Some(c)) => !canonEq(s, c)
-    }
-  let runTier = (keys: array<string>) =>
     keys->Array.forEach(k =>
-      switch (getTopKey(stored, k), getTopKey(current, k)) {
+      switch (stored->getTopKey(k), current->getTopKey(k)) {
       | (None, None) => ()
       | (None, _) | (_, None) => acc->Array.push(k)->ignore
       | (Some(s), Some(c)) => go(s, c, k)
       }
     )
+    acc
+  }
 
-  switch (stored, current) {
-  | (Object(sObj), Object(cObj)) =>
-    // chainIdMode sits right after version: it decides the physical type of
-    // every chain-id column, so a change to it is reported on its own rather
-    // than buried under the chain diffs that always accompany it.
-    let tiers = [
-      ["version"],
-      ["chainIdMode"],
-      ["name"],
-      ["storage"],
-      ["evm", "fuel", "svm"],
-      ["entities"],
-    ]
-    let firstHit = tiers->Array.reduce(None, (acc, tier) =>
+  let allTopKeys = (~stored: JSON.t, ~current: JSON.t) => {
+    let keysOf = json =>
+      switch json {
+      | JSON.Object(d) => d->Dict.keysToArray
+      | _ => []
+      }
+    Utils.Set.fromArray(Array.concat(stored->keysOf, current->keysOf))
+    ->Utils.Set.toArray
+    ->Array.toSorted(String.compare)
+  }
+
+  // Tiers in priority order. The first one with any diff is the only one
+  // rendered; lower tiers are silenced so a single noisy section doesn't bury
+  // the actionable change. `chainIdMode` sits right after version: it decides
+  // the physical type of every chain-id column, so a change to it is reported
+  // on its own rather than buried under the chain diffs that always accompany it.
+  let tiers = [
+    ["version"],
+    ["chainIdMode"],
+    ["name"],
+    ["storage"],
+    ["evm", "fuel", "svm"],
+    ["entities"],
+  ]
+)
+
+// Every path where the two snapshots differ, untiered — what a caller needs to
+// prove a change is confined to something it can act on.
+let allDiffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> =>
+  switch allTopKeys(~stored, ~current) {
+  // Neither side is an object, so there are no paths to report — only whether
+  // the two values match at all.
+  | [] => canonEq(stored, current) ? [] : ["<root>"]
+  | keys => collectDiffPaths(~stored, ~current, ~keys)
+  }
+
+// The same paths, restricted to the highest-priority tier with any diff.
+let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
+  let topKeyDiffers = (k: string) =>
+    switch (stored->getTopKey(k), current->getTopKey(k)) {
+    | (None, None) => false
+    | (None, _) | (_, None) => true
+    | (Some(s), Some(c)) => !canonEq(s, c)
+    }
+
+  let known = Utils.Set.fromArray(tiers->Array.flat)
+  let keys =
+    tiers
+    ->Array.concat([allTopKeys(~stored, ~current)->Array.filter(k => !(known->Utils.Set.has(k)))])
+    ->Array.reduce(None, (acc, tier) =>
       switch acc {
       | Some(_) => acc
       | None =>
@@ -1329,56 +1350,172 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
         }
       }
     )
-    switch firstHit {
-    | Some(hits) => runTier(hits)
-    | None =>
-      let knownSet = Utils.Set.fromArray(tiers->Array.flat)
-      let extras =
-        Utils.Set.fromArray(Array.concat(sObj->Dict.keysToArray, cObj->Dict.keysToArray))
-        ->Utils.Set.toArray
-        ->Array.filter(k => !(knownSet->Utils.Set.has(k)))
-        ->Array.toSorted(String.compare)
-        ->Array.filter(topKeyDiffers)
-      runTier(extras)
-    }
-  | _ => go(stored, current, "")
+  switch keys {
+  | Some(keys) => collectDiffPaths(~stored, ~current, ~keys)
+  // No known tier differs and the extras tier is already the last one above, so
+  // this is either a clean match or a pair of non-objects.
+  | None => allDiffPaths(~stored, ~current)
   }
-  acc
 }
+
+%%private(let ecosystemKeys = ["evm", "fuel", "svm"])
+
+// The entries `current` holds under `<ecosystem>.<group>` that `stored`
+// doesn't, as (key, value) pairs.
+%%private(
+  let addedKeysUnder = (~stored: JSON.t, ~current: JSON.t, ~ecosystem: string, ~group: string) => {
+    let entriesOf = json =>
+      switch json->getTopKey(ecosystem)->Option.flatMap(getTopKey(_, group)) {
+      | Some(Object(d)) => d->Dict.toArray
+      | _ => []
+      }
+    let storedKeys = Utils.Set.fromArray(stored->entriesOf->Array.map(((key, _)) => key))
+    current->entriesOf->Array.filter(((key, _)) => !(storedKeys->Utils.Set.has(key)))
+  }
+)
+
+// A chain the current config declares and the stored snapshot never had.
+type addedChain = {
+  // How the snapshot names it — `evm.chains.polygon` — which is the key the
+  // user's own config produced, so it's what the error message should show.
+  path: string,
+  ecosystem: string,
+  // Chain ids repeat across ecosystems, so this identifies a chain only
+  // together with `ecosystem`.
+  id: ChainId.t,
+}
+
+// The chains the current config adds on top of the stored snapshot. Non-empty
+// only when every other difference belongs to those chains, to the contracts
+// they introduce, or to an ecosystem that is itself new — anything else changes
+// how already-indexed data was produced, which adding a chain can't repair.
+let addedChains = (~stored: JSON.t, ~current: JSON.t): array<addedChain> => {
+  let addedIn = (~ecosystem, ~group) => addedKeysUnder(~stored, ~current, ~ecosystem, ~group)
+  let entries =
+    ecosystemKeys->Array.flatMap(ecosystem =>
+      addedIn(~ecosystem, ~group="chains")->Array.map(((key, chain)) => (ecosystem, key, chain))
+    )
+  // Every chain a snapshot holds carries its id — the map key is the network's
+  // name where there is one.
+  let added = entries->Array.filterMap(((ecosystem, key, chain)) =>
+    switch chain->getTopKey("id")->Option.map(ChainId.normalizeOrThrow) {
+    | Some(id) => Some({path: `${ecosystem}.chains.${key}`, ecosystem, id})
+    | None => None
+    | exception _ => None
+    }
+  )
+
+  // A chain without a readable id means a snapshot this can't reason about, so
+  // the change goes back to being an incompatible one.
+  if added->Utils.Array.isEmpty || added->Array.length !== entries->Array.length {
+    []
+  } else {
+    let allowed =
+      added
+      ->Array.map(({path}) => path)
+      ->Array.concat(
+        ecosystemKeys->Array.flatMap(ecosystem =>
+          ["contracts", "programs"]->Array.flatMap(group =>
+            addedIn(~ecosystem, ~group)->Array.map(((key, _)) => `${ecosystem}.${group}.${key}`)
+          )
+        ),
+      )
+      // A wholly new ecosystem diffs as its bare key, and everything under it
+      // belongs to chains none of which existed before.
+      ->Array.concat(
+        ecosystemKeys->Array.filter(key =>
+          stored->getTopKey(key)->Option.isNone && current->getTopKey(key)->Option.isSome
+        ),
+      )
+    allDiffPaths(~stored, ~current)->Array.every(path =>
+      allowed->Array.some(prefix => path === prefix || path->String.startsWith(`${prefix}.`))
+    )
+      ? added
+      : []
+  }
+}
+
+// The chain configs `addedChains` found, matched on the pair that identifies a
+// chain rather than on the snapshot key, which is the network's name. Throws
+// rather than hand back a subset: the snapshot these came from is derived from
+// this same config, so a chain it names and the config lacks would otherwise
+// migrate half of what the caller asked for.
+let selectChainsOrThrow = (chainConfigs: array<chain>, ~added: array<addedChain>) =>
+  added->Array.map(({path, ecosystem, id}) =>
+    switch chainConfigs->Array.find(chainConfig =>
+      ecosystem === (chainConfig.ecosystem: Ecosystem.name :> string) && id === chainConfig.id
+    ) {
+    | Some(chainConfig) => chainConfig
+    | None => JsError.throwWithMessage(`Chain "${path}" is missing from the loaded config.`)
+    }
+  )
+
+// Numbered `Pick one:` choices with the trailing `#` comments aligned. `~extra`
+// is appended verbatim, for a final choice that spans several lines.
+%%private(
+  let renderChoices = (choices: array<(string, string)>, ~extra="") => {
+    let col =
+      choices->Array.reduce(0, (acc, (label, _)) => Math.Int.max(acc, label->String.length)) + 2
+    let lines =
+      choices
+      ->Array.mapWithIndex(((label, comment), idx) =>
+        `  ${(idx + 1)->Int.toString}. ${label}${" "->String.repeat(
+            Math.Int.max(col - label->String.length, 1),
+          )}# ${comment}`
+      )
+      ->Array.joinUnsafe("\n")
+    `Pick one:\n${lines}${extra}`
+  }
+)
+
+// The config declares chains the storage was never initialized with. Unlike
+// every other incompatibility this one has a repair, so it gets its own message
+// instead of the reset-or-revert menu.
+%%private(
+  let throwAddedChains = (added: array<addedChain>, ~resetCommand: string) => {
+    let bullets = added->Array.map(({path}) => `    - ${path}`)->Array.joinUnsafe("\n")
+    JsError.throwWithMessage(
+      `The config declares chains the indexer database doesn't have yet:\n\n${bullets}\n\n` ++
+      renderChoices([
+        ("envio local db-migrate up", "add them to the database, then backfill"),
+        ("Revert the changes above", "resume indexing where it left off"),
+        (resetCommand, "delete all indexed data and start over"),
+      ]),
+    )
+  }
+)
 
 // Throws an `incompatible config` error listing each path in `changedPaths`,
 // plus the remediation options. `~resetCommand` is rendered as-is for
-// option 2 (the wipe-and-redo). `~runCommand` controls option 3 (parallel
-// indexer recipe): when `None`, option 3 is omitted — the migrate flow
-// uses this because running a second indexer doesn't apply.
-// `~hasClickhouse` adds the extra env line so users running both
-// Postgres and Clickhouse get a complete override.
+// the wipe-and-redo choice. `~runCommand` controls the parallel-indexer recipe:
+// when `None` it is omitted — the migrate flow uses this because running a
+// second indexer doesn't apply. `~hasClickhouse` adds the extra env line so
+// users running both Postgres and Clickhouse get a complete override.
 let throwIfIncompatible = (
   changedPaths: array<string>,
   ~resetCommand: string,
   ~runCommand: option<string>,
   ~hasClickhouse: bool,
-) => {
-  if changedPaths->Array.length > 0 {
+) =>
+  if changedPaths->Utils.Array.notEmpty {
     let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
-    let option1 = "Revert the changes above"
-    let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
-    let col = Math.Int.max(String.length(option1), String.length(resetCommand)) + 2
-    let option3 = switch runCommand {
+    let extra = switch runCommand {
     | None => ""
     | Some(cmd) =>
       let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
       `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
     }
     JsError.throwWithMessage(
-      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(
-          col,
-        )}# resume indexing where it left off\n  2. ${resetCommand->padTo(
-          col,
-        )}# delete all indexed data and start over${option3}`,
+      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\n` ++
+      renderChoices(
+        [
+          ("Revert the changes above", "resume indexing where it left off"),
+          (resetCommand, "delete all indexed data and start over"),
+        ],
+        ~extra,
+      ),
     )
   }
-}
 
 let throwIfResumeIncompatible = (
   ~storedEnvioInfo: option<JSON.t>,
@@ -1390,18 +1527,21 @@ let throwIfResumeIncompatible = (
 ) => {
   let changedPaths = switch storedEnvioInfo {
   | None => ["storage was initialized by an older envio version"]
-  | Some(stored) => diffPaths(~stored, ~current=envioInfo)
+  | Some(stored) =>
+    switch addedChains(~stored, ~current=envioInfo) {
+    // The contract mapping is left out of this branch on purpose: a new chain
+    // usually brings a contract with it, and `addChains` extends the stored
+    // mapping rather than treating the difference as damage.
+    | [] => diffPaths(~stored, ~current=envioInfo)
+    | added => throwAddedChains(added, ~resetCommand)
+    }
   }
   let changedPaths =
-    storedContractMapping->ContractMapping.isEqual(contractMapping)
+    storedContractMapping->ContractMapping.covers(contractMapping)
       ? changedPaths
       : changedPaths->Array.concat(["contracts"])
-  let hasClickhouse = switch envioInfo {
-  | Object(d) =>
-    switch d->Dict.get("storage") {
-    | Some(Object(s)) => s->Dict.get("clickhouse") == Some(Boolean(true))
-    | _ => false
-    }
+  let hasClickhouse = switch envioInfo->getTopKey("storage") {
+  | Some(Object(s)) => s->Dict.get("clickhouse") == Some(Boolean(true))
   | _ => false
   }
   throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)

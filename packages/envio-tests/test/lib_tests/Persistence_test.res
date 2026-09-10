@@ -305,15 +305,73 @@ Pick one:
        envio dev`)
   })
 
-  Async.it("Throws naming chains.<id> when a new chain is added", async t => {
+  Async.it("Points at db-migrate up when the only change is an added chain", async t => {
     let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
     let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
     let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
     t.expect(
       message,
-      ~message="full incompat message naming the new chain key",
+      ~message="the added chain has a repair, so it gets the migrate recipe instead of the reset menu",
+    ).toBe(`The config declares chains the indexer database doesn't have yet:
+
+    - evm.chains.10
+
+Pick one:
+  1. envio local db-migrate up  # add them to the database, then backfill
+  2. Revert the changes above   # resume indexing where it left off
+  3. envio dev -r               # delete all indexed data and start over`)
+  })
+
+  Async.it("Points at db-migrate up when the added chain brings a new contract", async t => {
+    let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}, "contracts": {"A": {}}}}`)
+    let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}, "contracts": {"A": {}, "B": {}}}}`)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(
+      message,
+      ~message="a contract only the new chain can reference is part of the same repair",
+    ).toBe(`The config declares chains the indexer database doesn't have yet:
+
+    - evm.chains.10
+
+Pick one:
+  1. envio local db-migrate up  # add them to the database, then backfill
+  2. Revert the changes above   # resume indexing where it left off
+  3. envio dev -r               # delete all indexed data and start over`)
+  })
+
+  Async.it("Falls back to the reset menu when an added chain comes with other changes", async t => {
+    // The tiered `diffPaths` would render only the ecosystem tier here, hiding
+    // the entity change behind the added chain — so the additive check reads the
+    // untiered diff, and this stays an incompatible change.
+    let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}, "entities": ["a"]}`)
+    let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}, "entities": ["b"]}`)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(
+      message,
+      ~message="an entity change alongside the new chain is not something adding a chain repairs",
     ).toBe(`The following config changes are incompatible with the existing indexer data:
 
+    - evm.chains.10
+
+Pick one:
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`)
+  })
+
+  Async.it("Falls back to the reset menu when an existing chain changed too", async t => {
+    let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1, "startBlock": 1}}}}`)
+    let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1, "startBlock": 5}, "10": {"id": 10, "startBlock": 1}}}}`)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(
+      message,
+      ~message="chain 1 is already indexed from its old start block, which no migration undoes",
+    ).toBe(`The following config changes are incompatible with the existing indexer data:
+
+    - evm.chains.1.startBlock
     - evm.chains.10
 
 Pick one:

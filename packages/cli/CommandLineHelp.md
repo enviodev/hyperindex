@@ -339,7 +339,7 @@ Local Envio database commands
 
 ###### **Subcommands:**
 
-* `up` — Migrate latest schema to database
+* `up` — Set up the database schema, or bring an existing one up to a config that added chains
 * `down` — Drop database schema
 * `setup` — Setup database by dropping schema and then running migrations
 
@@ -347,7 +347,7 @@ Local Envio database commands
 
 ## `envio local db-migrate up`
 
-Migrate latest schema to database
+Set up the database schema, or bring an existing one up to a config that added chains
 
 **Usage:** `envio local db-migrate up`
 

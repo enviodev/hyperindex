@@ -2,6 +2,7 @@ type method = [
   | #isInitialized
   | #initialize
   | #resumeInitialState
+  | #addChains
   | #dumpEffectCache
   | #loadOrThrow
 ]
@@ -18,6 +19,7 @@ type t = {
   resolveInitialize: Persistence.initialState => unit,
   resumeInitialStateCalls: array<bool>,
   resolveLoadInitialState: Persistence.initialState => unit,
+  addChainsCalls: array<{"chainIds": array<ChainId.t>, "envioInfo": JSON.t}>,
   loadOrThrowCalls: array<{"filter": EntityFilter.t, "tableName": string}>,
   ensureQueryIndexesCalls: array<{"tableName": string, "filters": array<EntityFilter.t>}>,
   finalizeBackfillCalls: array<{
@@ -56,6 +58,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
   let dumpEffectCacheCalls = ref(0)
   let resumeInitialStateCalls = []
   let resumeInitialStateResolveFns = []
+  let addChainsCalls = []
 
   {
     isInitializedCalls,
@@ -65,6 +68,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
     finalizeBackfillCalls,
     dumpEffectCacheCalls,
     resumeInitialStateCalls,
+    addChainsCalls,
     resolveLoadInitialState: (initialState: Persistence.initialState) => {
       resumeInitialStateResolveFns->Array.forEach(resolve => resolve(initialState))
     },
@@ -170,8 +174,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
       ) => (),
       getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
         JsError.throwWithMessage("Not implemented"),
-      getRollbackProgressDiff: (~floors as _) =>
-        JsError.throwWithMessage("Not implemented"),
+      getRollbackProgressDiff: (~floors as _) => JsError.throwWithMessage("Not implemented"),
       getRollbackData: (~entityConfig as _, ~floors as _) =>
         JsError.throwWithMessage("Not implemented"),
       writeBatch: (
@@ -185,6 +188,20 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
         ~chainMetaData as _,
         ~onWrite as _,
       ) => JsError.throwWithMessage("Not implemented"),
+      addChains: implement(#addChains, (
+        ~chainConfigs,
+        ~entities as _,
+        ~storedContractMapping as _,
+        ~envioInfo,
+      ) => {
+        addChainsCalls
+        ->Array.push({
+          "chainIds": chainConfigs->Array.map((chainConfig: Config.chain) => chainConfig.id),
+          "envioInfo": envioInfo,
+        })
+        ->ignore
+        Promise.resolve()
+      }),
       close: () => Promise.resolve(),
     },
   }

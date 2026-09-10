@@ -177,7 +177,7 @@ pub enum LocalDockerSubcommands {
 
 #[derive(Subcommand, Debug)]
 pub enum DbMigrateSubcommands {
-    ///Migrate latest schema to database
+    ///Set up the database schema, or bring an existing one up to a config that added chains
     Up,
     ///Drop database schema
     Down,

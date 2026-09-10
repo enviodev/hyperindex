@@ -594,6 +594,15 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
     ),
+  addChains: async (
+    ~chainConfigs as _,
+    ~entities as _,
+    ~storedContractMapping as _,
+    ~envioInfo as _,
+  ) =>
+    JsError.throwWithMessage(
+      "TestIndexer: addChains should not be called; the initial state is derived from config.",
+    ),
   loadOrThrow: async (~filter, ~table: Table.table) =>
     state
     ->handleLoad(~tableName=table.tableName, ~filter)

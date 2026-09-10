@@ -64,3 +64,23 @@ let nameOfOrThrow = (mapping: t, id) =>
 let isEqual = (a: t, b: t) =>
   a.names->Array.length === b.names->Array.length &&
     a.names->Array.everyWithIndex((name, idx) => b.names->Array.getUnsafe(idx) === name)
+
+let has = (mapping: t, name) =>
+  mapping.idByName->Utils.Dict.dangerouslyGetNonOption(name)->Option.isSome
+
+// Every contract `other` declares already has an id here. That, not equality, is
+// what a resume needs: the stored order is the one every lookup resolves
+// through, so a mapping carrying the same names in a different order still
+// answers every question the run asks.
+let covers = (mapping: t, other: t) => other.names->Array.every(name => mapping->has(name))
+
+// The names `mapping` lacks, in canonical order. `extend` appends exactly these,
+// so an id a stored address row references never moves.
+let missingFrom = (mapping: t, ~names: array<string>) =>
+  Core.getAddon().canonicalContractNames(names)->Array.filter(name => !(mapping->has(name)))
+
+let extend = (mapping: t, ~names: array<string>) =>
+  switch mapping->missingFrom(~names) {
+  | [] => mapping
+  | missing => indexNames(mapping.names->Array.concat(missing))
+  }

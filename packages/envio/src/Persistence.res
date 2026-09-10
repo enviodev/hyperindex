@@ -132,6 +132,20 @@ type storage = {
       ~storedContractMapping: ContractMapping.t,
     ) => unit,
   ) => promise<initialState>,
+  // Brings chains the config declares and the storage was never initialized
+  // with into an existing schema: their `envio_chains` rows, the partitions
+  // every per-chain entity needs for them, their config addresses, and the
+  // contract ids those addresses reference. `storedContractMapping` is extended
+  // rather than rebuilt, so no id an existing address row points at moves.
+  // Nothing already indexed is touched; the new chains start at `progress_block`
+  // -1 with a null `ready_at`, which is what makes the run that follows a
+  // backfill again.
+  addChains: (
+    ~chainConfigs: array<Config.chain>,
+    ~entities: array<Internal.entityConfig>,
+    ~storedContractMapping: ContractMapping.t,
+    ~envioInfo: JSON.t,
+  ) => promise<unit>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
@@ -215,6 +229,11 @@ type storage = {
   close: unit => promise<unit>,
 }
 
+// What a resume does when the config declares chains the storage was never
+// initialized with: a running indexer refuses and points at the migration,
+// `db-migrate up` performs it.
+type addedChainsPolicy = Reject | Add
+
 type storageStatus =
   | Unknown
   | Initializing(promise<unit>)
@@ -259,6 +278,7 @@ let init = {
     ~reset=false,
     ~lowercaseAddresses=false,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
+    ~addedChainsPolicy=Reject,
   ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
@@ -303,18 +323,60 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
+          let throwIfIncompatible = (~storedEnvioInfo, ~storedContractMapping) =>
+            Config.throwIfResumeIncompatible(
+              ~storedEnvioInfo,
+              ~storedContractMapping,
+              ~envioInfo,
+              ~contractMapping,
+              ~resetCommand,
+              ~runCommand,
+            )
+
+          // Under `Add` the added chains are collected instead of reported, and
+          // the compat check is skipped for that resume only: `Config.addedChains`
+          // has already proven the rest of the config matches.
+          let chainsToAdd = ref([])
           let initialState = await persistence.storage.resumeInitialState(
             ~entities=persistence.allEntities,
             ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) =>
-              Config.throwIfResumeIncompatible(
-                ~storedEnvioInfo,
-                ~storedContractMapping,
-                ~envioInfo,
-                ~contractMapping,
-                ~resetCommand,
-                ~runCommand,
-              ),
+              switch (addedChainsPolicy, storedEnvioInfo) {
+              | (Add, Some(stored)) =>
+                switch Config.addedChains(~stored, ~current=envioInfo) {
+                | [] => throwIfIncompatible(~storedEnvioInfo, ~storedContractMapping)
+                | added => chainsToAdd := added
+                }
+              | _ => throwIfIncompatible(~storedEnvioInfo, ~storedContractMapping)
+              },
           )
+
+          let initialState = switch chainsToAdd.contents {
+          | [] => initialState
+          | added =>
+            let newChains = chainConfigs->Config.selectChainsOrThrow(~added)
+            Logging.info({
+              "msg": `Adding new chains to the indexer storage...`,
+              "chains": added->Array.map(({path}: Config.addedChain) => path),
+            })
+            let newChains = await newChains->StartBlockResolver.resolveAllOrThrow(
+              ~lowercaseAddresses,
+              ~retry=startBlockRetry,
+            )
+            await persistence.storage.addChains(
+              ~chainConfigs=newChains,
+              ~entities=persistence.allEntities,
+              ~storedContractMapping=initialState.contractMapping,
+              ~envioInfo,
+            )
+            // Read back rather than splicing the new rows into the state above:
+            // the migration is what makes storage and config agree, so the state
+            // the caller sees should be the one the database now holds — and a
+            // sink learns about the new chains through the same resume.
+            await persistence.storage.resumeInitialState(
+              ~entities=persistence.allEntities,
+              ~throwIfIncompatible,
+            )
+          }
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

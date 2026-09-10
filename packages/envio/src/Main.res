@@ -586,6 +586,9 @@ let migrate = async (~reset) => {
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   await persistence->Persistence.init(
     ~reset,
+    // The one command that may change an initialized schema, and the only
+    // reason `envio start` points at it when the config grows a chain.
+    ~addedChainsPolicy=Add,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
     ~envioInfo=getEnvioInfo(),
