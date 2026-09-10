@@ -1222,6 +1222,10 @@ export type SvmAllTransactionFields = {
   readonly allSignatures: readonly string[];
   readonly loadedAddressesWritable: readonly string[];
   readonly loadedAddressesReadonly: readonly string[];
+  /** Static `accountKeys` followed by the lookup tables' writable then
+   *  readonly addresses — Solana's own account-resolution order, and what a
+   *  transaction's account indexes point into. */
+  readonly allAccountKeys: readonly string[];
 };
 
 export type SvmInstructionFieldName =
@@ -1245,7 +1249,8 @@ export type SvmTransactionFieldName =
   | "version"
   | "allSignatures"
   | "loadedAddressesWritable"
-  | "loadedAddressesReadonly";
+  | "loadedAddressesReadonly"
+  | "allAccountKeys";
 export type SvmAccountActivityFieldName =
   | "address"
   | "transactionAccountIndex"

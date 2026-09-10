@@ -60,6 +60,7 @@ type svmTransaction = {
   accountKeys?: array<SvmTypes.Pubkey.t>,
   loadedAddressesWritable?: array<SvmTypes.Pubkey.t>,
   loadedAddressesReadonly?: array<SvmTypes.Pubkey.t>,
+  allAccountKeys?: array<SvmTypes.Pubkey.t>,
   recentBlockhash?: string,
   version?: string,
   allSignatures?: array<string>,

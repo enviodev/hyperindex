@@ -135,6 +135,7 @@ pub enum SvmTxField {
     AccountActivities = 11,
     LoadedAddressesWritable = 12,
     LoadedAddressesReadonly = 13,
+    AllAccountKeys = 14,
 }
 
 impl SvmTxField {
@@ -156,6 +157,7 @@ impl SvmTxField {
             AccountActivities => "accountActivities",
             LoadedAddressesWritable => "loadedAddressesWritable",
             LoadedAddressesReadonly => "loadedAddressesReadonly",
+            AllAccountKeys => "allAccountKeys",
         }
     }
 }
@@ -306,6 +308,24 @@ fn svm_tx_col(field: SvmTxField, txs: &[solana_simple::Transaction]) -> Option<A
                 .as_ref()
                 .map(|keys| keys.iter().map(|key| key.to_string()).collect())
         }),
+        // Solana's own account-resolution order: static keys, then the lookup
+        // tables' writable addresses, then their readonly ones. An account
+        // index into the transaction addresses this list, not `account_keys`.
+        AllAccountKeys => str_list_from(txs, |t| {
+            let parts = [
+                t.account_keys.as_ref(),
+                t.loaded_addresses_writable.as_ref(),
+                t.loaded_addresses_readonly.as_ref(),
+            ];
+            parts.iter().any(Option::is_some).then(|| {
+                parts
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|key| key.to_string())
+                    .collect()
+            })
+        }),
         AccountActivities => None,
     }
 }
@@ -343,9 +363,11 @@ fn decode_svm_field(
                 .map(|(&i, &m)| (m & bit != 0).then_some(i as i64))
                 .collect(),
         ),
-        AllSignatures | AccountKeys | LoadedAddressesWritable | LoadedAddressesReadonly => {
-            Column::StrVec(str_list_cells(col, len))
-        }
+        AllSignatures
+        | AccountKeys
+        | LoadedAddressesWritable
+        | LoadedAddressesReadonly
+        | AllAccountKeys => Column::StrVec(str_list_cells(col, len)),
         Signature | FeePayer | Err | RecentBlockhash | Version => {
             Column::Str(bytes_cells(col, len, |b| Ok(Some(utf8(b))))?)
         }
@@ -1182,6 +1204,41 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn svm_all_account_keys_concatenate_in_resolution_order() {
+        let store = TransactionStore::new_svm();
+        let mut tx = raw_svm_tx(5, 0);
+        tx.account_keys = Some(vec![svm_key(1)]);
+        tx.loaded_addresses_writable = Some(vec![svm_key(2)]);
+        tx.loaded_addresses_readonly = Some(vec![svm_key(3)]);
+        // A legacy transaction carries no lookup tables, so its resolved list
+        // must still be exactly the static keys rather than a miss.
+        let mut legacy = raw_svm_tx(5, 1);
+        legacy.account_keys = Some(vec![svm_key(4)]);
+        store.insert_svm_txs(vec![tx, legacy]);
+
+        let mask = (1u64 << (SvmTxField::AllAccountKeys as u32)) as f64;
+        let cols = store
+            .materialize(vec![5, 5], vec![0, 1], vec![mask, mask])
+            .await
+            .expect("materialize");
+
+        match column(&cols, "allAccountKeys") {
+            Some(Column::StrVec(v)) => assert_eq!(
+                v,
+                &vec![
+                    Some(vec![
+                        svm_key(1).to_string(),
+                        svm_key(2).to_string(),
+                        svm_key(3).to_string()
+                    ]),
+                    Some(vec![svm_key(4).to_string()]),
+                ]
+            ),
+            _ => panic!("expected allAccountKeys column"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn account_activities_gather_by_key_range_and_index_order() {
         let store = TransactionStore::new_svm();
         store.insert_svm_txs(vec![raw_svm_tx(5, 0)]);
@@ -1487,6 +1544,7 @@ mod tests {
                 "accountActivities",
                 "loadedAddressesWritable",
                 "loadedAddressesReadonly",
+                "allAccountKeys",
             ]
         );
     }

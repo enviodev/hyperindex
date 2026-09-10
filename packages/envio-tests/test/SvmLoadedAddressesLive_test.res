@@ -35,6 +35,8 @@ type Accounts {
   programIsStatic: Boolean!
   programIsLoaded: Boolean!
   firstWritable: String!
+  allCount: Int!
+  allMatchesConcatenation: Boolean!
 }
 `,
   ~handlers=`
@@ -50,6 +52,7 @@ indexer.onInstruction(
         "accountKeys",
         "loadedAddressesWritable",
         "loadedAddressesReadonly",
+        "allAccountKeys",
       ],
     },
   },
@@ -63,6 +66,14 @@ indexer.onInstruction(
       programIsStatic: tx.accountKeys.includes("${klendProgramId}"),
       programIsLoaded: tx.loadedAddressesReadonly.includes("${klendProgramId}"),
       firstWritable: tx.loadedAddressesWritable[0] ?? "",
+      allCount: tx.allAccountKeys.length,
+      allMatchesConcatenation:
+        tx.allAccountKeys.join(",") ===
+        [
+          ...tx.accountKeys,
+          ...tx.loadedAddressesWritable,
+          ...tx.loadedAddressesReadonly,
+        ].join(","),
     });
   },
 );
@@ -85,6 +96,8 @@ describe("SVM loaded addresses (live)", () => {
         programIsStatic: false,
         programIsLoaded: true,
         firstWritable: "2Eff8Udy2G2gzNcf2619AnTx3xM4renEv4QrHKjS1o9N",
+        allCount: 33,
+        allMatchesConcatenation: true,
       },
     ]);
   });

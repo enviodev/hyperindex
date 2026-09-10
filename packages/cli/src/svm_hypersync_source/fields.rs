@@ -73,6 +73,14 @@ pub const TRANSACTION: &[HandlerField] = &[
         js_name: "loadedAddressesReadonly",
         columns: &["loaded_addresses_readonly"],
     },
+    HandlerField {
+        js_name: "allAccountKeys",
+        columns: &[
+            "account_keys",
+            "loaded_addresses_writable",
+            "loaded_addresses_readonly",
+        ],
+    },
 ];
 
 pub const BLOCK: &[HandlerField] = &[
