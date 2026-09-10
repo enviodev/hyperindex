@@ -351,13 +351,11 @@ WHERE "${(#id: field :> string)}" = $1;`
   }
 
   // Written only once every schema-defined index is verified, so a chain is
-  // never reported ready without the indexes the schema promises. One row at a
-  // time, like `setMeta`: the id column is INTEGER or BIGINT depending on the
-  // configured `ChainId.mode`, and a bare `= $2` needs no cast either way.
+  // never reported ready without the indexes the schema promises.
   //
-  // Every chain at once and without naming any: this only runs once the schema's
-  // indexes are committed, which is a fact about the whole indexer rather than
-  // about the chains the process running it happens to drive.
+  // Every chain at once and naming none of them: the indexes being committed is
+  // a fact about the whole indexer, not about the chains whichever process got
+  // there happens to drive.
   //
   // `IS NULL` so a chain keeps the timestamp it first earned, matching the
   // sticky in-memory `ChainState.markReady`.

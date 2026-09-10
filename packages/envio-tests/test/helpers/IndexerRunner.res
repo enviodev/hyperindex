@@ -334,12 +334,7 @@ let run = async (
         }
       },
       waitUntilReady: async () => {
-        // Every chain caught up *and* the finalize phase closed. A resumed run
-        // seeds its chains' caught-up timestamps from the database, so without
-        // the phase check this would resolve while the indexes the run still
-        // owes are being built.
         let isReady = () =>
-          !(state->IndexerState.isFinalizingIndexes) &&
           state
           ->IndexerState.chainStates
           ->Dict.valuesToArray

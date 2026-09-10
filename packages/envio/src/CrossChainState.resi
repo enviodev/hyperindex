@@ -15,6 +15,7 @@ let make: (
 let chainStates: t => dict<ChainState.t>
 let isRealtime: t => bool
 let isCaughtUp: t => bool
+let owesSchemaIndexes: t => bool
 let isInReorgThreshold: t => bool
 let targetBufferSize: t => int
 let shouldSaveHistory: t => dict<bool>
@@ -34,6 +35,7 @@ let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => uni
 let markCaughtUpIfSettled: t => unit
 let markCaughtUpOnResume: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit
+let clearSchemaIndexDebt: t => unit
 
 // Fetch control.
 let priorityOrder: t => array<ChainState.t>

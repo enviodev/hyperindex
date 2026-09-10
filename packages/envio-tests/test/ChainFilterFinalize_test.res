@@ -76,6 +76,42 @@ let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
 }
 
 describe("envio start --chain", () => {
+  // Standing down must not be final. The chains are judged from what they have
+  // committed, so a chain can read as behind for a moment — a burst it hasn't
+  // processed yet, or a sibling that catches up a second later. If that pass
+  // were the only one, the indexes would stay unbuilt for the rest of the run.
+  scenario->Scenario.it(
+    "Comes back to the indexes once the chain that was behind catches up",
+    ~sources=[{chain: 1}, {chain: 137}],
+    async (~t, ~indexer, ~source) => {
+      let running = await indexer.restart(~chains=[ChainId.fromInt(1)], ())
+      let {sql, pgSchema} = running.pg
+      let sourceOne = source(1)
+      await catchUp(~indexer=running, ~source=sourceOne)
+
+      t.expect(
+        await indexNames(~sql, ~pgSchema),
+        ~message="Chain 137 is behind, so this pass leaves the indexes alone",
+      ).toEqual([])
+
+      // Chain 137's own process reaching its head, which this one only ever
+      // sees as the row that process committed.
+      let _ = await sql->Postgres.unsafe(
+        `UPDATE "${pgSchema}"."envio_chains" SET "progress_block" = 100, "source_block" = 100 WHERE "id" = 137;`,
+      )
+
+      // Any batch brings the loop back round.
+      sourceOne.resolveGetHeightOrThrow(101)
+      sourceOne.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
+      await running.waitUntilIdle()
+
+      t.expect(
+        (await indexNames(~sql, ~pgSchema), await readyByChainId(~sql, ~pgSchema)),
+        ~message="The same process picks the debt back up, with no restart",
+      ).toEqual(([aBIdIndexName], [("1", true), ("137", true)]))
+    },
+  )
+
   scenario->Scenario.it(
     "Builds the schema's indexes only once every chain has finished backfill",
     ~sources=[{chain: 1}, {chain: 137}],

@@ -14,14 +14,20 @@
 // it holds still while the head runs on — a chain that reached its head keeps
 // reading as caught up, whoever asks and whenever.
 %%private(
-  let isStillBackfilling = (progress: Persistence.chainProgress, ~blockLag) =>
-    switch progress.endBlock {
-    | Some(endBlock) => progress.progressBlockNumber < endBlock
+  let isStillBackfilling = (progress: Persistence.chainProgress, ~blockLag) => {
     // A chain nothing has ever fetched for has no head to be measured against.
-    | None =>
-      progress.sourceBlockNumber <= 0 ||
-        progress.progressBlockNumber < progress.sourceBlockNumber - blockLag
+    let atHead =
+      progress.sourceBlockNumber > 0 &&
+        progress.progressBlockNumber >= progress.sourceBlockNumber - blockLag
+    // Either one, matching what the indexer itself counts as caught up. An
+    // `end_block` above the head is never reached, and testing only for it would
+    // leave such a chain owing its indexes for good.
+    let atEndBlock = switch progress.endBlock {
+    | Some(endBlock) => progress.progressBlockNumber >= endBlock
+    | None => false
     }
+    !(atHead || atEndBlock)
+  }
 )
 
 // The barrier `envio start --chain` turns on: the schema's indexes are global
@@ -38,6 +44,7 @@
     persistence: Persistence.t,
     ~config: Config.t,
     ~readyAt,
+    ~announce,
   ) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let blockLagById = Dict.make()
@@ -56,40 +63,59 @@
       ->Array.map(progress => progress.id->ChainId.toString)
 
     switch pending {
-    | [] => await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt)
+    | [] =>
+      await storage.finalizeBackfill(~entities=persistence.allEntities, ~readyAt)
+      true
     | _ =>
-      Logging.info({
-        "msg": `Leaving the schema's indexes to whichever chain finishes last: ${pending->Array.joinUnsafe(", ")} are still backfilling in other processes.`,
+      // At info the first time and at debug on every pass after it: the retry
+      // runs on each batch while the debt stands, and a chain can be behind for
+      // hours.
+      let message = {
+        "msg": `Leaving the schema's indexes to whichever chain finishes last. Still backfilling: ${pending->Array.joinUnsafe(", ")}.`,
         "pendingChains": pending,
-      })
+      }
+      announce ? Logging.info(message) : Logging.debug(message)
+      false
     }
   }
 )
 
 let runOnce = async (state: IndexerState.t) => {
-  Logging.info(
-    "This indexer's chains are caught up. Finalizing before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
-  )
+  // The phase is re-entered on every batch while the indexes stay owed, so the
+  // once-only half — announcing, flushing, and switching to realtime — is gated
+  // on this being the first pass.
+  let isFirstPass = !(state->IndexerState.isRealtime)
 
-  await Writing.flush(state)
+  if isFirstPass {
+    Logging.info(
+      "This indexer's chains are caught up. Finalizing before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
+    )
+    await Writing.flush(state)
+  }
 
   // A failed write already surfaced through onError; committing ready_at on top
   // of an incomplete write would claim progress that isn't durable.
   if !(state->IndexerState.hasFailedWrite) {
-    let persistence = state->IndexerState.persistence
-    let storage = persistence->Persistence.getInitializedStorageOrThrow
     let readyAt = Date.make()
 
-    await persistence->buildSchemaIndexesIfLast(
-      ~config=state->IndexerState.config,
-      ~readyAt,
-    )
+    if (
+      await state->IndexerState.persistence->buildSchemaIndexesIfLast(
+        ~config=state->IndexerState.config,
+        ~readyAt,
+        ~announce=isFirstPass,
+      )
+    ) {
+      state->IndexerState.clearSchemaIndexDebt
+    }
 
-    // Only after the build: in-memory readiness must never claim indexes the
-    // database doesn't hold. With chains left backfilling elsewhere there is no
-    // build to wait for, and this process is genuinely realtime without one.
-    state->IndexerState.markReady(~readyAt)
-    Logging.info("The indexer is ready. Switching to realtime indexing.")
+    if isFirstPass {
+      // Only after the build: in-memory readiness must never claim indexes the
+      // database doesn't hold. With chains left backfilling elsewhere there is
+      // no build to wait for, and this process is genuinely realtime without
+      // one — it just keeps the debt until a later pass can settle it.
+      state->IndexerState.markReady(~readyAt)
+      Logging.info("The indexer is ready. Switching to realtime indexing.")
+    }
   }
 }
 
@@ -123,10 +149,15 @@ let repairSchemaIndexes = async (state: IndexerState.t) => {
   // unhandled-rejection handler and take the indexer down. The whole body is
   // guarded, the barrier's own query included.
   try {
-    await persistence->buildSchemaIndexesIfLast(
-      ~config=state->IndexerState.config,
-      ~readyAt=Date.make(),
-    )
+    if (
+      await persistence->buildSchemaIndexesIfLast(
+        ~config=state->IndexerState.config,
+        ~readyAt=Date.make(),
+        ~announce=true,
+      )
+    ) {
+      state->IndexerState.clearSchemaIndexDebt
+    }
   } catch {
   | exn =>
     Logging.warn({

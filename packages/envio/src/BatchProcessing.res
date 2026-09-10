@@ -95,7 +95,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     // finalizing resumes exactly here: it still owes the schema its deferred
     // indexes, and no batch will ever come along to notice.
     state->IndexerState.markCaughtUpIfSettled
-    if state->IndexerState.isFinalizingIndexes {
+    if state->IndexerState.shouldRunFinalize {
       await FinalizeBackfill.run(state)
     }
 
@@ -166,7 +166,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         // Backfilling → FinalizingIndexes → Ready. Awaiting here holds the
         // processing loop for the whole finalize, which is what pauses
         // processing while the indexes are built.
-        if state->IndexerState.isFinalizingIndexes {
+        if state->IndexerState.shouldRunFinalize {
           await FinalizeBackfill.run(state)
         }
 

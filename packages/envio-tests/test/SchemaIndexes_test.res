@@ -47,6 +47,25 @@ name: schema-indexes${contractsYaml}chains:${chainYaml(
   ~schema,
 )
 
+// An `end_block` the chain never reaches: the indexer still counts itself caught
+// up once progress sits at the head, so the deferred indexes are owed then, not
+// at the unreachable end block.
+let unreachableEndBlockScenario = Scenario.make(
+  ~configYaml=`
+name: schema-indexes-unreachable-end${contractsYaml}chains:
+  - id: 1337
+    rpc:
+      url: https://rpc1337.example.test
+      for: sync
+    start_block: 1
+    end_block: 1000000
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+`,
+  ~schema,
+)
+
 let multichainScenario = Scenario.make(
   ~configYaml=`
 name: schema-indexes-multichain${contractsYaml}chains:${chainYaml(
@@ -137,6 +156,30 @@ let asContext = (context: Internal.handlerContext) =>
   context->(Utils.magic: Internal.handlerContext => indexesContext)
 
 describe("Deferred schema indexes", () => {
+  unreachableEndBlockScenario->Scenario.it(
+    "Are committed once the chain sits at the head, even with an end block it never reaches",
+    ~sources=[{chain: 1337}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      let {sql, pgSchema} = indexer.pg
+
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+
+      t.expect(
+        (
+          (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
+            entry => entry.name,
+          ),
+          await readyAtByChainId(~sql, ~pgSchema),
+        ),
+        ~message="Sitting at the head is what the indexes are owed on, not reaching the end block",
+      ).toEqual(([aBIdIndexName], [(ChainId.fromInt(1337), true)]))
+    },
+  )
+
   scenario->Scenario.it(
     "Are absent through backfill, committed with ready_at, and kept across a restart",
     ~sources=[{chain: 1337}],

@@ -493,12 +493,22 @@ let shouldSaveHistory = (state: t) => state.crossChainState->CrossChainState.sho
 let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
 
 // The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only
-// in the middle phase: this process's chains have caught up, but it hasn't yet
-// settled what it owes the schema — building the deferred indexes, or finding
-// that another chain is still backfilling and they aren't owed yet.
+// in the middle phase: every chain has caught up, but the first finalize pass
+// hasn't switched the run to realtime yet.
 let isFinalizingIndexes = (state: t) =>
   state.crossChainState->CrossChainState.isCaughtUp &&
     !(state.crossChainState->CrossChainState.isRealtime)
+
+// Whether the loop should run a finalize pass. Wider than the phase above,
+// because a pass that found another chain still backfilling leaves the schema's
+// indexes owed while this process goes realtime — the loop has to come back and
+// ask again rather than leaving them unbuilt for the rest of the run.
+let shouldRunFinalize = (state: t) =>
+  state.crossChainState->CrossChainState.isCaughtUp &&
+    state.crossChainState->CrossChainState.owesSchemaIndexes
+
+let clearSchemaIndexDebt = (state: t) =>
+  state.crossChainState->CrossChainState.clearSchemaIndexDebt
 
 let markCaughtUpIfSettled = (state: t) =>
   state.crossChainState->CrossChainState.markCaughtUpIfSettled
