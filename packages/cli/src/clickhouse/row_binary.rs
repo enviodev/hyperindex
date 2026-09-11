@@ -4,50 +4,18 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 
 use super::ch_type::ChType;
-use super::ch_type::ColumnKind;
+use crate::columnar::{self, ColumnKind};
 
-#[derive(Debug)]
-pub enum ColumnValues {
-    F64(Vec<f64>),
-    U64(Vec<u64>),
-    I64(Vec<i64>),
-    Text(Vec<String>),
-    Bytes(Vec<Vec<u8>>),
-}
-
-impl ColumnValues {
-    pub fn kind(&self) -> ColumnKind {
-        match self {
-            ColumnValues::F64(_) => ColumnKind::F64,
-            ColumnValues::U64(_) => ColumnKind::U64,
-            ColumnValues::I64(_) => ColumnKind::I64,
-            ColumnValues::Text(_) => ColumnKind::Text,
-            ColumnValues::Bytes(_) => ColumnKind::Bytes,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match self {
-            ColumnValues::F64(v) => v.len(),
-            ColumnValues::U64(v) => v.len(),
-            ColumnValues::I64(v) => v.len(),
-            ColumnValues::Text(v) => v.len(),
-            ColumnValues::Bytes(v) => v.len(),
-        }
-    }
-}
-
-#[derive(Debug)]
+/// One staged column, read straight out of the arena JavaScript filled.
 pub struct Column<'a> {
     pub name: Cow<'a, str>,
     pub ch_type: Cow<'a, ChType>,
-    pub values: ColumnValues,
-    pub nulls: Vec<u8>,
+    pub values: &'a columnar::Column,
 }
 
 impl Column<'_> {
     fn is_null(&self, row: usize) -> bool {
-        self.nulls.get(row).copied().unwrap_or(0) != 0
+        self.values.is_null(row)
     }
 }
 
@@ -408,9 +376,10 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         return put_default(out, ch_type);
     }
 
-    match (&column.values, ch_type) {
-        (ColumnValues::F64(v), ChType::Float64) => {
-            let value = v[row];
+    let values = column.values;
+    match (values.kind(), ch_type) {
+        (ColumnKind::F64, ChType::Float64) => {
+            let value = values.f64_at(row);
             if !value.is_finite() {
                 bail!(
                     "{value} is not a value a Float64 column can hold. Store a finite number, \
@@ -419,28 +388,32 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
             }
             out.extend_from_slice(&value.to_le_bytes())
         }
-        (ColumnValues::F64(v), other) => {
-            let value = v[row];
+        (ColumnKind::F64, other) => {
+            let value = values.f64_at(row);
             if value.fract() != 0.0 || !value.is_finite() {
                 bail!("{value} is not an integer, which a {other:?} column requires");
             }
             put_int(out, value as i128, other)?
         }
-        (ColumnValues::U64(v), ChType::Float64) => {
-            out.extend_from_slice(&(v[row] as f64).to_le_bytes())
+        (ColumnKind::U64, ChType::Float64) => {
+            out.extend_from_slice(&(values.u64_at(row) as f64).to_le_bytes())
         }
-        (ColumnValues::U64(v), ChType::UInt64) => out.extend_from_slice(&v[row].to_le_bytes()),
-        (ColumnValues::I64(v), ChType::Int64) => out.extend_from_slice(&v[row].to_le_bytes()),
-        (ColumnValues::U64(v), other) => put_int(out, v[row] as i128, other)?,
-        (ColumnValues::I64(v), other) => put_int(out, v[row] as i128, other)?,
-        (ColumnValues::Text(v), ChType::Array(_)) => {
+        (ColumnKind::U64, ChType::UInt64) => {
+            out.extend_from_slice(&values.u64_at(row).to_le_bytes())
+        }
+        (ColumnKind::I64, ChType::Int64) => {
+            out.extend_from_slice(&values.i64_at(row).to_le_bytes())
+        }
+        (ColumnKind::U64, other) => put_int(out, values.u64_at(row) as i128, other)?,
+        (ColumnKind::I64, other) => put_int(out, values.i64_at(row) as i128, other)?,
+        (ColumnKind::Text, ChType::Array(_)) => {
             let parsed: serde_json::Value =
-                serde_json::from_str(&v[row]).context("value is not JSON")?;
+                serde_json::from_slice(values.bytes_at(row)).context("value is not JSON")?;
             encode_json_value(out, ch_type, &parsed)?;
         }
-        (ColumnValues::Text(v), other) => encode_text_scalar(out, other, &v[row])?,
-        (ColumnValues::Bytes(v), ChType::Bytes) => put_bytes(out, &v[row]),
-        (ColumnValues::Bytes(_), other) => {
+        (ColumnKind::Text, other) => encode_text_scalar(out, other, values.str_at(row)?)?,
+        (ColumnKind::Bytes, ChType::Bytes) => put_bytes(out, values.bytes_at(row)),
+        (ColumnKind::Bytes, other) => {
             bail!("raw bytes are not a value a {other:?} column can hold")
         }
     }
@@ -499,34 +472,76 @@ mod tests {
     use crate::clickhouse::ch_type::test_support::parse_type;
     use pretty_assertions::assert_eq;
 
-    fn owned_column(name: &str, ty: &str, values: ColumnValues) -> Column<'static> {
-        Column {
-            name: Cow::Owned(name.to_string()),
-            ch_type: Cow::Owned(parse_type(ty)),
-            values,
-            nulls: Vec::new(),
+    /// A column and the arena backing it, so a test can keep owning the values
+    /// a borrowed [`Column`] points at.
+    struct TestColumn {
+        name: String,
+        ch_type: ChType,
+        arena: columnar::Arena,
+    }
+
+    impl TestColumn {
+        fn new(name: &str, ch_type: ChType, kind: ColumnKind, rows: usize) -> Self {
+            Self {
+                name: name.to_string(),
+                ch_type,
+                arena: columnar::Arena::new(rows.max(1), &[kind]).unwrap(),
+            }
+        }
+
+        fn set_nulls(&mut self, nulls: &[u8]) {
+            for (row, &null) in nulls.iter().enumerate() {
+                if null != 0 {
+                    self.arena.mark_null(0, row);
+                }
+            }
         }
     }
 
-    fn text_column(name: &str, ty: &str, values: &[&str]) -> Column<'static> {
-        owned_column(
-            name,
-            ty,
-            ColumnValues::Text(values.iter().map(|v| v.to_string()).collect()),
-        )
+    /// Shadows [`super::encode`] so every case below reads as it did when
+    /// columns owned their values.
+    fn encode(columns: &[TestColumn], rows: usize) -> Result<EncodedRows> {
+        let borrowed: Vec<Column> = columns
+            .iter()
+            .map(|column| Column {
+                name: Cow::Borrowed(&column.name),
+                ch_type: Cow::Borrowed(&column.ch_type),
+                values: &column.arena.columns()[0],
+            })
+            .collect();
+        super::encode(&borrowed, rows)
     }
 
-    fn f64_column(name: &str, ty: &str, values: &[f64]) -> Column<'static> {
-        owned_column(name, ty, ColumnValues::F64(values.to_vec()))
-    }
-
-    fn bytes_column(name: &str, ty: ChType, values: &[&[u8]]) -> Column<'static> {
-        Column {
-            name: Cow::Owned(name.to_string()),
-            ch_type: Cow::Owned(ty),
-            values: ColumnValues::Bytes(values.iter().map(|v| v.to_vec()).collect()),
-            nulls: Vec::new(),
+    fn text_column(name: &str, ty: &str, values: &[&str]) -> TestColumn {
+        let mut column = TestColumn::new(name, parse_type(ty), ColumnKind::Text, values.len());
+        for (row, value) in values.iter().enumerate() {
+            column.arena.set_bytes(0, row, value.as_bytes());
         }
+        column
+    }
+
+    fn f64_column(name: &str, ty: &str, values: &[f64]) -> TestColumn {
+        let mut column = TestColumn::new(name, parse_type(ty), ColumnKind::F64, values.len());
+        for (row, &value) in values.iter().enumerate() {
+            column.arena.set_f64(0, row, value);
+        }
+        column
+    }
+
+    fn u64_column(name: &str, ty: &str, values: &[u64]) -> TestColumn {
+        let mut column = TestColumn::new(name, parse_type(ty), ColumnKind::U64, values.len());
+        for (row, &value) in values.iter().enumerate() {
+            column.arena.set_u64(0, row, value);
+        }
+        column
+    }
+
+    fn bytes_column(name: &str, ty: ChType, values: &[&[u8]]) -> TestColumn {
+        let mut column = TestColumn::new(name, ty, ColumnKind::Bytes, values.len());
+        for (row, value) in values.iter().enumerate() {
+            column.arena.set_bytes(0, row, value);
+        }
+        column
     }
 
     #[test]
@@ -549,32 +564,23 @@ mod tests {
     #[test]
     fn a_null_bytes_cell_writes_the_null_marker() {
         let mut column = bytes_column("data", ChType::Nullable(Box::new(ChType::Bytes)), &[&[1]]);
-        column.nulls = vec![1];
+        column.set_nulls(&[1]);
         let encoded = encode(&[column], 1).unwrap();
         assert_eq!(encoded.body, vec![1]);
     }
 
     #[test]
     fn a_bytes_list_arrives_as_json_byte_values() {
-        let column = owned_column(
-            "chunks",
-            "Array(String)",
-            ColumnValues::Text(vec!["[[1,255],[]]".to_string()]),
-        );
-        let column = Column {
-            ch_type: Cow::Owned(ChType::Array(Box::new(ChType::Bytes))),
-            ..column
-        };
+        let mut column = text_column("chunks", "Array(String)", &["[[1,255],[]]"]);
+        column.ch_type = ChType::Array(Box::new(ChType::Bytes));
         let encoded = encode(&[column], 1).unwrap();
         assert_eq!(encoded.body, vec![2, 2, 1, 255, 0]);
     }
 
     #[test]
     fn a_bytes_list_element_past_a_byte_is_an_error() {
-        let column = Column {
-            ch_type: Cow::Owned(ChType::Array(Box::new(ChType::Bytes))),
-            ..text_column("chunks", "Array(String)", &["[[256]]"])
-        };
+        let mut column = text_column("chunks", "Array(String)", &["[[256]]"]);
+        column.ch_type = ChType::Array(Box::new(ChType::Bytes));
         let error = encode(&[column], 1).unwrap_err();
         assert_eq!(
             format!("{error:#}"),
@@ -643,11 +649,7 @@ mod tests {
 
     #[test]
     fn encodes_uint64_beyond_float_precision_exactly() {
-        let column = owned_column(
-            "checkpoint",
-            "UInt64",
-            ColumnValues::U64(vec![u64::MAX - 1]),
-        );
+        let column = u64_column("checkpoint", "UInt64", &[u64::MAX - 1]);
         let encoded = encode(&[column], 1).unwrap();
         assert_eq!(encoded.body, (u64::MAX - 1).to_le_bytes().to_vec());
     }
@@ -806,7 +808,7 @@ mod tests {
     #[test]
     fn encodes_nullable_with_a_leading_flag() {
         let mut column = text_column("s", "Nullable(String)", &["", "ab"]);
-        column.nulls = vec![1, 0];
+        column.set_nulls(&[1, 0]);
         let encoded = encode(&[column], 2).unwrap();
         assert_eq!(encoded.body, vec![1, 0, 2, b'a', b'b']);
     }
@@ -1062,7 +1064,7 @@ mod tests {
     #[test]
     fn a_null_marker_on_a_required_column_writes_the_type_default() {
         let mut column = text_column("id", "String", &["", "ab"]);
-        column.nulls = vec![1, 0];
+        column.set_nulls(&[1, 0]);
         let encoded = encode(&[column], 2).unwrap();
         assert_eq!(encoded.body, vec![0, 2, b'a', b'b']);
     }
@@ -1070,7 +1072,7 @@ mod tests {
     #[test]
     fn a_null_marker_defaults_an_enum_to_its_first_variant() {
         let mut column = text_column("e", "Enum8('SET' = 1, 'DELETE' = 2)", &[""]);
-        column.nulls = vec![1];
+        column.set_nulls(&[1]);
         let encoded = encode(&[column], 1).unwrap();
         assert_eq!(encoded.body, vec![1]);
     }
