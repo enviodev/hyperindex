@@ -15,7 +15,10 @@
 // on — a chain that reached its head keeps reading as caught up, whenever asked.
 %%private(
   let isStillBackfilling = (progress: Persistence.chainProgress, ~blockLag) => {
-    // A chain nothing has ever fetched for has no head to be measured against.
+    // Only a batch write ever sets `source_block`, so zero means the chain has
+    // not indexed its first block and there is no head to measure it against.
+    // It counts as backfilling: nothing here can tell it apart from a chain
+    // partway through one, and letting it pass would build the indexes early.
     let atHead =
       progress.sourceBlockNumber > 0 &&
         progress.progressBlockNumber >= Pervasives.max(0, progress.sourceBlockNumber - blockLag)
@@ -96,7 +99,9 @@
         "msg": announce
           ? `Reached the head, but waiting for these chains to finish syncing before serving queries: ${chains}.`
           : `Still waiting for these chains to finish syncing before serving queries: ${chains}. ${(waitMillis /.
-              60_000.)->Float.toFixed(~digits=0)} minutes so far. A large chain's backfill can take days; check that an instance is running for every chain.`,
+              60_000.)->Float.toFixed(
+              ~digits=0,
+            )} minutes so far. A large chain's backfill can take days, so this is expected while one is running. Otherwise check that an instance is running for every chain listed — and note that a chain reports nothing until it indexes its first block, so one whose start block is above the current head holds this open until the head reaches it.`,
         "waitingFor": pending,
         "waitedSeconds": waitMillis /. 1000.,
       }
