@@ -111,7 +111,7 @@
       if announce || isReportDue {
         Logging.info(message)
       } else {
-        Logging.debug(message)
+        Logging.trace(message)
       }
       false
     }

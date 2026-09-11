@@ -2252,7 +2252,7 @@ let make = (
 
     switch missing {
     | [] =>
-      Logging.debug({
+      Logging.trace({
         "storage": storageName,
         "msg": `All ${schemaIndexes
           ->Array.length
