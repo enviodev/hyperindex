@@ -378,7 +378,9 @@ let loadByFilter = (
 
     let size = ref(0)
 
-    filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
+    filters->Array.forEach(filter =>
+      inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter, ~table=entityConfig.table)
+    )
 
     // Any non-derived field can be filtered on, so the columns this query reads
     // are indexed on demand before it runs rather than promised by the schema.

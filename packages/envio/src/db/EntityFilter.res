@@ -1,76 +1,33 @@
-module FieldValue = {
-  @unboxed
-  type rec tNonOptional =
-    | String(string)
-    | BigInt(bigint)
-    | Int(int)
-    | BigDecimal(BigDecimal.t)
-    | Bool(bool)
-    | Array(array<tNonOptional>)
+// JSON is what makes the rest of the value space unambiguous: it quotes and
+// escapes strings so a delimiter inside one can't imitate a separator, renders
+// a Date as an ISO instant down to the millisecond, and a BigDecimal through
+// its own toJSON. Serializing with toString instead collapsed distinct values
+// onto one key — every object to "[object Object]" and any two instants in the
+// same second to the same string — which silently shared one filter index.
+let jsonStringify: unknown => string = %raw(`v => JSON.stringify(v)`)
 
-  let rec toString = tNonOptional =>
-    switch tNonOptional {
-    | String(v) => v
-    | BigInt(v) => v->BigInt.toString
-    | Int(v) => v->Int.toString
-    | BigDecimal(v) => v->BigDecimal.toString
-    | Bool(v) => v ? "true" : "false"
-    | Array(v) => `[${v->Array.map(toString)->Array.join(",")}]`
+let nullish: unknown => bool = %raw(`v => v === undefined || v === null`)
+
+// Built once per getWhere registration, never per entity.
+let rec serializeValue = (value: unknown): string =>
+  if value->nullish {
+    "undefined"
+  } else {
+    switch value->Utils.Bytes.asUint8Array {
+    | Some(bytes) => bytes->Utils.Bytes.toHex
+    | None =>
+      if value->Array.isArray {
+        `[${value
+          ->(Utils.magic: unknown => array<unknown>)
+          ->Array.map(serializeValue)
+          ->Array.join(",")}]`
+      } else if value->typeof === #bigint {
+        value->(Utils.magic: unknown => bigint)->BigInt.toString
+      } else {
+        value->jsonStringify
+      }
     }
-
-  //This needs to be a castable type from any type that we
-  //support in entities so that we can create evaluations
-  //and serialize the types without parsing/wrapping them
-  type t = option<tNonOptional>
-
-  // A Uint8Array is an object like a BigDecimal, so the unboxed variant can't
-  // tell them apart on its own.
-  let asBytes = (value: t) => value->(Utils.magic: t => unknown)->Utils.Bytes.asUint8Array
-
-  let toString = (value: t) =>
-    switch (value, value->asBytes) {
-    | (_, Some(bytes)) => bytes->Utils.Bytes.toHex
-    | (Some(v), None) => v->toString
-    | (None, None) => "undefined"
-    }
-
-  external castFrom: 'a => t = "%identity"
-
-  let compareWith = (a, b, ~bigDecimal, ~bytes, ~fallback) =>
-    switch (a, b, a->asBytes, b->asBytes) {
-    | (_, _, Some(bytesA), Some(bytesB)) => bytes(Utils.Bytes.compare(bytesA, bytesB))
-    //For big decimal use custom equals operator otherwise let Caml_obj.equal do its magic
-    | (Some(BigDecimal(bdA)), Some(BigDecimal(bdB)), _, _) => bigDecimal(bdA, bdB)
-    | (a, b, _, _) => fallback(a, b)
-    }
-
-  let eq = (a, b) =>
-    compareWith(
-      a,
-      b,
-      ~bigDecimal=BigDecimal.equals,
-      ~bytes=order => order === 0.,
-      ~fallback=(a, b) => a == b,
-    )
-
-  let gt = (a, b) =>
-    compareWith(
-      a,
-      b,
-      ~bigDecimal=BigDecimal.gt,
-      ~bytes=order => order > 0.,
-      ~fallback=(a, b) => a > b,
-    )
-
-  let lt = (a, b) =>
-    compareWith(
-      a,
-      b,
-      ~bigDecimal=BigDecimal.lt,
-      ~bytes=order => order < 0.,
-      ~fallback=(a, b) => a < b,
-    )
-}
+  }
 
 // The And case requires at least one nested filter (storage throws otherwise),
 // while In with an empty array matches nothing.
@@ -86,16 +43,11 @@ type rec t =
 // for any two different filters.
 let rec toString = (filter: t) =>
   switch filter {
-  | Eq({fieldName, fieldValue}) =>
-    `${fieldName}:Eq:${fieldValue->FieldValue.castFrom->FieldValue.toString}`
-  | Gt({fieldName, fieldValue}) =>
-    `${fieldName}:Gt:${fieldValue->FieldValue.castFrom->FieldValue.toString}`
-  | Lt({fieldName, fieldValue}) =>
-    `${fieldName}:Lt:${fieldValue->FieldValue.castFrom->FieldValue.toString}`
+  | Eq({fieldName, fieldValue}) => `${fieldName}:Eq:${fieldValue->serializeValue}`
+  | Gt({fieldName, fieldValue}) => `${fieldName}:Gt:${fieldValue->serializeValue}`
+  | Lt({fieldName, fieldValue}) => `${fieldName}:Lt:${fieldValue->serializeValue}`
   | In({fieldName, fieldValue}) =>
-    `${fieldName}:In:[${fieldValue
-      ->Array.map(v => v->FieldValue.castFrom->FieldValue.toString)
-      ->Array.join(",")}]`
+    `${fieldName}:In:[${fieldValue->Array.map(serializeValue)->Array.join(",")}]`
   | And({filters}) => `And(${filters->Array.map(toString)->Array.join(",")})`
   }
 
@@ -123,6 +75,30 @@ let throwUnsupportedGetWhereValue = (~valueName, ~entityName, ~filterDisplay, ~h
   JsError.throwWithMessage(
     `Invalid ${valueName} value passed to context.${entityName}.getWhere(${filterDisplay}). Filtering by null or undefined values is not supported in getWhere.${hint}`,
   )
+
+let isDate: unknown => bool = %raw(`v => v instanceof Date`)
+
+// Columns whose comparison needs a specific object shape. The rest compare
+// natively, so whatever they're handed is already safe.
+let expectedValueType = (field: Table.field) =>
+  switch field.fieldType {
+  | Date => Some(field.isArray ? "an array of Date" : "a Date")
+  | Bytea => Some(field.isArray ? "an array of Uint8Array" : "a Uint8Array")
+  | _ => None
+  }
+
+let matchesFieldType = (value: unknown, ~field: Table.field) => {
+  let matchesScalar = value =>
+    switch field.fieldType {
+    | Date => value->isDate
+    | Bytea => value->Utils.Bytes.asUint8Array->Option.isSome
+    | _ => true
+    }
+  field.isArray
+    ? value->Array.isArray &&
+        value->(Utils.magic: unknown => array<unknown>)->Array.every(matchesScalar)
+    : value->matchesScalar
+}
 
 // Each returned filter should be loaded separately and the results flattened:
 // _in maps to one Eq per value so loads memoize on the per-value level,
@@ -186,7 +162,7 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
       }
     )
 
-    switch table->Table.getFieldByApiName(apiFieldName) {
+    let field = switch table->Table.getFieldByApiName(apiFieldName) {
     | None =>
       JsError.throwWithMessage(
         `Invalid field "${apiFieldName}" in context.${entityName}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
@@ -195,7 +171,7 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
       JsError.throwWithMessage(
         `The field "${apiFieldName}" on entity "${entityName}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
       )
-    | Some(Field(_)) => ()
+    | Some(Field(field)) => field
     }
 
     operatorKeys->Array.map(operatorKey => {
@@ -209,6 +185,14 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
         )
       | None => ()
       }
+      let throwOnUnexpectedType = (fieldValue, ~hint="") =>
+        switch field->expectedValueType {
+        | Some(typeName) if !(fieldValue->matchesFieldType(~field)) =>
+          JsError.throwWithMessage(
+            `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). The field "${apiFieldName}" expects ${typeName}.${hint}`,
+          )
+        | _ => ()
+        }
 
       switch operatorKey {
       | "_in" => {
@@ -231,22 +215,29 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
                 )
               | None => ()
               }
+              fieldValue->throwOnUnexpectedType(
+                ~hint=` The value is at index ${index->Int.toString} of the _in array.`,
+              )
               Eq({fieldName: apiFieldName, fieldValue})
             },
           )
         }
-      | "_gte" => [
-          Eq({fieldName: apiFieldName, fieldValue}),
-          Gt({fieldName: apiFieldName, fieldValue}),
-        ]
-      | "_lte" => [
-          Eq({fieldName: apiFieldName, fieldValue}),
-          Lt({fieldName: apiFieldName, fieldValue}),
-        ]
-      | "_eq" => [Eq({fieldName: apiFieldName, fieldValue})]
-      | "_gt" => [Gt({fieldName: apiFieldName, fieldValue})]
-      | "_lt" => [Lt({fieldName: apiFieldName, fieldValue})]
-      | _ => throwInvalidOperator(operatorKey)
+      | _ =>
+        fieldValue->throwOnUnexpectedType
+        switch operatorKey {
+        | "_gte" => [
+            Eq({fieldName: apiFieldName, fieldValue}),
+            Gt({fieldName: apiFieldName, fieldValue}),
+          ]
+        | "_lte" => [
+            Eq({fieldName: apiFieldName, fieldValue}),
+            Lt({fieldName: apiFieldName, fieldValue}),
+          ]
+        | "_eq" => [Eq({fieldName: apiFieldName, fieldValue})]
+        | "_gt" => [Gt({fieldName: apiFieldName, fieldValue})]
+        | "_lt" => [Lt({fieldName: apiFieldName, fieldValue})]
+        | _ => throwInvalidOperator(operatorKey)
+        }
       }
     })
   })
@@ -377,26 +368,188 @@ let merge = (filters: array<t>) =>
     }
   }
 
-// A field missing on the entity reads as `undefined`, which matches the `None`
-// arm of `FieldValue.t` (`option<...>`), so nullable columns omitted on the
-// entity object are compared as null rather than crashing.
-let rec matches = (filter: t, ~entity: dict<FieldValue.t>) =>
+// A predicate specialized to a single filter. The field's comparison is
+// resolved once from the table config, so per-entity matching avoids both the
+// operator dispatch and the polymorphic Caml_obj compare.
+type matcher = Internal.entity => bool
+
+// Reads a field off an entity by its API name. Indexed/queryable fields hold
+// raw runtime values, so the result is compared directly.
+@get_index external getField: (Internal.entity, string) => unknown = ""
+
+// Compares (entityValue, filterValue) raw runtime values for one field. A
+// nullish entity value (a missing or null column) matches nothing, mirroring
+// SQL NULL semantics and the Postgres-side filter. Native operators already
+// return false for undefined, so only the object-typed comparators guard
+// explicitly to avoid calling methods on a missing value.
+type valueCompare = {
+  eq: (unknown, unknown) => bool,
+  gt: (unknown, unknown) => bool,
+  lt: (unknown, unknown) => bool,
+  // Projects a value onto something a Map can key by. Primitives key by
+  // themselves; the object-shaped types have to collapse to a primitive or
+  // equal values would miss each other on identity.
+  key: unknown => unknown,
+}
+
+// `>`/`<` on `unknown` would compile to the polymorphic Caml_obj path; the raw
+// operators give native JS comparison for primitive (string/number/bigint)
+// fields. `===` is already physical equality.
+let nativeEq = (a: unknown, b: unknown) => a === b
+let nativeGt: (unknown, unknown) => bool = %raw(`(a, b) => a > b`)
+let nativeLt: (unknown, unknown) => bool = %raw(`(a, b) => a < b`)
+let identityKey = (v: unknown) => v
+let native = {eq: nativeEq, gt: nativeGt, lt: nativeLt, key: identityKey}
+
+let asBigDecimal = (v: unknown) => v->(Utils.magic: unknown => BigDecimal.t)
+let bigDecimal = {
+  eq: (a, b) => !(a->nullish) && BigDecimal.equals(a->asBigDecimal, b->asBigDecimal),
+  gt: (a, b) => !(a->nullish) && BigDecimal.gt(a->asBigDecimal, b->asBigDecimal),
+  lt: (a, b) => !(a->nullish) && BigDecimal.lt(a->asBigDecimal, b->asBigDecimal),
+  key: v => v->asBigDecimal->BigDecimal.toString->(Utils.magic: string => unknown),
+}
+
+let getTime = (v: unknown) => v->(Utils.magic: unknown => Date.t)->Date.getTime
+let date = {
+  eq: (a, b) => !(a->nullish) && getTime(a) === getTime(b),
+  gt: (a, b) => !(a->nullish) && getTime(a) > getTime(b),
+  lt: (a, b) => !(a->nullish) && getTime(a) < getTime(b),
+  key: v => v->getTime->(Utils.magic: float => unknown),
+}
+
+// Json has no meaningful ordering, so reuse the structural compare for every
+// operator. Polymorphic `==` is intentional here.
+let json = {
+  eq: (a: unknown, b: unknown) => !(a->nullish) && a == b,
+  gt: (a, b) => !(a->nullish) && a > b,
+  lt: (a, b) => !(a->nullish) && a < b,
+  key: v => v->jsonStringify->(Utils.magic: string => unknown),
+}
+
+let asBytes = (v: unknown) => v->(Utils.magic: unknown => Uint8Array.t)
+let bytes = {
+  eq: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) === 0.,
+  gt: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) > 0.,
+  lt: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) < 0.,
+  key: v => v->asBytes->Utils.Bytes.toHex->(Utils.magic: string => unknown),
+}
+
+let scalarCompare = (fieldType: Table.fieldType): valueCompare =>
+  switch fieldType {
+  | BigDecimal(_) => bigDecimal
+  | Date => date
+  | Json => json
+  | Bytea => bytes
+  | String
+  | Boolean
+  | Uint32
+  | UInt52
+  | SmallInt
+  | UInt64
+  | Int32
+  | ChainId
+  | Number
+  | BigInt(_)
+  | Serial
+  | BigSerial
+  | Enum(_) => native
+  }
+
+let asArray = (v: unknown) => v->(Utils.magic: unknown => array<unknown>)
+
+// Array-valued fields compare element-wise with the element type's comparator:
+// equality is length + pairwise eq, ordering is lexicographic where the first
+// differing element decides and a proper prefix is the smaller array.
+let arrayCompare = (element: valueCompare): valueCompare => {
+  let eq = (a, b) =>
+    !(a->nullish) && {
+      let a = a->asArray
+      let b = b->asArray
+      let len = a->Array.length
+      len === b->Array.length && {
+          let rec go = i =>
+            i >= len || (element.eq(a->Array.getUnsafe(i), b->Array.getUnsafe(i)) && go(i + 1))
+          go(0)
+        }
+    }
+  let order = (~gt) =>
+    (a, b) =>
+      !(a->nullish) && {
+        let a = a->asArray
+        let b = b->asArray
+        let la = a->Array.length
+        let lb = b->Array.length
+        let len = la < lb ? la : lb
+        let rec go = i =>
+          if i >= len {
+            gt ? la > lb : la < lb
+          } else {
+            let x = a->Array.getUnsafe(i)
+            let y = b->Array.getUnsafe(i)
+            if element.eq(x, y) {
+              go(i + 1)
+            } else if gt {
+              element.gt(x, y)
+            } else {
+              element.lt(x, y)
+            }
+          }
+        go(0)
+      }
+  {
+    eq,
+    gt: order(~gt=true),
+    lt: order(~gt=false),
+    key: v => v->serializeValue->(Utils.magic: string => unknown),
+  }
+}
+
+let fieldCompare = (~table: Table.table, fieldName) =>
+  switch table->Table.getFieldByApiName(fieldName) {
+  | Some(Field({fieldType, isArray})) =>
+    let element = scalarCompare(fieldType)
+    isArray ? arrayCompare(element) : element
+  // Filters are validated against the table before reaching here, so a
+  // missing or derived field is unexpected; compare structurally instead of
+  // crashing.
+  | _ => json
+  }
+
+// Projects a field's values onto Map keys, so an index can be found by value
+// instead of by a serialized filter.
+let makeValueKey = (~table: Table.table, ~fieldName) => (fieldName->fieldCompare(~table)).key
+
+let rec makeMatcher = (filter: t, ~table: Table.table): matcher =>
   switch filter {
   | Eq({fieldName, fieldValue}) =>
-    entity->Dict.getUnsafe(fieldName)->FieldValue.eq(fieldValue->FieldValue.castFrom)
+    let eq = (fieldName->fieldCompare(~table)).eq
+    entity => eq(entity->getField(fieldName), fieldValue)
   | Gt({fieldName, fieldValue}) =>
-    entity->Dict.getUnsafe(fieldName)->FieldValue.gt(fieldValue->FieldValue.castFrom)
+    let gt = (fieldName->fieldCompare(~table)).gt
+    entity => gt(entity->getField(fieldName), fieldValue)
   | Lt({fieldName, fieldValue}) =>
-    entity->Dict.getUnsafe(fieldName)->FieldValue.lt(fieldValue->FieldValue.castFrom)
-  | In({fieldName, fieldValue}) => {
-      let entityFieldValue = entity->Dict.getUnsafe(fieldName)
-      fieldValue->Array.some(fieldValue =>
-        entityFieldValue->FieldValue.eq(fieldValue->FieldValue.castFrom)
-      )
+    let lt = (fieldName->fieldCompare(~table)).lt
+    entity => lt(entity->getField(fieldName), fieldValue)
+  | In({fieldName, fieldValue}) =>
+    let compare = fieldName->fieldCompare(~table)
+
+    // Equal values of a primitive field are equal Map keys, so membership is a
+    // lookup rather than a scan of every candidate.
+    if compare.eq === nativeEq {
+      let set = fieldValue->Utils.Set.fromArray
+      entity => set->Utils.Set.has(entity->getField(fieldName))
+    } else {
+      let eq = compare.eq
+      entity => {
+        let entityFieldValue = entity->getField(fieldName)
+        fieldValue->Array.some(value => eq(entityFieldValue, value))
+      }
     }
   | And({filters: []}) =>
-    JsError.throwWithMessage(`The "and" filter must contain at least one nested filter.`)
-  | And({filters}) => filters->Array.every(filter => filter->matches(~entity))
+    _ => JsError.throwWithMessage(`The "and" filter must contain at least one nested filter.`)
+  | And({filters}) =>
+    let matchers = filters->Array.map(filter => filter->makeMatcher(~table))
+    entity => matchers->Array.every(matcher => matcher(entity))
   }
 
 // In values are mapped as one array (isArray=true), so they can be

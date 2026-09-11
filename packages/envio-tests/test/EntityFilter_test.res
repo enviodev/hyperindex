@@ -1,5 +1,8 @@
 open Vitest
 
+external toUnknown: 'a => unknown = "%identity"
+external asEntity: dict<unknown> => Internal.entity = "%identity"
+
 describe("EntityFilter.toOperationKey", () => {
   it("Replaces filter values with $N placeholders", t => {
     let v = 0->(Utils.magic: int => unknown)
@@ -34,6 +37,8 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       Table.mkField("score", Int32, ~isIndex=true, ~fieldSchema=S.int),
       Table.mkField("name", String, ~fieldSchema=S.string),
       Table.mkField("owner", String, ~linkedEntity="Owner", ~fieldSchema=S.string),
+      Table.mkField("createdAt", Date, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("tag", Bytea, ~isIndex=true, ~fieldSchema=S.string),
       Table.mkDerivedFromField("tokens", ~derivedFromEntity="Token", ~derivedFromField="owner"),
     ],
   )
@@ -155,6 +160,11 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       getError(%raw(`{score: {_eq: null}}`)),
       getError(%raw(`{score: {_in: [1, undefined]}}`)),
       getError(%raw(`{score: {_in: 5}}`)),
+      // A comparison that needs a specific object shape rejects the value here
+      // instead of throwing out of the comparator.
+      getError(%raw(`{createdAt: {_eq: "2020-01-01"}}`)),
+      getError(%raw(`{createdAt: {_in: [new Date(0), 1700000000]}}`)),
+      getError(%raw(`{tag: {_eq: "0xdeadbeef"}}`)),
     ]).toEqual([
       `Empty filter passed to context.User.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
       `Invalid undefined value passed to context.User.getWhere({ score: undefined }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
@@ -170,6 +180,9 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       `Invalid null value passed to context.User.getWhere({ score: { _eq: null } }). Filtering by null or undefined values is not supported in getWhere.`,
       `Invalid undefined value passed to context.User.getWhere({ score: { _in: [...] } }). Filtering by null or undefined values is not supported in getWhere. The undefined value is at index 1 of the _in array.`,
       `Invalid value passed to context.User.getWhere({ score: { _in: ... } }). The _in operator expects an array of values.`,
+      `Invalid value passed to context.User.getWhere({ createdAt: { _eq: ... } }). The field "createdAt" expects a Date.`,
+      `Invalid value passed to context.User.getWhere({ createdAt: { _in: ... } }). The field "createdAt" expects a Date. The value is at index 1 of the _in array.`,
+      `Invalid value passed to context.User.getWhere({ tag: { _eq: ... } }). The field "tag" expects a Uint8Array.`,
     ])
   })
 })
@@ -200,24 +213,22 @@ describe("EntityFilter.getParams", () => {
 describe("EntityFilter.merge", () => {
   it("Merges Eq and In batches into a single In, keeps the rest as is", t => {
     let v = i => i->(Utils.magic: int => unknown)
-    t.expect(
-      (
-        [
-          EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
-          EntityFilter.Eq({fieldName: "a", fieldValue: v(2)}),
-        ]->EntityFilter.merge,
-        [
-          EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2)]}),
-          EntityFilter.In({fieldName: "a", fieldValue: [v(3)]}),
-        ]->EntityFilter.merge,
-        [
-          EntityFilter.Gt({fieldName: "a", fieldValue: v(1)}),
-          EntityFilter.Gt({fieldName: "a", fieldValue: v(2)}),
-        ]->EntityFilter.merge,
-        [EntityFilter.Eq({fieldName: "a", fieldValue: v(1)})]->EntityFilter.merge,
-        []->EntityFilter.merge,
-      ),
-    ).toEqual((
+    t.expect((
+      [
+        EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: v(2)}),
+      ]->EntityFilter.merge,
+      [
+        EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2)]}),
+        EntityFilter.In({fieldName: "a", fieldValue: [v(3)]}),
+      ]->EntityFilter.merge,
+      [
+        EntityFilter.Gt({fieldName: "a", fieldValue: v(1)}),
+        EntityFilter.Gt({fieldName: "a", fieldValue: v(2)}),
+      ]->EntityFilter.merge,
+      [EntityFilter.Eq({fieldName: "a", fieldValue: v(1)})]->EntityFilter.merge,
+      []->EntityFilter.merge,
+    )).toEqual((
       [EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2)]})],
       [EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2), v(3)]})],
       [
@@ -231,27 +242,256 @@ describe("EntityFilter.merge", () => {
 
   it("Throws on a mismatched filter instead of silently dropping it", t => {
     let v = i => i->(Utils.magic: int => unknown)
-    t->toThrowErrorEqual(() =>
-      [
-        EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
-        EntityFilter.And({filters: [EntityFilter.Eq({fieldName: "a", fieldValue: v(2)})]}),
-      ]->EntityFilter.merge
-    , 
+    t->toThrowErrorEqual(
+      () =>
+        [
+          EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
+          EntityFilter.And({filters: [EntityFilter.Eq({fieldName: "a", fieldValue: v(2)})]}),
+        ]->EntityFilter.merge,
       "Unexpected filter And(a:Eq:2) in a merged batch. Filters batched into a single query must use the same operator and field.",
     )
+  })
+})
+
+describe("EntityFilter.makeMatcher", () => {
+  let table = Table.mkTable(
+    "users",
+    ~fields=[
+      Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+      Table.mkField("score", Int32, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("balance", BigInt({}), ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("active", Boolean, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("nickname", String, ~isIndex=true, ~isNullable=true, ~fieldSchema=S.string),
+      Table.mkField("price", BigDecimal({}), ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("tags", String, ~isArray=true, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("created", Date, ~isIndex=true, ~fieldSchema=S.string),
+    ],
+  )
+
+  let u = value => value->toUnknown
+
+  let mkEntity = (~score, ~balance, ~active, ~nickname, ~price, ~tags, ~created) => {
+    let entity = Dict.make()
+    entity->Dict.set("id", "id"->u)
+    entity->Dict.set("score", score->u)
+    entity->Dict.set("balance", balance->u)
+    entity->Dict.set("active", active->u)
+    entity->Dict.set("price", price->u)
+    entity->Dict.set("tags", tags->u)
+    entity->Dict.set("created", created->u)
+    switch nickname {
+    | Some(nickname) => entity->Dict.set("nickname", nickname->u)
+    | None => ()
+    }
+    entity->asEntity
+  }
+
+  // Columns chosen so each filter below partitions the three rows distinctly.
+  let entities = [
+    mkEntity(
+      ~score=5,
+      ~balance=BigInt.fromInt(10),
+      ~active=true,
+      ~nickname=Some("nick"),
+      ~price=BigDecimal.fromInt(3),
+      ~tags=["x", "y"],
+      ~created=Date.fromTime(1000.),
+    ),
+    mkEntity(
+      ~score=7,
+      ~balance=BigInt.fromInt(20),
+      ~active=false,
+      ~nickname=Some("zzz"),
+      ~price=BigDecimal.fromInt(5),
+      ~tags=["x"],
+      ~created=Date.fromTime(2000.),
+    ),
+    mkEntity(
+      ~score=2,
+      ~balance=BigInt.fromInt(5),
+      ~active=true,
+      ~nickname=None,
+      ~price=BigDecimal.fromInt(1),
+      ~tags=["x", "y"],
+      ~created=Date.fromTime(500.),
+    ),
+  ]
+
+  // Each case pairs a filter with its expected match per entity above.
+  let cases: array<(EntityFilter.t, array<bool>)> = [
+    (Eq({fieldName: "score", fieldValue: u(5)}), [true, false, false]),
+    (Gt({fieldName: "score", fieldValue: u(5)}), [false, true, false]),
+    (Lt({fieldName: "score", fieldValue: u(5)}), [false, false, true]),
+    (In({fieldName: "score", fieldValue: [u(5), u(7)]}), [true, true, false]),
+    (Eq({fieldName: "balance", fieldValue: u(BigInt.fromInt(10))}), [true, false, false]),
+    (Gt({fieldName: "balance", fieldValue: u(BigInt.fromInt(10))}), [false, true, false]),
+    (Eq({fieldName: "active", fieldValue: u(true)}), [true, false, true]),
+    (Eq({fieldName: "nickname", fieldValue: u("nick")}), [true, false, false]),
+    // The undefined nullable column matches no comparison.
+    (Gt({fieldName: "nickname", fieldValue: u("a")}), [true, true, false]),
+    (In({fieldName: "nickname", fieldValue: [u("nick"), u("other")]}), [true, false, false]),
+    (Eq({fieldName: "price", fieldValue: u(BigDecimal.fromInt(3))}), [true, false, false]),
+    (Gt({fieldName: "price", fieldValue: u(BigDecimal.fromInt(3))}), [false, true, false]),
+    (Eq({fieldName: "tags", fieldValue: u(["x", "y"])}), [true, false, true]),
+    // Lexicographic: ["x"] is a proper prefix of ["x","y"], so it sorts lower.
+    (Lt({fieldName: "tags", fieldValue: u(["x", "y"])}), [false, true, false]),
+    (Eq({fieldName: "created", fieldValue: u(Date.fromTime(1000.))}), [true, false, false]),
+    (Gt({fieldName: "created", fieldValue: u(Date.fromTime(1000.))}), [false, true, false]),
+    (
+      And({
+        filters: [
+          Gt({fieldName: "score", fieldValue: u(3)}),
+          Eq({fieldName: "active", fieldValue: u(true)}),
+        ],
+      }),
+      [true, false, false],
+    ),
+  ]
+
+  it("Specializes the comparison per field type for every operator", t => {
+    let actual = cases->Array.map(
+      ((filter, _expected)) => {
+        let matcher = filter->EntityFilter.makeMatcher(~table)
+        entities->Array.map(entity => matcher(entity))
+      },
+    )
+    t.expect(actual).toEqual(cases->Array.map(((_filter, expected)) => expected))
+  })
+
+  it("Treats a nullish value on an object-typed field as matching nothing", t => {
+    // Without the nullish guard these would call BigDecimal/Date/Json methods
+    // on undefined and throw rather than return false.
+    let nullableTable = Table.mkTable(
+      "t",
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField(
+          "price",
+          BigDecimal({}),
+          ~isIndex=true,
+          ~isNullable=true,
+          ~fieldSchema=S.string,
+        ),
+        Table.mkField("created", Date, ~isIndex=true, ~isNullable=true, ~fieldSchema=S.string),
+        Table.mkField(
+          "tags",
+          String,
+          ~isArray=true,
+          ~isIndex=true,
+          ~isNullable=true,
+          ~fieldSchema=S.string,
+        ),
+      ],
+    )
+    let entity = Dict.make()
+    entity->Dict.set("id", "x"->u)
+    let run = filter => (filter->EntityFilter.makeMatcher(~table=nullableTable))(entity->asEntity)
+    t.expect([
+      run(Eq({fieldName: "price", fieldValue: u(BigDecimal.fromInt(1))})),
+      run(Gt({fieldName: "price", fieldValue: u(BigDecimal.fromInt(1))})),
+      run(Eq({fieldName: "created", fieldValue: u(Date.fromTime(0.))})),
+      run(Eq({fieldName: "tags", fieldValue: u(["x"])})),
+    ]).toEqual([false, false, false, false])
+  })
+
+  it("Compares Json fields structurally rather than by reference", t => {
+    let jsonTable = Table.mkTable(
+      "t",
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField("meta", Json, ~isIndex=true, ~fieldSchema=S.string),
+      ],
+    )
+    let entity = Dict.make()
+    entity->Dict.set("id", "x"->u)
+    entity->Dict.set("meta", {"a": 1, "b": [2, 3]}->u)
+    let run = value =>
+      (Eq({fieldName: "meta", fieldValue: value->u})->EntityFilter.makeMatcher(~table=jsonTable))(
+        entity->asEntity,
+      )
+    t.expect([
+      // A distinct object with equal contents matches; a differing one does not.
+      run({"a": 1, "b": [2, 3]}),
+      run({"a": 1, "b": [2, 4]}),
+    ]).toEqual([true, false])
+  })
+
+  it("Throws when an And filter has no nested filters", t => {
+    let matcher = EntityFilter.And({filters: []})->EntityFilter.makeMatcher(~table)
+    t->toThrowErrorEqual(
+      () => matcher(Dict.make()->asEntity),
+      `The "and" filter must contain at least one nested filter.`,
+    )
+  })
+})
+
+describe("EntityFilter.toString", () => {
+  let u = value => value->toUnknown
+
+  it("Serializes each value type into a stable, unambiguous cache key", t => {
+    t.expect(
+      [
+        EntityFilter.Eq({fieldName: "a", fieldValue: u("hello")}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(5)}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(BigInt.fromInt(10))}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(true)}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(BigDecimal.fromFloat(1.5))}),
+        EntityFilter.Gt({fieldName: "a", fieldValue: u(5)}),
+        EntityFilter.Lt({fieldName: "a", fieldValue: u(5)}),
+        EntityFilter.In({fieldName: "a", fieldValue: [u(1), u(2)]}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(["x", "y"])}),
+        EntityFilter.And({
+          filters: [Gt({fieldName: "a", fieldValue: u(1)}), Lt({fieldName: "b", fieldValue: u(2)})],
+        }),
+      ]->Array.map(EntityFilter.toString),
+    ).toEqual([
+      `a:Eq:"hello"`,
+      "a:Eq:5",
+      "a:Eq:10",
+      "a:Eq:true",
+      `a:Eq:"1.5"`,
+      "a:Gt:5",
+      "a:Lt:5",
+      "a:In:[1,2]",
+      `a:Eq:["x","y"]`,
+      "And(a:Gt:1,b:Lt:2)",
+    ])
+  })
+
+  it("Keeps values apart that a toString-based key collapsed onto one", t => {
+    t.expect(
+      [
+        // Sub-second instants: Date.prototype.toString stops at seconds.
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(Date.fromTime(1000.))}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(Date.fromTime(1500.))}),
+        // Any object stringifies to "[object Object]".
+        EntityFilter.Eq({fieldName: "a", fieldValue: u({"x": 1})}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u({"x": 2})}),
+        // A separator inside a string could imitate the element separator.
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(["x,y"])}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(["x", "y"])}),
+      ]->Array.map(EntityFilter.toString),
+    ).toEqual([
+      `a:Eq:"1970-01-01T00:00:01.000Z"`,
+      `a:Eq:"1970-01-01T00:00:01.500Z"`,
+      `a:Eq:{"x":1}`,
+      `a:Eq:{"x":2}`,
+      `a:Eq:["x,y"]`,
+      `a:Eq:["x","y"]`,
+    ])
   })
 })
 
 describe("EntityFilter.mapValues", () => {
   it("Maps scalar values one by one and In values as a whole array", t => {
     let calls = []
-    let mapped =
-      EntityFilter.And({
-        filters: [
-          Eq({fieldName: "a", fieldValue: 1->(Utils.magic: int => unknown)}),
-          In({fieldName: "b", fieldValue: [2, 3]->(Utils.magic: array<int> => array<unknown>)}),
-        ],
-      })->EntityFilter.mapValues(~mapValue=(~fieldName, ~fieldValue, ~isArray) => {
+    let mapped = EntityFilter.And({
+      filters: [
+        Eq({fieldName: "a", fieldValue: 1->(Utils.magic: int => unknown)}),
+        In({fieldName: "b", fieldValue: [2, 3]->(Utils.magic: array<int> => array<unknown>)}),
+      ],
+    })->EntityFilter.mapValues(
+      ~mapValue=(~fieldName, ~fieldValue, ~isArray) => {
         calls->Array.push((fieldName, isArray))->ignore
         isArray
           ? fieldValue
@@ -259,7 +499,8 @@ describe("EntityFilter.mapValues", () => {
             ->Array.map(v => v * 10)
             ->(Utils.magic: array<int> => unknown)
           : (fieldValue->(Utils.magic: unknown => int) * 10)->(Utils.magic: int => unknown)
-      })
+      },
+    )
 
     t.expect((mapped, calls)).toEqual((
       EntityFilter.And({
