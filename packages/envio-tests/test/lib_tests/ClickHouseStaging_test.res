@@ -114,7 +114,7 @@ let changes = [
 ]
 
 describe("ClickHouse staging", () => {
-  it("writes every column of every row shape into its own position", t => {
+  let tableFor = () => {
     let registry = ClickHouse.makeRegistry()
     let table =
       ClickHouse.makeSink(
@@ -124,14 +124,12 @@ describe("ClickHouse staging", () => {
         ~database="unused",
         ~chainIdMode=Int32,
       )->ClickHouse.entityTable(~registry, ~entityConfig)
+    (registry, table)
+  }
 
-    let captured = ref(([]: array<ClickHouseSink.columnValuesInput>))
-    let sink = {
-      "stage": (_table, _rows, columns: array<ClickHouseSink.columnValuesInput>) => {
-        captured := columns
-        1
-      },
-    }->(Utils.magic: {..} => ClickHouseSink.t)
+  it("writes every column of every row shape into its own position", t => {
+    let (registry, table) = tableFor()
+    let (mock, sink) = MockArena.make(~columns=table.columns)
 
     let _ = ClickHouse.stageUpdatesOrThrow(
       sink,
@@ -141,58 +139,117 @@ describe("ClickHouse staging", () => {
       ~scope=Chain(ChainId.fromInt(137)),
     )
 
-    t.expect((table.columns->Array.map(({name}) => name), captured.contents)).toEqual((
-      [
-        "id",
-        "some_int",
-        "opt_float",
-        "flag",
-        "at",
-        "big",
-        "tags",
-        "opt_kind",
-        "doc",
-        "owner_id",
-        "blob",
-        "opt_blob",
-        "chunks",
-        "chain_id",
-        "envio_checkpoint_id",
-        "envio_change",
-      ],
-      [
-        {texts: ["a", "b", "c"]},
-        {
-          numbers: Float64Array.fromArray([5., 0., 7.]),
-          nulls: Uint8Array.fromArray([0, 1, 0]),
-        },
-        {
-          numbers: Float64Array.fromArray([1.5, 0., 0.]),
-          nulls: Uint8Array.fromArray([0, 1, 1]),
-        },
-        {
-          numbers: Float64Array.fromArray([1., 0., 0.]),
-          nulls: Uint8Array.fromArray([0, 1, 0]),
-        },
-        {
-          numbers: Float64Array.fromArray([1000., 0., 2000.]),
-          nulls: Uint8Array.fromArray([0, 1, 0]),
-        },
-        {texts: ["10", "", "20"], nulls: Uint8Array.fromArray([0, 1, 0])},
-        {texts: [`["x","y"]`, "", "[]"], nulls: Uint8Array.fromArray([0, 1, 0])},
-        {texts: ["A", "", ""], nulls: Uint8Array.fromArray([0, 1, 1])},
-        {texts: [`{"k":1}`, "", "[1]"], nulls: Uint8Array.fromArray([0, 1, 0])},
-        {texts: ["alice", "", "carol"], nulls: Uint8Array.fromArray([0, 1, 0])},
-        {bytes: [blobA, emptyBytes, blobC], nulls: Uint8Array.fromArray([0, 1, 0])},
-        {
-          bytes: [optBlobA, emptyBytes, emptyBytes],
-          nulls: Uint8Array.fromArray([0, 1, 1]),
-        },
-        {texts: ["[[1,2],[3]]", "", "[]"], nulls: Uint8Array.fromArray([0, 1, 0])},
-        {numbers: Float64Array.fromArray([137., 137., 137.])},
-        {unsigned64: BigUint64Array.fromArray([1n, 2n, 3n])},
-        {texts: ["SET", "DELETE", "SET"]},
-      ],
+    t.expect(mock->MockArena.staged).toEqual([
+      {name: "id", values: Texts(["a", "b", "c"]), nulls: [0, 0, 0]},
+      {name: "some_int", values: Numbers([5., 0., 7.]), nulls: [0, 1, 0]},
+      {name: "opt_float", values: Numbers([1.5, 0., 0.]), nulls: [0, 1, 1]},
+      {name: "flag", values: Numbers([1., 0., 0.]), nulls: [0, 1, 0]},
+      {name: "at", values: Numbers([1000., 0., 2000.]), nulls: [0, 1, 0]},
+      {name: "big", values: Texts(["10", "", "20"]), nulls: [0, 1, 0]},
+      {name: "tags", values: Texts([`["x","y"]`, "", "[]"]), nulls: [0, 1, 0]},
+      {name: "opt_kind", values: Texts(["A", "", ""]), nulls: [0, 1, 1]},
+      {name: "doc", values: Texts([`{"k":1}`, "", "[1]"]), nulls: [0, 1, 0]},
+      {name: "owner_id", values: Texts(["alice", "", "carol"]), nulls: [0, 1, 0]},
+      {name: "blob", values: Blobs([blobA, emptyBytes, blobC]), nulls: [0, 1, 0]},
+      {name: "opt_blob", values: Blobs([optBlobA, emptyBytes, emptyBytes]), nulls: [0, 1, 1]},
+      {name: "chunks", values: Texts(["[[1,2],[3]]", "", "[]"]), nulls: [0, 1, 0]},
+      {name: "chain_id", values: Numbers([137., 137., 137.]), nulls: [0, 0, 0]},
+      {name: "envio_checkpoint_id", values: Unsigned([1n, 2n, 3n]), nulls: [0, 0, 0]},
+      {name: "envio_change", values: Texts(["SET", "DELETE", "SET"]), nulls: [0, 0, 0]},
+    ])
+  })
+
+  // A value bigger than the payload the arena guessed has to reach the column
+  // whole: the growth swaps the buffer under the view that is mid-batch.
+  it("keeps a value that outgrows the payload it was given", t => {
+    let (registry, table) = tableFor()
+    let (mock, sink) = MockArena.make(~columns=table.columns)
+    let long = "x"->String.repeat(5000)
+    let changes = [
+      Change.Set({
+        entityId: entityId(long),
+        checkpointId: 1n,
+        entity: entity({
+          id: long,
+          someInt: 1,
+          optFloat: None,
+          flag: true,
+          at: Date.fromTime(0.),
+          big: 1n,
+          tags: [],
+          optKind: None,
+          doc: %raw(`{}`),
+          owner_id: "alice",
+          blob: Uint8Array.fromArray(Array.make(~length=4000, 7)),
+          optBlob: None,
+          chunks: [],
+        }),
+      }),
+    ]
+
+    let _ = ClickHouse.stageUpdatesOrThrow(
+      sink,
+      ~registry,
+      ~changes,
+      ~entityConfig,
+      ~scope=Chain(ChainId.fromInt(137)),
+    )
+
+    let staged = mock->MockArena.staged
+    t.expect((
+      staged->Array.getUnsafe(0),
+      staged->Array.getUnsafe(10),
+    )).toEqual((
+      {MockArena.name: "id", values: Texts([long]), nulls: [0]},
+      {
+        MockArena.name: "blob",
+        values: Blobs([Uint8Array.fromArray(Array.make(~length=4000, 7))]),
+        nulls: [0],
+      },
     ))
+  })
+
+  // The arena is Rust memory lent to this side, so a batch that throws mid-fill
+  // has to hand it back rather than leave it to a garbage collector that owns
+  // none of it.
+  it("aborts the stage when a row cannot be converted", t => {
+    let (registry, table) = tableFor()
+    let (mock, sink) = MockArena.make(~columns=table.columns)
+    let changes = [
+      Change.Set({
+        entityId: entityId("a"),
+        checkpointId: 1n,
+        entity: entity({
+          id: "a",
+          someInt: 1,
+          optFloat: Some(Float.Constants.nan),
+          flag: true,
+          at: Date.fromTime(0.),
+          big: 1n,
+          tags: [],
+          optKind: None,
+          doc: %raw(`{}`),
+          owner_id: "alice",
+          blob: emptyBytes,
+          optBlob: None,
+          chunks: [],
+        }),
+      }),
+    ]
+
+    let failed = try {
+      let _ = ClickHouse.stageUpdatesOrThrow(
+        sink,
+        ~registry,
+        ~changes,
+        ~entityConfig,
+        ~scope=Chain(ChainId.fromInt(137)),
+      )
+      false
+    } catch {
+    | _ => true
+    }
+
+    t.expect((failed, mock.aborted, mock.committed)).toEqual((true, true, None))
   })
 })

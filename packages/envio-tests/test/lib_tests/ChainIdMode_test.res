@@ -209,11 +209,11 @@ describe("ChainIdMode ClickHouse schema", () => {
       let specs = ClickHouse.checkpointColumnSpecs
       let {kinds} = sink->ClickHouseSink.registerCheckpointsTable(specs)
       let column = specs->Array.findIndexOpt(({name}) => name === "chain_id")->Option.getOrThrow
-      kinds->Array.getUnsafe(column)->ClickHouseSink.kindOfOrdinal
+      kinds->Array.getUnsafe(column)->Staging.kindOfOrdinal
     }
     t.expect((maxInt32Config->chainIdKind, tronConfig->chainIdKind)).toEqual((
-      ClickHouseSink.F64,
-      ClickHouseSink.U64,
+      Staging.F64,
+      Staging.U64,
     ))
   })
 })

@@ -12,15 +12,16 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use napi::bindgen_prelude::{BigInt64Array, BigUint64Array, Float64Array, Uint8Array};
+use napi::bindgen_prelude::{ArrayBuffer, Object};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, Status};
 use napi_derive::napi;
 
+use crate::columnar::{self, Arena, ColumnKind};
 use crate::config_parsing::system_config::ChainIdMode;
-use ch_type::{ChType, ColumnKind, FieldSpec};
+use ch_type::{ChType, FieldSpec};
 use ddl::ResumeBounds;
-use row_binary::{Column, ColumnValues, EncodedRows};
+use row_binary::{Column, EncodedRows};
 
 const MAX_RETRIES: u32 = 8;
 
@@ -207,16 +208,6 @@ pub struct ResumeInput {
     pub history_tables: Vec<HistoryTableInput>,
 }
 
-#[napi(object)]
-pub struct ColumnValuesInput {
-    pub numbers: Option<Float64Array>,
-    pub unsigned64: Option<BigUint64Array>,
-    pub signed64: Option<BigInt64Array>,
-    pub texts: Option<Vec<String>>,
-    pub bytes: Option<Vec<Uint8Array>>,
-    pub nulls: Option<Uint8Array>,
-}
-
 struct ColumnSchema {
     name: String,
     ch_type: ChType,
@@ -229,15 +220,9 @@ struct TableSchema {
     insert_query: String,
 }
 
-struct StagedColumnValues {
-    values: ColumnValues,
-    nulls: Vec<u8>,
-}
-
 struct Staged {
     schema: Arc<TableSchema>,
-    rows: usize,
-    columns: Vec<StagedColumnValues>,
+    arena: Arena,
 }
 
 #[napi]
@@ -394,74 +379,81 @@ impl ClickHouseSink {
             .map_err(to_napi)
     }
 
-    /// Copies a batch into Rust memory and returns a handle to pass to
-    /// `write_batch`. Synchronous by necessity: reading a JS value needs the
-    /// isolate. Columns arrive in the order they were registered.
+    /// Allocates a batch's columns and lends them to JavaScript as
+    /// `ArrayBuffer`s to fill in place, in the order the table was registered.
+    /// Returns `{ handle, buffers }`; the handle goes to `commitStage` and then
+    /// `writeBatch`.
+    ///
+    /// Synchronous by necessity: handing memory to the isolate needs the
+    /// isolate. Nothing may await between here and `commitStage` — see the
+    /// phase rules in `columnar`.
     #[napi]
-    pub fn stage(
+    pub fn begin_stage<'env>(
         &self,
+        env: &'env Env,
         table: u32,
         rows: u32,
-        columns: Vec<ColumnValuesInput>,
-    ) -> napi::Result<u32> {
+    ) -> napi::Result<Object<'env>> {
         let schema = self.table_schema(table).map_err(to_napi)?;
-        if columns.len() != schema.columns.len() {
-            return Err(napi::Error::from_reason(format!(
-                "ClickHouse table `{}` has {} column(s), got {} in a batch",
-                schema.table,
-                schema.columns.len(),
-                columns.len()
-            )));
-        }
-        let rows = rows as usize;
-        let mut staged_columns = Vec::with_capacity(columns.len());
-        for (column, spec) in columns.into_iter().zip(&schema.columns) {
-            let ColumnValuesInput {
-                numbers,
-                unsigned64,
-                signed64,
-                texts,
-                bytes,
-                nulls,
-            } = column;
-            let name = &spec.name;
-            let values = match (numbers, unsigned64, signed64, texts, bytes) {
-                (Some(v), None, None, None, None) => ColumnValues::F64(v.to_vec()),
-                (None, Some(v), None, None, None) => ColumnValues::U64(v.to_vec()),
-                (None, None, Some(v), None, None) => ColumnValues::I64(v.to_vec()),
-                (None, None, None, Some(v), None) => ColumnValues::Text(v),
-                (None, None, None, None, Some(v)) => {
-                    ColumnValues::Bytes(v.into_iter().map(|b| b.to_vec()).collect())
-                }
-                _ => {
-                    return Err(napi::Error::from_reason(format!(
-                        "Column `{name}` must carry exactly one of \
-                         numbers/unsigned64/signed64/texts/bytes"
-                    )))
-                }
-            };
-            let staged_kind = values.kind();
-            if staged_kind != spec.kind {
-                return Err(napi::Error::from_reason(format!(
-                    "Column `{name}` is {:?} and must be sent as {:?}, got {staged_kind:?}",
-                    spec.ch_type, spec.kind
-                )));
-            }
-            staged_columns.push(StagedColumnValues {
-                values,
-                nulls: nulls.map(|n| n.to_vec()).unwrap_or_default(),
-            });
-        }
+        let kinds: Vec<ColumnKind> = schema.columns.iter().map(|column| column.kind).collect();
+        let mut arena = Arena::new(rows as usize, &kinds).map_err(to_napi)?;
+        let buffers = columnar::js::expose(env, &mut arena)?;
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        self.staged.lock().unwrap().insert(
-            handle,
-            Staged {
-                schema,
-                rows,
-                columns: staged_columns,
-            },
-        );
-        Ok(handle)
+        self.staged
+            .lock()
+            .unwrap()
+            .insert(handle, Staged { schema, arena });
+        let mut result = Object::new(env)?;
+        result.set("handle", handle)?;
+        result.set("buffers", buffers)?;
+        Ok(result)
+    }
+
+    /// Replaces a variable-width column's payload with a larger one holding the
+    /// same bytes, detaching `stale` first. Fixed-width columns are sized from
+    /// the row count and never reach here.
+    #[napi]
+    pub fn grow_stage<'env>(
+        &self,
+        env: &'env Env,
+        handle: u32,
+        column: u32,
+        needed: u32,
+        stale: ArrayBuffer,
+    ) -> napi::Result<ArrayBuffer<'env>> {
+        let mut staged = self.staged.lock().unwrap();
+        let staged = staged
+            .get_mut(&handle)
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
+        columnar::js::grow(env, &mut staged.arena, column, needed, stale)
+    }
+
+    /// Ends the filling phase: every buffer is detached, so a view JavaScript
+    /// kept throws rather than writing into memory Rust is about to read.
+    #[napi]
+    pub fn commit_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+        columnar::js::detach_all(buffers)?;
+        let mut staged = self.staged.lock().unwrap();
+        let staged = staged
+            .get_mut(&handle)
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
+        let names: Vec<String> = staged
+            .schema
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect();
+        staged.arena.seal(&names).map_err(to_napi)
+    }
+
+    /// Drops a batch that threw while it was being filled. The buffers are
+    /// detached before the arena goes, which is what keeps a JavaScript view
+    /// from outliving the bytes it points at on the error path.
+    #[napi]
+    pub fn abort_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+        columnar::js::detach_all(buffers)?;
+        self.staged.lock().unwrap().remove(&handle);
+        Ok(())
     }
 
     #[napi]
@@ -1023,22 +1015,24 @@ impl ClickHouseSink {
     }
 
     async fn insert_staged(&self, staged: Staged) -> Result<()> {
-        let Staged {
-            schema,
-            rows,
-            columns,
-        } = staged;
+        let Staged { schema, arena } = staged;
+        if !arena.is_sealed() {
+            bail!(
+                "a batch staged for ClickHouse table `{}` was never committed",
+                schema.table
+            );
+        }
+        let rows = arena.rows();
         let encode_schema = schema.clone();
         let encoded = tokio::task::spawn_blocking(move || {
             let columns: Vec<Column> = encode_schema
                 .columns
                 .iter()
-                .zip(columns)
+                .zip(arena.columns())
                 .map(|(spec, values)| Column {
                     name: Cow::Borrowed(&spec.name),
                     ch_type: Cow::Borrowed(&spec.ch_type),
-                    values: values.values,
-                    nulls: values.nulls,
+                    values,
                 })
                 .collect();
             row_binary::encode(&columns, rows)
@@ -1313,15 +1307,27 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn text_values(values: &[&str]) -> ColumnValuesInput {
-        ColumnValuesInput {
-            numbers: None,
-            unsigned64: None,
-            signed64: None,
-            texts: Some(values.iter().map(|v| v.to_string()).collect()),
-            bytes: None,
-            nulls: None,
+    /// Stages a single-text-column batch without an isolate, which is what
+    /// `begin_stage` would otherwise have to hand out `ArrayBuffer`s for.
+    fn stage_texts(sink: &ClickHouseSink, table: u32, values: &[&str]) -> u32 {
+        let schema = sink.table_schema(table).unwrap();
+        let kinds: Vec<ColumnKind> = schema.columns.iter().map(|column| column.kind).collect();
+        let names: Vec<String> = schema
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect();
+        let mut arena = Arena::new(values.len(), &kinds).unwrap();
+        for (row, value) in values.iter().enumerate() {
+            arena.set_bytes(0, row, value.as_bytes());
         }
+        arena.seal(&names).unwrap();
+        let handle = sink.next_handle.fetch_add(1, Ordering::Relaxed);
+        sink.staged
+            .lock()
+            .unwrap()
+            .insert(handle, Staged { schema, arena });
+        handle
     }
 
     fn spec(name: &str, field_type: &str) -> ColumnSpecInput {
@@ -2165,8 +2171,7 @@ mod tests {
         let table = sink
             .register_checkpoints_table(vec![spec("id", "String")])
             .unwrap();
-        sink.stage(table.handle, values.len() as u32, vec![text_values(values)])
-            .unwrap()
+        stage_texts(sink, table.handle, values)
     }
 
     async fn write(sink: &ClickHouseSink, handle: u32) -> napi::Result<()> {
@@ -2600,9 +2605,7 @@ mod tests {
                 ..spec("e", "Enum")
             }])
             .unwrap();
-        let handle = sink
-            .stage(table.handle, 1, vec![text_values(&["NOPE"])])
-            .unwrap();
+        let handle = stage_texts(&sink, table.handle, &["NOPE"]);
 
         let err = write(&sink, handle).await.unwrap_err();
 

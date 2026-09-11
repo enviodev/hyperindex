@@ -262,25 +262,18 @@ let makeRegistry = () => {
 )
 
 %%private(
-  let fillBuilders = (
-    ~table: ClickHouseSink.table,
-    ~converters,
-    ~changes: array<Change.t<Internal.entity>>,
-  ) => {
-    let rows = changes->Array.length
-    let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
-    let columns = builders->Array.length
-    for row in 0 to rows - 1 {
+  let fillStage = (stage, ~converters, ~changes: array<Change.t<Internal.entity>>) => {
+    let columns = stage->Staging.columnCount
+    for row in 0 to changes->Array.length - 1 {
       let change = changes->Array.getUnsafe(row)
       let (cells, write) = switch change {
-      | Change.Set(_) => (converters.setCells, ClickHouseSink.writeValue)
-      | Delete(_) => (converters.deleteCells, ClickHouseSink.writeDeletedValue)
+      | Change.Set(_) => (converters.setCells, Staging.writeValue)
+      | Delete(_) => (converters.deleteCells, Staging.writeDeletedValue)
       }
       for column in 0 to columns - 1 {
-        builders->Array.getUnsafe(column)->write(~row, (cells->Array.getUnsafe(column))(change))
+        stage->write(~column, ~row, (cells->Array.getUnsafe(column))(change))
       }
     }
-    builders
   }
 )
 
@@ -309,13 +302,6 @@ let checkpointsTable = (sink, ~registry) =>
     table
   }
 
-let stageBuilders = (sink, ~table: ClickHouseSink.table, ~builders, ~rows) =>
-  sink->ClickHouseSink.stage(
-    ~table=table.handle,
-    ~rows,
-    ~columns=builders->Array.map(ClickHouseSink.builderPayload),
-  )
-
 let stageCheckpointsOrThrow = (
   sink,
   ~registry,
@@ -327,20 +313,21 @@ let stageCheckpointsOrThrow = (
     Null.null
   } else {
     let table = sink->checkpointsTable(~registry)
+    let stage = sink->ClickHouseSink.arena->Staging.begin(~table=table.handle, ~rows, ~columns=table.columns)
     try {
       // The table was registered from `checkpointColumns`, in this order.
-      let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
-      builders->Array.forEachWithIndex((builder, index) => {
-        let column = checkpointColumns->Array.getUnsafe(index)
+      table.columns->Array.forEachWithIndex((_, column) => {
+        let source = checkpointColumns->Array.getUnsafe(column)
         let columnValues =
-          column.valuesOf(batch)->Array.concat(column.diffValuesOf(diffCheckpoints))
+          source.valuesOf(batch)->Array.concat(source.diffValuesOf(diffCheckpoints))
         for row in 0 to rows - 1 {
-          builder->ClickHouseSink.writeValue(~row, columnValues->Array.getUnsafe(row))
+          stage->Staging.writeValue(~column, ~row, columnValues->Array.getUnsafe(row))
         }
       })
-      Null.make(sink->stageBuilders(~table, ~builders, ~rows))
+      Null.make(stage->Staging.commit)
     } catch {
     | exn =>
+      stage->Staging.abort
       throw(
         Persistence.StorageError({
           message: `Failed to convert checkpoints for ClickHouse table "${table.name}"`,
@@ -365,6 +352,7 @@ let stageUpdatesOrThrow = (
     let table = sink->entityTable(~registry, ~entityConfig)
     let tableName = table.name
     let cacheKey = `${entityConfig.name}|${scope->Internal.chainScopeToString}`
+    let stage = sink->ClickHouseSink.arena->Staging.begin(~table=table.handle, ~rows, ~columns=table.columns)
     try {
       let converters = switch registry.converters->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
       | Some(cached) => cached
@@ -373,10 +361,11 @@ let stageUpdatesOrThrow = (
         registry.converters->Dict.set(cacheKey, cached)
         cached
       }
-      let builders = fillBuilders(~table, ~converters, ~changes)
-      Some(sink->stageBuilders(~table, ~builders, ~rows))
+      stage->fillStage(~converters, ~changes)
+      Some(stage->Staging.commit)
     } catch {
     | exn =>
+      stage->Staging.abort
       throw(
         Persistence.StorageError({
           message: `Failed to convert items for ClickHouse table "${tableName}"`,
