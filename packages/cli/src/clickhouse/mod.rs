@@ -476,6 +476,9 @@ impl ClickHouseSink {
         Ok(())
     }
 
+    /// Drops batches that were committed but never written — the rest of a
+    /// write that failed partway through staging. Their buffers were detached
+    /// by `commitStage`, so there is nothing left pointing at the arenas.
     #[napi]
     pub fn discard(&self, handles: Vec<u32>) {
         let mut staged = self.staged.lock().unwrap();

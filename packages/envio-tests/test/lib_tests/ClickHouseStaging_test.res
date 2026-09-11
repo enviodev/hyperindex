@@ -160,11 +160,13 @@ describe("ClickHouse staging", () => {
   })
 
   // A value bigger than the payload the arena guessed has to reach the column
-  // whole: the growth swaps the buffer under the view that is mid-batch.
+  // whole: the growth swaps the buffer under the view that is mid-batch. The
+  // text is deliberately not ASCII — a string is given room for one byte per
+  // UTF-16 unit first, and only the short encode says it needs more.
   it("keeps a value that outgrows the payload it was given", t => {
     let (registry, table) = tableFor()
     let (mock, sink) = MockArena.make(~columns=table.columns)
-    let long = "x"->String.repeat(5000)
+    let long = "xé😀"->String.repeat(1500)
     let changes = [
       Change.Set({
         entityId: entityId(long),

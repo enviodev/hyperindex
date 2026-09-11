@@ -247,7 +247,7 @@ impl Arena {
         if needed > u32::MAX as usize {
             bail!("a staged column cannot hold more than {} bytes", u32::MAX);
         }
-        let mut capacity = data.len();
+        let mut capacity = data.len().max(1);
         while capacity < needed {
             capacity = capacity.saturating_mul(2).min(u32::MAX as usize);
         }

@@ -173,11 +173,22 @@ let toText = (value: unknown, ~replacer) =>
 %%private(
   let writeText = (stage, builder, ~row, text) => {
     // `encodeInto` takes no destination offset, so the room has to be there
-    // before the subarray is taken: UTF-8 spends at most three bytes per UTF-16
-    // unit, which is what a surrogate pair costs across its two.
-    stage->ensure(builder, ~needed=builder.cursor + text->String.length * 3)
-    let {written} =
+    // before the subarray is taken. One byte per UTF-16 unit is what an ASCII
+    // id or hash needs, and `read` says when that guess was short: UTF-8 spends
+    // at most three bytes per unit, which is what a surrogate pair costs across
+    // its two.
+    let units = text->String.length
+    stage->ensure(builder, ~needed=builder.cursor + units)
+    let {read, written} =
       encoder->encodeInto(text, builder.data->TypedArray.subarray(~start=builder.cursor))
+    let written = if read < units {
+      stage->ensure(builder, ~needed=builder.cursor + units * 3)
+      let {written} =
+        encoder->encodeInto(text, builder.data->TypedArray.subarray(~start=builder.cursor))
+      written
+    } else {
+      written
+    }
     builder.cursor = builder.cursor + written
     builder.ends->TypedArray.set(row, builder.cursor)
   }
