@@ -5,15 +5,12 @@ type t
 
 let calculateTargetBufferSize: unit => int
 
-let make: (
-  ~chainStates: dict<ChainState.t>,
-  ~isRealtime: bool,
-  ~targetBufferSize: int=?,
-) => t
+let make: (~chainStates: dict<ChainState.t>, ~isRealtime: bool, ~targetBufferSize: int=?) => t
 
 // Accessors.
 let chainStates: t => dict<ChainState.t>
 let isRealtime: t => bool
+let chainIds: t => array<ChainId.t>
 let isCaughtUp: t => bool
 let isInReorgThreshold: t => bool
 let targetBufferSize: t => int

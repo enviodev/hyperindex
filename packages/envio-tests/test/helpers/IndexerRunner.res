@@ -56,7 +56,9 @@ type rec t = {
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.
   stop: unit => promise<unit>,
-  restart: unit => promise<t>,
+  // `~chains` resumes the same schema driving only those chains, the way
+  // `envio start --chain` does. The chains left out keep their stored state.
+  restart: (~chains: array<ChainId.t>=?, unit) => promise<t>,
 }
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
@@ -98,7 +100,11 @@ let run = async (
 
   // The builder is only reachable here and from `restart`, so it takes just
   // the flag that differs between them and reads the rest off this call.
-  let rec make = async (~reset) => {
+  let rec make = async (~reset, ~chains=?) => {
+    let config = switch chains {
+    | Some(chainIds) => config->Config.isolate(~chainIds)
+    | None => config
+    }
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
     switch Env.userLogLevel {
     | None => Logging.setLogLevel(#silent)
@@ -139,6 +145,7 @@ let run = async (
       ~runCommand=Some("envio dev"),
       ~reset,
       ~lowercaseAddresses=config.lowercaseAddresses,
+      ~requireInitialized=config.isolated,
     )
 
     // Same order as `Main.start`: storage is initialized - which is where a
@@ -446,12 +453,12 @@ let run = async (
       },
       pg,
       stop,
-      restart: async () => {
+      restart: async (~chains=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        await make(~reset=false)
+        await make(~reset=false, ~chains?)
       },
     }
   }

@@ -493,8 +493,9 @@ let shouldSaveHistory = (state: t) => state.crossChainState->CrossChainState.sho
 let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
 
 // The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only
-// in the middle phase: every chain has caught up, but the deferred schema
-// indexes and `ready_at` haven't been committed yet.
+// in the middle phase: the chains this process drives have caught up, but the
+// indexes the schema promises them and their `ready_at` haven't been committed
+// yet.
 let isFinalizingIndexes = (state: t) =>
   state.crossChainState->CrossChainState.isCaughtUp &&
     !(state.crossChainState->CrossChainState.isRealtime)
