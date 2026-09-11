@@ -76,6 +76,30 @@ let throwUnsupportedGetWhereValue = (~valueName, ~entityName, ~filterDisplay, ~h
     `Invalid ${valueName} value passed to context.${entityName}.getWhere(${filterDisplay}). Filtering by null or undefined values is not supported in getWhere.${hint}`,
   )
 
+let isDate: unknown => bool = %raw(`v => v instanceof Date`)
+
+// Columns whose comparison needs a specific object shape. The rest compare
+// natively, so whatever they're handed is already safe.
+let expectedValueType = (field: Table.field) =>
+  switch field.fieldType {
+  | Date => Some(field.isArray ? "an array of Date" : "a Date")
+  | Bytea => Some(field.isArray ? "an array of Uint8Array" : "a Uint8Array")
+  | _ => None
+  }
+
+let matchesFieldType = (value: unknown, ~field: Table.field) => {
+  let matchesScalar = value =>
+    switch field.fieldType {
+    | Date => value->isDate
+    | Bytea => value->Utils.Bytes.asUint8Array->Option.isSome
+    | _ => true
+    }
+  field.isArray
+    ? value->Array.isArray &&
+        value->(Utils.magic: unknown => array<unknown>)->Array.every(matchesScalar)
+    : value->matchesScalar
+}
+
 // Each returned filter should be loaded separately and the results flattened:
 // _in maps to one Eq per value so loads memoize on the per-value level,
 // and _gte/_lte are composed from Eq + Gt/Lt. Each field+operator pair
@@ -138,7 +162,7 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
       }
     )
 
-    switch table->Table.getFieldByApiName(apiFieldName) {
+    let field = switch table->Table.getFieldByApiName(apiFieldName) {
     | None =>
       JsError.throwWithMessage(
         `Invalid field "${apiFieldName}" in context.${entityName}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
@@ -147,7 +171,7 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
       JsError.throwWithMessage(
         `The field "${apiFieldName}" on entity "${entityName}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
       )
-    | Some(Field(_)) => ()
+    | Some(Field(field)) => field
     }
 
     operatorKeys->Array.map(operatorKey => {
@@ -161,6 +185,14 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
         )
       | None => ()
       }
+      let throwOnUnexpectedType = (fieldValue, ~hint="") =>
+        switch field->expectedValueType {
+        | Some(typeName) if !(fieldValue->matchesFieldType(~field)) =>
+          JsError.throwWithMessage(
+            `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). The field "${apiFieldName}" expects ${typeName}.${hint}`,
+          )
+        | _ => ()
+        }
 
       switch operatorKey {
       | "_in" => {
@@ -183,22 +215,29 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
                 )
               | None => ()
               }
+              fieldValue->throwOnUnexpectedType(
+                ~hint=` The value is at index ${index->Int.toString} of the _in array.`,
+              )
               Eq({fieldName: apiFieldName, fieldValue})
             },
           )
         }
-      | "_gte" => [
-          Eq({fieldName: apiFieldName, fieldValue}),
-          Gt({fieldName: apiFieldName, fieldValue}),
-        ]
-      | "_lte" => [
-          Eq({fieldName: apiFieldName, fieldValue}),
-          Lt({fieldName: apiFieldName, fieldValue}),
-        ]
-      | "_eq" => [Eq({fieldName: apiFieldName, fieldValue})]
-      | "_gt" => [Gt({fieldName: apiFieldName, fieldValue})]
-      | "_lt" => [Lt({fieldName: apiFieldName, fieldValue})]
-      | _ => throwInvalidOperator(operatorKey)
+      | _ =>
+        fieldValue->throwOnUnexpectedType
+        switch operatorKey {
+        | "_gte" => [
+            Eq({fieldName: apiFieldName, fieldValue}),
+            Gt({fieldName: apiFieldName, fieldValue}),
+          ]
+        | "_lte" => [
+            Eq({fieldName: apiFieldName, fieldValue}),
+            Lt({fieldName: apiFieldName, fieldValue}),
+          ]
+        | "_eq" => [Eq({fieldName: apiFieldName, fieldValue})]
+        | "_gt" => [Gt({fieldName: apiFieldName, fieldValue})]
+        | "_lt" => [Lt({fieldName: apiFieldName, fieldValue})]
+        | _ => throwInvalidOperator(operatorKey)
+        }
       }
     })
   })
