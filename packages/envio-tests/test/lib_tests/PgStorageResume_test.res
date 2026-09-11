@@ -20,6 +20,9 @@ let entities = [config->IndexerRunner.entityConfigByName("Counter")]
 let enums =
   config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
 let pgSchema = TestPgSchema.make()
+// The migration test needs a schema of its own: it initializes one config and
+// then resumes against another, which the shared one above is already past.
+let migrateSchema = TestPgSchema.make()
 
 let makeStorage = (~pgSchema) =>
   PgStorage.make(
@@ -36,6 +39,7 @@ let makeStorage = (~pgSchema) =>
 
 Async.afterAll(async () => {
   let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+  let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${migrateSchema}" CASCADE;`)
   await sql->Postgres.endSql
 })
 
@@ -74,13 +78,7 @@ describe("Resuming Postgres storage", () => {
   })
 
   Async.it("adds a chain the schema was never initialized with", async t => {
-    let migrateSchema = TestPgSchema.make()
     let storage = makeStorage(~pgSchema=migrateSchema)
-    Async.afterAll(
-      async () => {
-        let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${migrateSchema}" CASCADE;`)
-      },
-    )
 
     let before = makeConfig(~chains=[(1, "Gravatar")])
     let after = makeConfig(~chains=[(1, "Gravatar"), (137, "Poster")])
