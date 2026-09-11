@@ -1360,18 +1360,23 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 
 %%private(let ecosystemKeys = ["evm", "fuel", "svm"])
 
-// The entries `current` holds under `<ecosystem>.<group>` that `stored`
-// doesn't, as (key, value) pairs.
 %%private(
+  let getGroup = (json: JSON.t, ~ecosystem: string, ~group: string) =>
+    json->getTopKey(ecosystem)->Option.flatMap(getTopKey(_, group))
+
+  // The entries `current` holds under `<ecosystem>.<group>` that `stored`
+  // doesn't, as (key, value) pairs.
   let addedKeysUnder = (~stored: JSON.t, ~current: JSON.t, ~ecosystem: string, ~group: string) => {
     let entriesOf = json =>
-      switch json->getTopKey(ecosystem)->Option.flatMap(getTopKey(_, group)) {
+      switch json->getGroup(~ecosystem, ~group) {
       | Some(Object(d)) => d->Dict.toArray
       | _ => []
       }
     let storedKeys = Utils.Set.fromArray(stored->entriesOf->Array.map(((key, _)) => key))
     current->entriesOf->Array.filter(((key, _)) => !(storedKeys->Utils.Set.has(key)))
   }
+
+  let groups = ["chains", "contracts", "programs"]
 )
 
 // A chain the current config declares and the stored snapshot never had.
@@ -1415,7 +1420,7 @@ let addedChains = (~stored: JSON.t, ~current: JSON.t): array<addedChain> => {
       ->Array.map(({path}) => path)
       ->Array.concat(
         ecosystemKeys->Array.flatMap(ecosystem =>
-          ["contracts", "programs"]->Array.flatMap(group =>
+          groups->Array.flatMap(group =>
             addedIn(~ecosystem, ~group)->Array.map(((key, _)) => `${ecosystem}.${group}.${key}`)
           )
         ),
@@ -1425,6 +1430,19 @@ let addedChains = (~stored: JSON.t, ~current: JSON.t): array<addedChain> => {
       ->Array.concat(
         ecosystemKeys->Array.filter(key =>
           stored->getTopKey(key)->Option.isNone && current->getTopKey(key)->Option.isSome
+        ),
+      )
+      // So does a group the snapshot omitted entirely — the serialization drops
+      // an empty contracts/programs map — and everything under such a group is
+      // new for the same reason.
+      ->Array.concat(
+        ecosystemKeys->Array.flatMap(ecosystem =>
+          groups->Array.filterMap(group =>
+            stored->getGroup(~ecosystem, ~group)->Option.isNone &&
+              current->getGroup(~ecosystem, ~group)->Option.isSome
+              ? Some(`${ecosystem}.${group}`)
+              : None
+          )
         ),
       )
     allDiffPaths(~stored, ~current)->Array.every(path =>

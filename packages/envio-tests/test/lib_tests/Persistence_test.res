@@ -339,6 +339,25 @@ Pick one:
   3. envio dev -r               # delete all indexed data and start over`)
   })
 
+  Async.it("Points at db-migrate up when the snapshot had no contracts map at all", async t => {
+    // An onBlock-only project serializes no `contracts` key, so the added
+    // chain's first contract diffs as the bare `evm.contracts` path.
+    let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
+    let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}, "contracts": {"A": {}}}}`)
+    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(
+      message,
+      ~message="a group the snapshot omitted is as new as one it lists",
+    ).toBe(`The config declares chains the indexer database doesn't have yet:
+
+    - evm.chains.10
+
+Pick one:
+  1. envio local db-migrate up  # add them to the database, then backfill
+  2. Revert the changes above   # resume indexing where it left off
+  3. envio dev -r               # delete all indexed data and start over`)
+  })
+
   Async.it("Falls back to the reset menu when an added chain comes with other changes", async t => {
     // The tiered `diffPaths` would render only the ecosystem tier here, hiding
     // the entity change behind the added chain — so the additive check reads the
@@ -559,6 +578,63 @@ Pick one:
        ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`)
+  })
+
+  Async.it("db-migrate up detects the added chain, migrates it, then re-resumes", async t => {
+    let before = TestConfig.multiChain(~chains=[(1, "Gravatar")])
+    let after = TestConfig.multiChain(~chains=[(1, "Gravatar"), (137, "Poster")])
+    let storageMock = MockStorage.make([#isInitialized, #resumeInitialState, #addChains])
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+
+    let settled =
+      persistence->Persistence.init(
+        ~chainConfigs=after.config.chainMap->ChainMap.values,
+        ~contractMapping=after.config.contractMapping,
+        ~envioInfo=after.envioInfo,
+        ~resetCommand=resetCmd,
+        ~runCommand=runCmd,
+        ~addedChainsPolicy=Add,
+      )
+    storageMock.resolveIsInitialized(true)
+
+    // Resolve each resume as its call lands: the first with what the database
+    // holds — a chain behind the config — the second with what the migration
+    // left, which the real compatibility check then has to accept.
+    let resolveResumeWhenCalled = async (~count, ~snapshot: TestConfig.parsed) => {
+      let deadline = Date.now() +. 2000.
+      while storageMock.resumeInitialStateCalls->Array.length < count && Date.now() < deadline {
+        await Utils.delay(0)
+      }
+      storageMock.resolveLoadInitialState({
+        cleanRun: false,
+        contractMapping: snapshot.config.contractMapping,
+        envioInfo: Some(snapshot.envioInfo),
+        chains: [],
+        cache: Dict.make(),
+        reorgCheckpoints: [],
+        checkpointFrontier: Frontier.empty(),
+      })
+    }
+    await resolveResumeWhenCalled(~count=1, ~snapshot=before)
+    await resolveResumeWhenCalled(~count=2, ~snapshot=after)
+    await settled
+
+    t.expect({
+      "migrated": storageMock.addChainsCalls->Array.map(
+        call => call["chainIds"]->Array.map(ChainId.toString),
+      ),
+      // The second resume is the point: the caller ends up holding what the
+      // database says, read back after the migration rather than patched up.
+      "resumes": storageMock.resumeInitialStateCalls->Array.length,
+      "envioInfo": switch persistence.storageStatus {
+      | Ready({envioInfo}) => envioInfo
+      | _ => None
+      },
+    }).toEqual({
+      "migrated": [["137"]],
+      "resumes": 2,
+      "envioInfo": Some(after.envioInfo),
+    })
   })
 
   Async.it("Does NOT throw when only RPC or hypersync options change", async t => {

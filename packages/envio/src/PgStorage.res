@@ -1978,8 +1978,13 @@ let make = (
   }
 
   // Brings chains an existing schema was never initialized with into it. Every
-  // statement is additive and idempotent, and they run in one transaction, so a
-  // failed migration leaves the schema exactly as it was.
+  // statement only adds, and they run in one transaction, so a failure leaves
+  // the schema exactly as it was. Not idempotent, deliberately: the chain and
+  // contract inserts carry no `ON CONFLICT`, so two migrations racing each other
+  // collide on the primary key and one rolls back rather than both proceeding
+  // against a half-applied schema. A repeat of a migration that *succeeded*
+  // never reaches here — `Config.addedChains` reads the snapshot this wrote and
+  // finds nothing left to add.
   let addChains = async (
     ~chainConfigs: array<Config.chain>,
     ~entities: array<Internal.entityConfig>,
