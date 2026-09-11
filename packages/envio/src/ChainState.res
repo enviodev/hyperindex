@@ -994,6 +994,8 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   reorgCount: cs.reorgCount,
   reorgDetectedBlock: cs.reorgDetectedBlock,
   rollbackTargetBlock: cs.rollbackTargetBlock,
+  rateLimitTimeMs: cs.sourceManager->SourceManager.getRateLimitTimeMs,
+  rateLimitResetInMs: cs.sourceManager->SourceManager.getRateLimitResetInMs,
 }
 
 // Snapshot the inputs a batch build needs from this chain, including an

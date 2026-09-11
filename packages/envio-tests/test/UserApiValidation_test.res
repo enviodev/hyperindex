@@ -560,7 +560,24 @@ programs:
     bogus_extra: true
     instructions: []
 `,
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\`, \`instructions\` at line 10 column 5",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`idl\`, \`instructions\` at line 10 column 5",
+    ),
+    (
+      // SVM registers handlers from the `handlers` directory alone.
+      "rejects a per-program handler path on SVM",
+      `
+name: svm-program-handler
+ecosystem: svm
+chains:
+  - id: solana
+    start_slot: 1
+programs:
+  - name: Program
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    handler: ./src/Handlers.ts
+    instructions: []
+`,
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0]: unknown field \`handler\`, expected one of \`name\`, \`program_id\`, \`idl\`, \`instructions\` at line 10 column 5",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
