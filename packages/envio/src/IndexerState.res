@@ -537,6 +537,8 @@ let toMetrics = (state: t): Metrics.t => {
         method: s.method,
         count: s.count,
         seconds: s.seconds,
+        responseBlocks: s.responseBlocks,
+        emptyResponseCount: s.emptyResponseCount,
       })
     )
     sourceManager
