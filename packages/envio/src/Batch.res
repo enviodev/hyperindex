@@ -42,16 +42,24 @@ type t = {
   checkpointChainIds: array<ChainId.t>,
   checkpointBlockNumbers: array<int>,
   checkpointBlockHashes: array<Null.t<string>>,
+  // Items the checkpoint carries, which is what indexes `items`.
+  checkpointItemsCount: array<int>,
+  // Logs the checkpoint carries: one log routed to several registrations is one
+  // event, however many items it made.
   checkpointEventsProcessed: array<int>,
   registeredAddresses: array<AddressRows.staged>,
 }
+
+// What a chain contributed to the batch: items taken off its buffer, and the
+// logs behind them.
+type chainBatchCounts = {size: int, eventsProcessed: int}
 
 let getProgressedChainsById = {
   let getChainAfterBatchIfProgressed = (
     ~chainBeforeBatch: chainBeforeBatch,
     ~progressBlockNumberAfterBatch,
     ~fetchStateAfterBatch,
-    ~batchSize,
+    ~counts: chainBatchCounts,
   ) => {
     // The check is sufficient, since we guarantee to include a full block in a batch
     // Also, this might be true even if batchSize is 0,
@@ -60,10 +68,11 @@ let getProgressedChainsById = {
       Some(
         (
           {
-            batchSize,
+            batchSize: counts.size,
             progressBlockNumber: progressBlockNumberAfterBatch,
             sourceBlockNumber: chainBeforeBatch.sourceBlockNumber,
-            totalEventsProcessed: chainBeforeBatch.totalEventsProcessed +. batchSize->Int.toFloat,
+            totalEventsProcessed: chainBeforeBatch.totalEventsProcessed +.
+            counts.eventsProcessed->Int.toFloat,
             fetchState: fetchStateAfterBatch,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
             chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.blockLag,
@@ -77,7 +86,7 @@ let getProgressedChainsById = {
 
   (
     ~chainsBeforeBatch: dict<chainBeforeBatch>,
-    ~batchSizePerChain: dict<int>,
+    ~countsPerChain: dict<chainBatchCounts>,
     ~progressBlockNumberPerChain: dict<int>,
   ) => {
     let progressedChainsById = Dict.make()
@@ -98,14 +107,14 @@ let getProgressedChainsById = {
       | None => chainBeforeBatch.progressBlockNumber
       }
 
-      switch switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(
+      switch switch countsPerChain->Utils.Dict.dangerouslyGetNonOption(
         fetchState.chainId->ChainId.toString,
       ) {
-      | Some(batchSize) =>
-        let leftItems = fetchState.buffer->Array.slice(~start=batchSize)
+      | Some(counts) =>
+        let leftItems = fetchState.buffer->Array.slice(~start=counts.size)
         getChainAfterBatchIfProgressed(
           ~chainBeforeBatch,
-          ~batchSize,
+          ~counts,
           ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(~mutItems=leftItems),
           ~progressBlockNumberAfterBatch,
         )
@@ -113,7 +122,7 @@ let getProgressedChainsById = {
       | None =>
         getChainAfterBatchIfProgressed(
           ~chainBeforeBatch,
-          ~batchSize=0,
+          ~counts={size: 0, eventsProcessed: 0},
           ~fetchStateAfterBatch=chainBeforeBatch.fetchState,
           ~progressBlockNumberAfterBatch,
         )
@@ -156,6 +165,7 @@ let addReorgCheckpoints = (
   ~mutCheckpointChainIds,
   ~mutCheckpointBlockNumbers,
   ~mutCheckpointBlockHashes,
+  ~mutCheckpointItemsCount,
   ~mutCheckpointEventsProcessed,
 ) => {
   if shouldRollbackOnReorg {
@@ -177,6 +187,7 @@ let addReorgCheckpoints = (
       mutCheckpointChainIds->Array.push(chainId)
       mutCheckpointBlockNumbers->Array.push(blockNumber)
       mutCheckpointBlockHashes->Array.push(Null.Value(hash))
+      mutCheckpointItemsCount->Array.push(0)
       mutCheckpointEventsProcessed->Array.push(0)
 
       idx := idx.contents + 1
@@ -206,7 +217,7 @@ let make = (
   let totalBatchSize = ref(0)
 
   let cursor = sequence->CheckpointSequence.cursor(~frontier)
-  let mutBatchSizePerChain = Dict.make()
+  let mutCountsPerChain = Dict.make()
   let mutProgressBlockNumberPerChain = Dict.make()
 
   let items = []
@@ -214,6 +225,7 @@ let make = (
   let checkpointChainIds = []
   let checkpointBlockNumbers = []
   let checkpointBlockHashes = []
+  let checkpointItemsCount = []
   let checkpointEventsProcessed = []
 
   // Accumulate items for all actively indexing chains
@@ -232,10 +244,19 @@ let make = (
       ->Option.getUnsafe
 
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
+    let chainEventsProcessed = ref(0)
     if chainBatchSize > 0 {
       for idx in 0 to chainBatchSize - 1 {
         let item = fetchState.buffer->Array.getUnsafe(idx)
         let blockNumber = item->Internal.getItemBlockNumber
+        // The buffer is sorted, so a log's items are consecutive: the first of
+        // them is the only one that counts as an event.
+        let isNewEvent =
+          idx === 0 ||
+            !(fetchState.buffer->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
+        if isNewEvent {
+          chainEventsProcessed := chainEventsProcessed.contents + 1
+        }
 
         // Every new block we should create a new checkpoint
         if blockNumber !== prevBlockNumber.contents {
@@ -250,6 +271,7 @@ let make = (
             ~mutCheckpointChainIds=checkpointChainIds,
             ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
             ~mutCheckpointBlockHashes=checkpointBlockHashes,
+            ~mutCheckpointItemsCount=checkpointItemsCount,
             ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
           )
 
@@ -268,21 +290,30 @@ let make = (
             },
           )
           ->ignore
+          checkpointItemsCount->Array.push(1)->ignore
           checkpointEventsProcessed->Array.push(1)->ignore
 
           prevBlockNumber := blockNumber
         } else {
-          let lastIndex = checkpointEventsProcessed->Array.length - 1
-          checkpointEventsProcessed
-          ->Array.setUnsafe(lastIndex, checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1)
+          let lastIndex = checkpointItemsCount->Array.length - 1
+          checkpointItemsCount
+          ->Array.setUnsafe(lastIndex, checkpointItemsCount->Array.getUnsafe(lastIndex) + 1)
           ->ignore
+          if isNewEvent {
+            checkpointEventsProcessed
+            ->Array.setUnsafe(lastIndex, checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1)
+            ->ignore
+          }
         }
 
         items->Array.push(item)->ignore
       }
 
       totalBatchSize := totalBatchSize.contents + chainBatchSize
-      mutBatchSizePerChain->ChainId.Dict.set(fetchState.chainId, chainBatchSize)
+      mutCountsPerChain->ChainId.Dict.set(
+        fetchState.chainId,
+        {size: chainBatchSize, eventsProcessed: chainEventsProcessed.contents},
+      )
     }
 
     let progressBlockNumberAfterBatch =
@@ -299,6 +330,7 @@ let make = (
       ~mutCheckpointChainIds=checkpointChainIds,
       ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
       ~mutCheckpointBlockHashes=checkpointBlockHashes,
+      ~mutCheckpointItemsCount=checkpointItemsCount,
       ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
     )
 
@@ -315,7 +347,7 @@ let make = (
     items,
     progressedChainsById: getProgressedChainsById(
       ~chainsBeforeBatch,
-      ~batchSizePerChain=mutBatchSizePerChain,
+      ~countsPerChain=mutCountsPerChain,
       ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
     ),
     history,
@@ -323,6 +355,7 @@ let make = (
     checkpointChainIds,
     checkpointBlockNumbers,
     checkpointBlockHashes,
+    checkpointItemsCount,
     checkpointEventsProcessed,
     registeredAddresses: [],
   }
@@ -346,7 +379,7 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
     let checkpointChainId = batch.checkpointChainIds->Array.getUnsafe(idx.contents)
     if (
       checkpointChainId === chainId &&
-        batch.checkpointEventsProcessed->Array.getUnsafe(idx.contents) > 0
+        batch.checkpointItemsCount->Array.getUnsafe(idx.contents) > 0
     ) {
       result := Some(batch.checkpointBlockNumbers->Array.getUnsafe(idx.contents))
     } else {

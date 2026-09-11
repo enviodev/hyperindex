@@ -228,6 +228,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     checkpointChainIds: [],
     checkpointBlockNumbers: [],
     checkpointBlockHashes: [],
+    checkpointItemsCount: [],
     checkpointEventsProcessed: [],
     registeredAddresses: [],
   }
