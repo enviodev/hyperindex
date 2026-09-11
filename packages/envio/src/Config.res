@@ -143,10 +143,9 @@ type t = {
   // before asking again. Only the retries are held back, so this never delays a
   // run whose chains are all its own. Overridable in tests.
   finalizeRetryIntervalMillis: float,
-  // How long the schema's indexes may stay owed before each retry says so at
-  // warn rather than debug. An operator who forgot to start a chain otherwise
-  // sees a healthy realtime indexer whose queries are quietly unindexed.
-  // Overridable in tests.
+  // How long a chain may be waited on before each pass says so at warn rather
+  // than debug. Past this the likeliest explanation is a chain nobody started,
+  // which nothing else in the logs would name. Overridable in tests.
   finalizeWaitWarnAfterMillis: float,
   lowercaseAddresses: bool,
   isDev: bool,

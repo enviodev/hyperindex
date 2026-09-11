@@ -86,9 +86,9 @@
       true
     | _ =>
       // The pass comes back every `finalizeRetryIntervalMillis` while the wait
-      // stands, so most of them are quiet: info to announce it, debug after
-      // that. Once it has gone on too long the operator needs telling, because
-      // everything else about this process looks healthy while it waits.
+      // stands, so most of them are quiet: info to say it once, debug after
+      // that. A wait that goes on too long escalates to warn — by then it is
+      // more likely a chain nobody started than one still working.
       let waitMillis = state->IndexerState.finalizeWaitMillis
       let hasWaitedTooLong = waitMillis >= (state->IndexerState.config).finalizeWaitWarnAfterMillis
       let message = {
@@ -96,7 +96,7 @@
           ? `Still waiting after ${(waitMillis /. 60_000.)
                 ->Float.toFixed(~digits=0)} minutes for ${pending->Array.joinUnsafe(
                 ", ",
-              )} to finish syncing. Make sure an indexer is running for every chain. A chain whose start block is above the current head has nothing to report and will hold this open until it does — index it in this process instead.`
+              )} to finish syncing. Make sure an instance is running for every chain. A chain whose start block is above the current head has nothing to report and will hold this open until it does — index it in this instance instead.`
           : `Reached the head, but waiting for these chains to finish syncing before serving queries: ${pending->Array.joinUnsafe(
                 ", ",
               )}.`,

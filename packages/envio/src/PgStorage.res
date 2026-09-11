@@ -2136,7 +2136,7 @@ let make = (
         | Some(limit) if waited >= limit =>
           Logging.info({
             "storage": storageName,
-            "msg": "Another indexer is still preparing the database, so this index is left to it.",
+            "msg": "Another instance is still preparing the database, so this index is left to it.",
           })
         | _ =>
           // Otherwise a sibling's multi-minute build leaves this process looking
@@ -2144,7 +2144,7 @@ let make = (
           if retryMillis === indexLockRetryMillis {
             Logging.info({
               "storage": storageName,
-              "msg": "Waiting for another indexer to finish preparing the database.",
+              "msg": "Waiting for another instance to finish preparing the database.",
             })
           }
           await Utils.delay(retryMillis)
