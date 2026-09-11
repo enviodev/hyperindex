@@ -91,17 +91,16 @@
       // The pass comes back every `finalizeRetryIntervalMillis` while the wait
       // stands, so most of them are quiet. Waiting is the normal case — a big
       // chain's backfill runs for days — so it never escalates past info: once
-      // when it starts, then a heartbeat every `finalizeWaitReportIntervalMillis`
-      // so the reason stays visible without filling the log.
+      // when it starts, then a one-line heartbeat every
+      // `finalizeWaitReportIntervalMillis` so the reason stays visible without
+      // filling the log or reading as a fault.
       let waitMillis = state->IndexerState.finalizeWaitMillis
       let chains = pending->Array.joinUnsafe(", ")
       let message = {
         "msg": announce
           ? `Reached the head, but waiting for these chains to finish syncing before serving queries: ${chains}.`
-          : `Still waiting for these chains to finish syncing before serving queries: ${chains}. ${(waitMillis /.
-              60_000.)->Float.toFixed(
-              ~digits=0,
-            )} minutes so far. A large chain's backfill can take days, so this is expected while one is running. Otherwise check that an instance is running for every chain listed — and note that a chain reports nothing until it indexes its first block, so one whose start block is above the current head holds this open until the head reaches it.`,
+          : `Still waiting for these chains to finish syncing: ${chains}. ${(waitMillis /.
+              60_000.)->Float.toFixed(~digits=0)} minutes so far.`,
         "waitingFor": pending,
         "waitedSeconds": waitMillis /. 1000.,
       }
