@@ -43,25 +43,33 @@ type textEncoder
 
 @send external setFrom: (Uint8Array.t, Uint8Array.t, int) => unit = "set"
 
-type builder = {
-  name: string,
-  kind: kind,
-  isNullable: bool,
-  isVariable: bool,
-  replacer: JSON.replacer,
-  // Which column this is, and which buffer of the lent array carries its
-  // payload — `grow` replaces that one so the commit detaches what is live.
-  index: int,
-  dataSlot: int,
-  floats: Float64Array.t,
-  unsigned: BigUint64Array.t,
-  signed: BigInt64Array.t,
+// A variable-width column's payload and the offsets that cut it into rows.
+// `cursor` is where the next value starts — a row's bytes run from the previous
+// row's end to its own, so every row sets `ends`, the null ones included.
+// `slot` is which of the lent buffers carries `data`, since `grow` replaces it
+// and the commit has to detach what is live rather than what was handed out.
+type variable = {
   mutable data: Uint8Array.t,
   ends: Uint32Array.t,
-  nulls: Uint8Array.t,
-  // Where this column's next value starts. A row's bytes run from the previous
-  // row's end to its own, so every row has to set `ends`, null ones included.
+  slot: int,
   mutable cursor: int,
+}
+
+// One per column kind, holding only the view that kind writes through.
+type storage =
+  | Floats(Float64Array.t)
+  | Unsigned(BigUint64Array.t)
+  | Signed(BigInt64Array.t)
+  | Text(variable)
+  | Bytes(variable)
+
+type builder = {
+  name: string,
+  isNullable: bool,
+  replacer: JSON.replacer,
+  index: int,
+  storage: storage,
+  nulls: Uint8Array.t,
 }
 
 type t = {
@@ -71,75 +79,46 @@ type t = {
   builders: array<builder>,
 }
 
-%%private(let noFloats = Float64Array.fromLength(0))
-%%private(let noUnsigned = BigUint64Array.fromLength(0))
-%%private(let noSigned = BigInt64Array.fromLength(0))
-%%private(let noBytes = Uint8Array.fromLength(0))
-%%private(let noEnds = Uint32Array.fromLength(0))
-
 let begin = (arena, ~table, ~rows, ~columns: array<column>) => {
   let {handle, buffers} = arena.beginStage(~table, ~rows)
   let slot = ref(0)
+  let take = () => {
+    let buffer = buffers->Array.getUnsafe(slot.contents)
+    slot := slot.contents + 1
+    buffer
+  }
+  // Buffer order is the arena's: the values, then a variable column's offsets,
+  // then the null flags.
+  let takeVariable = () => {
+    let slot = slot.contents
+    let data = Uint8Array.fromBuffer(take())
+    let ends = Uint32Array.fromBuffer(take())
+    {data, ends, slot, cursor: 0}
+  }
   let builders = columns->Array.mapWithIndex(({name, kind, isNullable, replacer}, index) => {
-    let take = () => {
-      let buffer = buffers->Array.getUnsafe(slot.contents)
-      slot := slot.contents + 1
-      buffer
+    let storage = switch kind {
+    | F64 => Floats(Float64Array.fromBuffer(take()))
+    | U64 => Unsigned(BigUint64Array.fromBuffer(take()))
+    | I64 => Signed(BigInt64Array.fromBuffer(take()))
+    | Text => Text(takeVariable())
+    | Bytes => Bytes(takeVariable())
     }
-    switch kind {
-    | F64 | U64 | I64 =>
-      let values = take()
-      {
-        name,
-        kind,
-        isNullable,
-        isVariable: false,
-        replacer,
-        index,
-        dataSlot: -1,
-        floats: kind === F64 ? Float64Array.fromBuffer(values) : noFloats,
-        unsigned: kind === U64 ? BigUint64Array.fromBuffer(values) : noUnsigned,
-        signed: kind === I64 ? BigInt64Array.fromBuffer(values) : noSigned,
-        data: noBytes,
-        ends: noEnds,
-        nulls: Uint8Array.fromBuffer(take()),
-        cursor: 0,
-      }
-    | Text | Bytes =>
-      let dataSlot = slot.contents
-      let data = take()
-      {
-        name,
-        kind,
-        isNullable,
-        isVariable: true,
-        replacer,
-        index,
-        dataSlot,
-        floats: noFloats,
-        unsigned: noUnsigned,
-        signed: noSigned,
-        data: Uint8Array.fromBuffer(data),
-        ends: Uint32Array.fromBuffer(take()),
-        nulls: Uint8Array.fromBuffer(take()),
-        cursor: 0,
-      }
-    }
+    {name, isNullable, replacer, index, storage, nulls: Uint8Array.fromBuffer(take())}
   })
   {arena, handle, buffers, builders}
 }
 
 %%private(
-  let ensure = (stage, builder, ~needed) =>
-    if needed > builder.data->TypedArray.length {
+  let ensure = (stage, builder, variable, ~needed) =>
+    if needed > variable.data->TypedArray.length {
       let fresh = stage.arena.growStage(
         ~handle=stage.handle,
         ~column=builder.index,
         ~needed,
-        ~stale=builder.data->TypedArray.buffer,
+        ~stale=variable.data->TypedArray.buffer,
       )
-      stage.buffers->Array.setUnsafe(builder.dataSlot, fresh)
-      builder.data = Uint8Array.fromBuffer(fresh)
+      stage.buffers->Array.setUnsafe(variable.slot, fresh)
+      variable.data = Uint8Array.fromBuffer(fresh)
     }
 )
 
@@ -190,47 +169,50 @@ let toText = (value: unknown, ~replacer) =>
 )
 
 %%private(
-  let writeText = (stage, builder, ~row, text) => {
+  let writeText = (stage, builder, variable, ~row, text) => {
     // One byte per UTF-16 unit is what ASCII needs, so the room for the fast
     // path is the room for its guess. `read` says when the guess was short:
     // UTF-8 spends at most three bytes per unit, which is what a surrogate pair
     // costs across its two.
     let units = text->String.length
-    stage->ensure(builder, ~needed=builder.cursor + units)
-    let written = switch builder.data->writeAscii(text, builder.cursor) {
+    stage->ensure(builder, variable, ~needed=variable.cursor + units)
+    let written = switch variable.data->writeAscii(text, variable.cursor) {
     | -1 =>
       let {read, written} =
-        encoder->encodeInto(text, builder.data->TypedArray.subarray(~start=builder.cursor))
+        encoder->encodeInto(text, variable.data->TypedArray.subarray(~start=variable.cursor))
       if read < units {
-        stage->ensure(builder, ~needed=builder.cursor + units * 3)
+        stage->ensure(builder, variable, ~needed=variable.cursor + units * 3)
         let {written} =
-          encoder->encodeInto(text, builder.data->TypedArray.subarray(~start=builder.cursor))
+          encoder->encodeInto(text, variable.data->TypedArray.subarray(~start=variable.cursor))
         written
       } else {
         written
       }
     | ascii => ascii
     }
-    builder.cursor = builder.cursor + written
-    builder.ends->TypedArray.set(row, builder.cursor)
+    variable.cursor = variable.cursor + written
+    variable.ends->TypedArray.set(row, variable.cursor)
   }
 )
 
 %%private(
-  let writeBytes = (stage, builder, ~row, bytes: Uint8Array.t) => {
+  let writeBytes = (stage, builder, variable, ~row, bytes: Uint8Array.t) => {
     let length = bytes->TypedArray.length
-    stage->ensure(builder, ~needed=builder.cursor + length)
-    builder.data->setFrom(bytes, builder.cursor)
-    builder.cursor = builder.cursor + length
-    builder.ends->TypedArray.set(row, builder.cursor)
+    stage->ensure(builder, variable, ~needed=variable.cursor + length)
+    variable.data->setFrom(bytes, variable.cursor)
+    variable.cursor = variable.cursor + length
+    variable.ends->TypedArray.set(row, variable.cursor)
   }
 )
 
 %%private(
   let markNull = (builder, ~row) => {
     builder.nulls->TypedArray.set(row, 1)
-    if builder.isVariable {
-      builder.ends->TypedArray.set(row, builder.cursor)
+    // A row with no value still ends where the one before it did, or the row
+    // after it would start before its own beginning.
+    switch builder.storage {
+    | Text(variable) | Bytes(variable) => variable.ends->TypedArray.set(row, variable.cursor)
+    | Floats(_) | Unsigned(_) | Signed(_) => ()
     }
   }
 )
@@ -252,21 +234,23 @@ let toText = (value: unknown, ~replacer) =>
 
 %%private(
   let writePresent = (stage, builder, ~row, value: unknown) =>
-    switch builder.kind {
-    | F64 =>
-      builder.floats->TypedArray.set(row, value->toNumber->finiteOrThrow(~column=builder.name))
-    | U64 =>
-      builder.unsigned->TypedArray.set(
+    switch builder.storage {
+    | Floats(floats) =>
+      floats->TypedArray.set(row, value->toNumber->finiteOrThrow(~column=builder.name))
+    | Unsigned(unsigned) =>
+      unsigned->TypedArray.set(
         row,
         value->checkedBigInt(~builder, ~min=0n, ~max=18446744073709551615n),
       )
-    | I64 =>
-      builder.signed->TypedArray.set(
+    | Signed(signed) =>
+      signed->TypedArray.set(
         row,
         value->checkedBigInt(~builder, ~min=-9223372036854775808n, ~max=9223372036854775807n),
       )
-    | Text => stage->writeText(builder, ~row, value->toText(~replacer=builder.replacer))
-    | Bytes => stage->writeBytes(builder, ~row, value->(Utils.magic: unknown => Uint8Array.t))
+    | Text(variable) =>
+      stage->writeText(builder, variable, ~row, value->toText(~replacer=builder.replacer))
+    | Bytes(variable) =>
+      stage->writeBytes(builder, variable, ~row, value->(Utils.magic: unknown => Uint8Array.t))
     }
 )
 

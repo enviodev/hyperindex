@@ -435,10 +435,10 @@ impl ClickHouseSink {
     #[napi]
     pub fn commit_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
         let mut staged = self.staged.lock().unwrap();
+        Self::detach_or_abandon(&mut staged, handle, buffers)?;
         let staged = staged
             .get_mut(&handle)
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
-        columnar::js::detach_all(&staged.arena, buffers)?;
         let names: Vec<String> = staged
             .schema
             .columns
@@ -454,13 +454,20 @@ impl ClickHouseSink {
     #[napi]
     pub fn abort_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
         let mut staged = self.staged.lock().unwrap();
-        let Some(entry) = staged.get(&handle) else {
+        if !staged.contains_key(&handle) {
             return Ok(());
-        };
-        // A buffer that could not be detached is a view still pointing into the
-        // arena, so the arena is kept rather than freed under it. Leaking one
-        // batch beats freeing memory something can still write to.
-        columnar::js::detach_all(&entry.arena, buffers)?;
+        }
+        // An abort is already carrying an error out, and that error is the one
+        // worth reading. A batch that cannot be handed back has been abandoned
+        // and is safe either way, so say so rather than throwing over it.
+        if let Err(failed) = Self::detach_or_abandon(&mut staged, handle, buffers) {
+            (self.warn)(&format!(
+                "A staged ClickHouse batch could not be handed back and its memory was abandoned: \
+                 {}",
+                failed.reason
+            ));
+            return Ok(());
+        }
         staged.remove(&handle);
         Ok(())
     }
@@ -953,6 +960,28 @@ impl ClickHouseSink {
             .with_context(|| format!("Unknown ClickHouse table handle {handle}"))
     }
 
+    /// Detaches a staged batch's buffers. A batch that cannot hand them all back
+    /// still has a JavaScript view into its arena, and that allocation has to
+    /// outlive the view — so it leaves the registry without being freed. The
+    /// handle stops working, which is what makes the leak one batch rather than
+    /// a write into memory that has been handed to something else.
+    fn detach_or_abandon(
+        staged: &mut HashMap<u32, Staged>,
+        handle: u32,
+        buffers: Vec<ArrayBuffer>,
+    ) -> napi::Result<()> {
+        let Some(entry) = staged.get_mut(&handle) else {
+            return Err(napi::Error::from_reason(format!(
+                "Unknown staged batch {handle}"
+            )));
+        };
+        let detached = columnar::js::detach_all(&mut entry.arena, buffers);
+        if detached.is_err() {
+            std::mem::forget(staged.remove(&handle));
+        }
+        detached
+    }
+
     fn take_staged(
         &self,
         entities: &[u32],
@@ -1333,7 +1362,7 @@ mod tests {
         for (row, value) in values.iter().enumerate() {
             arena.set_bytes(0, row, value.as_bytes());
         }
-        arena.seal(&names).unwrap();
+        arena.seal_unlent(&names).unwrap();
         let handle = sink.next_handle.fetch_add(1, Ordering::Relaxed);
         sink.staged
             .lock()

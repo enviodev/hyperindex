@@ -29,9 +29,16 @@
 //!   through the lent views. Rust must not read the bytes, and must not
 //!   reallocate anything except through [`js::grow`], which detaches the buffer
 //!   it supersedes before the `Vec` moves.
-//! * *Sealed*, from [`Arena::seal`] on, which runs once [`js::detach_all`] has
-//!   confirmed no view is left. The values have been checked against the row
-//!   count, so Rust may read them.
+//! * *Detached*, once [`js::detach_all`] has taken every buffer back. Nothing
+//!   outside the arena points into it, so it is safe both to read and to free —
+//!   and the step is what [`Arena::seal`] needs to have happened.
+//! * *Sealed*, from [`Arena::seal`] on. The values have been checked against the
+//!   row count, so the encoder may slice them.
+//!
+//! An arena that cannot reach *Detached* — a buffer was never handed back, so a
+//! view into it may still be live — must never be freed. Its owner drops it from
+//! the registry and leaks the allocation instead; one leaked batch is the cheap
+//! side of that trade.
 //!
 //! Filling must not span an `await`: a stage that yielded to the event loop
 //! would let another stage's commit interleave with this one's writes.
@@ -213,18 +220,6 @@ impl Column {
         Ok(())
     }
 
-    /// Where each of this column's buffers currently lives. Pointers only: the
-    /// detach check compares them against what JavaScript hands back.
-    fn buffer_ptrs(&self) -> Vec<*const u8> {
-        let nulls = self.nulls.as_ptr();
-        match &self.storage {
-            Storage::Fixed(words) => vec![words.as_ptr().cast(), nulls],
-            Storage::Variable { data, ends } => {
-                vec![data.as_ptr(), ends.as_ptr().cast(), nulls]
-            }
-        }
-    }
-
     fn buffers(&mut self) -> Vec<(*mut u8, usize)> {
         let nulls = (self.nulls.as_mut_ptr(), self.nulls.len());
         match &mut self.storage {
@@ -240,11 +235,23 @@ impl Column {
     }
 }
 
+/// Which of the phases described at the top of this module an arena is in.
+/// Each step happens once, and only in this order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Phase {
+    /// JavaScript holds the buffers and writes through them.
+    Filling,
+    /// Every buffer is detached, so nothing outside points into the arena.
+    Detached,
+    /// The values have been checked against the row count and Rust may read them.
+    Sealed,
+}
+
 /// One batch's columns, allocated together and filled by JavaScript.
 pub struct Arena {
     rows: usize,
     columns: Vec<Column>,
-    sealed: bool,
+    phase: Phase,
 }
 
 impl Arena {
@@ -255,7 +262,7 @@ impl Arena {
         Ok(Self {
             rows,
             columns: kinds.iter().map(|&kind| Column::new(kind, rows)).collect(),
-            sealed: false,
+            phase: Phase::Filling,
         })
     }
 
@@ -268,42 +275,53 @@ impl Arena {
     }
 
     pub fn is_sealed(&self) -> bool {
-        self.sealed
+        self.phase == Phase::Sealed
+    }
+
+    fn is_filling(&self) -> bool {
+        self.phase == Phase::Filling
+    }
+
+    /// Records that nothing outside the arena points into it any more. Only
+    /// [`js::detach_all`] may say so, having detached the buffers itself.
+    fn finish_lending(&mut self) {
+        self.phase = Phase::Detached;
     }
 
     /// Every buffer the arena currently has lent out. A commit that does not
     /// detach all of these has left JavaScript able to write into memory Rust
     /// is about to read.
-    fn buffer_ptrs(&self) -> Vec<*const u8> {
-        self.columns.iter().flat_map(Column::buffer_ptrs).collect()
+    fn buffer_ptrs(&mut self) -> Vec<*const u8> {
+        self.columns
+            .iter_mut()
+            .flat_map(Column::buffers)
+            .map(|(data, _)| data.cast_const())
+            .collect()
     }
 
-    /// The payload `grow` would replace, so a caller can check that the buffer
-    /// it is about to detach is the one that describes it.
-    fn payload_ptr(&self, column: usize) -> Result<*const u8> {
+    /// Doubles a variable-width column's payload until it holds `needed` bytes,
+    /// and reports where it moved to.
+    ///
+    /// `current` is what the caller believes the payload to be. It is checked
+    /// rather than trusted: growing a column whose buffer the caller does not
+    /// actually hold would leave that buffer describing a freed allocation.
+    fn grow(
+        &mut self,
+        column: usize,
+        needed: usize,
+        current: *const u8,
+    ) -> Result<(*mut u8, usize)> {
+        let index = column;
         let column = self
             .columns
-            .get(column)
-            .with_context(|| format!("no column {column} to grow"))?;
-        match &column.storage {
-            Storage::Variable { data, .. } => Ok(data.as_ptr()),
-            Storage::Fixed(_) => {
-                bail!("a fixed-width column is sized from the row count and never grows")
-            }
-        }
-    }
-
-    /// Doubles a variable-width column's payload until it holds `needed` bytes.
-    /// The `Vec` moves, so the caller has to have detached the buffer that
-    /// described the old allocation before calling this.
-    fn grow(&mut self, column: usize, needed: usize) -> Result<(*mut u8, usize)> {
-        let column = self
-            .columns
-            .get_mut(column)
-            .with_context(|| format!("no column {column} to grow"))?;
+            .get_mut(index)
+            .with_context(|| format!("no column {index} to grow"))?;
         let Storage::Variable { data, .. } = &mut column.storage else {
             bail!("a fixed-width column is sized from the row count and never grows");
         };
+        if !std::ptr::eq(data.as_ptr(), current) {
+            bail!("the buffer handed to grow is not column {index}'s payload");
+        }
         if needed > u32::MAX as usize {
             bail!("a staged column cannot hold more than {} bytes", u32::MAX);
         }
@@ -315,16 +333,18 @@ impl Arena {
         Ok((data.as_mut_ptr(), data.len()))
     }
 
-    /// Ends the filling phase. Every buffer must already be detached.
+    /// Checks the values against the row count, which is what lets the encoder
+    /// slice them. Only reachable once every buffer is detached, so nothing can
+    /// change them between the check and the read.
     pub fn seal(&mut self, names: &[String]) -> Result<()> {
-        if self.sealed {
-            bail!("a staged batch cannot be committed twice");
+        if self.phase != Phase::Detached {
+            bail!("a staged batch can only be sealed once, and not while it is still lent out");
         }
         for (index, column) in self.columns.iter_mut().enumerate() {
             let name = names.get(index).map(String::as_str).unwrap_or("?");
             column.seal(name, self.rows)?;
         }
-        self.sealed = true;
+        self.phase = Phase::Sealed;
         Ok(())
     }
 }
@@ -373,9 +393,16 @@ impl Arena {
         self.columns[column].any_null = true;
     }
 
+    /// Nothing was lent out — the values came from Rust, not from an isolate —
+    /// so there is no buffer to detach before sealing.
+    pub fn seal_unlent(&mut self, names: &[String]) -> Result<()> {
+        self.finish_lending();
+        self.seal(names)
+    }
+
     pub fn seal_for_test(&mut self) -> Result<()> {
         let names: Vec<String> = (0..self.columns.len()).map(|i| i.to_string()).collect();
-        self.seal(&names)
+        self.seal_unlent(&names)
     }
 }
 

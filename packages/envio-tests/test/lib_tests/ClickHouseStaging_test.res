@@ -279,11 +279,56 @@ describe("Staged buffer checks", () => {
     | exn => (exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"]
     }
 
-  it("refuses a commit that leaves a buffer attached", t => {
+  // The first text column, and where its buffers start in the lent array.
+  let textColumn = (registered: ClickHouseSink.registeredTable) => {
+    let columns = ClickHouseSink.makeTable(~name="checkpoints", registered).columns
+    let column = columns->Array.findIndexOpt(({kind}) => kind === Staging.Text)->Option.getOrThrow
+    (column, MockArena.slotOf(columns, ~column))
+  }
+
+  // A buffer left attached is a view into the arena, so the batch is dropped
+  // without freeing it — and the handle goes with it, which is what the abort
+  // that follows finds.
+  it("refuses a commit that leaves a buffer attached, and abandons the batch", t => {
     let (sink, _, begun) = staged()
-    t.expect(
-      messageOf(() => sink->ClickHouseSink.commitStage(~handle=begun.handle, ~buffers=[])),
-    ).toBe("Buffer 0 of the staged batch was not handed back to be detached.")
+    let refused = messageOf(
+      () => sink->ClickHouseSink.commitStage(~handle=begun.handle, ~buffers=[]),
+    )
+    // The caller that forgot a buffer forgets it here too, so the arena cannot
+    // be handed back — and must not be freed under the view that is still on it.
+    let aborted = messageOf(
+      () => sink->ClickHouseSink.abortStage(~handle=begun.handle, ~buffers=[]),
+    )
+    t.expect((refused, aborted)).toEqual((
+      "Buffer 0 of the staged batch was not handed back to be detached.",
+      "returned without complaint",
+    ))
+  })
+
+  // A commit that fails to seal has already detached every buffer, so the abort
+  // that follows has nothing left to hand back. Counting that as a missing
+  // buffer would replace the reason the batch failed with a complaint about the
+  // cleanup.
+  it("lets the abort after a commit that could not seal through", t => {
+    let (sink, registered, begun) = staged()
+    let (column, slot) = textColumn(registered)
+    // Offsets only a bug in the writer could leave behind: a row ending before
+    // the row before it.
+    let ends = Uint32Array.fromBuffer(begun.buffers->Array.getUnsafe(slot + 1))
+    ends->TypedArray.set(0, 8)
+    ends->TypedArray.set(1, 4)
+
+    let refused = messageOf(
+      () => sink->ClickHouseSink.commitStage(~handle=begun.handle, ~buffers=begun.buffers),
+    )
+    let aborted = messageOf(
+      () => sink->ClickHouseSink.abortStage(~handle=begun.handle, ~buffers=begun.buffers),
+    )
+
+    t.expect((refused, aborted)).toEqual((
+      `column \`${registered.names->Array.getUnsafe(column)}\` row 1 ends at 4, before row 0 at 8`,
+      "returned without complaint",
+    ))
   })
 
   it("refuses to grow against a buffer that is not the column's payload", t => {
@@ -304,6 +349,6 @@ describe("Staged buffer checks", () => {
           )
           ->ignore,
       ),
-    ).toBe(`The buffer handed to grow is not column ${column->Int.toString}'s payload.`)
+    ).toBe(`the buffer handed to grow is not column ${column->Int.toString}'s payload`)
   })
 })

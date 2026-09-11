@@ -43,8 +43,8 @@ pub fn expose<'env>(env: &'env Env, arena: &mut Arena) -> napi::Result<Vec<Array
 
 /// Replaces one variable-width column's payload with a larger one holding the
 /// same bytes. `stale` has to be the buffer that describes the allocation about
-/// to move — it is checked rather than trusted, because detaching some other
-/// buffer would leave a live view over memory this is about to free.
+/// to move, which the arena checks — detaching some other buffer would leave a
+/// live view over memory this is about to free.
 ///
 /// The growth runs before the detach, so a column too wide to grow leaves
 /// `stale` attached and still the column's payload — an abort can then detach
@@ -58,14 +58,8 @@ pub fn grow<'env>(
     needed: u32,
     stale: ArrayBuffer,
 ) -> napi::Result<ArrayBuffer<'env>> {
-    let payload = arena.payload_ptr(column as usize).map_err(to_napi)?;
-    if !std::ptr::eq(stale.as_ptr(), payload) {
-        return Err(napi::Error::from_reason(format!(
-            "The buffer handed to grow is not column {column}'s payload."
-        )));
-    }
     let (data, len) = arena
-        .grow(column as usize, needed as usize)
+        .grow(column as usize, needed as usize, stale.as_ptr())
         .map_err(to_napi)?;
     stale.detach()?;
     lend(env, data, len)
@@ -74,9 +68,15 @@ pub fn grow<'env>(
 /// Ends the filling phase: detaches every buffer JavaScript hands back, then
 /// checks that this covered all of the arena's. A buffer the caller forgot
 /// would be a live view over memory Rust is about to read and then free, so it
-/// fails the batch instead — the arena stays lent out, and the handle is
-/// unusable, rather than being read or freed under a writer.
-pub fn detach_all(arena: &Arena, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+/// fails instead — and the caller has to keep the arena rather than free it.
+///
+/// Does nothing for an arena that is already detached, which is the abort after
+/// a commit that detached everything and then failed to seal. Counting those
+/// buffers as missing would report the cleanup instead of the failure.
+pub fn detach_all(arena: &mut Arena, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+    if !arena.is_filling() {
+        return Ok(());
+    }
     let mut detached = Vec::with_capacity(buffers.len());
     for buffer in buffers {
         // A payload superseded by `grow` is already detached, and has no
@@ -96,6 +96,7 @@ pub fn detach_all(arena: &Arena, buffers: Vec<ArrayBuffer>) -> napi::Result<()> 
             "Buffer {missed} of the staged batch was not handed back to be detached."
         )));
     }
+    arena.finish_lending();
     Ok(())
 }
 

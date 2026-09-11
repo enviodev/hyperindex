@@ -45,15 +45,15 @@ let initialPayload = 8
     }
 )
 
-%%private(
-  let slotOf = (columns: array<Staging.column>, ~column) => {
-    let slot = ref(0)
-    for index in 0 to column - 1 {
-      slot := slot.contents + slots((columns->Array.getUnsafe(index)).kind)
-    }
-    slot.contents
+// Where a column's buffers start in the lent array. Tests that reach past this
+// mock and into the real arena need the same walk.
+let slotOf = (columns: array<Staging.column>, ~column) => {
+  let slot = ref(0)
+  for index in 0 to column - 1 {
+    slot := slot.contents + slots((columns->Array.getUnsafe(index)).kind)
   }
-)
+  slot.contents
+}
 
 %%private(
   let readColumn = (mock, ~column, ~slot) => {
