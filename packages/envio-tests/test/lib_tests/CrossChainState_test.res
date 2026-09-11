@@ -158,6 +158,7 @@ let emptyBatch: Batch.t = {
   checkpointChainIds: [],
   checkpointBlockNumbers: [],
   checkpointBlockHashes: [],
+  checkpointItemsCount: [],
   checkpointEventsProcessed: [],
   registeredAddresses: [],
 }

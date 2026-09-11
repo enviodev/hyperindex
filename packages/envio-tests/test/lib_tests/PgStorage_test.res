@@ -478,6 +478,42 @@ FROM "public"."envio_chains";`
       },
     )
 
+    // An isolated run builds a per-chain entity's index on its own chains'
+    // partitions; a run driving every chain declares it once, on the parent.
+    Async.it(
+      "Places a per-chain entity's index on the parent, or on the isolated chains' partitions",
+      async t => {
+        let perChain: Internal.entityConfig = {
+          ...entityConfig("A"),
+          name: "PerChain",
+          table: Table.mkTable(
+            "PerChain",
+            ~fields=[
+              Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+              Table.mkField(
+                Config.chainIdFieldName,
+                ChainId,
+                ~fieldSchema=ChainId.schema,
+                ~isPrimaryKey=true,
+                ~isChainId=true,
+              ),
+              Table.mkField("owner", String, ~isIndex=true, ~fieldSchema=S.string),
+            ],
+          ),
+        }
+
+        let tableNames = (~partitionChainIds=?) =>
+          PgStorage.getSchemaIndexes(~entities=[perChain], ~partitionChainIds?)->Array.map(
+            definition => definition.IndexDefinition.tableName,
+          )
+
+        t.expect((
+          tableNames(),
+          tableNames(~partitionChainIds=[ChainId.fromInt(1), ChainId.fromInt(137)]),
+        )).toEqual((["PerChain"], ["PerChain$1", "PerChain$137"]))
+      },
+    )
+
     // Config parsing rejects a Postgres entity deriving from one that isn't in
     // Postgres, so every `@derivedFrom` target here is guaranteed to resolve.
     Async.it(

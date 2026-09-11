@@ -8,11 +8,12 @@ type t = {
   // Chain ids in a stable order, so the cross-chain loops iterate the chains
   // without allocating a values array on every tick.
   chainIds: array<ChainId.t>,
-  // True once every chain has caught up to head/endBlock. Monotonic during a run.
+  // True once every chain this process drives has caught up to head/endBlock and
+  // the indexes they owe are committed. Monotonic during a run.
   mutable isRealtime: bool,
-  // True once every chain has caught up and there's nothing left to process,
-  // but before the deferred schema indexes and `ready_at` are committed. The
-  // gap between this and `isRealtime` is the FinalizingIndexes phase.
+  // True once those chains have caught up and there's nothing left to process,
+  // but before the deferred schema indexes and `ready_at` are committed. The gap
+  // between this and `isRealtime` is the FinalizingIndexes phase.
   mutable isCaughtUp: bool,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
@@ -44,6 +45,7 @@ let getChainState = (crossChainState: t, chainId) =>
 
 let chainStates = (crossChainState: t) => crossChainState.chainStates
 let isRealtime = (crossChainState: t) => crossChainState.isRealtime
+let chainIds = (crossChainState: t) => crossChainState.chainIds
 let isCaughtUp = (crossChainState: t) => crossChainState.isCaughtUp
 // Chains enter the threshold together. It is the run-wide reading; what a
 // write keeps is decided per chain.
@@ -149,17 +151,6 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
 
   crossChainState.isCaughtUp =
     crossChainState.isCaughtUp || (crossChainState->nextItemIsNone && everyChainCaughtUp.contents)
-
-  // A run resumed with every chain already stamped ready needs no finalize —
-  // the indexes were committed together with those stamps.
-  let allChainsReady = ref(true)
-  for i in 0 to chainIds->Array.length - 1 {
-    if !(crossChainState->getChainState(chainIds->Array.getUnsafe(i))->ChainState.isReady) {
-      allChainsReady := false
-    }
-  }
-
-  crossChainState.isRealtime = crossChainState.isRealtime || allChainsReady.contents
 }
 
 // Every chain has buffered up to its head (or endblock) with nothing
@@ -194,29 +185,25 @@ let markCaughtUpIfSettled = (crossChainState: t) =>
 // may have moved on — at which point no chain looks at head any more and the
 // indexes it still owes would wait out another whole backfill. Deciding here,
 // before any source request, keeps that debt tied to the progress that was
-// actually committed. Skipped once every chain carries `ready_at`: those indexes
-// were committed together with the stamps.
+// actually committed. Skipped when the run resumed realtime, which is exactly
+// the case where the indexes are already committed and nothing is owed.
 let markCaughtUpOnResume = (crossChainState: t) => {
   let everyChainCaughtUp = ref(crossChainState.chainIds->Array.length > 0)
-  let everyChainReady = ref(true)
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
     if !(cs->ChainState.isDurablyCaughtUp) {
       everyChainCaughtUp := false
     }
-    if !(cs->ChainState.isReady) {
-      everyChainReady := false
-    }
   }
 
-  if everyChainCaughtUp.contents && !everyChainReady.contents && crossChainState->nextItemIsNone {
+  if everyChainCaughtUp.contents && !crossChainState.isRealtime && crossChainState->nextItemIsNone {
     crossChainState.isCaughtUp = true
   }
 }
 
-// Concludes the FinalizingIndexes phase: stamps every chain with the `ready_at`
-// already committed alongside the deferred schema indexes and switches the
-// indexer to realtime.
+// Concludes the FinalizingIndexes phase: stamps every chain this process drives
+// with the `ready_at` already committed alongside their deferred schema indexes,
+// and switches the indexer to realtime.
 let markReady = (crossChainState: t, ~readyAt) => {
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     crossChainState
@@ -407,7 +394,7 @@ let checkAndFetch = async (
     switch actionByChain->ChainId.Dict.dangerouslyGetNonOption(chainId) {
     | Some(NothingToQuery)
     | None => ()
-    | Some(action) => promises->Array.push(dispatchChain(~chainId=chainId, ~action))
+    | Some(action) => promises->Array.push(dispatchChain(~chainId, ~action))
     }
   }
   let _ = await promises->Promise.all

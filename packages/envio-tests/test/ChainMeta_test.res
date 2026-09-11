@@ -21,6 +21,7 @@ let emptyBatch = (~checkpointId): Batch.t => {
   checkpointChainIds: [1->ChainId.fromInt],
   checkpointBlockNumbers: [checkpointId->BigInt.toInt],
   checkpointBlockHashes: [`0x${checkpointId->BigInt.toString}`->Null.make],
+  checkpointItemsCount: [0],
   checkpointEventsProcessed: [0],
   registeredAddresses: [],
 }
