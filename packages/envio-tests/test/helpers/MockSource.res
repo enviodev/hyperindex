@@ -197,6 +197,7 @@ type getItemsOrThrowCall = {
     ~latestFetchedBlockHash: string=?,
     ~knownHeight: int=?,
     ~prevRangeLastBlock: ReorgDetection.blockData=?,
+    ~requestStats: array<Source.requestStat>=?,
   ) => unit,
   reject: 'exn. 'exn => unit,
 }
@@ -237,6 +238,7 @@ type t = {
     ~latestFetchedBlockHash: string=?,
     ~knownHeight: int=?,
     ~prevRangeLastBlock: ReorgDetection.blockData=?,
+    ~requestStats: array<Source.requestStat>=?,
   ) => unit,
   // Empty-response every matching pending query. A statement about queries that
   // already exist, so unlike `resolveGetItemsOrThrow` it never waits for one.
@@ -435,6 +437,7 @@ let make = (
       ~latestFetchedBlockHash=?,
       ~knownHeight=?,
       ~prevRangeLastBlock=?,
+      ~requestStats=?,
     ) => {
       let respond = (call: getItemsOrThrowCall) =>
         call.resolve(
@@ -443,6 +446,7 @@ let make = (
           ~latestFetchedBlockHash?,
           ~knownHeight?,
           ~prevRangeLastBlock?,
+          ~requestStats?,
         )
       let matches = (call: getItemsOrThrowCall) =>
         switch filter {
@@ -586,6 +590,7 @@ let make = (
                 ~latestFetchedBlockHash=?,
                 ~knownHeight=knownHeight,
                 ~prevRangeLastBlock=?,
+                ~requestStats=[],
               ) => {
                 let latestFetchedBlockNumber =
                   latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
@@ -695,7 +700,7 @@ let make = (
                   stats: {
                     totalTimeElapsed: 0.,
                   },
-                  requestStats: [],
+                  requestStats,
                 })
               },
               reject: reject->Utils.magic,
