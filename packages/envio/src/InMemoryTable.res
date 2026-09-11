@@ -2,11 +2,19 @@ module Entity = {
   type relatedEntityId = string
   // The matcher is specialized from the filter once at index creation and
   // reused for every entity write against this index.
-  type filterWithRelatedIds = (EntityFilter.t, EntityFilter.matcher, Utils.Set.t<relatedEntityId>)
-  // Keyed by EntityFilter.toString
-  type filterIndexes = dict<filterWithRelatedIds>
+  type index = {
+    matcher: EntityFilter.matcher,
+    ids: Utils.Set.t<relatedEntityId>,
+  }
 
-  type entityFilters = Utils.Set.t<EntityFilter.t>
+  // Equality indexes on one field, found by the field's value rather than by
+  // running their matchers, so a write costs a lookup per indexed field
+  // instead of a pass over every registered index.
+  type eqBucket = {
+    keyOf: unknown => unknown,
+    byValue: Utils.Map.t<unknown, index>,
+  }
+
   type t = {
     latestEntityChangeById: dict<Change.t<Internal.entity>>,
     // Recorded changes (new latest ids + prevEntityChanges pushes), tracked
@@ -15,8 +23,14 @@ module Entity = {
     // Swapped out when a write starts so processing keeps appending while the
     // previous changes persist in the background.
     mutable prevEntityChanges: array<Change.t<Internal.entity>>,
-    mutable filtersByEntityId: dict<entityFilters>,
-    mutable filterIndexes: filterIndexes,
+    // Every index an entity currently belongs to, so a write can drop it from
+    // the ones it stopped matching without consulting the others.
+    mutable indexesByEntityId: dict<Utils.Set.t<index>>,
+    // Keyed by EntityFilter.toString, for lookups coming from the load manager.
+    mutable indexesByKey: dict<index>,
+    mutable eqBucketsByField: dict<eqBucket>,
+    // Ranges and composites, which no single field value can resolve.
+    mutable scanIndexes: array<index>,
   }
 
   // Helper to extract an entity's id as a dict key. The raw id may be a
@@ -32,21 +46,22 @@ module Entity = {
       )
     }
 
-  let getOrCreateEntityFilters = (self: t, ~entityId) =>
-    switch self.filtersByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
-    | Some(s) => s
-    | None =>
-      let s = Utils.Set.make()
-      self.filtersByEntityId->Dict.set(entityId, s)
-      s
+  let addToIndex = (self: t, ~index: index, ~entityId) => {
+    index.ids->Utils.Set.add(entityId)->ignore
+    switch self.indexesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
+    | Some(indexes) => indexes->Utils.Set.add(index)->ignore
+    | None => self.indexesByEntityId->Dict.set(entityId, Utils.Set.fromArray([index]))
     }
+  }
 
   let make = (): t => {
     latestEntityChangeById: Dict.make(),
     changesCount: 0.,
     prevEntityChanges: [],
-    filtersByEntityId: Dict.make(),
-    filterIndexes: Dict.make(),
+    indexesByEntityId: Dict.make(),
+    indexesByKey: Dict.make(),
+    eqBucketsByField: Dict.make(),
+    scanIndexes: [],
   }
 
   // Changes to persist for checkpoints in (committedCheckpointId, upToCheckpointId].
@@ -99,55 +114,52 @@ module Entity = {
     })
     keysToDelete->Array.forEach(key => self.latestEntityChangeById->Utils.Dict.deleteInPlace(key))
     self.changesCount = self.changesCount -. keysToDelete->Array.length->Int.toFloat
-    self.filtersByEntityId = Dict.make()
-    self.filterIndexes = Dict.make()
+    self.indexesByEntityId = Dict.make()
+    self.indexesByKey = Dict.make()
+    self.eqBucketsByField = Dict.make()
+    self.scanIndexes = []
   }
 
   let updateIndexes = (self: t, ~entity: Internal.entity) => {
     let entityId = entity->getEntityIdUnsafe
 
-    //Remove any invalid filters on entity, reusing each filter's stored matcher
-    switch self.filtersByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
+    switch self.indexesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | None => ()
-    | Some(entityFilters) =>
-      entityFilters->Utils.Set.forEach(filter => {
-        let stillMatches = switch self.filterIndexes->Utils.Dict.dangerouslyGetNonOption(
-          filter->EntityFilter.toString,
-        ) {
-        | Some((_filter, matcher, _relatedEntityIds)) => matcher(entity)
-        | None => false
+    | Some(indexes) =>
+      indexes->Utils.Set.forEach(index =>
+        if !index.matcher(entity) {
+          index.ids->Utils.Set.delete(entityId)->ignore
+          indexes->Utils.Set.delete(index)->ignore
         }
-        if !stillMatches {
-          entityFilters->Utils.Set.delete(filter)->ignore
-        }
-      })
+      )
     }
 
-    self.filterIndexes->Utils.Dict.forEach(((filter, matcher, relatedEntityIds)) => {
-      if matcher(entity) {
-        //Add entity id to the filter index and the filter to entity filters
-        relatedEntityIds->Utils.Set.add(entityId)->ignore
-        self->getOrCreateEntityFilters(~entityId)->Utils.Set.add(filter)->ignore
-      } else {
-        relatedEntityIds->Utils.Set.delete(entityId)->ignore
+    self.eqBucketsByField->Utils.Dict.forEachWithKey((bucket, fieldName) => {
+      let fieldValue = entity->EntityFilter.getField(fieldName)
+
+      // A nullish column matches no equality index, and the key projections
+      // would throw on it.
+      if !(fieldValue->EntityFilter.nullish) {
+        switch bucket.byValue->Utils.Map.get(bucket.keyOf(fieldValue)) {
+        | Some(index) => self->addToIndex(~index, ~entityId)
+        | None => ()
+        }
       }
     })
+
+    self.scanIndexes->Array.forEach(index =>
+      if index.matcher(entity) {
+        self->addToIndex(~index, ~entityId)
+      }
+    )
   }
 
   let deleteEntityFromIndexes = (self: t, ~entityId: string) =>
-    switch self.filtersByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
+    switch self.indexesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | None => ()
-    | Some(entityFilters) =>
-      entityFilters->Utils.Set.forEach(filter => {
-        switch self.filterIndexes->Utils.Dict.dangerouslyGetNonOption(
-          filter->EntityFilter.toString,
-        ) {
-        | Some((_filter, _matcher, relatedEntityIds)) =>
-          let _wasRemoved = relatedEntityIds->Utils.Set.delete(entityId)
-        | None => () //Unexpected filter index should exist if it is in entityFilters
-        }
-        let _wasRemoved = entityFilters->Utils.Set.delete(filter)
-      })
+    | Some(indexes) =>
+      indexes->Utils.Set.forEach(index => index.ids->Utils.Set.delete(entityId)->ignore)
+      self.indexesByEntityId->Utils.Dict.deleteInPlace(entityId)
     }
 
   let set = (inMemTable: t, ~committedCheckpointId, change: Change.t<Internal.entity>) => {
@@ -207,16 +219,16 @@ module Entity = {
 
   let hasIndex = (inMemTable: t) =>
     (filterKey: string) =>
-      inMemTable.filterIndexes->Utils.Dict.dangerouslyGetNonOption(filterKey) !== None
+      inMemTable.indexesByKey->Utils.Dict.dangerouslyGetNonOption(filterKey) !== None
 
   let getUnsafeOnIndex = (inMemTable: t) => {
     let getEntity = inMemTable->getUnsafe
     (filterKey: string) => {
-      switch inMemTable.filterIndexes->Utils.Dict.dangerouslyGetNonOption(filterKey) {
+      switch inMemTable.indexesByKey->Utils.Dict.dangerouslyGetNonOption(filterKey) {
       | None =>
         JsError.throwWithMessage(`Unexpected error. Must have an index for the filter ${filterKey}`)
-      | Some((_filter, _matcher, relatedEntityIds)) =>
-        relatedEntityIds
+      | Some({ids}) =>
+        ids
         ->Utils.Set.toArray
         ->Array.filterMap(entityId => {
           switch inMemTable.latestEntityChangeById->Dict.has(entityId) {
@@ -230,23 +242,39 @@ module Entity = {
 
   let addEmptyIndex = (inMemTable: t, ~filter: EntityFilter.t, ~table: Table.table) => {
     let filterKey = filter->EntityFilter.toString
-    switch inMemTable.filterIndexes->Utils.Dict.dangerouslyGetNonOption(filterKey) {
+    switch inMemTable.indexesByKey->Utils.Dict.dangerouslyGetNonOption(filterKey) {
     | Some(_) => () //Should not happen, this means the index already exists
     | None =>
-      let matcher = filter->EntityFilter.makeMatcher(~table)
-      let relatedEntityIds = Utils.Set.make()
+      let index = {matcher: filter->EntityFilter.makeMatcher(~table), ids: Utils.Set.make()}
+      inMemTable.indexesByKey->Dict.set(filterKey, index)
+
+      switch filter {
+      | Eq({fieldName, fieldValue}) =>
+        let bucket = switch inMemTable.eqBucketsByField->Utils.Dict.dangerouslyGetNonOption(
+          fieldName,
+        ) {
+        | Some(bucket) => bucket
+        | None =>
+          let bucket = {
+            keyOf: EntityFilter.makeValueKey(~table, ~fieldName),
+            byValue: Utils.Map.make(),
+          }
+          inMemTable.eqBucketsByField->Dict.set(fieldName, bucket)
+          bucket
+        }
+        bucket.byValue->Utils.Map.set(bucket.keyOf(fieldValue), index)->ignore
+      | Gt(_) | Lt(_) | In(_) | And(_) => inMemTable.scanIndexes->Array.push(index)->ignore
+      }
+
       inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
         switch change->mapChangeToEntity {
         | Some(entity) =>
-          if matcher(entity) {
-            let entityId = entity->getEntityIdUnsafe
-            let _ = inMemTable->getOrCreateEntityFilters(~entityId)->Utils.Set.add(filter)
-            let _ = relatedEntityIds->Utils.Set.add(entityId)
+          if index.matcher(entity) {
+            inMemTable->addToIndex(~index, ~entityId=entity->getEntityIdUnsafe)
           }
         | None => ()
         }
       })
-      inMemTable.filterIndexes->Dict.set(filterKey, (filter, matcher, relatedEntityIds))
     }
   }
 }

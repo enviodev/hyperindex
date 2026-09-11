@@ -386,6 +386,10 @@ type valueCompare = {
   eq: (unknown, unknown) => bool,
   gt: (unknown, unknown) => bool,
   lt: (unknown, unknown) => bool,
+  // Projects a value onto something a Map can key by. Primitives key by
+  // themselves; the object-shaped types have to collapse to a primitive or
+  // equal values would miss each other on identity.
+  key: unknown => unknown,
 }
 
 // `>`/`<` on `unknown` would compile to the polymorphic Caml_obj path; the raw
@@ -394,13 +398,15 @@ type valueCompare = {
 let nativeEq = (a: unknown, b: unknown) => a === b
 let nativeGt: (unknown, unknown) => bool = %raw(`(a, b) => a > b`)
 let nativeLt: (unknown, unknown) => bool = %raw(`(a, b) => a < b`)
-let native = {eq: nativeEq, gt: nativeGt, lt: nativeLt}
+let identityKey = (v: unknown) => v
+let native = {eq: nativeEq, gt: nativeGt, lt: nativeLt, key: identityKey}
 
 let asBigDecimal = (v: unknown) => v->(Utils.magic: unknown => BigDecimal.t)
 let bigDecimal = {
   eq: (a, b) => !(a->nullish) && BigDecimal.equals(a->asBigDecimal, b->asBigDecimal),
   gt: (a, b) => !(a->nullish) && BigDecimal.gt(a->asBigDecimal, b->asBigDecimal),
   lt: (a, b) => !(a->nullish) && BigDecimal.lt(a->asBigDecimal, b->asBigDecimal),
+  key: v => v->asBigDecimal->BigDecimal.toString->(Utils.magic: string => unknown),
 }
 
 let getTime = (v: unknown) => v->(Utils.magic: unknown => Date.t)->Date.getTime
@@ -408,6 +414,7 @@ let date = {
   eq: (a, b) => !(a->nullish) && getTime(a) === getTime(b),
   gt: (a, b) => !(a->nullish) && getTime(a) > getTime(b),
   lt: (a, b) => !(a->nullish) && getTime(a) < getTime(b),
+  key: v => v->getTime->(Utils.magic: float => unknown),
 }
 
 // Json has no meaningful ordering, so reuse the structural compare for every
@@ -416,6 +423,7 @@ let json = {
   eq: (a: unknown, b: unknown) => !(a->nullish) && a == b,
   gt: (a, b) => !(a->nullish) && a > b,
   lt: (a, b) => !(a->nullish) && a < b,
+  key: v => v->jsonStringify->(Utils.magic: string => unknown),
 }
 
 let asBytes = (v: unknown) => v->(Utils.magic: unknown => Uint8Array.t)
@@ -423,6 +431,7 @@ let bytes = {
   eq: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) === 0.,
   gt: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) > 0.,
   lt: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) < 0.,
+  key: v => v->asBytes->Utils.Bytes.toHex->(Utils.magic: string => unknown),
 }
 
 let scalarCompare = (fieldType: Table.fieldType): valueCompare =>
@@ -487,36 +496,54 @@ let arrayCompare = (element: valueCompare): valueCompare => {
           }
         go(0)
       }
-  {eq, gt: order(~gt=true), lt: order(~gt=false)}
+  {
+    eq,
+    gt: order(~gt=true),
+    lt: order(~gt=false),
+    key: v => v->serializeValue->(Utils.magic: string => unknown),
+  }
 }
 
-let rec makeMatcher = (filter: t, ~table: Table.table): matcher => {
-  let fieldCompare = fieldName =>
-    switch table->Table.getFieldByApiName(fieldName) {
-    | Some(Field({fieldType, isArray})) =>
-      let element = scalarCompare(fieldType)
-      isArray ? arrayCompare(element) : element
-    // Filters are validated against the table before reaching here, so a
-    // missing or derived field is unexpected; compare structurally instead of
-    // crashing.
-    | _ => json
-    }
+let fieldCompare = (~table: Table.table, fieldName) =>
+  switch table->Table.getFieldByApiName(fieldName) {
+  | Some(Field({fieldType, isArray})) =>
+    let element = scalarCompare(fieldType)
+    isArray ? arrayCompare(element) : element
+  // Filters are validated against the table before reaching here, so a
+  // missing or derived field is unexpected; compare structurally instead of
+  // crashing.
+  | _ => json
+  }
 
+// Projects a field's values onto Map keys, so an index can be found by value
+// instead of by a serialized filter.
+let makeValueKey = (~table: Table.table, ~fieldName) => (fieldName->fieldCompare(~table)).key
+
+let rec makeMatcher = (filter: t, ~table: Table.table): matcher =>
   switch filter {
   | Eq({fieldName, fieldValue}) =>
-    let eq = (fieldName->fieldCompare).eq
+    let eq = (fieldName->fieldCompare(~table)).eq
     entity => eq(entity->getField(fieldName), fieldValue)
   | Gt({fieldName, fieldValue}) =>
-    let gt = (fieldName->fieldCompare).gt
+    let gt = (fieldName->fieldCompare(~table)).gt
     entity => gt(entity->getField(fieldName), fieldValue)
   | Lt({fieldName, fieldValue}) =>
-    let lt = (fieldName->fieldCompare).lt
+    let lt = (fieldName->fieldCompare(~table)).lt
     entity => lt(entity->getField(fieldName), fieldValue)
   | In({fieldName, fieldValue}) =>
-    let eq = (fieldName->fieldCompare).eq
-    entity => {
-      let entityFieldValue = entity->getField(fieldName)
-      fieldValue->Array.some(value => eq(entityFieldValue, value))
+    let compare = fieldName->fieldCompare(~table)
+
+    // Equal values of a primitive field are equal Map keys, so membership is a
+    // lookup rather than a scan of every candidate.
+    if compare.eq === nativeEq {
+      let set = fieldValue->Utils.Set.fromArray
+      entity => set->Utils.Set.has(entity->getField(fieldName))
+    } else {
+      let eq = compare.eq
+      entity => {
+        let entityFieldValue = entity->getField(fieldName)
+        fieldValue->Array.some(value => eq(entityFieldValue, value))
+      }
     }
   | And({filters: []}) =>
     _ => JsError.throwWithMessage(`The "and" filter must contain at least one nested filter.`)
@@ -524,7 +551,6 @@ let rec makeMatcher = (filter: t, ~table: Table.table): matcher => {
     let matchers = filters->Array.map(filter => filter->makeMatcher(~table))
     entity => matchers->Array.every(matcher => matcher(entity))
   }
-}
 
 // In values are mapped as one array (isArray=true), so they can be
 // converted with the table's cached array schema in a single pass.
