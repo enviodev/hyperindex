@@ -48,6 +48,7 @@ describe("Resuming Postgres storage", () => {
     let outcome = try {
       let _ = await storage.resumeInitialState(
         ~entities,
+        ~chainIds=config.chainMap->ChainMap.keys,
         ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) => {
           handed
           ->Array.push((

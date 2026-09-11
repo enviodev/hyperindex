@@ -19,12 +19,6 @@ type t = {
   resumeInitialStateCalls: array<bool>,
   resolveLoadInitialState: Persistence.initialState => unit,
   loadOrThrowCalls: array<{"filter": EntityFilter.t, "tableName": string}>,
-  ensureQueryIndexesCalls: array<{"tableName": string, "filters": array<EntityFilter.t>}>,
-  finalizeBackfillCalls: array<{
-    "entityNames": array<string>,
-    "chainIds": array<ChainId.t>,
-    "readyAt": Date.t,
-  }>,
   dumpEffectCacheCalls: ref<int>,
   storage: Persistence.storage,
 }
@@ -51,8 +45,6 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
   let isInitializedResolveFns = []
   let initializeResolveFns = []
   let loadOrThrowCalls = []
-  let ensureQueryIndexesCalls = []
-  let finalizeBackfillCalls = []
   let dumpEffectCacheCalls = ref(0)
   let resumeInitialStateCalls = []
   let resumeInitialStateResolveFns = []
@@ -61,8 +53,6 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
     isInitializedCalls,
     initializeCalls,
     loadOrThrowCalls,
-    ensureQueryIndexesCalls,
-    finalizeBackfillCalls,
     dumpEffectCacheCalls,
     resumeInitialStateCalls,
     resolveLoadInitialState: (initialState: Persistence.initialState) => {
@@ -101,7 +91,11 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
           initializeResolveFns->Array.push(resolve)->ignore
         })
       }),
-      resumeInitialState: implement(#resumeInitialState, (~entities as _, ~throwIfIncompatible) => {
+      resumeInitialState: implement(#resumeInitialState, (
+        ~entities as _,
+        ~chainIds as _,
+        ~throwIfIncompatible,
+      ) => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
           resumeInitialStateResolveFns->Array.push(resolve)->ignore
@@ -139,26 +133,9 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
           Promise.resolve(rows->(Utils.magic: array<'entity> => array<unknown>))
         })
       },
-      ensureQueryIndexes: (~table: Table.table, ~filters) => {
-        ensureQueryIndexesCalls
-        ->Array.push({
-          "tableName": table.tableName,
-          "filters": filters,
-        })
-        ->ignore
-        Promise.resolve()
-      },
-      ensureSchemaIndexes: (~entities as _) => Promise.resolve(),
-      finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
-        finalizeBackfillCalls
-        ->Array.push({
-          "entityNames": entities->Array.map((e: Internal.entityConfig) => e.name),
-          "chainIds": chainIds,
-          "readyAt": readyAt,
-        })
-        ->ignore
-        Promise.resolve()
-      },
+      ensureQueryIndexes: (~entityConfig as _, ~scope as _, ~filters as _) => Promise.resolve(),
+      ensureSchemaIndexes: (~entities as _, ~chainIds as _) => Promise.resolve(),
+      finalizeBackfill: (~entities as _, ~chainIds as _, ~readyAt as _) => Promise.resolve(),
       reset: () => JsError.throwWithMessage("Not implemented"),
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
       pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
