@@ -435,16 +435,39 @@ describe("EntityFilter.toString", () => {
         }),
       ]->Array.map(EntityFilter.toString),
     ).toEqual([
-      "a:Eq:hello",
+      `a:Eq:"hello"`,
       "a:Eq:5",
       "a:Eq:10",
       "a:Eq:true",
-      "a:Eq:1.5",
+      `a:Eq:"1.5"`,
       "a:Gt:5",
       "a:Lt:5",
       "a:In:[1,2]",
-      "a:Eq:[x,y]",
+      `a:Eq:["x","y"]`,
       "And(a:Gt:1,b:Lt:2)",
+    ])
+  })
+
+  it("Keeps values apart that a toString-based key collapsed onto one", t => {
+    t.expect(
+      [
+        // Sub-second instants: Date.prototype.toString stops at seconds.
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(Date.fromTime(1000.))}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(Date.fromTime(1500.))}),
+        // Any object stringifies to "[object Object]".
+        EntityFilter.Eq({fieldName: "a", fieldValue: u({"x": 1})}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u({"x": 2})}),
+        // A separator inside a string could imitate the element separator.
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(["x,y"])}),
+        EntityFilter.Eq({fieldName: "a", fieldValue: u(["x", "y"])}),
+      ]->Array.map(EntityFilter.toString),
+    ).toEqual([
+      `a:Eq:"1970-01-01T00:00:01.000Z"`,
+      `a:Eq:"1970-01-01T00:00:01.500Z"`,
+      `a:Eq:{"x":1}`,
+      `a:Eq:{"x":2}`,
+      `a:Eq:["x,y"]`,
+      `a:Eq:["x","y"]`,
     ])
   })
 })

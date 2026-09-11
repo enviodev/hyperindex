@@ -1,16 +1,32 @@
-let serializeRaw: unknown => string = %raw(`function ser(v) {
-  if (v === undefined || v === null) return "undefined";
-  if (Array.isArray(v)) return "[" + v.map(ser).join(",") + "]";
-  if (typeof v === "object") return v.toString();
-  return String(v);
-}`)
+// JSON is what makes the rest of the value space unambiguous: it quotes and
+// escapes strings so a delimiter inside one can't imitate a separator, renders
+// a Date as an ISO instant down to the millisecond, and a BigDecimal through
+// its own toJSON. Serializing with toString instead collapsed distinct values
+// onto one key — every object to "[object Object]" and any two instants in the
+// same second to the same string — which silently shared one filter index.
+let jsonStringify: unknown => string = %raw(`v => JSON.stringify(v)`)
 
-// Built once per getWhere registration, never per entity, so a single generic
-// pass is fine — it only has to be unambiguous across distinct values.
-let serializeValue = (value: unknown) =>
-  switch value->Utils.Bytes.asUint8Array {
-  | Some(bytes) => bytes->Utils.Bytes.toHex
-  | None => value->serializeRaw
+let nullish: unknown => bool = %raw(`v => v === undefined || v === null`)
+
+// Built once per getWhere registration, never per entity.
+let rec serializeValue = (value: unknown): string =>
+  if value->nullish {
+    "undefined"
+  } else {
+    switch value->Utils.Bytes.asUint8Array {
+    | Some(bytes) => bytes->Utils.Bytes.toHex
+    | None =>
+      if value->Array.isArray {
+        `[${value
+          ->(Utils.magic: unknown => array<unknown>)
+          ->Array.map(serializeValue)
+          ->Array.join(",")}]`
+      } else if value->typeof === #bigint {
+        value->(Utils.magic: unknown => bigint)->BigInt.toString
+      } else {
+        value->jsonStringify
+      }
+    }
   }
 
 // The And case requires at least one nested filter (storage throws otherwise),
@@ -332,8 +348,6 @@ type valueCompare = {
   gt: (unknown, unknown) => bool,
   lt: (unknown, unknown) => bool,
 }
-
-let nullish: unknown => bool = %raw(`v => v === undefined || v === null`)
 
 // `>`/`<` on `unknown` would compile to the polymorphic Caml_obj path; the raw
 // operators give native JS comparison for primitive (string/number/bigint)
