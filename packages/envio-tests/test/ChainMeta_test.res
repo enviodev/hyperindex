@@ -3,8 +3,8 @@ open Vitest
 let metaFields = (
   ~buffer,
   ~firstEvent=?,
-  ~isHyperSync=false,
   ~readyAt=?,
+  ~isHyperSync=false,
 ): InternalTable.Chains.metaFields => {
   firstEventBlockNumber: firstEvent->Null.fromOption,
   latestFetchedBlockNumber: buffer,

@@ -645,23 +645,21 @@ let hasProcessedToEndblock = (cs: t) => {
 // head has run away from it while the indexer was down.
 let isDurablyCaughtUp = (cs: t) => {
   let {committedProgressBlockNumber, fetchState} = cs
-  switch fetchState.endBlock {
-  | Some(endBlock) if committedProgressBlockNumber >= endBlock => true
+  let atEndBlock =
+    fetchState.endBlock->Option.mapOr(false, endBlock => committedProgressBlockNumber >= endBlock)
   // Either one, like `isFetchingAtHead`: an `end_block` above the head is never
   // reached, and testing only for it would leave such a chain reading as behind
   // however long it sits at the head.
   //
   // The configured lag, not the fetch state's: pre-threshold that one also
   // carries maxReorgDepth, which would read a chain a whole reorg depth behind
-  // the head as caught up.
-  | _ =>
-    // Clamped at zero: a chain younger than its own lag would otherwise have a
-    // negative threshold, and the -1 a run that has processed nothing carries
-    // would clear it. Not `fetchCeiling`, whose lag also folds in maxReorgDepth.
+  // the head as caught up. Clamped at zero: the -1 a run that has processed
+  // nothing carries would otherwise clear a chain younger than its own lag.
+  let atHead =
     fetchState.knownHeight > 0 &&
       committedProgressBlockNumber >=
-        Pervasives.max(0, fetchState.knownHeight - cs.chainConfig.blockLag)
-  }
+      Pervasives.max(0, fetchState.knownHeight - cs.chainConfig.blockLag)
+  atEndBlock || atHead
 }
 
 let getHighestBlockBelowThreshold = (cs: t): int => {

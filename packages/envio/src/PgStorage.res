@@ -41,30 +41,32 @@ let partitionTableName = (~entityConfig: Internal.entityConfig, ~chainId: ChainI
   )
 }
 
-// A per-chain entity's rows are partitioned by chain, so its indexes are built
-// on the partitions rather than on the parent table. The planner uses a
-// partition's own index either way, so a query reads the same; what changes is
-// that building one chain's index neither waits for nor locks another chain's
-// rows, which is what lets `envio start --chain` processes finalize
-// independently. A cross-chain entity has no partitions and is indexed on the
-// table itself.
-let indexTableNames = (entityConfig: Internal.entityConfig, ~chainIds) =>
-  switch entityConfig.table->Table.getChainIdField {
-  | None => [entityConfig.table.tableName]
-  | Some(_) => chainIds->Array.map(chainId => partitionTableName(~entityConfig, ~chainId))
+// The physical tables an index on the entity is built on. A per-chain entity's
+// rows are partitioned by chain, and an index declared on the parent cascades
+// to every partition, which is what a run driving every chain wants: one
+// declaration, one build. An isolated run instead builds on its own chains'
+// partitions only: the planner uses a partition's own index either way, and
+// building one chain's index then neither waits for nor locks the rows of a
+// chain a sibling process drives.
+let indexTableNames = (entityConfig: Internal.entityConfig, ~partitionChainIds) =>
+  switch (entityConfig.table->Table.getChainIdField, partitionChainIds) {
+  | (Some(_), Some(chainIds)) =>
+    chainIds->Array.map(chainId => partitionTableName(~entityConfig, ~chainId))
+  | _ => [entityConfig.table.tableName]
   }
 
-// Every index the entity schema promises, for the given chains: an `@index`
-// field, a composite index, or the index backing a derived relationship.
-// Deferred past the initial DDL and created once a chain has finished backfill,
-// so a chain that reports itself ready always has all of them.
+// Every index the entity schema promises: an `@index` field, a composite index,
+// or the index backing a derived relationship. Deferred past the initial DDL
+// and created once backfill completes, so a chain that reports itself ready
+// always has all of them. With `partitionChainIds`, a per-chain entity's index
+// is one per partition of those chains rather than one on the parent.
 //
 // `entities` is the Postgres-backed set, and every `@derivedFrom` target within
 // it resolves: config parsing rejects a Postgres entity deriving from one that
 // isn't in Postgres (`validate_relationship_storage`).
 let getSchemaIndexes = (
   ~entities: array<Internal.entityConfig>,
-  ~chainIds: array<ChainId.t>,
+  ~partitionChainIds: option<array<ChainId.t>>=?,
 ): array<IndexDefinition.t> => {
   let derivedSchema = Schema.make(entities->Array.map(e => e.table))
   let all = []
@@ -97,9 +99,7 @@ let getSchemaIndexes = (
   )
 
   // An `@index` field and a derived relationship pointing at it describe the
-  // same index, so the list is deduped on identity rather than on name. Deduped
-  // before the fan-out below, where one definition can only ever become one per
-  // chain.
+  // same index, so the list is deduped on identity rather than on name.
   let seen = Utils.Set.make()
   let entityByTableName = Dict.make()
   entities->Array.forEach(entityConfig =>
@@ -120,7 +120,7 @@ let getSchemaIndexes = (
     entityByTableName
     ->Dict.get(definition.tableName)
     ->Option.getOrThrow
-    ->indexTableNames(~chainIds)
+    ->indexTableNames(~partitionChainIds)
     ->Array.map(tableName => {...definition, IndexDefinition.tableName})
   )
 }
@@ -349,7 +349,7 @@ let makeInitializeTransaction = (
       ),
     )
 
-  let schemaIndexes = getSchemaIndexes(~entities, ~chainIds)
+  let schemaIndexes = getSchemaIndexes(~entities)
 
   let query = ref(
     (
@@ -1699,6 +1699,10 @@ let make = (
   // encoded at initialize and when stored rows are grouped on resume.
   ~ecosystem: Ecosystem.name,
   ~sink: option<Sink.t>=?,
+  // An `envio start --chain` process: builds and looks for a per-chain entity's
+  // indexes on its own chains' partitions, never on the parent table, so no
+  // build reaches into the rows a sibling process drives.
+  ~isolated=false,
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
@@ -2089,13 +2093,19 @@ let make = (
       })
     }
 
-  // The physical table a query against `scope` reads. A per-chain entity's query
-  // carries the scope's chain id, so it is planned against that chain's
-  // partition and an index on the partition is what serves it.
+  let partitionChainIds = chainIds => isolated ? Some(chainIds) : None
+
+  // The physical table a query index for `scope` is built on. A per-chain
+  // entity's query carries the scope's chain id, so it is planned against that
+  // chain's partition, which an index on the parent covers by cascading.
   let queryTableName = (~entityConfig: Internal.entityConfig, ~scope: Internal.chainScope) =>
-    switch (scope, entityConfig.table->Table.getChainIdField) {
-    | (Chain(chainId), Some(_)) => partitionTableName(~entityConfig, ~chainId)
-    | _ => entityConfig.table.tableName
+    switch scope {
+    | Chain(chainId) =>
+      indexTableNames(
+        entityConfig,
+        ~partitionChainIds=partitionChainIds([chainId]),
+      )->Array.getUnsafe(0)
+    | CrossChain => entityConfig.table.tableName
     }
 
   let ensureQueryIndexes = async (
@@ -2157,7 +2167,7 @@ let make = (
   let ensureSchemaIndexes = async (~entities: array<Internal.entityConfig>, ~chainIds) => {
     let schemaIndexes = getSchemaIndexes(
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
-      ~chainIds,
+      ~partitionChainIds=?partitionChainIds(chainIds),
     )
 
     let _ = await schemaIndexes
@@ -2208,7 +2218,7 @@ let make = (
   ) => {
     let schemaIndexes = getSchemaIndexes(
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
-      ~chainIds,
+      ~partitionChainIds=?partitionChainIds(chainIds),
     )
 
     // Resolved up front so a name held by an unrelated index fails before any
@@ -2406,7 +2416,11 @@ let make = (
     }
   }
 
-  let resumeInitialState = async (~entities, ~throwIfIncompatible): Persistence.initialState => {
+  let resumeInitialState = async (
+    ~entities,
+    ~chainIds,
+    ~throwIfIncompatible,
+  ): Persistence.initialState => {
     let (
       cache,
       (chains, checkpointFrontier),
@@ -2418,6 +2432,10 @@ let make = (
         sql,
         ~pgSchema,
       )->Promise.thenResolve(rawInitialStates => {
+        let rawInitialStates =
+          rawInitialStates->Array.filter(rawInitialState =>
+            chainIds->Array.includes(rawInitialState.id)
+          )
         (
           rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
             id: rawInitialState.id,
@@ -2681,6 +2699,7 @@ let makeStorageFromEnv = (
     ~pgPassword=Env.Db.password,
     ~chainIdMode=config.chainIdMode,
     ~ecosystem=config.ecosystem.name,
+    ~isolated=config.isolated,
     ~sink=?{
       // Internally ClickHouse storage is implemented as a sync of the
       // Postgres storage. Required env vars are validated here only when

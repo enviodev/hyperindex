@@ -102,7 +102,7 @@ let run = async (
   // the flag that differs between them and reads the rest off this call.
   let rec make = async (~reset, ~chains=?) => {
     let config = switch chains {
-    | Some(chainIds) => config->Config.filterChains(~chainIds)
+    | Some(chainIds) => config->Config.isolate(~chainIds)
     | None => config
     }
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
@@ -145,6 +145,7 @@ let run = async (
       ~runCommand=Some("envio dev"),
       ~reset,
       ~lowercaseAddresses=config.lowercaseAddresses,
+      ~requireInitialized=config.isolated,
     )
 
     // Same order as `Main.start`: storage is initialized - which is where a

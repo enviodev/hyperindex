@@ -104,7 +104,6 @@ describe("@derivedFrom spellings", () => {
   alias: ${spelling} @derivedFrom(field: "parent")`,
           ),
         ).config.userEntities,
-        ~chainIds=[ChainId.fromInt(1)],
       )->Array.map(IndexDefinition.describe)
 
     t.expect(spellings->Array.map(indexes)).toEqual(

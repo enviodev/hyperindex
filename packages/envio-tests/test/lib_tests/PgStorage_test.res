@@ -462,7 +462,7 @@ FROM "public"."envio_chains";`
         let definition = IndexDefinition.single(~tableName="A", ~column="b_id")
 
         t.expect(
-          PgStorage.getSchemaIndexes(~entities, ~chainIds=[ChainId.fromInt(1)])->Array.map(
+          PgStorage.getSchemaIndexes(~entities)->Array.map(
             definition => (
               definition->IndexDefinition.name,
               definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
@@ -478,12 +478,10 @@ FROM "public"."envio_chains";`
       },
     )
 
-    // A per-chain entity's rows live in one partition per chain, so the single
-    // index the schema declares becomes one physical index per chain. The
-    // planner uses a partition's own index, so a query reads the same either
-    // way; what this buys is that one chain's build never touches another's rows.
+    // An isolated run builds a per-chain entity's index on its own chains'
+    // partitions; a run driving every chain declares it once, on the parent.
     Async.it(
-      "Fans a per-chain entity's index out over one partition per chain",
+      "Places a per-chain entity's index on the parent, or on the isolated chains' partitions",
       async t => {
         let perChain: Internal.entityConfig = {
           ...entityConfig("A"),
@@ -504,13 +502,15 @@ FROM "public"."envio_chains";`
           ),
         }
 
-        t.expect(
-          PgStorage.getSchemaIndexes(
-            ~entities=[perChain],
-            ~chainIds=[ChainId.fromInt(1), ChainId.fromInt(137)],
-          )->Array.map(definition => definition.IndexDefinition.tableName),
-          ~message="One index per partition, and none on the parent table",
-        ).toEqual(["PerChain$1", "PerChain$137"])
+        let tableNames = (~partitionChainIds=?) =>
+          PgStorage.getSchemaIndexes(~entities=[perChain], ~partitionChainIds?)->Array.map(
+            definition => definition.IndexDefinition.tableName,
+          )
+
+        t.expect((
+          tableNames(),
+          tableNames(~partitionChainIds=[ChainId.fromInt(1), ChainId.fromInt(137)]),
+        )).toEqual((["PerChain"], ["PerChain$1", "PerChain$137"]))
       },
     )
 
@@ -547,7 +547,7 @@ FROM "public"."envio_chains";`
         ]
 
         t.expect(
-          PgStorage.getSchemaIndexes(~entities, ~chainIds=[ChainId.fromInt(1)])->Array.map(
+          PgStorage.getSchemaIndexes(~entities)->Array.map(
             definition => (
               definition.IndexDefinition.tableName,
               definition.columns->Array.map(column => column.IndexDefinition.name),

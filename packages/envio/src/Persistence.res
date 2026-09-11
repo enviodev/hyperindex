@@ -125,8 +125,13 @@ type storage = {
   // `throwIfIncompatible` gets what the storage holds before any sink is
   // resumed, so a config the stored one rules out is reported as such rather
   // than as the sink tripping over tables it never created.
+  //
+  // `chainIds` is what this run drives. An isolated run resumes a subset of
+  // the stored chains, and the sink's resume trims past each resumed chain's
+  // checkpoint, so chains a sibling process is still writing must stay out.
   resumeInitialState: (
     ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
     ~throwIfIncompatible: (
       ~storedEnvioInfo: option<JSON.t>,
       ~storedContractMapping: ContractMapping.t,
@@ -255,28 +260,6 @@ let make = (
   }
 }
 
-// Keeps only what the chains this run drives own. Unconditional, because
-// "resume the chains I was given" holds in every mode — with the full set it is
-// a no-op, and a config that genuinely disagrees with the database was already
-// rejected by `throwIfResumeIncompatible`, which compares the stored chain list.
-//
-// The checkpoint frontier is left whole: under the per-chain sequence a subset
-// run requires, a chain only ever reads its own position out of it.
-%%private(
-  let narrowToChains = (initialState: initialState, ~chainConfigs: array<Config.chain>) => {
-    let isActive = Dict.make()
-    chainConfigs->Array.forEach(chain => isActive->ChainId.Dict.set(chain.id, true))
-    let has = chainId => isActive->ChainId.Dict.dangerouslyGetNonOption(chainId)->Option.isSome
-    {
-      ...initialState,
-      chains: initialState.chains->Array.filter(chain => has(chain.id)),
-      reorgCheckpoints: initialState.reorgCheckpoints->Array.filter(checkpoint =>
-        has(checkpoint.chainId)
-      ),
-    }
-  }
-)
-
 let init = {
   async (
     persistence,
@@ -287,9 +270,9 @@ let init = {
     ~runCommand,
     ~reset=false,
     ~lowercaseAddresses=false,
-    // `envio start --chain` needs the schema to exist already: initializing
-    // under it would create rows for this process's chains only, leaving the
-    // ones it skipped with no state for their own processes to resume.
+    // An isolated run needs the schema to exist already: initializing under it
+    // would create rows for this process's chains only, leaving the ones it
+    // skipped with no state for their own processes to resume.
     ~requireInitialized=false,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
   ) => {
@@ -343,6 +326,7 @@ let init = {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState(
             ~entities=persistence.allEntities,
+            ~chainIds=chainConfigs->Array.map(chain => chain.id),
             ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) =>
               Config.throwIfResumeIncompatible(
                 ~storedEnvioInfo,
@@ -353,7 +337,6 @@ let init = {
                 ~runCommand,
               ),
           )
-          let initialState = initialState->narrowToChains(~chainConfigs)
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

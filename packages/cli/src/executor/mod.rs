@@ -36,9 +36,6 @@ pub enum Command {
         cwd: String,
         env: serde_json::Map<String, serde_json::Value>,
         config: serde_json::Value,
-        /// Chains this process indexes, from `--chain`. Empty means every chain
-        /// in the config, which is what a run without the flag does.
-        chains: Vec<String>,
     },
     Migrate {
         reset: bool,
@@ -129,7 +126,7 @@ pub async fn execute(
                 start_args.restart,
                 false,
                 &[],
-                start_args.chains.iter().map(|id| id.to_string()).collect(),
+                &start_args.chains,
             )?))
         }
 
@@ -190,7 +187,10 @@ pub fn build_start_command(
     reset: bool,
     is_dev: bool,
     extra_env: &[(String, String)],
-    chains: Vec<String>,
+    // `--chain`: rides in the public config as `isolatedChains`, next to
+    // `isDev`, so the runtime reads the selection off the config it already
+    // parses. Empty means every chain, which is what a run without the flag does.
+    chains: &[u64],
 ) -> Result<Command> {
     let config_path = config
         .parsed_project_paths
@@ -203,6 +203,11 @@ pub fn build_start_command(
             .chain(extra_env.iter().map(|(k, v)| (k.clone(), v.clone().into())))
             .collect();
 
+    let mut public_config = public_config_value(config, is_dev)?;
+    if !chains.is_empty() {
+        public_config["isolatedChains"] = chains.iter().copied().collect();
+    }
+
     Ok(Command::Start {
         reset,
         cwd: config
@@ -211,8 +216,7 @@ pub fn build_start_command(
             .to_string_lossy()
             .into_owned(),
         env,
-        config: public_config_value(config, is_dev)?,
-        chains,
+        config: public_config,
     })
 }
 

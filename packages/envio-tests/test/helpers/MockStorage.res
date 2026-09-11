@@ -91,7 +91,11 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
           initializeResolveFns->Array.push(resolve)->ignore
         })
       }),
-      resumeInitialState: implement(#resumeInitialState, (~entities as _, ~throwIfIncompatible) => {
+      resumeInitialState: implement(#resumeInitialState, (
+        ~entities as _,
+        ~chainIds as _,
+        ~throwIfIncompatible,
+      ) => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
           resumeInitialStateResolveFns->Array.push(resolve)->ignore

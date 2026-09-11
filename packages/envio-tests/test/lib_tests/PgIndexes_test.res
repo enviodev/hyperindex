@@ -101,10 +101,11 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEnt
     let _ = await sql->Postgres.unsafe(fixtures->Array.getUnsafe(idx))
   }
   if fixtures->Utils.Array.notEmpty {
-    let _ = await storage.resumeInitialState(~entities, ~throwIfIncompatible=(
-      ~storedEnvioInfo as _,
-      ~storedContractMapping as _,
-    ) => ())
+    let _ = await storage.resumeInitialState(
+      ~entities,
+      ~chainIds=config.chainMap->ChainMap.keys,
+      ~throwIfIncompatible=(~storedEnvioInfo as _, ~storedContractMapping as _) => (),
+    )
   }
   storage
 }
@@ -222,6 +223,7 @@ describe("Indexes built against a real schema", () => {
     ->catchMessage
     let _ = await storage.resumeInitialState(
       ~entities,
+      ~chainIds=config.chainMap->ChainMap.keys,
       ~throwIfIncompatible=(~storedEnvioInfo as _, ~storedContractMapping as _) => (),
     )
 
@@ -266,8 +268,16 @@ describe("Indexes built against a real schema", () => {
     let storage = await setup(~pgSchema)
     let column = "optionalStringToTestLinkedEntities"
 
-    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters=[eq(~fieldName=column)])
-    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters=[eq(~fieldName=column)])
+    await storage.ensureQueryIndexes(
+      ~entityConfig=entityA,
+      ~scope=CrossChain,
+      ~filters=[eq(~fieldName=column)],
+    )
+    await storage.ensureQueryIndexes(
+      ~entityConfig=entityA,
+      ~scope=CrossChain,
+      ~filters=[eq(~fieldName=column)],
+    )
 
     t.expect(
       (await findIndexes(~pgSchema, ~tableName="A", ~columns=[column]))->Array.map(describeIndex),
@@ -449,7 +459,11 @@ describe("Indexes built against a real schema", () => {
     let pgSchema = testSchema("shared")
     let storage = await setup(~pgSchema)
 
-    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndexes(
+      ~entityConfig=entityA,
+      ~scope=CrossChain,
+      ~filters=[eq(~fieldName="b_id")],
+    )
     await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(

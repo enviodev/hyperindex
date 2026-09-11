@@ -10,14 +10,6 @@
 // A chain's rows live in a partition of its own, so this touches nothing another
 // `envio start --chain` process is indexing and never waits on one.
 
-%%private(
-  let ownChainIds = (state: IndexerState.t) =>
-    state
-    ->IndexerState.chainStates
-    ->Dict.valuesToArray
-    ->Array.map(cs => (cs->ChainState.chainConfig).id)
-)
-
 let runOnce = async (state: IndexerState.t) => {
   Logging.info(
     "All chains are caught up. Finalizing the indexer before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
@@ -34,7 +26,7 @@ let runOnce = async (state: IndexerState.t) => {
 
     await storage.finalizeBackfill(
       ~entities=persistence.allEntities,
-      ~chainIds=state->ownChainIds,
+      ~chainIds=state->IndexerState.crossChainState->CrossChainState.chainIds,
       ~readyAt,
     )
 
@@ -66,5 +58,8 @@ let run = (state: IndexerState.t) =>
 let repairSchemaIndexes = (state: IndexerState.t) => {
   let persistence = state->IndexerState.persistence
   let storage = persistence->Persistence.getInitializedStorageOrThrow
-  storage.ensureSchemaIndexes(~entities=persistence.allEntities, ~chainIds=state->ownChainIds)
+  storage.ensureSchemaIndexes(
+    ~entities=persistence.allEntities,
+    ~chainIds=state->IndexerState.crossChainState->CrossChainState.chainIds,
+  )
 }

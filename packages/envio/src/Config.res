@@ -136,6 +136,10 @@ type t = {
   reorgThresholdReadyTolerance: int,
   lowercaseAddresses: bool,
   isDev: bool,
+  // An `envio start --chain` process: drives a subset of the schema's chains
+  // while sibling processes drive the rest, so it only touches what its own
+  // chains own — their partitions' indexes, their `ready_at`, their resume.
+  isolated: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
@@ -590,6 +594,7 @@ let publicConfigSchema = S.schema(s =>
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
     "isDev": s.matches(S.option(S.bool)),
+    "isolatedChains": s.matches(S.option(S.array(ChainId.schema))),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
@@ -611,6 +616,44 @@ let contractMappingOf = (~chainConfigs: array<chain>): ContractMapping.t => {
     chain.contracts->Array.forEach(contract => names->Array.push(contract.name)->ignore)
   )
   ContractMapping.make(~names)
+}
+
+let getChain = (config, ~chainId) =>
+  config.chainMap->ChainMap.has(chainId)
+    ? chainId
+    : JsError.throwWithMessage(
+        "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
+      )
+
+// Narrows a config to the chains one `envio start --chain` process drives.
+// `contractMapping` is deliberately left whole: its ids are what the migration
+// that created the schema stored, and one rebuilt from a subset would hand the
+// same contract a different id.
+let isolate = (config: t, ~chainIds: array<ChainId.t>) => {
+  // Chains indexed in separate processes each advance their own checkpoint
+  // counter, which only holds while no entity has rows another chain can reach.
+  switch config.userEntities->Array.filter(entityConfig => entityConfig.crossChain) {
+  | [] => ()
+  | shared =>
+    JsError.throwWithMessage(
+      `Only a schema whose entities are all per-chain can be split across processes. Shared across chains: ${shared
+        ->Array.map(entityConfig => entityConfig.name)
+        ->Array.joinUnsafe(", ")}.`,
+    )
+  }
+  chainIds->Array.forEach(chainId => config->getChain(~chainId)->ignore)
+
+  // Filtered out of the config's own chain order rather than built from the
+  // argument order, so a repeated `--chain` collapses and `defaultChain` doesn't
+  // depend on how the flags were typed.
+  let chains =
+    config.chainMap->ChainMap.values->Array.filter(chain => chainIds->Array.includes(chain.id))
+  {
+    ...config,
+    chainMap: chains->Array.map(chain => (chain.id, chain))->ChainMap.fromArrayUnsafe,
+    defaultChain: chains->Array.get(0),
+    isolated: true,
+  }
 }
 
 let fromPublic = (publicConfigJson: JSON.t) => {
@@ -713,12 +756,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       }
       let widened =
         contractConfig->(
-          Utils.magic: _ => {
-            "svmAbi": option<{
-              "definedTypes": JSON.t,
-              "source": string,
-            }>,
-          }
+          Utils.magic: _ => {"svmAbi": option<{"definedTypes": JSON.t, "source": string}>}
         )
       contractDataByName->Dict.set(
         capitalizedName,
@@ -1067,7 +1105,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => []
   }
 
-  {
+  let config = {
     name: publicConfig["name"],
     description: publicConfig["description"],
     handlers: publicConfig["handlers"]->Option.getOr("src/handlers"),
@@ -1088,10 +1126,16 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
+    isolated: false,
     userEntitiesByName,
     userEntities,
     allEnums,
     checkpointSequence: CheckpointSequence.fromEntities(userEntities),
+  }
+
+  switch publicConfig["isolatedChains"] {
+  | None => config
+  | Some(chainIds) => config->isolate(~chainIds)
   }
 }
 
@@ -1166,83 +1210,11 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<Cha
   })
 }
 
-let getChain = (config, ~chainId) =>
-  config.chainMap->ChainMap.has(chainId)
-    ? chainId
-    : JsError.throwWithMessage(
-        "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
-      )
-
-// Narrows a config to the chains one `envio start --chain` process drives.
-// `contractMapping` is deliberately left whole: its ids are what the migration
-// that created the schema stored, and one rebuilt from a subset would hand the
-// same contract a different id.
-//
-// Whether a selection is allowed at all — every entity per-chain, every id
-// configured — is decided by the CLI before the runtime is handed the command
-// (`validate_chain_selection`), which is where the message a user reads lives.
-// What is left here is the same pair of rules as invariants, for the paths that
-// reach this directly: the test API, and `IndexerRunner`.
-let filterChains = (config: t, ~chainIds: array<ChainId.t>) => {
-  // Chains indexed in separate processes each advance their own checkpoint
-  // counter, which only holds while no entity has rows another chain can reach.
-  switch config.userEntities->Array.filter(entityConfig => entityConfig.crossChain) {
-  | [] => ()
-  | shared =>
-    JsError.throwWithMessage(
-      `Only a schema whose entities are all per-chain can be split across processes. Shared across chains: ${shared
-        ->Array.map(entityConfig => entityConfig.name)
-        ->Array.joinUnsafe(", ")}.`,
-    )
-  }
-
-  let selected = Dict.make()
-  chainIds->Array.forEach(chainId =>
-    if config.chainMap->ChainMap.has(chainId) {
-      selected->ChainId.Dict.set(chainId, true)
-    } else {
-      JsError.throwWithMessage(
-        `Chain ${chainId->ChainId.toString} is not in config.yaml, so there is nothing for this process to index.`,
-      )
-    }
-  )
-
-  // Filtered out of the config's own chain order rather than built from the
-  // argument order, so a repeated `--chain` collapses and `defaultChain` doesn't
-  // depend on how the flags were typed.
-  let chains =
-    config.chainMap
-    ->ChainMap.values
-    ->Array.filter(chain => selected->ChainId.Dict.dangerouslyGetNonOption(chain.id)->Option.isSome)
-
-  {
-    ...config,
-    chainMap: chains->Array.map(chain => (chain.id, chain))->ChainMap.fromArrayUnsafe,
-    defaultChain: chains->Array.get(0),
-  }
-}
-
 // A CLI command payload already contains the resolved JSON; priming lets
 // downstream callers skip the NAPI `getConfigJson` round-trip. Calling
 // `prime` again invalidates the memo.
 %%private(let primedJson: ref<option<JSON.t>> = ref(None))
 %%private(let cached: ref<option<t>> = ref(None))
-
-// Applied inside `load` rather than by the caller, because the memoized config
-// is what the exported `generated` indexer reads for `indexer.chains` — patching
-// the record afterwards would leave that advertising chains this process never
-// drives. Empty means every chain, which is what a run without `--chain` does.
-%%private(let activeChains: ref<array<ChainId.t>> = ref([]))
-let setActiveChains = (chainIds: array<ChainId.t>) => {
-  activeChains := chainIds
-  cached := None
-}
-
-// Whether `--chain` was given at all, which is a different question from whether
-// it happened to name fewer chains than the config declares: naming every one of
-// them is still a `--chain` run, and still needs the database the migration
-// built.
-let hasChainFilter = () => activeChains.contents->Array.length > 0
 
 let prime = (json: JSON.t): unit => {
   primedJson := Some(json)
@@ -1284,6 +1256,7 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
   switch cloned {
   | Object(obj) => {
       obj->Utils.Dict.deleteInPlace("isDev")
+      obj->Utils.Dict.deleteInPlace("isolatedChains")
       stripChains(obj->Dict.get("evm"))
       stripChains(obj->Dict.get("fuel"))
       stripChains(obj->Dict.get("svm"))
@@ -1482,10 +1455,6 @@ let load = () =>
   | Some(c) => c
   | None => {
       let c = getPublicConfigJson()->fromPublic
-      let c = switch activeChains.contents {
-      | [] => c
-      | chainIds => c->filterChains(~chainIds)
-      }
       cached := Some(c)
       c
     }

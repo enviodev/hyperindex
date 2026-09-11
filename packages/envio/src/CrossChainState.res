@@ -45,6 +45,7 @@ let getChainState = (crossChainState: t, chainId) =>
 
 let chainStates = (crossChainState: t) => crossChainState.chainStates
 let isRealtime = (crossChainState: t) => crossChainState.isRealtime
+let chainIds = (crossChainState: t) => crossChainState.chainIds
 let isCaughtUp = (crossChainState: t) => crossChainState.isCaughtUp
 // Chains enter the threshold together. It is the run-wide reading; what a
 // write keeps is decided per chain.
@@ -393,7 +394,7 @@ let checkAndFetch = async (
     switch actionByChain->ChainId.Dict.dangerouslyGetNonOption(chainId) {
     | Some(NothingToQuery)
     | None => ()
-    | Some(action) => promises->Array.push(dispatchChain(~chainId=chainId, ~action))
+    | Some(action) => promises->Array.push(dispatchChain(~chainId, ~action))
     }
   }
   let _ = await promises->Promise.all

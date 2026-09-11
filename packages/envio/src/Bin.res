@@ -15,8 +15,6 @@ type startCmd = {
   cwd: string,
   env: dict<JSON.t>,
   config: JSON.t,
-  // From `--chain`. Empty means every chain in the config.
-  chains: array<string>,
 }
 type migrateCmd = {reset: bool, config: JSON.t}
 type dropSchemaCmd = {config: JSON.t}
@@ -59,9 +57,8 @@ let run = async args => {
     | None => ()
     | Some(json) =>
       switch decodeCommand(json->JSON.parseOrThrow) {
-      | Start({reset, cwd, env, config, chains}) =>
+      | Start({reset, cwd, env, config}) =>
         Config.prime(config)
-        Config.setActiveChains(chains->Array.map(ChainId.normalizeOrThrow))
         processChdir(cwd)
         applyEnv(env)
         await Main.start(~reset)
