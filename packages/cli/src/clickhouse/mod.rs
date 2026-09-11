@@ -432,11 +432,11 @@ impl ClickHouseSink {
     /// kept throws rather than writing into memory Rust is about to read.
     #[napi]
     pub fn commit_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
-        columnar::js::detach_all(buffers)?;
         let mut staged = self.staged.lock().unwrap();
         let staged = staged
             .get_mut(&handle)
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
+        columnar::js::detach_all(&staged.arena, buffers)?;
         let names: Vec<String> = staged
             .schema
             .columns
@@ -451,8 +451,15 @@ impl ClickHouseSink {
     /// from outliving the bytes it points at on the error path.
     #[napi]
     pub fn abort_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
-        columnar::js::detach_all(buffers)?;
-        self.staged.lock().unwrap().remove(&handle);
+        let mut staged = self.staged.lock().unwrap();
+        let Some(entry) = staged.get(&handle) else {
+            return Ok(());
+        };
+        // A buffer that could not be detached is a view still pointing into the
+        // arena, so the arena is kept rather than freed under it. Leaking one
+        // batch beats freeing memory something can still write to.
+        columnar::js::detach_all(&entry.arena, buffers)?;
+        staged.remove(&handle);
         Ok(())
     }
 

@@ -25,12 +25,13 @@
 //!
 //! An arena is in exactly one phase at a time, and nothing may straddle them:
 //!
-//! * *Filling*, from [`js::expose`] until [`js::commit`]. JavaScript writes
+//! * *Filling*, from [`js::expose`] until [`js::detach_all`]. JavaScript writes
 //!   through the lent views. Rust must not read the bytes, and must not
-//!   reallocate anything except through [`Arena::grow`], which detaches the
-//!   buffer it supersedes before the `Vec` moves.
-//! * *Sealed*, from [`js::commit`] on. Every buffer is detached and the values
-//!   have been checked against the row count, so Rust may read them.
+//!   reallocate anything except through [`js::grow`], which detaches the buffer
+//!   it supersedes before the `Vec` moves.
+//! * *Sealed*, from [`Arena::seal`] on, which runs once [`js::detach_all`] has
+//!   confirmed no view is left. The values have been checked against the row
+//!   count, so Rust may read them.
 //!
 //! Filling must not span an `await`: a stage that yielded to the event loop
 //! would let another stage's commit interleave with this one's writes.
@@ -157,7 +158,10 @@ impl Column {
     /// encoder — the slicing in [`Column::bytes_at`] trusts these invariants.
     fn seal(&self, name: &str, rows: usize) -> Result<()> {
         if self.nulls.len() != rows {
-            bail!("column `{name}` has {} null flags, not {rows}", self.nulls.len());
+            bail!(
+                "column `{name}` has {} null flags, not {rows}",
+                self.nulls.len()
+            );
         }
         match &self.storage {
             Storage::Fixed(words) => {
@@ -172,7 +176,10 @@ impl Column {
                 let mut previous = 0u32;
                 for (row, &end) in ends.iter().enumerate() {
                     if end < previous {
-                        bail!("column `{name}` row {row} ends at {end}, before row {} at {previous}", row - 1);
+                        bail!(
+                            "column `{name}` row {row} ends at {end}, before row {} at {previous}",
+                            row - 1
+                        );
                     }
                     previous = end;
                 }
@@ -185,6 +192,18 @@ impl Column {
             }
         }
         Ok(())
+    }
+
+    /// Where each of this column's buffers currently lives. Pointers only: the
+    /// detach check compares them against what JavaScript hands back.
+    fn buffer_ptrs(&self) -> Vec<*const u8> {
+        let nulls = self.nulls.as_ptr();
+        match &self.storage {
+            Storage::Fixed(words) => vec![words.as_ptr().cast(), nulls],
+            Storage::Variable { data, ends } => {
+                vec![data.as_ptr(), ends.as_ptr().cast(), nulls]
+            }
+        }
     }
 
     fn buffers(&mut self) -> Vec<(*mut u8, usize)> {
@@ -231,6 +250,28 @@ impl Arena {
 
     pub fn is_sealed(&self) -> bool {
         self.sealed
+    }
+
+    /// Every buffer the arena currently has lent out. A commit that does not
+    /// detach all of these has left JavaScript able to write into memory Rust
+    /// is about to read.
+    fn buffer_ptrs(&self) -> Vec<*const u8> {
+        self.columns.iter().flat_map(Column::buffer_ptrs).collect()
+    }
+
+    /// The payload `grow` would replace, so a caller can check that the buffer
+    /// it is about to detach is the one that describes it.
+    fn payload_ptr(&self, column: usize) -> Result<*const u8> {
+        let column = self
+            .columns
+            .get(column)
+            .with_context(|| format!("no column {column} to grow"))?;
+        match &column.storage {
+            Storage::Variable { data, .. } => Ok(data.as_ptr()),
+            Storage::Fixed(_) => {
+                bail!("a fixed-width column is sized from the row count and never grows")
+            }
+        }
     }
 
     /// Doubles a variable-width column's payload until it holds `needed` bytes.
@@ -324,7 +365,8 @@ mod tests {
 
     #[test]
     fn fixed_columns_round_trip_their_bits() {
-        let mut arena = Arena::new(2, &[ColumnKind::F64, ColumnKind::U64, ColumnKind::I64]).unwrap();
+        let mut arena =
+            Arena::new(2, &[ColumnKind::F64, ColumnKind::U64, ColumnKind::I64]).unwrap();
         arena.set_f64(0, 0, 1.5);
         arena.set_f64(0, 1, -0.25);
         arena.set_u64(1, 0, u64::MAX);
@@ -364,7 +406,15 @@ mod tests {
                 columns[1].bytes_at(1),
                 columns[1].bytes_at(2),
             ),
-            ("first", true, "", "ünïcode", &[][..], &[0xde, 0xad][..], &[0xbe][..])
+            (
+                "first",
+                true,
+                "",
+                "ünïcode",
+                &[][..],
+                &[0xde, 0xad][..],
+                &[0xbe][..]
+            )
         );
     }
 

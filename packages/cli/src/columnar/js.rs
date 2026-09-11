@@ -42,8 +42,9 @@ pub fn expose<'env>(env: &'env Env, arena: &mut Arena) -> napi::Result<Vec<Array
 }
 
 /// Replaces one variable-width column's payload with a larger one holding the
-/// same bytes. `stale` describes the allocation that is about to move, and is
-/// detached before it does.
+/// same bytes. `stale` has to be the buffer that describes the allocation about
+/// to move — it is checked rather than trusted, because detaching some other
+/// buffer would leave a live view over memory `grow` is about to free.
 pub fn grow<'env>(
     env: &'env Env,
     arena: &mut Arena,
@@ -51,22 +52,47 @@ pub fn grow<'env>(
     needed: u32,
     stale: ArrayBuffer,
 ) -> napi::Result<ArrayBuffer<'env>> {
+    let payload = arena.payload_ptr(column as usize).map_err(to_napi)?;
+    if !std::ptr::eq(stale.as_ptr(), payload) {
+        return Err(napi::Error::from_reason(format!(
+            "The buffer handed to grow is not column {column}'s payload."
+        )));
+    }
     stale.detach()?;
     let (data, len) = arena
         .grow(column as usize, needed as usize)
-        .map_err(|err| napi::Error::from_reason(format!("{err:#}")))?;
+        .map_err(to_napi)?;
     lend(env, data, len)
 }
 
-/// Ends the filling phase. Once this returns, no JavaScript view describes
-/// arena memory and Rust may read it.
-pub fn detach_all(buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+/// Ends the filling phase: detaches every buffer JavaScript hands back, then
+/// checks that this covered all of the arena's. A buffer the caller forgot
+/// would be a live view over memory Rust is about to read and then free, so it
+/// fails the batch instead — the arena stays lent out, and the handle is
+/// unusable, rather than being read or freed under a writer.
+pub fn detach_all(arena: &Arena, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+    let mut detached = Vec::with_capacity(buffers.len());
     for buffer in buffers {
-        // A buffer superseded by `grow` is already detached, and detaching it
-        // again is not an error worth failing a batch over.
-        if !buffer.is_detached()? {
-            buffer.detach()?;
+        // A payload superseded by `grow` is already detached, and has no
+        // pointer left to match against the arena's.
+        if buffer.is_detached()? {
+            continue;
         }
+        detached.push(buffer.as_ptr());
+        buffer.detach()?;
+    }
+    if let Some(missed) = arena
+        .buffer_ptrs()
+        .into_iter()
+        .position(|buffer| !detached.contains(&buffer))
+    {
+        return Err(napi::Error::from_reason(format!(
+            "Buffer {missed} of the staged batch was not handed back to be detached."
+        )));
     }
     Ok(())
+}
+
+fn to_napi(err: anyhow::Error) -> napi::Error {
+    napi::Error::from_reason(format!("{err:#}"))
 }

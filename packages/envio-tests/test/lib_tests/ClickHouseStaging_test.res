@@ -255,3 +255,57 @@ describe("ClickHouse staging", () => {
     t.expect((failed, mock.aborted, mock.committed)).toEqual((true, true, None))
   })
 })
+
+// The arena is Rust memory, and the buffers JavaScript writes through are the
+// only things keeping a stale view from reaching it. Both entry points check
+// what they are handed rather than trusting it, because the alternative is a
+// read of memory something can still write and no test that could see it.
+describe("Staged buffer checks", () => {
+  let staged = () => {
+    let sink = ClickHouse.makeSink(
+      ~host="http://127.0.0.1:1",
+      ~username="default",
+      ~password="",
+      ~database="unused",
+      ~chainIdMode=Int32,
+    )
+    let registered = sink->ClickHouseSink.registerCheckpointsTable(ClickHouse.checkpointColumnSpecs)
+    let begun = sink->ClickHouseSink.beginStage(~table=registered.handle, ~rows=4)
+    (sink, registered, begun)
+  }
+
+  let messageOf = body =>
+    try {
+      body()
+      "returned without complaint"
+    } catch {
+    | exn => (exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"]
+    }
+
+  it("refuses a commit that leaves a buffer attached", t => {
+    let (sink, _, begun) = staged()
+    t.expect(
+      messageOf(() => sink->ClickHouseSink.commitStage(~handle=begun.handle, ~buffers=[])),
+    ).toBe("Buffer 0 of the staged batch was not handed back to be detached.")
+  })
+
+  it("refuses to grow against a buffer that is not the column's payload", t => {
+    let (sink, registered, begun) = staged()
+    let column =
+      registered.kinds
+      ->Array.findIndexOpt(kind => kind->Staging.kindOfOrdinal === Text)
+      ->Option.getOrThrow
+    t.expect(
+      messageOf(() =>
+        sink
+        ->ClickHouseSink.growStage(
+          ~handle=begun.handle,
+          ~column,
+          ~needed=4096,
+          ~stale=ArrayBuffer.make(8),
+        )
+        ->ignore
+      ),
+    ).toBe(`The buffer handed to grow is not column ${column->Int.toString}'s payload.`)
+  })
+})
