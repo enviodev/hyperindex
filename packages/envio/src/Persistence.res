@@ -125,8 +125,13 @@ type storage = {
   // `throwIfIncompatible` gets what the storage holds before any sink is
   // resumed, so a config the stored one rules out is reported as such rather
   // than as the sink tripping over tables it never created.
+  //
+  // `chainIds` is what this run drives. An isolated run resumes a subset of
+  // the stored chains, and the sink's resume trims past each resumed chain's
+  // checkpoint, so chains a sibling process is still writing must stay out.
   resumeInitialState: (
     ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
     ~throwIfIncompatible: (
       ~storedEnvioInfo: option<JSON.t>,
       ~storedContractMapping: ContractMapping.t,
@@ -153,17 +158,24 @@ type storage = {
   // Creates whatever indexes the filters need and aren't there yet, resolving
   // once they're queryable. Best-effort: it resolves even when a build fails,
   // leaving the query to run unindexed rather than failing the handler.
-  ensureQueryIndexes: (~table: Table.table, ~filters: array<EntityFilter.t>) => promise<unit>,
-  // Creates every schema-defined index still missing, without touching
-  // `ready_at`. For a resumed indexer that is already ready and so never runs
-  // `finalizeBackfill`: an index dropped or invalidated while it was down would
-  // otherwise never be rebuilt. Best-effort, and safe to run with indexing live.
-  ensureSchemaIndexes: (~entities: array<Internal.entityConfig>) => promise<unit>,
-  // Creates every schema-defined index still missing, then stamps `ready_at` on
-  // the given chains. Called once, when backfill completes. The indexes are
-  // committed one at a time so a failure part way through doesn't undo the ones
-  // already built; `ready_at` is only written once they all verify, and all
-  // chains are stamped together.
+  ensureQueryIndexes: (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~filters: array<EntityFilter.t>,
+  ) => promise<unit>,
+  // Creates every index the schema promises for the given chains, without
+  // touching `ready_at`. For a resumed indexer that is already ready and so
+  // never runs `finalizeBackfill`: an index dropped or invalidated while it was
+  // down would otherwise never be rebuilt. Best-effort, and safe to run with
+  // indexing live.
+  ensureSchemaIndexes: (
+    ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
+  ) => promise<unit>,
+  // Creates every index the schema promises for the given chains, then stamps
+  // `ready_at` on them. Called once those chains finish backfill. The indexes
+  // are committed one at a time so a failure part way through doesn't undo the
+  // ones already built; `ready_at` is only written once they all verify.
   finalizeBackfill: (
     ~entities: array<Internal.entityConfig>,
     ~chainIds: array<ChainId.t>,
@@ -277,6 +289,10 @@ let init = {
     ~runCommand,
     ~reset=false,
     ~lowercaseAddresses=false,
+    // An isolated run needs the schema to exist already: initializing under it
+    // would create rows for this process's chains only, leaving the ones it
+    // skipped with no state for their own processes to resume.
+    ~requireInitialized=false,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
     ~addedChainsPolicy=Reject,
   ) => {
@@ -296,6 +312,11 @@ let init = {
         })
         persistence.storageStatus = Initializing(promise)
         if reset || !(await persistence.storage.isInitialized()) {
+          if requireInitialized {
+            JsError.throwWithMessage(
+              "`envio start --chain` needs a database that already holds every chain. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+            )
+          }
           Logging.info(`Initializing the indexer storage...`)
           // Only runs once per schema (this branch is the "first deploy or
           // reset" gate), which is exactly when a `latest` start block must be
@@ -339,6 +360,7 @@ let init = {
           let chainsToAdd = ref([])
           let initialState = await persistence.storage.resumeInitialState(
             ~entities=persistence.allEntities,
+            ~chainIds=chainConfigs->Array.map(chain => chain.id),
             ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) =>
               switch (addedChainsPolicy, storedEnvioInfo) {
               | (Add, Some(stored)) =>
@@ -371,9 +393,12 @@ let init = {
             // Read back rather than splicing the new rows into the state above:
             // the migration is what makes storage and config agree, so the state
             // the caller sees should be the one the database now holds — and a
-            // sink learns about the new chains through the same resume.
+            // sink learns about the new chains through the same resume. The
+            // newly added chains are in this list: they are chains the run now
+            // drives, and nothing else is writing them.
             await persistence.storage.resumeInitialState(
               ~entities=persistence.allEntities,
+              ~chainIds=chainConfigs->Array.map(chain => chain.id),
               ~throwIfIncompatible,
             )
           }

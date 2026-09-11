@@ -59,6 +59,7 @@ describe("Resuming Postgres storage", () => {
     let outcome = try {
       let _ = await storage.resumeInitialState(
         ~entities,
+        ~chainIds=config.chainMap->ChainMap.keys,
         ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) => {
           handed
           ->Array.push((
@@ -101,8 +102,13 @@ describe("Resuming Postgres storage", () => {
     )
 
     let storedInfo = ref(None)
+    // The chain the migration is about to add is in this list already: the
+    // storage filters its stored rows by it, so naming a chain it does not hold
+    // yet simply matches nothing.
+    let runChainIds = after.config.chainMap->ChainMap.keys
     let _ = await storage.resumeInitialState(
       ~entities=entitiesOf(after.config),
+      ~chainIds=runChainIds,
       ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping as _) =>
         storedInfo := storedEnvioInfo,
     )
@@ -124,6 +130,7 @@ describe("Resuming Postgres storage", () => {
     // what says the migration brought the schema up to the config.
     let resumed = await storage.resumeInitialState(
       ~entities=entitiesOf(after.config),
+      ~chainIds=runChainIds,
       ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) =>
         Config.throwIfResumeIncompatible(
           ~storedEnvioInfo,

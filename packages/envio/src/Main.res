@@ -663,6 +663,7 @@ let start = async (
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
     ~lowercaseAddresses=config.lowercaseAddresses,
+    ~requireInitialized=config.isolated,
   )
 
   // Loads user handler files, which register handler/contractRegister/where

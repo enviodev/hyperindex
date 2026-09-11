@@ -1,10 +1,14 @@
-// The FinalizingIndexes phase. Reached from the processing loop when every
-// chain has caught up: processing is already paused (the loop awaits this),
-// pending writes are flushed, then storage builds every missing schema-defined
-// index and, once they all verify, commits `ready_at`. A failure part-way
-// leaves the indexes built so far in place and reaches the processing loop's
-// error boundary; the retry only owes what's left. Either way the indexer never
-// reports ready with an index the schema promised still missing.
+// The FinalizingIndexes phase. Reached from the processing loop when the chains
+// this process drives have caught up: processing is already paused (the loop
+// awaits this), pending writes are flushed, then storage builds every index the
+// schema promises for those chains and, once they all verify, commits their
+// `ready_at`. A failure part-way leaves the indexes built so far in place and
+// reaches the processing loop's error boundary; the retry only owes what's left.
+// Either way a chain never reports ready with an index the schema promised for
+// it still missing.
+//
+// A chain's rows live in a partition of its own, so this touches nothing another
+// `envio start --chain` process is indexing and never waits on one.
 
 let runOnce = async (state: IndexerState.t) => {
   Logging.info(
@@ -22,10 +26,7 @@ let runOnce = async (state: IndexerState.t) => {
 
     await storage.finalizeBackfill(
       ~entities=persistence.allEntities,
-      ~chainIds=state
-      ->IndexerState.chainStates
-      ->Dict.valuesToArray
-      ->Array.map(cs => (cs->ChainState.chainConfig).id),
+      ~chainIds=state->IndexerState.crossChainState->CrossChainState.chainIds,
       ~readyAt,
     )
 
@@ -57,5 +58,8 @@ let run = (state: IndexerState.t) =>
 let repairSchemaIndexes = (state: IndexerState.t) => {
   let persistence = state->IndexerState.persistence
   let storage = persistence->Persistence.getInitializedStorageOrThrow
-  storage.ensureSchemaIndexes(~entities=persistence.allEntities)
+  storage.ensureSchemaIndexes(
+    ~entities=persistence.allEntities,
+    ~chainIds=state->IndexerState.crossChainState->CrossChainState.chainIds,
+  )
 }
