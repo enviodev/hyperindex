@@ -221,8 +221,7 @@ module Entity = {
     (filterKey: string) =>
       inMemTable.indexesByKey->Utils.Dict.dangerouslyGetNonOption(filterKey) !== None
 
-  let getUnsafeOnIndex = (inMemTable: t) => {
-    let getEntity = inMemTable->getUnsafe
+  let getUnsafeOnIndex = (inMemTable: t) =>
     (filterKey: string) => {
       switch inMemTable.indexesByKey->Utils.Dict.dangerouslyGetNonOption(filterKey) {
       | None =>
@@ -230,15 +229,14 @@ module Entity = {
       | Some({ids}) =>
         ids
         ->Utils.Set.toArray
-        ->Array.filterMap(entityId => {
-          switch inMemTable.latestEntityChangeById->Dict.has(entityId) {
-          | true => getEntity(entityId)
-          | false => None
+        ->Array.filterMap(entityId =>
+          switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
+          | Some(change) => change->mapChangeToEntity
+          | None => None
           }
-        })
+        )
       }
     }
-  }
 
   let addEmptyIndex = (inMemTable: t, ~filter: EntityFilter.t, ~table: Table.table) => {
     let filterKey = filter->EntityFilter.toString

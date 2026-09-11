@@ -264,7 +264,7 @@ module Dict = {
 }
 
 module Math = {
-  let minOptInt = (a, b) =>
+  let minOptInt = (a: option<int>, b: option<int>) =>
     switch (a, b) {
     | (Some(a), Some(b)) => Some(a < b ? a : b)
     | (Some(a), None) => Some(a)
