@@ -365,9 +365,6 @@ module Array = {
   /**
 Helper to check if a value exists in an array
 */
-  let includes = (arr: array<'a>, val: 'a) =>
-    arr->Array.find(item => item == val)->Stdlib.Option.isSome
-
   let isEmpty = (arr: array<_>) =>
     switch arr {
     | [] => true
