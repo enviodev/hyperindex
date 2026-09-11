@@ -358,13 +358,13 @@ let loadByFilter = (
   ~shouldGroup,
   ~item,
   ~ecosystem,
-  ~filter: EntityFilter.t,
+  ~filter: EntityFilter.Raw.t,
 ) => {
   let key =
-    filter->EntityFilter.toOperationKey(~entityName=entityConfig.name) ++ scope->scopeKeySuffix
+    filter->EntityFilter.Raw.toOperationKey(~entityName=entityConfig.name) ++ scope->scopeKeySuffix
   let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
 
-  let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
+  let load = async (rawFilters: array<EntityFilter.Raw.t>, ~onError) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
 
     let timerRef =
@@ -372,8 +372,26 @@ let loadByFilter = (
 
     let size = ref(0)
 
-    filters->Array.forEach(filter =>
-      inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter, ~table=entityConfig.table)
+    // Only a query needs the operator variants, and reaching one costs a round
+    // trip, so the filter is expanded here rather than on every getWhere. This
+    // is also what validates it — calls sharing an operation key differ only in
+    // the values, so a rejected one has to fail alone rather than take the
+    // batch with it.
+    let filters = []
+    rawFilters->Array.forEach(rawFilter =>
+      switch try Ok(
+        rawFilter->EntityFilter.parseGetWhereOrThrow(
+          ~entityName=entityConfig.name,
+          ~table=entityConfig.table,
+        ),
+      ) catch {
+      | exn => Error(exn)
+      } {
+      | Ok(expanded) =>
+        inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter=rawFilter, ~table=entityConfig.table)
+        expanded->Array.forEach(filter => filters->Array.push(filter)->ignore)
+      | Error(exn) => onError(~inputKey=rawFilter->EntityFilter.Raw.toString, ~exn)
+      }
     )
 
     // Any non-derived field can be filtered on, so the columns this query reads
@@ -442,7 +460,7 @@ let loadByFilter = (
     ~load,
     ~input=filter,
     ~shouldGroup,
-    ~hasher=EntityFilter.toString,
+    ~hasher=EntityFilter.Raw.toString,
     ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
     ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
   )

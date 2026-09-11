@@ -3,22 +3,17 @@ open Vitest
 external toUnknown: 'a => unknown = "%identity"
 external asEntity: dict<unknown> => Internal.entity = "%identity"
 
-describe("EntityFilter.toOperationKey", () => {
+describe("EntityFilter.Raw.toOperationKey", () => {
   it("Replaces filter values with $N placeholders", t => {
     let v = 0->(Utils.magic: int => unknown)
     t.expect(
       [
-        EntityFilter.Eq({fieldName: "a", fieldValue: v}),
-        EntityFilter.Gt({fieldName: "a", fieldValue: v}),
-        EntityFilter.Lt({fieldName: "a", fieldValue: v}),
-        EntityFilter.In({fieldName: "a", fieldValue: [v]}),
-        EntityFilter.And({
-          filters: [
-            EntityFilter.Gt({fieldName: "a", fieldValue: v}),
-            EntityFilter.Lt({fieldName: "b", fieldValue: v}),
-          ],
-        }),
-      ]->Array.map(filter => filter->EntityFilter.toOperationKey(~entityName="User")),
+        dict{"a": dict{"_eq": v}},
+        dict{"a": dict{"_gt": v}},
+        dict{"a": dict{"_lt": v}},
+        dict{"a": dict{"_in": v}},
+        dict{"a": dict{"_gt": v}, "b": dict{"_lt": v}},
+      ]->Array.map(filter => filter->EntityFilter.Raw.toOperationKey(~entityName="User")),
     ).toEqual([
       "User.getWhere({a: $1})",
       "User.getWhere({a: {_gt: $1}})",
@@ -248,7 +243,7 @@ describe("EntityFilter.merge", () => {
           EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
           EntityFilter.And({filters: [EntityFilter.Eq({fieldName: "a", fieldValue: v(2)})]}),
         ]->EntityFilter.merge,
-      "Unexpected filter And(a:Eq:2) in a merged batch. Filters batched into a single query must use the same operator and field.",
+      "Unexpected and filter in a merged batch. Filters batched into a single query must use the same operator and field.",
     )
   })
 })
@@ -425,36 +420,34 @@ describe("EntityFilter.makeMatcher", () => {
   })
 })
 
-describe("EntityFilter.toString", () => {
+describe("EntityFilter.Raw.toString", () => {
   let u = value => value->toUnknown
 
   it("Serializes each value type into a stable, unambiguous cache key", t => {
     t.expect(
       [
-        EntityFilter.Eq({fieldName: "a", fieldValue: u("hello")}),
-        EntityFilter.Eq({fieldName: "a", fieldValue: u(5)}),
-        EntityFilter.Eq({fieldName: "a", fieldValue: u(BigInt.fromInt(10))}),
-        EntityFilter.Eq({fieldName: "a", fieldValue: u(true)}),
-        EntityFilter.Eq({fieldName: "a", fieldValue: u(BigDecimal.fromFloat(1.5))}),
-        EntityFilter.Gt({fieldName: "a", fieldValue: u(5)}),
-        EntityFilter.Lt({fieldName: "a", fieldValue: u(5)}),
-        EntityFilter.In({fieldName: "a", fieldValue: [u(1), u(2)]}),
-        EntityFilter.Eq({fieldName: "a", fieldValue: u(["x", "y"])}),
-        EntityFilter.And({
-          filters: [Gt({fieldName: "a", fieldValue: u(1)}), Lt({fieldName: "b", fieldValue: u(2)})],
-        }),
-      ]->Array.map(EntityFilter.toString),
+        dict{"a": dict{"_eq": u("hello")}},
+        dict{"a": dict{"_eq": u(5)}},
+        dict{"a": dict{"_eq": u(BigInt.fromInt(10))}},
+        dict{"a": dict{"_eq": u(true)}},
+        dict{"a": dict{"_eq": u(BigDecimal.fromFloat(1.5))}},
+        dict{"a": dict{"_gt": u(5)}},
+        dict{"a": dict{"_lt": u(5)}},
+        dict{"a": dict{"_in": u([1, 2])}},
+        dict{"a": dict{"_eq": u(["x", "y"])}},
+        dict{"a": dict{"_gt": u(1)}, "b": dict{"_lt": u(2)}},
+      ]->Array.map(EntityFilter.Raw.toString),
     ).toEqual([
-      `a:Eq:"hello"`,
-      "a:Eq:5",
-      "a:Eq:10",
-      "a:Eq:true",
-      `a:Eq:"1.5"`,
-      "a:Gt:5",
-      "a:Lt:5",
-      "a:In:[1,2]",
-      `a:Eq:["x","y"]`,
-      "And(a:Gt:1,b:Lt:2)",
+      `a_eq"hello"`,
+      "a_eq5",
+      "a_eq10",
+      "a_eqtrue",
+      `a_eq"1.5"`,
+      "a_gt5",
+      "a_lt5",
+      "a_in[1,2]",
+      `a_eq["x","y"]`,
+      "a_gt1b_lt2",
     ])
   })
 
@@ -462,22 +455,22 @@ describe("EntityFilter.toString", () => {
     t.expect(
       [
         // Sub-second instants: Date.prototype.toString stops at seconds.
-        EntityFilter.Eq({fieldName: "a", fieldValue: u(Date.fromTime(1000.))}),
-        EntityFilter.Eq({fieldName: "a", fieldValue: u(Date.fromTime(1500.))}),
+        dict{"a": dict{"_eq": u(Date.fromTime(1000.))}},
+        dict{"a": dict{"_eq": u(Date.fromTime(1500.))}},
         // Any object stringifies to "[object Object]".
-        EntityFilter.Eq({fieldName: "a", fieldValue: u({"x": 1})}),
-        EntityFilter.Eq({fieldName: "a", fieldValue: u({"x": 2})}),
+        dict{"a": dict{"_eq": u({"x": 1})}},
+        dict{"a": dict{"_eq": u({"x": 2})}},
         // A separator inside a string could imitate the element separator.
-        EntityFilter.Eq({fieldName: "a", fieldValue: u(["x,y"])}),
-        EntityFilter.Eq({fieldName: "a", fieldValue: u(["x", "y"])}),
-      ]->Array.map(EntityFilter.toString),
+        dict{"a": dict{"_eq": u(["x,y"])}},
+        dict{"a": dict{"_eq": u(["x", "y"])}},
+      ]->Array.map(EntityFilter.Raw.toString),
     ).toEqual([
-      `a:Eq:"1970-01-01T00:00:01.000Z"`,
-      `a:Eq:"1970-01-01T00:00:01.500Z"`,
-      `a:Eq:{"x":1}`,
-      `a:Eq:{"x":2}`,
-      `a:Eq:["x,y"]`,
-      `a:Eq:["x","y"]`,
+      `a_eq"1970-01-01T00:00:01.000Z"`,
+      `a_eq"1970-01-01T00:00:01.500Z"`,
+      `a_eq{"x":1}`,
+      `a_eq{"x":2}`,
+      `a_eq["x,y"]`,
+      `a_eq["x","y"]`,
     ])
   })
 })

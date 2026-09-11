@@ -39,18 +39,6 @@ type rec t =
   | @as("in") In({fieldName: string, fieldValue: array<unknown>})
   | @as("and") And({filters: array<t>})
 
-// Used as a stable in-memory cache key, so it must be unambiguous
-// for any two different filters.
-let rec toString = (filter: t) =>
-  switch filter {
-  | Eq({fieldName, fieldValue}) => `${fieldName}:Eq:${fieldValue->serializeValue}`
-  | Gt({fieldName, fieldValue}) => `${fieldName}:Gt:${fieldValue->serializeValue}`
-  | Lt({fieldName, fieldValue}) => `${fieldName}:Lt:${fieldValue->serializeValue}`
-  | In({fieldName, fieldValue}) =>
-    `${fieldName}:In:[${fieldValue->Array.map(serializeValue)->Array.join(",")}]`
-  | And({filters}) => `And(${filters->Array.map(toString)->Array.join(",")})`
-  }
-
 let rec valuesCount = (filter: t) =>
   switch filter {
   | Eq(_) | Gt(_) | Lt(_) => 1
@@ -256,47 +244,6 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
   )
 }
 
-let rec printOperationFilter = (filter: t, ~paramsCount: ref<int>) =>
-  switch filter {
-  | Eq({fieldName}) => {
-      paramsCount := paramsCount.contents + 1
-      `${fieldName}: $${paramsCount.contents->Int.toString}`
-    }
-  | Gt({fieldName}) => {
-      paramsCount := paramsCount.contents + 1
-      `${fieldName}: {_gt: $${paramsCount.contents->Int.toString}}`
-    }
-  | Lt({fieldName}) => {
-      paramsCount := paramsCount.contents + 1
-      `${fieldName}: {_lt: $${paramsCount.contents->Int.toString}}`
-    }
-  | In({fieldName}) => {
-      paramsCount := paramsCount.contents + 1
-      `${fieldName}: {_in: $${paramsCount.contents->Int.toString}}`
-    }
-  | And({filters}) => {
-      let acc = ref("")
-      for idx in 0 to filters->Array.length - 1 {
-        let part = filters->Array.getUnsafe(idx)->printOperationFilter(~paramsCount)
-        acc := (acc.contents === "" ? part : `${acc.contents}, ${part}`)
-      }
-      acc.contents
-    }
-  }
-
-// Filters that may be batched into a single storage query must produce
-// the same key, so concrete values are replaced with $N placeholders.
-// The flat cases duplicate printOperationFilter to keep this hot path
-// allocation-free.
-let toOperationKey = (filter: t, ~entityName) =>
-  switch filter {
-  | Eq({fieldName}) => `${entityName}.getWhere({${fieldName}: $1})`
-  | Gt({fieldName}) => `${entityName}.getWhere({${fieldName}: {_gt: $1}})`
-  | Lt({fieldName}) => `${entityName}.getWhere({${fieldName}: {_lt: $1}})`
-  | In({fieldName}) => `${entityName}.getWhere({${fieldName}: {_in: $1}})`
-  | And(_) => `${entityName}.getWhere({${filter->printOperationFilter(~paramsCount=ref(0))}})`
-  }
-
 // Values bound to the operation key's $N placeholders, in placeholder
 // order. A top-level In is reported flat, since a merged query holds one
 // value per batched call there, while an In nested in And binds its whole
@@ -330,10 +277,18 @@ let getParams = (filter: t) =>
 // Expects a homogeneous batch — filters with the same operation key.
 // A mismatched filter throws: dropping it would leave its already
 // registered index without the matching db rows, silently losing data.
-let throwUnmergeable = (filter: t) =>
+let throwUnmergeable = (filter: t) => {
+  let operator = switch filter {
+  | Eq(_) => "_eq"
+  | Gt(_) => "_gt"
+  | Lt(_) => "_lt"
+  | In(_) => "_in"
+  | And(_) => "and"
+  }
   JsError.throwWithMessage(
-    `Unexpected filter ${filter->toString} in a merged batch. Filters batched into a single query must use the same operator and field.`,
+    `Unexpected ${operator} filter in a merged batch. Filters batched into a single query must use the same operator and field.`,
   )
+}
 
 let merge = (filters: array<t>) =>
   switch filters {
@@ -551,6 +506,100 @@ let rec makeMatcher = (filter: t, ~table: Table.table): matcher =>
     let matchers = filters->Array.map(filter => filter->makeMatcher(~table))
     entity => matchers->Array.every(matcher => matcher(entity))
   }
+
+// The filter as the handler wrote it. Serving a getWhere whose index is
+// already in memory costs nothing but this module: expanding it into the
+// operator variants above is only worth it once a query has to be built, where
+// a database round trip dwarfs the work.
+module Raw = {
+  type t = dict<dict<unknown>>
+
+  let toString = (filter: t) => {
+    let key = ref("")
+    filter->Utils.Dict.forEachWithKey((operators, fieldName) =>
+      operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
+        key := key.contents ++ fieldName ++ operator ++ fieldValue->serializeValue
+      )
+    )
+    key.contents
+  }
+
+  // Values are replaced by placeholders so calls that differ only in what they
+  // filter for batch together.
+  let toOperationKey = (filter: t, ~entityName) => {
+    let params = ref(0)
+    let printed = ref("")
+    filter->Utils.Dict.forEachWithKey((operators, fieldName) =>
+      operators->Utils.Dict.forEachWithKey((_, operator) => {
+        params := params.contents + 1
+        let placeholder = `$${params.contents->Int.toString}`
+        let part =
+          operator === "_eq"
+            ? `${fieldName}: ${placeholder}`
+            : `${fieldName}: {${operator}: ${placeholder}}`
+        printed := (printed.contents === "" ? part : printed.contents ++ ", " ++ part)
+      })
+    )
+    `${entityName}.getWhere({${printed.contents}})`
+  }
+
+  // An equality index can be found by the value of one field, which is what
+  // lets a write resolve it without running its matcher.
+  let asSingleEq = (filter: t) =>
+    switch filter->Dict.keysToArray {
+    | [fieldName] =>
+      let operators = filter->Dict.getUnsafe(fieldName)
+      switch operators->Dict.keysToArray {
+      | ["_eq"] => Some((fieldName, operators->Dict.getUnsafe("_eq")))
+      | _ => None
+      }
+    | _ => None
+    }
+
+  let makeMatcher = (filter: t, ~table: Table.table): matcher => {
+    let checks = []
+    filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
+      let compare = fieldName->fieldCompare(~table)
+      operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
+        let check = switch operator {
+        | "_eq" => entity => compare.eq(entity->getField(fieldName), fieldValue)
+        | "_gt" => entity => compare.gt(entity->getField(fieldName), fieldValue)
+        | "_lt" => entity => compare.lt(entity->getField(fieldName), fieldValue)
+        | "_gte" =>
+          entity => {
+            let entityFieldValue = entity->getField(fieldName)
+            compare.eq(entityFieldValue, fieldValue) || compare.gt(entityFieldValue, fieldValue)
+          }
+        | "_lte" =>
+          entity => {
+            let entityFieldValue = entity->getField(fieldName)
+            compare.eq(entityFieldValue, fieldValue) || compare.lt(entityFieldValue, fieldValue)
+          }
+        | "_in" =>
+          let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
+          if compare.eq === nativeEq {
+            let set = fieldValues->Utils.Set.fromArray
+            entity => set->Utils.Set.has(entity->getField(fieldName))
+          } else {
+            entity => {
+              let entityFieldValue = entity->getField(fieldName)
+              fieldValues->Array.some(candidate => compare.eq(entityFieldValue, candidate))
+            }
+          }
+        | _ =>
+          JsError.throwWithMessage(
+            `Invalid operator "${operator}" in a getWhere filter. Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
+          )
+        }
+        checks->Array.push(check)->ignore
+      })
+    })
+    switch checks {
+    | [check] => check
+    | _ => entity => checks->Array.every(check => check(entity))
+    }
+  }
+}
 
 // In values are mapped as one array (isArray=true), so they can be
 // converted with the table's cached array schema in a single pass.

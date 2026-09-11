@@ -238,16 +238,16 @@ module Entity = {
       }
     }
 
-  let addEmptyIndex = (inMemTable: t, ~filter: EntityFilter.t, ~table: Table.table) => {
-    let filterKey = filter->EntityFilter.toString
+  let addEmptyIndex = (inMemTable: t, ~filter: EntityFilter.Raw.t, ~table: Table.table) => {
+    let filterKey = filter->EntityFilter.Raw.toString
     switch inMemTable.indexesByKey->Utils.Dict.dangerouslyGetNonOption(filterKey) {
     | Some(_) => () //Should not happen, this means the index already exists
     | None =>
-      let index = {matcher: filter->EntityFilter.makeMatcher(~table), ids: Utils.Set.make()}
+      let index = {matcher: filter->EntityFilter.Raw.makeMatcher(~table), ids: Utils.Set.make()}
       inMemTable.indexesByKey->Dict.set(filterKey, index)
 
-      switch filter {
-      | Eq({fieldName, fieldValue}) =>
+      switch filter->EntityFilter.Raw.asSingleEq {
+      | Some((fieldName, fieldValue)) =>
         let bucket = switch inMemTable.eqBucketsByField->Utils.Dict.dangerouslyGetNonOption(
           fieldName,
         ) {
@@ -261,7 +261,7 @@ module Entity = {
           bucket
         }
         bucket.byValue->Utils.Map.set(bucket.keyOf(fieldValue), index)->ignore
-      | Gt(_) | Lt(_) | In(_) | And(_) => inMemTable.scanIndexes->Array.push(index)->ignore
+      | None => inMemTable.scanIndexes->Array.push(index)->ignore
       }
 
       inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
