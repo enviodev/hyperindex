@@ -1704,7 +1704,6 @@ let make = (
   // build reaches into the rows a sibling process drives.
   ~isolated=false,
   ~onInitialize=?,
-  ~onNewTables=?,
 ): Persistence.storage => {
   // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
   let containerName = "envio-postgres"
@@ -1863,19 +1862,6 @@ let make = (
     }
 
     let cacheTableInfo = await queryCacheTableInfo()
-
-    if withUpload && cacheTableInfo->Utils.Array.notEmpty {
-      // Integration with other tools like Hasura
-      switch onNewTables {
-      | Some(onNewTables) =>
-        await onNewTables(
-          ~tableNames=cacheTableInfo->Array.map(info => {
-            info.tableName
-          }),
-        )
-      | None => ()
-      }
-    }
 
     let cache = Dict.make()
     cacheTableInfo->Array.forEach(({tableName, count}) => {
@@ -2335,11 +2321,6 @@ let make = (
       let _ = await sql->Postgres.unsafe(
         makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
       )
-      // Integration with other tools like Hasura
-      switch onNewTables {
-      | Some(onNewTables) => await onNewTables(~tableNames=[table.tableName])
-      | None => ()
-      }
     }
 
     await setOrThrow(~items, ~table, ~itemSchema)
@@ -2757,34 +2738,6 @@ let makeStorageFromEnv = (
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
               Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
-            })
-          },
-        )
-      } else {
-        None
-      }
-    },
-    ~onNewTables=?{
-      if isHasuraEnabled {
-        Some(
-          (~tableNames) => {
-            Hasura.trackTables(
-              ~endpoint=Env.Hasura.graphqlEndpoint,
-              ~auth={
-                role: Env.Hasura.role,
-                secret: Env.Hasura.secret,
-              },
-              ~pgSchema,
-              ~tableConfigs=tableNames->Array.map(tableName => {
-                Hasura.tableName,
-                description: None,
-                columnConfigs: dict{},
-              }),
-            )->Promise.catch(err => {
-              Logging.errorWithExn(
-                err->Utils.prettifyExn,
-                `Error tracking new tables`,
-              )->Promise.resolve
             })
           },
         )
