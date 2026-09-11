@@ -138,6 +138,7 @@ describe("ChainState reorg threshold", () => {
       checkpointChainIds: [],
       checkpointBlockNumbers: [],
       checkpointBlockHashes: [],
+      checkpointItemsCount: [],
       checkpointEventsProcessed: [],
       registeredAddresses: [],
     }
