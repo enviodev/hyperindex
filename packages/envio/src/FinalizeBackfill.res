@@ -99,8 +99,8 @@
       let message = {
         "msg": announce
           ? `Reached the head, but waiting for these chains to finish syncing before serving queries: ${chains}.`
-          : `Still waiting for these chains to finish syncing: ${chains}. ${(waitMillis /.
-              60_000.)->Float.toFixed(~digits=0)} minutes so far.`,
+          : `Waiting ${(waitMillis /. 60_000.)
+                ->Float.toFixed(~digits=0)} minutes for these chains to finish syncing: ${chains}. A large backfill can take days — otherwise check that an instance is running for every chain listed.`,
         "waitingFor": pending,
         "waitedSeconds": waitMillis /. 1000.,
       }
