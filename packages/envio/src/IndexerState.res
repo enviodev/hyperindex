@@ -780,6 +780,7 @@ let drainBatchRun = (state: t): Batch.t => {
   let checkpointChainIds = []
   let checkpointBlockNumbers = []
   let checkpointBlockHashes = []
+  let checkpointItemsCount = []
   let checkpointEventsProcessed = []
   let registeredAddresses = []
   all->Array.forEach(batch => {
@@ -794,6 +795,7 @@ let drainBatchRun = (state: t): Batch.t => {
       checkpointChainIds->Array.pushMany(batch.checkpointChainIds)
       checkpointBlockNumbers->Array.pushMany(batch.checkpointBlockNumbers)
       checkpointBlockHashes->Array.pushMany(batch.checkpointBlockHashes)
+      checkpointItemsCount->Array.pushMany(batch.checkpointItemsCount)
       checkpointEventsProcessed->Array.pushMany(batch.checkpointEventsProcessed)
       registeredAddresses->Array.pushMany(batch.registeredAddresses)
     } else {
@@ -811,6 +813,7 @@ let drainBatchRun = (state: t): Batch.t => {
     checkpointChainIds,
     checkpointBlockNumbers,
     checkpointBlockHashes,
+    checkpointItemsCount,
     checkpointEventsProcessed,
     registeredAddresses,
   }

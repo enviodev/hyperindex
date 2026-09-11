@@ -979,6 +979,20 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   }
 }
 
+// Whether two adjacent buffer items came from one log routed to two
+// registrations: everything `compareBufferItem` orders on except the
+// registration index is equal. Only meaningful on neighbours of a sorted
+// buffer, where such items sit next to each other.
+let isSameLog = (a: Internal.item, b: Internal.item): bool =>
+  a->Internal.getItemKind === 0 &&
+  b->Internal.getItemKind === 0 &&
+  a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
+  a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
+  switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
+  | (Value(pa), Value(pb)) => comparePath(pa, pb) === 0
+  | _ => true
+  }
+
 // Merge a maybe-unsorted `newItems` run into the already-sorted, already-deduped
 // `buffer`, dropping items equal on every component of `compareBufferItem`.
 // Single linear pass over both runs after ordering `newItems` in place; every
