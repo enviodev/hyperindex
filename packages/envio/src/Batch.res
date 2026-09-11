@@ -42,8 +42,6 @@ type t = {
   checkpointChainIds: array<ChainId.t>,
   checkpointBlockNumbers: array<int>,
   checkpointBlockHashes: array<Null.t<string>>,
-  // Items the checkpoint carries, which is what indexes `items`.
-  checkpointItemsCount: array<int>,
   // Logs the checkpoint carries: one log routed to several registrations is one
   // event, however many items it made.
   checkpointEventsProcessed: array<int>,
@@ -165,7 +163,6 @@ let addReorgCheckpoints = (
   ~mutCheckpointChainIds,
   ~mutCheckpointBlockNumbers,
   ~mutCheckpointBlockHashes,
-  ~mutCheckpointItemsCount,
   ~mutCheckpointEventsProcessed,
 ) => {
   if shouldRollbackOnReorg {
@@ -187,7 +184,6 @@ let addReorgCheckpoints = (
       mutCheckpointChainIds->Array.push(chainId)
       mutCheckpointBlockNumbers->Array.push(blockNumber)
       mutCheckpointBlockHashes->Array.push(Null.Value(hash))
-      mutCheckpointItemsCount->Array.push(0)
       mutCheckpointEventsProcessed->Array.push(0)
 
       idx := idx.contents + 1
@@ -225,7 +221,6 @@ let make = (
   let checkpointChainIds = []
   let checkpointBlockNumbers = []
   let checkpointBlockHashes = []
-  let checkpointItemsCount = []
   let checkpointEventsProcessed = []
 
   // Accumulate items for all actively indexing chains
@@ -252,8 +247,7 @@ let make = (
         // The buffer is sorted, so a log's items are consecutive: the first of
         // them is the only one that counts as an event.
         let isNewEvent =
-          idx === 0 ||
-            !(fetchState.buffer->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
+          idx === 0 || !(fetchState.buffer->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
         if isNewEvent {
           chainEventsProcessed := chainEventsProcessed.contents + 1
         }
@@ -271,7 +265,6 @@ let make = (
             ~mutCheckpointChainIds=checkpointChainIds,
             ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
             ~mutCheckpointBlockHashes=checkpointBlockHashes,
-            ~mutCheckpointItemsCount=checkpointItemsCount,
             ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
           )
 
@@ -290,20 +283,14 @@ let make = (
             },
           )
           ->ignore
-          checkpointItemsCount->Array.push(1)->ignore
           checkpointEventsProcessed->Array.push(1)->ignore
 
           prevBlockNumber := blockNumber
-        } else {
-          let lastIndex = checkpointItemsCount->Array.length - 1
-          checkpointItemsCount
-          ->Array.setUnsafe(lastIndex, checkpointItemsCount->Array.getUnsafe(lastIndex) + 1)
+        } else if isNewEvent {
+          let lastIndex = checkpointEventsProcessed->Array.length - 1
+          checkpointEventsProcessed
+          ->Array.setUnsafe(lastIndex, checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1)
           ->ignore
-          if isNewEvent {
-            checkpointEventsProcessed
-            ->Array.setUnsafe(lastIndex, checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1)
-            ->ignore
-          }
         }
 
         items->Array.push(item)->ignore
@@ -330,7 +317,6 @@ let make = (
       ~mutCheckpointChainIds=checkpointChainIds,
       ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
       ~mutCheckpointBlockHashes=checkpointBlockHashes,
-      ~mutCheckpointItemsCount=checkpointItemsCount,
       ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
     )
 
@@ -355,7 +341,6 @@ let make = (
     checkpointChainIds,
     checkpointBlockNumbers,
     checkpointBlockHashes,
-    checkpointItemsCount,
     checkpointEventsProcessed,
     registeredAddresses: [],
   }
@@ -371,6 +356,30 @@ let checkpointFrontier = (batch: t): Frontier.t => {
   frontier
 }
 
+// Exclusive end of the items belonging to the checkpoint at `checkpointIdx`,
+// starting from `fromItemIdx`. A checkpoint is one chain's one block, and a
+// batch takes whole blocks in order, so a checkpoint's items are the run at the
+// dispatch cursor that still carries its chain and block - a reorg-only
+// checkpoint's run is empty.
+let checkpointItemsEnd = (batch: t, ~checkpointIdx, ~fromItemIdx) => {
+  let chainId = batch.checkpointChainIds->Array.getUnsafe(checkpointIdx)
+  let blockNumber = batch.checkpointBlockNumbers->Array.getUnsafe(checkpointIdx)
+  let itemsLength = batch.items->Array.length
+  let idx = ref(fromItemIdx)
+  let isFinished = ref(false)
+  while !isFinished.contents && idx.contents < itemsLength {
+    let item = batch.items->Array.getUnsafe(idx.contents)
+    if (
+      item->Internal.getItemBlockNumber === blockNumber && item->Internal.getItemChainId === chainId
+    ) {
+      idx := idx.contents + 1
+    } else {
+      isFinished := true
+    }
+  }
+  idx.contents
+}
+
 let findFirstEventBlockNumber = (batch: t, ~chainId) => {
   let idx = ref(0)
   let result = ref(None)
@@ -379,7 +388,7 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
     let checkpointChainId = batch.checkpointChainIds->Array.getUnsafe(idx.contents)
     if (
       checkpointChainId === chainId &&
-        batch.checkpointItemsCount->Array.getUnsafe(idx.contents) > 0
+        batch.checkpointEventsProcessed->Array.getUnsafe(idx.contents) > 0
     ) {
       result := Some(batch.checkpointBlockNumbers->Array.getUnsafe(idx.contents))
     } else {
