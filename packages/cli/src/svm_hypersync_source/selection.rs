@@ -953,7 +953,13 @@ mod tests {
         );
         assert_eq!(
             built.transaction_columns,
-            vec!["slot", "transaction_index", "account_keys"]
+            vec![
+                "slot",
+                "transaction_index",
+                "account_keys",
+                "loaded_addresses_writable",
+                "loaded_addresses_readonly"
+            ]
         );
         assert!(built.account_activity_columns.is_empty());
     }
