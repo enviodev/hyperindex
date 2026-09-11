@@ -488,7 +488,12 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: bool) => {
+let startServer = (
+  ~getMetrics: unit => option<Metrics.t>,
+  ~envioVersion: string,
+  ~persistence: Persistence.t,
+  ~isDevelopmentMode: bool,
+) => {
   open Express
 
   let app = make()
@@ -520,10 +525,20 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
   })
 
   app->get("/console/state", (_req, res) => {
-    let state = if isDevelopmentMode {
-      getState()
-    } else {
+    let state = if !isDevelopmentMode {
       Disabled({})
+    } else {
+      switch getMetrics() {
+      | None => Initializing({})
+      | Some(metrics) =>
+        Active({
+          envioVersion,
+          chains: metrics.chains->Array.map(toChainData),
+          indexerStartTime: metrics.startTime,
+          isPreRegisteringDynamicContracts: false,
+          rollbackOnReorg: metrics.rollbackEnabled,
+        })
+      }
     }
 
     res->json(state->S.reverseConvertToJsonOrThrow(stateSchema))
@@ -543,10 +558,7 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
 
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", Metrics.contentType)
-    let _ =
-      res->endWithData(
-        Metrics.collect(~metrics=getIndexerState()->Option.map(IndexerState.toMetrics)),
-      )
+    let _ = res->endWithData(Metrics.collect(~metrics=getMetrics()))
   })
 
   app->get("/metrics/runtime", (_req, res) => {
@@ -683,22 +695,10 @@ let start = async (
   }
   let envioVersion = Utils.EnvioPackage.value.version
 
+  let getMetrics = () => getIndexerState()->Option.map(IndexerState.toMetrics)
+
   if !isTest {
-    startServer(~persistence, ~isDevelopmentMode, ~getState=() =>
-      switch getIndexerState() {
-      | None => Initializing({})
-      | Some(state) => {
-          let chains = (state->IndexerState.toMetrics).chains->Array.map(toChainData)
-          Active({
-            envioVersion,
-            chains,
-            indexerStartTime: state->IndexerState.indexerStartTime,
-            isPreRegisteringDynamicContracts: false,
-            rollbackOnReorg: config.shouldRollbackOnReorg,
-          })
-        }
-      }
-    )
+    startServer(~persistence, ~isDevelopmentMode, ~envioVersion, ~getMetrics)
   }
 
   let state = IndexerState.makeFromDbState(
@@ -712,7 +712,7 @@ let start = async (
     ~onError,
   )
   if shouldUseTui {
-    let _rerender = Tui.start(~getState=() => state)
+    let _rerender = Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
   }
   setIndexerState(state)
   state->IndexerLoop.start
