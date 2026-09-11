@@ -64,20 +64,24 @@ describe("Config.filterChains", () => {
   it("Rejects a chain the config doesn't declare", t => {
     t->toThrowErrorEqual(
       () => config->Config.filterChains(~chainIds=[chainId(42)]),
-      `Chain 42 is not configured, so \`envio start --chain 42\` has nothing to index. Configured chains: 1, 137.`,
+      `Chain 42 is not in config.yaml, so there is nothing for this process to index.`,
     )
   })
 
-  it("Rejects an empty selection", t => {
+  // The user-facing rejection is the CLI's (`validate_chain_selection`); this is
+  // the same rule as an invariant, for the paths that reach `filterChains`
+  // without going through it.
+  it("Rejects a schema that shares entities across chains", t => {
+    let crossChain = InternalTestIndexer.fromUserApi(~configYaml, ~schema=crossChainSchema).config
     t->toThrowErrorEqual(
-      () => config->Config.filterChains(~chainIds=[]),
-      `\`envio start --chain\` needs at least one chain to index.`,
+      () => crossChain->Config.filterChains(~chainIds=[chainId(1)]),
+      `Only a schema whose entities are all per-chain can be split across processes. Shared across chains: GlobalCounter.`,
     )
   })
 
   it("Names a `--chain` run by the flag's presence, not by how many it narrowed", t => {
-    // The precondition `--chain` carries - that the migration already built the
-    // schema for every chain - holds just as much when the flag happens to name
+    // The precondition `--chain` carries — that the migration already built the
+    // schema for every chain — holds just as much when the flag happens to name
     // all of them. A count comparison would call that an unfiltered run.
     let before = Config.hasChainFilter()
     Config.setActiveChains([chainId(1), chainId(137)])
@@ -86,27 +90,5 @@ describe("Config.filterChains", () => {
     // rest of the suite.
     Config.setActiveChains([])
     t.expect((before, namingAll, Config.hasChainFilter())).toEqual((false, true, false))
-  })
-
-  it("Reports a wholly cross-chain schema without listing every entity", t => {
-    let crossChain = InternalTestIndexer.fromUserApi(
-      ~configYaml=configYaml->String.replace("disable_default_cross_chain: true\n", ""),
-      ~schema=perChainSchema,
-    ).config
-    t->toThrowErrorEqual(
-      () => crossChain->Config.filterChains(~chainIds=[chainId(1)]),
-      `\`envio start --chain\` needs every entity to be per-chain, because chains indexed in separate processes can't share a checkpoint sequence. Every entity in this schema is cross-chain, because config.yaml doesn't set \`disable_default_cross_chain: true\`. Set it, then run every chain in its own process.`,
-    )
-  })
-
-  it("Rejects a schema that shares entities across chains", t => {
-    let crossChain = InternalTestIndexer.fromUserApi(
-      ~configYaml,
-      ~schema=crossChainSchema,
-    ).config
-    t->toThrowErrorEqual(
-      () => crossChain->Config.filterChains(~chainIds=[chainId(1)]),
-      `\`envio start --chain\` needs every entity to be per-chain, because chains indexed in separate processes can't share a checkpoint sequence. Entities shared across chains: GlobalCounter. Drop \`@crossChain\` from them, or run every chain in one process.`,
-    )
   })
 })

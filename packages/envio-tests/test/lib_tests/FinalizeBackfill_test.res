@@ -11,7 +11,7 @@ describe("Finalizing the backfill", () => {
     let base = MockStorage.make([])
     let storage = {
       ...base.storage,
-      finalizeBackfill: (~entities as _, ~readyAt as _) => {
+      finalizeBackfill: (~entities as _, ~chainIds as _, ~readyAt as _) => {
         calls := calls.contents + 1
         gate.wait()
       },

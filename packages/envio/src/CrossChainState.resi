@@ -15,7 +15,6 @@ let make: (
 let chainStates: t => dict<ChainState.t>
 let isRealtime: t => bool
 let isCaughtUp: t => bool
-let finalizeWaitMillis: t => float
 let isInReorgThreshold: t => bool
 let targetBufferSize: t => int
 let shouldSaveHistory: t => dict<bool>

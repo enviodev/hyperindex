@@ -8,16 +8,13 @@ type t = {
   // Chain ids in a stable order, so the cross-chain loops iterate the chains
   // without allocating a values array on every tick.
   chainIds: array<ChainId.t>,
-  // True once this process's chains have caught up to head/endBlock and the
-  // finalize phase has closed. Monotonic during a run.
+  // True once every chain this process drives has caught up to head/endBlock and
+  // the indexes they owe are committed. Monotonic during a run.
   mutable isRealtime: bool,
   // True once those chains have caught up and there's nothing left to process,
-  // but before the finalize phase has closed. The gap between this and
-  // `isRealtime` is the FinalizingIndexes phase.
+  // but before the deferred schema indexes and `ready_at` are committed. The gap
+  // between this and `isRealtime` is the FinalizingIndexes phase.
   mutable isCaughtUp: bool,
-  // When this run first found the schema's indexes owed but not buildable, so a
-  // wait that goes on too long can be escalated from debug to warn.
-  mutable finalizeWaitSinceMillis: option<float>,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
 }
@@ -32,7 +29,6 @@ let calculateTargetBufferSize = () =>
 let make = (~chainStates, ~isRealtime, ~targetBufferSize=calculateTargetBufferSize()): t => {
   {
     chainStates,
-    finalizeWaitSinceMillis: None,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isCaughtUp: isRealtime,
@@ -58,12 +54,12 @@ let isInReorgThreshold = (crossChainState: t) => {
 }
 let targetBufferSize = (crossChainState: t) => crossChainState.targetBufferSize
 
-// Whether each chain's writes still need history, keyed by chain id - what the
+// Whether each chain's writes still need history, keyed by chain id — what the
 // history policy is built from.
 let shouldSaveHistory = (crossChainState: t) =>
   crossChainState.chainStates->Utils.Dict.mapValues(ChainState.shouldSaveHistory)
 
-// Ready-to-process items across every chain - the live draw against
+// Ready-to-process items across every chain — the live draw against
 // targetBufferSize, which is a budget of processable events (items stuck behind
 // a gap don't count toward the goal of keeping ~targetBufferSize ready).
 let totalReadyCount = (crossChainState: t) => {
@@ -84,7 +80,7 @@ let nextItemIsNone = (crossChainState: t): bool =>
 // reach, or None while it has nothing safe yet. A chain that can't be rolled
 // back (maxReorgDepth = 0) tracks none, and everything committed is safe from
 // it: under one shared sequence that is the run's highest id, not the chain's
-// own - an idle chain's would hold every other chain's prune back.
+// own — an idle chain's would hold every other chain's prune back.
 let getSafeCheckpointIdByChain = (
   crossChainState: t,
   ~sequence: CheckpointSequence.t,
@@ -159,7 +155,7 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
 // Every chain has buffered up to its head (or endblock) with nothing
 // processable left. Derived from current state rather than from the flag a
 // progressed batch sets, because a run that reached the head and died before
-// finalizing resumes with no batch to process - nothing would ever set it.
+// finalizing resumes with no batch to process — nothing would ever set it.
 let isSettledAtHead = (crossChainState: t) => {
   let settled = ref(crossChainState->nextItemIsNone)
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
@@ -185,7 +181,7 @@ let markCaughtUpIfSettled = (crossChainState: t) =>
 // The same resume, decided from persisted values at construction instead of from
 // the fetch frontier. A run that reached the head and died before finalizing has
 // no batch to process on resume, and by the time the first height lands the head
-// may have moved on - at which point no chain looks at head any more and the
+// may have moved on — at which point no chain looks at head any more and the
 // indexes it still owes would wait out another whole backfill. Deciding here,
 // before any source request, keeps that debt tied to the progress that was
 // actually committed. Skipped when the run resumed realtime, which is exactly
@@ -204,21 +200,9 @@ let markCaughtUpOnResume = (crossChainState: t) => {
   }
 }
 
-// How long the indexes have been owed and unbuildable, starting the clock on the
-// first pass that had to wait.
-let finalizeWaitMillis = (crossChainState: t) => {
-  let now = Date.now()
-  switch crossChainState.finalizeWaitSinceMillis {
-  | Some(since) => now -. since
-  | None =>
-    crossChainState.finalizeWaitSinceMillis = Some(now)
-    0.
-  }
-}
-
-// Concludes the FinalizingIndexes phase and switches the indexer to realtime.
-// Only reached once the schema's indexes are committed, so realtime never claims
-// a database that is still missing them.
+// Concludes the FinalizingIndexes phase: stamps every chain this process drives
+// with the `ready_at` already committed alongside their deferred schema indexes,
+// and switches the indexer to realtime.
 let markReady = (crossChainState: t, ~readyAt) => {
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     crossChainState
@@ -232,7 +216,7 @@ let markReady = (crossChainState: t, ~readyAt) => {
 
 // Chains ordered furthest-behind first by fetch-frontier progress, so the
 // shared buffer pool goes to the chains with the most fetchable backfill work
-// before the rest - and the same metric that sets the alignment line also
+// before the rest — and the same metric that sets the alignment line also
 // decides who draws budget first, so the anchor is served before any chain it
 // clamps. (Batch ordering keeps its own getProgressPercentage measure.) A chain
 // with no known height reads 100% here and sorts last, which is fine: it can't
@@ -244,7 +228,7 @@ let priorityOrder = (crossChainState: t) =>
     Float.compare(a->ChainState.frontierProgress, b->ChainState.frontierProgress)
   )
 
-// In-flight estimated items across every chain - the live draw against
+// In-flight estimated items across every chain — the live draw against
 // targetBufferSize alongside totalReadyCount, so the pool isn't re-dispatched
 // while queries are still being fetched.
 let totalReservedSize = (crossChainState: t) => {
@@ -258,7 +242,7 @@ let totalReservedSize = (crossChainState: t) => {
 
 // Action for a chain that was handed budget but emitted no query (its budget
 // went to more-behind chains, or the alignment clamp cut its range to
-// nothing). A chain is genuinely idle - and correctly left undispatched -
+// nothing). A chain is genuinely idle — and correctly left undispatched —
 // when it is caught up to its head/endblock, still draining in-flight
 // queries, or holding ready items that batch processing will drain and
 // re-schedule from. Any other chain must keep polling for new blocks instead
@@ -275,22 +259,22 @@ let idleOrWaitAction = (cs: ChainState.t) =>
 // Dispatch a fetch tick across the whole indexer from one shared pool of
 // ~targetBufferSize ready events, as a waterfall: visit chains furthest-behind
 // first, hand each the budget remaining at that point (plus its own
-// already-reserved share, since a chain's pending queries aren't "spent" -
+// already-reserved share, since a chain's pending queries aren't "spent" —
 // they're this chain's), let it turn that into queries sized against its own
 // chain-density-derived target block, then subtract what it actually used
 // before moving to the next chain. So a chain that can only use a little
 // (density too low, or already caught up) leaves the rest for the others
 // automatically. Starting a new query requires at least 10% of the target pool
 // to be free. A chain visited after the budget falls below that admission unit
-// doesn't query this round - reservations release as responses land, so the
+// doesn't query this round — reservations release as responses land, so the
 // next tick redistributes. Every other chain is additionally capped at the
 // lowest-frontier-progress chain's progress mapped onto its own range, so no
-// chain runs ahead of the chain the pool is prioritizing - including on ticks
+// chain runs ahead of the chain the pool is prioritizing — including on ticks
 // where that chain is mid-fetch and emits no new query. A chain with no known
 // height can't anchor this line (there's no range to measure against), a chain
 // caught up to its fetchable head reads 100% and so never anchors while another
 // is behind, and once the whole indexer has caught up (isRealtime) the clamp is
-// dropped - chains at head only trail each other by real-time block production.
+// dropped — chains at head only trail each other by real-time block production.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
@@ -312,13 +296,13 @@ let checkAndFetch = async (
   let minimumAdmissionBudget = targetBudget *. 0.1
 
   // A chain with no density signal probes blind, so it only gets a bounded
-  // slice of the pool - one unknown chain shouldn't hold the whole budget
+  // slice of the pool — one unknown chain shouldn't hold the whole budget
   // while it takes its first measurements. Its probe is one admission unit.
   let coldChainBudget = minimumAdmissionBudget
 
   let prioritizedChainStates = crossChainState->priorityOrder
 
-  // Alignment anchor: the first known-height chain in priority order - which,
+  // Alignment anchor: the first known-height chain in priority order — which,
   // since that order sorts by frontier progress, is the chain furthest behind
   // by the very metric the clamp maps other chains against. Anchoring on the
   // frontier (not on the target of whichever chain happens to query this tick)
@@ -335,11 +319,11 @@ let checkAndFetch = async (
   prioritizedChainStates->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
     if cs->ChainState.knownHeight == 0 {
-      // No height yet - there's nothing to size a query against, only height
+      // No height yet — there's nothing to size a query against, only height
       // tracking to start. Checked before the admission floor so a chain that
       // hasn't found its first block yet keeps polling even while other chains
       // hold the whole pool. (The general can't-fetch-yet rule, including
-      // blockLag, lives in FetchState.getNextQuery - this branch only
+      // blockLag, lives in FetchState.getNextQuery — this branch only
       // short-circuits the unambiguous no-height case.)
       actionByChain->ChainId.Dict.set(chainId, FetchState.WaitingForNewBlock)
     } else if remaining.contents < minimumAdmissionBudget {
@@ -367,7 +351,7 @@ let checkAndFetch = async (
       | NothingToQuery =>
         // A chain below its head can emit no query when its budget went to
         // more-behind chains or the cross-chain alignment clamped its range to
-        // nothing - idleOrWaitAction keeps it polling for new blocks.
+        // nothing — idleOrWaitAction keeps it polling for new blocks.
         actionByChain->ChainId.Dict.set(chainId, idleOrWaitAction(cs))
       | Ready(queries) => {
           let consumed =

@@ -960,6 +960,7 @@ let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
   firstEventBlockNumber: cs.fetchState.firstEventBlock->Null.fromOption,
   isHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
   latestFetchedBlockNumber: cs.fetchState->FetchState.bufferBlockNumber,
+  timestampCaughtUpToHeadOrEndblock: cs.timestampCaughtUpToHeadOrEndblock->Null.fromOption,
 }
 
 let toMetrics = (cs: t): Metrics.chainMetrics => {
@@ -1158,12 +1159,12 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
   }
 }
 
-// Mark the chain caught up to head/endblock. Called by CrossChainState once
-// every chain this process drives is caught up. That is not the same as the
-// indexer's `ready_at`, which is committed only when the deferred schema indexes
-// are: under `envio start --chain` this process can be caught up and realtime
-// while a chain another process drives is still backfilling, and the column
-// stays null until it finishes. Sticky: a chain stays ready once set.
+// Mark the chain caught up to head/endblock. Called by CrossChainState only once
+// every chain this process drives is caught up and the indexes the schema
+// promises them are committed, so no chain flips to ready while an index it
+// promised is still missing. `readyAt` is the timestamp already committed to
+// `envio_chains.ready_at` in that same transaction. Sticky: a chain stays ready
+// once set.
 let markReady = (cs: t, ~readyAt) =>
   if !(cs->isReady) {
     cs.timestampCaughtUpToHeadOrEndblock = Some(readyAt)
@@ -1177,7 +1178,7 @@ type rolledBackTo =
   | Untouched
 
 // Returns the address registrations the storage has to delete along with the
-// chain - the store is what decides which ones died, so the two halves of a
+// chain — the store is what decides which ones died, so the two halves of a
 // rollback can't disagree.
 let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
   let rollbackTo = targetBlockNumber => {
@@ -1198,8 +1199,8 @@ let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
   | RecomputedProgress({blockNumber, eventsProcessed}) =>
     // A rollback only ever takes a chain back. The diff recomputes progress from
     // the checkpoints still in the database, so a chain that an unwritten
-    // rollback already took below them - to a fork block only that rollback
-    // knew - would be handed their MIN back and moved forward onto blocks it
+    // rollback already took below them — to a fork block only that rollback
+    // knew — would be handed their MIN back and moved forward onto blocks it
     // never re-indexed.
     let newProgressBlockNumber = Pervasives.min(blockNumber, cs.committedProgressBlockNumber)
     let newTotalEventsProcessed = cs.numEventsProcessed -. eventsProcessed

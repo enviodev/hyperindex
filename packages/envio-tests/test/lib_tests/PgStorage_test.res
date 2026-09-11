@@ -2,7 +2,7 @@ open Vitest
 
 // Every scalar the DDL knows how to render, an entity whose name is over
 // Postgres' 63-character table-name limit, and a foreign key that carries an
-// index - the shapes the generated SQL below is asserted against.
+// index — the shapes the generated SQL below is asserted against.
 let config = TestConfig.make(
   ~schema=`
 enum AccountType {
@@ -462,7 +462,7 @@ FROM "public"."envio_chains";`
         let definition = IndexDefinition.single(~tableName="A", ~column="b_id")
 
         t.expect(
-          PgStorage.getSchemaIndexes(~entities)->Array.map(
+          PgStorage.getSchemaIndexes(~entities, ~chainIds=[ChainId.fromInt(1)])->Array.map(
             definition => (
               definition->IndexDefinition.name,
               definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
@@ -475,6 +475,42 @@ FROM "public"."envio_chains";`
             `CREATE INDEX "${definition->IndexDefinition.name}" ON "test_schema"."A"("b_id");`,
           ),
         ])
+      },
+    )
+
+    // A per-chain entity's rows live in one partition per chain, so the single
+    // index the schema declares becomes one physical index per chain. The
+    // planner uses a partition's own index, so a query reads the same either
+    // way; what this buys is that one chain's build never touches another's rows.
+    Async.it(
+      "Fans a per-chain entity's index out over one partition per chain",
+      async t => {
+        let perChain: Internal.entityConfig = {
+          ...entityConfig("A"),
+          name: "PerChain",
+          table: Table.mkTable(
+            "PerChain",
+            ~fields=[
+              Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+              Table.mkField(
+                Config.chainIdFieldName,
+                ChainId,
+                ~fieldSchema=ChainId.schema,
+                ~isPrimaryKey=true,
+                ~isChainId=true,
+              ),
+              Table.mkField("owner", String, ~isIndex=true, ~fieldSchema=S.string),
+            ],
+          ),
+        }
+
+        t.expect(
+          PgStorage.getSchemaIndexes(
+            ~entities=[perChain],
+            ~chainIds=[ChainId.fromInt(1), ChainId.fromInt(137)],
+          )->Array.map(definition => definition.IndexDefinition.tableName),
+          ~message="One index per partition, and none on the parent table",
+        ).toEqual(["PerChain$1", "PerChain$137"])
       },
     )
 
@@ -511,7 +547,7 @@ FROM "public"."envio_chains";`
         ]
 
         t.expect(
-          PgStorage.getSchemaIndexes(~entities)->Array.map(
+          PgStorage.getSchemaIndexes(~entities, ~chainIds=[ChainId.fromInt(1)])->Array.map(
             definition => (
               definition.IndexDefinition.tableName,
               definition.columns->Array.map(column => column.IndexDefinition.name),
@@ -567,7 +603,7 @@ FROM "public"."envio_chains";`
     )
 
     // A bytea column binds as the Uint8Array postgres.js serializes, and a
-    // bytea[] one as the array literal Postgres parses itself - postgres.js
+    // bytea[] one as the array literal Postgres parses itself — postgres.js
     // types an array parameter after its first element, so an array of
     // Uint8Arrays would bind as a single bytea. An `in` over a list column
     // nests one dimension deeper, and Postgres arrays are rectangular, so its
@@ -798,7 +834,8 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
 SET "buffer_block" = $2,
     "first_event_block" = $3,
-    "_is_hyper_sync" = $4
+    "ready_at" = $4,
+    "_is_hyper_sync" = $5
 WHERE "id" = $1;`
 
         t.expect(

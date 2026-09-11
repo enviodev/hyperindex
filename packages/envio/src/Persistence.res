@@ -27,26 +27,16 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  // Every address the chain indexes, columnar - config-declared and dynamically
+  // Every address the chain indexes, columnar — config-declared and dynamically
   // registered alike. The chain's address store seeds straight from it.
   addressRows: AddressRows.seedRows,
   sourceBlockNumber: int,
 }
 
-// A chain's committed position, as the barrier reads it. Judged rather than
-// stamped: `progress_block` and `source_block` are written as one group by the
-// batch write, so this is always a consistent pair from the last commit.
-type chainProgress = {
-  id: ChainId.t,
-  progressBlockNumber: int,
-  sourceBlockNumber: int,
-  endBlock: option<int>,
-}
-
 type initialState = {
   cleanRun: bool,
   // On a resume this is what the database holds, not what the config would
-  // derive - the ids must never reshuffle under stored rows.
+  // derive — the ids must never reshuffle under stored rows.
   contractMapping: ContractMapping.t,
   // Public config snapshot, restored with the address rows. None when
   // envio_info or envio_contracts is missing.
@@ -101,7 +91,7 @@ let writtenFrontier = (~batch: Batch.t, ~rollback: option<rollback>) =>
 
 // One flush group: the changes an entity accumulated within a single chain
 // scope. A per-chain entity contributes one group per chain, and the scope is
-// what stamps the chain id onto the rows - it's never re-derived downstream.
+// what stamps the chain id onto the rows — it's never re-derived downstream.
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
   scope: Internal.chainScope,
@@ -124,7 +114,7 @@ type storage = {
   // Should initialize the storage so we can start interacting with it
   // Eg create connection, schema, tables, etc. `envioInfo` is opaque JSON
   // persisted as part of the same transaction so a fresh schema always
-  // carries a matching row - storage doesn't interpret it.
+  // carries a matching row — storage doesn't interpret it.
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
@@ -149,17 +139,27 @@ type storage = {
   // Creates whatever indexes the filters need and aren't there yet, resolving
   // once they're queryable. Best-effort: it resolves even when a build fails,
   // leaving the query to run unindexed rather than failing the handler.
-  ensureQueryIndexes: (~table: Table.table, ~filters: array<EntityFilter.t>) => promise<unit>,
-  // How far every chain in the schema has committed, the ones other
-  // `envio start --chain` processes drive included. Read to decide whether any
-  // chain is still backfilling, and so whether the schema's indexes are owed.
-  readChainProgress: unit => promise<array<chainProgress>>,
-  // Creates every schema-defined index still missing, then stamps `ready_at` on
-  // every chain. Called once every chain has finished backfill. The indexes are
-  // committed one at a time so a failure part way through doesn't undo the ones
-  // already built; `ready_at` is only written once they all verify.
+  ensureQueryIndexes: (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~filters: array<EntityFilter.t>,
+  ) => promise<unit>,
+  // Creates every index the schema promises for the given chains, without
+  // touching `ready_at`. For a resumed indexer that is already ready and so
+  // never runs `finalizeBackfill`: an index dropped or invalidated while it was
+  // down would otherwise never be rebuilt. Best-effort, and safe to run with
+  // indexing live.
+  ensureSchemaIndexes: (
+    ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
+  ) => promise<unit>,
+  // Creates every index the schema promises for the given chains, then stamps
+  // `ready_at` on them. Called once those chains finish backfill. The indexes
+  // are committed one at a time so a failure part way through doesn't undo the
+  // ones already built; `ready_at` is only written once they all verify.
   finalizeBackfill: (
     ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
     ~readyAt: Date.t,
   ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
@@ -256,7 +256,7 @@ let make = (
 }
 
 // Keeps only what the chains this run drives own. Unconditional, because
-// "resume the chains I was given" holds in every mode - with the full set it is
+// "resume the chains I was given" holds in every mode — with the full set it is
 // a no-op, and a config that genuinely disagrees with the database was already
 // rejected by `throwIfResumeIncompatible`, which compares the stored chain list.
 //

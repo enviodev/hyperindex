@@ -68,7 +68,6 @@ let baseMetrics: Metrics.t = {
   elapsedSeconds: 0.,
   targetBufferSize: 0,
   isInReorgThreshold: false,
-  owesSchemaIndexes: false,
   rollbackEnabled: false,
   maxBatchSize: 0,
   preloadSeconds: 0.,
@@ -127,7 +126,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
   it("Omits the height stream families entirely when no source subscribes", t => {
     // No source samples at all, which is what a chain that only ever polls
-    // reports - the base is already exactly that.
+    // reports — the base is already exactly that.
     t.expect(
       Metrics.collect(~metrics=Some(baseMetrics))->String.includes("envio_source_height_stream"),
     ).toBe(false)
@@ -148,7 +147,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
     // Nothing has disconnected, because nothing ever connected. Without the zero
     // there is no series at all, and a ws url the node will never accept would
-    // go unreported - a sample only exists once a stream has been asked for, so
+    // go unreported — a sample only exists once a stream has been asked for, so
     // zero connects here says the stream is down rather than absent.
     t.expect(
       Metrics.collect(~metrics=Some(metrics))
@@ -214,7 +213,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
         sourceRequest(~responseBlocks=Some(30), ~emptyResponseCount=1),
         sourceRequest(~responseBlocks=Some(12), ~emptyResponseCount=2),
         // A chain whose every response carried blocks still renders the empty
-        // counter, flat at zero - a series that only appears once the first
+        // counter, flat at zero — a series that only appears once the first
         // empty response lands is one nothing can alert on.
         sourceRequest(~chainId=2, ~responseBlocks=Some(7), ~emptyResponseCount=0),
         // A stream push is a response nothing measures in blocks, so it stays
@@ -242,7 +241,6 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       elapsedSeconds: 123.456,
       targetBufferSize: 5000,
       isInReorgThreshold: true,
-      owesSchemaIndexes: false,
       rollbackEnabled: true,
       maxBatchSize: 5000,
       preloadSeconds: 12.3456,
@@ -419,10 +417,6 @@ envio_processing_stalled_on_fetch_seconds 6.02
 # TYPE envio_processing_stalled_on_storage_write_seconds counter
 envio_processing_stalled_on_storage_write_seconds 1.33
 
-# HELP envio_schema_indexes_pending Whether the indexes the schema declares have yet to be built. They are deferred until every chain in the database has finished backfilling, so this staying at 1 means some chain is still behind - with one indexer process per chain, most likely one whose process was never started. Queries relying on those indexes run unindexed while it holds.
-# TYPE envio_schema_indexes_pending gauge
-envio_schema_indexes_pending 0
-
 # HELP envio_progress_ready Whether the chain is fully synced to the head.
 # TYPE envio_progress_ready gauge
 envio_progress_ready{chainId="1"} 1
@@ -524,7 +518,7 @@ envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLog
 # TYPE envio_source_response_blocks_total counter
 envio_source_response_blocks_total{source="HyperSync",chainId="1",method="getLogs"} 1234
 
-# HELP envio_source_response_empty_total The number of responses that came back with no blocks at all - a range the source scanned and matched nothing in. Compare against envio_source_request_total for the share of requests that returned nothing.
+# HELP envio_source_response_empty_total The number of responses that came back with no blocks at all — a range the source scanned and matched nothing in. Compare against envio_source_request_total for the share of requests that returned nothing.
 # TYPE envio_source_response_empty_total counter
 envio_source_response_empty_total{source="HyperSync",chainId="1",method="getLogs"} 9
 

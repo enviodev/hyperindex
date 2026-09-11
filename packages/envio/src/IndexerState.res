@@ -97,15 +97,6 @@ type t = {
   // When an entity's history was last pruned. No key = never pruned yet,
   // which counts as overdue.
   lastPrunedAtMillis: dict<float>,
-  // When the finalize barrier last read the chains. Only throttles the retry
-  // passes; the first one is never held back.
-  mutable lastFinalizeCheckMillis: float,
-  // Whether the user has already been told this process reached the head, so the
-  // passes that follow it while a sibling chain catches up stay quiet.
-  mutable hasAnnouncedFinalize: bool,
-  // When the wait for another chain was last reported at info, so the heartbeat
-  // keeps its interval no matter how often the pass runs.
-  mutable lastFinalizeWaitReportMillis: float,
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
   exitAfterFirstEventBlock: bool,
@@ -194,9 +185,6 @@ let make = (
     indexerStartTimeRef: Performance.now(),
     rollbackState: NoRollback,
     lastPrunedAtMillis: Dict.make(),
-    lastFinalizeCheckMillis: 0.,
-    hasAnnouncedFinalize: false,
-    lastFinalizeWaitReportMillis: 0.,
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
@@ -321,7 +309,7 @@ let isResolvingReorg = (state: t) =>
 @inline
 let // Close an open fetch-stall interval, accruing it into the counter. Called
 // whenever the reason for the idle changes, so the interval never spans into
-// time another counter owns - or, at shutdown, past the point where the loops
+// time another counter owns — or, at shutdown, past the point where the loops
 // stop and nothing would ever close it.
 settleStalledOnFetch = (state: t) =>
   switch state.processingStalledOnFetchSince {
@@ -381,7 +369,7 @@ let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.e
 // queries). isResolvingReorg derives from rollbackState.
 let beginReorg = (state: t, ~chainId, ~blockNumber) => {
   // Settle here, or the rollback that follows would be folded into the stall on
-  // the next beginProcessing - time envio_rollback_seconds already counts.
+  // the next beginProcessing — time envio_rollback_seconds already counts.
   state->settleStalledOnFetch
   state.epoch = state.epoch + 1
   state.rollbackState = ReorgDetected({chainId, blockNumber})
@@ -505,41 +493,12 @@ let shouldSaveHistory = (state: t) => state.crossChainState->CrossChainState.sho
 let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
 
 // The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only
-// in the middle phase: every chain has caught up, but the schema's indexes
-// aren't committed yet, so the run hasn't switched to realtime. Under
-// `envio start --chain` a process sits here for as long as a sibling chain is
-// still backfilling.
-%%private(
-  let isFinalizingIndexes = (state: t) =>
-    state.crossChainState->CrossChainState.isCaughtUp &&
-      !(state.crossChainState->CrossChainState.isRealtime)
-)
-
-// The phase is re-entered from the processing loop for as long as it holds, and
-// a sibling chain can be behind for hours, so without the interval every batch
-// would query the chains table. The clock starts at zero, so the first pass is
-// never held back.
-let shouldRunFinalize = (state: t) =>
-  state->isFinalizingIndexes &&
-    Date.now() -. state.lastFinalizeCheckMillis >= state.config.finalizeRetryIntervalMillis
-
-let recordFinalizeCheck = (state: t) => state.lastFinalizeCheckMillis = Date.now()
-
-let hasAnnouncedFinalize = (state: t) => state.hasAnnouncedFinalize
-let markFinalizeAnnounced = (state: t) => state.hasAnnouncedFinalize = true
-
-// Whether the heartbeat is due, stamping the clock when it is.
-let isFinalizeWaitReportDue = (state: t) => {
-  let now = Date.now()
-  if now -. state.lastFinalizeWaitReportMillis >= state.config.finalizeWaitReportIntervalMillis {
-    state.lastFinalizeWaitReportMillis = now
-    true
-  } else {
-    false
-  }
-}
-
-let finalizeWaitMillis = (state: t) => state.crossChainState->CrossChainState.finalizeWaitMillis
+// in the middle phase: the chains this process drives have caught up, but the
+// indexes the schema promises them and their `ready_at` haven't been committed
+// yet.
+let isFinalizingIndexes = (state: t) =>
+  state.crossChainState->CrossChainState.isCaughtUp &&
+    !(state.crossChainState->CrossChainState.isRealtime)
 
 let markCaughtUpIfSettled = (state: t) =>
   state.crossChainState->CrossChainState.markCaughtUpIfSettled
@@ -561,7 +520,6 @@ let simulateDeadInputTracker = (state: t) => state.simulateDeadInputTracker
 // counters for the /metrics endpoint, the TUI and the console API.
 let toMetrics = (state: t): Metrics.t => {
   let chainStates = state.crossChainState->CrossChainState.chainStates
-  let owesSchemaIndexes = state->isFinalizingIndexes
   let sourceRequests = []
   let sourceHeights = []
   let sourceHeightStreams = []
@@ -614,7 +572,6 @@ let toMetrics = (state: t): Metrics.t => {
     elapsedSeconds: state.indexerStartTimeRef->Performance.secondsSince,
     targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
     isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
-    owesSchemaIndexes,
     rollbackEnabled: state.config.shouldRollbackOnReorg,
     maxBatchSize: state.config.batchSize,
     preloadSeconds: state.preloadSeconds,
@@ -869,13 +826,13 @@ let takeRollback = (state: t): option<Persistence.rollback> => {
 // Written rows leave the buffer only once the transaction that holds them has
 // committed. A failed write keeps them, and re-inserting a row the database
 // already has is a no-op. Rows staged while the write was in flight belong to
-// later checkpoints - ids only ever grow - so this can't drop one unwritten.
+// later checkpoints — ids only ever grow — so this can't drop one unwritten.
 let markCommitted = (state: t, ~writtenFrontier) => {
   state.committedFrontier = Frontier.mergeMax(state.committedFrontier, writtenFrontier)
 }
 
 // Reset the in-memory tables and arm the rollback diff that the next write
-// commits. The diff ids start from the committed frontier - a rollback that
+// commits. The diff ids start from the committed frontier — a rollback that
 // supersedes an unwritten one takes over its ids along with its rows. A sibling
 // the rollback leaves alone gets no diff row: burning an id on it would leave a
 // hole in its sequence.
@@ -909,7 +866,7 @@ let beginRollbackDiff = (
   // Same for the chains: this rollback recomputes progress from the checkpoints,
   // so a chain the pending diff already moved can land on exactly the block it
   // is now at and go unreported here. Its stored progress still needs
-  // correcting, so the pending rows carry over - this rollback's row for a
+  // correcting, so the pending rows carry over — this rollback's row for a
   // chain wins, being the later reading of the same chain state.
   let progressedChains = switch state.rollback {
   | Some({progressedChains: pending}) =>
@@ -959,7 +916,10 @@ let addCommitWaiter = (state: t, resolve) => state.commitWaiters->Array.push(res
 let metaFieldsEqual = (a: InternalTable.Chains.metaFields, b: InternalTable.Chains.metaFields) =>
   a.firstEventBlockNumber == b.firstEventBlockNumber &&
   a.latestFetchedBlockNumber == b.latestFetchedBlockNumber &&
-  a.isHyperSync == b.isHyperSync
+  a.isHyperSync == b.isHyperSync &&
+  // Date is boxed; compare epoch ms.
+  a.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime) ==
+    b.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime)
 
 // Stage per-chain metadata, dirtying only on a real change so restages are no-ops.
 let stageChainMeta = (state: t, chainsData: dict<InternalTable.Chains.metaFields>) =>

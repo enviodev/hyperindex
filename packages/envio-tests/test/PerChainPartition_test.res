@@ -159,9 +159,6 @@ type relation = {
   @as("parent") parent: string,
 }
 
-let ownerIndexName =
-  IndexDefinition.single(~tableName="Counter", ~column="owner")->IndexDefinition.name
-
 describe("Per-chain entity partitions against Postgres", () => {
   scenario->Scenario.it(
     "Creates the partitions, prunes a chain-filtered read to one, and round-trips rows",
@@ -199,22 +196,24 @@ describe("Per-chain entity partitions against Postgres", () => {
          ORDER BY c.relname`,
       )
 
-      // Postgres cascades a partitioned index down to every partition. The
-      // indexer declared its index on the parent, so that is what has to
-      // satisfy the declaration — a child's copy must never stand in for it.
+      // A per-chain entity's index is declared on each partition rather than on
+      // the parent: the planner uses a partition's own index either way, and
+      // building one chain's touches no other chain's rows.
       let catalog =
         IndexCatalog.fromRows(
           ~rows=(await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
             IndexCatalog.rowsSchema,
           ),
         )
-      let ownerIndex =
-        catalog
-        ->IndexCatalog.find(
-          IndexDefinition.single(~tableName="Counter", ~column="owner"),
-          ~coverage=Exact,
+      let ownerIndexTables =
+        ["Counter", "Counter$1", "Counter$137"]->Array.filterMap(tableName =>
+          catalog
+          ->IndexCatalog.find(
+            IndexDefinition.single(~tableName, ~column="owner"),
+            ~coverage=Exact,
+          )
+          ->Option.map((entry: IndexCatalog.entry) => entry.tableName)
         )
-        ->Option.map((entry: IndexCatalog.entry) => (entry.tableName, entry.name, entry.isValid))
 
       let plan: array<{
         "QUERY PLAN": string,
@@ -227,7 +226,7 @@ describe("Per-chain entity partitions against Postgres", () => {
       t.expect((
         rows->Array.toSorted((a, b) => Int.compare(a.chainId, b.chainId)),
         relations,
-        ownerIndex,
+        ownerIndexTables,
         // Nothing anywhere in the schema — partitions included — is unusable.
         catalog->IndexCatalog.invalidNames,
         // Only chain 137's partition survives planning; the other is pruned.
@@ -250,7 +249,7 @@ describe("Per-chain entity partitions against Postgres", () => {
           {name: "Counter$137", kind: "r", parent: "Counter"},
           {name: "envio_history_Counter", kind: "r", parent: ""},
         ],
-        Some(("Counter", ownerIndexName, true)),
+        ["Counter$1", "Counter$137"],
         [],
         [`Counter$137`],
       ))

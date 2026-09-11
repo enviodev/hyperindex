@@ -266,7 +266,7 @@ describe("Deferred schema indexes", () => {
 
       t.expect(
         (await indexNames(~sql, ~pgSchema), await readyAtByChainId(~sql, ~pgSchema)),
-        ~message="A resume rediscovers the indexes from the catalog - none are dropped or recreated",
+        ~message="A resume rediscovers the indexes from the catalog — none are dropped or recreated",
       ).toEqual((indexesBeforeRestart, [(ChainId.fromInt(1337), true)]))
     },
   )
@@ -277,9 +277,9 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 1337}],
     ~mapStorage=storage => {
       ...storage,
-      finalizeBackfill: (~entities, ~readyAt) =>
+      finalizeBackfill: (~entities, ~chainIds, ~readyAt) =>
         gate.contents.wait()->Promise.then(() =>
-          storage.finalizeBackfill(~entities, ~readyAt)
+          storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
         ),
     },
     async (~t, ~indexer, ~source) => {
@@ -328,10 +328,10 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 1337}],
     ~mapStorage=storage => {
       ...storage,
-      finalizeBackfill: (~entities, ~readyAt) => {
+      finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
         joinFinalizeCalls := joinFinalizeCalls.contents + 1
         joinGate.contents.wait()->Promise.then(() =>
-          storage.finalizeBackfill(~entities, ~readyAt)
+          storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
         )
       },
     },
@@ -388,9 +388,9 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 100}, {chain: 1337}],
     ~mapStorage=storage => {
       ...storage,
-      finalizeBackfill: (~entities, ~readyAt) => {
+      finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
         multichainFinalizeCalls := multichainFinalizeCalls.contents + 1
-        storage.finalizeBackfill(~entities, ~readyAt)
+        storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
       },
     },
     async (~t, ~indexer, ~source) => {

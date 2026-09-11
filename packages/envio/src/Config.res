@@ -78,7 +78,7 @@ type sourceSync = {
 }
 
 // How a backend spells column names, mirroring `column_name_format` in
-// config.yaml. Only the internal columns the runtime appends need it - user
+// config.yaml. Only the internal columns the runtime appends need it — user
 // field names arrive pre-resolved from the CLI.
 type columnNameFormat = | @as("original") Original | @as("snake_case") SnakeCase
 
@@ -119,11 +119,6 @@ type t = {
   // they can express fits an INTEGER.
   chainIdMode: ChainId.mode,
   chainMap: ChainMap.t<chain>,
-  // Every chain config.yaml declares and its block lag, kept whole while
-  // `envio start --chain` narrows `chainMap` to the ones this process drives.
-  // The schema is migrated for all of them, so judging whether the indexer as a
-  // whole has caught up needs the lag of chains this process never sees.
-  blockLagByChainId: dict<int>,
   // Derived from every chain's contracts, so an id means the same contract on
   // every chain and on every restart.
   contractMapping: ContractMapping.t,
@@ -139,15 +134,6 @@ type t = {
   // ready to enter the reorg threshold, absorbing head advances between catch-up
   // and the entry check. Overridable in tests.
   reorgThresholdReadyTolerance: int,
-  // How long a finalize pass that found another chain still backfilling waits
-  // before asking again. Only the retries are held back, so this never delays a
-  // run whose chains are all its own. Overridable in tests.
-  finalizeRetryIntervalMillis: float,
-  // How often the wait for another chain is reported at info rather than debug.
-  // A big chain's backfill can run for days, so this is a heartbeat, not an
-  // alarm: it keeps the reason visible without filling the log. Overridable in
-  // tests.
-  finalizeWaitReportIntervalMillis: float,
   lowercaseAddresses: bool,
   isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
@@ -551,7 +537,7 @@ let parseEntitiesFromJson = (
     // Resolve per-entity storage against the global config. The CLI
     // validates that an entity never opts into a backend the global
     // config didn't enable, and that at least one backend stays true
-    // for an annotated entity - so `getOr(false)` is safe here.
+    // for an annotated entity — so `getOr(false)` is safe here.
     let storage: Internal.entityStorage = switch entityJson["storage"] {
     | Some(s) =>
       switch s["clickhouse"] {
@@ -676,7 +662,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   }
 
   // Parse contract configs (ABIs, events, handlers).
-  // SVM stores them under `svm.programs` in the public JSON - the per-program
+  // SVM stores them under `svm.programs` in the public JSON — the per-program
   // events drive `indexer.onInstruction` registration the same way EVM/Fuel
   // contracts drive `onEvent`.
   let publicContractsConfig = switch (
@@ -750,7 +736,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   // Build event configs for a contract from JSON event items.
   //
   // `~addresses` is the chain-side address list. For SVM programs it's the
-  // single base58 program_id - wired onto each instruction's event config so
+  // single base58 program_id — wired onto each instruction's event config so
   // the source can build `(programId, discriminator)`-keyed InstructionSelections.
   // EVM and Fuel ignore it (the address lives in `ChainContract.addresses` and
   // is looked up at dispatch time, not stamped on the event).
@@ -918,7 +904,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
 
       // One address listed twice for the same contract would violate the
       // (chainId, address, contract) primary key of envio_addresses with an
-      // opaque Postgres error - fail fast instead. Two contracts may share an
+      // opaque Postgres error — fail fast instead. Two contracts may share an
       // address: each indexes it with its own events. parseAddress already
       // canonicalizes casing (checksum or lowercase), so an exact match
       // catches case variants too.
@@ -1007,7 +993,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         maxReorgDepth: switch ecosystemName {
         | Ecosystem.Evm => publicChainConfig["maxReorgDepth"]->Option.getOr(200)
         // Tower BFT roots a block once 32 votes lock it in (MAX_LOCKOUT_HISTORY
-        // is 31, plus the slot itself), which is what `finalized` waits for - so
+        // is 31, plus the slot itself), which is what `finalized` waits for — so
         // 32 is the protocol's own bound on how far a fork can be replaced. That
         // bound counts *blocks* while the threshold here is measured in slot
         // numbers, and skipped slots make the slot distance the larger of the
@@ -1092,11 +1078,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     storage: globalStorage,
     chainIdMode: publicConfig["chainIdMode"]->Option.getOr(Int32),
     chainMap,
-    blockLagByChainId: {
-      let byId = Dict.make()
-      chains->Array.forEach(chain => byId->ChainId.Dict.set(chain.id, chain.blockLag))
-      byId
-    },
     contractMapping: contractMappingOf(~chainConfigs=chains),
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
@@ -1105,8 +1086,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     clientFilterAddressThreshold: Env.clientFilterAddressThreshold,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,
-    finalizeRetryIntervalMillis: 30_000.,
-    finalizeWaitReportIntervalMillis: 15. *. 60. *. 1000.,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,
@@ -1138,7 +1117,7 @@ let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
 // to any real contract), so only the "0x" prefix is enforced here. Under
 // address_format: checksum, a real address is checksummed even if the input
 // casing doesn't match (getAddress doesn't require the input to already be
-// checksummed) - a placeholder that isn't valid hex falls back unchanged.
+// checksummed) — a placeholder that isn't valid hex falls back unchanged.
 let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
   switch config.ecosystem.name {
   | Ecosystem.Evm =>
@@ -1198,39 +1177,32 @@ let getChain = (config, ~chainId) =>
 // `contractMapping` is deliberately left whole: its ids are what the migration
 // that created the schema stored, and one rebuilt from a subset would hand the
 // same contract a different id.
+//
+// Whether a selection is allowed at all — every entity per-chain, every id
+// configured — is decided by the CLI before the runtime is handed the command
+// (`validate_chain_selection`), which is where the message a user reads lives.
+// What is left here is the same pair of rules as invariants, for the paths that
+// reach this directly: the test API, and `IndexerRunner`.
 let filterChains = (config: t, ~chainIds: array<ChainId.t>) => {
-  if chainIds->Array.length === 0 {
-    JsError.throwWithMessage("`envio start --chain` needs at least one chain to index.")
-  }
   // Chains indexed in separate processes each advance their own checkpoint
   // counter, which only holds while no entity has rows another chain can reach.
   switch config.userEntities->Array.filter(entityConfig => entityConfig.crossChain) {
   | [] => ()
   | shared =>
-    // Naming all of them is only useful when some are per-chain. Without
-    // `disable_default_cross_chain` every entity is shared, and the list is just
-    // the schema read back. Kept in step with the CLI's own check, which is what
-    // a user normally hits first.
-    let remedy = if shared->Array.length === config.userEntities->Array.length {
-      "Every entity in this schema is cross-chain, because config.yaml doesn't set `disable_default_cross_chain: true`. Set it, then run every chain in its own process."
-    } else {
-      let names = shared->Array.map(entityConfig => entityConfig.name)->Array.joinUnsafe(", ")
-      `Entities shared across chains: ${names}. Drop \`@crossChain\` from them, or run every chain in one process.`
-    }
     JsError.throwWithMessage(
-      `\`envio start --chain\` needs every entity to be per-chain, because chains indexed in separate processes can't share a checkpoint sequence. ${remedy}`,
+      `Only a schema whose entities are all per-chain can be split across processes. Shared across chains: ${shared
+        ->Array.map(entityConfig => entityConfig.name)
+        ->Array.joinUnsafe(", ")}.`,
     )
   }
 
-  let configured = config.chainMap->ChainMap.keys->Array.map(ChainId.toString)
   let selected = Dict.make()
   chainIds->Array.forEach(chainId =>
     if config.chainMap->ChainMap.has(chainId) {
       selected->ChainId.Dict.set(chainId, true)
     } else {
-      let id = chainId->ChainId.toString
       JsError.throwWithMessage(
-        `Chain ${id} is not configured, so \`envio start --chain ${id}\` has nothing to index. Configured chains: ${configured->Array.joinUnsafe(", ")}.`,
+        `Chain ${chainId->ChainId.toString} is not in config.yaml, so there is nothing for this process to index.`,
       )
     }
   )
@@ -1257,7 +1229,7 @@ let filterChains = (config: t, ~chainIds: array<ChainId.t>) => {
 %%private(let cached: ref<option<t>> = ref(None))
 
 // Applied inside `load` rather than by the caller, because the memoized config
-// is what the exported `generated` indexer reads for `indexer.chains` - patching
+// is what the exported `generated` indexer reads for `indexer.chains` — patching
 // the record afterwards would leave that advertising chains this process never
 // drives. Empty means every chain, which is what a run without `--chain` does.
 %%private(let activeChains: ref<array<ChainId.t>> = ref([]))
@@ -1443,7 +1415,7 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 // Throws an `incompatible config` error listing each path in `changedPaths`,
 // plus the remediation options. `~resetCommand` is rendered as-is for
 // option 2 (the wipe-and-redo). `~runCommand` controls option 3 (parallel
-// indexer recipe): when `None`, option 3 is omitted - the migrate flow
+// indexer recipe): when `None`, option 3 is omitted — the migrate flow
 // uses this because running a second indexer doesn't apply.
 // `~hasClickhouse` adds the extra env line so users running both
 // Postgres and Clickhouse get a complete override.
@@ -1462,7 +1434,7 @@ let throwIfIncompatible = (
     | None => ""
     | Some(cmd) =>
       let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
-      `\n  3. Run a second indexer alongside this one - keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
+      `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
     }
     JsError.throwWithMessage(
       `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(

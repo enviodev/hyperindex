@@ -21,8 +21,8 @@ use anyhow::{Context, Result};
 use schemars::schema_for;
 
 /// A deferred work item the executor asks its host to run after Rust returns.
-/// Anything that must run in the JS event loop - migrations, indexer start,
-/// anything that loads `envio/src/*.res.mjs` - is encoded as a `Command`.
+/// Anything that must run in the JS event loop — migrations, indexer start,
+/// anything that loads `envio/src/*.res.mjs` — is encoded as a `Command`.
 ///
 /// Wire format: serde-tagged JSON on the `kind` field.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -51,7 +51,7 @@ pub enum Command {
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
 /// (to stamp the `envio` `file:{dir}` dep into generated / init
-/// `package.json`s). Commands that don't call it - `script` subcommands -
+/// `package.json`s). Commands that don't call it — `script` subcommands —
 /// may pass `None`; init/codegen/dev/start on a dev build without it will
 /// error out of `get_envio_version`.
 ///
@@ -122,14 +122,14 @@ pub async fn execute(
                 .await
                 .context("Failed running codegen")?;
 
-            // `envio start` doesn't manage Docker - users are expected to
+            // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
             Ok(Some(build_start_command(
                 &config,
                 start_args.restart,
                 false,
                 &[],
-                start_args.chains,
+                start_args.chains.iter().map(|id| id.to_string()).collect(),
             )?))
         }
 
@@ -220,7 +220,7 @@ pub fn build_start_command(
 /// hold, and both are cheaper to reject here than to discover at runtime: every
 /// id has to name a configured chain, and no entity may be shared across chains,
 /// since separate processes each advance their own checkpoint sequence.
-fn validate_chain_selection(config: &SystemConfig, chains: &[String], restart: bool) -> Result<()> {
+fn validate_chain_selection(config: &SystemConfig, chains: &[u64], restart: bool) -> Result<()> {
     if chains.is_empty() {
         return Ok(());
     }
@@ -265,14 +265,18 @@ fn validate_chain_selection(config: &SystemConfig, chains: &[String], restart: b
         );
     }
 
-    let mut configured: Vec<String> = config.chains.keys().map(|id| id.to_string()).collect();
-    configured.sort_unstable();
     for chain in chains {
-        if !configured.iter().any(|id| id == chain) {
+        if !config.chains.contains_key(chain) {
+            let mut configured: Vec<u64> = config.chains.keys().copied().collect();
+            configured.sort_unstable();
             anyhow::bail!(
                 "Chain {chain} is not configured, so `envio start --chain {chain}` has nothing to \
                  index. Configured chains: {}.",
-                configured.join(", ")
+                configured
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
         }
     }
@@ -281,7 +285,7 @@ fn validate_chain_selection(config: &SystemConfig, chains: &[String], restart: b
 }
 
 /// Returns a `Value` (not a string) so the serde payload embeds the config
-/// as a nested JSON object - the JS side then skips the extra `JSON.parse`.
+/// as a nested JSON object — the JS side then skips the extra `JSON.parse`.
 pub fn public_config_value(config: &SystemConfig, is_dev: bool) -> Result<serde_json::Value> {
     serde_json::from_str(&config.to_public_config_json(is_dev)?)
         .context("Failed parsing public config JSON")
@@ -342,9 +346,12 @@ chains:
     #[test]
     fn accepts_configured_chains_of_a_per_chain_schema() {
         let config = config(true);
-        assert!(validate_chain_selection(&config, &["137".to_string()], false).is_ok());
-        assert!(
-            validate_chain_selection(&config, &["1".to_string(), "137".to_string()], false).is_ok()
+        assert_eq!(
+            (
+                validate_chain_selection(&config, &[137], false).is_ok(),
+                validate_chain_selection(&config, &[1, 137], false).is_ok(),
+            ),
+            (true, true)
         );
     }
 
@@ -355,7 +362,7 @@ chains:
 
     #[test]
     fn rejects_a_restart_and_says_what_to_do_instead() {
-        let err = validate_chain_selection(&config(true), &["1".to_string()], true)
+        let err = validate_chain_selection(&config(true), &[1], true)
             .expect_err("a restart under --chain should be rejected");
         assert_eq!(
             err.to_string(),
@@ -367,7 +374,7 @@ chains:
 
     #[test]
     fn rejects_a_chain_the_config_does_not_declare() {
-        let err = validate_chain_selection(&config(true), &["42".to_string()], false)
+        let err = validate_chain_selection(&config(true), &[42], false)
             .expect_err("an unconfigured chain should be rejected");
         assert_eq!(
             err.to_string(),
@@ -378,7 +385,7 @@ chains:
 
     #[test]
     fn rejects_a_schema_that_shares_entities_across_chains() {
-        let err = validate_chain_selection(&config(false), &["1".to_string()], false)
+        let err = validate_chain_selection(&config(false), &[1], false)
             .expect_err("a cross-chain schema should be rejected");
         assert_eq!(
             err.to_string(),

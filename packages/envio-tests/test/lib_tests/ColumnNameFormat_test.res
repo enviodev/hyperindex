@@ -82,7 +82,10 @@ describe("Storage column naming (snake_case)", () => {
 
   it("creates indexes with db column names", t => {
     let definition =
-      PgStorage.getSchemaIndexes(~entities=[snapshotEntity])->Array.getUnsafe(0)
+      PgStorage.getSchemaIndexes(
+        ~entities=[snapshotEntity],
+        ~chainIds=[ChainId.fromInt(1)],
+      )->Array.getUnsafe(0)
     t.expect(
       definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
     ).toBe(

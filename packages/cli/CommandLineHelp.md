@@ -378,7 +378,7 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
-* `--chain <CHAIN_ID>` — Index only this chain, leaving the others to their own `envio start --chain` processes. Repeat the flag for several chains. Requires a schema whose entities are all per-chain, created for every chain by `envio local db-migrate up` before any process starts. Assign each configured chain to exactly one process, and start every chain: the schema's indexes are built, and the chains reported ready, only once the last has finished backfilling
+* `--chain <CHAIN_ID>` — Index only this chain, leaving the others to their own `envio start --chain` processes. Repeat the flag for several chains. Requires a schema whose entities are all per-chain, created for every chain by `envio local db-migrate up` before any process starts. Assign each configured chain to exactly one process. Each process builds the indexes for its own chains and reports them ready as they catch up, independently of the others
 
 
 

@@ -18,7 +18,7 @@ let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~schedul
     // responses synchronously in one tick; this yield lets them all land before
     // the first createBatch so they coalesce into one batch (matching the old
     // setImmediate model). In production responses arrive on separate network
-    // ticks and never co-arrive, so this never coalesces anything real - remove
+    // ticks and never co-arrive, so this never coalesces anything real — remove
     // it later to avoid an unnecessary setImmediate per processing burst.
     await yieldTick()
     // Seeded true so the first batch always runs (it handles the caught-up exit
@@ -95,7 +95,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     // finalizing resumes exactly here: it still owes the schema its deferred
     // indexes, and no batch will ever come along to notice.
     state->IndexerState.markCaughtUpIfSettled
-    if state->IndexerState.shouldRunFinalize {
+    if state->IndexerState.isFinalizingIndexes {
       await FinalizeBackfill.run(state)
     }
 
@@ -166,7 +166,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         // Backfilling → FinalizingIndexes → Ready. Awaiting here holds the
         // processing loop for the whole finalize, which is what pauses
         // processing while the indexes are built.
-        if state->IndexerState.shouldRunFinalize {
+        if state->IndexerState.isFinalizingIndexes {
           await FinalizeBackfill.run(state)
         }
 

@@ -28,26 +28,44 @@ let formatSeconds = (timeRef: Performance.timeRef) =>
 // stalled-looking indexer is explainable from the logs alone.
 let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
-// What one attempt at building an index came back with. `LockBusy` is another
-// process holding the schema's index lock, not a failure.
-type indexBuildAttempt =
-  | LockBusy
-  | AlreadyBuilt
-  | Built(IndexCatalog.entry)
+// A per-chain entity's rows are partitioned by the chain that owns them, so a
+// chain-filtered read scans one chain's partition rather than the whole table.
+// `$` can't occur in a GraphQL entity name, so a partition name can never
+// collide with the table another entity claims; past the identifier limit the
+// entity index keeps what survives truncation unique.
+let partitionTableName = (~entityConfig: Internal.entityConfig, ~chainId: ChainId.t) => {
+  let chainIdStr = chainId->ChainId.toString
+  Table.fitPgTableName(
+    `${entityConfig.table.tableName}$${chainIdStr}`,
+    ~uniqueSuffix=`$${entityConfig.index->Int.toString}$${chainIdStr}`,
+  )
+}
 
-// First key of every `pg_advisory_lock` envio takes, so its locks can never
-// collide with an application's own. "envi" as ASCII, which fits int4.
-let envioAdvisoryLockNamespace = 0x656e7669
+// A per-chain entity's rows are partitioned by chain, so its indexes are built
+// on the partitions rather than on the parent table. The planner uses a
+// partition's own index either way, so a query reads the same; what changes is
+// that building one chain's index neither waits for nor locks another chain's
+// rows, which is what lets `envio start --chain` processes finalize
+// independently. A cross-chain entity has no partitions and is indexed on the
+// table itself.
+let indexTableNames = (entityConfig: Internal.entityConfig, ~chainIds) =>
+  switch entityConfig.table->Table.getChainIdField {
+  | None => [entityConfig.table.tableName]
+  | Some(_) => chainIds->Array.map(chainId => partitionTableName(~entityConfig, ~chainId))
+  }
 
-// Every index the entity schema promises: an `@index` field, a composite index,
-// or the index backing a derived relationship. Deferred past the initial DDL and
-// created once every chain has finished backfill, so an indexer that reports
-// itself ready always has all of them.
+// Every index the entity schema promises, for the given chains: an `@index`
+// field, a composite index, or the index backing a derived relationship.
+// Deferred past the initial DDL and created once a chain has finished backfill,
+// so a chain that reports itself ready always has all of them.
 //
 // `entities` is the Postgres-backed set, and every `@derivedFrom` target within
 // it resolves: config parsing rejects a Postgres entity deriving from one that
 // isn't in Postgres (`validate_relationship_storage`).
-let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<IndexDefinition.t> => {
+let getSchemaIndexes = (
+  ~entities: array<Internal.entityConfig>,
+  ~chainIds: array<ChainId.t>,
+): array<IndexDefinition.t> => {
   let derivedSchema = Schema.make(entities->Array.map(e => e.table))
   let all = []
 
@@ -79,9 +97,17 @@ let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<IndexDef
   )
 
   // An `@index` field and a derived relationship pointing at it describe the
-  // same index, so the list is deduped on identity rather than on name.
+  // same index, so the list is deduped on identity rather than on name. Deduped
+  // before the fan-out below, where one definition can only ever become one per
+  // chain.
   let seen = Utils.Set.make()
-  all->Array.filter(definition => {
+  let entityByTableName = Dict.make()
+  entities->Array.forEach(entityConfig =>
+    entityByTableName->Dict.set(entityConfig.table.tableName, entityConfig)
+  )
+
+  all
+  ->Array.filter(definition => {
     let key = definition->IndexDefinition.key
     if seen->Utils.Set.has(key) {
       false
@@ -90,6 +116,13 @@ let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<IndexDef
       true
     }
   })
+  ->Array.flatMap(definition =>
+    entityByTableName
+    ->Dict.get(definition.tableName)
+    ->Option.getOrThrow
+    ->indexTableNames(~chainIds)
+    ->Array.map(tableName => {...definition, IndexDefinition.tableName})
+  )
 }
 
 let makeCreateTableQuery = (
@@ -131,19 +164,6 @@ let makeCreateTableQuery = (
     | Some(column) => ` PARTITION BY LIST ("${column}")`
     | None => ""
     }};`
-}
-
-// A per-chain entity's rows are partitioned by the chain that owns them, so a
-// chain-filtered read scans one chain's partition rather than the whole table.
-// `$` can't occur in a GraphQL entity name, so a partition name can never
-// collide with the table another entity claims; past the identifier limit the
-// entity index keeps what survives truncation unique.
-let partitionTableName = (~entityConfig: Internal.entityConfig, ~chainId: ChainId.t) => {
-  let chainIdStr = chainId->ChainId.toString
-  Table.fitPgTableName(
-    `${entityConfig.table.tableName}$${chainIdStr}`,
-    ~uniqueSuffix=`$${entityConfig.index->Int.toString}$${chainIdStr}`,
-  )
 }
 
 // The entity as it's stored: the handler-visible schema plus the chain-id
@@ -252,8 +272,8 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
 
 // Every table an entity needs: its own, one partition per chain when it's
 // per-chain, and its history table. The chain set is fixed for the life of a
-// schema - changing it fails the resume compat check against `envio_info` and
-// forces a resync - so every partition the entity will ever need is created
+// schema — changing it fails the resume compat check against `envio_info` and
+// forces a resync — so every partition the entity will ever need is created
 // here, at init.
 //
 // History stays unpartitioned: it is only ever read by checkpoint, never by
@@ -329,7 +349,7 @@ let makeInitializeTransaction = (
       ),
     )
 
-  let schemaIndexes = getSchemaIndexes(~entities)
+  let schemaIndexes = getSchemaIndexes(~entities, ~chainIds)
 
   let query = ref(
     (
@@ -441,13 +461,13 @@ let rec makeFilterCondition = (
   // Postgres can only prune a plan it caches when that column is a constant in
   // the SQL. Bound, the cached plan has to keep every partition, and the
   // planner ends up throwing it away and re-planning on every execution
-  // instead - measured at 315us per load against 218us with the id written in,
+  // instead — measured at 315us per load against 218us with the id written in,
   // on 30 chains.
   //
   // The cost is that each chain gets its own query text, so Postgres caches a
   // prepared statement per (entity, chain, filter shape) rather than per
   // (entity, filter shape). Measured at ~8KB of plan cache each, which is ~10MB
-  // per connection for 40 entities across 30 chains - accepted, since the
+  // per connection for 40 entities across 30 chains — accepted, since the
   // alternative is a cached plan that can't prune.
   //
   // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
@@ -488,7 +508,7 @@ let rec makeFilterCondition = (
 // tables, which have no such column.
 //
 // The chain id is written into the SQL rather than bound, because the table is
-// partitioned by it - see `makeFilterCondition` for why a partition key has to
+// partitioned by it — see `makeFilterCondition` for why a partition key has to
 // be a constant.
 let makeChainIdCondition = (~table: Table.table, ~chainId: option<ChainId.t>) =>
   switch (table->Table.getChainIdField, chainId) {
@@ -690,7 +710,7 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
 
 // Strips NUL bytes, recursing into nested objects/arrays so a NUL buried
 // inside a jsonb column (an event param object, a json entity field) is
-// removed too - Postgres rejects it in both text (0x00) and jsonb (22P05).
+// removed too — Postgres rejects it in both text (0x00) and jsonb (22P05).
 let rec removeInvalidUtf8DeepInPlace = (value: unknown): unknown => {
   if value->typeof === #string {
     value
@@ -717,8 +737,8 @@ exception PgEncodingError({table: Table.table})
 
 // Classifies a write failure, parking it in `specificError` so the
 // transaction can unwind and the outer handler can react. Both Postgres
-// encoding failures we recognize are NUL-related - `0x00` in a text column
-// and a NUL rejected by jsonb (22P05) - so they become a PgEncodingError
+// encoding failures we recognize are NUL-related — `0x00` in a text column
+// and a NUL rejected by jsonb (22P05) — so they become a PgEncodingError
 // that triggers an escape-and-retry of the offending table, where deep NUL
 // stripping resolves them. We escape lazily on first failure to keep the
 // happy path free of per-item sanitization. The aborted-transaction cascade
@@ -748,7 +768,7 @@ let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table,
 
 // Batch set queries, cached per table. The query text bakes in the schema and
 // the chain-id mode, so the cache belongs to the storage instance those came
-// from - `make` creates one and threads it down. A process-wide cache would
+// from — `make` creates one and threads it down. A process-wide cache would
 // hand a second storage the first one's schema.
 let makeSetQueryCache = () => Utils.WeakMap.make()
 
@@ -1010,7 +1030,7 @@ let makeInsertDeleteUpdatesQuery = (
 
   // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
   // The chain-id column is part of the history primary key, so a DELETE row
-  // carries the scope's chain - bound once as $3 - rather than the NULL every
+  // carries the scope's chain — bound once as $3 — rather than the NULL every
   // other data field gets.
   let chainIdColumn = switch (entityConfig.table->Table.getChainIdField, chainId) {
   | (Some(field), Some(_)) => field->Table.getPgDbFieldName
@@ -1923,7 +1943,7 @@ let make = (
     )
     // Execute all queries within a single transaction for integrity.
     // The envio_info row is written in the same transaction so a successful
-    // initialize is atomic - no schema can come up without the matching row.
+    // initialize is atomic — no schema can come up without the matching row.
     let rowsByChain =
       chainConfigs->Array.map(chainConfig =>
         chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping)
@@ -2051,180 +2071,144 @@ let make = (
     prepared->IndexManager.verifyOrThrow(~rows, ~pgSchema)
   }
 
-  // Serializes index DDL across the processes sharing this schema. Sibling
-  // `envio start --chain` runs reach the same index set together, and
-  // `CREATE INDEX` carries no `IF NOT EXISTS`, so without this each would build
-  // the whole set and every loser would fail on a name the winner already took.
+  // A build outside a transaction can commit its DDL and still fail — the
+  // read-back is a second round trip. Re-reading the index puts the catalog
+  // back in step, so the next attempt plans against what the database holds
+  // instead of retrying a create that can only raise "already exists".
   //
-  // The key is derived here rather than with Postgres' `hashtext`, which is an
-  // internal function carrying no compatibility promise. Namespaced by the
-  // schema name, so two indexers sharing a database never wait on each other.
-  //
-  // Taken with `try`, not by waiting: the transaction has already reserved a
-  // pooled connection by the time the lock is asked for, and blocking inside
-  // Postgres would pin it for as long as a sibling's build takes. With
-  // `ENVIO_PG_MAX_CONNECTIONS` at its default of 2 that starves the writes this
-  // indexer is trying to make. Failing to acquire ends the transaction, hands
-  // the connection back, and the caller comes round again.
-  let indexLockQuery = {
-    let key = IndexDefinition.fnv1a(pgSchema, ~seed=IndexDefinition.fnvOffsetBasis)
-    `SELECT pg_try_advisory_xact_lock(${envioAdvisoryLockNamespace->Int.toString}, ${key->Int.toString}) AS "locked";`
-  }
-
-  // Long enough that a contended build isn't polling hard, short enough to be
-  // lost in the seconds-to-minutes an index takes. Doubles up to the ceiling
-  // while the lock stays held.
-  let indexLockRetryMillis = 250
-  let indexLockMaxRetryMillis = 4000
-
-  // Builds one index, unless the database already holds it. Every build goes
-  // through here, so the lock and the re-read under it are not something a
-  // caller can forget.
-  //
-  // One transaction per index rather than one around a whole set: a committed
-  // index stays committed, so a build that dies half way through a large schema
-  // leaves the retry owing only the rest. The transaction is also what makes the
-  // read-back safe - a verification failure rolls the DDL back with it, instead
-  // of leaving behind an index the catalog doesn't know about, which is why
-  // nothing here has to repair the catalog after a failure.
-  // `~giveUpAfterMillis` bounds the wait for the lock, for callers a handler is
-  // awaiting: a sibling process's build can run for minutes, and a getWhere is
-  // promised its query will run unindexed rather than block on one. The finalize
-  // path passes none and waits, since nothing is waiting on it.
-  let buildIndex = async (
-    ~definition,
-    ~coverage,
-    ~startMessage=?,
-    ~doneMessage=?,
-    ~giveUpAfterMillis=?,
-  ) => {
-    let name = definition->IndexDefinition.name
-    let timeRef = Performance.now()
-    let rec attempt = async (~retryMillis) => {
-      let outcome = await sql->Postgres.beginSql(async sql => {
-        let rows: array<{"locked": bool}> = await sql->Postgres.unsafe(indexLockQuery)
-        if !(rows->Array.getUnsafe(0))["locked"] {
-          // Someone else is building. Whatever they build, the re-read on the
-          // next attempt sees, so this terminates either way.
-          LockBusy
-        } else {
-          // Under the lock: a sibling process may have built this one while we
-          // waited, and a previous attempt of our own may have committed DDL it
-          // never got to read back.
-          indexManager->IndexManager.resync(
-            ~name,
-            ~rows=await sql->loadCatalogRows(~indexName=name),
-          )
-          switch indexManager->IndexManager.prepare(~definition, ~coverage, ~pgSchema) {
-          | None => AlreadyBuilt
-          | Some(prepared) =>
-            // Logged from inside the build so it reports the one attempt that
-            // actually creates the index, not the ones waiting on it.
-            switch startMessage {
-            | Some(startMessage) =>
-              Logging.info({"storage": storageName, "msg": prepared->startMessage})
-            | None => ()
-            }
-            Built(await sql->runAndVerify(prepared))
-          }
-        }
+  // If this read fails too, the next attempt does waste a create before landing
+  // here again — bounded, and it recovers as soon as the database answers.
+  let resyncIndex = async name =>
+    switch await sql->loadCatalogRows(~indexName=name) {
+    | rows => indexManager->IndexManager.resync(~name, ~rows)
+    | exception exn =>
+      Logging.debug({
+        "storage": storageName,
+        "msg": `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
+        "err": exn->Utils.prettifyExn,
       })
-      switch outcome {
-      | LockBusy =>
-        let waited = timeRef->Performance.secondsSince *. 1000.
-        switch giveUpAfterMillis {
-        | Some(limit) if waited >= limit =>
-          Logging.info({
-            "storage": storageName,
-            "msg": "Another instance is still preparing the database, so this index is left to it.",
-          })
-        | _ =>
-          // Otherwise a sibling's multi-minute build leaves this process looking
-          // frozen, with nothing in its logs to say why.
-          if retryMillis === indexLockRetryMillis {
-            Logging.info({
-              "storage": storageName,
-              "msg": "Waiting for another instance to finish preparing the database.",
-            })
-          }
-          await Utils.delay(retryMillis)
-          // Backs off, because each attempt reserves a pooled connection for its
-          // transaction and the holder's build can run for minutes.
-          await attempt(~retryMillis=Pervasives.min(retryMillis * 2, indexLockMaxRetryMillis))
-        }
-      | AlreadyBuilt => ()
-      | Built(entry) =>
-        // Recorded only once the commit made the DDL durable.
-        indexManager->IndexManager.record(entry)
-        switch doneMessage {
-        | Some(doneMessage) =>
-          Logging.info({"storage": storageName, "msg": doneMessage(timeRef->formatSeconds)})
-        | None => ()
-        }
-      }
     }
-    await attempt(~retryMillis=indexLockRetryMillis)
-  }
 
-  let ensureQueryIndexes = async (~table: Table.table, ~filters: array<EntityFilter.t>) => {
-    let columns = filterColumns(~table, ~filters)
+  // The physical table a query against `scope` reads. A per-chain entity's query
+  // carries the scope's chain id, so it is planned against that chain's
+  // partition and an index on the partition is what serves it.
+  let queryTableName = (~entityConfig: Internal.entityConfig, ~scope: Internal.chainScope) =>
+    switch (scope, entityConfig.table->Table.getChainIdField) {
+    | (Chain(chainId), Some(_)) => partitionTableName(~entityConfig, ~chainId)
+    | _ => entityConfig.table.tableName
+    }
+
+  let ensureQueryIndexes = async (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~filters: array<EntityFilter.t>,
+  ) => {
+    let tableName = queryTableName(~entityConfig, ~scope)
+    let columns = filterColumns(~table=entityConfig.table, ~filters)
     let _ = await columns
     ->Array.map(column => {
-      let definition = IndexDefinition.single(~tableName=table.tableName, ~column)
+      let definition = IndexDefinition.single(~tableName, ~column)
       indexManager
-      ->IndexManager.ensure(~definition, ~coverage=LeadingColumns, ~build=() =>
-        buildIndex(
+      ->IndexManager.ensure(~definition, ~coverage=LeadingColumns, ~build=async () => {
+        // Resolved before logging so a rebuild is reported as one, and an
+        // unrelated index holding the name fails before any DDL runs.
+        switch indexManager->IndexManager.prepare(
           ~definition,
           ~coverage=LeadingColumns,
-          // A handler is awaiting this one.
-          ~giveUpAfterMillis=5_000.,
-          ~startMessage=(prepared: IndexManager.prepared) => {
-            let verb = prepared.isRebuild ? "Rebuilding the unusable index" : "Creating an index"
-            `${verb} on "${table.tableName}"."${column}" to serve a getWhere query. Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`
-          },
-          ~doneMessage=seconds =>
-            `The index on "${table.tableName}"."${column}" is ready after ${seconds}s. Resuming indexing.`,
-        )
-      )
+          ~pgSchema,
+        ) {
+        | None => ()
+        | Some(prepared) =>
+          let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating index"
+          // Logged from inside the build so it reports the one request that
+          // actually creates the index, not the ones waiting on it.
+          Logging.info({
+            "storage": storageName,
+            "msg": `${verb} "${prepared.name}" to serve a getWhere query on "${tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+          })
+          let timeRef = Performance.now()
+          let entry = await sql->runAndVerify(prepared)
+          indexManager->IndexManager.record(entry)
+          Logging.info({
+            "storage": storageName,
+            "msg": `Index "${prepared.name}" is ready after ${timeRef->formatSeconds}s. Resuming indexing.`,
+          })
+        }
+      })
       // A failed build records nothing, so the next getWhere retries. Meanwhile
-      // the query still runs - just without the index.
-      ->Promise.catch(async exn =>
+      // the query still runs — just without the index.
+      ->Promise.catch(async exn => {
         Logging.warn({
           "storage": storageName,
-          "msg": `Failed to create an index on "${table.tableName}"("${column}") for a getWhere query. The query runs without it.`,
+          "msg": `Failed to create an index on "${tableName}"("${column}") for a getWhere query. The query runs without it.`,
           "err": exn->Utils.prettifyExn,
         })
-      )
+        await resyncIndex(definition->IndexDefinition.name)
+      })
     })
     ->Promise.all
   }
 
-  let readChainProgress = async (): array<Persistence.chainProgress> => {
-    // Raw read, so the chain id goes through `normalizeOrThrow` rather than
-    // trusting what the driver made of a BIGINT column.
-    let rows: array<{
-      "id": unknown,
-      "progressBlockNumber": int,
-      "sourceBlockNumber": int,
-      "endBlock": Null.t<int>,
-    }> = await sql->Postgres.unsafe(InternalTable.Chains.makeReadProgressQuery(~pgSchema))
-    rows->Array.map(row => {
-      Persistence.id: row["id"]->ChainId.normalizeOrThrow,
-      progressBlockNumber: row["progressBlockNumber"],
-      sourceBlockNumber: row["sourceBlockNumber"],
-      endBlock: row["endBlock"]->Null.toOption,
-    })
-  }
-
-  // Doesn't go through `IndexManager.ensure`, unlike `ensureQueryIndexes`: the
-  // per-table queue is only there to stop two requests in this process building
-  // the same index at once, and `buildIndex` already rules that out for every
-  // process sharing the schema. So this is safe to run alongside a live indexer,
-  // which is what the resume path needs - and why the logging here can't claim
-  // that writes are paused or that the indexer has yet to report ready.
-  let finalizeBackfill = async (~entities: array<Internal.entityConfig>, ~readyAt: Date.t) => {
+  // Goes through `IndexManager.ensure`, unlike `finalizeBackfill` below: that
+  // one runs with processing paused, while this runs on a resumed indexer that
+  // is already ready, so handlers may be issuing getWhere queries alongside it
+  // and the per-table queues are what keep the two from colliding. Nothing here
+  // writes `ready_at` — the chains already carry theirs.
+  let ensureSchemaIndexes = async (~entities: array<Internal.entityConfig>, ~chainIds) => {
     let schemaIndexes = getSchemaIndexes(
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
+      ~chainIds,
+    )
+
+    let _ = await schemaIndexes
+    ->Array.map(definition =>
+      indexManager
+      ->IndexManager.ensure(~definition, ~coverage=Exact, ~build=async () => {
+        switch indexManager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema) {
+        | None => ()
+        | Some(prepared) =>
+          let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating missing index"
+          Logging.info({
+            "storage": storageName,
+            "msg": `${verb} "${prepared.name}" the schema promises but the database no longer has. Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+          })
+          let timeRef = Performance.now()
+          let entry = await sql->runAndVerify(prepared)
+          indexManager->IndexManager.record(entry)
+          Logging.info({
+            "storage": storageName,
+            "msg": `Index "${prepared.name}" is ready after ${timeRef->formatSeconds}s.`,
+          })
+        }
+      })
+      ->Promise.catch(async exn => {
+        Logging.warn({
+          "storage": storageName,
+          "msg": `Failed to restore the schema index "${definition->IndexDefinition.name}". Queries relying on it run unindexed until the next restart.`,
+          "err": exn->Utils.prettifyExn,
+        })
+        await resyncIndex(definition->IndexDefinition.name)
+      })
+    )
+    ->Promise.all
+  }
+
+  // Unlike `ensureQueryIndexes`, this doesn't go through `IndexManager.ensure`.
+  // It's safe because the caller guarantees exclusivity — `FinalizeBackfill.run`
+  // is reached from the processing loop with processing already paused, so no
+  // handler can be running a getWhere.
+  //
+  // Each index is built on its own rather than in one transaction with
+  // `ready_at`: a build that dies half way through a large schema would
+  // otherwise roll back every index before it and make the retry start over.
+  let finalizeBackfill = async (
+    ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
+    ~readyAt: Date.t,
+  ) => {
+    let schemaIndexes = getSchemaIndexes(
+      ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
+      ~chainIds,
     )
 
     // Resolved up front so a name held by an unrelated index fails before any
@@ -2247,23 +2231,25 @@ let make = (
         "msg": `PostgreSQL reports ${rebuilt
           ->Array.length
           ->Int.toString} of the indexer's own indexes as invalid, so they can't serve queries. Rebuilding them.`,
+        "indexes": rebuilt->Array.map((prepared: IndexManager.prepared) => prepared.name),
       })
     }
 
     switch missing {
     | [] =>
-      Logging.trace({
+      Logging.info({
         "storage": storageName,
         "msg": `All ${schemaIndexes
           ->Array.length
-          ->Int.toString} indexes the schema declares are already in place.`,
+          ->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
       })
     | _ =>
       Logging.info({
         "storage": storageName,
         "msg": `Creating the ${missing
           ->Array.length
-          ->Int.toString} indexes the schema declares. Writes to a table are paused while its index is built. ${slowOnLargeDatabaseNotice}`,
+          ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
+        "indexes": missing->Array.map((prepared: IndexManager.prepared) => prepared.name),
       })
     }
     let timeRef = Performance.now()
@@ -2272,27 +2258,44 @@ let make = (
     // failure stays built and recorded, so the retry owes only the rest.
     for idx in 0 to missing->Array.length - 1 {
       let prepared = missing->Array.getUnsafe(idx)
-      await buildIndex(~definition=prepared.definition, ~coverage=Exact)
+      switch await sql->runAndVerify(prepared) {
+      | entry => indexManager->IndexManager.record(entry)
+      | exception exn =>
+        // The DDL is outside a transaction, so a create that commits and then
+        // fails its read-back leaves the index in place and unrecorded.
+        // Re-reading it means the retry plans against the database rather than
+        // replaying a create that can only raise "already exists".
+        await resyncIndex(prepared.name)
+        throw(exn)
+      }
     }
 
     // Reached only once every definition is verified against pg_catalog, so a
     // crash either leaves `ready_at` null and the retry finds the indexes
     // already built, or commits readiness the schema backs.
-    let _ = await sql->Postgres.preparedUnsafe(
-      InternalTable.Chains.makeSetReadyAtQuery(~pgSchema),
-      [readyAt->(Utils.magic: Date.t => unknown)]->(Utils.magic: array<unknown> => unknown),
-    )
+    //
+    // One transaction for the whole set: the chains this process drives caught
+    // up together, and a crash part way through would otherwise leave some of
+    // them stamped and some not.
+    let setReadyAtQuery = InternalTable.Chains.makeSetReadyAtQuery(~pgSchema)
+    let _ = await sql->Postgres.beginSql(async sql => {
+      for idx in 0 to chainIds->Array.length - 1 {
+        let _ = await sql->Postgres.preparedUnsafe(
+          setReadyAtQuery,
+          [
+            readyAt->(Utils.magic: Date.t => unknown),
+            chainIds->Array.getUnsafe(idx)->(Utils.magic: ChainId.t => unknown),
+          ]->(Utils.magic: array<unknown> => unknown),
+        )
+      }
+    })
 
-    switch missing {
-    | [] => ()
-    | _ =>
-      Logging.info({
-        "storage": storageName,
-        "msg": `Created ${missing
-          ->Array.length
-          ->Int.toString} indexes in ${timeRef->formatSeconds}s.`,
-      })
-    }
+    Logging.info({
+      "storage": storageName,
+      "msg": `Committed ${missing
+        ->Array.length
+        ->Int.toString} schema indexes and the ready timestamp in ${timeRef->formatSeconds}s.`,
+    })
   }
 
   let setOrThrow = (
@@ -2647,7 +2650,7 @@ let make = (
     resumeInitialState,
     loadOrThrow,
     ensureQueryIndexes,
-    readChainProgress,
+    ensureSchemaIndexes,
     finalizeBackfill,
     dumpEffectCache,
     reset,

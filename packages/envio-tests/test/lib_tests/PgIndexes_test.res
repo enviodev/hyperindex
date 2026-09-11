@@ -35,35 +35,27 @@ let entities = [entityA, entityB]
 let allEntities = entities
 
 // Delegates to the real client, records every statement, and can be told to
-// fail one kind of query - enough to reproduce a read-back that fails after its
+// fail one kind of query — enough to reproduce a read-back that fails after its
 // DDL has already committed. A Proxy rather than a hand-written stand-in, so
 // the storage reaching for a method this test never thought about still works.
-// Wraps the transaction handle as well as the pool: index DDL runs inside a
-// transaction, so a proxy that only covered the pool would never see it.
 let makeFlakySql: (
   Postgres.sql,
   array<string>,
   string => bool,
-) => Postgres.sql = %raw(`(sql, log, shouldFail) => {
-  const wrap = (target) => new Proxy(target, {
-    get(t, prop, receiver) {
-      if (prop === "unsafe") {
-        return (query, params, options) => {
-          log.push(query);
-          return shouldFail(query)
-            ? Promise.reject(new Error("connection terminated unexpectedly"))
-            : t.unsafe(query, params, options);
-        };
-      }
-      if (prop === "begin") {
-        return (fn) => t.begin((tx) => fn(wrap(tx)));
-      }
-      const value = Reflect.get(t, prop, receiver);
-      return typeof value === "function" ? value.bind(t) : value;
-    },
-  });
-  return wrap(sql);
-}`)
+) => Postgres.sql = %raw(`(sql, log, shouldFail) => new Proxy(sql, {
+  get(target, prop, receiver) {
+    if (prop === "unsafe") {
+      return (query, params, options) => {
+        log.push(query);
+        return shouldFail(query)
+          ? Promise.reject(new Error("connection terminated unexpectedly"))
+          : target.unsafe(query, params, options);
+      };
+    }
+    const value = Reflect.get(target, prop, receiver);
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+})`)
 
 let makeStorage = (~sql=sql, pgSchema) =>
   PgStorage.make(
@@ -80,7 +72,7 @@ let makeStorage = (~sql=sql, pgSchema) =>
 
 // A schema of its own per test, so the fixtures below can leave whatever
 // indexes they like behind without disturbing the other suites. `fixtures` run
-// after the tables exist, then the storage resumes - the same order a restart
+// after the tables exist, then the storage resumes — the same order a restart
 // onto an existing schema sees.
 // Each test owns a schema; they'd otherwise pile up in the developer's database
 // run after run, since nothing else ever looks at them again. The name is
@@ -179,13 +171,13 @@ describe("Indexes built against a real schema", () => {
   Async.it("Builds a separate full index when only a partial one exists", async t => {
     let pgSchema = testSchema("partial")
     // Covers only the rows its predicate selects, so it can't answer the
-    // unrestricted lookups a getWhere filter makes - but it does hold a name.
+    // unrestricted lookups a getWhere filter makes — but it does hold a name.
     let storage = await setup(
       ~pgSchema,
       ~fixtures=[`CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id") WHERE "b_id" IS NOT NULL;`],
     )
 
-    await storage.finalizeBackfill(~entities, ~readyAt)
+    await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
       (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
@@ -202,7 +194,7 @@ describe("Indexes built against a real schema", () => {
       ~fixtures=[`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`],
     )
 
-    await storage.finalizeBackfill(~entities, ~readyAt)
+    await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
       (
@@ -240,7 +232,7 @@ describe("Indexes built against a real schema", () => {
       ~message="The failed build leaves an invalid index holding the name",
     ).toEqual((true, [("A_b_id", false)]))
 
-    await storage.finalizeBackfill(~entities, ~readyAt)
+    await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
       (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
@@ -259,7 +251,7 @@ describe("Indexes built against a real schema", () => {
       ~fixtures=[`CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id");`],
     )
 
-    await storage.finalizeBackfill(~entities, ~readyAt)
+    await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
       (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
@@ -274,8 +266,8 @@ describe("Indexes built against a real schema", () => {
     let storage = await setup(~pgSchema)
     let column = "optionalStringToTestLinkedEntities"
 
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName=column)])
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName=column)])
+    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters=[eq(~fieldName=column)])
+    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters=[eq(~fieldName=column)])
 
     t.expect(
       (await findIndexes(~pgSchema, ~tableName="A", ~columns=[column]))->Array.map(describeIndex),
@@ -286,7 +278,7 @@ describe("Indexes built against a real schema", () => {
   })
 
   // Entity names are capped at 63 characters by codegen, so nothing the
-  // indexer creates should ever be truncated by Postgres - but if that ever
+  // indexer creates should ever be truncated by Postgres — but if that ever
   // stopped holding, the catalog would report a name we never look for and
   // verification would fail every finalize. This pins the boundary.
   Async.it("Round-trips a table name at Postgres' identifier limit", async t => {
@@ -306,10 +298,10 @@ describe("Indexes built against a real schema", () => {
     let storage = await setup(~pgSchema, ~entities=[entity])
     let definition = IndexDefinition.single(~tableName, ~column="b_id")
 
-    await storage.finalizeBackfill(~entities=[entity], ~readyAt)
+    await storage.finalizeBackfill(~entities=[entity], ~chainIds=[], ~readyAt)
     // A second pass has to recognise what the first one built. If the stored
     // name and the one we match on had drifted, this would rebuild and fail.
-    await storage.finalizeBackfill(~entities=[entity], ~readyAt)
+    await storage.finalizeBackfill(~entities=[entity], ~chainIds=[], ~readyAt)
 
     t.expect((
       tableName->String.length,
@@ -317,10 +309,10 @@ describe("Indexes built against a real schema", () => {
     )).toEqual((63, [(definition->IndexDefinition.name, true, false, "btree")]))
   })
 
-  // The read-back shares a transaction with the DDL, so a failure takes the
-  // create with it. The catalog and the database can't end up disagreeing about
-  // whether the index exists, which is what a later request would trip over.
-  Async.it("Rolls the index back when the read-back fails", async t => {
+  // The DDL commits, then the read-back fails on its own round trip. Without
+  // resyncing that index, the catalog keeps claiming the name is free and every
+  // later request replans a create that can only raise "already exists".
+  Async.it("Recovers when the read-back fails after the index was built", async t => {
     let pgSchema = testSchema("flaky")
     let queries = []
     // One-shot: the storage reads the catalog during initialize too, so the
@@ -330,13 +322,7 @@ describe("Indexes built against a real schema", () => {
       sql,
       queries,
       query =>
-        // Only the read that verifies a build: the same query also runs before
-        // one, to see whether another process got there first.
-        if (
-          failNextRead.contents &&
-          query->String.includes("FROM pg_index") &&
-          queries->Array.some(logged => logged->String.includes("CREATE INDEX"))
-        ) {
+        if failNextRead.contents && query->String.includes("FROM pg_index") {
           failNextRead := false
           true
         } else {
@@ -347,32 +333,33 @@ describe("Indexes built against a real schema", () => {
     let filters = [eq(~fieldName="b_id")]
 
     failNextRead := true
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters)
+    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters)
 
+    let built = await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"])
     t.expect(
-      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
-        entry => entry.name,
-      ),
-      ~message="The failed verification took the create with it",
-    ).toEqual([])
+      built->Array.map(entry => entry.name),
+      ~message="The index committed even though the verification read never came back",
+    ).toEqual([aBIdName])
 
+    // The resync happens on the failure path, so by now the storage should
+    // already know the index exists.
     queries->Utils.Array.clearInPlace
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters)
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters)
+    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters)
+    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters)
 
     t.expect(
       (
-        queries->Array.filter(query => query->String.includes("CREATE INDEX"))->Array.length,
+        queries->Array.filter(query => query->String.includes("CREATE INDEX")),
         (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
           entry => entry.name,
         ),
       ),
-      ~message="The retry builds it once, and the request after that is served from the catalog",
-    ).toEqual((1, [aBIdName]))
+      ~message="Later requests are served from the catalog instead of retrying a doomed create",
+    ).toEqual(([], [aBIdName]))
   })
 
   // A finalize that dies part way through must not undo the indexes it already
-  // built: each one commits on its own, so the retry owes only the rest.
+  // built, and must not claim readiness the schema doesn't back yet.
   Async.it("Keeps the indexes it built when a later one fails, and retries the rest", async t => {
     let pgSchema = testSchema("partial_failure")
     let tableName = "Triple"
@@ -406,6 +393,7 @@ describe("Indexes built against a real schema", () => {
         query->String.includes(secondName),
     )
     let storage = await setup(~pgSchema, ~sql=flakySql, ~entities=[entity])
+    let chainIds = config.chainMap->ChainMap.values->Array.map(chain => chain.id)
     let createdIndexNames = async () =>
       (await loadCatalog(pgSchema))
       ->IndexCatalog.entries
@@ -422,84 +410,47 @@ describe("Indexes built against a real schema", () => {
           ),
       )
 
-    let failure = await storage.finalizeBackfill(~entities=[entity], ~readyAt)->catchMessage
+    let failure = await storage.finalizeBackfill(
+      ~entities=[entity],
+      ~chainIds,
+      ~readyAt,
+    )->catchMessage
 
     t.expect(
-      (failure->Option.isSome, await createdIndexNames(), attemptedBuilds()),
-      ~message="The first index survives the failure and the third is never attempted",
+      (
+        failure->Option.isSome,
+        await createdIndexNames(),
+        attemptedBuilds(),
+        await readyAtByChainId(pgSchema),
+      ),
+      ~message="The first index survives the failure, the third is never attempted, and nothing is ready",
     ).toEqual((
       true,
       [indexNames->Array.getUnsafe(0)],
       indexNames->Array.slice(~start=0, ~end=2),
+      chainIds->Array.map(id => (id, false)),
     ))
 
     failSecondBuild := false
     queries->Utils.Array.clearInPlace
-    await storage.finalizeBackfill(~entities=[entity], ~readyAt)
+    await storage.finalizeBackfill(~entities=[entity], ~chainIds, ~readyAt)
 
     t.expect(
-      (await createdIndexNames(), attemptedBuilds()),
-      ~message="The retry owes only what's left",
-    ).toEqual((indexNames->Array.toSorted(String.compare), indexNames->Array.slice(~start=1, ~end=3)))
-  })
-
-  // What `envio start --chain` reads to decide whether it is the last process
-  // still backfilling, and so the one that owes the schema its indexes. Judged
-  // from committed progress rather than a stamp, so nothing has to be kept in
-  // step with it - including a chain-metadata write, which can't reach these
-  // columns at all.
-  Async.it("Reports each chain's committed position against its head", async t => {
-    let pgSchema = testSchema("chain_progress")
-    let storage = await setup(~pgSchema)
-    let chainIds = config.chainMap->ChainMap.values->Array.map(chain => chain.id)
-    let first = chainIds->Array.getUnsafe(0)
-
-    let fresh = await storage.readChainProgress()
-
-    // Stands in for the batch write that carries a chain to its head: progress
-    // and source are written as one group, so they move together.
-    let _ = await sql->Postgres.unsafe(
-      `UPDATE "${pgSchema}"."${InternalTable.Chains.table.tableName}"
-       SET "progress_block" = 500, "source_block" = 500 WHERE "id" = ${first->ChainId.toString};`,
-    )
-    let meta = Dict.make()
-    meta->Dict.set(
-      first->ChainId.toString,
-      (
-        {
-          firstEventBlockNumber: Null.null,
-          latestFetchedBlockNumber: 10,
-          isHyperSync: false,
-        }: InternalTable.Chains.metaFields
-      ),
-    )
-    let _ = await storage.setChainMeta(meta)
-
-    let caughtUp = (await storage.readChainProgress())->Array.filter(progress =>
-      progress.id === first
-    )
-
-    t.expect(
-      (
-        fresh->Array.length,
-        fresh->Array.every((progress: Persistence.chainProgress) =>
-          progress.progressBlockNumber === -1 && progress.sourceBlockNumber === 0
-        ),
-        caughtUp->Array.map((progress: Persistence.chainProgress) => (
-          progress.progressBlockNumber,
-          progress.sourceBlockNumber,
-        )),
-      ),
-      ~message="A fresh chain has no head to be measured against; a caught-up one reads level, and a metadata write doesn't disturb it",
-    ).toEqual((chainIds->Array.length, true, [(500, 500)]))
+      (await createdIndexNames(), attemptedBuilds(), await readyAtByChainId(pgSchema)),
+      ~message="The retry owes only what's left, and readiness is committed once it's all there",
+    ).toEqual((
+      indexNames->Array.toSorted(String.compare),
+      indexNames->Array.slice(~start=1, ~end=3),
+      chainIds->Array.map(id => (id, true)),
+    ))
   })
 
   Async.it("Skips the schema index an automatic build already created", async t => {
     let pgSchema = testSchema("shared")
     let storage = await setup(~pgSchema)
 
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    await storage.finalizeBackfill(~entities, ~readyAt)
+    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters=[eq(~fieldName="b_id")])
+    await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
       (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(

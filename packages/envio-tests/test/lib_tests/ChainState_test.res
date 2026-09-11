@@ -121,7 +121,7 @@ describe("ChainState history reachability", () => {
     )).toEqual((true, false, false))
   })
 
-  // Entering the threshold is what turns history on - but a chain no rollback
+  // Entering the threshold is what turns history on — but a chain no rollback
   // can reach stays where it is.
   it("Leaves a chain no rollback can reach alone when the threshold is entered", t => {
     let noDepth = makeChainState(resumed(~maxReorgDepth=0))
@@ -177,7 +177,7 @@ describe("ChainState chain density seed (on resume)", () => {
 
 describe("ChainState chain density EMA (per batch)", () => {
   // applyBatchProgress doesn't read chainAfterBatch.fetchState, so any valid
-  // value works here - a fresh, minimal one, independent of the chain state
+  // value works here — a fresh, minimal one, independent of the chain state
   // under test.
   let dummyFetchState = () =>
     FetchState.make(
@@ -258,7 +258,7 @@ describe("ChainState chain density EMA (per batch)", () => {
       ),
     )
     let fetchState = dummyFetchState()
-    // Progressed 10 blocks but processed 0 events - must not seed a 0 density.
+    // Progressed 10 blocks but processed 0 events — must not seed a 0 density.
     cs->ChainState.applyBatchProgress(
       ~batch=makeBatch(~progressBlockNumber=10, ~totalEventsProcessed=0., ~fetchState),
       ~blockTimestampName="timestamp",

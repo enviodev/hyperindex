@@ -41,7 +41,7 @@ type chainMetrics = {
 }
 
 // Mirrors `ChainState.hasProcessedToEndblock`, which is what clamps
-// `knownHeight` to the end block - the two must agree.
+// `knownHeight` to the end block — the two must agree.
 let hasProcessedToEndblock = (m: chainMetrics) =>
   switch m.endBlock {
   | Some(endBlock) => m.progressBlockNumber >= endBlock
@@ -128,10 +128,6 @@ type t = {
   elapsedSeconds: float,
   targetBufferSize: int,
   isInReorgThreshold: bool,
-  // The schema's deferred indexes are still owed, because some chain hasn't
-  // finished backfilling. Under `envio start --chain` that chain is usually
-  // another process's, so this is how an operator sees one waiting on a sibling.
-  owesSchemaIndexes: bool,
   rollbackEnabled: bool,
   maxBatchSize: int,
   preloadSeconds: float,
@@ -257,7 +253,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   }
 
   // Two sources can share a name (e.g. primary and fallback RPC urls on the
-  // same host), so aggregate by label set - duplicate samples would make
+  // same host), so aggregate by label set — duplicate samples would make
   // Prometheus reject the scrape.
   let sourceRequests = {
     let byLabels: dict<sourceRequestMetrics> = Dict.make()
@@ -296,8 +292,8 @@ let renderMetrics = (b: builder, metrics: t) => {
   }
 
   // Zero connects is the one count worth rendering flat: it is a stream that
-  // has never come up, which the disconnects say nothing about - retries at a
-  // connection that never opened are not disconnections - and which is
+  // has never come up, which the disconnects say nothing about — retries at a
+  // connection that never opened are not disconnections — and which is
   // otherwise indistinguishable from a chain that was never configured to
   // stream at all.
   let heightStreamConnects = {
@@ -364,12 +360,6 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~help="Time the indexer paused processing because too many changes were still waiting to be written. A high rate means storage writes are the bottleneck: check envio_storage_write_seconds and the database performance.",
     ~kind="counter",
     ~value=metrics.processingStalledOnStorageWriteSeconds,
-  )
-  b->single(
-    ~name="envio_schema_indexes_pending",
-    ~help="Whether the indexes the schema declares have yet to be built. They are deferred until every chain in the database has finished backfilling, so this staying at 1 means some chain is still behind - with one indexer process per chain, most likely one whose process was never started. Queries relying on those indexes run unindexed while it holds.",
-    ~kind="gauge",
-    ~value=metrics.owesSchemaIndexes ? 1. : 0.,
   )
   b->series(
     ~name="envio_progress_ready",
@@ -554,7 +544,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   // that only appears once the first empty response lands can't be alerted on.
   b->seriesOpt(
     ~name="envio_source_response_empty_total",
-    ~help="The number of responses that came back with no blocks at all - a range the source scanned and matched nothing in. Compare against envio_source_request_total for the share of requests that returned nothing.",
+    ~help="The number of responses that came back with no blocks at all — a range the source scanned and matched nothing in. Compare against envio_source_request_total for the share of requests that returned nothing.",
     ~kind="counter",
     ~entries=sourceRequests,
     ~value=s => s.responseBlocks->Option.map(_ => s.emptyResponseCount->Int.toFloat),
@@ -977,7 +967,7 @@ let collectRuntime = () => {
   // Nanoseconds in the histogram; reset after rendering so each scrape reports
   // the delay distribution since the previous one, matching prom-client. With
   // no samples yet (e.g. the first scrape, which starts the sampler) the
-  // histogram reports NaN means and a sentinel min - render 0 instead.
+  // histogram reports NaN means and a sentinel min — render 0 instead.
   let hasLagSamples = eventLoopDelay.max > 0.
   let nsToSeconds = ns => hasLagSamples && !(ns->Float.isNaN) ? ns /. 1_000_000_000. : 0.
   b->single(

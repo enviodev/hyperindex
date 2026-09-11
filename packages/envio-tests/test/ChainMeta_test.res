@@ -1,8 +1,14 @@
 open Vitest
 
-let metaFields = (~buffer, ~firstEvent=?, ~isHyperSync=false): InternalTable.Chains.metaFields => {
+let metaFields = (
+  ~buffer,
+  ~firstEvent=?,
+  ~isHyperSync=false,
+  ~readyAt=?,
+): InternalTable.Chains.metaFields => {
   firstEventBlockNumber: firstEvent->Null.fromOption,
   latestFetchedBlockNumber: buffer,
+  timestampCaughtUpToHeadOrEndblock: readyAt->Null.fromOption,
   isHyperSync,
 }
 
