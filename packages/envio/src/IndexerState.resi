@@ -95,6 +95,7 @@ let shouldRunFinalize: t => bool
 let recordFinalizeCheck: t => unit
 let hasAnnouncedFinalize: t => bool
 let markFinalizeAnnounced: t => unit
+let isFinalizeWaitReportDue: t => bool
 let finalizeWaitMillis: t => float
 let markCaughtUpIfSettled: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit

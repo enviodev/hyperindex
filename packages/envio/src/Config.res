@@ -143,10 +143,11 @@ type t = {
   // before asking again. Only the retries are held back, so this never delays a
   // run whose chains are all its own. Overridable in tests.
   finalizeRetryIntervalMillis: float,
-  // How long a chain may be waited on before each pass says so at warn rather
-  // than debug. Past this the likeliest explanation is a chain nobody started,
-  // which nothing else in the logs would name. Overridable in tests.
-  finalizeWaitWarnAfterMillis: float,
+  // How often the wait for another chain is reported at info rather than debug.
+  // A big chain's backfill can run for days, so this is a heartbeat, not an
+  // alarm: it keeps the reason visible without filling the log. Overridable in
+  // tests.
+  finalizeWaitReportIntervalMillis: float,
   lowercaseAddresses: bool,
   isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
@@ -1105,7 +1106,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,
     finalizeRetryIntervalMillis: 30_000.,
-    finalizeWaitWarnAfterMillis: 15. *. 60. *. 1000.,
+    finalizeWaitReportIntervalMillis: 15. *. 60. *. 1000.,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,

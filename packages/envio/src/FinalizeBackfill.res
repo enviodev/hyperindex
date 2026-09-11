@@ -86,26 +86,24 @@
       true
     | _ =>
       // The pass comes back every `finalizeRetryIntervalMillis` while the wait
-      // stands, so most of them are quiet: info to say it once, debug after
-      // that. A wait that goes on too long escalates to warn — by then it is
-      // more likely a chain nobody started than one still working.
+      // stands, so most of them are quiet. Waiting is the normal case — a big
+      // chain's backfill runs for days — so it never escalates past info: once
+      // when it starts, then a heartbeat every `finalizeWaitReportIntervalMillis`
+      // so the reason stays visible without filling the log.
       let waitMillis = state->IndexerState.finalizeWaitMillis
-      let hasWaitedTooLong = waitMillis >= (state->IndexerState.config).finalizeWaitWarnAfterMillis
+      let chains = pending->Array.joinUnsafe(", ")
       let message = {
-        "msg": hasWaitedTooLong
-          ? `Still waiting after ${(waitMillis /. 60_000.)
-                ->Float.toFixed(~digits=0)} minutes for ${pending->Array.joinUnsafe(
-                ", ",
-              )} to finish syncing. Make sure an instance is running for every chain. A chain whose start block is above the current head has nothing to report and will hold this open until it does — index it in this instance instead.`
-          : `Reached the head, but waiting for these chains to finish syncing before serving queries: ${pending->Array.joinUnsafe(
-                ", ",
-              )}.`,
+        "msg": announce
+          ? `Reached the head, but waiting for these chains to finish syncing before serving queries: ${chains}.`
+          : `Still waiting for these chains to finish syncing before serving queries: ${chains}. ${(waitMillis /.
+              60_000.)->Float.toFixed(~digits=0)} minutes so far. A large chain's backfill can take days; check that an instance is running for every chain.`,
         "waitingFor": pending,
         "waitedSeconds": waitMillis /. 1000.,
       }
-      if hasWaitedTooLong {
-        Logging.warn(message)
-      } else if announce {
+      // Evaluated before the `announce` shortcut, so the first pass stamps the
+      // heartbeat clock rather than leaving the next pass finding it due.
+      let isReportDue = state->IndexerState.isFinalizeWaitReportDue
+      if announce || isReportDue {
         Logging.info(message)
       } else {
         Logging.debug(message)

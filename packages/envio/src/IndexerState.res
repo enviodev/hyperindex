@@ -103,6 +103,9 @@ type t = {
   // Whether the user has already been told this process reached the head, so the
   // passes that follow it while a sibling chain catches up stay quiet.
   mutable hasAnnouncedFinalize: bool,
+  // When the wait for another chain was last reported at info, so the heartbeat
+  // keeps its interval no matter how often the pass runs.
+  mutable lastFinalizeWaitReportMillis: float,
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
   exitAfterFirstEventBlock: bool,
@@ -193,6 +196,7 @@ let make = (
     lastPrunedAtMillis: Dict.make(),
     lastFinalizeCheckMillis: 0.,
     hasAnnouncedFinalize: false,
+    lastFinalizeWaitReportMillis: 0.,
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
@@ -523,6 +527,17 @@ let recordFinalizeCheck = (state: t) => state.lastFinalizeCheckMillis = Date.now
 
 let hasAnnouncedFinalize = (state: t) => state.hasAnnouncedFinalize
 let markFinalizeAnnounced = (state: t) => state.hasAnnouncedFinalize = true
+
+// Whether the heartbeat is due, stamping the clock when it is.
+let isFinalizeWaitReportDue = (state: t) => {
+  let now = Date.now()
+  if now -. state.lastFinalizeWaitReportMillis >= state.config.finalizeWaitReportIntervalMillis {
+    state.lastFinalizeWaitReportMillis = now
+    true
+  } else {
+    false
+  }
+}
 
 let finalizeWaitMillis = (state: t) => state.crossChainState->CrossChainState.finalizeWaitMillis
 
