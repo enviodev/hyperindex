@@ -78,7 +78,7 @@ type sourceSync = {
 }
 
 // How a backend spells column names, mirroring `column_name_format` in
-// config.yaml. Only the internal columns the runtime appends need it - user
+// config.yaml. Only the internal columns the runtime appends need it — user
 // field names arrive pre-resolved from the CLI.
 type columnNameFormat = | @as("original") Original | @as("snake_case") SnakeCase
 
@@ -551,7 +551,7 @@ let parseEntitiesFromJson = (
     // Resolve per-entity storage against the global config. The CLI
     // validates that an entity never opts into a backend the global
     // config didn't enable, and that at least one backend stays true
-    // for an annotated entity - so `getOr(false)` is safe here.
+    // for an annotated entity — so `getOr(false)` is safe here.
     let storage: Internal.entityStorage = switch entityJson["storage"] {
     | Some(s) =>
       switch s["clickhouse"] {
@@ -676,7 +676,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   }
 
   // Parse contract configs (ABIs, events, handlers).
-  // SVM stores them under `svm.programs` in the public JSON - the per-program
+  // SVM stores them under `svm.programs` in the public JSON — the per-program
   // events drive `indexer.onInstruction` registration the same way EVM/Fuel
   // contracts drive `onEvent`.
   let publicContractsConfig = switch (
@@ -750,7 +750,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   // Build event configs for a contract from JSON event items.
   //
   // `~addresses` is the chain-side address list. For SVM programs it's the
-  // single base58 program_id - wired onto each instruction's event config so
+  // single base58 program_id — wired onto each instruction's event config so
   // the source can build `(programId, discriminator)`-keyed InstructionSelections.
   // EVM and Fuel ignore it (the address lives in `ChainContract.addresses` and
   // is looked up at dispatch time, not stamped on the event).
@@ -918,7 +918,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
 
       // One address listed twice for the same contract would violate the
       // (chainId, address, contract) primary key of envio_addresses with an
-      // opaque Postgres error - fail fast instead. Two contracts may share an
+      // opaque Postgres error — fail fast instead. Two contracts may share an
       // address: each indexes it with its own events. parseAddress already
       // canonicalizes casing (checksum or lowercase), so an exact match
       // catches case variants too.
@@ -1007,7 +1007,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         maxReorgDepth: switch ecosystemName {
         | Ecosystem.Evm => publicChainConfig["maxReorgDepth"]->Option.getOr(200)
         // Tower BFT roots a block once 32 votes lock it in (MAX_LOCKOUT_HISTORY
-        // is 31, plus the slot itself), which is what `finalized` waits for - so
+        // is 31, plus the slot itself), which is what `finalized` waits for — so
         // 32 is the protocol's own bound on how far a fork can be replaced. That
         // bound counts *blocks* while the threshold here is measured in slot
         // numbers, and skipped slots make the slot distance the larger of the
@@ -1138,7 +1138,7 @@ let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
 // to any real contract), so only the "0x" prefix is enforced here. Under
 // address_format: checksum, a real address is checksummed even if the input
 // casing doesn't match (getAddress doesn't require the input to already be
-// checksummed) - a placeholder that isn't valid hex falls back unchanged.
+// checksummed) — a placeholder that isn't valid hex falls back unchanged.
 let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
   switch config.ecosystem.name {
   | Ecosystem.Evm =>
@@ -1443,7 +1443,7 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 // Throws an `incompatible config` error listing each path in `changedPaths`,
 // plus the remediation options. `~resetCommand` is rendered as-is for
 // option 2 (the wipe-and-redo). `~runCommand` controls option 3 (parallel
-// indexer recipe): when `None`, option 3 is omitted - the migrate flow
+// indexer recipe): when `None`, option 3 is omitted — the migrate flow
 // uses this because running a second indexer doesn't apply.
 // `~hasClickhouse` adds the extra env line so users running both
 // Postgres and Clickhouse get a complete override.
@@ -1462,7 +1462,7 @@ let throwIfIncompatible = (
     | None => ""
     | Some(cmd) =>
       let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
-      `\n  3. Run a second indexer alongside this one - keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
+      `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
     }
     JsError.throwWithMessage(
       `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(

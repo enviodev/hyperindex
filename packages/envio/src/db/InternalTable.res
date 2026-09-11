@@ -5,7 +5,7 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-// Postgres SQLSTATE for "undefined_table" - what a read gets when the schema was
+// Postgres SQLSTATE for "undefined_table" — what a read gets when the schema was
 // initialized by an older envio that didn't have the table.
 let undefinedTableSqlState = "42P01"
 
@@ -60,7 +60,7 @@ SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(T
 
   // Ordered by id, so the result is the canonical list itself. None when the
   // schema has no such table: it was written by an envio that predates the
-  // contract mapping, and every address row in it is shaped differently - so a
+  // contract mapping, and every address row in it is shaped differently — so a
   // resume has to stop at the compat check rather than at a missing column.
   let read = async (sql, ~pgSchema): option<array<string>> =>
     try {
@@ -407,7 +407,7 @@ FROM "${pgSchema}"."${table.tableName}";`
   // Addresses are read as plain rows rather than aggregated per chain with
   // json_agg: a single chain's aggregate can exceed V8's max string length
   // (postgres.js decodes the column with Buffer.toString and throws
-  // ERR_STRING_TOO_LONG). Grouping happens in JS instead - see getInitialState.
+  // ERR_STRING_TOO_LONG). Grouping happens in JS instead — see getInitialState.
   let getInitialState = async (sql, ~pgSchema) => {
     let (rawInitialStates, rawAddressRows) = await Promise.all2((
       sql
@@ -514,7 +514,7 @@ WHERE "${table.tableName}"."${(#id: field :> string)}" = envio_frontier.chain_id
   }
 
   // The chains the write moved, in one statement and in the batch's own
-  // transaction - so a chain's stored id can never outlive the rows it covers,
+  // transaction — so a chain's stored id can never outlive the rows it covers,
   // nor lag behind them.
   let setCheckpointFrontier = (
     sql,
@@ -532,7 +532,7 @@ WHERE "${table.tableName}"."${(#id: field :> string)}" = envio_frontier.chain_id
 }
 
 module EnvioInfo = {
-  // Singleton table - written by `initialize` inside the schema-setup
+  // Singleton table — written by `initialize` inside the schema-setup
   // transaction, read on resume for the config compat check. The `id`
   // column has a fixed default of 1 plus a primary key, so the table can
   // hold at most one row; `write` upserts on conflict.
@@ -611,7 +611,7 @@ module Checkpoints = {
   let initialCheckpointId = 0n
 
   // The checkpoint a rollback's diff rows are stamped with. It never reaches
-  // Postgres - there the diff is written straight to the entity table - but an
+  // Postgres — there the diff is written straight to the entity table — but an
   // append-only sink resolves current state through the checkpoints, so without
   // one of these the diff sits above the frontier while the rows it supersedes
   // sit below it, and the orphaned values are what a reader sees.
@@ -625,7 +625,7 @@ module Checkpoints = {
 
   // One definition per column, carrying what each storage needs: the field
   // itself, the type ClickHouse gives it where that differs from Postgres, and
-  // where a batch - or a rollback diff - keeps the column's values.
+  // where a batch — or a rollback diff — keeps the column's values.
   type column = {
     field: fieldOrDerived,
     clickHouseFieldType: fieldType,
@@ -694,7 +694,7 @@ module Checkpoints = {
   // Where each chain counts its own ids the chain has to be part of the key,
   // and every bound a rollback or a prune applies names it. Under one shared
   // sequence the id is unique by itself and those bounds are id ranges with no
-  // chain in them - which a key led by the chain can't serve.
+  // chain in them — which a key led by the chain can't serve.
   let globalTable = mkTable(
     tableName,
     ~fields=columns->Array.map(({field: column}) =>
@@ -717,7 +717,7 @@ module Checkpoints = {
     // checkpoint tracking.
     //
     // Ordered by id, which within a chain is block order: both consumers of
-    // these rows - the safe-checkpoint scan and the block-store seed - read them
+    // these rows — the safe-checkpoint scan and the block-store seed — read them
     // as ascending. Physical row order can't stand in for that, since a rollback
     // frees space that later checkpoints are written back into.
     //

@@ -68,7 +68,7 @@ let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFi
   Internal.entity,
 > => {
   // Loads for non-entity tables (e.g. effect caches `envio_effect_<name>`) reach
-  // here too. TestIndexer never persists those, so there's nothing to return -
+  // here too. TestIndexer never persists those, so there's nothing to return —
   // an empty result makes the effect recompute instead of crashing on a missing
   // entityConfig.
   switch state.entityConfigs->Dict.get(tableName) {
@@ -80,7 +80,7 @@ let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFi
       ->Dict.valuesToArray
       ->Array.filter(entity => {
         // The store holds decoded entities and the filter carries decoded values,
-        // so compare directly (same approach as InMemoryTable) - no JSON round-trip.
+        // so compare directly (same approach as InMemoryTable) — no JSON round-trip.
         let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
         filter->EntityFilter.matches(~entity=entityAsDict)
       })
@@ -407,8 +407,8 @@ let parseBlockRange = (
   {startBlock, endBlock}
 }
 
-// The store owns its entities. Copy on the boundary with user code - both when
-// handing one out (get/getAll/getOrThrow) and when taking one in (set) - so a
+// The store owns its entities. Copy on the boundary with user code — both when
+// handing one out (get/getAll/getOrThrow) and when taking one in (set) — so a
 // user mutating a returned entity, or an object they passed to `set`, can't
 // corrupt the in-memory store. The copy is shallow (matching InMemoryTable):
 // scalar fields (string/bigint/BigDecimal) are immutable, but array-valued
@@ -420,7 +420,7 @@ let copyEntity = (entity: Internal.entity): Internal.entity =>
   ->(Utils.magic: dict<unknown> => Internal.entity)
 
 // Entity operations for direct manipulation outside of handlers. Unlike a
-// handler, which always runs on a known chain, these are chain-agnostic - so a
+// handler, which always runs on a known chain, these are chain-agnostic — so a
 // per-chain entity is looked up across every chain and an id present on more
 // than one is an error rather than an arbitrary pick.
 let getEntityFromState = (
@@ -450,7 +450,7 @@ let getEntityFromState = (
         )
         ->Array.join(", ")
       JsError.throwWithMessage(
-        `Entity \`${entityConfig.name}\` with id \`${entityId}\` exists on multiple chains (${chains}) - use getWhere({${field.fieldName}: {_eq: ...}}) to pick one.`,
+        `Entity \`${entityConfig.name}\` with id \`${entityId}\` exists on multiple chains (${chains}) — use getWhere({${field.fieldName}: {_eq: ...}}) to pick one.`,
       )
     }
   }
@@ -572,7 +572,7 @@ type entityOperations = {
 }
 
 // Adapt the real storage interface to the in-memory entity store. In-process
-// there's no worker boundary, so entities are stored and loaded decoded - no
+// there's no worker boundary, so entities are stored and loaded decoded — no
 // JSON serialization round-trip.
 let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   name: "test-inmemory",
@@ -649,7 +649,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
 
 // Copy the per-chain registration arrays so a process() run's simulate-source
 // additions (SimulateItems.patchConfig pushes onEventRegistrations) never
-// mutate the shared base registration - lets independent createTestIndexer runs
+// mutate the shared base registration — lets independent createTestIndexer runs
 // proceed in parallel without clobbering each other's registrations.
 let cloneRegistrations = (
   base: HandlerRegister.registrationsByChainId,

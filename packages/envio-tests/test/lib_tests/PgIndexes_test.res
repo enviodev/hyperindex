@@ -35,7 +35,7 @@ let entities = [entityA, entityB]
 let allEntities = entities
 
 // Delegates to the real client, records every statement, and can be told to
-// fail one kind of query - enough to reproduce a read-back that fails after its
+// fail one kind of query — enough to reproduce a read-back that fails after its
 // DDL has already committed. A Proxy rather than a hand-written stand-in, so
 // the storage reaching for a method this test never thought about still works.
 // Wraps the transaction handle as well as the pool: index DDL runs inside a
@@ -80,7 +80,7 @@ let makeStorage = (~sql=sql, pgSchema) =>
 
 // A schema of its own per test, so the fixtures below can leave whatever
 // indexes they like behind without disturbing the other suites. `fixtures` run
-// after the tables exist, then the storage resumes - the same order a restart
+// after the tables exist, then the storage resumes — the same order a restart
 // onto an existing schema sees.
 // Each test owns a schema; they'd otherwise pile up in the developer's database
 // run after run, since nothing else ever looks at them again. The name is
@@ -179,7 +179,7 @@ describe("Indexes built against a real schema", () => {
   Async.it("Builds a separate full index when only a partial one exists", async t => {
     let pgSchema = testSchema("partial")
     // Covers only the rows its predicate selects, so it can't answer the
-    // unrestricted lookups a getWhere filter makes - but it does hold a name.
+    // unrestricted lookups a getWhere filter makes — but it does hold a name.
     let storage = await setup(
       ~pgSchema,
       ~fixtures=[`CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id") WHERE "b_id" IS NOT NULL;`],
@@ -286,7 +286,7 @@ describe("Indexes built against a real schema", () => {
   })
 
   // Entity names are capped at 63 characters by codegen, so nothing the
-  // indexer creates should ever be truncated by Postgres - but if that ever
+  // indexer creates should ever be truncated by Postgres — but if that ever
   // stopped holding, the catalog would report a name we never look for and
   // verification would fail every finalize. This pins the boundary.
   Async.it("Round-trips a table name at Postgres' identifier limit", async t => {

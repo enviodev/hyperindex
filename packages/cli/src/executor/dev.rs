@@ -12,7 +12,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
     let config =
         SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 
-    // Always regenerate before launching - the JS runtime does the
+    // Always regenerate before launching — the JS runtime does the
     // config-vs-DB compatibility check, so there's no separate file-based
     // codegen-staleness gate to maintain.
     commands::codegen::run_codegen(&config)

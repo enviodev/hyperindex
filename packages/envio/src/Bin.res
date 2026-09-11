@@ -8,7 +8,7 @@ NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
   NodeJs.process->NodeJs.exitWithCode(Failure)
 })
 
-// Wire format mirrors the Rust `executor::Command` enum - a tagged JSON
+// Wire format mirrors the Rust `executor::Command` enum — a tagged JSON
 // object with a `kind` discriminator.
 type startCmd = {
   reset: bool,
@@ -55,7 +55,7 @@ let run = async args => {
   try {
     switch (await Core.runCli(args))->Null.toOption {
     // Rust-only command (codegen / init / stop / docker / metrics / help /
-    // version / scripts) - nothing for JS to do, exit cleanly.
+    // version / scripts) — nothing for JS to do, exit cleanly.
     | None => ()
     | Some(json) =>
       switch decodeCommand(json->JSON.parseOrThrow) {
@@ -78,7 +78,7 @@ let run = async args => {
     // Already logged with full context by Main.start's onError; just exit.
     NodeJs.process->NodeJs.exitWithCode(Failure)
   | exn =>
-    // Log just the exception's own message - wrapping it in "Failed at
+    // Log just the exception's own message — wrapping it in "Failed at
     // initialization" and pino's err serializer buries the real cause under
     // a nested `err: { type, message, stack, ... }` block.
     let message = switch exn->JsExn.anyToExnInternal {

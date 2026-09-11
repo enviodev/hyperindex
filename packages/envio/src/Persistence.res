@@ -27,7 +27,7 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  // Every address the chain indexes, columnar - config-declared and dynamically
+  // Every address the chain indexes, columnar — config-declared and dynamically
   // registered alike. The chain's address store seeds straight from it.
   addressRows: AddressRows.seedRows,
   sourceBlockNumber: int,
@@ -46,7 +46,7 @@ type chainProgress = {
 type initialState = {
   cleanRun: bool,
   // On a resume this is what the database holds, not what the config would
-  // derive - the ids must never reshuffle under stored rows.
+  // derive — the ids must never reshuffle under stored rows.
   contractMapping: ContractMapping.t,
   // Public config snapshot, restored with the address rows. None when
   // envio_info or envio_contracts is missing.
@@ -101,7 +101,7 @@ let writtenFrontier = (~batch: Batch.t, ~rollback: option<rollback>) =>
 
 // One flush group: the changes an entity accumulated within a single chain
 // scope. A per-chain entity contributes one group per chain, and the scope is
-// what stamps the chain id onto the rows - it's never re-derived downstream.
+// what stamps the chain id onto the rows — it's never re-derived downstream.
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
   scope: Internal.chainScope,
@@ -124,7 +124,7 @@ type storage = {
   // Should initialize the storage so we can start interacting with it
   // Eg create connection, schema, tables, etc. `envioInfo` is opaque JSON
   // persisted as part of the same transaction so a fresh schema always
-  // carries a matching row - storage doesn't interpret it.
+  // carries a matching row — storage doesn't interpret it.
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,

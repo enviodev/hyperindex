@@ -149,8 +149,8 @@ let runOnce = async (state: IndexerState.t) => {
   }
 }
 
-// Several paths reach the phase - a processed batch, a tick that progressed
-// nothing - and a height update can bring another one round while the first is
+// Several paths reach the phase — a processed batch, a tick that progressed
+// nothing — and a height update can bring another one round while the first is
 // still building. They all join the in-flight run rather than starting a second
 // pass over the same indexes.
 let run = (state: IndexerState.t) =>

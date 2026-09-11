@@ -133,7 +133,7 @@ let makeFlakyFinalize = (~failCount) => {
 describe("Resuming a backfill that never finalized", () => {
   // A run that persists its last batch and dies before finalizing leaves
   // progress at the head with ready_at unset and the schema indexes missing.
-  // The resumed run has no batch to process and - since the head hasn't moved -
+  // The resumed run has no batch to process and — since the head hasn't moved —
   // no source response to react to either, so readiness has to come from the
   // persisted progress/height alone.
   let (finalizeCalls, mapStorage) = makeFlakyFinalize(~failCount=1)
@@ -288,7 +288,7 @@ describe("Resuming a backfill that never finalized", () => {
   )
 
   // Same crash, but "caught up" is the configured endBlock rather than a live
-  // head - so the resumed run doesn't need a height response at all.
+  // head — so the resumed run doesn't need a height response at all.
   let (finalizeCalls, mapStorage) = makeFlakyFinalize(~failCount=1)
 
   endBlockScenario->Scenario.it(
@@ -397,7 +397,7 @@ describe("Resuming a backfill that never finalized", () => {
 
   // The head doesn't stand still while an indexer is down. The resumed run's
   // first height already reports blocks past the persisted progress, so nothing
-  // about the live fetch frontier says "caught up" any more - but the indexes
+  // about the live fetch frontier says "caught up" any more — but the indexes
   // owed for the progress that was committed can't wait out another backfill.
   let (finalizeCalls, mapStorage) = makeFlakyFinalize(~failCount=1)
   scenario->Scenario.it(
@@ -547,7 +547,7 @@ describe("Resuming a backfill that never finalized", () => {
   // query it belonged to has to be retired here or its partition stops asking
   // for ranges at all.
   // Holds the second finalize open so the catch-up query below is provably
-  // in flight when the handoff bumps the epoch - the window the leak needs.
+  // in flight when the handoff bumps the epoch — the window the leak needs.
   let gate = MockSource.Gate.make()
   let finalizeCalls = ref(0)
   let mapStorage = (storage: Persistence.storage) => {

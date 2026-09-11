@@ -2,7 +2,7 @@ open Vitest
 
 // Every scalar the DDL knows how to render, an entity whose name is over
 // Postgres' 63-character table-name limit, and a foreign key that carries an
-// index - the shapes the generated SQL below is asserted against.
+// index — the shapes the generated SQL below is asserted against.
 let config = TestConfig.make(
   ~schema=`
 enum AccountType {
@@ -567,7 +567,7 @@ FROM "public"."envio_chains";`
     )
 
     // A bytea column binds as the Uint8Array postgres.js serializes, and a
-    // bytea[] one as the array literal Postgres parses itself - postgres.js
+    // bytea[] one as the array literal Postgres parses itself — postgres.js
     // types an array parameter after its first element, so an array of
     // Uint8Arrays would bind as a single bytea. An `in` over a list column
     // nests one dimension deeper, and Postgres arrays are rectangular, so its

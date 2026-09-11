@@ -21,8 +21,8 @@ use anyhow::{Context, Result};
 use schemars::schema_for;
 
 /// A deferred work item the executor asks its host to run after Rust returns.
-/// Anything that must run in the JS event loop - migrations, indexer start,
-/// anything that loads `envio/src/*.res.mjs` - is encoded as a `Command`.
+/// Anything that must run in the JS event loop — migrations, indexer start,
+/// anything that loads `envio/src/*.res.mjs` — is encoded as a `Command`.
 ///
 /// Wire format: serde-tagged JSON on the `kind` field.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -51,7 +51,7 @@ pub enum Command {
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
 /// (to stamp the `envio` `file:{dir}` dep into generated / init
-/// `package.json`s). Commands that don't call it - `script` subcommands -
+/// `package.json`s). Commands that don't call it — `script` subcommands —
 /// may pass `None`; init/codegen/dev/start on a dev build without it will
 /// error out of `get_envio_version`.
 ///
@@ -122,7 +122,7 @@ pub async fn execute(
                 .await
                 .context("Failed running codegen")?;
 
-            // `envio start` doesn't manage Docker - users are expected to
+            // `envio start` doesn't manage Docker — users are expected to
             // have their own services and env vars set up (e.g. via .env).
             Ok(Some(build_start_command(
                 &config,
@@ -281,7 +281,7 @@ fn validate_chain_selection(config: &SystemConfig, chains: &[String], restart: b
 }
 
 /// Returns a `Value` (not a string) so the serde payload embeds the config
-/// as a nested JSON object - the JS side then skips the extra `JSON.parse`.
+/// as a nested JSON object — the JS side then skips the extra `JSON.parse`.
 pub fn public_config_value(config: &SystemConfig, is_dev: bool) -> Result<serde_json::Value> {
     serde_json::from_str(&config.to_public_config_json(is_dev)?)
         .context("Failed parsing public config JSON")

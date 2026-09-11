@@ -127,7 +127,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
   it("Omits the height stream families entirely when no source subscribes", t => {
     // No source samples at all, which is what a chain that only ever polls
-    // reports - the base is already exactly that.
+    // reports — the base is already exactly that.
     t.expect(
       Metrics.collect(~metrics=Some(baseMetrics))->String.includes("envio_source_height_stream"),
     ).toBe(false)
@@ -148,7 +148,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
     // Nothing has disconnected, because nothing ever connected. Without the zero
     // there is no series at all, and a ws url the node will never accept would
-    // go unreported - a sample only exists once a stream has been asked for, so
+    // go unreported — a sample only exists once a stream has been asked for, so
     // zero connects here says the stream is down rather than absent.
     t.expect(
       Metrics.collect(~metrics=Some(metrics))
@@ -214,7 +214,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
         sourceRequest(~responseBlocks=Some(30), ~emptyResponseCount=1),
         sourceRequest(~responseBlocks=Some(12), ~emptyResponseCount=2),
         // A chain whose every response carried blocks still renders the empty
-        // counter, flat at zero - a series that only appears once the first
+        // counter, flat at zero — a series that only appears once the first
         // empty response lands is one nothing can alert on.
         sourceRequest(~chainId=2, ~responseBlocks=Some(7), ~emptyResponseCount=0),
         // A stream push is a response nothing measures in blocks, so it stays
@@ -524,7 +524,7 @@ envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLog
 # TYPE envio_source_response_blocks_total counter
 envio_source_response_blocks_total{source="HyperSync",chainId="1",method="getLogs"} 1234
 
-# HELP envio_source_response_empty_total The number of responses that came back with no blocks at all - a range the source scanned and matched nothing in. Compare against envio_source_request_total for the share of requests that returned nothing.
+# HELP envio_source_response_empty_total The number of responses that came back with no blocks at all — a range the source scanned and matched nothing in. Compare against envio_source_request_total for the share of requests that returned nothing.
 # TYPE envio_source_response_empty_total counter
 envio_source_response_empty_total{source="HyperSync",chainId="1",method="getLogs"} 9
 

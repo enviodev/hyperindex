@@ -4,7 +4,7 @@
 type backend = IndexerRunner.backend
 
 // A backend this scenario can't run on, and why. The reason shows up in the
-// skip message - an opt-out nobody can explain is an opt-out nobody revisits.
+// skip message — an opt-out nobody can explain is an opt-out nobody revisits.
 type unsupported = {backend: backend, reason: string}
 
 type t = {
@@ -36,7 +36,7 @@ let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrTh
 
 // The ClickHouse leg indexes the same scenario with the sink switched on. It's
 // a config choice a user makes in YAML, so it's made there rather than by
-// patching the parsed config - that way the entities pick up their ClickHouse
+// patching the parsed config — that way the entities pick up their ClickHouse
 // storage flags through the same parse a user's would.
 let withClickHouseStorage = configYaml =>
   if configYaml->String.match(/^storage:/m)->Option.isSome {
@@ -94,10 +94,10 @@ let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=
 }
 
 // Swap every mocked chain's source for the test double. The rest of the config
-// - chains, contracts, block ranges, reorg settings - is whatever the YAML said.
+// — chains, contracts, block ranges, reorg settings — is whatever the YAML said.
 //
 // The runner starts every chain in the config, so a chain left unmocked would
-// query the source its YAML names - a live URL. Requiring the two sets to match
+// query the source its YAML names — a live URL. Requiring the two sets to match
 // exactly turns that into a failure at setup rather than a hanging test.
 let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) => {
   let configured = config.chainMap->ChainMap.keys
@@ -127,7 +127,7 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
     )
   }
 
-  // A chain may be given several mocks - a Sync and a Realtime one, say - and
+  // A chain may be given several mocks — a Sync and a Realtime one, say — and
   // they reach its source config in the order `~sources` listed them.
   let chainMap = config.chainMap->ChainMap.mapWithKey((chainId, chainConfig) =>
     switch sources->Array.filter(((mockedChain, _)) => mockedChain->ChainId.fromInt == chainId) {
