@@ -131,7 +131,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "accountActivities" field in the fields.transaction option of the "swap" instruction on program "Swapper". Valid transaction fields: "transactionIndex", "signature", "feePayer", "success", "err", "fee", "computeUnitsConsumed", "accountKeys", "recentBlockhash", "version", "allSignatures", "loadedAddressesWritable", "loadedAddressesReadonly", "allAccountKeys".\`,
+      \`Invalid "accountActivities" field in the fields.transaction option of the "swap" instruction on program "Swapper". Valid transaction fields: "transactionIndex", "signature", "feePayer", "success", "err", "fee", "computeUnitsConsumed", "accountKeys", "recentBlockhash", "version", "allSignatures".\`,
     );
   });
 
@@ -301,9 +301,6 @@ expectType<
     | "recentBlockhash"
     | "version"
     | "allSignatures"
-    | "loadedAddressesWritable"
-    | "loadedAddressesReadonly"
-    | "allAccountKeys"
   >
 >(true);
 expectType<
@@ -391,7 +388,7 @@ type _Tx = Swap["transaction"];
 type _Block = Swap["block"];
 
 expectType<TypeEqual<SvmAllTransactionFields["signature"], string>>(true);
-expectType<TypeEqual<keyof SvmAllTransactionFields, "transactionIndex" | "signature" | "feePayer" | "success" | "err" | "fee" | "computeUnitsConsumed" | "accountKeys" | "recentBlockhash" | "version" | "allSignatures" | "loadedAddressesWritable" | "loadedAddressesReadonly" | "allAccountKeys">>(true);
+expectType<TypeEqual<keyof SvmAllTransactionFields, "transactionIndex" | "signature" | "feePayer" | "success" | "err" | "fee" | "computeUnitsConsumed" | "accountKeys" | "recentBlockhash" | "version" | "allSignatures">>(true);
 `)
   )
 

@@ -545,9 +545,6 @@ let validSvmTransactionFields = Utils.Set.fromArray([
   "recentBlockhash",
   "version",
   "allSignatures",
-  "loadedAddressesWritable",
-  "loadedAddressesReadonly",
-  "allAccountKeys",
 ])
 let validSvmAccountActivityFields = Utils.Set.fromArray([
   "address",

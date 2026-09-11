@@ -47,7 +47,11 @@ pub const TRANSACTION: &[HandlerField] = &[
     },
     HandlerField {
         js_name: "accountKeys",
-        columns: &["account_keys"],
+        columns: &[
+            "account_keys",
+            "loaded_addresses_writable",
+            "loaded_addresses_readonly",
+        ],
     },
     HandlerField {
         js_name: "recentBlockhash",
@@ -64,22 +68,6 @@ pub const TRANSACTION: &[HandlerField] = &[
     HandlerField {
         js_name: "accountActivities",
         columns: &[],
-    },
-    HandlerField {
-        js_name: "loadedAddressesWritable",
-        columns: &["loaded_addresses_writable"],
-    },
-    HandlerField {
-        js_name: "loadedAddressesReadonly",
-        columns: &["loaded_addresses_readonly"],
-    },
-    HandlerField {
-        js_name: "allAccountKeys",
-        columns: &[
-            "account_keys",
-            "loaded_addresses_writable",
-            "loaded_addresses_readonly",
-        ],
     },
 ];
 

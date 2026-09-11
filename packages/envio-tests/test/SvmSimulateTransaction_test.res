@@ -1,7 +1,5 @@
 let feePayerAddr = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
 let blockhash = "So11111111111111111111111111111111111111112"
-let altWritable = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-let altReadonly = "11111111111111111111111111111111"
 let signature = "5j7s6NiJS3JAkvgkoc18WVAsiSaci2pxB2A6ueCJP4tprA2TFg9wSyTLeYouxPBJEMzJinENTkpA52YStRW5Dia7"
 
 let _ = InternalTestIndexer.fromUserApi(
@@ -17,8 +15,6 @@ type SimTx {
   fee: BigInt!
   computeUnitsConsumed: BigInt!
   accountKeys: [String!]!
-  loadedAddressesWritable: [String!]!
-  loadedAddressesReadonly: [String!]!
   recentBlockhash: String!
   version: String!
 }
@@ -53,8 +49,6 @@ indexer.onInstruction(
         "fee",
         "computeUnitsConsumed",
         "accountKeys",
-        "loadedAddressesWritable",
-        "loadedAddressesReadonly",
         "recentBlockhash",
         "version",
       ],
@@ -73,8 +67,6 @@ indexer.onInstruction(
       fee: tx.fee,
       computeUnitsConsumed: tx.computeUnitsConsumed ?? 0n,
       accountKeys: tx.accountKeys,
-      loadedAddressesWritable: tx.loadedAddressesWritable,
-      loadedAddressesReadonly: tx.loadedAddressesReadonly,
       recentBlockhash: tx.recentBlockhash,
       version: tx.version ?? "",
     });
@@ -88,8 +80,6 @@ import { createTestIndexer } from "envio";
 const feePayerAddr = "${feePayerAddr}";
 const blockhash = "${blockhash}";
 const signature = "${signature}";
-const altWritable = "${altWritable}";
-const altReadonly = "${altReadonly}";
 
 describe("SVM simulate transaction fields", () => {
   // A top-level \`slot\` is the documented way to place an SVM simulate item; it
@@ -113,8 +103,6 @@ describe("SVM simulate transaction fields", () => {
                 fee: 5000n,
                 computeUnitsConsumed: 1234n,
                 accountKeys: [feePayerAddr],
-                loadedAddressesWritable: [altWritable],
-                loadedAddressesReadonly: [altReadonly],
                 recentBlockhash: blockhash,
                 version: "legacy",
               },
@@ -135,8 +123,6 @@ describe("SVM simulate transaction fields", () => {
       fee: 5000n,
       computeUnitsConsumed: 1234n,
       accountKeys: [feePayerAddr],
-      loadedAddressesWritable: [altWritable],
-      loadedAddressesReadonly: [altReadonly],
       recentBlockhash: blockhash,
       version: "legacy",
     });

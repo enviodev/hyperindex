@@ -1216,16 +1216,13 @@ export type SvmAllTransactionFields = {
   readonly err: string | undefined;
   readonly fee: bigint;
   readonly computeUnitsConsumed: bigint | undefined;
+  /** Every account the transaction resolves to: the static keys, then the
+   *  address lookup tables' writable then readonly addresses. A transaction's
+   *  account indexes address this list. */
   readonly accountKeys: readonly string[];
   readonly recentBlockhash: string;
   readonly version: string | undefined;
   readonly allSignatures: readonly string[];
-  readonly loadedAddressesWritable: readonly string[];
-  readonly loadedAddressesReadonly: readonly string[];
-  /** Static `accountKeys` followed by the lookup tables' writable then
-   *  readonly addresses — Solana's own account-resolution order, and what a
-   *  transaction's account indexes point into. */
-  readonly allAccountKeys: readonly string[];
 };
 
 export type SvmInstructionFieldName =
@@ -1247,10 +1244,7 @@ export type SvmTransactionFieldName =
   | "accountKeys"
   | "recentBlockhash"
   | "version"
-  | "allSignatures"
-  | "loadedAddressesWritable"
-  | "loadedAddressesReadonly"
-  | "allAccountKeys";
+  | "allSignatures";
 export type SvmAccountActivityFieldName =
   | "address"
   | "transactionAccountIndex"

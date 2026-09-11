@@ -953,32 +953,15 @@ mod tests {
         );
         assert_eq!(
             built.transaction_columns,
-            vec!["slot", "transaction_index", "account_keys"]
-        );
-        assert!(built.account_activity_columns.is_empty());
-    }
-
-    #[test]
-    fn loaded_addresses_fetch_the_lookup_table_columns() {
-        let mut input = reg(0, false);
-        input.transaction_fields = vec![
-            "loadedAddressesWritable".to_string(),
-            "loadedAddressesReadonly".to_string(),
-        ];
-        let (_store, _set, built) = build(
-            &[program(PROG_A, vec![ix(Some("0x21"), vec![input])])],
-            &[0],
-            &[],
-        );
-        assert_eq!(
-            built.transaction_columns,
             vec![
                 "slot",
                 "transaction_index",
+                "account_keys",
                 "loaded_addresses_writable",
                 "loaded_addresses_readonly"
             ]
         );
+        assert!(built.account_activity_columns.is_empty());
     }
 
     // Token-2022 shape: a 1-byte extension family and its 2-byte members. A
