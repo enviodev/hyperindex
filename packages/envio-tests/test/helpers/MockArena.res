@@ -36,22 +36,22 @@ type textDecoder
 // takes the growth path, which is otherwise only reached by large values.
 let initialPayload = 8
 
+// How many buffers a column of this kind lends out, mirroring `Column::buffers`.
 %%private(
-  let payload = (mock, ~column) => {
+  let slots = (kind: Staging.kind) =>
+    switch kind {
+    | Text | Bytes => 3
+    | F64 | U64 | I64 => 2
+    }
+)
+
+%%private(
+  let slotOf = (columns: array<Staging.column>, ~column) => {
     let slot = ref(0)
-    let found = ref(-1)
-    mock.columns->Array.forEachWithIndex(({kind}, index) => {
-      if index === column {
-        found := slot.contents
-      }
-      slot :=
-        slot.contents +
-        switch kind {
-        | Text | Bytes => 3
-        | F64 | U64 | I64 => 2
-        }
-    })
-    found.contents
+    for index in 0 to column - 1 {
+      slot := slot.contents + slots((columns->Array.getUnsafe(index)).kind)
+    }
+    slot.contents
   }
 )
 
@@ -104,23 +104,16 @@ let make = (~columns: array<Staging.column>) => {
       }
       let fresh = ArrayBuffer.make(capacity.contents)
       Uint8Array.fromBuffer(fresh)->setFrom(Uint8Array.fromBuffer(stale), 0)
-      mock.buffers->Array.setUnsafe(mock->payload(~column), fresh)
+      mock.buffers->Array.setUnsafe(columns->slotOf(~column), fresh)
       fresh
     },
     commitStage: (~handle as _, ~buffers) => {
       mock.buffers = buffers
-      let staged = []
-      let slot = ref(0)
-      columns->Array.forEachWithIndex(({kind}, column) => {
-        staged->Array.push(mock->readColumn(~column, ~slot=slot.contents))
-        slot :=
-          slot.contents +
-          switch kind {
-          | Text | Bytes => 3
-          | F64 | U64 | I64 => 2
-          }
-      })
-      mock.committed = Some(staged)
+      mock.committed = Some(
+        columns->Array.mapWithIndex((_, column) =>
+          mock->readColumn(~column, ~slot=columns->slotOf(~column))
+        ),
+      )
     },
     abortStage: (~handle as _, ~buffers as _) => mock.aborted = true,
   }

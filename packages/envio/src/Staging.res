@@ -170,24 +170,46 @@ let toText = (value: unknown, ~replacer) =>
   | _ => value->(Utils.magic: unknown => JSON.t)->JSON.stringify(~replacer)
   }
 
+// Copies `text` in as one byte per character, or returns -1 at the first
+// character that needs more than one. An id, a hash, a decimal and an enum
+// variant are all ASCII, which is most of what a text column ever holds, and
+// this spares them the `subarray` that `encodeInto` needs to be given an
+// offset — one short-lived object per cell is what the batch pays otherwise.
+%%private(
+  let writeAscii: (Uint8Array.t, string, int) => int = %raw(`(data, text, offset) => {
+    const length = text.length;
+    for (let index = 0; index < length; index++) {
+      const code = text.charCodeAt(index);
+      if (code > 0x7f) {
+        return -1;
+      }
+      data[offset + index] = code;
+    }
+    return length;
+  }`)
+)
+
 %%private(
   let writeText = (stage, builder, ~row, text) => {
-    // `encodeInto` takes no destination offset, so the room has to be there
-    // before the subarray is taken. One byte per UTF-16 unit is what an ASCII
-    // id or hash needs, and `read` says when that guess was short: UTF-8 spends
-    // at most three bytes per unit, which is what a surrogate pair costs across
-    // its two.
+    // One byte per UTF-16 unit is what ASCII needs, so the room for the fast
+    // path is the room for its guess. `read` says when the guess was short:
+    // UTF-8 spends at most three bytes per unit, which is what a surrogate pair
+    // costs across its two.
     let units = text->String.length
     stage->ensure(builder, ~needed=builder.cursor + units)
-    let {read, written} =
-      encoder->encodeInto(text, builder.data->TypedArray.subarray(~start=builder.cursor))
-    let written = if read < units {
-      stage->ensure(builder, ~needed=builder.cursor + units * 3)
-      let {written} =
+    let written = switch builder.data->writeAscii(text, builder.cursor) {
+    | -1 =>
+      let {read, written} =
         encoder->encodeInto(text, builder.data->TypedArray.subarray(~start=builder.cursor))
-      written
-    } else {
-      written
+      if read < units {
+        stage->ensure(builder, ~needed=builder.cursor + units * 3)
+        let {written} =
+          encoder->encodeInto(text, builder.data->TypedArray.subarray(~start=builder.cursor))
+        written
+      } else {
+        written
+      }
+    | ascii => ascii
     }
     builder.cursor = builder.cursor + written
     builder.ends->TypedArray.set(row, builder.cursor)

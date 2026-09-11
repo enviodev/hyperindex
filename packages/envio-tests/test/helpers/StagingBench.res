@@ -1,6 +1,9 @@
 // Measures what staging a batch for ClickHouse costs on the main thread, which
-// is the thread an indexer has only one of. Run it with
-// `node scripts/staging-bench.mjs`.
+// is the thread an indexer has only one of, and what the write that follows
+// costs after it. Run it as
+// `ENVIO_DEV_ADDON=<path to envio.node> node scripts/staging-bench.mjs`, on a
+// release build — the staging cost is mostly napi and the encode is all Rust,
+// so a debug addon compares nothing anyone runs.
 
 type usage = {user: float, system: float}
 @val @scope("process") external cpuUsage: unit => usage = "cpuUsage"
@@ -17,7 +20,7 @@ let observeGc: PerfHooks.performanceObserverCtor => unit = %raw(`(PerformanceObs
   }).observe({ entryTypes: ["gc"] });
 }`)
 
-type sample = {cpuMs: float, wallMs: float}
+type sample = {cpuMs: float, stageMs: float, writeMs: float}
 
 %%private(
   let median = (values: array<float>) => {
@@ -166,7 +169,7 @@ chains:
     for batch in 0 to warmupBatches + measuredBatches - 1 {
       let changes = changesFor(profile, ~batch)
       let startedCpu = cpuUsage()
-      let startedWall = Date.now()
+      let startedStage = Performance.now()
       let handle = ClickHouse.stageUpdatesOrThrow(
         sink,
         ~registry,
@@ -175,6 +178,8 @@ chains:
         ~scope=Chain(ChainId.fromInt(1)),
       )
       let staged = cpuUsageSince(startedCpu)
+      let stageMs = startedStage->Performance.secondsSince *. 1000.
+      let startedWrite = Performance.now()
       await ClickHouse.writeStagedOrThrow(
         sink,
         ~entities=switch handle {
@@ -183,10 +188,12 @@ chains:
         },
         ~checkpoints=Null.null,
       )
+      let writeMs = startedWrite->Performance.secondsSince *. 1000.
       if batch >= warmupBatches {
         samples->Array.push({
           cpuMs: (staged.user +. staged.system) /. 1000.,
-          wallMs: Date.now() -. startedWall,
+          stageMs,
+          writeMs,
         })
       }
     }
@@ -194,7 +201,8 @@ chains:
     (
       profile.name,
       median(samples->Array.map(({cpuMs}) => cpuMs)),
-      median(samples->Array.map(({wallMs}) => wallMs)),
+      median(samples->Array.map(({stageMs}) => stageMs)),
+      median(samples->Array.map(({writeMs}) => writeMs)),
     )
   }
 )
@@ -212,20 +220,22 @@ let run = async () => {
 
   let results = []
   for index in 0 to profiles->Array.length - 1 {
-    let (name, cpuMs, wallMs) = await measure(profiles->Array.getUnsafe(index))
+    let (name, cpuMs, stageMs, writeMs) = await measure(profiles->Array.getUnsafe(index))
     watch()
-    results->Array.push((name, cpuMs, wallMs))
+    results->Array.push((name, cpuMs, stageMs, writeMs))
   }
   clearInterval(timer)
 
   Console.log(
     `rows/batch ${rowsPerBatch->Int.toString}, ${measuredBatches->Int.toString} batches, median per batch`,
   )
-  results->Array.forEach(((name, cpuMs, wallMs)) =>
+  results->Array.forEach(((name, cpuMs, stageMs, writeMs)) =>
     Console.log(
       `${name->String.padEnd(14, " ")} staging CPU ${cpuMs->Float.toFixed(
           ~digits=2,
-        )} ms   wall ${wallMs->Float.toFixed(~digits=2)} ms`,
+        )} ms   stage ${stageMs->Float.toFixed(~digits=2)} ms   write ${writeMs->Float.toFixed(
+          ~digits=2,
+        )} ms`,
     )
   )
   Console.log(

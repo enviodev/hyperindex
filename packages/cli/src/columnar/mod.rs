@@ -83,6 +83,10 @@ pub struct Column {
     /// cannot hold NULL still uses it: a delete row names no value for a field,
     /// and what that encodes to is the writer's business, not the arena's.
     nulls: Vec<u8>,
+    /// Whether any of `nulls` is set, as sealing found it. Most batches mark
+    /// none, and the encoder asks once per cell — without this it would read a
+    /// second array, on its own cache lines, for every value it encodes.
+    any_null: bool,
 }
 
 impl Column {
@@ -99,9 +103,14 @@ impl Column {
             kind,
             storage,
             nulls: vec![0; rows],
+            any_null: false,
         }
     }
 
+    // The encoder calls these once per cell, and the `envio` profile builds with
+    // neither LTO nor a single codegen unit, so what would otherwise be a field
+    // read becomes a cross-module call in the innermost loop there is.
+    #[inline]
     pub fn kind(&self) -> ColumnKind {
         self.kind
     }
@@ -115,10 +124,14 @@ impl Column {
         }
     }
 
+    /// Only meaningful once the arena is sealed: `any_null` is what sealing
+    /// found, and before that it is still false.
+    #[inline]
     pub fn is_null(&self, row: usize) -> bool {
-        self.nulls.get(row).copied().unwrap_or(0) != 0
+        self.any_null && self.nulls[row] != 0
     }
 
+    #[inline]
     fn words(&self) -> &[u64] {
         match &self.storage {
             Storage::Fixed(words) => words,
@@ -126,18 +139,22 @@ impl Column {
         }
     }
 
+    #[inline]
     pub fn f64_at(&self, row: usize) -> f64 {
         f64::from_bits(self.words()[row])
     }
 
+    #[inline]
     pub fn u64_at(&self, row: usize) -> u64 {
         self.words()[row]
     }
 
+    #[inline]
     pub fn i64_at(&self, row: usize) -> i64 {
         self.words()[row] as i64
     }
 
+    #[inline]
     pub fn bytes_at(&self, row: usize) -> &[u8] {
         match &self.storage {
             Storage::Variable { data, ends } => {
@@ -149,6 +166,7 @@ impl Column {
         }
     }
 
+    #[inline]
     pub fn str_at(&self, row: usize) -> Result<&str> {
         std::str::from_utf8(self.bytes_at(row)).context("staged text is not UTF-8")
     }
@@ -156,7 +174,7 @@ impl Column {
     /// Checks what the arena lent out against what it promised, so a writer bug
     /// surfaces as an error on the batch rather than a panic deep in an
     /// encoder — the slicing in [`Column::bytes_at`] trusts these invariants.
-    fn seal(&self, name: &str, rows: usize) -> Result<()> {
+    fn seal(&mut self, name: &str, rows: usize) -> Result<()> {
         if self.nulls.len() != rows {
             bail!(
                 "column `{name}` has {} null flags, not {rows}",
@@ -191,6 +209,7 @@ impl Column {
                 }
             }
         }
+        self.any_null = self.nulls.iter().any(|&null| null != 0);
         Ok(())
     }
 
@@ -301,7 +320,7 @@ impl Arena {
         if self.sealed {
             bail!("a staged batch cannot be committed twice");
         }
-        for (index, column) in self.columns.iter().enumerate() {
+        for (index, column) in self.columns.iter_mut().enumerate() {
             let name = names.get(index).map(String::as_str).unwrap_or("?");
             column.seal(name, self.rows)?;
         }
@@ -351,6 +370,7 @@ impl Arena {
 
     pub fn mark_null(&mut self, column: usize, row: usize) {
         self.columns[column].nulls[row] = 1;
+        self.columns[column].any_null = true;
     }
 
     pub fn seal_for_test(&mut self) -> Result<()> {
