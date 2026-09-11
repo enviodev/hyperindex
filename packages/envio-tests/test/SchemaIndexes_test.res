@@ -266,7 +266,7 @@ describe("Deferred schema indexes", () => {
 
       t.expect(
         (await indexNames(~sql, ~pgSchema), await readyAtByChainId(~sql, ~pgSchema)),
-        ~message="A resume rediscovers the indexes from the catalog — none are dropped or recreated",
+        ~message="A resume rediscovers the indexes from the catalog - none are dropped or recreated",
       ).toEqual((indexesBeforeRestart, [(ChainId.fromInt(1337), true)]))
     },
   )

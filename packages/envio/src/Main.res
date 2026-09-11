@@ -1,5 +1,5 @@
 // The public console/state chain shape. Kept to exactly this field set for
-// backward compatibility with consumers like RACE — new metric fields stay off
+// backward compatibility with consumers like RACE - new metric fields stay off
 // the HTTP response.
 type chainData = {
   chainId: ChainId.t,
@@ -192,7 +192,7 @@ let buildChainsObject = (~config: Config.t) => {
               }
             // Before the global state is available (eg during handler
             // module load after resume), read them off what persistence
-            // restored — which already holds the config's own addresses
+            // restored - which already holds the config's own addresses
             // alongside the dynamically registered ones.
             | None =>
               switch getInitialState() {
@@ -394,7 +394,7 @@ let getGlobalIndexer = (): 'indexer => {
 
   // Ecosystem-specific surface: EVM/Fuel expose event + block handlers; SVM
   // exposes slot handlers only. The TS `.d.ts` already models this separation
-  // — the Proxy mirrors it at runtime so `Object.keys(indexer)` reflects the
+  // - the Proxy mirrors it at runtime so `Object.keys(indexer)` reflects the
   // actually-callable methods and typos surface via the unknown-prop throw
   // rather than silent `undefined` returns.
   //
@@ -460,7 +460,7 @@ let getGlobalIndexer = (): 'indexer => {
 
   let traps: Utils.Proxy.traps<{..}> = {
     // Engine internals (`Symbol.toStringTag`, `Symbol.toPrimitive`, inspect
-    // hooks, etc.) read symbol-keyed properties — fall through to the
+    // hooks, etc.) read symbol-keyed properties - fall through to the
     // underlying null-proto target so stringification / inspection of the
     // indexer value stays well-behaved instead of throwing.
     get: (~target, ~prop) =>
@@ -666,7 +666,7 @@ let start = async (
   // Loads user handler files, which register handler/contractRegister/where
   // state into the global `HandlerRegister` registry as a side effect; this
   // returns that state resolved into per-chain registrations. `config` itself
-  // is never mutated by registration — it holds only event definitions.
+  // is never mutated by registration - it holds only event definitions.
   let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config)
   let config = if isTest {
     {...config, shouldRollbackOnReorg: false}
@@ -680,7 +680,7 @@ let start = async (
   }
   // The single fatal-error handler, invoked once via IndexerState.errorExit.
   // It logs the failure once (with chain context) and rejects the run wrapped in
-  // `FatalError` so callers know it's already logged — `Bin.res` just exits, the
+  // `FatalError` so callers know it's already logged - `Bin.res` just exits, the
   // test worker unwraps and re-throws it to the parent thread. `runUntilFatalError`
   // only ever rejects: on a clean run it stays pending and the process exits via
   // ExitOnCaughtUp / when the indexer loop drains.

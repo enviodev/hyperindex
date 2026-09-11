@@ -76,8 +76,8 @@ describe("Config.filterChains", () => {
   })
 
   it("Names a `--chain` run by the flag's presence, not by how many it narrowed", t => {
-    // The precondition `--chain` carries — that the migration already built the
-    // schema for every chain — holds just as much when the flag happens to name
+    // The precondition `--chain` carries - that the migration already built the
+    // schema for every chain - holds just as much when the flag happens to name
     // all of them. A count comparison would call that an unfiltered run.
     let before = Config.hasChainFilter()
     Config.setActiveChains([chainId(1), chainId(137)])

@@ -252,8 +252,8 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
 
 // Every table an entity needs: its own, one partition per chain when it's
 // per-chain, and its history table. The chain set is fixed for the life of a
-// schema — changing it fails the resume compat check against `envio_info` and
-// forces a resync — so every partition the entity will ever need is created
+// schema - changing it fails the resume compat check against `envio_info` and
+// forces a resync - so every partition the entity will ever need is created
 // here, at init.
 //
 // History stays unpartitioned: it is only ever read by checkpoint, never by
@@ -441,13 +441,13 @@ let rec makeFilterCondition = (
   // Postgres can only prune a plan it caches when that column is a constant in
   // the SQL. Bound, the cached plan has to keep every partition, and the
   // planner ends up throwing it away and re-planning on every execution
-  // instead — measured at 315us per load against 218us with the id written in,
+  // instead - measured at 315us per load against 218us with the id written in,
   // on 30 chains.
   //
   // The cost is that each chain gets its own query text, so Postgres caches a
   // prepared statement per (entity, chain, filter shape) rather than per
   // (entity, filter shape). Measured at ~8KB of plan cache each, which is ~10MB
-  // per connection for 40 entities across 30 chains — accepted, since the
+  // per connection for 40 entities across 30 chains - accepted, since the
   // alternative is a cached plan that can't prune.
   //
   // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
@@ -488,7 +488,7 @@ let rec makeFilterCondition = (
 // tables, which have no such column.
 //
 // The chain id is written into the SQL rather than bound, because the table is
-// partitioned by it — see `makeFilterCondition` for why a partition key has to
+// partitioned by it - see `makeFilterCondition` for why a partition key has to
 // be a constant.
 let makeChainIdCondition = (~table: Table.table, ~chainId: option<ChainId.t>) =>
   switch (table->Table.getChainIdField, chainId) {
@@ -690,7 +690,7 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
 
 // Strips NUL bytes, recursing into nested objects/arrays so a NUL buried
 // inside a jsonb column (an event param object, a json entity field) is
-// removed too — Postgres rejects it in both text (0x00) and jsonb (22P05).
+// removed too - Postgres rejects it in both text (0x00) and jsonb (22P05).
 let rec removeInvalidUtf8DeepInPlace = (value: unknown): unknown => {
   if value->typeof === #string {
     value
@@ -717,8 +717,8 @@ exception PgEncodingError({table: Table.table})
 
 // Classifies a write failure, parking it in `specificError` so the
 // transaction can unwind and the outer handler can react. Both Postgres
-// encoding failures we recognize are NUL-related — `0x00` in a text column
-// and a NUL rejected by jsonb (22P05) — so they become a PgEncodingError
+// encoding failures we recognize are NUL-related - `0x00` in a text column
+// and a NUL rejected by jsonb (22P05) - so they become a PgEncodingError
 // that triggers an escape-and-retry of the offending table, where deep NUL
 // stripping resolves them. We escape lazily on first failure to keep the
 // happy path free of per-item sanitization. The aborted-transaction cascade
@@ -748,7 +748,7 @@ let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table,
 
 // Batch set queries, cached per table. The query text bakes in the schema and
 // the chain-id mode, so the cache belongs to the storage instance those came
-// from — `make` creates one and threads it down. A process-wide cache would
+// from - `make` creates one and threads it down. A process-wide cache would
 // hand a second storage the first one's schema.
 let makeSetQueryCache = () => Utils.WeakMap.make()
 
@@ -1010,7 +1010,7 @@ let makeInsertDeleteUpdatesQuery = (
 
   // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
   // The chain-id column is part of the history primary key, so a DELETE row
-  // carries the scope's chain — bound once as $3 — rather than the NULL every
+  // carries the scope's chain - bound once as $3 - rather than the NULL every
   // other data field gets.
   let chainIdColumn = switch (entityConfig.table->Table.getChainIdField, chainId) {
   | (Some(field), Some(_)) => field->Table.getPgDbFieldName
@@ -1923,7 +1923,7 @@ let make = (
     )
     // Execute all queries within a single transaction for integrity.
     // The envio_info row is written in the same transaction so a successful
-    // initialize is atomic — no schema can come up without the matching row.
+    // initialize is atomic - no schema can come up without the matching row.
     let rowsByChain =
       chainConfigs->Array.map(chainConfig =>
         chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping)
@@ -2084,7 +2084,7 @@ let make = (
   // One transaction per index rather than one around a whole set: a committed
   // index stays committed, so a build that dies half way through a large schema
   // leaves the retry owing only the rest. The transaction is also what makes the
-  // read-back safe — a verification failure rolls the DDL back with it, instead
+  // read-back safe - a verification failure rolls the DDL back with it, instead
   // of leaving behind an index the catalog doesn't know about, which is why
   // nothing here has to repair the catalog after a failure.
   // `~giveUpAfterMillis` bounds the wait for the lock, for callers a handler is
@@ -2187,7 +2187,7 @@ let make = (
         )
       )
       // A failed build records nothing, so the next getWhere retries. Meanwhile
-      // the query still runs — just without the index.
+      // the query still runs - just without the index.
       ->Promise.catch(async exn =>
         Logging.warn({
           "storage": storageName,
@@ -2220,7 +2220,7 @@ let make = (
   // per-table queue is only there to stop two requests in this process building
   // the same index at once, and `buildIndex` already rules that out for every
   // process sharing the schema. So this is safe to run alongside a live indexer,
-  // which is what the resume path needs — and why the logging here can't claim
+  // which is what the resume path needs - and why the logging here can't claim
   // that writes are paused or that the indexer has yet to report ready.
   let finalizeBackfill = async (~entities: array<Internal.entityConfig>, ~readyAt: Date.t) => {
     let schemaIndexes = getSchemaIndexes(

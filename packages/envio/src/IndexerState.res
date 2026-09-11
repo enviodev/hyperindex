@@ -321,7 +321,7 @@ let isResolvingReorg = (state: t) =>
 @inline
 let // Close an open fetch-stall interval, accruing it into the counter. Called
 // whenever the reason for the idle changes, so the interval never spans into
-// time another counter owns — or, at shutdown, past the point where the loops
+// time another counter owns - or, at shutdown, past the point where the loops
 // stop and nothing would ever close it.
 settleStalledOnFetch = (state: t) =>
   switch state.processingStalledOnFetchSince {
@@ -381,7 +381,7 @@ let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.e
 // queries). isResolvingReorg derives from rollbackState.
 let beginReorg = (state: t, ~chainId, ~blockNumber) => {
   // Settle here, or the rollback that follows would be folded into the stall on
-  // the next beginProcessing — time envio_rollback_seconds already counts.
+  // the next beginProcessing - time envio_rollback_seconds already counts.
   state->settleStalledOnFetch
   state.epoch = state.epoch + 1
   state.rollbackState = ReorgDetected({chainId, blockNumber})
@@ -869,13 +869,13 @@ let takeRollback = (state: t): option<Persistence.rollback> => {
 // Written rows leave the buffer only once the transaction that holds them has
 // committed. A failed write keeps them, and re-inserting a row the database
 // already has is a no-op. Rows staged while the write was in flight belong to
-// later checkpoints — ids only ever grow — so this can't drop one unwritten.
+// later checkpoints - ids only ever grow - so this can't drop one unwritten.
 let markCommitted = (state: t, ~writtenFrontier) => {
   state.committedFrontier = Frontier.mergeMax(state.committedFrontier, writtenFrontier)
 }
 
 // Reset the in-memory tables and arm the rollback diff that the next write
-// commits. The diff ids start from the committed frontier — a rollback that
+// commits. The diff ids start from the committed frontier - a rollback that
 // supersedes an unwritten one takes over its ids along with its rows. A sibling
 // the rollback leaves alone gets no diff row: burning an id on it would leave a
 // hole in its sequence.
@@ -909,7 +909,7 @@ let beginRollbackDiff = (
   // Same for the chains: this rollback recomputes progress from the checkpoints,
   // so a chain the pending diff already moved can land on exactly the block it
   // is now at and go unreported here. Its stored progress still needs
-  // correcting, so the pending rows carry over — this rollback's row for a
+  // correcting, so the pending rows carry over - this rollback's row for a
   // chain wins, being the later reading of the same chain state.
   let progressedChains = switch state.rollback {
   | Some({progressedChains: pending}) =>

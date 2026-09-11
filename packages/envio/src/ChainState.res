@@ -1177,7 +1177,7 @@ type rolledBackTo =
   | Untouched
 
 // Returns the address registrations the storage has to delete along with the
-// chain — the store is what decides which ones died, so the two halves of a
+// chain - the store is what decides which ones died, so the two halves of a
 // rollback can't disagree.
 let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
   let rollbackTo = targetBlockNumber => {
@@ -1198,8 +1198,8 @@ let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
   | RecomputedProgress({blockNumber, eventsProcessed}) =>
     // A rollback only ever takes a chain back. The diff recomputes progress from
     // the checkpoints still in the database, so a chain that an unwritten
-    // rollback already took below them — to a fork block only that rollback
-    // knew — would be handed their MIN back and moved forward onto blocks it
+    // rollback already took below them - to a fork block only that rollback
+    // knew - would be handed their MIN back and moved forward onto blocks it
     // never re-indexed.
     let newProgressBlockNumber = Pervasives.min(blockNumber, cs.committedProgressBlockNumber)
     let newTotalEventsProcessed = cs.numEventsProcessed -. eventsProcessed

@@ -18,7 +18,7 @@ let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~schedul
     // responses synchronously in one tick; this yield lets them all land before
     // the first createBatch so they coalesce into one batch (matching the old
     // setImmediate model). In production responses arrive on separate network
-    // ticks and never co-arrive, so this never coalesces anything real — remove
+    // ticks and never co-arrive, so this never coalesces anything real - remove
     // it later to avoid an unnecessary setImmediate per processing burst.
     await yieldTick()
     // Seeded true so the first batch always runs (it handles the caught-up exit

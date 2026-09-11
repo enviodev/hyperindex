@@ -3,7 +3,7 @@ type metric = {
   labels: dict<string>,
 }
 
-// The schema this indexer's tables live in, and the run's own client — closed
+// The schema this indexer's tables live in, and the run's own client - closed
 // with it. A test needing raw SQL should reach for these rather than opening a
 // client the run won't clean up.
 type pg = {sql: Postgres.sql, pgSchema: string}
@@ -65,7 +65,7 @@ let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
 
 // Runs `body` against a fresh indexer in a Postgres schema of its own, then
-// tears both down — so tests never stop an indexer by hand, and files can run
+// tears both down - so tests never stop an indexer by hand, and files can run
 // in parallel against one database. Cleanup runs even when the body throws,
 // otherwise a failing test would leave its schema and connections behind.
 //
@@ -182,7 +182,7 @@ let run = async (
             await state->Writing.flush
             state->IndexerState.stop
             // Tests deliberately leave handlers that never resolve, which pins
-            // `isProcessing` for good — so that wait is short and giving up on
+            // `isProcessing` for good - so that wait is short and giving up on
             // it is expected.
             let processingDeadline = Date.now() +. 2000.
             while state->IndexerState.isProcessing && Date.now() < processingDeadline {
@@ -277,7 +277,7 @@ let run = async (
               Frontier.equals(state->IndexerState.committedFrontier, state->IndexerState.processedFrontier)
 
             // Catching up hands off to a finalize pass, which is where readiness
-            // is decided — so a batch isn't settled until that pass is done. The
+            // is decided - so a batch isn't settled until that pass is done. The
             // idle fallback below still bounds the wait.
             if (
               before < state->IndexerState.processedBatchesCount &&
@@ -471,7 +471,7 @@ let run = async (
   }
 
   // Every step runs even if an earlier one throws, and a teardown failure
-  // never replaces the body's — losing the real failure behind a cleanup
+  // never replaces the body's - losing the real failure behind a cleanup
   // error is how a broken test becomes unreadable.
   let teardownFailure = ref(None)
   let attempt = async step =>
@@ -491,7 +491,7 @@ let run = async (
     | None => ()
     }
   }
-  // Dropped whether the body passed or threw — a leaked schema outlives the
+  // Dropped whether the body passed or threw - a leaked schema outlives the
   // information it could have carried, and the sweeper only covers workers
   // that died before getting here.
   switch clients->Array.get(0) {

@@ -1,7 +1,7 @@
 // The FinalizingIndexes phase. Reached from the processing loop when this
 // process's chains have caught up: processing is already paused (the loop awaits
-// this), pending writes are flushed, and then — only if no chain in the schema
-// is still backfilling — storage builds every missing schema-defined index and,
+// this), pending writes are flushed, and then - only if no chain in the schema
+// is still backfilling - storage builds every missing schema-defined index and,
 // once they all verify, commits `ready_at`. A failure part-way leaves the
 // indexes built so far in place and reaches the processing loop's error
 // boundary; the retry only owes what's left. The run stays in this phase until
@@ -12,7 +12,7 @@
 // what it last committed rather than from a stamp: `progress_block` and
 // `source_block` are written as one group by the batch write, so the pair read
 // here is always consistent with itself, and it holds still while the head runs
-// on — a chain that reached its head keeps reading as caught up, whenever asked.
+// on - a chain that reached its head keeps reading as caught up, whenever asked.
 %%private(
   let isStillBackfilling = (progress: Persistence.chainProgress, ~blockLag) => {
     // Only a batch write ever sets `source_block`, so zero means the chain has
@@ -49,7 +49,7 @@
     let config = state->IndexerState.config
 
     // Only the chains this process doesn't drive. Its own are caught up by
-    // definition — that is the condition it is here under — and they are also
+    // definition - that is the condition it is here under - and they are also
     // the ones a row can't speak for: a chain with nothing to index never has a
     // batch to write one, and a chain resumed at a head that has since run on
     // is still caught up as of the progress it committed.
@@ -89,8 +89,8 @@
       true
     | _ =>
       // The pass comes back every `finalizeRetryIntervalMillis` while the wait
-      // stands, so most of them are quiet. Waiting is the normal case — a big
-      // chain's backfill runs for days — so it never escalates past info: once
+      // stands, so most of them are quiet. Waiting is the normal case - a big
+      // chain's backfill runs for days - so it never escalates past info: once
       // when it starts, then a one-line heartbeat every
       // `finalizeWaitReportIntervalMillis` so the reason stays visible without
       // filling the log or reading as a fault.
@@ -100,7 +100,7 @@
         "msg": announce
           ? `Reached the head, but waiting for these chains to finish syncing before serving queries: ${chains}.`
           : `Waiting ${(waitMillis /. 60_000.)
-                ->Float.toFixed(~digits=0)} minutes for these chains to finish syncing: ${chains}. A large backfill can take days — otherwise check that an instance is running for every chain listed.`,
+                ->Float.toFixed(~digits=0)} minutes for these chains to finish syncing: ${chains}. A large backfill can take days - otherwise check that an instance is running for every chain listed.`,
         "waitingFor": pending,
         "waitedSeconds": waitMillis /. 1000.,
       }
@@ -149,8 +149,8 @@ let runOnce = async (state: IndexerState.t) => {
   }
 }
 
-// Several paths reach the phase — a processed batch, a tick that progressed
-// nothing — and a height update can bring another one round while the first is
+// Several paths reach the phase - a processed batch, a tick that progressed
+// nothing - and a height update can bring another one round while the first is
 // still building. They all join the in-flight run rather than starting a second
 // pass over the same indexes.
 let run = (state: IndexerState.t) =>
@@ -167,7 +167,7 @@ let run = (state: IndexerState.t) =>
 // from the processing loop, so `IndexerLoop` calls it once at startup instead.
 // It is the same pass: a resumed realtime run is already ready, so it skips the
 // announcing and the switch to realtime and does only the part that matters
-// here — building whatever the schema is still missing.
+// here - building whatever the schema is still missing.
 //
 // Only a database that lost an index while the indexer was down reaches it: a
 // run that resumes realtime is a run whose `ready_at` is stamped, which only a
@@ -175,7 +175,7 @@ let run = (state: IndexerState.t) =>
 //
 // Best-effort and not awaited by the loop: indexing is already live and correct
 // without the indexes, just slower, and a failure here must not take the indexer
-// down — nothing awaits this, so a rejection would otherwise reach the process's
+// down - nothing awaits this, so a rejection would otherwise reach the process's
 // unhandled-rejection handler. Whatever it fails to build, the next restart owes
 // again.
 let repairSchemaIndexes = (state: IndexerState.t) =>

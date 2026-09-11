@@ -77,7 +77,7 @@ let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
 
 describe("envio start --chain", () => {
   // Standing down must not be final. The chains are judged from what they have
-  // committed, so a chain can read as behind for a moment — a burst it hasn't
+  // committed, so a chain can read as behind for a moment - a burst it hasn't
   // processed yet, or a sibling that catches up a second later. If that pass
   // were the only one, the indexes would stay unbuilt for the rest of the run.
   scenario->Scenario.it(
