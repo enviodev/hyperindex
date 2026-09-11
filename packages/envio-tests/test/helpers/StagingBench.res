@@ -65,9 +65,9 @@ type Blobs {
     row: seed =>
       Dict.fromArray([
         ("a", blob(~length=32, ~seed)->(Utils.magic: Uint8Array.t => unknown)),
-        ("b", blob(~length=32, ~seed = seed + 1)->(Utils.magic: Uint8Array.t => unknown)),
-        ("c", blob(~length=128, ~seed = seed + 2)->(Utils.magic: Uint8Array.t => unknown)),
-        ("d", blob(~length=20, ~seed = seed + 3)->(Utils.magic: Uint8Array.t => unknown)),
+        ("b", blob(~length=32, ~seed=seed + 1)->(Utils.magic: Uint8Array.t => unknown)),
+        ("c", blob(~length=128, ~seed=seed + 2)->(Utils.magic: Uint8Array.t => unknown)),
+        ("d", blob(~length=20, ~seed=seed + 3)->(Utils.magic: Uint8Array.t => unknown)),
       ]),
   },
   {
@@ -85,9 +85,9 @@ type Texts {
     row: seed =>
       Dict.fromArray([
         ("a", text(~length=42, ~seed)->(Utils.magic: string => unknown)),
-        ("b", text(~length=42, ~seed = seed + 1)->(Utils.magic: string => unknown)),
-        ("c", text(~length=160, ~seed = seed + 2)->(Utils.magic: string => unknown)),
-        ("d", text(~length=12, ~seed = seed + 3)->(Utils.magic: string => unknown)),
+        ("b", text(~length=42, ~seed=seed + 1)->(Utils.magic: string => unknown)),
+        ("c", text(~length=160, ~seed=seed + 2)->(Utils.magic: string => unknown)),
+        ("d", text(~length=12, ~seed=seed + 3)->(Utils.magic: string => unknown)),
       ]),
   },
   {
@@ -229,8 +229,7 @@ let run = async () => {
     )
   )
   Console.log(
-    `peak RSS ${(peakRss.contents /. 1024. /. 1024.)->Float.toFixed(
-        ~digits=1,
-      )} MiB   GC pauses ${gcPauses()->Int.toString}`,
+    `peak RSS ${(peakRss.contents /. 1024. /. 1024.)
+        ->Float.toFixed(~digits=1)} MiB   GC pauses ${gcPauses()->Int.toString}`,
   )
 }

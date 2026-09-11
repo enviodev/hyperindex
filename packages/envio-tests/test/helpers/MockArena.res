@@ -72,9 +72,7 @@ let initialPayload = 8
         data->TypedArray.slice(~start, ~end)
       })
       (
-        kind === Text
-          ? Texts(slices->Array.map(slice => decoder->decode(slice)))
-          : Blobs(slices),
+        kind === Text ? Texts(slices->Array.map(slice => decoder->decode(slice))) : Blobs(slices),
         at(2),
       )
     }

@@ -399,6 +399,8 @@ impl ClickHouseSink {
         let mut arena = Arena::new(rows as usize, &kinds).map_err(to_napi)?;
         let buffers = columnar::js::expose(env, &mut arena)?;
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
+        // Storing the arena moves its `Vec` headers, not the allocations the
+        // buffers above point into, so the lending survives the move.
         self.staged
             .lock()
             .unwrap()

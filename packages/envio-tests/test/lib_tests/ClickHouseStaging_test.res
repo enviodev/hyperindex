@@ -198,10 +198,7 @@ describe("ClickHouse staging", () => {
     )
 
     let staged = mock->MockArena.staged
-    t.expect((
-      staged->Array.getUnsafe(0),
-      staged->Array.getUnsafe(10),
-    )).toEqual((
+    t.expect((staged->Array.getUnsafe(0), staged->Array.getUnsafe(10))).toEqual((
       {MockArena.name: "id", values: Texts([long]), nulls: [0]},
       {
         MockArena.name: "blob",
@@ -296,15 +293,16 @@ describe("Staged buffer checks", () => {
       ->Array.findIndexOpt(kind => kind->Staging.kindOfOrdinal === Text)
       ->Option.getOrThrow
     t.expect(
-      messageOf(() =>
-        sink
-        ->ClickHouseSink.growStage(
-          ~handle=begun.handle,
-          ~column,
-          ~needed=4096,
-          ~stale=ArrayBuffer.make(8),
-        )
-        ->ignore
+      messageOf(
+        () =>
+          sink
+          ->ClickHouseSink.growStage(
+            ~handle=begun.handle,
+            ~column,
+            ~needed=4096,
+            ~stale=ArrayBuffer.make(8),
+          )
+          ->ignore,
       ),
     ).toBe(`The buffer handed to grow is not column ${column->Int.toString}'s payload.`)
   })

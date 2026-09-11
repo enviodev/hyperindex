@@ -313,7 +313,8 @@ let stageCheckpointsOrThrow = (
     Null.null
   } else {
     let table = sink->checkpointsTable(~registry)
-    let stage = sink->ClickHouseSink.arena->Staging.begin(~table=table.handle, ~rows, ~columns=table.columns)
+    let stage =
+      sink->ClickHouseSink.arena->Staging.begin(~table=table.handle, ~rows, ~columns=table.columns)
     try {
       // The table was registered from `checkpointColumns`, in this order.
       table.columns->Array.forEachWithIndex((_, column) => {
@@ -352,7 +353,8 @@ let stageUpdatesOrThrow = (
     let table = sink->entityTable(~registry, ~entityConfig)
     let tableName = table.name
     let cacheKey = `${entityConfig.name}|${scope->Internal.chainScopeToString}`
-    let stage = sink->ClickHouseSink.arena->Staging.begin(~table=table.handle, ~rows, ~columns=table.columns)
+    let stage =
+      sink->ClickHouseSink.arena->Staging.begin(~table=table.handle, ~rows, ~columns=table.columns)
     try {
       let converters = switch registry.converters->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
       | Some(cached) => cached

@@ -44,7 +44,13 @@ pub fn expose<'env>(env: &'env Env, arena: &mut Arena) -> napi::Result<Vec<Array
 /// Replaces one variable-width column's payload with a larger one holding the
 /// same bytes. `stale` has to be the buffer that describes the allocation about
 /// to move — it is checked rather than trusted, because detaching some other
-/// buffer would leave a live view over memory `grow` is about to free.
+/// buffer would leave a live view over memory this is about to free.
+///
+/// The growth runs before the detach, so a column too wide to grow leaves
+/// `stale` attached and still the column's payload — an abort can then detach
+/// it, and the error the caller sees is the one that says why. Nothing runs
+/// between the two: JavaScript is blocked in this call, so the moment where the
+/// old buffer describes a freed allocation is not one it can write in.
 pub fn grow<'env>(
     env: &'env Env,
     arena: &mut Arena,
@@ -58,10 +64,10 @@ pub fn grow<'env>(
             "The buffer handed to grow is not column {column}'s payload."
         )));
     }
-    stale.detach()?;
     let (data, len) = arena
         .grow(column as usize, needed as usize)
         .map_err(to_napi)?;
+    stale.detach()?;
     lend(env, data, len)
 }
 

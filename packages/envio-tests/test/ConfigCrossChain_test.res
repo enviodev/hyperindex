@@ -532,7 +532,7 @@ describe("Per-chain ClickHouse writes", () => {
     let chainIdIndex = columnSpecs(entityConfig)->Array.findIndex(({name}) => name === "chainId")
     let (mock, sink) = MockArena.make(~columns=table.columns)
     let _ = ClickHouse.stageUpdatesOrThrow(sink, ~registry, ~changes, ~entityConfig, ~scope)
-    switch (mock->MockArena.staged)->Array.get(chainIdIndex) {
+    switch mock->MockArena.staged->Array.get(chainIdIndex) {
     | Some({values: Numbers(numbers)}) => numbers->Array.map(number => Some(number))
     | _ => changes->Array.map(_ => None)
     }
