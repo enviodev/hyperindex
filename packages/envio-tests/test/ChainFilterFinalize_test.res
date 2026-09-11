@@ -67,10 +67,11 @@ let readyByChainId = async (~sql, ~pgSchema) => {
   ))
 }
 
+// Not `waitUntilReady`: a process whose sibling is still backfilling never
+// reports ready, which is the point of the test below.
 let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
   source.resolveGetHeightOrThrow(100)
   source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-  await indexer.waitUntilReady()
   await indexer.waitUntilIdle()
 }
 
@@ -82,9 +83,12 @@ describe("envio start --chain", () => {
   scenario->Scenario.it(
     "Comes back to the indexes once the chain that was behind catches up",
     ~sources=[{chain: 1}, {chain: 137}],
-    // The retry is throttled in production, where the chain it waits on can be
-    // behind for hours. This test drives it a batch at a time.
+    // Both of these are long in production, where the chain being waited on can
+    // be behind for hours: a caught-up chain drops to reduced polling, and the
+    // pass that reads the other chains is throttled. This test drives them a
+    // tick at a time.
     ~finalizeRetryIntervalMillis=0.,
+    ~reducedPollingInterval=0,
     async (~t, ~indexer, ~source) => {
       let running = await indexer.restart(~chains=[ChainId.fromInt(1)], ())
       let {sql, pgSchema} = running.pg
@@ -102,10 +106,14 @@ describe("envio start --chain", () => {
         `UPDATE "${pgSchema}"."envio_chains" SET "progress_block" = 100, "source_block" = 100 WHERE "id" = 137;`,
       )
 
-      // Any batch brings the loop back round.
-      sourceOne.resolveGetHeightOrThrow(101)
-      sourceOne.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
-      await running.waitUntilIdle()
+      // A caught-up chain that hasn't finalized polls its source on the reduced
+      // interval, and every round it completes brings the loop back here.
+      sourceOne.setAutoHeight(101)
+      let attempts = ref(0)
+      while !(await hasSchemaIndex(~sql, ~pgSchema)) && attempts.contents < 500 {
+        attempts := attempts.contents + 1
+        await Utils.delay(2)
+      }
 
       t.expect(
         (await hasSchemaIndex(~sql, ~pgSchema), await readyByChainId(~sql, ~pgSchema)),
@@ -127,12 +135,14 @@ describe("envio start --chain", () => {
           await hasSchemaIndex(~sql, ~pgSchema),
           await readyByChainId(~sql, ~pgSchema),
           await first.metric("envio_schema_indexes_pending"),
+          await first.metric("envio_progress_ready"),
         ),
-        ~message="Chain 1 finished its backfill, but chain 137 is still behind, so nothing builds the indexes, no chain is ready, and the gauge says the indexes are outstanding",
+        ~message="Chain 1 finished its backfill, but chain 137 is still behind, so nothing builds the indexes, chain 1 holds short of realtime rather than reporting itself ready, and the gauge says the indexes are outstanding",
       ).toEqual((
         false,
         [("1", false), ("137", false)],
         [{value: "1", labels: dict{}}],
+        [{value: "0", labels: dict{"chainId": "1"}}],
       ))
 
       let second = await first.restart(~chains=[ChainId.fromInt(137)], ())
@@ -143,9 +153,15 @@ describe("envio start --chain", () => {
           await hasSchemaIndex(~sql, ~pgSchema),
           await readyByChainId(~sql, ~pgSchema),
           await second.metric("envio_schema_indexes_pending"),
+          await second.metric("envio_progress_ready"),
         ),
         ~message="The last chain to catch up finds every chain at its head, builds the indexes, readiness lands on every chain at once, and the gauge clears",
-      ).toEqual((true, [("1", true), ("137", true)], [{value: "0", labels: dict{}}]))
+      ).toEqual((
+        true,
+        [("1", true), ("137", true)],
+        [{value: "0", labels: dict{}}],
+        [{value: "1", labels: dict{"chainId": "137"}}],
+      ))
     },
   )
 })

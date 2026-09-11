@@ -2094,8 +2094,8 @@ let make = (
   let buildIndex = async (
     ~definition,
     ~coverage,
-    ~startMessage,
-    ~doneNote="",
+    ~startMessage=?,
+    ~doneMessage=?,
     ~giveUpAfterMillis=?,
   ) => {
     let name = definition->IndexDefinition.name
@@ -2120,7 +2120,11 @@ let make = (
           | Some(prepared) =>
             // Logged from inside the build so it reports the one attempt that
             // actually creates the index, not the ones waiting on it.
-            Logging.info({"storage": storageName, "msg": prepared->startMessage})
+            switch startMessage {
+            | Some(startMessage) =>
+              Logging.info({"storage": storageName, "msg": prepared->startMessage})
+            | None => ()
+            }
             Built(await sql->runAndVerify(prepared))
           }
         }
@@ -2132,7 +2136,7 @@ let make = (
         | Some(limit) if waited >= limit =>
           Logging.info({
             "storage": storageName,
-            "msg": `Another process is still building the schema's indexes, so "${name}" is left to it.`,
+            "msg": "Another indexer is still preparing the database, so this index is left to it.",
           })
         | _ =>
           // Otherwise a sibling's multi-minute build leaves this process looking
@@ -2140,7 +2144,7 @@ let make = (
           if retryMillis === indexLockRetryMillis {
             Logging.info({
               "storage": storageName,
-              "msg": `Waiting on another process building the schema's indexes before "${name}".`,
+              "msg": "Waiting for another indexer to finish preparing the database.",
             })
           }
           await Utils.delay(retryMillis)
@@ -2152,10 +2156,11 @@ let make = (
       | Built(entry) =>
         // Recorded only once the commit made the DDL durable.
         indexManager->IndexManager.record(entry)
-        Logging.info({
-          "storage": storageName,
-          "msg": `Index "${name}" is ready after ${timeRef->formatSeconds}s.${doneNote}`,
-        })
+        switch doneMessage {
+        | Some(doneMessage) =>
+          Logging.info({"storage": storageName, "msg": doneMessage(timeRef->formatSeconds)})
+        | None => ()
+        }
       }
     }
     await attempt(~retryMillis=indexLockRetryMillis)
@@ -2171,13 +2176,14 @@ let make = (
         buildIndex(
           ~definition,
           ~coverage=LeadingColumns,
-          ~doneNote=" Resuming indexing.",
           // A handler is awaiting this one.
           ~giveUpAfterMillis=5_000.,
           ~startMessage=(prepared: IndexManager.prepared) => {
-            let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating index"
-            `${verb} "${prepared.name}" to serve a getWhere query on "${table.tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`
+            let verb = prepared.isRebuild ? "Rebuilding the unusable index" : "Creating an index"
+            `${verb} on "${table.tableName}"."${column}" to serve a getWhere query. Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`
           },
+          ~doneMessage=seconds =>
+            `The index on "${table.tableName}"."${column}" is ready after ${seconds}s. Resuming indexing.`,
         )
       )
       // A failed build records nothing, so the next getWhere retries. Meanwhile
@@ -2241,7 +2247,6 @@ let make = (
         "msg": `PostgreSQL reports ${rebuilt
           ->Array.length
           ->Int.toString} of the indexer's own indexes as invalid, so they can't serve queries. Rebuilding them.`,
-        "indexes": rebuilt->Array.map((prepared: IndexManager.prepared) => prepared.name),
       })
     }
 
@@ -2251,15 +2256,14 @@ let make = (
         "storage": storageName,
         "msg": `All ${schemaIndexes
           ->Array.length
-          ->Int.toString} schema indexes are already in place.`,
+          ->Int.toString} indexes the schema declares are already in place.`,
       })
     | _ =>
       Logging.info({
         "storage": storageName,
         "msg": `Creating the ${missing
           ->Array.length
-          ->Int.toString} schema indexes the database is missing. Writes to a table are paused while its index is built. ${slowOnLargeDatabaseNotice}`,
-        "indexes": missing->Array.map((prepared: IndexManager.prepared) => prepared.name),
+          ->Int.toString} indexes the schema declares. Writes to a table are paused while its index is built. ${slowOnLargeDatabaseNotice}`,
       })
     }
     let timeRef = Performance.now()
@@ -2268,11 +2272,7 @@ let make = (
     // failure stays built and recorded, so the retry owes only the rest.
     for idx in 0 to missing->Array.length - 1 {
       let prepared = missing->Array.getUnsafe(idx)
-      await buildIndex(
-        ~definition=prepared.definition,
-        ~coverage=Exact,
-        ~startMessage=_ => `Creating schema index "${prepared.name}".`,
-      )
+      await buildIndex(~definition=prepared.definition, ~coverage=Exact)
     }
 
     // Reached only once every definition is verified against pg_catalog, so a
@@ -2288,9 +2288,9 @@ let make = (
     | _ =>
       Logging.info({
         "storage": storageName,
-        "msg": `Committed ${missing
+        "msg": `Created ${missing
           ->Array.length
-          ->Int.toString} schema indexes in ${timeRef->formatSeconds}s. Every chain that had none is now ready.`,
+          ->Int.toString} indexes in ${timeRef->formatSeconds}s.`,
       })
     }
   }

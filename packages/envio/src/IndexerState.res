@@ -100,6 +100,9 @@ type t = {
   // When the finalize barrier last read the chains. Only throttles the retry
   // passes; the first one is never held back.
   mutable lastFinalizeCheckMillis: float,
+  // Whether the user has already been told this process reached the head, so the
+  // passes that follow it while a sibling chain catches up stay quiet.
+  mutable hasAnnouncedFinalize: bool,
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
   exitAfterFirstEventBlock: bool,
@@ -189,6 +192,7 @@ let make = (
     rollbackState: NoRollback,
     lastPrunedAtMillis: Dict.make(),
     lastFinalizeCheckMillis: 0.,
+    hasAnnouncedFinalize: false,
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
@@ -497,38 +501,30 @@ let shouldSaveHistory = (state: t) => state.crossChainState->CrossChainState.sho
 let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
 
 // The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only
-// in the middle phase: every chain has caught up, but the first finalize pass
-// hasn't switched the run to realtime yet.
-let isFinalizingIndexes = (state: t) =>
-  state.crossChainState->CrossChainState.isCaughtUp &&
-    !(state.crossChainState->CrossChainState.isRealtime)
+// in the middle phase: every chain has caught up, but the schema's indexes
+// aren't committed yet, so the run hasn't switched to realtime. Under
+// `envio start --chain` a process sits here for as long as a sibling chain is
+// still backfilling.
+%%private(
+  let isFinalizingIndexes = (state: t) =>
+    state.crossChainState->CrossChainState.isCaughtUp &&
+      !(state.crossChainState->CrossChainState.isRealtime)
+)
 
-// A chain another process drives can be behind for hours, and the retry runs off
-// the processing loop, so without the interval it would query the chains table
-// on every batch for the whole time.
-//
-// Whether the loop should run a finalize pass. Wider than the phase above,
-// because a pass that found another chain still backfilling leaves the schema's
-// indexes owed while this process goes realtime — the loop has to come back and
-// ask again rather than leaving them unbuilt for the rest of the run. Only those
-// retries are throttled; the first pass holds the run short of realtime, so it
-// runs the moment the chains are caught up.
+// The phase is re-entered from the processing loop for as long as it holds, and
+// a sibling chain can be behind for hours, so without the interval every batch
+// would query the chains table. The clock starts at zero, so the first pass is
+// never held back.
 let shouldRunFinalize = (state: t) =>
-  state.crossChainState->CrossChainState.isCaughtUp &&
-  state.crossChainState->CrossChainState.owesSchemaIndexes &&
-  (!(state.crossChainState->CrossChainState.isRealtime) ||
-    Date.now() -. state.lastFinalizeCheckMillis >= state.config.finalizeRetryIntervalMillis)
+  state->isFinalizingIndexes &&
+    Date.now() -. state.lastFinalizeCheckMillis >= state.config.finalizeRetryIntervalMillis
 
 let recordFinalizeCheck = (state: t) => state.lastFinalizeCheckMillis = Date.now()
 
-let clearSchemaIndexDebt = (state: t) =>
-  state.crossChainState->CrossChainState.clearSchemaIndexDebt
+let hasAnnouncedFinalize = (state: t) => state.hasAnnouncedFinalize
+let markFinalizeAnnounced = (state: t) => state.hasAnnouncedFinalize = true
 
-let markSchemaIndexDebt = (state: t) =>
-  state.crossChainState->CrossChainState.markSchemaIndexDebt
-
-let schemaIndexWaitMillis = (state: t) =>
-  state.crossChainState->CrossChainState.schemaIndexWaitMillis
+let finalizeWaitMillis = (state: t) => state.crossChainState->CrossChainState.finalizeWaitMillis
 
 let markCaughtUpIfSettled = (state: t) =>
   state.crossChainState->CrossChainState.markCaughtUpIfSettled
@@ -550,7 +546,7 @@ let simulateDeadInputTracker = (state: t) => state.simulateDeadInputTracker
 // counters for the /metrics endpoint, the TUI and the console API.
 let toMetrics = (state: t): Metrics.t => {
   let chainStates = state.crossChainState->CrossChainState.chainStates
-  let owesSchemaIndexes = state.crossChainState->CrossChainState.owesSchemaIndexes
+  let owesSchemaIndexes = state->isFinalizingIndexes
   let sourceRequests = []
   let sourceHeights = []
   let sourceHeightStreams = []

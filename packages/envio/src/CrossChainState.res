@@ -15,15 +15,9 @@ type t = {
   // but before the finalize phase has closed. The gap between this and
   // `isRealtime` is the FinalizingIndexes phase.
   mutable isCaughtUp: bool,
-  // Whether the schema's deferred indexes are still owed. Separate from
-  // `isRealtime` because a process can be realtime and still owe them: under
-  // `envio start --chain` it stands down while a sibling chain is behind, and a
-  // chain that read as behind for a moment leaves the debt to a later pass.
-  // While it holds, the loop keeps re-entering the FinalizingIndexes phase.
-  mutable owesSchemaIndexes: bool,
-  // When this run first found the indexes owed but not buildable, so a wait
-  // that goes on too long can be escalated from debug to warn.
-  mutable schemaIndexDebtSinceMillis: option<float>,
+  // When this run first found the schema's indexes owed but not buildable, so a
+  // wait that goes on too long can be escalated from debug to warn.
+  mutable finalizeWaitSinceMillis: option<float>,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
 }
@@ -38,8 +32,7 @@ let calculateTargetBufferSize = () =>
 let make = (~chainStates, ~isRealtime, ~targetBufferSize=calculateTargetBufferSize()): t => {
   {
     chainStates,
-    owesSchemaIndexes: !isRealtime,
-    schemaIndexDebtSinceMillis: None,
+    finalizeWaitSinceMillis: None,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isCaughtUp: isRealtime,
@@ -211,34 +204,21 @@ let markCaughtUpOnResume = (crossChainState: t) => {
   }
 }
 
-let owesSchemaIndexes = (crossChainState: t) => crossChainState.owesSchemaIndexes
-
-// A pass that found another chain behind may be owing indexes it didn't know
-// about — a run resumed realtime starts with no debt, and only the barrier can
-// tell it otherwise. Recording it here is what brings the loop back round.
-let markSchemaIndexDebt = (crossChainState: t) => crossChainState.owesSchemaIndexes = true
-
-let clearSchemaIndexDebt = (crossChainState: t) => {
-  crossChainState.owesSchemaIndexes = false
-  crossChainState.schemaIndexDebtSinceMillis = None
-}
-
 // How long the indexes have been owed and unbuildable, starting the clock on the
 // first pass that had to wait.
-let schemaIndexWaitMillis = (crossChainState: t) => {
+let finalizeWaitMillis = (crossChainState: t) => {
   let now = Date.now()
-  switch crossChainState.schemaIndexDebtSinceMillis {
+  switch crossChainState.finalizeWaitSinceMillis {
   | Some(since) => now -. since
   | None =>
-    crossChainState.schemaIndexDebtSinceMillis = Some(now)
+    crossChainState.finalizeWaitSinceMillis = Some(now)
     0.
   }
 }
 
 // Concludes the FinalizingIndexes phase and switches the indexer to realtime.
-// Under `envio start --chain` it is reached whether or not this process was the
-// one that built the schema's indexes: a chain that has caught up is realtime
-// regardless of how far its siblings have got.
+// Only reached once the schema's indexes are committed, so realtime never claims
+// a database that is still missing them.
 let markReady = (crossChainState: t, ~readyAt) => {
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     crossChainState

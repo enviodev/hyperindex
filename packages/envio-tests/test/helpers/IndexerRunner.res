@@ -276,12 +276,12 @@ let run = async (
               state->IndexerState.writeFiber->Option.isNone &&
               Frontier.equals(state->IndexerState.committedFrontier, state->IndexerState.processedFrontier)
 
-            // Catching up hands off to the FinalizingIndexes phase, which is
-            // where readiness is decided — so a batch isn't settled until that
-            // phase is over. The idle fallback below still bounds the wait.
+            // Catching up hands off to a finalize pass, which is where readiness
+            // is decided — so a batch isn't settled until that pass is done. The
+            // idle fallback below still bounds the wait.
             if (
               before < state->IndexerState.processedBatchesCount &&
-                !(state->IndexerState.isFinalizingIndexes)
+                state->IndexerState.finalizeFiber->Option.isNone
             ) {
               ()
             } else if isIdle && idleChecks.contents >= 5 {
@@ -319,7 +319,7 @@ let run = async (
           settled := if (
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
-              !(state->IndexerState.isFinalizingIndexes) &&
+              state->IndexerState.finalizeFiber->Option.isNone &&
               Frontier.equals(state->IndexerState.committedFrontier, state->IndexerState.processedFrontier)
             ) {
               settled.contents + 1
