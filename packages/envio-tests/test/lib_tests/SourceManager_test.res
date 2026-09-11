@@ -1842,7 +1842,10 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     async t => {
       let syncMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow])
       let fallbackMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
-      let recoveryTimeout = 5.0
+      // The recovery check reads the wall clock, so this has to outlast the
+      // failover below: with a few milliseconds of budget the source picked for
+      // the "before the timeout" query depends on how slow the machine is.
+      let recoveryTimeout = 1000.0
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~recoveryTimeout,
@@ -1913,7 +1916,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       ).toBe(fallbackMock.source)
 
       // Wait for recovery timeout to elapse
-      await Utils.delay(recoveryTimeout->Float.toInt)
+      await Utils.delay(recoveryTimeout->Float.toInt + 100)
 
       {
         // Query after timeout — recovery switches to sync before querying
