@@ -1998,6 +1998,81 @@ let make = (
     }
   }
 
+  // Brings chains an existing schema was never initialized with into it. Every
+  // statement only adds, and they run in one transaction, so a failure leaves
+  // the schema exactly as it was. Not idempotent, deliberately: the chain and
+  // contract inserts carry no `ON CONFLICT`, so two migrations racing each other
+  // collide on the primary key and one rolls back rather than both proceeding
+  // against a half-applied schema. A repeat of a migration that *succeeded*
+  // never reaches here — `Config.addedChains` reads the snapshot this wrote and
+  // finds nothing left to add.
+  let addChains = async (
+    ~chainConfigs: array<Config.chain>,
+    ~entities: array<Internal.entityConfig>,
+    ~storedContractMapping: ContractMapping.t,
+    ~envioInfo,
+  ) => {
+    let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
+    // Appended, never re-canonicalized: an id an existing address row points at
+    // has to keep the position it was written with.
+    let newContractNames =
+      storedContractMapping->ContractMapping.missingFrom(
+        ~names=chainConfigs->Array.flatMap((chainConfig: Config.chain) =>
+          chainConfig.contracts->Array.map((contract: Config.contract) => contract.name)
+        ),
+      )
+    let contractMapping = storedContractMapping->ContractMapping.extend(~names=newContractNames)
+
+    let chainIds = chainConfigs->Array.map((chainConfig: Config.chain) => chainConfig.id)
+    let partitionQueries = pgEntities->Array.flatMap((entityConfig: Internal.entityConfig) =>
+      switch entityConfig.table->Table.getChainIdField {
+      | None => []
+      | Some(_) =>
+        chainIds->Array.map(chainId =>
+          `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${partitionTableName(
+              ~entityConfig,
+              ~chainId,
+            )}" PARTITION OF "${pgSchema}"."${entityConfig.table.tableName}" FOR VALUES IN (${chainId->ChainId.toString});`
+        )
+      }
+    )
+    let addressRows =
+      chainConfigs->Array.flatMap(chainConfig =>
+        chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping)
+      )
+
+    await sql->Postgres.beginSql(async sql => {
+      // One at a time: every partition of an entity takes a lock on the same
+      // parent table, and issuing them concurrently on one connection only
+      // invites a deadlock for no gain at migration time.
+      for idx in 0 to partitionQueries->Array.length - 1 {
+        await sql
+        ->Postgres.unsafe(partitionQueries->Array.getUnsafe(idx))
+        ->Utils.Promise.ignoreValue
+      }
+      switch InternalTable.Chains.makeInitialValuesQuery(~pgSchema, ~chainConfigs) {
+      | Some(query) => await sql->Postgres.unsafe(query)->Utils.Promise.ignoreValue
+      | None => ()
+      }
+      if newContractNames->Utils.Array.notEmpty {
+        await InternalTable.EnvioContracts.insert(
+          sql,
+          ~pgSchema,
+          ~contractNames=newContractNames,
+          ~firstId=storedContractMapping->ContractMapping.names->Array.length,
+        )
+      }
+      if addressRows->Utils.Array.notEmpty {
+        await InternalTable.EnvioAddresses.insert(sql, ~pgSchema, ~rows=addressRows, ~chainIdMode)
+      }
+      // Last in the transaction: the snapshot is what a later resume compares
+      // against, so it must only become current once the rows it describes exist.
+      await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
+    })
+
+    await reloadIndexCatalog()
+  }
+
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
     let params = []
     let condition = makeFilterCondition(~filter, ~table, ~params)
@@ -2647,6 +2722,7 @@ let make = (
     isInitialized,
     initialize,
     resumeInitialState,
+    addChains,
     loadOrThrow,
     ensureQueryIndexes,
     ensureSchemaIndexes,

@@ -55,6 +55,18 @@ let isInReorgThreshold = (crossChainState: t) => {
 }
 let targetBufferSize = (crossChainState: t) => crossChainState.targetBufferSize
 
+// A chain that already caught up, held while another one hasn't. This only ever
+// describes a chain added to a schema whose others were already synced: every
+// other run reaches `ready_at` on all chains at once, in `markReady`, so no
+// chain is ready while a sibling backfills. Holding them keeps the whole fetch
+// pool on the chain that needs it, and keeps the ready chains from writing
+// history and checkpoints nothing can prune until the newcomer supplies a safe
+// checkpoint of its own. A frozen chain is never queried, so it keeps the
+// knownHeight it stopped at and still reads as caught up while it waits;
+// `isRealtime` flips in `markReady`, which releases it.
+let isFrozen = (crossChainState: t, cs: ChainState.t) =>
+  !crossChainState.isRealtime && cs->ChainState.isReady
+
 // Whether each chain's writes still need history, keyed by chain id — what the
 // history policy is built from.
 let shouldSaveHistory = (crossChainState: t) =>
@@ -301,7 +313,10 @@ let checkAndFetch = async (
   // while it takes its first measurements. Its probe is one admission unit.
   let coldChainBudget = minimumAdmissionBudget
 
-  let prioritizedChainStates = crossChainState->priorityOrder
+  // Frozen chains sit out the whole tick: they neither anchor the alignment, nor
+  // draw budget, nor get dispatched.
+  let prioritizedChainStates =
+    crossChainState->priorityOrder->Array.filter(cs => !(crossChainState->isFrozen(cs)))
 
   // Alignment anchor: the first known-height chain in priority order — which,
   // since that order sorts by frontier progress, is the chain furthest behind

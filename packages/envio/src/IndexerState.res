@@ -230,24 +230,28 @@ let makeFromDbState = (
   ~onError,
   ~onExit=?,
 ) => {
-  let isInReorgThreshold = if initialState.cleanRun {
-    false
-  } else {
-    // Check if any chain is in reorg threshold by comparing progress with sourceBlock - maxReorgDepth.
-    initialState.chains->Array.some(resumedChainState =>
-      isProgressInReorgThreshold(
-        ~progressBlockNumber=resumedChainState.progressBlockNumber,
-        ~sourceBlockNumber=resumedChainState.sourceBlockNumber,
-        ~maxReorgDepth=resumedChainState.maxReorgDepth,
-      )
-    )
-  }
-
   // `ready_at` is durable: a chain that once caught up resumes realtime, and the
   // deferred indexes committed alongside that stamp are not owed again.
   let isRealtime =
     initialState.chains->Array.length > 0 &&
       initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
+
+  // Chains enter the threshold together, so this reading is run-wide: any chain
+  // whose progress is within maxReorgDepth of the source head puts the run in it.
+  // Chains that resume frozen — ready while a newly added one still backfills —
+  // are left out. They sit at head by definition, and counting them would put the
+  // newcomer in the threshold from its first block, making it save history and
+  // write reorg checkpoints across its whole backfill.
+  let isInReorgThreshold =
+    !initialState.cleanRun &&
+    initialState.chains->Array.some(resumedChainState =>
+      (isRealtime || resumedChainState.timestampCaughtUpToHeadOrEndblock->Option.isNone) &&
+        isProgressInReorgThreshold(
+          ~progressBlockNumber=resumedChainState.progressBlockNumber,
+          ~sourceBlockNumber=resumedChainState.sourceBlockNumber,
+          ~maxReorgDepth=resumedChainState.maxReorgDepth,
+        )
+    )
 
   let chainStates = Dict.make()
   initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {

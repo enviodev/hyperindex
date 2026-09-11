@@ -47,12 +47,14 @@ module EnvioContracts = {
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "name")
 SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(Text: Postgres.columnType :> string)}[]);`
 
-  // `contractNames` is the canonical list: a name's position is its id.
-  let insert = (sql, ~pgSchema, ~contractNames: array<string>) =>
+  // A name's position is its id. `firstId` is where this batch starts: 0 for the
+  // canonical list an `initialize` writes, and the row count already stored when
+  // a migration appends the contracts a newly added chain brought with it.
+  let insert = (sql, ~pgSchema, ~contractNames: array<string>, ~firstId=0) =>
     sql
     ->Postgres.preparedUnsafe(
       makeInsertQuery(~pgSchema),
-      (contractNames->Array.mapWithIndex((_, idx) => idx), contractNames)->(
+      (contractNames->Array.mapWithIndex((_, idx) => firstId + idx), contractNames)->(
         Utils.magic: ((array<int>, array<string>)) => unknown
       ),
     )
