@@ -49,6 +49,17 @@ type pgTableInput = {
   partitionByColumn?: string,
 }
 
+type pgIndexColumnInput = {
+  name: string,
+  direction: string,
+}
+
+type pgIndexInput = {
+  tableName: string,
+  columns: array<pgIndexColumnInput>,
+  method: string,
+}
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
@@ -72,6 +83,12 @@ type addon = {
     ~scale: Null.t<int>,
     ~enumName: Null.t<string>,
   ) => string,
+  pgIndexKey: (~definition: pgIndexInput) => string,
+  pgIndexName: (~definition: pgIndexInput) => string,
+  pgIndexReadablePrefix: (~definition: pgIndexInput) => string,
+  pgIndexColumnKey: (~column: pgIndexColumnInput) => string,
+  pgIndexCreateQuery: (~definition: pgIndexInput, ~pgSchema: string) => string,
+  pgIndexDropQuery: (~pgSchema: string, ~indexName: string) => string,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
@@ -330,3 +347,12 @@ let pgFieldType = (
     ~scale,
     ~enumName,
   )
+
+let pgIndexKey = (~definition) => getAddon().pgIndexKey(~definition)
+let pgIndexName = (~definition) => getAddon().pgIndexName(~definition)
+let pgIndexReadablePrefix = (~definition) => getAddon().pgIndexReadablePrefix(~definition)
+let pgIndexColumnKey = (~column) => getAddon().pgIndexColumnKey(~column)
+let pgIndexCreateQuery = (~definition, ~pgSchema) =>
+  getAddon().pgIndexCreateQuery(~definition, ~pgSchema)
+let pgIndexDropQuery = (~pgSchema, ~indexName) =>
+  getAddon().pgIndexDropQuery(~pgSchema, ~indexName)

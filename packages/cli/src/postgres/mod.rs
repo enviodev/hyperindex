@@ -6,6 +6,7 @@
 //! SQL. The storage interface itself stays in ReScript.
 
 pub mod ddl;
+pub mod index_definition;
 pub mod pg_type;
 
 // The addon registers these; a test build has no registration and would see

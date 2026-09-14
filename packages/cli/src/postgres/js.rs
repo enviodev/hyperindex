@@ -3,6 +3,7 @@
 use napi_derive::napi;
 
 use super::ddl::{self, ColumnSpec, TableSpec};
+use super::index_definition::{self, Direction, IndexColumn, IndexDefinition};
 use super::pg_type::{self, ChainIdMode, FieldType};
 
 /// One column, flattened for the boundary: napi carries no tagged union, so the
@@ -107,4 +108,88 @@ pub fn pg_create_table_query(
     let chain_id_mode = ChainIdMode::parse(&chain_id_mode).map_err(to_napi)?;
     ddl::create_table_query(&spec, &pg_schema, is_numeric_array_as_text, chain_id_mode)
         .map_err(to_napi)
+}
+
+#[napi(object)]
+pub struct PgIndexColumnInput {
+    pub name: String,
+    pub direction: String,
+}
+
+#[napi(object)]
+pub struct PgIndexInput {
+    pub table_name: String,
+    pub columns: Vec<PgIndexColumnInput>,
+    pub method: String,
+}
+
+impl TryFrom<PgIndexColumnInput> for IndexColumn {
+    type Error = anyhow::Error;
+
+    fn try_from(input: PgIndexColumnInput) -> anyhow::Result<Self> {
+        Ok(IndexColumn {
+            name: input.name,
+            direction: match input.direction.as_str() {
+                "Asc" => Direction::Asc,
+                "Desc" => Direction::Desc,
+                other => anyhow::bail!("`{other}` is not an index column direction"),
+            },
+        })
+    }
+}
+
+impl TryFrom<PgIndexInput> for IndexDefinition {
+    type Error = anyhow::Error;
+
+    fn try_from(input: PgIndexInput) -> anyhow::Result<Self> {
+        Ok(IndexDefinition {
+            table_name: input.table_name,
+            columns: input
+                .columns
+                .into_iter()
+                .map(IndexColumn::try_from)
+                .collect::<anyhow::Result<Vec<_>>>()?,
+            method: input.method,
+        })
+    }
+}
+
+#[napi]
+pub fn pg_index_key(definition: PgIndexInput) -> napi::Result<String> {
+    Ok(IndexDefinition::try_from(definition)
+        .map_err(to_napi)?
+        .key())
+}
+
+#[napi]
+pub fn pg_index_name(definition: PgIndexInput) -> napi::Result<String> {
+    Ok(IndexDefinition::try_from(definition)
+        .map_err(to_napi)?
+        .name())
+}
+
+#[napi]
+pub fn pg_index_readable_prefix(definition: PgIndexInput) -> napi::Result<String> {
+    Ok(IndexDefinition::try_from(definition)
+        .map_err(to_napi)?
+        .readable_prefix())
+}
+
+#[napi]
+pub fn pg_index_column_key(column: PgIndexColumnInput) -> napi::Result<String> {
+    Ok(IndexDefinition::column_key(
+        &IndexColumn::try_from(column).map_err(to_napi)?,
+    ))
+}
+
+#[napi]
+pub fn pg_index_create_query(definition: PgIndexInput, pg_schema: String) -> napi::Result<String> {
+    Ok(IndexDefinition::try_from(definition)
+        .map_err(to_napi)?
+        .create_query(&pg_schema))
+}
+
+#[napi]
+pub fn pg_index_drop_query(pg_schema: String, index_name: String) -> String {
+    index_definition::drop_query(&pg_schema, &index_name)
 }
