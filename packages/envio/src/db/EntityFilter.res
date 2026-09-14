@@ -39,10 +39,11 @@ let valuesCount = (filter: t) => {
   filter->Utils.Dict.forEachWithKey((operators, _) =>
     operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
       count :=
-        count.contents +
-        (operator === "_in"
-          ? fieldValue->(Utils.magic: unknown => array<unknown>)->Array.length
-          : 1)
+        count.contents + (
+          operator === "_in"
+            ? fieldValue->(Utils.magic: unknown => array<unknown>)->Array.length
+            : 1
+        )
     )
   )
   count.contents
@@ -90,12 +91,9 @@ let matchesFieldType = (value: unknown, ~field: Table.field) => {
     : value->matchesScalar
 }
 
-// Each returned filter should be loaded separately and the results flattened:
-// _in maps to one Eq per value so loads memoize on the per-value level,
-// and _gte/_lte are composed from Eq + Gt/Lt. Each field+operator pair
-// expands into a group of such alternatives, and multiple pairs combine
-// as a cross product of And filters — the groups stay disjoint, so the
-// flattened results contain no duplicates.
+// Runs once per getWhere registration, before the filter reaches an index or a
+// query, so a bad field, operator or value is reported against the call the
+// handler made rather than surfacing later as a comparator or SQL failure.
 let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
   let filterKeys = filter->Dict.keysToArray
 
@@ -272,14 +270,18 @@ let merge = (filters: array<t>) =>
         | _ => throwUnmergeable(filter)
         }
       )
-      [Dict.fromArray([(fieldName, Dict.fromArray([("_in", values->(Utils.magic: array<unknown> => unknown))]))])]
+      [
+        Dict.fromArray([
+          (fieldName, Dict.fromArray([("_in", values->(Utils.magic: array<unknown> => unknown))])),
+        ]),
+      ]
     | _ => filters
     }
   }
 
 // A predicate specialized to a single filter. The field's comparison is
 // resolved once from the table config, so per-entity matching avoids both the
-// operator dispatch and the polymorphic Caml_obj compare.
+// operator dispatch and the polymorphic compare.
 type matcher = Internal.entity => bool
 
 // Reads a field off an entity by its API name. Indexed/queryable fields hold
@@ -301,7 +303,7 @@ type valueCompare = {
   key: unknown => unknown,
 }
 
-// `>`/`<` on `unknown` would compile to the polymorphic Caml_obj path; the raw
+// `>`/`<` on `unknown` would compile to the polymorphic Primitive_object path; the raw
 // operators give native JS comparison for primitive (string/number/bigint)
 // fields. `===` is already physical equality.
 let nativeEq = (a: unknown, b: unknown) => a === b
