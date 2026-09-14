@@ -150,10 +150,9 @@ let toText = (value: unknown, ~replacer) =>
   }
 
 // Copies `text` in as one byte per character, or returns -1 at the first
-// character that needs more than one. An id, a hash, a decimal and an enum
-// variant are all ASCII, which is most of what a text column ever holds, and
-// this spares them the `subarray` that `encodeInto` needs to be given an
-// offset — one short-lived object per cell is what the batch pays otherwise.
+// character that needs more than one. Spares a short value the `subarray` that
+// `encodeInto` needs to be given an offset — one short-lived object per cell is
+// what the batch pays otherwise.
 %%private(
   let writeAscii: (Uint8Array.t, string, int) => int = %raw(`(data, text, offset) => {
     const length = text.length;
@@ -168,6 +167,30 @@ let toText = (value: unknown, ~replacer) =>
   }`)
 )
 
+// Where `encodeInto` overtakes the loop above. The loop costs a few nanoseconds
+// a character while `encodeInto` copies in bulk, so the `subarray` it saves is
+// a fixed price a long value earns back several times over. Where the two meet
+// depends on how V8 holds the string — around 38 characters for a flat one, low
+// thirties for one built by concatenation — and this sits under both, so no
+// length is made slower. An enum variant stays on the loop; a hex address, a
+// transaction hash and most ids take the bulk copy.
+%%private(let asciiCopyLimit = 32)
+
+%%private(
+  let writeEncoded = (stage, builder, variable, ~units, text) => {
+    let {read, written} =
+      encoder->encodeInto(text, variable.data->TypedArray.subarray(~start=variable.cursor))
+    if read < units {
+      stage->ensure(builder, variable, ~needed=variable.cursor + units * 3)
+      let {written} =
+        encoder->encodeInto(text, variable.data->TypedArray.subarray(~start=variable.cursor))
+      written
+    } else {
+      written
+    }
+  }
+)
+
 %%private(
   let writeText = (stage, builder, variable, ~row, text) => {
     // One byte per UTF-16 unit is what ASCII needs, so the room for the fast
@@ -176,19 +199,13 @@ let toText = (value: unknown, ~replacer) =>
     // costs across its two.
     let units = text->String.length
     stage->ensure(builder, variable, ~needed=variable.cursor + units)
-    let written = switch variable.data->writeAscii(text, variable.cursor) {
-    | -1 =>
-      let {read, written} =
-        encoder->encodeInto(text, variable.data->TypedArray.subarray(~start=variable.cursor))
-      if read < units {
-        stage->ensure(builder, variable, ~needed=variable.cursor + units * 3)
-        let {written} =
-          encoder->encodeInto(text, variable.data->TypedArray.subarray(~start=variable.cursor))
-        written
-      } else {
-        written
+    let written = if units > asciiCopyLimit {
+      writeEncoded(stage, builder, variable, ~units, text)
+    } else {
+      switch variable.data->writeAscii(text, variable.cursor) {
+      | -1 => writeEncoded(stage, builder, variable, ~units, text)
+      | ascii => ascii
       }
-    | ascii => ascii
     }
     variable.cursor = variable.cursor + written
     variable.ends->TypedArray.set(row, variable.cursor)
