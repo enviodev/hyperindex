@@ -445,17 +445,21 @@ let toString = (filter: t) => {
 let toOperationKey = (filter: t, ~entityName) => {
   let params = ref(0)
   let printed = ref("")
-  filter->Utils.Dict.forEachWithKey((operators, fieldName) =>
+  filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
+    let ops = ref("")
+    // An _eq on its own is written without the operator, the way the user does.
+    let loneEq = ref(false)
     operators->Utils.Dict.forEachWithKey((_, operator) => {
       params := params.contents + 1
-      let placeholder = `$${params.contents->Int.toString}`
-      let part =
-        operator === "_eq"
-          ? `${fieldName}: ${placeholder}`
-          : `${fieldName}: {${operator}: ${placeholder}}`
-      printed := (printed.contents === "" ? part : printed.contents ++ ", " ++ part)
+      let part = `${operator}: $${params.contents->Int.toString}`
+      loneEq := ops.contents === "" && operator === "_eq"
+      ops := (ops.contents === "" ? part : ops.contents ++ ", " ++ part)
     })
-  )
+    let part = loneEq.contents
+      ? `${fieldName}: $${params.contents->Int.toString}`
+      : `${fieldName}: {${ops.contents}}`
+    printed := (printed.contents === "" ? part : printed.contents ++ ", " ++ part)
+  })
   `${entityName}.getWhere({${printed.contents}})`
 }
 

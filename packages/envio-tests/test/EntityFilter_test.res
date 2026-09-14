@@ -13,6 +13,10 @@ describe("EntityFilter.toOperationKey", () => {
         dict{"a": dict{"_lt": v}},
         dict{"a": dict{"_in": v}},
         dict{"a": dict{"_gt": v}, "b": dict{"_lt": v}},
+        // Operators on one field stay under that field, rather than repeating
+        // the key — the printed form is what the user sees in an error log.
+        dict{"a": dict{"_gt": v, "_lt": v}},
+        dict{"a": dict{"_gt": v, "_eq": v}},
       ]->Array.map(filter => filter->EntityFilter.toOperationKey(~entityName="User")),
     ).toEqual([
       "User.getWhere({a: $1})",
@@ -20,6 +24,8 @@ describe("EntityFilter.toOperationKey", () => {
       "User.getWhere({a: {_lt: $1}})",
       "User.getWhere({a: {_in: $1}})",
       "User.getWhere({a: {_gt: $1}, b: {_lt: $2}})",
+      "User.getWhere({a: {_gt: $1, _lt: $2}})",
+      "User.getWhere({a: {_gt: $1, _eq: $2}})",
     ])
   })
 })
