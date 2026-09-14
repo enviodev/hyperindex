@@ -428,31 +428,3 @@ describe("EntityFilter.toString", () => {
     ])
   })
 })
-
-describe("EntityFilter.mapValues", () => {
-  it("Maps scalar values one by one and In values as a whole array", t => {
-    let calls = []
-    let mapped = dict{
-      "a": dict{"_eq": 1->(Utils.magic: int => unknown)},
-      "b": dict{"_in": [2, 3]->(Utils.magic: array<int> => unknown)},
-    }->EntityFilter.mapValues(
-      ~mapValue=(~fieldName, ~fieldValue, ~isArray) => {
-        calls->Array.push((fieldName, isArray))->ignore
-        isArray
-          ? fieldValue
-            ->(Utils.magic: unknown => array<int>)
-            ->Array.map(v => v * 10)
-            ->(Utils.magic: array<int> => unknown)
-          : (fieldValue->(Utils.magic: unknown => int) * 10)->(Utils.magic: int => unknown)
-      },
-    )
-
-    t.expect((mapped, calls)).toEqual((
-      dict{
-        "a": dict{"_eq": 10->(Utils.magic: int => unknown)},
-        "b": dict{"_in": [20, 30]->(Utils.magic: array<int> => unknown)},
-      },
-      [("a", false), ("b", true)],
-    ))
-  })
-})

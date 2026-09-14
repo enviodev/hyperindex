@@ -502,23 +502,3 @@ let makeMatcher = (filter: t, ~table: Table.table): matcher => {
   | _ => entity => checks->Array.every(check => check(entity))
   }
 }
-
-// In values are mapped as one array (isArray=true), so they can be
-// converted with the table's cached array schema in a single pass.
-let mapValues = (
-  filter: t,
-  ~mapValue: (~fieldName: string, ~fieldValue: unknown, ~isArray: bool) => unknown,
-) => {
-  let mapped = Dict.make()
-  filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
-    let mappedOperators = Dict.make()
-    operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
-      mappedOperators->Dict.set(
-        operator,
-        mapValue(~fieldName, ~fieldValue, ~isArray=operator === "_in"),
-      )
-    )
-    mapped->Dict.set(fieldName, mappedOperators)
-  })
-  mapped
-}
