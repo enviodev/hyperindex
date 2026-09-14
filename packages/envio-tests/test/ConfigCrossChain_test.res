@@ -522,26 +522,20 @@ describe("Per-chain ClickHouse writes", () => {
   // Int32 chain-id mode.
   let columnSpecs = entityConfig => ClickHouse.entitySpec(~entityConfig).columns
 
-  let stagedChainIds = (~changes, ~entityConfig: Internal.entityConfig, ~scope, ~registry) => {
-    let captured = []
+  let stagedChainIds = (
+    ~changes,
+    ~entityConfig: Internal.entityConfig,
+    ~scope,
+    ~registry: ClickHouse.registry,
+  ) => {
+    let table = registry.entities->Dict.getUnsafe(entityConfig.name)
     let chainIdIndex = columnSpecs(entityConfig)->Array.findIndex(({name}) => name === "chainId")
-    let sink = {
-      "stage": (_table, rows, columns: array<ClickHouseSink.columnValuesInput>) => {
-        switch columns->Array.get(chainIdIndex) {
-        | Some({numbers: ?Some(numbers)}) =>
-          for row in 0 to rows - 1 {
-            captured->Array.push(numbers->TypedArray.get(row))->ignore
-          }
-        | _ =>
-          for _ in 0 to rows - 1 {
-            captured->Array.push(None)->ignore
-          }
-        }
-        1
-      },
-    }->(Utils.magic: {..} => ClickHouseSink.t)
+    let (mock, sink) = MockArena.make(~columns=table.columns)
     let _ = ClickHouse.stageUpdatesOrThrow(sink, ~registry, ~changes, ~entityConfig, ~scope)
-    captured
+    switch mock->MockArena.staged->Array.get(chainIdIndex) {
+    | Some({values: Numbers(numbers)}) => numbers->Array.map(number => Some(number))
+    | _ => changes->Array.map(_ => None)
+    }
   }
 
   // Registration only parses the column types, so it never reaches this host.
