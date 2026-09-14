@@ -141,7 +141,9 @@ let make = (
     }
 
     let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
-    let requestStats = [{Source.method: "getLogs", seconds: pageFetchTime}]
+    let requestStats = [
+      {Source.method: "getLogs", seconds: pageFetchTime, responseBlocks: pageUnsafe.responseBlocks},
+    ]
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight

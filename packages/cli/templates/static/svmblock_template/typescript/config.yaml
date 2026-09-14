@@ -1,7 +1,0 @@
-# yaml-language-server: $schema=./node_modules/envio/svm.schema.json
-name: solana-block-handler
-ecosystem: svm
-full_batch_size: 10
-chains:
-  - id: solana
-    start_slot: 385453000

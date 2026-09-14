@@ -258,6 +258,8 @@ impl EvmHyperSyncClient {
             RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
         };
 
+        let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
+
         let transaction_store = TransactionStore::new_evm(self.enable_checksum_addresses);
         let block_store = BlockStore::new_evm(self.enable_checksum_addresses);
         let items = tokio::task::block_in_place(|| {
@@ -307,6 +309,7 @@ impl EvmHyperSyncClient {
                 .context("convert next_block")
                 .map_err(map_err)?,
             items,
+            response_blocks,
         };
         Ok((event_items, transaction_store, block_store))
     }
@@ -378,6 +381,10 @@ pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
     pub items: Vec<EventItem>,
+    /// Blocks the server returned for this query, before routing drops the ones
+    /// no item joins to. The server returns one block per number, so this is a
+    /// distinct count.
+    pub response_blocks: i64,
 }
 
 fn convert_response(
@@ -540,16 +547,16 @@ fn process_response(
 
     // The server returns one block per number. Every returned block is
     // validated, items or not, and its number tracked for coverage.
-    let response_blocks: Vec<simple_types::Block> = blocks.into_iter().flatten().collect();
+    let returned_blocks: Vec<simple_types::Block> = blocks.into_iter().flatten().collect();
     let present_block_numbers: HashSet<u64> =
-        response_blocks.iter().filter_map(|b| b.number).collect();
+        returned_blocks.iter().filter_map(|b| b.number).collect();
 
     // Validate the requested block fields once per distinct block. The
     // always-required number/timestamp/hash back every header, so they are
     // checked on every returned block; the rest of the user's selection is only
     // ever read through the store, so it is checked only where an item can
     // reach it — same rule as transactions.
-    for block in &response_blocks {
+    for block in &returned_blocks {
         let referenced = block
             .number
             .is_some_and(|number| referenced_blocks.contains(&number));
@@ -589,7 +596,7 @@ fn process_response(
     // decode from the store like any other field. Blocks whose logs were all
     // dropped by client-side routing keep a hash-only row so every returned
     // header still backs reorg detection.
-    let store_blocks: Vec<simple_types::Block> = response_blocks
+    let store_blocks: Vec<simple_types::Block> = returned_blocks
         .into_iter()
         .map(|b| {
             if b.number

@@ -341,10 +341,8 @@ pub mod svm {
 
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
     pub enum Template {
-        #[strum(serialize = "Metaplex Token Metadata (instructions)")]
-        MetaplexTokenMetadata,
-        #[strum(serialize = "Feature: Block Handler (onSlot)")]
-        FeatureBlockHandler,
+        #[strum(serialize = "USDC Transfers (SPL Token instructions)")]
+        UsdcTransfers,
     }
 
     #[derive(Clone, Debug, Display)]

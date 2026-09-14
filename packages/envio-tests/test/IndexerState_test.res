@@ -140,7 +140,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
-    ~isInReorgThreshold=false,
+
     ~isRealtime=false,
     ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
   )
@@ -194,9 +194,7 @@ describe("IndexerState", () => {
         while continue.contents {
           let batch =
             state->IndexerState.createBatch(
-              ~processedCheckpointId=Internal.initialCheckpointId,
               ~batchSizeTarget=10000,
-              ~isRollback=false,
             )
           let {items, totalBatchSize} = batch
 
@@ -327,7 +325,7 @@ describe("IndexerState", () => {
             ~config,
             ~persistence=TestIndexerState.defaultPersistence(),
             ~chainStates,
-            ~isInReorgThreshold=false,
+
             ~isRealtime=false,
             ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
           )
@@ -337,9 +335,7 @@ describe("IndexerState", () => {
         let state = makeState(~eventBlocks=[5])
         let batch =
           state->IndexerState.createBatch(
-            ~processedCheckpointId=Internal.initialCheckpointId,
             ~batchSizeTarget=10000,
-            ~isRollback=false,
           )
 
         let chainId = config.chainMap->ChainMap.keys->Array.getUnsafe(0)

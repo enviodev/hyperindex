@@ -166,6 +166,15 @@ module Dict = {
 
   let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
 
+  // Keeps every key either dict has; `pick` decides a key both have.
+  let mergeWith: (dict<'a>, dict<'a>, ('a, 'a) => 'a) => dict<'a> = %raw(`(a, b, pick) => {
+    var merged = {...a}, i;
+    for (i in b) {
+      merged[i] = i in merged ? pick(merged[i], b[i]) : b[i];
+    }
+    return merged;
+  }`)
+
   @val
   external mergeInPlace: (dict<'a>, dict<'a>) => dict<'a> = "Object.assign"
 

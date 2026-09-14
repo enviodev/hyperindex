@@ -49,10 +49,7 @@ let getEffectInMemTable = (
 ) => state->IndexerState.effectState->EffectState.getTable(~effect, ~scope)
 
 let hasEffectOutput = (inMemTable: EffectState.effectCacheInMemTable, key) =>
-  switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
-  | Some(Set(_)) => true
-  | Some(Delete(_)) | None => false
-  }
+  inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key)->Option.isSome
 
 // Returns the raw output. The output is itself an option for effects with an
 // optional output, so it must never be wrapped in another option here: Some(None)
@@ -62,14 +59,15 @@ let getEffectOutputUnsafe = (
   key,
 ): Internal.effectOutput =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
-  | Some(Set({entity: output})) => output
-  | Some(Delete(_)) | None => %raw(`undefined`)
+  | Some({output}) => output
+  | None => %raw(`undefined`)
   }
 
 // Records a handler output. Persisted on the next write only when shouldCache;
 // otherwise kept in memory (re-run on a later miss) but never written to the db.
 let setEffectOutput = (
   inMemTable: EffectState.effectCacheInMemTable,
+  ~chainId,
   ~checkpointId,
   ~cacheKey,
   ~output,
@@ -79,10 +77,7 @@ let setEffectOutput = (
   | Some(_) => ()
   | None => inMemTable.changesCount = inMemTable.changesCount +. 1.
   }
-  inMemTable.dict->Dict.set(
-    cacheKey,
-    Set({entityId: cacheKey->EntityId.unsafeOfString, entity: output, checkpointId}),
-  )
+  inMemTable.dict->Dict.set(cacheKey, {output, chainId, checkpointId})
   if shouldCache {
     inMemTable.idsToStore->Array.push(cacheKey)->ignore
   }
@@ -90,16 +85,17 @@ let setEffectOutput = (
 
 // Seeds an entry from a db read. Stamped with loadedFromDbCheckpointId so it's
 // always droppable (re-readable from the db) and never re-persisted.
-let initEffectOutputFromDb = (inMemTable: EffectState.effectCacheInMemTable, ~cacheKey, ~output) =>
+let initEffectOutputFromDb = (
+  inMemTable: EffectState.effectCacheInMemTable,
+  ~chainId,
+  ~cacheKey,
+  ~output,
+) =>
   if inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(cacheKey)->Option.isNone {
     inMemTable.changesCount = inMemTable.changesCount +. 1.
     inMemTable.dict->Dict.set(
       cacheKey,
-      Set({
-        entityId: cacheKey->EntityId.unsafeOfString,
-        entity: output,
-        checkpointId: Internal.loadedFromDbCheckpointId,
-      }),
+      {output, chainId, checkpointId: Internal.loadedFromDbCheckpointId},
     )
   }
 
@@ -108,14 +104,13 @@ let initEffectOutputFromDb = (inMemTable: EffectState.effectCacheInMemTable, ~ca
 // seeded from a db read are spared. Mirrors entity dropCommittedChanges.
 let dropCommittedEffects = (
   inMemTable: EffectState.effectCacheInMemTable,
-  ~committedCheckpointId,
+  ~committedFrontier: Frontier.t,
   ~keepLoadedFromDb,
 ) => {
   let keysToDelete = []
-  inMemTable.dict->Utils.Dict.forEachWithKey((change, key) => {
-    let checkpointId = change->Change.getCheckpointId
+  inMemTable.dict->Utils.Dict.forEachWithKey(({chainId, checkpointId}, key) => {
     if (
-      !(checkpointId > committedCheckpointId) &&
+      !(checkpointId > committedFrontier->Frontier.get(chainId)) &&
       !(keepLoadedFromDb && checkpointId == Internal.loadedFromDbCheckpointId)
     ) {
       keysToDelete->Array.push(key)
@@ -128,18 +123,21 @@ let dropCommittedEffects = (
 let prepareRollbackDiff = async (
   state: IndexerState.t,
   ~floors: RollbackFloors.t,
-  ~rollbackDiffCheckpointId,
   ~progressedChains,
   ~rolledBackAddresses,
 ) => {
-  state->IndexerState.beginRollbackDiff(
-    ~diffCheckpointId=rollbackDiffCheckpointId,
-    ~floors,
-    ~progressedChains,
-    ~rolledBackAddresses,
-  )
+  let diffFrontier =
+    state->IndexerState.beginRollbackDiff(~floors, ~progressedChains, ~rolledBackAddresses)
   let persistence = state->IndexerState.persistence
-  let committedCheckpointId = state->IndexerState.committedCheckpointId
+  let sequence = (state->IndexerState.config).checkpointSequence
+  let diffCheckpointId = scope =>
+    switch sequence->CheckpointSequence.findForScope(diffFrontier, ~scope) {
+    | Some(checkpointId) => checkpointId
+    | None =>
+      JsError.throwWithMessage(
+        "Internal error: the rollback returned rows for a chain its diff never moved.",
+      )
+    }
 
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
@@ -160,10 +158,10 @@ let prepareRollbackDiff = async (
       state
       ->getInMemTable(~entityConfig, ~scope)
       ->InMemoryTable.Entity.set(
-        ~committedCheckpointId,
+        ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
         Delete({
           entityId,
-          checkpointId: rollbackDiffCheckpointId,
+          checkpointId: diffCheckpointId(scope),
         }),
       )
     })
@@ -174,10 +172,10 @@ let prepareRollbackDiff = async (
       state
       ->getInMemTable(~entityConfig, ~scope)
       ->InMemoryTable.Entity.set(
-        ~committedCheckpointId,
+        ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
         Set({
           entityId: entity.id->EntityId.unsafeOfString,
-          checkpointId: rollbackDiffCheckpointId,
+          checkpointId: diffCheckpointId(scope),
           entity,
         }),
       )

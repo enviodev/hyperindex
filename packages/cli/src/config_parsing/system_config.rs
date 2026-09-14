@@ -1396,12 +1396,8 @@ impl SystemConfig {
                         .collect();
                     warn_about_unindexable(program, &svm_abi.idl.unusable);
 
-                    let contract = Contract::new(
-                        program.name.clone(),
-                        program.handler.clone(),
-                        events,
-                        Abi::Svm(svm_abi),
-                    )?;
+                    let contract =
+                        Contract::new(program.name.clone(), None, events, Abi::Svm(svm_abi))?;
                     contracts.insert(contract.name.clone(), contract);
 
                     for (chain_id, address) in &program_addresses[&program.name] {
@@ -1475,7 +1471,7 @@ impl SystemConfig {
                     enable_raw_events: false,
                     storage,
                     lowercase_addresses: false,
-                    handlers: None,
+                    handlers: svm_config.base.handlers.clone(),
                     human_config,
                     is_rescript,
                 })
@@ -2963,6 +2959,35 @@ mod test {
         let mut ids: Vec<_> = config.chains.keys().copied().collect();
         ids.sort();
         assert_eq!(ids, vec![SOLANA_MAINNET_CHAIN_ID, SOLANA_DEVNET_CHAIN_ID]);
+    }
+
+    // svm parsed `handlers` and then dropped it, so a custom directory never
+    // reached the runtime config. Rejecting a per-program `handler` is covered
+    // at the user-API rung in UserApiValidation_test.
+    #[test]
+    fn svm_carries_the_handlers_directory_through() {
+        let schema = "type Foo @entity { id: ID! }";
+        let yaml = |base: &str| {
+            format!(
+                "name: x\necosystem: svm\n{base}chains:\n  - id: solana\n    start_slot: \
+                 0\nprograms:\n  - name: TokenMetadata\n    program_id: \
+                 metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n    instructions:\n      - name: \
+                 UpdateMetadataAccountV2\n        discriminator: \"0x0f\"\n"
+            )
+        };
+        let parse = |yaml: &str| {
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("svm config")
+                .handlers
+        };
+
+        assert_eq!(
+            (
+                parse(&yaml("")),
+                parse(&yaml("handlers: src/svm-handlers\n"))
+            ),
+            (None, Some("src/svm-handlers".to_string()))
+        );
     }
 
     // `start_block: latest` has to survive the whole config pipeline on every

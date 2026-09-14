@@ -2,12 +2,13 @@ type t = {
   name: string,
   initialize: (~entities: array<Internal.entityConfig>) => promise<unit>,
   resume: (
-    ~checkpointId: Internal.checkpointId,
+    ~frontier: Frontier.t,
     ~chains: array<Persistence.initialChainState>,
     ~entities: array<Internal.entityConfig>,
   ) => promise<unit>,
   writeBatch: (
     ~batch: Batch.t,
+    ~diffCheckpoints: array<InternalTable.Checkpoints.diffCheckpoint>,
     ~updatedEntities: array<Persistence.updatedEntity>,
   ) => promise<unit>,
 }
@@ -17,6 +18,7 @@ let makeClickHouse = (
   ~database,
   ~username,
   ~password,
+  ~sequence: CheckpointSequence.t,
   ~chainIdMode: ChainId.mode=Int32,
 ): t => {
   let sink = ClickHouse.makeSink(~host, ~username, ~password, ~database, ~chainIdMode)
@@ -29,10 +31,10 @@ let makeClickHouse = (
     initialize: (~entities) => {
       ClickHouse.initialize(sink, ~entities=mirrored(entities))
     },
-    resume: (~checkpointId, ~chains, ~entities) => {
-      ClickHouse.resume(sink, ~checkpointId, ~chains, ~entities=mirrored(entities))
+    resume: (~frontier, ~chains, ~entities) => {
+      ClickHouse.resume(sink, ~sequence, ~frontier, ~chains, ~entities=mirrored(entities))
     },
-    writeBatch: async (~batch, ~updatedEntities) => {
+    writeBatch: async (~batch, ~diffCheckpoints, ~updatedEntities) => {
       // Staging reads JS values, so it holds the isolate and runs here. The
       // encode and the round trips happen in Rust, which also keeps the
       // checkpoints behind the rows they cover.
@@ -44,7 +46,7 @@ let makeClickHouse = (
           | None => ()
           }
         )
-        ClickHouse.stageCheckpointsOrThrow(sink, ~registry, ~batch)
+        ClickHouse.stageCheckpointsOrThrow(sink, ~registry, ~batch, ~diffCheckpoints)
       } catch {
       | exn =>
         sink->ClickHouseSink.discard(entities)

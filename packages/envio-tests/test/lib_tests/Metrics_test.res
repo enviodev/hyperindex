@@ -190,6 +190,50 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
     ])
   })
 
+  it("Aggregates source request samples that share a source name and chain", t => {
+    let sourceRequest = (
+      ~chainId=1,
+      ~method="getLogs",
+      ~responseBlocks,
+      ~emptyResponseCount,
+    ): Metrics.sourceRequestMetrics => {
+      source: "HyperSync",
+      chainId: chainId->ChainId.fromInt,
+      method,
+      count: 1,
+      seconds: 0.,
+      responseBlocks,
+      emptyResponseCount,
+    }
+    let metrics: Metrics.t = {
+      ...baseMetrics,
+      // Two urls on the same host share a source name, and duplicate samples
+      // would make Prometheus reject the whole scrape.
+      sourceRequests: [
+        sourceRequest(~responseBlocks=Some(30), ~emptyResponseCount=1),
+        sourceRequest(~responseBlocks=Some(12), ~emptyResponseCount=2),
+        // A chain whose every response carried blocks still renders the empty
+        // counter, flat at zero — a series that only appears once the first
+        // empty response lands is one nothing can alert on.
+        sourceRequest(~chainId=2, ~responseBlocks=Some(7), ~emptyResponseCount=0),
+        // A stream push is a response nothing measures in blocks, so it stays
+        // out of both series rather than reading as an empty response.
+        sourceRequest(~method="heightPush", ~responseBlocks=None, ~emptyResponseCount=0),
+      ],
+    }
+
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))
+      ->String.split("\n")
+      ->Array.filter(line => line->String.startsWith("envio_source_response")),
+    ).toStrictEqual([
+      `envio_source_response_blocks_total{source="HyperSync",chainId="1",method="getLogs"} 42`,
+      `envio_source_response_blocks_total{source="HyperSync",chainId="2",method="getLogs"} 7`,
+      `envio_source_response_empty_total{source="HyperSync",chainId="1",method="getLogs"} 3`,
+      `envio_source_response_empty_total{source="HyperSync",chainId="2",method="getLogs"} 0`,
+    ])
+  })
+
   it("Renders every metric family from a fully populated snapshot", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(1700000000000.),
@@ -240,6 +284,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           reorgCount: 2,
           reorgDetectedBlock: Some(199),
           rollbackTargetBlock: Some(180),
+          rateLimitTimeMs: 0.,
+          rateLimitResetInMs: None,
         },
       ],
       handlers: [
@@ -299,6 +345,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           method: "getLogs",
           count: 42,
           seconds: 33.75,
+          responseBlocks: Some(1234),
+          emptyResponseCount: 9,
         },
         {
           source: "HyperSync",
@@ -306,6 +354,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           method: "heightPush",
           count: 7,
           seconds: 0.,
+          responseBlocks: None,
+          emptyResponseCount: 0,
         },
         {
           source: "HyperSync",
@@ -313,6 +363,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           method: "heightPushIgnored",
           count: 0,
           seconds: 0.,
+          responseBlocks: None,
+          emptyResponseCount: 0,
         },
       ],
       sourceHeights: [
@@ -461,6 +513,14 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # HELP envio_source_request_seconds_total Cumulative time spent on data source requests.
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
+
+# HELP envio_source_response_blocks_total The number of blocks a data source returned, summed over its responses. Counted as the source sent them, before the indexer drops the blocks no event needs. Only sources whose responses are measured in blocks report it.
+# TYPE envio_source_response_blocks_total counter
+envio_source_response_blocks_total{source="HyperSync",chainId="1",method="getLogs"} 1234
+
+# HELP envio_source_response_empty_total The number of responses that came back with no blocks at all — a range the source scanned and matched nothing in. Compare against envio_source_request_total for the share of requests that returned nothing.
+# TYPE envio_source_response_empty_total counter
+envio_source_response_empty_total{source="HyperSync",chainId="1",method="getLogs"} 9
 
 # HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected. Compare against the disconnects total, which is absent until the first disconnect and counts as zero while it is: one more connect than disconnects means the stream is up, and equal counts mean it is down and the indexer is polling instead. Zero connects means the stream has not come up, which is the normal reading for a chain that is still backfilling: subscriptions are only opened once a chain reaches the head.
 # TYPE envio_source_height_stream_connects_total counter

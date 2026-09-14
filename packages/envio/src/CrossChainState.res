@@ -8,13 +8,13 @@ type t = {
   // Chain ids in a stable order, so the cross-chain loops iterate the chains
   // without allocating a values array on every tick.
   chainIds: array<ChainId.t>,
-  // True once every chain has caught up to head/endBlock. Monotonic during a run.
+  // True once every chain this process drives has caught up to head/endBlock and
+  // the indexes they owe are committed. Monotonic during a run.
   mutable isRealtime: bool,
-  // True once every chain has caught up and there's nothing left to process,
-  // but before the deferred schema indexes and `ready_at` are committed. The
-  // gap between this and `isRealtime` is the FinalizingIndexes phase.
+  // True once those chains have caught up and there's nothing left to process,
+  // but before the deferred schema indexes and `ready_at` are committed. The gap
+  // between this and `isRealtime` is the FinalizingIndexes phase.
   mutable isCaughtUp: bool,
-  mutable isInReorgThreshold: bool,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
 }
@@ -26,18 +26,12 @@ let calculateTargetBufferSize = () =>
   | None => 100_000
   }
 
-let make = (
-  ~chainStates,
-  ~isInReorgThreshold,
-  ~isRealtime,
-  ~targetBufferSize=calculateTargetBufferSize(),
-): t => {
+let make = (~chainStates, ~isRealtime, ~targetBufferSize=calculateTargetBufferSize()): t => {
   {
     chainStates,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isCaughtUp: isRealtime,
-    isInReorgThreshold,
     targetBufferSize,
   }
 }
@@ -51,9 +45,20 @@ let getChainState = (crossChainState: t, chainId) =>
 
 let chainStates = (crossChainState: t) => crossChainState.chainStates
 let isRealtime = (crossChainState: t) => crossChainState.isRealtime
+let chainIds = (crossChainState: t) => crossChainState.chainIds
 let isCaughtUp = (crossChainState: t) => crossChainState.isCaughtUp
-let isInReorgThreshold = (crossChainState: t) => crossChainState.isInReorgThreshold
+// Chains enter the threshold together. It is the run-wide reading; what a
+// write keeps is decided per chain.
+let isInReorgThreshold = (crossChainState: t) => {
+  let chainStates = crossChainState.chainStates->Dict.valuesToArray
+  chainStates->Utils.Array.notEmpty && chainStates->Array.every(ChainState.isInReorgThreshold)
+}
 let targetBufferSize = (crossChainState: t) => crossChainState.targetBufferSize
+
+// Whether each chain's writes still need history, keyed by chain id — what the
+// history policy is built from.
+let shouldSaveHistory = (crossChainState: t) =>
+  crossChainState.chainStates->Utils.Dict.mapValues(ChainState.shouldSaveHistory)
 
 // Ready-to-process items across every chain — the live draw against
 // targetBufferSize, which is a budget of processable events (items stuck behind
@@ -74,14 +79,20 @@ let nextItemIsNone = (crossChainState: t): bool =>
 
 // Each chain's safe checkpoint: the last one a reorg on that chain can no longer
 // reach, or None while it has nothing safe yet. A chain that can't be rolled
-// back (maxReorgDepth = 0) tracks none, and everything it has committed is safe.
-let getSafeCheckpointIdByChain = (crossChainState: t, ~committedCheckpointId) =>
+// back (maxReorgDepth = 0) tracks none, and everything committed is safe from
+// it: under one shared sequence that is the run's highest id, not the chain's
+// own — an idle chain's would hold every other chain's prune back.
+let getSafeCheckpointIdByChain = (
+  crossChainState: t,
+  ~sequence: CheckpointSequence.t,
+  ~committedFrontier,
+) =>
   crossChainState.chainIds->Array.map(chainId => {
     let cs = crossChainState->getChainState(chainId)
     (
       chainId,
       switch cs->ChainState.safeCheckpointTracking {
-      | None => Some(committedCheckpointId)
+      | None => Some(sequence->CheckpointSequence.position(committedFrontier, ~chainId))
       | Some(tracking) =>
         tracking->SafeCheckpointTracking.getSafeCheckpointId(
           ~sourceBlockNumber=cs->ChainState.knownHeight,
@@ -94,18 +105,14 @@ let getSafeCheckpointIdByChain = (crossChainState: t, ~committedCheckpointId) =>
 
 let createBatch = (
   crossChainState: t,
-  ~processedCheckpointId,
+  ~config: Config.t,
+  ~frontier,
   ~batchSizeTarget: int,
-  ~isRollback: bool,
 ): Batch.t => {
   Batch.make(
-    ~isInReorgThreshold=crossChainState.isInReorgThreshold,
-    ~checkpointIdBeforeBatch=processedCheckpointId->BigInt.add(
-      // Since for rollback we have a diff checkpoint id.
-      // This is needed to currectly overwrite old state
-      // in an append-only ClickHouse insert.
-      isRollback ? 1n : 0n,
-    ),
+    ~sequence=config.checkpointSequence,
+    ~history=config->HistoryPolicy.decide(~shouldSaveHistory=crossChainState->shouldSaveHistory),
+    ~frontier,
     ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues(
       ChainState.toChainBeforeBatch,
     ),
@@ -123,8 +130,6 @@ let enterReorgThreshold = (crossChainState: t) => {
     ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
     ->ChainState.enterReorgThreshold
   }
-
-  crossChainState.isInReorgThreshold = true
 }
 
 // Commit each progressed chain's batch progress, then record whether the whole
@@ -146,17 +151,6 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
 
   crossChainState.isCaughtUp =
     crossChainState.isCaughtUp || (crossChainState->nextItemIsNone && everyChainCaughtUp.contents)
-
-  // A run resumed with every chain already stamped ready needs no finalize —
-  // the indexes were committed together with those stamps.
-  let allChainsReady = ref(true)
-  for i in 0 to chainIds->Array.length - 1 {
-    if !(crossChainState->getChainState(chainIds->Array.getUnsafe(i))->ChainState.isReady) {
-      allChainsReady := false
-    }
-  }
-
-  crossChainState.isRealtime = crossChainState.isRealtime || allChainsReady.contents
 }
 
 // Every chain has buffered up to its head (or endblock) with nothing
@@ -191,29 +185,25 @@ let markCaughtUpIfSettled = (crossChainState: t) =>
 // may have moved on — at which point no chain looks at head any more and the
 // indexes it still owes would wait out another whole backfill. Deciding here,
 // before any source request, keeps that debt tied to the progress that was
-// actually committed. Skipped once every chain carries `ready_at`: those indexes
-// were committed together with the stamps.
+// actually committed. Skipped when the run resumed realtime, which is exactly
+// the case where the indexes are already committed and nothing is owed.
 let markCaughtUpOnResume = (crossChainState: t) => {
   let everyChainCaughtUp = ref(crossChainState.chainIds->Array.length > 0)
-  let everyChainReady = ref(true)
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
     if !(cs->ChainState.isDurablyCaughtUp) {
       everyChainCaughtUp := false
     }
-    if !(cs->ChainState.isReady) {
-      everyChainReady := false
-    }
   }
 
-  if everyChainCaughtUp.contents && !everyChainReady.contents && crossChainState->nextItemIsNone {
+  if everyChainCaughtUp.contents && !crossChainState.isRealtime && crossChainState->nextItemIsNone {
     crossChainState.isCaughtUp = true
   }
 }
 
-// Concludes the FinalizingIndexes phase: stamps every chain with the `ready_at`
-// already committed alongside the deferred schema indexes and switches the
-// indexer to realtime.
+// Concludes the FinalizingIndexes phase: stamps every chain this process drives
+// with the `ready_at` already committed alongside their deferred schema indexes,
+// and switches the indexer to realtime.
 let markReady = (crossChainState: t, ~readyAt) => {
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     crossChainState
@@ -411,7 +401,7 @@ let checkAndFetch = async (
     switch actionByChain->ChainId.Dict.dangerouslyGetNonOption(chainId) {
     | Some(NothingToQuery)
     | None => ()
-    | Some(action) => promises->Array.push(dispatchChain(~chainId=chainId, ~action))
+    | Some(action) => promises->Array.push(dispatchChain(~chainId, ~action))
     }
   }
   let _ = await promises->Promise.all
