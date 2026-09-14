@@ -29,22 +29,24 @@ let rec serializeValue = (value: unknown): string =>
     }
   }
 
-// The And case requires at least one nested filter (storage throws otherwise),
-// while In with an empty array matches nothing.
-@tag("operator")
-type rec t =
-  | @as("=") Eq({fieldName: string, fieldValue: unknown})
-  | @as(">") Gt({fieldName: string, fieldValue: unknown})
-  | @as("<") Lt({fieldName: string, fieldValue: unknown})
-  | @as("in") In({fieldName: string, fieldValue: array<unknown>})
-  | @as("and") And({filters: array<t>})
+// The filter as the handler wrote it: field -> operator -> value. Everything
+// downstream reads this shape, so what reaches storage is a flat map rather
+// than a recursive tree.
+type t = dict<dict<unknown>>
 
-let rec valuesCount = (filter: t) =>
-  switch filter {
-  | Eq(_) | Gt(_) | Lt(_) => 1
-  | In({fieldValue}) => fieldValue->Array.length
-  | And({filters}) => filters->Array.reduce(0, (acc, filter) => acc + filter->valuesCount)
-  }
+let valuesCount = (filter: t) => {
+  let count = ref(0)
+  filter->Utils.Dict.forEachWithKey((operators, _) =>
+    operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
+      count :=
+        count.contents +
+        (operator === "_in"
+          ? fieldValue->(Utils.magic: unknown => array<unknown>)->Array.length
+          : 1)
+    )
+  )
+  count.contents
+}
 
 let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema.graphql changes.`
 
@@ -94,9 +96,7 @@ let matchesFieldType = (value: unknown, ~field: Table.field) => {
 // expands into a group of such alternatives, and multiple pairs combine
 // as a cross product of And filters — the groups stay disjoint, so the
 // flattened results contain no duplicates.
-let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Table.table): array<
-  t,
-> => {
+let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
   let filterKeys = filter->Dict.keysToArray
 
   if filterKeys->Array.length === 0 {
@@ -105,7 +105,7 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
     )
   }
 
-  let filterGroups = filterKeys->Array.flatMap(apiFieldName => {
+  filterKeys->Array.forEach(apiFieldName => {
     let operatorObj = filter->Dict.getUnsafe(apiFieldName)
 
     switch operatorObj->getUndefinedOrNullName {
@@ -162,7 +162,7 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
     | Some(Field(field)) => field
     }
 
-    operatorKeys->Array.map(operatorKey => {
+    operatorKeys->Array.forEach(operatorKey => {
       let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
       switch fieldValue->getUndefinedOrNullName {
       | Some(valueName) =>
@@ -191,7 +191,7 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
           }
           let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
 
-          fieldValues->Array.mapWithIndex(
+          fieldValues->Array.forEachWithIndex(
             (fieldValue, index) => {
               switch fieldValue->getUndefinedOrNullName {
               | Some(valueName) =>
@@ -206,120 +206,74 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
               fieldValue->throwOnUnexpectedType(
                 ~hint=` The value is at index ${index->Int.toString} of the _in array.`,
               )
-              Eq({fieldName: apiFieldName, fieldValue})
             },
           )
         }
-      | _ =>
-        fieldValue->throwOnUnexpectedType
-        switch operatorKey {
-        | "_gte" => [
-            Eq({fieldName: apiFieldName, fieldValue}),
-            Gt({fieldName: apiFieldName, fieldValue}),
-          ]
-        | "_lte" => [
-            Eq({fieldName: apiFieldName, fieldValue}),
-            Lt({fieldName: apiFieldName, fieldValue}),
-          ]
-        | "_eq" => [Eq({fieldName: apiFieldName, fieldValue})]
-        | "_gt" => [Gt({fieldName: apiFieldName, fieldValue})]
-        | "_lt" => [Lt({fieldName: apiFieldName, fieldValue})]
-        | _ => throwInvalidOperator(operatorKey)
-        }
+      | _ => fieldValue->throwOnUnexpectedType
       }
     })
   })
-
-  filterGroups
-  ->Array.reduce([[]], (combinations, group) =>
-    combinations->Array.flatMap(combination =>
-      group->Array.map(filter => combination->Array.concat([filter]))
-    )
-  )
-  ->Array.map(filters =>
-    switch filters {
-    | [filter] => filter
-    | _ => And({filters: filters})
-    }
-  )
 }
 
-// Values bound to the operation key's $N placeholders, in placeholder
-// order. A top-level In is reported flat, since a merged query holds one
-// value per batched call there, while an In nested in And binds its whole
-// array to a single placeholder, mirroring the one paramsCount increment
-// per flat filter in printOperationFilter.
-let getParams = (filter: t) =>
-  switch filter {
-  | Eq({fieldValue}) => [fieldValue]
-  | Gt({fieldValue}) => [fieldValue]
-  | Lt({fieldValue}) => [fieldValue]
-  | In({fieldValue}) => fieldValue
-  | And(_) => {
-      let acc = []
-      let rec collect = (filter: t) =>
-        switch filter {
-        | Eq({fieldValue}) => acc->Array.push(fieldValue)->ignore
-        | Gt({fieldValue}) => acc->Array.push(fieldValue)->ignore
-        | Lt({fieldValue}) => acc->Array.push(fieldValue)->ignore
-        | In({fieldValue}) =>
-          acc->Array.push(fieldValue->(Utils.magic: array<unknown> => unknown))->ignore
-        | And({filters}) => filters->Array.forEach(collect)
-        }
-      collect(filter)
-      acc
+// Values bound to the query's $N placeholders, in the order it binds them.
+let getParams = (filter: t) => {
+  let params = []
+  filter->Utils.Dict.forEachWithKey((operators, _) =>
+    operators->Utils.Dict.forEachWithKey((fieldValue, _) => params->Array.push(fieldValue)->ignore)
+  )
+  params
+}
+
+// The one shape a value can key an index or a merged query by: a single field
+// under a single operator.
+let asSingleOperator = (filter: t) =>
+  switch filter->Dict.keysToArray {
+  | [fieldName] =>
+    let operators = filter->Dict.getUnsafe(fieldName)
+    switch operators->Dict.keysToArray {
+    | [operator] => Some((fieldName, operator, operators->Dict.getUnsafe(operator)))
+    | _ => None
     }
+  | _ => None
   }
 
 // Collapses filters sharing an operation key into fewer storage queries:
-// Eq and In batches merge into a single In on the field. Gt/Lt/And have
-// no lossless single-query form without an Or operator, so they stay as is.
+// _eq and _in batches merge into a single _in on the field. The rest have no
+// lossless single-query form without an Or operator, so they stay as is.
 // Expects a homogeneous batch — filters with the same operation key.
 // A mismatched filter throws: dropping it would leave its already
 // registered index without the matching db rows, silently losing data.
-let throwUnmergeable = (filter: t) => {
-  let operator = switch filter {
-  | Eq(_) => "_eq"
-  | Gt(_) => "_gt"
-  | Lt(_) => "_lt"
-  | In(_) => "_in"
-  | And(_) => "and"
-  }
+let throwUnmergeable = (filter: t) =>
   JsError.throwWithMessage(
-    `Unexpected ${operator} filter in a merged batch. Filters batched into a single query must use the same operator and field.`,
+    `Unexpected ${switch filter->asSingleOperator {
+      | Some((_, operator, _)) => operator
+      | None => "composite"
+      }} filter in a merged batch. Filters batched into a single query must use the same operator and field.`,
   )
-}
 
 let merge = (filters: array<t>) =>
   switch filters {
   | [] | [_] => filters
   | _ =>
-    switch filters->Array.getUnsafe(0) {
-    | Eq({fieldName}) => [
-        In({
-          fieldName,
-          fieldValue: filters->Array.map(filter =>
-            switch filter {
-            | Eq({fieldValue}) => fieldValue
-            | _ => throwUnmergeable(filter)
-            }
-          ),
-        }),
-      ]
-    | In({fieldName}) => [
-        In({
-          fieldName,
-          fieldValue: filters
-          ->Array.map(filter =>
-            switch filter {
-            | In({fieldValue}) => fieldValue
-            | _ => throwUnmergeable(filter)
-            }
-          )
-          ->Array.flat,
-        }),
-      ]
-    | Gt(_) | Lt(_) | And(_) => filters
+    switch filters->Array.getUnsafe(0)->asSingleOperator {
+    | Some((fieldName, ("_eq" | "_in") as operator, _)) =>
+      let values = []
+      filters->Array.forEach(filter =>
+        switch filter->asSingleOperator {
+        | Some((candidateField, candidateOperator, fieldValue))
+          if candidateField === fieldName && candidateOperator === operator =>
+          if operator === "_in" {
+            fieldValue
+            ->(Utils.magic: unknown => array<unknown>)
+            ->Array.forEach(value => values->Array.push(value)->ignore)
+          } else {
+            values->Array.push(fieldValue)->ignore
+          }
+        | _ => throwUnmergeable(filter)
+        }
+      )
+      [Dict.fromArray([(fieldName, Dict.fromArray([("_in", values->(Utils.magic: array<unknown> => unknown))]))])]
+    | _ => filters
     }
   }
 
@@ -474,154 +428,95 @@ let fieldCompare = (~table: Table.table, fieldName) =>
 // instead of by a serialized filter.
 let makeValueKey = (~table: Table.table, ~fieldName) => (fieldName->fieldCompare(~table)).key
 
-let rec makeMatcher = (filter: t, ~table: Table.table): matcher =>
-  switch filter {
-  | Eq({fieldName, fieldValue}) =>
-    let eq = (fieldName->fieldCompare(~table)).eq
-    entity => eq(entity->getField(fieldName), fieldValue)
-  | Gt({fieldName, fieldValue}) =>
-    let gt = (fieldName->fieldCompare(~table)).gt
-    entity => gt(entity->getField(fieldName), fieldValue)
-  | Lt({fieldName, fieldValue}) =>
-    let lt = (fieldName->fieldCompare(~table)).lt
-    entity => lt(entity->getField(fieldName), fieldValue)
-  | In({fieldName, fieldValue}) =>
-    let compare = fieldName->fieldCompare(~table)
-
-    // Equal values of a primitive field are equal Map keys, so membership is a
-    // lookup rather than a scan of every candidate.
-    if compare.eq === nativeEq {
-      let set = fieldValue->Utils.Set.fromArray
-      entity => set->Utils.Set.has(entity->getField(fieldName))
-    } else {
-      let eq = compare.eq
-      entity => {
-        let entityFieldValue = entity->getField(fieldName)
-        fieldValue->Array.some(value => eq(entityFieldValue, value))
-      }
-    }
-  | And({filters: []}) =>
-    _ => JsError.throwWithMessage(`The "and" filter must contain at least one nested filter.`)
-  | And({filters}) =>
-    let matchers = filters->Array.map(filter => filter->makeMatcher(~table))
-    entity => matchers->Array.every(matcher => matcher(entity))
-  }
-
-// The filter as the handler wrote it. Serving a getWhere whose index is
-// already in memory costs nothing but this module: expanding it into the
-// operator variants above is only worth it once a query has to be built, where
-// a database round trip dwarfs the work.
-module Raw = {
-  type t = dict<dict<unknown>>
-
-  let toString = (filter: t) => {
-    let key = ref("")
-    filter->Utils.Dict.forEachWithKey((operators, fieldName) =>
-      operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
-        key := key.contents ++ fieldName ++ operator ++ fieldValue->serializeValue
-      )
+let toString = (filter: t) => {
+  let key = ref("")
+  filter->Utils.Dict.forEachWithKey((operators, fieldName) =>
+    operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
+      key := key.contents ++ fieldName ++ operator ++ fieldValue->serializeValue
     )
-    key.contents
-  }
+  )
+  key.contents
+}
 
-  // Values are replaced by placeholders so calls that differ only in what they
-  // filter for batch together.
-  let toOperationKey = (filter: t, ~entityName) => {
-    let params = ref(0)
-    let printed = ref("")
-    filter->Utils.Dict.forEachWithKey((operators, fieldName) =>
-      operators->Utils.Dict.forEachWithKey((_, operator) => {
-        params := params.contents + 1
-        let placeholder = `$${params.contents->Int.toString}`
-        let part =
-          operator === "_eq"
-            ? `${fieldName}: ${placeholder}`
-            : `${fieldName}: {${operator}: ${placeholder}}`
-        printed := (printed.contents === "" ? part : printed.contents ++ ", " ++ part)
-      })
-    )
-    `${entityName}.getWhere({${printed.contents}})`
-  }
-
-  // An equality index can be found by the value of one field, which is what
-  // lets a write resolve it without running its matcher.
-  let asSingleEq = (filter: t) =>
-    switch filter->Dict.keysToArray {
-    | [fieldName] =>
-      let operators = filter->Dict.getUnsafe(fieldName)
-      switch operators->Dict.keysToArray {
-      | ["_eq"] => Some((fieldName, operators->Dict.getUnsafe("_eq")))
-      | _ => None
-      }
-    | _ => None
-    }
-
-  let makeMatcher = (filter: t, ~table: Table.table): matcher => {
-    let checks = []
-    filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
-      let compare = fieldName->fieldCompare(~table)
-      operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
-        let check = switch operator {
-        | "_eq" => entity => compare.eq(entity->getField(fieldName), fieldValue)
-        | "_gt" => entity => compare.gt(entity->getField(fieldName), fieldValue)
-        | "_lt" => entity => compare.lt(entity->getField(fieldName), fieldValue)
-        | "_gte" =>
-          entity => {
-            let entityFieldValue = entity->getField(fieldName)
-            compare.eq(entityFieldValue, fieldValue) || compare.gt(entityFieldValue, fieldValue)
-          }
-        | "_lte" =>
-          entity => {
-            let entityFieldValue = entity->getField(fieldName)
-            compare.eq(entityFieldValue, fieldValue) || compare.lt(entityFieldValue, fieldValue)
-          }
-        | "_in" =>
-          let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
-          if compare.eq === nativeEq {
-            let set = fieldValues->Utils.Set.fromArray
-            entity => set->Utils.Set.has(entity->getField(fieldName))
-          } else {
-            entity => {
-              let entityFieldValue = entity->getField(fieldName)
-              fieldValues->Array.some(candidate => compare.eq(entityFieldValue, candidate))
-            }
-          }
-        | _ =>
-          JsError.throwWithMessage(
-            `Invalid operator "${operator}" in a getWhere filter. Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
-          )
-        }
-        checks->Array.push(check)->ignore
-      })
+// Values are replaced by placeholders so calls that differ only in what they
+// filter for batch together.
+let toOperationKey = (filter: t, ~entityName) => {
+  let params = ref(0)
+  let printed = ref("")
+  filter->Utils.Dict.forEachWithKey((operators, fieldName) =>
+    operators->Utils.Dict.forEachWithKey((_, operator) => {
+      params := params.contents + 1
+      let placeholder = `$${params.contents->Int.toString}`
+      let part =
+        operator === "_eq"
+          ? `${fieldName}: ${placeholder}`
+          : `${fieldName}: {${operator}: ${placeholder}}`
+      printed := (printed.contents === "" ? part : printed.contents ++ ", " ++ part)
     })
-    switch checks {
-    | [check] => check
-    | _ => entity => checks->Array.every(check => check(entity))
-    }
+  )
+  `${entityName}.getWhere({${printed.contents}})`
+}
+
+let makeMatcher = (filter: t, ~table: Table.table): matcher => {
+  let checks = []
+  filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
+    let compare = fieldName->fieldCompare(~table)
+    operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
+      let check = switch operator {
+      | "_eq" => entity => compare.eq(entity->getField(fieldName), fieldValue)
+      | "_gt" => entity => compare.gt(entity->getField(fieldName), fieldValue)
+      | "_lt" => entity => compare.lt(entity->getField(fieldName), fieldValue)
+      | "_gte" =>
+        entity => {
+          let entityFieldValue = entity->getField(fieldName)
+          compare.eq(entityFieldValue, fieldValue) || compare.gt(entityFieldValue, fieldValue)
+        }
+      | "_lte" =>
+        entity => {
+          let entityFieldValue = entity->getField(fieldName)
+          compare.eq(entityFieldValue, fieldValue) || compare.lt(entityFieldValue, fieldValue)
+        }
+      | "_in" =>
+        let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
+        if compare.eq === nativeEq {
+          let set = fieldValues->Utils.Set.fromArray
+          entity => set->Utils.Set.has(entity->getField(fieldName))
+        } else {
+          entity => {
+            let entityFieldValue = entity->getField(fieldName)
+            fieldValues->Array.some(candidate => compare.eq(entityFieldValue, candidate))
+          }
+        }
+      | _ =>
+        JsError.throwWithMessage(
+          `Invalid operator "${operator}" in a getWhere filter. Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
+        )
+      }
+      checks->Array.push(check)->ignore
+    })
+  })
+  switch checks {
+  | [check] => check
+  | _ => entity => checks->Array.every(check => check(entity))
   }
 }
 
 // In values are mapped as one array (isArray=true), so they can be
 // converted with the table's cached array schema in a single pass.
-let rec mapValues = (
+let mapValues = (
   filter: t,
   ~mapValue: (~fieldName: string, ~fieldValue: unknown, ~isArray: bool) => unknown,
-) =>
-  switch filter {
-  | Eq({fieldName, fieldValue}) =>
-    Eq({fieldName, fieldValue: mapValue(~fieldName, ~fieldValue, ~isArray=false)})
-  | Gt({fieldName, fieldValue}) =>
-    Gt({fieldName, fieldValue: mapValue(~fieldName, ~fieldValue, ~isArray=false)})
-  | Lt({fieldName, fieldValue}) =>
-    Lt({fieldName, fieldValue: mapValue(~fieldName, ~fieldValue, ~isArray=false)})
-  | In({fieldName, fieldValue}) =>
-    In({
-      fieldName,
-      fieldValue: mapValue(
-        ~fieldName,
-        ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
-        ~isArray=true,
-      )->(Utils.magic: unknown => array<unknown>),
-    })
-  | And({filters}) => And({filters: filters->Array.map(filter => filter->mapValues(~mapValue))})
-  }
+) => {
+  let mapped = Dict.make()
+  filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
+    let mappedOperators = Dict.make()
+    operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
+      mappedOperators->Dict.set(
+        operator,
+        mapValue(~fieldName, ~fieldValue, ~isArray=operator === "_in"),
+      )
+    )
+    mapped->Dict.set(fieldName, mappedOperators)
+  })
+  mapped
+}

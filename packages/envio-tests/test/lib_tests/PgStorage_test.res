@@ -580,38 +580,38 @@ FROM "public"."envio_chains";`
     Async.it("Binds bytea values as bytes and bytea arrays as array literals", async t => {
       let params = []
       let condition = PgStorage.makeFilterCondition(
-        ~filter=And({
-          filters: [
-            Eq({
-              fieldName: "tag",
-              fieldValue: Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
-            }),
-            In({
-              fieldName: "tag",
-              fieldValue: [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
-                Utils.magic: array<Uint8Array.t> => array<unknown>
+        ~filter=Dict.fromArray([
+          (
+            "tag",
+            Dict.fromArray([
+              ("_eq", Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown)),
+              (
+                "_in",
+                [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
+                  Utils.magic: array<Uint8Array.t> => unknown
+                ),
               ),
-            }),
-            Eq({
-              fieldName: "chunks",
-              fieldValue: [Uint8Array.fromArray([3])]->(
-                Utils.magic: array<Uint8Array.t> => unknown
+            ]),
+          ),
+          (
+            "chunks",
+            Dict.fromArray([
+              ("_eq", [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown)),
+              (
+                "_in",
+                [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
+                  Utils.magic: array<array<Uint8Array.t>> => unknown
+                ),
               ),
-            }),
-            In({
-              fieldName: "chunks",
-              fieldValue: [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
-                Utils.magic: array<array<Uint8Array.t>> => array<unknown>
-              ),
-            }),
-          ],
-        }),
+            ]),
+          ),
+        ]),
         ~table=bytesTable,
         ~params,
       )
 
       t.expect((condition, params)).toEqual((
-        `("tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4))`,
+        `"tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4)`,
         [
           Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
           `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
@@ -626,10 +626,9 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=In({
-            fieldName: "id",
-            fieldValue: ["1", "2"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          ~filter=Dict.fromArray([
+            ("id", Dict.fromArray([("_in", ["1", "2"]->(Utils.magic: array<string> => unknown))])),
+          ]),
           ~table,
           ~params,
         )
@@ -646,7 +645,9 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=Gt({fieldName: "score", fieldValue: 5->(Utils.magic: int => unknown)}),
+          ~filter=Dict.fromArray([
+            ("score", Dict.fromArray([("_gt", 5->(Utils.magic: int => unknown))])),
+          ]),
           ~table,
           ~params,
         )
@@ -656,27 +657,26 @@ FROM "public"."envio_chains";`
     )
 
     Async.it(
-      "Should number params across nested and filters",
+      "Should number params across every field and operator",
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=And({
-            filters: [
-              Eq({fieldName: "id", fieldValue: "1"->(Utils.magic: string => unknown)}),
-              And({
-                filters: [
-                  Gt({fieldName: "score", fieldValue: 5->(Utils.magic: int => unknown)}),
-                  Lt({fieldName: "score", fieldValue: 10->(Utils.magic: int => unknown)}),
-                ],
-              }),
-            ],
-          }),
+          ~filter=Dict.fromArray([
+            ("id", Dict.fromArray([("_eq", "1"->(Utils.magic: string => unknown))])),
+            (
+              "score",
+              Dict.fromArray([
+                ("_gt", 5->(Utils.magic: int => unknown)),
+                ("_lt", 10->(Utils.magic: int => unknown)),
+              ]),
+            ),
+          ]),
           ~table,
           ~params,
         )
 
         t.expect((condition, params)).toEqual((
-          `("id" = $1 AND ("score" > $2 AND "score" < $3))`,
+          `"id" = $1 AND "score" > $2 AND "score" < $3`,
           [
             "1"->(Utils.magic: string => unknown),
             5->(Utils.magic: int => unknown),
@@ -687,17 +687,17 @@ FROM "public"."envio_chains";`
     )
 
     Async.it(
-      "Should throw a StorageError for an empty and filter",
+      "Should throw a StorageError for a filter that constrains nothing",
       async t => {
         let result = try {
-          let _ = PgStorage.makeFilterCondition(~filter=And({filters: []}), ~table, ~params=[])
+          let _ = PgStorage.makeFilterCondition(~filter=Dict.make(), ~table, ~params=[])
           None
         } catch {
         | Persistence.StorageError({message}) => Some(message)
         }
 
         t.expect(result).toEqual(
-          Some(`Failed loading "users" from storage. The "and" filter must contain at least one nested filter.`),
+          Some(`Failed loading "users" from storage. The filter must constrain at least one field.`),
         )
       },
     )

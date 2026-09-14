@@ -11,15 +11,14 @@ let scopeKeySuffix = (scope: Internal.chainScope) =>
 let scopeFilter = (filter: EntityFilter.t, ~table: Table.table, ~scope: Internal.chainScope) =>
   switch (scope, table->Table.getChainIdField) {
   | (Chain(chainId), Some(field)) =>
-    EntityFilter.And({
-      filters: [
-        filter,
-        Eq({
-          fieldName: field.fieldName,
-          fieldValue: chainId->(Utils.magic: ChainId.t => unknown),
-        }),
-      ],
-    })
+    // Copied, because the filter the handler passed in must not gain a column
+    // it never asked for.
+    let scoped = filter->Utils.Dict.shallowCopy
+    scoped->Dict.set(
+      field.fieldName,
+      Dict.fromArray([("_eq", chainId->(Utils.magic: ChainId.t => unknown))]),
+    )
+    scoped
   | _ => filter
   }
 
@@ -48,10 +47,12 @@ let loadById = (
       (
         await storage.loadOrThrow(
           ~table=entityConfig.table,
-          ~filter=EntityFilter.In({
-            fieldName: Table.idFieldName,
-            fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
-          })->scopeFilter(~table=entityConfig.table, ~scope),
+          ~filter=Dict.fromArray([
+            (
+              Table.idFieldName,
+              Dict.fromArray([("_in", idsToLoad->(Utils.magic: array<string> => unknown))]),
+            ),
+          ])->scopeFilter(~table=entityConfig.table, ~scope),
         )
       )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
@@ -274,10 +275,12 @@ let loadEffect = (
         (
           await storage.loadOrThrow(
             ~table,
-            ~filter=EntityFilter.In({
-              fieldName: Table.idFieldName,
-              fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
-            }),
+            ~filter=Dict.fromArray([
+              (
+                Table.idFieldName,
+                Dict.fromArray([("_in", idsToLoad->(Utils.magic: array<string> => unknown))]),
+              ),
+            ]),
           )
         )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
@@ -358,13 +361,13 @@ let loadByFilter = (
   ~shouldGroup,
   ~item,
   ~ecosystem,
-  ~filter: EntityFilter.Raw.t,
+  ~filter: EntityFilter.t,
 ) => {
   let key =
-    filter->EntityFilter.Raw.toOperationKey(~entityName=entityConfig.name) ++ scope->scopeKeySuffix
+    filter->EntityFilter.toOperationKey(~entityName=entityConfig.name) ++ scope->scopeKeySuffix
   let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
 
-  let load = async (rawFilters: array<EntityFilter.Raw.t>, ~onError) => {
+  let load = async (rawFilters: array<EntityFilter.t>, ~onError) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
 
     let timerRef =
@@ -372,25 +375,22 @@ let loadByFilter = (
 
     let size = ref(0)
 
-    // Only a query needs the operator variants, and reaching one costs a round
-    // trip, so the filter is expanded here rather than on every getWhere. This
-    // is also what validates it — calls sharing an operation key differ only in
-    // the values, so a rejected one has to fail alone rather than take the
-    // batch with it.
+    // Calls sharing an operation key differ only in the values, so a rejected
+    // one has to fail alone rather than take the batch with it.
     let filters = []
     rawFilters->Array.forEach(rawFilter =>
       switch try Ok(
-        rawFilter->EntityFilter.parseGetWhereOrThrow(
+        rawFilter->EntityFilter.validateOrThrow(
           ~entityName=entityConfig.name,
           ~table=entityConfig.table,
         ),
       ) catch {
       | exn => Error(exn)
       } {
-      | Ok(expanded) =>
+      | Ok() =>
         inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter=rawFilter, ~table=entityConfig.table)
-        expanded->Array.forEach(filter => filters->Array.push(filter)->ignore)
-      | Error(exn) => onError(~inputKey=rawFilter->EntityFilter.Raw.toString, ~exn)
+        filters->Array.push(rawFilter)->ignore
+      | Error(exn) => onError(~inputKey=rawFilter->EntityFilter.toString, ~exn)
       }
     )
 
@@ -460,7 +460,7 @@ let loadByFilter = (
     ~load,
     ~input=filter,
     ~shouldGroup,
-    ~hasher=EntityFilter.Raw.toString,
+    ~hasher=EntityFilter.toString,
     ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
     ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
   )

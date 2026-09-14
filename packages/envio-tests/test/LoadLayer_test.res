@@ -77,10 +77,7 @@ describe("LoadLayer", () => {
     t.expect(user).toEqual(None)
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.In({
-          fieldName: "id",
-          fieldValue: ["123"]->(Utils.magic: array<string> => array<unknown>),
-        }),
+        "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["123"]->(Utils.magic: array<string> => unknown))]))]),
         "tableName": "User",
       },
     ])
@@ -111,17 +108,11 @@ describe("LoadLayer", () => {
     t.expect(user2).toEqual(None)
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.In({
-          fieldName: "id",
-          fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>),
-        }),
+        "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["1"]->(Utils.magic: array<string> => unknown))]))]),
         "tableName": "User",
       },
       {
-        "filter": EntityFilter.In({
-          fieldName: "id",
-          fieldValue: ["2"]->(Utils.magic: array<string> => array<unknown>),
-        }),
+        "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["2"]->(Utils.magic: array<string> => unknown))]))]),
         "tableName": "User",
       },
     ])
@@ -153,10 +144,7 @@ describe("LoadLayer", () => {
       t.expect(user2).toEqual(None)
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "filter": EntityFilter.In({
-            fieldName: "id",
-            fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["1"]->(Utils.magic: array<string> => unknown))]))]),
           "tableName": "User",
         },
       ])
@@ -199,17 +187,11 @@ describe("LoadLayer", () => {
     t.expect(user2).toEqual(None)
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.In({
-          fieldName: "id",
-          fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>),
-        }),
+        "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["1"]->(Utils.magic: array<string> => unknown))]))]),
         "tableName": "User",
       },
       {
-        "filter": EntityFilter.In({
-          fieldName: "id",
-          fieldValue: ["2"]->(Utils.magic: array<string> => array<unknown>),
-        }),
+        "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["2"]->(Utils.magic: array<string> => unknown))]))]),
         "tableName": "User",
       },
     ])
@@ -237,10 +219,7 @@ describe("LoadLayer", () => {
     t.expect(users).toEqual([None, None])
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.In({
-          fieldName: "id",
-          fieldValue: ["1", "2"]->(Utils.magic: array<string> => array<unknown>),
-        }),
+        "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["1", "2"]->(Utils.magic: array<string> => unknown))]))]),
         "tableName": "User",
       },
     ])
@@ -281,10 +260,7 @@ describe("LoadLayer", () => {
       t.expect(users).toEqual([Some(user1->(Utils.magic: user => Internal.entity)), None])
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "filter": EntityFilter.In({
-            fieldName: "id",
-            fieldValue: ["2"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["2"]->(Utils.magic: array<string> => unknown))]))]),
           "tableName": "User",
         },
       ])
@@ -340,10 +316,7 @@ describe("LoadLayer", () => {
       t.expect(user).toEqual(Some(user1->(Utils.magic: user => Internal.entity)))
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "filter": EntityFilter.In({
-            fieldName: "id",
-            fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["1"]->(Utils.magic: array<string> => unknown))]))]),
           "tableName": "User",
         },
       ])
@@ -396,17 +369,11 @@ describe("LoadLayer", () => {
       // but we are not sure that it'll bring some benefits
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "filter": EntityFilter.In({
-            fieldName: "id",
-            fieldValue: ["2"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["2"]->(Utils.magic: array<string> => unknown))]))]),
           "tableName": "User",
         },
         {
-          "filter": EntityFilter.In({
-            fieldName: "id",
-            fieldValue: ["3"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          "filter": Dict.fromArray([("id", Dict.fromArray([("_in", ["3"]->(Utils.magic: array<string> => unknown))]))]),
           "tableName": "User",
         },
       ])
@@ -453,17 +420,11 @@ describe("LoadLayer", () => {
     t.expect(users2).toEqual([])
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.Eq({
-          fieldName: "id",
-          fieldValue: "123"->(Utils.magic: string => unknown),
-        }),
+        "filter": Dict.fromArray([("id", Dict.fromArray([("_eq", "123"->(Utils.magic: string => unknown))]))]),
         "tableName": "User",
       },
       {
-        "filter": EntityFilter.Gt({
-          fieldName: "updatesCountOnUserForTesting",
-          fieldValue: 0->(Utils.magic: int => unknown),
-        }),
+        "filter": Dict.fromArray([("updatesCountOnUserForTesting", Dict.fromArray([("_gt", 0->(Utils.magic: int => unknown))]))]),
         "tableName": "User",
       },
     ])
@@ -492,10 +453,7 @@ describe("LoadLayer", () => {
     ).toEqual(3)
     t.expect(storageMock.loadOrThrowCalls->Array.get(2)).toEqual(
       Some({
-        "filter": EntityFilter.Lt({
-          fieldName: "updatesCountOnUserForTesting",
-          fieldValue: 5->(Utils.magic: int => unknown),
-        }),
+        "filter": Dict.fromArray([("updatesCountOnUserForTesting", Dict.fromArray([("_lt", 5->(Utils.magic: int => unknown))]))]),
         "tableName": "User",
       }),
     )
@@ -535,10 +493,7 @@ describe("LoadLayer", () => {
       [[user1->(Utils.magic: user => Internal.entity)], []],
       [
         {
-          "filter": EntityFilter.In({
-            fieldName: "address",
-            fieldValue: ["0x1", "0x2"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          "filter": Dict.fromArray([("address", Dict.fromArray([("_in", ["0x1", "0x2"]->(Utils.magic: array<string> => unknown))]))]),
           "tableName": "User",
         },
       ],
@@ -586,10 +541,7 @@ describe("LoadLayer", () => {
       ],
       [
         {
-          "filter": EntityFilter.In({
-            fieldName: "address",
-            fieldValue: ["0x1", "0x2"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          "filter": Dict.fromArray([("address", Dict.fromArray([("_in", ["0x1", "0x2"]->(Utils.magic: array<string> => unknown))]))]),
           "tableName": "User",
         },
       ],
@@ -624,10 +576,7 @@ describe("LoadLayer", () => {
       [[], []],
       [
         {
-          "filter": EntityFilter.In({
-            fieldName: "address",
-            fieldValue: ["0x1", "0x2", "0x3"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          "filter": Dict.fromArray([("address", Dict.fromArray([("_in", ["0x1", "0x2", "0x3"]->(Utils.magic: array<string> => unknown))]))]),
           "tableName": "User",
         },
       ],
@@ -661,17 +610,11 @@ describe("LoadLayer", () => {
       [[], []],
       [
         {
-          "filter": EntityFilter.Gt({
-            fieldName: "updatesCountOnUserForTesting",
-            fieldValue: 0->(Utils.magic: int => unknown),
-          }),
+          "filter": Dict.fromArray([("updatesCountOnUserForTesting", Dict.fromArray([("_gt", 0->(Utils.magic: int => unknown))]))]),
           "tableName": "User",
         },
         {
-          "filter": EntityFilter.Gt({
-            fieldName: "updatesCountOnUserForTesting",
-            fieldValue: 5->(Utils.magic: int => unknown),
-          }),
+          "filter": Dict.fromArray([("updatesCountOnUserForTesting", Dict.fromArray([("_gt", 5->(Utils.magic: int => unknown))]))]),
           "tableName": "User",
         },
       ],
@@ -737,17 +680,11 @@ describe("LoadLayer", () => {
     ])
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.Eq({
-          fieldName: "id",
-          fieldValue: "1"->(Utils.magic: string => unknown),
-        }),
+        "filter": Dict.fromArray([("id", Dict.fromArray([("_eq", "1"->(Utils.magic: string => unknown))]))]),
         "tableName": "User",
       },
       {
-        "filter": EntityFilter.Gt({
-          fieldName: "updatesCountOnUserForTesting",
-          fieldValue: 0->(Utils.magic: int => unknown),
-        }),
+        "filter": Dict.fromArray([("updatesCountOnUserForTesting", Dict.fromArray([("_gt", 0->(Utils.magic: int => unknown))]))]),
         "tableName": "User",
       },
     ])
@@ -811,10 +748,7 @@ describe("LoadLayer", () => {
 
       let loadEntitiesByFieldSingleDbCall = [
         {
-          "filter": EntityFilter.Eq({
-            fieldName: "id",
-            fieldValue: "1"->(Utils.magic: string => unknown),
-          }),
+          "filter": Dict.fromArray([("id", Dict.fromArray([("_eq", "1"->(Utils.magic: string => unknown))]))]),
           "tableName": "User",
         },
       ]

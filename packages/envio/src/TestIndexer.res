@@ -538,21 +538,14 @@ let makeEntityGetWhere = (~state: testIndexerState, ~entityConfig: Internal.enti
         `Cannot call ${entityConfig.name}.getWhere() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
       )
     }
-    let filters =
-      filter->EntityFilter.parseGetWhereOrThrow(
-        ~entityName=entityConfig.name,
-        ~table=entityConfig.table,
-      )
+    filter->EntityFilter.validateOrThrow(
+      ~entityName=entityConfig.name,
+      ~table=entityConfig.table,
+    )
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-    let matchers =
-      filters->Array.map(filter => filter->EntityFilter.makeMatcher(~table=entityConfig.table))
-    // parseGetWhereOrThrow expands an operator group into alternatives whose
-    // matches are disjoint, so the union needs no dedup.
+    let matcher = filter->EntityFilter.makeMatcher(~table=entityConfig.table)
     Promise.resolve(
-      entityDict
-      ->Dict.valuesToArray
-      ->Array.filter(entity => matchers->Array.some(matcher => matcher(entity)))
-      ->Array.map(copyEntity),
+      entityDict->Dict.valuesToArray->Array.filter(matcher)->Array.map(copyEntity),
     )
   }
 }

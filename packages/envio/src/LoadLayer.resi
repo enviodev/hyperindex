@@ -19,7 +19,7 @@ let loadByFilter: (
   ~shouldGroup: bool,
   ~item: Internal.item,
   ~ecosystem: Ecosystem.t,
-  ~filter: EntityFilter.Raw.t,
+  ~filter: EntityFilter.t,
 ) => promise<array<Internal.entity>>
 
 let loadEffect: (

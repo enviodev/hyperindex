@@ -374,11 +374,7 @@ let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
 // Field names are spliced as quoted identifiers only after the queryFields
 // lookup proves they exist on the table (and they originate from
 // codegen-validated schemas), so the interpolation can't be abused.
-let rec makeFilterCondition = (
-  ~filter: EntityFilter.t,
-  ~table: Table.table,
-  ~params: array<unknown>,
-) => {
+let makeFilterCondition = (~filter: EntityFilter.t, ~table: Table.table, ~params: array<unknown>) => {
   // Filters reference fields by API name, while the SQL references columns
   // by their possibly renamed db names.
   let getQueryFieldOrThrow = fieldName =>
@@ -412,60 +408,73 @@ let rec makeFilterCondition = (
     params->Array.push(param)->ignore
     `$${params->Array.length->Int.toString}`
   }
-  let scalarCondition = (~fieldName, ~fieldValue, ~op) => {
+
+  let condition = ref("")
+  filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
     let queryField = getQueryFieldOrThrow(fieldName)
-    `"${queryField.pgDbFieldName}" ${op} ${serializeParamOrThrow(
-        ~queryField,
-        ~fieldName,
-        ~fieldValue,
-        ~isArray=false,
-      )}`
-  }
-  switch filter {
-  // A per-chain entity's table is partitioned by its chain-id column, and
-  // Postgres can only prune a plan it caches when that column is a constant in
-  // the SQL. Bound, the cached plan has to keep every partition, and the
-  // planner ends up throwing it away and re-planning on every execution
-  // instead — measured at 315us per load against 218us with the id written in,
-  // on 30 chains.
-  //
-  // The cost is that each chain gets its own query text, so Postgres caches a
-  // prepared statement per (entity, chain, filter shape) rather than per
-  // (entity, filter shape). Measured at ~8KB of plan cache each, which is ~10MB
-  // per connection for 40 entities across 30 chains — accepted, since the
-  // alternative is a cached plan that can't prune.
-  //
-  // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
-  // range-checked to a non-negative safe integer, so it can carry nothing but
-  // digits.
-  | Eq({fieldName, fieldValue}) if getQueryFieldOrThrow(fieldName).isChainId =>
-    `"${getQueryFieldOrThrow(fieldName).pgDbFieldName}" = ${fieldValue
-      ->ChainId.normalizeOrThrow
-      ->ChainId.toString}`
-  | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
-  | Gt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op=">")
-  | Lt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="<")
-  | In({fieldName, fieldValue}) => {
-      let queryField = getQueryFieldOrThrow(fieldName)
-      `"${queryField.pgDbFieldName}" = ANY(${serializeParamOrThrow(
-          ~queryField,
-          ~fieldName,
-          ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
-          ~isArray=true,
-        )})`
-    }
-  | And({filters: []}) =>
+    operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
+      let column = `"${queryField.pgDbFieldName}"`
+      let part = switch operator {
+      // A per-chain entity's table is partitioned by its chain-id column, and
+      // Postgres can only prune a plan it caches when that column is a constant
+      // in the SQL. Bound, the cached plan has to keep every partition, and the
+      // planner ends up throwing it away and re-planning on every execution
+      // instead — measured at 315us per load against 218us with the id written
+      // in, on 30 chains.
+      //
+      // The cost is that each chain gets its own query text, so Postgres caches
+      // a prepared statement per (entity, chain, filter shape) rather than per
+      // (entity, filter shape). Measured at ~8KB of plan cache each, which is
+      // ~10MB per connection for 40 entities across 30 chains — accepted, since
+      // the alternative is a cached plan that can't prune.
+      //
+      // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
+      // range-checked to a non-negative safe integer, so it can carry nothing
+      // but digits.
+      | "_eq" if queryField.isChainId =>
+        `${column} = ${fieldValue->ChainId.normalizeOrThrow->ChainId.toString}`
+      | "_in" =>
+        `${column} = ANY(${serializeParamOrThrow(
+            ~queryField,
+            ~fieldName,
+            ~fieldValue,
+            ~isArray=true,
+          )})`
+      | _ =>
+        let sqlOperator = switch operator {
+        | "_eq" => "="
+        | "_gt" => ">"
+        | "_lt" => "<"
+        | "_gte" => ">="
+        | "_lte" => "<="
+        | _ =>
+          throw(
+            Persistence.StorageError({
+              message: `Failed loading "${table.tableName}" from storage. Unknown filter operator "${operator}".`,
+              reason: Utils.Error.make(`Unknown filter operator "${operator}"`),
+            }),
+          )
+        }
+        `${column} ${sqlOperator} ${serializeParamOrThrow(
+            ~queryField,
+            ~fieldName,
+            ~fieldValue,
+            ~isArray=false,
+          )}`
+      }
+      condition := (condition.contents === "" ? part : condition.contents ++ " AND " ++ part)
+    })
+  })
+
+  if condition.contents === "" {
     throw(
       Persistence.StorageError({
-        message: `Failed loading "${table.tableName}" from storage. The "and" filter must contain at least one nested filter.`,
-        reason: Utils.Error.make(`Empty "and" filter`),
+        message: `Failed loading "${table.tableName}" from storage. The filter must constrain at least one field.`,
+        reason: Utils.Error.make("Empty filter"),
       }),
     )
-  | And({filters}) =>
-    `(${filters
-      ->Array.map(filter => makeFilterCondition(~filter, ~table, ~params))
-      ->Array.join(" AND ")})`
   }
+  condition.contents
 }
 
 // The chain-id predicate a per-chain entity's row-level SQL needs, already
@@ -1964,9 +1973,8 @@ let make = (
     let queryFields = table->Table.queryFields
     let columns = []
     let seen = Utils.Set.make()
-    let rec collect = (filter: EntityFilter.t) =>
-      switch filter {
-      | Eq({fieldName}) | Gt({fieldName}) | Lt({fieldName}) | In({fieldName}) =>
+    filters->Array.forEach(filter =>
+      filter->Utils.Dict.forEachWithKey((_, fieldName) =>
         switch queryFields->Utils.Dict.dangerouslyGetNonOption(fieldName) {
         | Some({pgDbFieldName}) =>
           if !(seen->Utils.Set.has(pgDbFieldName)) {
@@ -1975,9 +1983,8 @@ let make = (
           }
         | None => ()
         }
-      | And({filters}) => filters->Array.forEach(collect)
-      }
-    filters->Array.forEach(collect)
+      )
+    )
     columns
   }
 

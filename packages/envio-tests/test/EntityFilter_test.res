@@ -3,7 +3,7 @@ open Vitest
 external toUnknown: 'a => unknown = "%identity"
 external asEntity: dict<unknown> => Internal.entity = "%identity"
 
-describe("EntityFilter.Raw.toOperationKey", () => {
+describe("EntityFilter.toOperationKey", () => {
   it("Replaces filter values with $N placeholders", t => {
     let v = 0->(Utils.magic: int => unknown)
     t.expect(
@@ -13,7 +13,7 @@ describe("EntityFilter.Raw.toOperationKey", () => {
         dict{"a": dict{"_lt": v}},
         dict{"a": dict{"_in": v}},
         dict{"a": dict{"_gt": v}, "b": dict{"_lt": v}},
-      ]->Array.map(filter => filter->EntityFilter.Raw.toOperationKey(~entityName="User")),
+      ]->Array.map(filter => filter->EntityFilter.toOperationKey(~entityName="User")),
     ).toEqual([
       "User.getWhere({a: $1})",
       "User.getWhere({a: {_gt: $1}})",
@@ -24,7 +24,7 @@ describe("EntityFilter.Raw.toOperationKey", () => {
   })
 })
 
-describe("EntityFilter.parseGetWhereOrThrow", () => {
+describe("EntityFilter.validateOrThrow", () => {
   let table = Table.mkTable(
     "users",
     ~fields=[
@@ -41,101 +41,42 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
   // The filter comes from user-land JS, so test inputs are raw objects
   let parse = (filter: 'a) =>
     filter
-    ->(Utils.magic: 'a => dict<dict<unknown>>)
-    ->EntityFilter.parseGetWhereOrThrow(~entityName="User", ~table)
+    ->(Utils.magic: 'a => EntityFilter.t)
+    ->EntityFilter.validateOrThrow(~entityName="User", ~table)
 
-  let v = (value: int) => value->(Utils.magic: int => unknown)
+  it("Accepts every operator and every non-derived field", t => {
+    let accepts = (filter: 'a) =>
+      switch try Ok(parse(filter)) catch {
+      | JsExn(e) => Error(e->JsExn.message->Option.getOr("(no message)"))
+      } {
+      | Ok() => "ok"
+      | Error(message) => message
+      }
 
-  it("Parses every operator into the filters to load", t => {
     t.expect([
-      parse(%raw(`{score: {_eq: 1}}`)),
-      parse(%raw(`{score: {_gt: 1}}`)),
-      parse(%raw(`{score: {_lt: 1}}`)),
-      parse(%raw(`{score: {_gte: 1}}`)),
-      parse(%raw(`{score: {_lte: 1}}`)),
-      parse(%raw(`{score: {_in: [1, 2]}}`)),
-      parse(%raw(`{score: {_in: []}}`)),
+      accepts(%raw(`{score: {_eq: 1}}`)),
+      accepts(%raw(`{score: {_gt: 1}}`)),
+      accepts(%raw(`{score: {_lt: 1}}`)),
+      accepts(%raw(`{score: {_gte: 1}}`)),
+      accepts(%raw(`{score: {_lte: 1}}`)),
+      accepts(%raw(`{score: {_in: [1, 2]}}`)),
+      accepts(%raw(`{score: {_in: []}}`)),
+      accepts(%raw(`{score: {_gt: 1, _lt: 5}}`)),
+      accepts(%raw(`{score: {_eq: 1}, owner_id: {_eq: 2}}`)),
       // Unindexed linked entity fields are allowed via the _id api name
-      parse(%raw(`{owner_id: {_eq: 1}}`)),
+      accepts(%raw(`{owner_id: {_eq: 1}}`)),
       // Primary key fields are allowed without an explicit index
-      parse(%raw(`{id: {_eq: 1}}`)),
+      accepts(%raw(`{id: {_eq: 1}}`)),
       // Any non-derived field is allowed — the index is created on demand
-      parse(%raw(`{name: {_eq: 1}}`)),
-    ]).toEqual([
-      [Eq({fieldName: "score", fieldValue: v(1)})],
-      [Gt({fieldName: "score", fieldValue: v(1)})],
-      [Lt({fieldName: "score", fieldValue: v(1)})],
-      [Eq({fieldName: "score", fieldValue: v(1)}), Gt({fieldName: "score", fieldValue: v(1)})],
-      [Eq({fieldName: "score", fieldValue: v(1)}), Lt({fieldName: "score", fieldValue: v(1)})],
-      [Eq({fieldName: "score", fieldValue: v(1)}), Eq({fieldName: "score", fieldValue: v(2)})],
-      [],
-      [Eq({fieldName: "owner_id", fieldValue: v(1)})],
-      [Eq({fieldName: "id", fieldValue: v(1)})],
-      [Eq({fieldName: "name", fieldValue: v(1)})],
-    ])
-  })
-
-  it("Combines multiple operators and fields into a cross product of And filters", t => {
-    t.expect([
-      parse(%raw(`{score: {_gt: 1, _lt: 5}}`)),
-      parse(%raw(`{score: {_eq: 1}, owner_id: {_eq: 2}}`)),
-      parse(%raw(`{score: {_gte: 1}, owner_id: {_eq: 2}}`)),
-      parse(%raw(`{score: {_in: [1, 2]}, owner_id: {_eq: 3}}`)),
-      parse(%raw(`{score: {_in: []}, owner_id: {_eq: 3}}`)),
-    ]).toEqual([
-      [
-        And({
-          filters: [
-            Gt({fieldName: "score", fieldValue: v(1)}),
-            Lt({fieldName: "score", fieldValue: v(5)}),
-          ],
-        }),
-      ],
-      [
-        And({
-          filters: [
-            Eq({fieldName: "score", fieldValue: v(1)}),
-            Eq({fieldName: "owner_id", fieldValue: v(2)}),
-          ],
-        }),
-      ],
-      [
-        And({
-          filters: [
-            Eq({fieldName: "score", fieldValue: v(1)}),
-            Eq({fieldName: "owner_id", fieldValue: v(2)}),
-          ],
-        }),
-        And({
-          filters: [
-            Gt({fieldName: "score", fieldValue: v(1)}),
-            Eq({fieldName: "owner_id", fieldValue: v(2)}),
-          ],
-        }),
-      ],
-      [
-        And({
-          filters: [
-            Eq({fieldName: "score", fieldValue: v(1)}),
-            Eq({fieldName: "owner_id", fieldValue: v(3)}),
-          ],
-        }),
-        And({
-          filters: [
-            Eq({fieldName: "score", fieldValue: v(2)}),
-            Eq({fieldName: "owner_id", fieldValue: v(3)}),
-          ],
-        }),
-      ],
-      [],
-    ])
+      accepts(%raw(`{name: {_eq: 1}}`)),
+    ]).toEqual(["ok", "ok", "ok", "ok", "ok", "ok", "ok", "ok", "ok", "ok", "ok", "ok"])
   })
 
   it("Throws a user friendly error for every invalid filter", t => {
     let getError = (filter: 'a) =>
       try {
-        let _ = parse(filter)
-        "Expected parseGetWhereOrThrow to throw"
+        parse(filter)
+        "Expected validateOrThrow to throw"
       } catch {
       | JsExn(e) => e->JsExn.message->Option.getOr("(no message)")
       }
@@ -183,23 +124,23 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
 })
 
 describe("EntityFilter.getParams", () => {
-  it("Reports a top-level In flat and a nested In as a single placeholder value", t => {
+  it("Reports one value per operator, in the order the query binds them", t => {
     let v = i => i->(Utils.magic: int => unknown)
     t.expect((
-      EntityFilter.Eq({fieldName: "a", fieldValue: v(1)})->EntityFilter.getParams,
-      EntityFilter.Gt({fieldName: "a", fieldValue: v(1)})->EntityFilter.getParams,
-      EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2)]})->EntityFilter.getParams,
-      EntityFilter.And({
-        filters: [
-          Gt({fieldName: "a", fieldValue: v(1)}),
-          Lt({fieldName: "b", fieldValue: v(2)}),
-          In({fieldName: "c", fieldValue: [v(3), v(4)]}),
-        ],
-      })->EntityFilter.getParams,
+      Dict.fromArray([("a", Dict.fromArray([("_eq", v(1))]))])->EntityFilter.getParams,
+      Dict.fromArray([("a", Dict.fromArray([("_gt", v(1))]))])->EntityFilter.getParams,
+      Dict.fromArray([
+        ("a", Dict.fromArray([("_in", [v(1), v(2)]->(Utils.magic: array<unknown> => unknown))])),
+      ])->EntityFilter.getParams,
+      Dict.fromArray([
+        ("a", Dict.fromArray([("_gt", v(1))])),
+        ("b", Dict.fromArray([("_lt", v(2))])),
+        ("c", Dict.fromArray([("_in", [v(3), v(4)]->(Utils.magic: array<unknown> => unknown))])),
+      ])->EntityFilter.getParams,
     )).toEqual((
       [v(1)],
       [v(1)],
-      [v(1), v(2)],
+      [[1, 2]->(Utils.magic: array<int> => unknown)],
       [v(1), v(2), [3, 4]->(Utils.magic: array<int> => unknown)],
     ))
   })
@@ -210,27 +151,42 @@ describe("EntityFilter.merge", () => {
     let v = i => i->(Utils.magic: int => unknown)
     t.expect((
       [
-        EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
-        EntityFilter.Eq({fieldName: "a", fieldValue: v(2)}),
+        Dict.fromArray([("a", Dict.fromArray([("_eq", v(1))]))]),
+        Dict.fromArray([("a", Dict.fromArray([("_eq", v(2))]))]),
       ]->EntityFilter.merge,
       [
-        EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2)]}),
-        EntityFilter.In({fieldName: "a", fieldValue: [v(3)]}),
+        Dict.fromArray([
+          ("a", Dict.fromArray([("_in", [v(1), v(2)]->(Utils.magic: array<unknown> => unknown))])),
+        ]),
+        Dict.fromArray([
+          ("a", Dict.fromArray([("_in", [v(3)]->(Utils.magic: array<unknown> => unknown))])),
+        ]),
       ]->EntityFilter.merge,
       [
-        EntityFilter.Gt({fieldName: "a", fieldValue: v(1)}),
-        EntityFilter.Gt({fieldName: "a", fieldValue: v(2)}),
+        Dict.fromArray([("a", Dict.fromArray([("_gt", v(1))]))]),
+        Dict.fromArray([("a", Dict.fromArray([("_gt", v(2))]))]),
       ]->EntityFilter.merge,
-      [EntityFilter.Eq({fieldName: "a", fieldValue: v(1)})]->EntityFilter.merge,
+      [Dict.fromArray([("a", Dict.fromArray([("_eq", v(1))]))])]->EntityFilter.merge,
       []->EntityFilter.merge,
     )).toEqual((
-      [EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2)]})],
-      [EntityFilter.In({fieldName: "a", fieldValue: [v(1), v(2), v(3)]})],
       [
-        EntityFilter.Gt({fieldName: "a", fieldValue: v(1)}),
-        EntityFilter.Gt({fieldName: "a", fieldValue: v(2)}),
+        Dict.fromArray([
+          ("a", Dict.fromArray([("_in", [v(1), v(2)]->(Utils.magic: array<unknown> => unknown))])),
+        ]),
       ],
-      [EntityFilter.Eq({fieldName: "a", fieldValue: v(1)})],
+      [
+        Dict.fromArray([
+          (
+            "a",
+            Dict.fromArray([("_in", [v(1), v(2), v(3)]->(Utils.magic: array<unknown> => unknown))]),
+          ),
+        ]),
+      ],
+      [
+        Dict.fromArray([("a", Dict.fromArray([("_gt", v(1))]))]),
+        Dict.fromArray([("a", Dict.fromArray([("_gt", v(2))]))]),
+      ],
+      [Dict.fromArray([("a", Dict.fromArray([("_eq", v(1))]))])],
       [],
     ))
   })
@@ -240,10 +196,13 @@ describe("EntityFilter.merge", () => {
     t->toThrowErrorEqual(
       () =>
         [
-          EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
-          EntityFilter.And({filters: [EntityFilter.Eq({fieldName: "a", fieldValue: v(2)})]}),
+          Dict.fromArray([("a", Dict.fromArray([("_eq", v(1))]))]),
+          Dict.fromArray([
+            ("a", Dict.fromArray([("_eq", v(2))])),
+            ("b", Dict.fromArray([("_eq", v(3))])),
+          ]),
         ]->EntityFilter.merge,
-      "Unexpected and filter in a merged batch. Filters batched into a single query must use the same operator and field.",
+      "Unexpected composite filter in a merged batch. Filters batched into a single query must use the same operator and field.",
     )
   })
 })
@@ -314,33 +273,31 @@ describe("EntityFilter.makeMatcher", () => {
 
   // Each case pairs a filter with its expected match per entity above.
   let cases: array<(EntityFilter.t, array<bool>)> = [
-    (Eq({fieldName: "score", fieldValue: u(5)}), [true, false, false]),
-    (Gt({fieldName: "score", fieldValue: u(5)}), [false, true, false]),
-    (Lt({fieldName: "score", fieldValue: u(5)}), [false, false, true]),
-    (In({fieldName: "score", fieldValue: [u(5), u(7)]}), [true, true, false]),
-    (Eq({fieldName: "balance", fieldValue: u(BigInt.fromInt(10))}), [true, false, false]),
-    (Gt({fieldName: "balance", fieldValue: u(BigInt.fromInt(10))}), [false, true, false]),
-    (Eq({fieldName: "active", fieldValue: u(true)}), [true, false, true]),
-    (Eq({fieldName: "nickname", fieldValue: u("nick")}), [true, false, false]),
+    (dict{"score": dict{"_eq": u(5)}}, [true, false, false]),
+    (dict{"score": dict{"_gt": u(5)}}, [false, true, false]),
+    (dict{"score": dict{"_lt": u(5)}}, [false, false, true]),
+    (dict{"score": dict{"_gte": u(5)}}, [true, true, false]),
+    (dict{"score": dict{"_lte": u(5)}}, [true, false, true]),
+    (dict{"score": dict{"_in": u([5, 7])}}, [true, true, false]),
+    (dict{"balance": dict{"_eq": u(BigInt.fromInt(10))}}, [true, false, false]),
+    (dict{"balance": dict{"_gt": u(BigInt.fromInt(10))}}, [false, true, false]),
+    (dict{"active": dict{"_eq": u(true)}}, [true, false, true]),
+    (dict{"nickname": dict{"_eq": u("nick")}}, [true, false, false]),
     // The undefined nullable column matches no comparison.
-    (Gt({fieldName: "nickname", fieldValue: u("a")}), [true, true, false]),
-    (In({fieldName: "nickname", fieldValue: [u("nick"), u("other")]}), [true, false, false]),
-    (Eq({fieldName: "price", fieldValue: u(BigDecimal.fromInt(3))}), [true, false, false]),
-    (Gt({fieldName: "price", fieldValue: u(BigDecimal.fromInt(3))}), [false, true, false]),
-    (Eq({fieldName: "tags", fieldValue: u(["x", "y"])}), [true, false, true]),
+    (dict{"nickname": dict{"_gt": u("a")}}, [true, true, false]),
+    (dict{"nickname": dict{"_in": u(["nick", "other"])}}, [true, false, false]),
+    (dict{"price": dict{"_eq": u(BigDecimal.fromInt(3))}}, [true, false, false]),
+    (dict{"price": dict{"_gt": u(BigDecimal.fromInt(3))}}, [false, true, false]),
+    (dict{"tags": dict{"_eq": u(["x", "y"])}}, [true, false, true]),
     // Lexicographic: ["x"] is a proper prefix of ["x","y"], so it sorts lower.
-    (Lt({fieldName: "tags", fieldValue: u(["x", "y"])}), [false, true, false]),
-    (Eq({fieldName: "created", fieldValue: u(Date.fromTime(1000.))}), [true, false, false]),
-    (Gt({fieldName: "created", fieldValue: u(Date.fromTime(1000.))}), [false, true, false]),
-    (
-      And({
-        filters: [
-          Gt({fieldName: "score", fieldValue: u(3)}),
-          Eq({fieldName: "active", fieldValue: u(true)}),
-        ],
-      }),
-      [true, false, false],
-    ),
+    (dict{"tags": dict{"_lt": u(["x", "y"])}}, [false, true, false]),
+    (dict{"created": dict{"_eq": u(Date.fromTime(1000.))}}, [true, false, false]),
+    (dict{"created": dict{"_gt": u(Date.fromTime(1000.))}}, [false, true, false]),
+    // Every field in the filter must match, and a mismatch on the first one
+    // skips the rest.
+    (dict{"score": dict{"_gt": u(3)}, "active": dict{"_eq": u(true)}}, [true, false, false]),
+    // Two operators on one field are both applied.
+    (dict{"score": dict{"_gt": u(2), "_lt": u(7)}}, [true, false, false]),
   ]
 
   it("Specializes the comparison per field type for every operator", t => {
@@ -382,10 +339,10 @@ describe("EntityFilter.makeMatcher", () => {
     entity->Dict.set("id", "x"->u)
     let run = filter => (filter->EntityFilter.makeMatcher(~table=nullableTable))(entity->asEntity)
     t.expect([
-      run(Eq({fieldName: "price", fieldValue: u(BigDecimal.fromInt(1))})),
-      run(Gt({fieldName: "price", fieldValue: u(BigDecimal.fromInt(1))})),
-      run(Eq({fieldName: "created", fieldValue: u(Date.fromTime(0.))})),
-      run(Eq({fieldName: "tags", fieldValue: u(["x"])})),
+      run(dict{"price": dict{"_eq": u(BigDecimal.fromInt(1))}}),
+      run(dict{"price": dict{"_gt": u(BigDecimal.fromInt(1))}}),
+      run(dict{"created": dict{"_eq": u(Date.fromTime(0.))}}),
+      run(dict{"tags": dict{"_eq": u(["x"])}}),
     ]).toEqual([false, false, false, false])
   })
 
@@ -401,7 +358,7 @@ describe("EntityFilter.makeMatcher", () => {
     entity->Dict.set("id", "x"->u)
     entity->Dict.set("meta", {"a": 1, "b": [2, 3]}->u)
     let run = value =>
-      (Eq({fieldName: "meta", fieldValue: value->u})->EntityFilter.makeMatcher(~table=jsonTable))(
+      (dict{"meta": dict{"_eq": value->u}}->EntityFilter.makeMatcher(~table=jsonTable))(
         entity->asEntity,
       )
     t.expect([
@@ -411,16 +368,13 @@ describe("EntityFilter.makeMatcher", () => {
     ]).toEqual([true, false])
   })
 
-  it("Throws when an And filter has no nested filters", t => {
-    let matcher = EntityFilter.And({filters: []})->EntityFilter.makeMatcher(~table)
-    t->toThrowErrorEqual(
-      () => matcher(Dict.make()->asEntity),
-      `The "and" filter must contain at least one nested filter.`,
-    )
+  it("Matches everything when the filter constrains no field", t => {
+    let matcher = Dict.make()->EntityFilter.makeMatcher(~table)
+    t.expect(matcher(Dict.make()->asEntity)).toEqual(true)
   })
 })
 
-describe("EntityFilter.Raw.toString", () => {
+describe("EntityFilter.toString", () => {
   let u = value => value->toUnknown
 
   it("Serializes each value type into a stable, unambiguous cache key", t => {
@@ -436,7 +390,7 @@ describe("EntityFilter.Raw.toString", () => {
         dict{"a": dict{"_in": u([1, 2])}},
         dict{"a": dict{"_eq": u(["x", "y"])}},
         dict{"a": dict{"_gt": u(1)}, "b": dict{"_lt": u(2)}},
-      ]->Array.map(EntityFilter.Raw.toString),
+      ]->Array.map(EntityFilter.toString),
     ).toEqual([
       `a_eq"hello"`,
       "a_eq5",
@@ -463,7 +417,7 @@ describe("EntityFilter.Raw.toString", () => {
         // A separator inside a string could imitate the element separator.
         dict{"a": dict{"_eq": u(["x,y"])}},
         dict{"a": dict{"_eq": u(["x", "y"])}},
-      ]->Array.map(EntityFilter.Raw.toString),
+      ]->Array.map(EntityFilter.toString),
     ).toEqual([
       `a_eq"1970-01-01T00:00:01.000Z"`,
       `a_eq"1970-01-01T00:00:01.500Z"`,
@@ -478,12 +432,10 @@ describe("EntityFilter.Raw.toString", () => {
 describe("EntityFilter.mapValues", () => {
   it("Maps scalar values one by one and In values as a whole array", t => {
     let calls = []
-    let mapped = EntityFilter.And({
-      filters: [
-        Eq({fieldName: "a", fieldValue: 1->(Utils.magic: int => unknown)}),
-        In({fieldName: "b", fieldValue: [2, 3]->(Utils.magic: array<int> => array<unknown>)}),
-      ],
-    })->EntityFilter.mapValues(
+    let mapped = dict{
+      "a": dict{"_eq": 1->(Utils.magic: int => unknown)},
+      "b": dict{"_in": [2, 3]->(Utils.magic: array<int> => unknown)},
+    }->EntityFilter.mapValues(
       ~mapValue=(~fieldName, ~fieldValue, ~isArray) => {
         calls->Array.push((fieldName, isArray))->ignore
         isArray
@@ -496,12 +448,10 @@ describe("EntityFilter.mapValues", () => {
     )
 
     t.expect((mapped, calls)).toEqual((
-      EntityFilter.And({
-        filters: [
-          Eq({fieldName: "a", fieldValue: 10->(Utils.magic: int => unknown)}),
-          In({fieldName: "b", fieldValue: [20, 30]->(Utils.magic: array<int> => array<unknown>)}),
-        ],
-      }),
+      dict{
+        "a": dict{"_eq": 10->(Utils.magic: int => unknown)},
+        "b": dict{"_in": [20, 30]->(Utils.magic: array<int> => unknown)},
+      },
       [("a", false), ("b", true)],
     ))
   })
