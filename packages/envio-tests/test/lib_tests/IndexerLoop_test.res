@@ -34,8 +34,11 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~addressStore,
       ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
       ~maxReorgDepth=200,
-      ~shouldRollbackOnReorg=false,
-
+      // Being in the threshold avoids triggering a fetch on the mock source
+      // (which implements no methods) when the processing loop runs to its
+      // empty exit.
+      ~shouldRollbackOnReorg=true,
+      ~isInReorgThreshold=true,
       ~committedProgressBlockNumber=-1,
       ~logger=Logging.getLogger(),
     )
@@ -46,9 +49,6 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
-    // isInReorgThreshold avoids triggering a fetch on the mock source (which
-    // implements no methods) when the processing loop runs to its empty exit.
-    ~isInReorgThreshold=true,
     ~isRealtime=false,
     ~onError,
   )

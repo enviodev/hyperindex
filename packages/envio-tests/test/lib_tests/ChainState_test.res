@@ -51,17 +51,93 @@ let makeResumedChainState = (
   sourceBlockNumber: 1000,
 }
 
-let makeChainState = (resumedChainState, ~reorgCheckpoints=[]) =>
+// https://github.com/enviodev/hyperindex/pull/1637
+describe("Durably caught up", () => {
+  it("Doesn't count a chain younger than its own block lag as caught up", t => {
+    // The lagged head is 5 - 10, so an unclamped comparison would let the -1 a
+    // run that has processed nothing carries clear it.
+    let chainConfig = {...baseChainConfig, blockLag: 10}
+    let cs = ChainState.makeFromDbState(
+      chainConfig,
+      ~resumedChainState={
+        ...makeResumedChainState(
+          ~progressBlockNumber=-1,
+          ~numEventsProcessed=0.,
+          ~firstEventBlockNumber=None,
+        ),
+        sourceBlockNumber: 5,
+      },
+      ~reorgCheckpoints=[],
+      ~isInReorgThreshold=false,
+      ~isRealtime=false,
+      ~config=TestConfig.default,
+      ~contractMapping=TestConfig.default.contractMapping,
+      ~registrationsByChainId,
+    )
+    cs->ChainState.updateKnownHeight(~knownHeight=5)
+
+    t.expect(cs->ChainState.isDurablyCaughtUp).toBe(false)
+  })
+})
+
+let makeChainState = (
+  resumedChainState,
+  ~reorgCheckpoints=[],
+  ~config=TestConfig.default,
+  ~isInReorgThreshold=false,
+) =>
   ChainState.makeFromDbState(
     baseChainConfig,
     ~resumedChainState,
     ~reorgCheckpoints,
-    ~isInReorgThreshold=false,
+    ~isInReorgThreshold,
     ~isRealtime=false,
-    ~config=TestConfig.default,
-    ~contractMapping=TestConfig.default.contractMapping,
+    ~config,
+    ~contractMapping=config.contractMapping,
     ~registrationsByChainId,
   )
+
+let resumed = (~maxReorgDepth) => {
+  ...makeResumedChainState(
+    ~progressBlockNumber=110,
+    ~numEventsProcessed=0.,
+    ~firstEventBlockNumber=None,
+  ),
+  maxReorgDepth,
+}
+
+describe("ChainState history reachability", () => {
+  // A chain keeps history only for what a rollback could still reach: inside
+  // its reorg threshold, with a reorg depth to be rolled back through, on a run
+  // that rolls back at all.
+  it("Keeps history only inside the threshold, and never without a reorg depth", t => {
+    let inThreshold = makeChainState(resumed(~maxReorgDepth=200), ~isInReorgThreshold=true)
+    let belowThreshold = makeChainState(resumed(~maxReorgDepth=200))
+    let noDepth = makeChainState(resumed(~maxReorgDepth=0), ~isInReorgThreshold=true)
+    t.expect((
+      inThreshold->ChainState.shouldSaveHistory,
+      belowThreshold->ChainState.shouldSaveHistory,
+      noDepth->ChainState.shouldSaveHistory,
+    )).toEqual((true, false, false))
+  })
+
+  // Entering the threshold is what turns history on — but a chain no rollback
+  // can reach stays where it is.
+  it("Leaves a chain no rollback can reach alone when the threshold is entered", t => {
+    let noDepth = makeChainState(resumed(~maxReorgDepth=0))
+    let noRollback = makeChainState(
+      resumed(~maxReorgDepth=200),
+      ~config={...TestConfig.default, shouldRollbackOnReorg: false},
+    )
+    let entering = makeChainState(resumed(~maxReorgDepth=200))
+    [noDepth, noRollback, entering]->Array.forEach(ChainState.enterReorgThreshold)
+    t.expect((
+      noDepth->ChainState.shouldSaveHistory,
+      noRollback->ChainState.shouldSaveHistory,
+      entering->ChainState.shouldSaveHistory,
+    )).toEqual((false, false, true))
+  })
+})
 
 describe("ChainState chain density seed (on resume)", () => {
   it("seeds from cumulative resumed progress when there's a first event block", t => {
@@ -147,11 +223,12 @@ describe("ChainState chain density EMA (per batch)", () => {
       )
       d
     },
-    isInReorgThreshold: false,
+    history: Dict.make(),
     checkpointIds: [],
     checkpointChainIds: [],
     checkpointBlockNumbers: [],
     checkpointBlockHashes: [],
+    checkpointItemsCount: [],
     checkpointEventsProcessed: [],
     registeredAddresses: [],
   }

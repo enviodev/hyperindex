@@ -20,6 +20,7 @@ struct State {
     seen: usize,
     queries: usize,
     heads: Vec<String>,
+    display_name: Option<String>,
 }
 
 pub struct MockClickHouse {
@@ -108,6 +109,10 @@ impl MockClickHouse {
         self.state.lock().unwrap().statements_seen.clone()
     }
 
+    pub fn serve_as(&self, display_name: &str) {
+        self.state.lock().unwrap().display_name = Some(display_name.to_string());
+    }
+
     pub fn heads(&self) -> Vec<String> {
         self.state.lock().unwrap().heads.clone()
     }
@@ -192,13 +197,12 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
                 ),
             }
         };
-        mock_http::write_response(
-            &mut stream,
-            status,
-            &[("Connection", "keep-alive")],
-            body.as_bytes(),
-        )
-        .await?;
+        let display_name = state.lock().unwrap().display_name.clone();
+        let mut headers = vec![("Connection", "keep-alive")];
+        if let Some(display_name) = &display_name {
+            headers.push(("X-ClickHouse-Server-Display-Name", display_name.as_str()));
+        }
+        mock_http::write_response(&mut stream, status, &headers, body.as_bytes()).await?;
     }
     Ok(())
 }

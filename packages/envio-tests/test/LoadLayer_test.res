@@ -807,6 +807,7 @@ describe("LoadLayer effect cache", () => {
             input: "test"->(Utils.magic: string => Internal.effectInput),
             context: {"cache": false}->(Utils.magic: {..} => Internal.effectContext),
             cacheKey: "test",
+            chainId: 1337->ChainId.fromInt,
             checkpointId: 0n,
           },
           ~scope=Internal.CrossChain,
@@ -837,6 +838,7 @@ describe("LoadLayer effect scope isolation", () => {
           input: input->(Utils.magic: string => Internal.effectInput),
           context: {"cache": false}->(Utils.magic: {..} => Internal.effectContext),
           cacheKey: input,
+          chainId: 1337->ChainId.fromInt,
           checkpointId: 0n,
         },
         ~scope,
@@ -986,6 +988,82 @@ describe("LoadLayer effect scope isolation", () => {
     ))
   })
 
+  // A cross-chain effect's entries come from every chain's handlers. Where each
+  // chain counts its own checkpoints, an entry's id only compares against its
+  // own chain's committed one: a sibling still far behind must not keep it warm.
+  Async.it("Frees a cross-chain effect's entries once their own chain commits them", async t => {
+    let config = TestConfig.fromUserApi(
+      ~schema=`
+type Counter {
+  id: ID!
+}
+`,
+      `
+name: load-layer-per-chain
+disable_default_cross_chain: true
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+  - id: 1337
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+`,
+    )
+    let storageMock = MockStorage.make([#loadOrThrow])
+    let indexerState = TestIndexerState.make(~config)
+    let effect = Envio.createEffect(
+      {
+        name: "crossChainPerChainSequence",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+        crossChain: true,
+        cache: false,
+      },
+      async ({input}) => input ++ "-out",
+    )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+
+    let _ = await LoadLayer.loadEffect(
+      ~loadManager=LoadManager.make(),
+      ~persistence=storageMock->MockStorage.toPersistence(~config),
+      ~effect,
+      ~effectArgs={
+        input: "a"->(Utils.magic: string => Internal.effectInput),
+        context: {"cache": false}->(Utils.magic: {..} => Internal.effectContext),
+        cacheKey: "a",
+        chainId: 1337->ChainId.fromInt,
+        checkpointId: 5n,
+      },
+      ~scope=CrossChain,
+      ~indexerState,
+      ~shouldGroup=true,
+      ~item,
+      ~ecosystem=config.ecosystem,
+    )
+    let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope=CrossChain)
+    let before = inMemTable.changesCount
+
+    // Chain 1337 committed the entry's checkpoint; chain 1 is only at its second.
+    indexerState->IndexerState.markCommitted(
+      ~writtenFrontier=Frontier.fromEntries([
+        (1->ChainId.fromInt, 2n),
+        (1337->ChainId.fromInt, 5n),
+      ]),
+    )
+    indexerState->Writing.dropCommitted(~keepLoadedFromDb=false)
+
+    t.expect((config.checkpointSequence, before, inMemTable.changesCount)).toEqual((
+      PerChain,
+      1.,
+      0.,
+    ))
+  })
+
   Async.it("Keeps the rate-limit budget across a rollback reset", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
@@ -1018,16 +1096,18 @@ describe("LoadLayer effect scope isolation", () => {
     let _ = await call(~scope=Chain(1->ChainId.fromInt), ~input="a")
 
     // A reorg wipes the effect in-mem tables (IndexerState.beginRollbackDiff).
-    indexerState->IndexerState.beginRollbackDiff(
-      ~diffCheckpointId=0n,
-      ~floors=RollbackFloors.global(
-        ~floorCheckpointId=0n,
-        ~reorgChainId=1->ChainId.fromInt,
-        ~forkBlockNumber=0,
-      ),
-      ~progressedChains=[],
-      ~rolledBackAddresses=[],
-    )
+    let _ =
+      indexerState->IndexerState.beginRollbackDiff(
+        ~floors=RollbackFloors.make(
+          ~sequence=SharedAcrossChains,
+          ~chainIds=[],
+          ~floorCheckpointId=0n,
+          ~reorgChainId=1->ChainId.fromInt,
+          ~forkBlockNumber=0,
+        ),
+        ~progressedChains=[],
+        ~rolledBackAddresses=[],
+      )
 
     // The window hasn't elapsed, so the budget must still be spent: the next
     // call is queued (not run) rather than getting a fresh budget from the reset.

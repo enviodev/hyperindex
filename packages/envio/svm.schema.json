@@ -341,13 +341,6 @@
           "description": "Base58-encoded program id (32 bytes). A single value is allowed only when the config defines one chain; with several, give a mapping keyed by chain id that names every one of them, writing `_` for a chain the program is not deployed on.",
           "$ref": "#/$defs/SvmProgramId"
         },
-        "handler": {
-          "description": "Optional relative path to a file where handlers are registered for the given program. If not provided, handlers can be auto-loaded from the src directory.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "idl": {
           "description": "Optional path (relative to config.yaml) to an IDL JSON file (Anchor 0.30+, legacy Anchor, Shank, or Codama). When present, every usable instruction is in the catalog and `onInstruction` selects by name. Omit YAML `instructions` to take that catalog as-is. A YAML row overwrites the IDL instruction of the same name, or adds a name the IDL did not declare.",
           "type": [

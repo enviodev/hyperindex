@@ -368,6 +368,47 @@ describe("HyperSync source contract", () => {
     t.expect(heights).toEqual([7, 9])
   })
 
+  Async.it("counts the blocks the server returned, before any routing drops them", async t => {
+    let requestStats = await MockHyperSyncServer.withServer(~height=100, async server => {
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      server->MockHyperSyncServer.pushResponse({
+        ...page,
+        // Block 12 carries no log, so nothing routes to it. It is still a block
+        // the server scanned and returned, which is what the billing model
+        // counts — the metric follows the response, not the items.
+        blocks: page.blocks
+        ->Option.getOrThrow
+        ->Array.concat([
+          JSON.parseOrThrow(
+            `{"number":12,"timestamp":1700000024,"hash":"${blockHash(12)}","parent_hash":"${blockHash(
+                11,
+              )}","miner":"${minerAddress}","state_root":"${stateRoot}"}`,
+          ),
+        ]),
+      })
+      let page = await source->fetch(~addressSet, ~toBlock=Some(12))
+      page.requestStats->Array.map(({method, responseBlocks: ?responseBlocks}) => (
+        method,
+        responseBlocks,
+      ))
+    })
+
+    t.expect(requestStats).toEqual([("getLogs", Some(3))])
+  })
+
+  Async.it("counts zero blocks for a range the server matched nothing in", async t => {
+    let requestStats = await MockHyperSyncServer.withServer(~height=100, async server => {
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      let page = await source->fetch(~addressSet)
+      page.requestStats->Array.map(({method, responseBlocks: ?responseBlocks}) => (
+        method,
+        responseBlocks,
+      ))
+    })
+
+    t.expect(requestStats).toEqual([("getLogs", Some(0))])
+  })
+
   Async.it("surfaces a page that withholds a selected field", async t => {
     let result = await MockHyperSyncServer.withServer(~height=100, async server => {
       let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)

@@ -41,6 +41,8 @@ type t = {
   // detected reorg either rolls back or is only logged.
   shouldRollbackOnReorg: bool,
   maxReorgDepth: int,
+  // One-way: past it, everything the chain writes can still be rolled back.
+  mutable isInReorgThreshold: bool,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
@@ -126,6 +128,7 @@ let make = (
   ~safeCheckpointTracking=None,
   ~shouldRollbackOnReorg,
   ~maxReorgDepth,
+  ~isInReorgThreshold=false,
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
@@ -155,6 +158,7 @@ let make = (
     safeCheckpointTracking,
     shouldRollbackOnReorg,
     maxReorgDepth,
+    isInReorgThreshold,
     transactionStore,
     blockStore,
     reorgThresholdReadyTolerance,
@@ -308,6 +312,7 @@ let makeInternal = (
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
     ~maxReorgDepth,
+    ~isInReorgThreshold,
     ~safeCheckpointTracking=SafeCheckpointTracking.make(
       ~maxReorgDepth,
       ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
@@ -640,15 +645,21 @@ let hasProcessedToEndblock = (cs: t) => {
 // head has run away from it while the indexer was down.
 let isDurablyCaughtUp = (cs: t) => {
   let {committedProgressBlockNumber, fetchState} = cs
-  switch fetchState.endBlock {
-  | Some(endBlock) => committedProgressBlockNumber >= endBlock
-  | None =>
-    // The configured lag, not the fetch state's: pre-threshold that one also
-    // carries maxReorgDepth, which would read a chain a whole reorg depth behind
-    // the head as caught up.
+  let atEndBlock =
+    fetchState.endBlock->Option.mapOr(false, endBlock => committedProgressBlockNumber >= endBlock)
+  // Either one, like `isFetchingAtHead`: an `end_block` above the head is never
+  // reached, and testing only for it would leave such a chain reading as behind
+  // however long it sits at the head.
+  //
+  // The configured lag, not the fetch state's: pre-threshold that one also
+  // carries maxReorgDepth, which would read a chain a whole reorg depth behind
+  // the head as caught up. Clamped at zero: the -1 a run that has processed
+  // nothing carries would otherwise clear a chain younger than its own lag.
+  let atHead =
     fetchState.knownHeight > 0 &&
-      committedProgressBlockNumber >= fetchState.knownHeight - cs.chainConfig.blockLag
-  }
+      committedProgressBlockNumber >=
+      Pervasives.max(0, fetchState.knownHeight - cs.chainConfig.blockLag)
+  atEndBlock || atHead
 }
 
 let getHighestBlockBelowThreshold = (cs: t): int => {
@@ -929,8 +940,18 @@ let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
   }
 
 // Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
-let enterReorgThreshold = (cs: t) =>
+let enterReorgThreshold = (cs: t) => {
+  cs.isInReorgThreshold = true
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
+}
+
+let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
+
+// Whether the chain's writes need history: only what a rollback could still
+// reach. A chain with no reorg depth is never rolled back, however far its
+// progress has run.
+let shouldSaveHistory = (cs: t) =>
+  cs.shouldRollbackOnReorg && cs.maxReorgDepth > 0 && cs.isInReorgThreshold
 
 // Snapshot the chain's metadata fields for staging into the chains table.
 let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
@@ -979,6 +1000,8 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   reorgCount: cs.reorgCount,
   reorgDetectedBlock: cs.reorgDetectedBlock,
   rollbackTargetBlock: cs.rollbackTargetBlock,
+  rateLimitTimeMs: cs.sourceManager->SourceManager.getRateLimitTimeMs,
+  rateLimitResetInMs: cs.sourceManager->SourceManager.getRateLimitResetInMs,
 }
 
 // Snapshot the inputs a batch build needs from this chain, including an
@@ -1135,11 +1158,11 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
 }
 
 // Mark the chain caught up to head/endblock. Called by CrossChainState only once
-// every chain in the indexer is caught up and the deferred schema indexes are
-// committed, so no chain flips to ready while another is still backfilling or
-// while an index the schema promises is still missing. `readyAt` is the
-// timestamp already committed to `envio_chains.ready_at` in that same
-// transaction. Sticky: a chain stays ready once set.
+// every chain this process drives is caught up and the indexes the schema
+// promises them are committed, so no chain flips to ready while an index it
+// promised is still missing. `readyAt` is the timestamp already committed to
+// `envio_chains.ready_at` in that same transaction. Sticky: a chain stays ready
+// once set.
 let markReady = (cs: t, ~readyAt) =>
   if !(cs->isReady) {
     cs.timestampCaughtUpToHeadOrEndblock = Some(readyAt)

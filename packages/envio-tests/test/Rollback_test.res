@@ -119,6 +119,10 @@ describe("E2E rollback tests", () => {
     ~sourceMock: MockSource.t,
     ~indexer: IndexerRunner.t,
     ~firstHistoryCheckpointId=2n,
+    // How far the id after the rollback sits above the first history one. The
+    // diff takes an id per chain it moves, so a run with a sibling to move
+    // burns one more before the re-index.
+    ~afterRollback=3n,
     ~chainId=1337->ChainId.fromInt,
   ) => {
     t.expect(
@@ -379,7 +383,7 @@ describe("E2E rollback tests", () => {
     ).toEqual((
       [
         {
-          id: firstHistoryCheckpointId->BigInt.add(3n),
+          id: firstHistoryCheckpointId->BigInt.add(afterRollback),
           blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0101")),
           blockNumber: 101,
           chainId,
@@ -398,7 +402,7 @@ describe("E2E rollback tests", () => {
       ],
       [
         Set({
-          checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
+          checkpointId: firstHistoryCheckpointId->BigInt.add(afterRollback),
           entityId: "1"->EntityId.unsafeOfString,
           entity: {
             id: "1",
@@ -406,7 +410,7 @@ describe("E2E rollback tests", () => {
           },
         }),
         Set({
-          checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
+          checkpointId: firstHistoryCheckpointId->BigInt.add(afterRollback),
           entityId: "2"->EntityId.unsafeOfString,
           entity: {
             id: "2",
@@ -910,6 +914,7 @@ describe("E2E rollback tests", () => {
         ~sourceMock=sourceMock2,
         ~indexer,
         ~firstHistoryCheckpointId=3n,
+        ~afterRollback=4n,
         ~chainId=100->ChainId.fromInt,
       )
     },
@@ -1465,14 +1470,19 @@ describe("E2E rollback tests", () => {
       ).toEqual((
         // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
         // chunkRange=3 -> chunkSize=ceil(3*1.8)=6, tiled uniformly from 106 and
-        // stopping at the alignment cap, which chain 1337 anchors from its fork
-        // block.
+        // stopping at the alignment cap (chain 1337's fork block plus
+        // CrossChainState.alignmentMargin of chain 100's range).
         [
           {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
           {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
           {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
-          {"fromBlock": 130, "toBlock": Some(133), "retry": 0, "p": "0"},
+          {"fromBlock": 130, "toBlock": Some(135), "retry": 0, "p": "0"},
+          {"fromBlock": 136, "toBlock": Some(141), "retry": 0, "p": "0"},
+          {"fromBlock": 142, "toBlock": Some(147), "retry": 0, "p": "0"},
+          {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
+          {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
+          {"fromBlock": 160, "toBlock": Some(163), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition DELETED (lfb > target), recreated fresh from
         // just above the fork block.
@@ -1543,14 +1553,14 @@ describe("E2E rollback tests", () => {
           // for chain 1337. After rollback it was removed
           // and replaced with chain id 100.
           {
-            id: 10n,
+            id: 11n,
             eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 11n,
+            id: 12n,
             eventsProcessed: 0,
             chainId: 100->ChainId.fromInt,
             blockNumber: 111,
@@ -1581,7 +1591,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 10n,
+            checkpointId: 11n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -1945,14 +1955,14 @@ describe("E2E rollback tests", () => {
           // for chain 1337. After rollback it was removed
           // and replaced with chain id 100.
           {
-            id: 10n,
+            id: 11n,
             eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 11n,
+            id: 12n,
             eventsProcessed: 0,
             chainId: 100->ChainId.fromInt,
             blockNumber: 111,
@@ -1983,7 +1993,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 10n,
+            checkpointId: 11n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -2011,7 +2021,7 @@ describe("E2E rollback tests", () => {
         ],
         [
           Set({
-            checkpointId: 10n,
+            checkpointId: 11n,
             entityId: "foo"->EntityId.unsafeOfString,
             entity: {
               id: "foo",
@@ -2999,7 +3009,6 @@ describe("E2E rollback tests", () => {
       writeBatch: (
         ~batch,
         ~rollback,
-        ~isInReorgThreshold,
         ~config,
         ~allEntities,
         ~updatedEffectsCache,
@@ -3017,8 +3026,7 @@ describe("E2E rollback tests", () => {
           await storage.writeBatch(
             ~batch,
             ~rollback,
-            ~isInReorgThreshold,
-            ~config,
+                ~config,
             ~allEntities,
             ~updatedEffectsCache,
             ~updatedEntities,
@@ -3175,13 +3183,19 @@ describe("E2E rollback tests", () => {
       ).toEqual((
         // Chain 100: partition kept (lfb <= target), chunk history preserved.
         // chunkRange=3 -> chunkSize=6, tiled uniformly from 106 and stopping at
-        // the alignment cap, which chain 1337 anchors from its fork block.
+        // the alignment cap (chain 1337's fork block plus
+        // CrossChainState.alignmentMargin of chain 100's range).
         [
           {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
           {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
           {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
-          {"fromBlock": 130, "toBlock": Some(133), "retry": 0, "p": "0"},
+          {"fromBlock": 130, "toBlock": Some(135), "retry": 0, "p": "0"},
+          {"fromBlock": 136, "toBlock": Some(141), "retry": 0, "p": "0"},
+          {"fromBlock": 142, "toBlock": Some(147), "retry": 0, "p": "0"},
+          {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
+          {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
+          {"fromBlock": 160, "toBlock": Some(163), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition deleted (lfb > target), recreated fresh from
         // just above the fork block at 103.
@@ -3246,7 +3260,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 8n,
+            checkpointId: 9n,
             entityId: "victim"->EntityId.unsafeOfString,
             entity: {
               id: "victim",

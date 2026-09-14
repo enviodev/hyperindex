@@ -133,11 +133,12 @@ describe("ChainState reorg threshold", () => {
       totalBatchSize: 0,
       items: [],
       progressedChainsById,
-      isInReorgThreshold: true,
+      history: Dict.make(),
       checkpointIds: [],
       checkpointChainIds: [],
       checkpointBlockNumbers: [],
       checkpointBlockHashes: [],
+      checkpointItemsCount: [],
       checkpointEventsProcessed: [],
       registeredAddresses: [],
     }

@@ -285,10 +285,24 @@ fn svm_tx_col(field: SvmTxField, txs: &[solana_simple::Transaction]) -> Option<A
         Err => var_from(txs, |t| t.err.as_ref().map(|s| s.as_bytes())),
         Fee => u64_from(txs, |t| t.fee),
         ComputeUnitsConsumed => u64_from(txs, |t| t.compute_units_consumed),
+        // Solana's own account-resolution order: static keys, then the lookup
+        // tables' writable then readonly addresses. A transaction's account
+        // indexes address this resolved list, so anything short of it makes
+        // index-based access silently wrong on a versioned transaction.
         AccountKeys => str_list_from(txs, |t| {
-            t.account_keys
-                .as_ref()
-                .map(|keys| keys.iter().map(|key| key.to_string()).collect())
+            let parts = [
+                t.account_keys.as_ref(),
+                t.loaded_addresses_writable.as_ref(),
+                t.loaded_addresses_readonly.as_ref(),
+            ];
+            parts.iter().any(Option::is_some).then(|| {
+                parts
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|key| key.to_string())
+                    .collect()
+            })
         }),
         RecentBlockhash => base58_col(txs, |t| t.recent_blockhash),
         Version => var_from(txs, |t| t.version.as_ref().map(|s| s.as_bytes())),
@@ -1113,6 +1127,41 @@ mod tests {
                 false
             )
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn svm_account_keys_resolve_lookup_tables_in_order() {
+        let store = TransactionStore::new_svm();
+        let mut tx = raw_svm_tx(5, 0);
+        tx.account_keys = Some(vec![svm_key(1)]);
+        tx.loaded_addresses_writable = Some(vec![svm_key(2)]);
+        tx.loaded_addresses_readonly = Some(vec![svm_key(3)]);
+        // A legacy transaction carries no lookup tables, so its resolved list
+        // must still be exactly the static keys rather than a miss.
+        let mut legacy = raw_svm_tx(5, 1);
+        legacy.account_keys = Some(vec![svm_key(4)]);
+        store.insert_svm_txs(vec![tx, legacy]);
+
+        let mask = (1u64 << (SvmTxField::AccountKeys as u32)) as f64;
+        let cols = store
+            .materialize(vec![5, 5], vec![0, 1], vec![mask, mask])
+            .await
+            .expect("materialize");
+
+        match column(&cols, "accountKeys") {
+            Some(Column::StrVec(v)) => assert_eq!(
+                v,
+                &vec![
+                    Some(vec![
+                        svm_key(1).to_string(),
+                        svm_key(2).to_string(),
+                        svm_key(3).to_string()
+                    ]),
+                    Some(vec![svm_key(4).to_string()]),
+                ]
+            ),
+            _ => panic!("expected accountKeys column"),
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
