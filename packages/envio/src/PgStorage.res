@@ -125,46 +125,40 @@ let getSchemaIndexes = (
   )
 }
 
+// The column as the addon takes it: the variant's name, plus whichever of
+// precision, scale and enum name that variant carries.
+let pgColumnInput = (field: Table.field): Core.pgColumnInput => {
+  let (fieldType, precision, scale, enumName) = field.fieldType->Table.pgFieldTypeParts
+  {
+    name: field->Table.getPgDbFieldName,
+    fieldType,
+    isArray: field.isArray,
+    isNullable: field.isNullable,
+    isPrimaryKey: field.isPrimaryKey,
+    defaultValue: ?field.defaultValue,
+    precision: ?precision,
+    scale: ?scale,
+    enumName: ?enumName,
+  }
+}
+
 let makeCreateTableQuery = (
   table: Table.table,
   ~pgSchema,
   ~isNumericArrayAsText,
   ~chainIdMode: ChainId.mode=Int32,
   ~partitionByColumn: option<string>=?,
-) => {
-  let fieldsMapped =
-    table
-    ->Table.getFields
-    ->Array.map(field => {
-      let {fieldType, isNullable, isArray, defaultValue} = field
-      let fieldName = field->Table.getPgDbFieldName
-
-      {
-        `"${fieldName}" ${Table.getPgFieldType(
-            ~chainIdMode,
-            ~fieldType,
-            ~pgSchema,
-            ~isArray,
-            ~isNullable,
-            ~isNumericArrayAsText,
-          )}${switch defaultValue {
-          | Some(defaultValue) => ` DEFAULT ${defaultValue}`
-          | None => isNullable ? `` : ` NOT NULL`
-          }}`
-      }
-    })
-    ->Array.joinUnsafe(", ")
-
-  let primaryKeyFieldNames = table->Table.getPgPrimaryKeyFieldNames
-  let primaryKey = primaryKeyFieldNames->Array.map(field => `"${field}"`)->Array.joinUnsafe(", ")
-
-  `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
-      ? `, PRIMARY KEY(${primaryKey})`
-      : ""})${switch partitionByColumn {
-    | Some(column) => ` PARTITION BY LIST ("${column}")`
-    | None => ""
-    }};`
-}
+) =>
+  Core.pgCreateTableQuery(
+    ~table={
+      tableName: table.tableName,
+      columns: table->Table.getFields->Array.map(pgColumnInput),
+      partitionByColumn: ?partitionByColumn,
+    },
+    ~pgSchema,
+    ~isNumericArrayAsText,
+    ~chainIdMode=(chainIdMode :> string),
+  )
 
 // The entity as it's stored: the handler-visible schema plus the chain-id
 // column a per-chain entity's table carries. The value for that column is

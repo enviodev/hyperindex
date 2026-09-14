@@ -27,12 +27,51 @@ type fromUserApiResult = {
   indexerCode: Null.t<string>,
 }
 
+// One column of a Postgres table, flattened for the boundary: napi carries no
+// tagged union, so the field type arrives as its name plus whichever of the
+// modifiers it takes.
+type pgColumnInput = {
+  // The database column name, renames already resolved.
+  name: string,
+  fieldType: string,
+  isArray?: bool,
+  isNullable?: bool,
+  isPrimaryKey?: bool,
+  defaultValue?: string,
+  precision?: int,
+  scale?: int,
+  enumName?: string,
+}
+
+type pgTableInput = {
+  tableName: string,
+  columns: array<pgColumnInput>,
+  partitionByColumn?: string,
+}
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
+  pgCreateTableQuery: (
+    ~table: pgTableInput,
+    ~pgSchema: string,
+    ~isNumericArrayAsText: bool,
+    ~chainIdMode: string,
+  ) => string,
+  pgFieldType: (
+    ~fieldType: string,
+    ~pgSchema: string,
+    ~isArray: bool,
+    ~isNullable: bool,
+    ~isNumericArrayAsText: bool,
+    ~chainIdMode: string,
+    ~precision: Null.t<int>,
+    ~scale: Null.t<int>,
+    ~enumName: Null.t<string>,
+  ) => string,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
@@ -265,3 +304,29 @@ let runCli = args => {
   let addon = getAddon()
   addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
 }
+
+let pgCreateTableQuery = (~table, ~pgSchema, ~isNumericArrayAsText, ~chainIdMode) =>
+  getAddon().pgCreateTableQuery(~table, ~pgSchema, ~isNumericArrayAsText, ~chainIdMode)
+
+let pgFieldType = (
+  ~fieldType,
+  ~pgSchema,
+  ~isArray,
+  ~isNullable,
+  ~isNumericArrayAsText,
+  ~chainIdMode,
+  ~precision,
+  ~scale,
+  ~enumName,
+) =>
+  getAddon().pgFieldType(
+    ~fieldType,
+    ~pgSchema,
+    ~isArray,
+    ~isNullable,
+    ~isNumericArrayAsText,
+    ~chainIdMode,
+    ~precision,
+    ~scale,
+    ~enumName,
+  )

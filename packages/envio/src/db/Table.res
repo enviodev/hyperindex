@@ -160,6 +160,34 @@ let fitPgTableName = (fullName, ~uniqueSuffix) =>
     fullName
   }
 
+// The variant's name and whichever of precision, scale and enum name it
+// carries. They travel to the addon separately because napi has no tagged
+// union of its own.
+let pgFieldTypeParts = (fieldType: fieldType) =>
+  switch fieldType {
+  | String => ("String", None, None, None)
+  | Boolean => ("Boolean", None, None, None)
+  | Uint32 => ("Uint32", None, None, None)
+  | UInt52 => ("UInt52", None, None, None)
+  | SmallInt => ("SmallInt", None, None, None)
+  | Bytea => ("Bytea", None, None, None)
+  | UInt64 => ("UInt64", None, None, None)
+  | Int32 => ("Int32", None, None, None)
+  | ChainId => ("ChainId", None, None, None)
+  | Number => ("Number", None, None, None)
+  | BigInt({?precision}) => ("BigInt", precision, None, None)
+  | BigDecimal({?config}) =>
+    switch config {
+    | Some((precision, scale)) => ("BigDecimal", Some(precision), Some(scale), None)
+    | None => ("BigDecimal", None, None, None)
+    }
+  | Serial => ("Serial", None, None, None)
+  | BigSerial => ("BigSerial", None, None, None)
+  | Json => ("Json", None, None, None)
+  | Date => ("Date", None, None, None)
+  | Enum({config}) => ("Enum", None, None, Some(config.name))
+  }
+
 let getPgFieldType = (
   ~fieldType: fieldType,
   ~pgSchema,
@@ -168,52 +196,18 @@ let getPgFieldType = (
   ~isNullable,
   ~chainIdMode: ChainId.mode=Int32,
 ) => {
-  let columnType = switch fieldType {
-  | String => (Postgres.Text :> string)
-  | Boolean => (Postgres.Boolean :> string)
-  | Int32 => (Postgres.Integer :> string)
-  | ChainId =>
-    switch chainIdMode {
-    | Int32 => (Postgres.Integer :> string)
-    | Int64 => (Postgres.BigInt :> string)
-    }
-  | Uint32 => (Postgres.BigInt :> string)
-  | UInt52 => (Postgres.BigInt :> string)
-  | SmallInt => (Postgres.SmallInt :> string)
-  | Bytea => (Postgres.Bytea :> string)
-  | UInt64 => (Postgres.BigInt :> string)
-  | Number => (Postgres.DoublePrecision :> string)
-  | BigInt({?precision}) =>
-    (Postgres.Numeric :> string) ++
-    switch precision {
-    | Some(precision) => `(${precision->Int.toString}, 0)` // scale is always 0 for BigInt
-    | None => ""
-    }
-
-  | BigDecimal({?config}) =>
-    (Postgres.Numeric :> string) ++
-    switch config {
-    | Some((precision, scale)) => `(${precision->Int.toString}, ${scale->Int.toString})`
-    | None => ""
-    }
-
-  | Serial => (Postgres.Serial :> string)
-  | BigSerial => (Postgres.BigSerial :> string)
-  | Json => (Postgres.JsonB :> string)
-  | Date =>
-    (isNullable ? Postgres.TimestampWithTimezoneNull : Postgres.TimestampWithTimezone :> string)
-  | Enum({config}) => `"${pgSchema}".${config.name}`
-  }
-
-  // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
-  let isNumericAsText = isArray && isNumericArrayAsText
-  let columnType = if columnType == (Postgres.Numeric :> string) && isNumericAsText {
-    (Postgres.Text :> string)
-  } else {
-    columnType
-  }
-
-  columnType ++ (isArray ? "[]" : "")
+  let (fieldType, precision, scale, enumName) = pgFieldTypeParts(fieldType)
+  Core.pgFieldType(
+    ~fieldType,
+    ~pgSchema,
+    ~isArray,
+    ~isNullable,
+    ~isNumericArrayAsText,
+    ~chainIdMode=(chainIdMode :> string),
+    ~precision=precision->Null.fromOption,
+    ~scale=scale->Null.fromOption,
+    ~enumName=enumName->Null.fromOption,
+  )
 }
 
 type indexFieldDirection = Asc | Desc
