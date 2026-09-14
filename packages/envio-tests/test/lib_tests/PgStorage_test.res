@@ -577,49 +577,52 @@ FROM "public"."envio_chains";`
       ],
     )
 
-    Async.it("Binds bytea values as bytes and bytea arrays as array literals", async t => {
-      let params = []
-      let condition = PgStorage.makeFilterCondition(
-        ~filter=Dict.fromArray([
-          (
-            "tag",
-            Dict.fromArray([
-              ("_eq", Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown)),
-              (
-                "_in",
-                [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
-                  Utils.magic: array<Uint8Array.t> => unknown
+    Async.it(
+      "Binds bytea values as bytes and bytea arrays as array literals",
+      async t => {
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=Dict.fromArray([
+            (
+              "tag",
+              Dict.fromArray([
+                ("_eq", Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown)),
+                (
+                  "_in",
+                  [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
+                    Utils.magic: array<Uint8Array.t> => unknown
+                  ),
                 ),
-              ),
-            ]),
-          ),
-          (
-            "chunks",
-            Dict.fromArray([
-              ("_eq", [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown)),
-              (
-                "_in",
-                [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
-                  Utils.magic: array<array<Uint8Array.t>> => unknown
+              ]),
+            ),
+            (
+              "chunks",
+              Dict.fromArray([
+                ("_eq", [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown)),
+                (
+                  "_in",
+                  [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
+                    Utils.magic: array<array<Uint8Array.t>> => unknown
+                  ),
                 ),
-              ),
-            ]),
-          ),
-        ]),
-        ~table=bytesTable,
-        ~params,
-      )
+              ]),
+            ),
+          ]),
+          ~table=bytesTable,
+          ~params,
+        )
 
-      t.expect((condition, params)).toEqual((
-        `"tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4)`,
-        [
-          Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
-          `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
-          `{"\\\\x03"}`->(Utils.magic: string => unknown),
-          `{{"\\\\x04"},{"\\\\x05"}}`->(Utils.magic: string => unknown),
-        ],
-      ))
-    })
+        t.expect((condition, params)).toEqual((
+          `"tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4)`,
+          [
+            Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+            `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
+            `{"\\\\x03"}`->(Utils.magic: string => unknown),
+            `{{"\\\\x04"},{"\\\\x05"}}`->(Utils.magic: string => unknown),
+          ],
+        ))
+      },
+    )
 
     Async.it(
       "Should create condition and params for loading multiple records by IDs",
@@ -653,6 +656,29 @@ FROM "public"."envio_chains";`
         )
 
         t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => unknown)]))
+      },
+    )
+
+    // These reach the query as themselves. Composing them from an equality and
+    // a strict comparison, as the filter IR used to, needed a separate query
+    // per operator and a cross product once a second field was filtered on.
+    Async.it(
+      "Should emit _gte and _lte as a single inclusive comparison",
+      async t => {
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=Dict.fromArray([
+            ("score", Dict.fromArray([("_gte", 5->(Utils.magic: int => unknown))])),
+            ("id", Dict.fromArray([("_lte", "9"->(Utils.magic: string => unknown))])),
+          ]),
+          ~table,
+          ~params,
+        )
+
+        t.expect((condition, params)).toEqual((
+          `"score" >= $1 AND "id" <= $2`,
+          [5->(Utils.magic: int => unknown), "9"->(Utils.magic: string => unknown)],
+        ))
       },
     )
 
