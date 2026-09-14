@@ -1470,14 +1470,19 @@ describe("E2E rollback tests", () => {
       ).toEqual((
         // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
         // chunkRange=3 -> chunkSize=ceil(3*1.8)=6, tiled uniformly from 106 and
-        // stopping at the alignment cap, which chain 1337 anchors from its fork
-        // block.
+        // stopping at the alignment cap (chain 1337's fork block plus
+        // CrossChainState.alignmentMargin of chain 100's range).
         [
           {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
           {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
           {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
-          {"fromBlock": 130, "toBlock": Some(133), "retry": 0, "p": "0"},
+          {"fromBlock": 130, "toBlock": Some(135), "retry": 0, "p": "0"},
+          {"fromBlock": 136, "toBlock": Some(141), "retry": 0, "p": "0"},
+          {"fromBlock": 142, "toBlock": Some(147), "retry": 0, "p": "0"},
+          {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
+          {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
+          {"fromBlock": 160, "toBlock": Some(163), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition DELETED (lfb > target), recreated fresh from
         // just above the fork block.
@@ -3178,13 +3183,19 @@ describe("E2E rollback tests", () => {
       ).toEqual((
         // Chain 100: partition kept (lfb <= target), chunk history preserved.
         // chunkRange=3 -> chunkSize=6, tiled uniformly from 106 and stopping at
-        // the alignment cap, which chain 1337 anchors from its fork block.
+        // the alignment cap (chain 1337's fork block plus
+        // CrossChainState.alignmentMargin of chain 100's range).
         [
           {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
           {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
           {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
-          {"fromBlock": 130, "toBlock": Some(133), "retry": 0, "p": "0"},
+          {"fromBlock": 130, "toBlock": Some(135), "retry": 0, "p": "0"},
+          {"fromBlock": 136, "toBlock": Some(141), "retry": 0, "p": "0"},
+          {"fromBlock": 142, "toBlock": Some(147), "retry": 0, "p": "0"},
+          {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
+          {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
+          {"fromBlock": 160, "toBlock": Some(163), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition deleted (lfb > target), recreated fresh from
         // just above the fork block at 103.
