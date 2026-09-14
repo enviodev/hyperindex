@@ -432,6 +432,10 @@ let loadByFilter = (
           )
         })
 
+        // Every row this filter's values could match is now in the table, so a
+        // later getWhere naming any of them needs no round trip of its own.
+        inMemTable->InMemoryTable.Entity.recordLoadedValues(~filter, ~table=entityConfig.table)
+
         size := size.contents + entities->Array.length
       } catch {
       | Persistence.StorageError({message, reason}) =>
@@ -462,12 +466,20 @@ let loadByFilter = (
     )
   }
 
+  let filterKey = filter->EntityFilter.toString
+
+  // Hashing an _in filter walks every value, so it's computed once here and
+  // handed to the load manager rather than recomputed by the hasher.
+  if !(inMemTable->InMemoryTable.Entity.hasIndex)(filterKey) {
+    inMemTable->InMemoryTable.Entity.tryIndexFromLoadedValues(~filter, ~table=entityConfig.table)
+  }
+
   loadManager->LoadManager.call(
     ~key,
     ~load,
     ~input=filter,
     ~shouldGroup,
-    ~hasher=EntityFilter.toString,
+    ~hasher=_ => filterKey,
     ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
     ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
   )

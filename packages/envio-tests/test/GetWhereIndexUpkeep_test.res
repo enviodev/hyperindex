@@ -34,20 +34,24 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ contex
     (await context.Item.getWhere({ owner: { _eq: owner } })).map((i) => i.id).sort().join(",");
   const aboveRank = async (rank: number) =>
     (await context.Item.getWhere({ rank: { _gt: rank } })).map((i) => i.id).sort().join(",");
+  const anyOwner = async (owners: string[]) =>
+    (await context.Item.getWhere({ owner: { _in: owners } })).map((i) => i.id).sort().join(",");
 
-  // Register both equality indexes and a range index before anything matches.
+  // Register an equality, a range and a multi-value index on the same fields
+  // before anything matches.
   await byOwner("alice");
   await byOwner("bob");
   await aboveRank(10);
+  await anyOwner(["alice", "carol"]);
 
   context.Item.set({ id: "x", owner: "alice", rank: 5 });
-  const first = \`\${await byOwner("alice")}/\${await byOwner("bob")}/\${await aboveRank(10)}\`;
+  const first = \`\${await byOwner("alice")}/\${await byOwner("bob")}/\${await aboveRank(10)}/\${await anyOwner(["alice", "carol"])}\`;
 
   context.Item.set({ id: "x", owner: "bob", rank: 50 });
-  const moved = \`\${await byOwner("alice")}/\${await byOwner("bob")}/\${await aboveRank(10)}\`;
+  const moved = \`\${await byOwner("alice")}/\${await byOwner("bob")}/\${await aboveRank(10)}/\${await anyOwner(["alice", "carol"])}\`;
 
   context.Item.deleteUnsafe("x");
-  const gone = \`\${await byOwner("alice")}/\${await byOwner("bob")}/\${await aboveRank(10)}\`;
+  const gone = \`\${await byOwner("alice")}/\${await byOwner("bob")}/\${await aboveRank(10)}/\${await anyOwner(["alice", "carol"])}\`;
 
   context.Probe.set({ id: \`\${first} | \${moved} | \${gone}\` });
 });
@@ -80,7 +84,7 @@ describe("in-memory index upkeep", () => {
     });
 
     t.expect(result.changes[0]?.Probe).toEqual({
-      sets: [{ id: "x// | /x/x | //" }],
+      sets: [{ id: "x///x | /x/x/ | ///" }],
     });
   });
 });

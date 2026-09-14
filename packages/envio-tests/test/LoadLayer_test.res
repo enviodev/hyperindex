@@ -1120,3 +1120,75 @@ chains:
     t.expect((countWhileQueued, callCount.contents)).toEqual((1, 2))
   })
 })
+
+describe("LoadLayer getWhere index reuse", () => {
+  // Values a completed query already loaded are known to be in the table, so a
+  // later getWhere naming any of them is answered from memory. Without this an
+  // _eq is a distinct index from the _in that loaded the same value, and pays
+  // a second round trip for rows already sitting in memory.
+  Async.it("Serves a filter whose values an earlier query already loaded", async t => {
+    let storageMock = MockStorage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let indexerState = TestIndexerState.make(~config)
+
+    let getUsers = filter =>
+      LoadLayer.loadByFilter(
+        ~loadManager,
+        ~persistence=storageMock->MockStorage.toPersistence(~config),
+        ~entityConfig=userEntityConfig,
+        ~scope=Internal.CrossChain,
+        ~indexerState,
+        ~item,
+        ~ecosystem=config.ecosystem,
+        ~filter,
+        ~shouldGroup=true,
+      )
+    let inFilter = values =>
+      dict{"address": dict{"_in": values->(Utils.magic: array<string> => unknown)}}
+    let eqFilter = value => dict{"address": dict{"_eq": value->(Utils.magic: string => unknown)}}
+
+    let _ = await getUsers(inFilter(["0x1", "0x2"]))
+    // Both covered by the query above.
+    let _ = await getUsers(eqFilter("0x1"))
+    let _ = await getUsers(inFilter(["0x1", "0x2"]))
+    let _ = await getUsers(inFilter(["0x2"]))
+    // 0x3 was never loaded, so this one still goes to the db.
+    let _ = await getUsers(eqFilter("0x3"))
+    // And now that it has, an _in over both is covered.
+    let _ = await getUsers(inFilter(["0x1", "0x3"]))
+
+    t.expect(storageMock.loadOrThrowCalls->Array.map(call => call["filter"])).toEqual([
+      inFilter(["0x1", "0x2"]),
+      eqFilter("0x3"),
+    ])
+  })
+
+  // A range can't be covered by the values a previous query named.
+  Async.it("Still queries for an operator no loaded value can cover", async t => {
+    let storageMock = MockStorage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let indexerState = TestIndexerState.make(~config)
+
+    let getUsers = filter =>
+      LoadLayer.loadByFilter(
+        ~loadManager,
+        ~persistence=storageMock->MockStorage.toPersistence(~config),
+        ~entityConfig=userEntityConfig,
+        ~scope=Internal.CrossChain,
+        ~indexerState,
+        ~item,
+        ~ecosystem=config.ecosystem,
+        ~filter,
+        ~shouldGroup=true,
+      )
+
+    let _ = await getUsers(
+      dict{"updatesCountOnUserForTesting": dict{"_in": [1, 2]->(Utils.magic: array<int> => unknown)}},
+    )
+    let _ = await getUsers(
+      dict{"updatesCountOnUserForTesting": dict{"_gt": 1->(Utils.magic: int => unknown)}},
+    )
+
+    t.expect(storageMock.loadOrThrowCalls->Array.length).toEqual(2)
+  })
+})

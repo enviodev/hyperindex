@@ -7,12 +7,18 @@ module Entity = {
     ids: Utils.Set.t<relatedEntityId>,
   }
 
-  // Equality indexes on one field, found by the field's value rather than by
-  // running their matchers, so a write costs a lookup per indexed field
-  // instead of a pass over every registered index.
+  // Indexes on one field that a single value can resolve — _eq, and _in under
+  // each of its values — found by the field's value rather than by running
+  // their matchers, so a write costs a lookup per indexed field instead of a
+  // pass over every registered index. Several indexes can share a value: an
+  // _in and an _eq naming it, or two _in filters overlapping on it.
   type eqBucket = {
     keyOf: unknown => unknown,
-    byValue: Utils.Map.t<unknown, index>,
+    byValue: Utils.Map.t<unknown, array<index>>,
+    // Values a completed query has already loaded every row for. A later
+    // filter naming only these is answered from the table instead of a
+    // second round trip for rows that are already in it.
+    loadedValues: Utils.Set.t<unknown>,
   }
 
   type t = {
@@ -141,7 +147,7 @@ module Entity = {
       // would throw on it.
       if !(fieldValue->EntityFilter.nullish) {
         switch bucket.byValue->Utils.Map.get(bucket.keyOf(fieldValue)) {
-        | Some(index) => self->addToIndex(~index, ~entityId)
+        | Some(indexes) => indexes->Array.forEach(index => self->addToIndex(~index, ~entityId))
         | None => ()
         }
       }
@@ -238,6 +244,30 @@ module Entity = {
       }
     }
 
+  let getOrCreateEqBucket = (inMemTable: t, ~table: Table.table, ~fieldName) =>
+    switch inMemTable.eqBucketsByField->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+    | Some(bucket) => bucket
+    | None =>
+      let bucket = {
+        keyOf: EntityFilter.makeValueKey(~table, ~fieldName),
+        byValue: Utils.Map.make(),
+        loadedValues: Utils.Set.make(),
+      }
+      inMemTable.eqBucketsByField->Dict.set(fieldName, bucket)
+      bucket
+    }
+
+  // The values a filter constrains a single field to exactly, which is what a
+  // bucket and the loaded set are keyed by. Everything else — ranges, several
+  // fields, several operators — has no such list.
+  let singleFieldValues = (filter: EntityFilter.t) =>
+    switch filter->EntityFilter.asSingleOperator {
+    | Some((fieldName, "_eq", fieldValue)) => Some((fieldName, [fieldValue]))
+    | Some((fieldName, "_in", fieldValue)) =>
+      Some((fieldName, fieldValue->(Utils.magic: unknown => array<unknown>)))
+    | Some(_) | None => None
+    }
+
   let addEmptyIndex = (inMemTable: t, ~filter: EntityFilter.t, ~table: Table.table) => {
     let filterKey = filter->EntityFilter.toString
     switch inMemTable.indexesByKey->Utils.Dict.dangerouslyGetNonOption(filterKey) {
@@ -246,22 +276,17 @@ module Entity = {
       let index = {matcher: filter->EntityFilter.makeMatcher(~table), ids: Utils.Set.make()}
       inMemTable.indexesByKey->Dict.set(filterKey, index)
 
-      switch filter->EntityFilter.asSingleOperator {
-      | Some((fieldName, "_eq", fieldValue)) =>
-        let bucket = switch inMemTable.eqBucketsByField->Utils.Dict.dangerouslyGetNonOption(
-          fieldName,
-        ) {
-        | Some(bucket) => bucket
-        | None =>
-          let bucket = {
-            keyOf: EntityFilter.makeValueKey(~table, ~fieldName),
-            byValue: Utils.Map.make(),
+      switch filter->singleFieldValues {
+      | Some((fieldName, fieldValues)) =>
+        let bucket = inMemTable->getOrCreateEqBucket(~table, ~fieldName)
+        fieldValues->Array.forEach(fieldValue => {
+          let valueKey = bucket.keyOf(fieldValue)
+          switch bucket.byValue->Utils.Map.get(valueKey) {
+          | Some(indexes) => indexes->Array.push(index)->ignore
+          | None => bucket.byValue->Utils.Map.set(valueKey, [index])->ignore
           }
-          inMemTable.eqBucketsByField->Dict.set(fieldName, bucket)
-          bucket
-        }
-        bucket.byValue->Utils.Map.set(bucket.keyOf(fieldValue), index)->ignore
-      | Some(_) | None => inMemTable.scanIndexes->Array.push(index)->ignore
+        })
+      | None => inMemTable.scanIndexes->Array.push(index)->ignore
       }
 
       inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
@@ -275,4 +300,41 @@ module Entity = {
       })
     }
   }
+
+  // Called once a query's rows are in the table, so every row the filter's
+  // values could match is now in memory.
+  let recordLoadedValues = (inMemTable: t, ~filter: EntityFilter.t, ~table: Table.table) =>
+    switch filter->singleFieldValues {
+    | Some((fieldName, fieldValues)) =>
+      let bucket = inMemTable->getOrCreateEqBucket(~table, ~fieldName)
+      fieldValues->Array.forEach(fieldValue =>
+        bucket.loadedValues->Utils.Set.add(bucket.keyOf(fieldValue))->ignore
+      )
+    | None => ()
+    }
+
+  let isFullyLoaded = (inMemTable: t, ~filter: EntityFilter.t) =>
+    try switch filter->singleFieldValues {
+    | Some((fieldName, fieldValues)) =>
+      switch inMemTable.eqBucketsByField->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+      | Some(bucket) =>
+        fieldValues->Array.every(fieldValue =>
+          bucket.loadedValues->Utils.Set.has(bucket.keyOf(fieldValue))
+        )
+      | None => false
+      }
+    | None => false
+    } catch {
+    // The filter is still the unvalidated object the handler passed in, so
+    // anything malformed here simply isn't covered. The load reports it with
+    // the message naming the field the user wrote.
+    | _ => false
+    }
+
+  // Builds the index for a filter whose every value an earlier query already
+  // loaded, so the call is served from the table instead of going to storage.
+  let tryIndexFromLoadedValues = (inMemTable: t, ~filter: EntityFilter.t, ~table: Table.table) =>
+    if inMemTable->isFullyLoaded(~filter) {
+      inMemTable->addEmptyIndex(~filter, ~table)
+    }
 }
