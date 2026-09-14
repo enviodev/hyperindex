@@ -120,8 +120,8 @@ describe("ClickHouse column type contract", () => {
         fieldType => ClickHouse.makeColumnSpec(~name="c", ~fieldType),
       ),
     )
-    t.expect(kinds->Array.map(ClickHouseSink.kindOfOrdinal)).toEqual([
-      ClickHouseSink.F64,
+    t.expect(kinds->Array.map(Staging.kindOfOrdinal)).toEqual([
+      Staging.F64,
       U64,
       I64,
       Text,
@@ -134,11 +134,11 @@ describe("ClickHouse column type contract", () => {
   // text and store them as something else.
   it("refuses a wire kind it does not know", t => {
     let message = try {
-      let _ = ClickHouseSink.kindOfOrdinal(5)
+      let _ = Staging.kindOfOrdinal(5)
       "decoded without complaint"
     } catch {
     | exn => (exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"]
     }
-    t.expect(message).toBe("Unknown ClickHouse column kind 5")
+    t.expect(message).toBe("Unknown staged column kind 5")
   })
 })

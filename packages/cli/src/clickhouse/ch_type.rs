@@ -2,6 +2,7 @@ use std::fmt;
 
 use anyhow::{bail, Result};
 
+use crate::columnar::ColumnKind;
 use crate::config_parsing::system_config::ChainIdMode;
 
 /// How wide an `Enum` column's variant list can get before it needs two bytes.
@@ -201,15 +202,6 @@ impl fmt::Display for ChType {
             ChType::Array(inner) => write!(f, "Array({inner})"),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ColumnKind {
-    F64 = 0,
-    U64 = 1,
-    I64 = 2,
-    Text = 3,
-    Bytes = 4,
 }
 
 impl ChType {
