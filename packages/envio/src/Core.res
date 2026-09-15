@@ -11,6 +11,7 @@ type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
 type clickHouseSinkCtor
+type pgClientCtor
 type addressStoreCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
@@ -105,6 +106,8 @@ type addon = {
   addressStore: addressStoreCtor,
   @as("ClickHouseSink")
   clickHouseSink: clickHouseSinkCtor,
+  @as("PgClient")
+  pgClient: pgClientCtor,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,

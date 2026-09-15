@@ -80,6 +80,16 @@ pub enum ColumnSpec {
     },
 }
 
+/// A zeroed vector of `len`, always holding at least one slot's worth of
+/// allocation. An empty `Vec` has no pointer to lend, and a result matching
+/// nothing — or an array with no elements — would otherwise have nothing to
+/// hand JavaScript.
+fn sized<T: Clone + Default>(len: usize) -> Vec<T> {
+    let mut values = Vec::with_capacity(len.max(1));
+    values.resize(len, T::default());
+    values
+}
+
 /// What a variable-width column reserves per row before anything grows. A hex
 /// address renders to 42 bytes and an id to a little more, so most batches are
 /// filled without a single reallocation.
@@ -125,16 +135,16 @@ impl Column {
     fn new(kind: ColumnKind, rows: usize) -> Self {
         let storage = if kind.is_variable() {
             Storage::Variable {
-                data: vec![0; (rows * VARIABLE_GUESS_PER_ROW).max(MIN_VARIABLE_CAPACITY)],
-                ends: vec![0; rows],
+                data: sized((rows * VARIABLE_GUESS_PER_ROW).max(MIN_VARIABLE_CAPACITY)),
+                ends: sized(rows),
             }
         } else {
-            Storage::Fixed(vec![0; rows])
+            Storage::Fixed(sized(rows))
         };
         Self {
             kind,
             storage,
-            nulls: vec![0; rows],
+            nulls: sized(rows),
             any_null: false,
         }
     }
@@ -147,9 +157,9 @@ impl Column {
             kind: ColumnKind::List,
             storage: Storage::List {
                 elements: Box::new(Column::new(element, elements)),
-                row_ends: vec![0; rows],
+                row_ends: sized(rows),
             },
-            nulls: vec![0; rows],
+            nulls: sized(rows),
             any_null: false,
         }
     }
@@ -291,14 +301,14 @@ impl Column {
     }
 
     fn buffers(&mut self) -> Vec<(*mut u8, usize)> {
-        let nulls = (self.nulls.as_mut_ptr(), self.nulls.len());
+        let nulls = (self.nulls.as_mut_ptr(), self.nulls.len().max(1));
         match &mut self.storage {
             Storage::Fixed(words) => {
-                vec![(words.as_mut_ptr().cast(), words.len() * 8), nulls]
+                vec![(words.as_mut_ptr().cast(), (words.len() * 8).max(8)), nulls]
             }
             Storage::Variable { data, ends } => vec![
                 (data.as_mut_ptr(), data.len()),
-                (ends.as_mut_ptr().cast(), ends.len() * 4),
+                (ends.as_mut_ptr().cast(), (ends.len() * 4).max(4)),
                 nulls,
             ],
             // The elements' own buffers first, so a reader builds the element
@@ -306,7 +316,7 @@ impl Column {
             // into rows.
             Storage::List { elements, row_ends } => {
                 let mut buffers = elements.buffers();
-                buffers.push((row_ends.as_mut_ptr().cast(), row_ends.len() * 4));
+                buffers.push((row_ends.as_mut_ptr().cast(), (row_ends.len() * 4).max(4)));
                 buffers.push(nulls);
                 buffers
             }

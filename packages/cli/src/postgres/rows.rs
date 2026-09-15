@@ -260,21 +260,68 @@ impl<'a> FromSql<'a> for Cell {
 /// JSON document travels as its own text, which is what that driver's parser was
 /// handed too.
 pub fn scalar_kind(ty: &Type) -> ColumnKind {
-    match ty.oid() {
-        BYTEA => ColumnKind::Bytes,
-        BOOL | INT2 | INT4 | OID | FLOAT4 | FLOAT8 | DATE | TIMESTAMP | TIMESTAMPTZ => {
-            ColumnKind::F64
+    read_kind(ty).slot()
+}
+
+/// What JavaScript makes of a column, which is more than the slot it travels
+/// in: a boolean, a timestamp and a float all ride in the same eight bytes and
+/// come out as three different things.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum ReadKind {
+    Float = 0,
+    Bool = 1,
+    /// Milliseconds, which is what a `Date` is built from.
+    Timestamp = 2,
+    Text = 3,
+    Bytes = 4,
+    List = 5,
+    /// The document's own text, parsed on the other side — which is what the
+    /// driver being replaced did with exactly these bytes.
+    Json = 6,
+}
+
+impl ReadKind {
+    /// The slot it travels in. Three of them share one.
+    fn slot(self) -> ColumnKind {
+        match self {
+            ReadKind::Float | ReadKind::Bool | ReadKind::Timestamp => ColumnKind::F64,
+            ReadKind::Text | ReadKind::Json => ColumnKind::Text,
+            ReadKind::Bytes => ColumnKind::Bytes,
+            ReadKind::List => ColumnKind::List,
         }
-        _ => ColumnKind::Text,
     }
 }
 
-/// The slot JavaScript sees for a column: a list where the type is an array,
-/// and the scalar's own slot otherwise.
-pub fn slot_kind(ty: &Type) -> ColumnKind {
+/// What a scalar of this type becomes. Two of these are wider than the slot
+/// that carries them: `int8` and `numeric` are text because that is what the
+/// driver being replaced produced, and a JSON document travels as its own text
+/// because that is what its parser was handed.
+pub fn read_kind(ty: &Type) -> ReadKind {
+    match ty.oid() {
+        BOOL => ReadKind::Bool,
+        BYTEA => ReadKind::Bytes,
+        DATE | TIMESTAMP | TIMESTAMPTZ => ReadKind::Timestamp,
+        INT2 | INT4 | OID | FLOAT4 | FLOAT8 => ReadKind::Float,
+        JSON | JSONB => ReadKind::Json,
+        _ => ReadKind::Text,
+    }
+}
+
+/// What JavaScript makes of a column: a list where the type is an array, and
+/// the scalar's own reading otherwise.
+pub fn column_read_kind(ty: &Type) -> ReadKind {
     match ty.kind() {
-        Kind::Array(_) => ColumnKind::List,
-        _ => scalar_kind(ty),
+        Kind::Array(_) => ReadKind::List,
+        _ => read_kind(ty),
+    }
+}
+
+/// What a list column's elements become, or `-1` where the column is not a list.
+pub fn element_read_kind(ty: &Type) -> i32 {
+    match ty.kind() {
+        Kind::Array(element) => read_kind(element) as i32,
+        _ => -1,
     }
 }
 

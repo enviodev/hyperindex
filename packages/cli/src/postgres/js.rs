@@ -217,6 +217,10 @@ pub struct PgQueryResult {
     /// One per column, as `columnar`'s ordinals. JavaScript picks the view to
     /// build over each buffer from these.
     pub kinds: Vec<u8>,
+    /// What a list column's elements are, and `-1` for a column that is not a
+    /// list. A list's own ordinal says nothing about what it holds, and the
+    /// element column is read exactly as a top-level one of that kind.
+    pub element_kinds: Vec<i32>,
     pub rows: u32,
 }
 
@@ -297,7 +301,11 @@ impl PgClient {
         let result = PgQueryResult {
             handle: self.next_handle.fetch_add(1, Ordering::Relaxed),
             names: columns.into_iter().map(|column| column.name).collect(),
-            kinds: types.iter().map(|ty| rows::slot_kind(ty) as u8).collect(),
+            kinds: types
+                .iter()
+                .map(|ty| rows::column_read_kind(ty) as u8)
+                .collect(),
+            element_kinds: types.iter().map(rows::element_read_kind).collect(),
             rows: arena.rows() as u32,
         };
         self.results.lock().unwrap().insert(result.handle, arena);

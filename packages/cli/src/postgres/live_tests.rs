@@ -11,7 +11,7 @@
 use super::client::{PgClient, PgConnectionOptions, SslSetting};
 use super::param::Param;
 use super::rows::Cell;
-use crate::columnar::ColumnKind;
+use super::rows::ReadKind;
 
 fn client() -> PgClient {
     PgClient::connect(PgConnectionOptions {
@@ -309,7 +309,10 @@ async fn array_columns_lay_out_as_lists() {
     assert_eq!(
         (
             arena.rows(),
-            types.iter().map(super::rows::slot_kind).collect::<Vec<_>>(),
+            types
+                .iter()
+                .map(super::rows::column_read_kind)
+                .collect::<Vec<_>>(),
             // the null array in the third row, and nothing else
             (0..3)
                 .map(|row| arena.columns()[1].is_null(row))
@@ -317,7 +320,7 @@ async fn array_columns_lay_out_as_lists() {
         ),
         (
             3,
-            vec![ColumnKind::List, ColumnKind::List, ColumnKind::List],
+            vec![ReadKind::List, ReadKind::List, ReadKind::List],
             vec![false, false, true],
         )
     );
