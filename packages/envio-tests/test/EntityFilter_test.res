@@ -107,6 +107,12 @@ describe("EntityFilter.validateOrThrow", () => {
       getError(%raw(`{createdAt: {_eq: "2020-01-01"}}`)),
       getError(%raw(`{createdAt: {_in: [new Date(0), 1700000000]}}`)),
       getError(%raw(`{tag: {_eq: "0xdeadbeef"}}`)),
+      // The cache key has to render every value it is handed.
+      getError(%raw(`{name: {_eq: {a: 1n}}}`)),
+      getError(%raw(`{name: {_in: [{ok: 1}, {a: 1n}]}}`)),
+      getError(
+        %raw(`(() => { const circular = {}; circular.self = circular; return {name: {_eq: circular}} })()`),
+      ),
     ]).toEqual([
       `Empty filter passed to context.User.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
       `Invalid undefined value passed to context.User.getWhere({ score: undefined }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
@@ -125,6 +131,9 @@ describe("EntityFilter.validateOrThrow", () => {
       `Invalid value passed to context.User.getWhere({ createdAt: { _eq: ... } }). The field "createdAt" expects a Date.`,
       `Invalid value passed to context.User.getWhere({ createdAt: { _in: ... } }). The field "createdAt" expects a Date. The value is at index 1 of the _in array.`,
       `Invalid value passed to context.User.getWhere({ tag: { _eq: ... } }). The field "tag" expects a Uint8Array.`,
+      `Invalid value passed to context.User.getWhere({ name: { _eq: ... } }). The value can't be serialized, so it can't be used as a filter. An object holding a bigint, or a circular reference, is not supported.`,
+      `Invalid value passed to context.User.getWhere({ name: { _in: ... } }). The value can't be serialized, so it can't be used as a filter. An object holding a bigint, or a circular reference, is not supported. The value is at index 1 of the _in array.`,
+      `Invalid value passed to context.User.getWhere({ name: { _eq: ... } }). The value can't be serialized, so it can't be used as a filter. An object holding a bigint, or a circular reference, is not supported.`,
     ])
   })
 })

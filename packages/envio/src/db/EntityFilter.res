@@ -78,6 +78,29 @@ let expectedValueType = (field: Table.field) =>
   | _ => None
   }
 
+// Whether building the cache key for this column runs a value through a JSON
+// serializer, which is the only thing that can fail on it. Date, Bytea and
+// BigDecimal project to a primitive first, so their values never reach one.
+let keyUsesSerializer = (field: Table.field) =>
+  field.isArray ||
+  switch field.fieldType {
+  | Date | Bytea | BigDecimal(_) => false
+  | _ => true
+  }
+
+// The cache key has to render every value it is handed, and an object holding
+// a bigint or a circular reference can't be. Asking serializeValue itself keeps
+// the check from drifting from what the key actually does. Only objects can
+// fail, so a filter over primitives pays a single typeof per value.
+let isKeyable = (value: unknown) =>
+  value->typeof !== #object ||
+    switch try Ok(value->serializeValue) catch {
+    | _ => Error()
+    } {
+    | Ok(_) => true
+    | Error() => false
+    }
+
 let matchesFieldType = (value: unknown, ~field: Table.field) => {
   let matchesScalar = value =>
     switch field.fieldType {
@@ -164,6 +187,7 @@ let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
     // shape — so the per-value check below is a single comparison on the path
     // that matters, an _in of many values that are all about to pass.
     let expectedType = field->expectedValueType
+    let checkKeyable = field->keyUsesSerializer
 
     operatorKeys->Array.forEach(operatorKey => {
       let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
@@ -179,6 +203,10 @@ let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
       let throwUnexpectedType = (~typeName, ~hint) =>
         JsError.throwWithMessage(
           `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). The field "${apiFieldName}" expects ${typeName}.${hint}`,
+        )
+      let throwUnkeyable = (~hint) =>
+        JsError.throwWithMessage(
+          `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). The value can't be serialized, so it can't be used as a filter. An object holding a bigint, or a circular reference, is not supported.${hint}`,
         )
 
       switch operatorKey {
@@ -210,6 +238,11 @@ let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
                 )
               | _ => ()
               }
+              if checkKeyable && !(fieldValue->isKeyable) {
+                throwUnkeyable(
+                  ~hint=` The value is at index ${index->Int.toString} of the _in array.`,
+                )
+              }
             },
           )
         }
@@ -218,6 +251,9 @@ let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
         | Some(typeName) if !(fieldValue->matchesFieldType(~field)) =>
           throwUnexpectedType(~typeName, ~hint="")
         | _ => ()
+        }
+        if checkKeyable && !(fieldValue->isKeyable) {
+          throwUnkeyable(~hint="")
         }
       }
     })
