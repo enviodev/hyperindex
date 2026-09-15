@@ -120,8 +120,7 @@ let columns = (~buffers, ~names, ~kinds, ~elementKinds) => {
     switch reader {
     | Floats(values) => values->floatAt(index)->(Utils.magic: float => unknown)
     | Booleans(values) => (values->floatAt(index) !== 0.)->(Utils.magic: bool => unknown)
-    | Timestamps(values) =>
-      values->floatAt(index)->Date.fromTime->(Utils.magic: Date.t => unknown)
+    | Timestamps(values) => values->floatAt(index)->Date.fromTime->(Utils.magic: Date.t => unknown)
     | Texts(variable) =>
       let (start, end) = boundsOf(variable, index)
       decoder
@@ -131,7 +130,7 @@ let columns = (~buffers, ~names, ~kinds, ~elementKinds) => {
       let (start, end) = boundsOf(variable, index)
       decoder
       ->decode(variable.data->TypedArray.subarray(~start, ~end))
-      ->JSON.parseExn
+      ->JSON.parseOrThrow
       ->(Utils.magic: JSON.t => unknown)
     | Blobs(variable) =>
       let (start, end) = boundsOf(variable, index)

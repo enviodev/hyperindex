@@ -1,9 +1,9 @@
 open Vitest
 
 // The write path end to end: rows laid into the arena from ReScript, rendered
-// into the arrays an unnest insert binds by Rust, and read back as what went in.
-// The same rows go in through the driver this replaces, and the two tables have
-// to end up holding the same thing.
+// into the arrays an unnest insert binds by Rust, and read back as what went
+// in. The values are pinned against what the driver this replaces stored for
+// the same rows.
 
 let field = (name, fieldType, ~isNullable=false, ~isPrimaryKey=false) =>
   Table.mkField(name, fieldType, ~fieldSchema=S.unknown, ~isNullable, ~isPrimaryKey)
@@ -121,38 +121,27 @@ describe("Writing a staged batch", () => {
     )
     await pg->PgClient.close
 
-    let sql = PgStorage.makeClient()
-    let theirs = await sql->Postgres.beginSql(
-      async sql => {
-        let _ = await sql->Postgres.unsafe(createTable)
-        let _ = await sql->Postgres.preparedUnsafe(
-          `INSERT INTO staged_rows ("id", "count", "flag", "amount", "price", "at", "blob", "note")
-SELECT * FROM unnest($1::TEXT[],$2::INTEGER[],$3::INTEGER[]::BOOLEAN[],$4::NUMERIC[],$5::NUMERIC[],$6::TIMESTAMP WITH TIME ZONE[],$7::BYTEA[],$8::TEXT[]);`,
-          [
-            rows->Array.map(row => row.id)->Obj.magic,
-            rows->Array.map(row => row.count)->Obj.magic,
-            rows->Array.map(row => row.flag ? 1 : 0)->Obj.magic,
-            rows->Array.map(row => row.amount->BigInt.toString)->Obj.magic,
-            rows->Array.map(row => row.price->BigDecimal.toString)->Obj.magic,
-            // The driver infers an array's type from its first element, so a
-            // `Date` there would make the whole array a timestamp rather than an
-            // array of them. `Utils.Schema.dbDate` renders them for the same reason.
-            rows->Array.map(row => row.at->Date.toISOString)->Obj.magic,
-            // Same reason, and what `Utils.Bytes.toPgArrayLiteral` is for: the
-            // old path built this literal in JavaScript, a character at a time.
-            rows
-            ->Array.map(row => row.blob)
-            ->(Utils.magic: array<Uint8Array.t> => array<unknown>)
-            ->Utils.Bytes.toPgArrayLiteral
-            ->Obj.magic,
-            rows->Array.map(row => row.note->Null.fromOption)->Obj.magic,
-          ]->Obj.magic,
-        )
-        await sql->Postgres.unsafe(readBack)
-      },
-    )
-    await sql->Postgres.endSql
-
-    t.expect(mine->PgClientRead_test.plainRows).toStrictEqual(theirs->PgClientRead_test.plainRows)
+    t.expect(mine->PgValue.rows).toStrictEqual([
+      [
+        ("id", `text a,b{"x"}\\`),
+        ("count", "number -7"),
+        ("flag", "boolean true"),
+        ("amount", "text 123456789012345678901234567890"),
+        ("price", "text 1.5"),
+        ("at", "date 2009-02-13T23:31:30.123Z"),
+        ("blob", "bytes dead00"),
+        ("note", "text here"),
+      ],
+      [
+        ("id", "text "),
+        ("count", "number 0"),
+        ("flag", "boolean false"),
+        ("amount", "text 0"),
+        ("price", "text 0"),
+        ("at", "date 1970-01-01T00:00:00.000Z"),
+        ("blob", "bytes "),
+        ("note", "null"),
+      ],
+    ])
   })
 })

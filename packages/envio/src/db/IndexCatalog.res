@@ -6,8 +6,7 @@ type row = {
   tableName: string,
   indexName: string,
   method: string,
-  // 1/0 rather than bools: postgres.js hands booleans back inconsistently
-  // depending on the driver's type resolution, so the query casts them.
+  // 1/0 rather than bools, cast by the query itself.
   isValid: int,
   isUnique: int,
   // An index with a WHERE clause only covers rows inside its predicate, so it

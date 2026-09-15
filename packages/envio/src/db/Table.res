@@ -532,11 +532,11 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
               ~chainIdMode,
             )
             switch f.fieldType {
-            | Enum(_) => `${(Text: Postgres.columnType :> string)}[]::${pgFieldType}`
-            | Boolean => `${(Integer: Postgres.columnType :> string)}[]::${pgFieldType}`
+            | Enum(_) => `${(Text: Sql.columnType :> string)}[]::${pgFieldType}`
+            | Boolean => `${(Integer: Sql.columnType :> string)}[]::${pgFieldType}`
             | _ => pgFieldType
             }
-          | DerivedFrom(_) => (Text: Postgres.columnType :> string) ++ "[]"
+          | DerivedFrom(_) => (Text: Sql.columnType :> string) ++ "[]"
           },
         )
         ->ignore

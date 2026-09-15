@@ -48,7 +48,7 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
         "numeric_precision": Nullable.t<int>,
         "numeric_scale": Nullable.t<int>,
         "is_nullable": string,
-      }> = await sql->Postgres.unsafe(`SELECT
+      }> = await sql->Sql.query(`SELECT
           a.attname AS column_name,
           pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
           CASE

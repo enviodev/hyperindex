@@ -236,7 +236,7 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
       ~setQueryCache=PgStorage.makeSetQueryCache(),
     )
 
-    let rawRows = await sql->Postgres.unsafe(`SELECT * FROM "${pgSchema}"."Snapshot";`)
+    let rawRows = await sql->Sql.query(`SELECT * FROM "${pgSchema}"."Snapshot";`)
     let loadedByIds = await storage.loadOrThrow(
       ~filter=EntityFilter.In({
         fieldName: "id",
@@ -252,7 +252,7 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
       ~table=snapshotEntity.table,
     )
 
-    let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+    let _ = await sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
     await storage.close()
 
     t.expect({

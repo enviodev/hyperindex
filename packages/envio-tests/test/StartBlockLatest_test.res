@@ -93,7 +93,7 @@ let persistedStartBlocks = async (~sql, ~pgSchema) => {
   let rows: array<{
     "id": int,
     "start_block": int,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.query(
     `SELECT "id", "start_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (row["id"], row["start_block"]))
@@ -142,7 +142,7 @@ describe("start_block: latest", () => {
       await indexer.getBatchWritePromise()
 
       let {sql, pgSchema} = indexer.pg
-      let rows: array<{"seenStartBlock": int}> = await sql->Postgres.unsafe(
+      let rows: array<{"seenStartBlock": int}> = await sql->Sql.query(
         `SELECT "seenStartBlock" FROM "${pgSchema}"."Seen";`,
       )
 

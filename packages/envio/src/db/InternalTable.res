@@ -5,17 +5,21 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-// Postgres SQLSTATE for "undefined_table" — what a read gets when the schema was
-// initialized by an older envio that didn't have the table.
-let undefinedTableSqlState = "42P01"
-
-@get external getSqlStateCode: JsExn.t => option<string> = "code"
-
-let isUndefinedTable = exn =>
-  switch exn->JsExn.anyToExnInternal {
-  | JsExn(e) => e->getSqlStateCode === Some(undefinedTableSqlState)
-  | _ => false
+// Whether the schema has a table at all. A schema initialized by an older envio
+// is missing the ones added since, and reading one of those has to report the
+// old schema rather than fail.
+let exists = async (sql, ~pgSchema, ~tableName) => {
+  let rows: array<{
+    "present": bool,
+  }> = await sql->Sql.query(
+    `SELECT to_regclass($1) IS NOT NULL AS present;`,
+    ~params=[`"${pgSchema}"."${tableName}"`->(Utils.magic: string => unknown)],
+  )
+  switch rows->Array.get(0) {
+  | Some(row) => row["present"]
+  | None => false
   }
+}
 
 // The array type an unnest binds a chain-id column to. Resolved from the
 // config's mode, so every internal query casts the parameter the same way the
@@ -45,33 +49,31 @@ module EnvioContracts = {
 
   let makeInsertQuery = (~pgSchema) =>
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "name")
-SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(Text: Postgres.columnType :> string)}[]);`
+SELECT * FROM unnest($1::${(SmallInt: Sql.columnType :> string)}[],$2::${(Text: Sql.columnType :> string)}[]);`
 
   // `contractNames` is the canonical list: a name's position is its id.
   let insert = (sql, ~pgSchema, ~contractNames: array<string>) =>
-    sql
-    ->Postgres.preparedUnsafe(
+    sql->Sql.exec(
       makeInsertQuery(~pgSchema),
-      (contractNames->Array.mapWithIndex((_, idx) => idx), contractNames)->(
-        Utils.magic: ((array<int>, array<string>)) => unknown
+      ~params=(contractNames->Array.mapWithIndex((_, idx) => idx), contractNames)->(
+        Utils.magic: ((array<int>, array<string>)) => array<unknown>
       ),
     )
-    ->Utils.Promise.ignoreValue
 
   // Ordered by id, so the result is the canonical list itself. None when the
   // schema has no such table: it was written by an envio that predates the
   // contract mapping, and every address row in it is shaped differently — so a
   // resume has to stop at the compat check rather than at a missing column.
   let read = async (sql, ~pgSchema): option<array<string>> =>
-    try {
+    if await sql->exists(~pgSchema, ~tableName=table.tableName) {
       let rows: array<{
         "name": string,
-      }> = await sql->Postgres.unsafe(
+      }> = await sql->Sql.query(
         `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
       )
       Some(rows->Array.map(row => row["name"]))
-    } catch {
-    | exn => isUndefinedTable(exn) ? None : throw(exn)
+    } else {
+      None
     }
 }
 
@@ -93,7 +95,7 @@ module EnvioAddresses = {
   let makeInsertQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
     let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("chain_id", "address", "contract_id", "registration_block")
-SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[],$4::${(Integer: Postgres.columnType :> string)}[])
+SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Sql.columnType :> string)}[],$3::${(SmallInt: Sql.columnType :> string)}[],$4::${(Integer: Sql.columnType :> string)}[])
 ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
   }
 
@@ -113,23 +115,20 @@ ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
       contractIds->Array.push(row.contractId)->ignore
       registrationBlocks->Array.push(row.registrationBlock)->ignore
     })
-    sql
-    ->Postgres.preparedUnsafe(
+    sql->Sql.exec(
       makeInsertQuery(~pgSchema, ~chainIdMode),
-      (
-        chainIds,
-        sql->Postgres.typed(addresses, Postgres.byteaArrayOid),
-        contractIds,
-        registrationBlocks,
-      )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>, array<int>)) => unknown),
+      ~params=(chainIds, addresses, contractIds, registrationBlocks)->(
+        Utils.magic: ((array<ChainId.t>, array<NodeJs.Buffer.t>, array<int>, array<int>)) => array<
+          unknown,
+        >
+      ),
     )
-    ->Utils.Promise.ignoreValue
   }
 
   let makeDeleteQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
     let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
     `DELETE FROM "${pgSchema}"."${table.tableName}"
-USING unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[]) AS dead(chain_id, address, contract_id)
+USING unnest($1::${chainIdArrayType},$2::${(Bytea: Sql.columnType :> string)}[],$3::${(SmallInt: Sql.columnType :> string)}[]) AS dead(chain_id, address, contract_id)
 WHERE "${table.tableName}"."chain_id" = dead.chain_id
   AND "${table.tableName}"."address" = dead.address
   AND "${table.tableName}"."contract_id" = dead.contract_id;`
@@ -149,14 +148,12 @@ WHERE "${table.tableName}"."chain_id" = dead.chain_id
       addresses->Array.push(key.address)->ignore
       contractIds->Array.push(key.contractId)->ignore
     })
-    sql
-    ->Postgres.preparedUnsafe(
+    sql->Sql.exec(
       makeDeleteQuery(~pgSchema, ~chainIdMode),
-      (chainIds, sql->Postgres.typed(addresses, Postgres.byteaArrayOid), contractIds)->(
-        Utils.magic: ((array<ChainId.t>, unknown, array<int>)) => unknown
+      ~params=(chainIds, addresses, contractIds)->(
+        Utils.magic: ((array<ChainId.t>, array<NodeJs.Buffer.t>, array<int>)) => array<unknown>
       ),
     )
-    ->Utils.Promise.ignoreValue
   }
 
   let makeGetRowsQuery = (~pgSchema) =>
@@ -385,16 +382,15 @@ FROM "${pgSchema}"."${table.tableName}";`
   }
 
   // Addresses are read as plain rows rather than aggregated per chain with
-  // json_agg: a single chain's aggregate can exceed V8's max string length
-  // (postgres.js decodes the column with Buffer.toString and throws
-  // ERR_STRING_TOO_LONG). Grouping happens in JS instead — see getInitialState.
+  // json_agg: a single chain's aggregate can exceed V8's max string length.
+  // Grouping happens in JS instead — see getInitialState.
   let getInitialState = async (sql, ~pgSchema) => {
     let (rawInitialStates, rawAddressRows) = await Promise.all2((
       sql
-      ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
+      ->Sql.query(makeGetInitialStateQuery(~pgSchema))
       ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>),
       sql
-      ->Postgres.unsafe(EnvioAddresses.makeGetRowsQuery(~pgSchema))
+      ->Sql.query(EnvioAddresses.makeGetRowsQuery(~pgSchema))
       ->(Utils.magic: promise<array<unknown>> => promise<array<AddressRows.row>>),
     ))
 
@@ -440,7 +436,7 @@ FROM "${pgSchema}"."${table.tableName}";`
         params->Array.push(value)->ignore
       })
 
-      promises->Array.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Array.push(sql->Sql.exec(query, ~params))->ignore
     })
 
     Promise.all(promises)
@@ -475,7 +471,7 @@ FROM "${pgSchema}"."${table.tableName}";`
         ->ignore
       })
 
-      promises->Array.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Array.push(sql->Sql.exec(query, ~params))->ignore
     })
 
     Promise.all(promises)->Utils.Promise.ignoreValue
@@ -488,7 +484,7 @@ FROM "${pgSchema}"."${table.tableName}";`
       ~idColumn=(#id: field :> string),
       ~setColumn=(#checkpoint_id: field :> string),
       ~idArrayType=chainIdArrayType(~pgSchema, ~chainIdMode),
-      ~valueArrayType=(BigInt: Postgres.columnType :> string) ++ "[]",
+      ~valueArrayType=(BigInt: Sql.columnType :> string) ++ "[]",
       ~relation="envio_frontier",
     )
 
@@ -501,12 +497,12 @@ FROM "${pgSchema}"."${table.tableName}";`
     ~frontier: Frontier.t,
     ~chainIdMode: ChainId.mode=Int32,
   ) => {
-    sql
-    ->Postgres.preparedUnsafe(
+    sql->Sql.exec(
       makeSetCheckpointFrontierQuery(~pgSchema, ~chainIdMode),
-      frontier->Frontier.unnestParams->(Utils.magic: Frontier.unnestParams => unknown),
+      ~params=frontier
+      ->Frontier.unnestParams
+      ->(Utils.magic: Frontier.unnestParams => array<unknown>),
     )
-    ->Utils.Promise.ignoreValue
   }
 }
 
@@ -530,10 +526,10 @@ module EnvioInfo = {
   let read = async (sql, ~pgSchema): option<JSON.t> => {
     let rows: array<{
       "config": string,
-    }> = try await sql->Postgres.unsafe(
-      `SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`,
-    ) catch {
-    | exn => isUndefinedTable(exn) ? [] : throw(exn)
+    }> = if await sql->exists(~pgSchema, ~tableName=table.tableName) {
+      await sql->Sql.query(`SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`)
+    } else {
+      []
     }
     rows->Array.get(0)->Option.map(row => row["config"]->JSON.parseOrThrow)
   }
@@ -542,12 +538,10 @@ module EnvioInfo = {
   // `initialize` runs against a non-empty schema (shouldn't happen, but
   // protects against a partially-applied prior run).
   let write = (sql, ~pgSchema, ~envioInfo: JSON.t) => {
-    sql
-    ->Postgres.preparedUnsafe(
+    sql->Sql.exec(
       `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "config") VALUES (1, $1) ON CONFLICT ("id") DO UPDATE SET "config" = EXCLUDED."config";`,
-      [envioInfo->JSON.stringify]->(Utils.magic: array<string> => unknown),
+      ~params=[envioInfo->JSON.stringify->(Utils.magic: string => unknown)],
     )
-    ->Utils.Promise.ignoreValue
   }
 }
 
@@ -729,7 +723,7 @@ ORDER BY cp."${(#id: field :> string)}";`
   let makeInsertCheckpointQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
     let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
-SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chainIdArrayType},$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
+SELECT * FROM unnest($1::${(BigInt: Sql.columnType :> string)}[],$2::${chainIdArrayType},$3::${(Integer: Sql.columnType :> string)}[],$4::${(Text: Sql.columnType :> string)}[],$5::${(Integer: Sql.columnType :> string)}[]);`
   }
 
   let insert = (
@@ -744,24 +738,20 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
   ) => {
     let query = makeInsertCheckpointQuery(~pgSchema, ~chainIdMode)
 
-    // Convert bigint arrays to string arrays for postgres driver compatibility
-    let checkpointIdStrings = checkpointIds->Utils.BigInt.arrayToStringArray
-    sql
-    ->Postgres.preparedUnsafe(
+    sql->Sql.exec(
       query,
-      (
-        checkpointIdStrings,
+      ~params=(
+        checkpointIds,
         checkpointChainIds,
         checkpointBlockNumbers,
         checkpointBlockHashes,
         checkpointEventsProcessed,
       )->(
         Utils.magic: (
-          (array<string>, array<ChainId.t>, array<int>, array<Null.t<string>>, array<int>)
-        ) => unknown
+          (array<BigInt.t>, array<ChainId.t>, array<int>, array<Null.t<string>>, array<int>)
+        ) => array<unknown>
       ),
     )
-    ->Utils.Promise.ignoreValue
   }
 
   // Optional to match the entity tables', where a cross-chain entity has none.
@@ -770,12 +760,10 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
   let rollback = (sql, ~pgSchema, ~floors: RollbackFloors.t) => {
     let tableRef = `"${pgSchema}"."${table.tableName}"`
     let bounds = floors.checkpointBounds->CheckpointSequence.sql(~chainIdColumn, ~tableRef)
-    sql
-    ->Postgres.preparedUnsafe(
+    sql->Sql.exec(
       `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" > ${bounds.checkpointId}${bounds.usingMatch};`,
-      floors.checkpointBounds->CheckpointSequence.params,
+      ~params=floors.checkpointBounds->CheckpointSequence.params,
     )
-    ->Utils.Promise.ignoreValue
   }
 
   let makePruneStaleCheckpointsQuery = (
@@ -788,12 +776,10 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
   }
 
   let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpoints) =>
-    sql
-    ->Postgres.preparedUnsafe(
+    sql->Sql.exec(
       makePruneStaleCheckpointsQuery(~pgSchema, ~safeCheckpoints),
-      safeCheckpoints->CheckpointSequence.params,
+      ~params=safeCheckpoints->CheckpointSequence.params,
     )
-    ->Utils.Promise.ignoreValue
 
   let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
     `SELECT "${(#id: field :> string)}" FROM "${pgSchema}"."${table.tableName}"
@@ -811,12 +797,13 @@ LIMIT 1;`
     ~lastKnownValidBlockNumber: int,
   ) => {
     let rawResult: promise<array<{"id": string}>> =
-      sql
-      ->Postgres.preparedUnsafe(
+      sql->Sql.query(
         makeGetRollbackTargetCheckpointQuery(~pgSchema),
-        (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
+        ~params=(reorgChainId, lastKnownValidBlockNumber)->(
+          Utils.magic: ((ChainId.t, int)) => array<unknown>
+        ),
       )
-      ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>)
+
     rawResult->Promise.thenResolve(rows => {
       rows->Array.get(0)->Option.map(row => row["id"]->BigInt.fromStringOrThrow)
     })
@@ -835,12 +822,12 @@ GROUP BY t."${(#chain_id: field :> string)}";`
 
   let getRollbackProgressDiff = (sql, ~pgSchema, ~floors: RollbackFloors.t) =>
     sql
-    ->Postgres.preparedUnsafe(
+    ->Sql.query(
       makeGetRollbackProgressDiffQuery(~pgSchema, ~floors),
-      floors.checkpointBounds->CheckpointSequence.params,
+      ~params=floors.checkpointBounds->CheckpointSequence.params,
     )
     ->(
-      Utils.magic: promise<unknown> => promise<
+      Utils.magic: promise<array<unknown>> => promise<
         array<{
           "chain_id": ChainId.t,
           "events_processed_diff": string,

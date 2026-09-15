@@ -32,9 +32,9 @@ let createdSchemas = []
 
 Async.afterAll(async () => {
   let _ = await createdSchemas
-  ->Array.map(pgSchema => sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`))
+  ->Array.map(pgSchema => sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`))
   ->Promise.all
-  await sql->Postgres.endSql
+  await sql->Sql.close
 })
 
 let setup = async () => {
@@ -79,7 +79,7 @@ let row = (~address: Address.t, ~contractName, ~registrationBlock): AddressRows.
 }
 
 let storedRows = async (~pgSchema) => {
-  let rows: array<AddressRows.row> = await sql->Postgres.unsafe(
+  let rows: array<AddressRows.row> = await sql->Sql.query(
     InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),
   )
   let rendered = rows->AddressRows.render(~ecosystem="evm", ~shouldChecksum=true)
@@ -132,7 +132,7 @@ describe("envio_addresses", () => {
   // resume.
   Async.it("refuses to resume a schema that predates the contract mapping", async t => {
     let (storage, pgSchema) = await setup()
-    let _ = await sql->Postgres.unsafe(
+    let _ = await sql->Sql.query(
       `DROP TABLE "${pgSchema}"."${InternalTable.EnvioContracts.table.tableName}";`,
     )
     let persistence = Persistence.make(

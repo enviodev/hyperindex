@@ -1,23 +1,14 @@
-let makeClient = () => {
-  Postgres.makeSql(
-    ~config={
-      host: Env.Db.host,
-      port: Env.Db.port,
-      username: Env.Db.user,
-      password: Env.Db.password,
-      database: Env.Db.database,
-      ssl: Env.Db.ssl,
-      // TODO: think how we want to pipe these logs to pino.
-      onnotice: ?(
-        Env.userLogLevel == Some(#warn) || Env.userLogLevel == Some(#error)
-          ? None
-          : Some(_str => ())
-      ),
-      transform: {undefined: Null},
-      max: Env.Db.maxConnections,
-      // debug: (~connection, ~query, ~params as _, ~types as _) => Js.log2(connection, query),
-    },
-  )
+let makeClient = (): Sql.t => {
+  client: PgClient.make({
+    host: Env.Db.host,
+    port: Env.Db.port,
+    user: Env.Db.user,
+    password: Env.Db.password,
+    database: Env.Db.database,
+    ssl: Env.Db.ssl->Sql.sslModeToString,
+    maxConnections: Env.Db.maxConnections,
+  }),
+  transaction: Null.null,
 }
 
 let formatSeconds = (timeRef: Performance.timeRef) =>
@@ -752,29 +743,35 @@ let setOrThrow = async (
           let chunkSize = chunk->Array.length
           let isFullChunk = chunkSize === maxItemsPerQuery
 
-          let params = data["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>))
+          let params =
+            data["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>))->(
+              Utils.magic: unknown => array<unknown>
+            )
           // Use prepared query only for full batches where the cached query is reused.
           // Partial chunks generate unique SQL each time, so preparation has no benefit.
-          let response = isFullChunk
-            ? sql->Postgres.preparedUnsafe(data["query"], params)
-            : sql->Postgres.unpreparedUnsafe(
-                makeInsertValuesSetQuery(
-                  ~pgSchema,
-                  ~table,
-                  ~itemSchema,
-                  ~itemsCount=chunkSize,
-                  ~chainIdMode,
-                ),
-                params,
-              )
+          let response =
+            sql->Sql.exec(
+              isFullChunk
+                ? data["query"]
+                : makeInsertValuesSetQuery(
+                    ~pgSchema,
+                    ~table,
+                    ~itemSchema,
+                    ~itemsCount=chunkSize,
+                    ~chainIdMode,
+                  ),
+              ~params,
+            )
           responses->Array.push(response)->ignore
         })
         let _ = await Promise.all(responses)
       } else {
         // Use UNNEST approach for single query
-        await sql->Postgres.preparedUnsafe(
+        await sql->Sql.exec(
           data["query"],
-          data["convertOrThrow"](items->(Utils.magic: array<'item> => array<unknown>)),
+          ~params=data["convertOrThrow"](items->(Utils.magic: array<'item> => array<unknown>))->(
+            Utils.magic: unknown => array<unknown>
+          ),
         )
       }
     } catch {
@@ -923,19 +920,19 @@ let deleteByIdsOrThrow = async (
   switch await (
     switch ids {
     | [_] =>
-      sql->Postgres.preparedUnsafe(
+      sql->Sql.exec(
         makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName, ~chainIdCondition),
-        idsJson->(Utils.magic: JSON.t => array<unknown>)->Obj.magic,
+        ~params=idsJson->(Utils.magic: JSON.t => array<unknown>),
       )
     | _ =>
-      sql->Postgres.preparedUnsafe(
+      sql->Sql.exec(
         makeDeleteByIdsQuery(
           ~pgSchema,
           ~tableName=table.tableName,
           ~idPgType=table->Table.getIdPgFieldType(~pgSchema),
           ~chainIdCondition,
         ),
-        [idsJson->(Utils.magic: JSON.t => unknown)]->Obj.magic,
+        ~params=[idsJson->(Utils.magic: JSON.t => unknown)],
       )
     }
   ) {
@@ -990,9 +987,9 @@ let makeInsertDeleteUpdatesQuery = (
   )
 
 let executeSet = (
-  sql: Postgres.sql,
+  sql: Sql.t,
   ~items: array<'a>,
-  ~dbFunction: (Postgres.sql, array<'a>) => promise<unit>,
+  ~dbFunction: (Sql.t, array<'a>) => promise<unit>,
 ) => {
   if items->Array.length > 0 {
     sql->dbFunction(items)
@@ -1211,21 +1208,17 @@ let rec writeBatch = async (
 
             if batchDeleteCheckpointIds->Utils.Array.notEmpty {
               promises->Array.push(
-                sql
-                ->Postgres.preparedUnsafe(
+                sql->Sql.exec(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema, ~chainId=scopeChainId),
-                  [
+                  ~params=[
                     entityConfig.table
                     ->Table.encodeIdsToJson(batchDeleteEntityIds)
                     ->(Utils.magic: JSON.t => unknown),
                     batchDeleteCheckpointIds
                     ->Utils.BigInt.arrayToStringArray
                     ->(Utils.magic: array<string> => unknown),
-                  ]
-                  ->Array.concat(chainIdParams)
-                  ->Obj.magic,
-                )
-                ->Utils.Promise.ignoreValue,
+                  ]->Array.concat(chainIdParams),
+                ),
               )
             }
 
@@ -1285,14 +1278,14 @@ let rec writeBatch = async (
 
           let _ = await promises->Promise.all
         } catch {
-        // There's a race condition that sql->Postgres.beginSql
+        // There's a race condition that the transaction
         // might throw PG error, earlier, than the handled error
         // from setOrThrow will be passed through.
         // This is needed for the utf8 encoding fix.
         //
         // Important: Don't rethrow here, since it'll result in an unhandled
         // rejected promise error. That's fine not to throw, since
-        // sql->Postgres.beginSql will fail anyways.
+        // the transaction will fail anyways.
         | exn => classifyWriteError(~specificError, ~table=entityConfig.table, ~exn)
         }
       }
@@ -1356,7 +1349,7 @@ let rec writeBatch = async (
 
     try {
       let _ = await Promise.all2((
-        sql->Postgres.beginSql(async sql => {
+        sql->Sql.begin(async sql => {
           //Rollback tables need to happen first in the traction
           switch rollbackTables {
           | Some(rollbackTables) =>
@@ -1520,7 +1513,7 @@ let rollbackKeyColumns = (entityConfig: Internal.entityConfig) =>
       }
     ),
     keyColumns: rollbackKeyColumns(entityConfig),
-    chainIdColumn: ?entityConfig.table->Table.getPgChainIdColumn,
+    chainIdColumn: ?(entityConfig.table->Table.getPgChainIdColumn),
     checkpointColumn: EntityHistory.checkpointIdFieldName,
     changeColumn: EntityHistory.changeFieldName,
     sequence: switch sequence {
@@ -1536,11 +1529,7 @@ let makeGetRollbackPreTargetRowsQuery = (
   ~floors: RollbackFloors.t,
 ) =>
   Core.pgRollbackPreTargetRowsQuery(
-    ~input=historyQueryInput(
-      ~entityConfig,
-      ~pgSchema,
-      ~sequence=floors.checkpointBounds.sequence,
-    ),
+    ~input=historyQueryInput(~entityConfig, ~pgSchema, ~sequence=floors.checkpointBounds.sequence),
   )
 
 let makeGetRollbackRemovedIdsQuery = (
@@ -1549,11 +1538,7 @@ let makeGetRollbackRemovedIdsQuery = (
   ~floors: RollbackFloors.t,
 ) =>
   Core.pgRollbackRemovedIdsQuery(
-    ~input=historyQueryInput(
-      ~entityConfig,
-      ~pgSchema,
-      ~sequence=floors.checkpointBounds.sequence,
-    ),
+    ~input=historyQueryInput(~entityConfig, ~pgSchema, ~sequence=floors.checkpointBounds.sequence),
   )
 
 let rollbackRowStateSchema: Table.table => S.t<(
@@ -1582,7 +1567,7 @@ let rollbackRemovedIdSchema: Table.table => S.t<EntityId.t> = Utils.WeakMap.memo
 )
 
 let make = (
-  ~sql: Postgres.sql,
+  ~sql: Sql.t,
   ~pgHost,
   ~pgSchema,
   ~pgPort,
@@ -1622,7 +1607,7 @@ let make = (
 
   let loadCatalogRows = (sql, ~indexName=?) =>
     sql
-    ->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema, ~indexName?))
+    ->Sql.query(IndexCatalog.makeQuery(~pgSchema, ~indexName?))
     ->Promise.thenResolve(rows => rows->S.parseOrThrow(IndexCatalog.rowsSchema))
 
   // The whole-schema snapshot, taken on a clean initialize and on every resume.
@@ -1647,7 +1632,7 @@ let make = (
   }
 
   let isInitialized = async () => {
-    let envioTables = await sql->Postgres.unsafe(
+    let envioTables = await sql->Sql.query(
       `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND (table_name = '${// This is for indexer before envio@2.28
         "event_sync_state"}' OR table_name = '${InternalTable.Chains.table.tableName}');`,
     )
@@ -1705,12 +1690,12 @@ let make = (
   // are computed here per table rather than through a shared SQL helper so
   // indexers isolated by schema in one database never touch each other's state.
   let queryCacheTableInfo = async (): array<schemaCacheTableInfo> => {
-    let tableNames: array<schemaTableName> = await sql->Postgres.unsafe(
+    let tableNames: array<schemaTableName> = await sql->Sql.query(
       makeEffectCacheTableNamesQuery(~pgSchema),
     )
     await tableNames
     ->Array.map(async ({tableName}) => {
-      let rows: array<cacheRowCount> = await sql->Postgres.unsafe(
+      let rows: array<cacheRowCount> = await sql->Sql.query(
         makeCacheRowCountQuery(~pgSchema, ~tableName),
       )
       ({tableName, count: (rows->Array.getUnsafe(0)).count}: schemaCacheTableInfo)
@@ -1729,7 +1714,7 @@ let make = (
           let _ = await entries
           ->Array.map(((table, inputFile)) => {
             sql
-            ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
+            ->Sql.batch(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
             ->Promise.then(() => {
               let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
 
@@ -1784,7 +1769,7 @@ let make = (
     // picks its own out of the full list.
     let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
 
-    let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
+    let schemaTableNames: array<schemaTableName> = await sql->Sql.query(
       makeSchemaTableNamesQuery(~pgSchema),
     )
 
@@ -1839,10 +1824,10 @@ let make = (
     // The contract mapping and the config's addresses join the schema in the
     // same transaction as envio_info: a schema that comes up without them would
     // resume against ids nothing assigned.
-    let _ = await sql->Postgres.beginSql(async sql => {
+    let _ = await sql->Sql.begin(async sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
-      let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
+      let _ = await Promise.all(queries->Array.map(query => sql->Sql.batch(query)))
       await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
       await InternalTable.EnvioContracts.insert(
         sql,
@@ -1897,9 +1882,9 @@ let make = (
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
     let params = []
     let condition = makeFilterCondition(~filter, ~table, ~params)
-    switch await sql->Postgres.preparedUnsafe(
+    switch await sql->Sql.query(
       makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
-      params->Obj.magic,
+      ~params,
     ) {
     | exception exn =>
       throw(
@@ -1951,7 +1936,7 @@ let make = (
     // Sequential rather than Promise.all: inside a transaction they share one
     // connection, and a rebuild's DROP has to land before its CREATE.
     for idx in 0 to prepared.queries->Array.length - 1 {
-      let _ = await sql->Postgres.unsafe(prepared.queries->Array.getUnsafe(idx))
+      await sql->Sql.batch(prepared.queries->Array.getUnsafe(idx))
     }
     let rows = await sql->loadCatalogRows(~indexName=prepared.name)
     prepared->IndexManager.verifyOrThrow(~rows, ~pgSchema)
@@ -2170,14 +2155,14 @@ let make = (
     // up together, and a crash part way through would otherwise leave some of
     // them stamped and some not.
     let setReadyAtQuery = InternalTable.Chains.makeSetReadyAtQuery(~pgSchema)
-    let _ = await sql->Postgres.beginSql(async sql => {
+    let _ = await sql->Sql.begin(async sql => {
       for idx in 0 to chainIds->Array.length - 1 {
-        let _ = await sql->Postgres.preparedUnsafe(
+        await sql->Sql.exec(
           setReadyAtQuery,
-          [
+          ~params=[
             readyAt->(Utils.magic: Date.t => unknown),
             chainIds->Array.getUnsafe(idx)->(Utils.magic: ChainId.t => unknown),
-          ]->(Utils.magic: array<unknown> => unknown),
+          ],
         )
       }
     })
@@ -2214,9 +2199,7 @@ let make = (
     ~initialize: bool,
   ) => {
     if initialize {
-      let _ = await sql->Postgres.unsafe(
-        makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
-      )
+      await sql->Sql.batch(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
     }
 
     await setOrThrow(~items, ~table, ~itemSchema)
@@ -2335,7 +2318,7 @@ let make = (
         )
       }),
       sql
-      ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
+      ->Sql.query(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
       ->(
         Utils.magic: promise<array<unknown>> => promise<
           array<{
@@ -2390,8 +2373,7 @@ let make = (
   }
 
   let reset = async () => {
-    let query = `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`
-    await sql->Postgres.unsafe(query)->Utils.Promise.ignoreValue
+    await sql->Sql.batch(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
   }
 
   let setChainMeta = chainsData =>
@@ -2427,19 +2409,9 @@ let make = (
     let params = floors.checkpointBounds->CheckpointSequence.params
     let (removedIdRows, rollbackRows) = await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
-      sql
-      ->Postgres.preparedUnsafe(
-        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema, ~floors),
-        params,
-      )
-      ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
+      sql->Sql.query(makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema, ~floors), ~params),
       // Get the latest pre-target row, including its SET or DELETE action.
-      sql
-      ->Postgres.preparedUnsafe(
-        makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema, ~floors),
-        params,
-      )
-      ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
+      sql->Sql.query(makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema, ~floors), ~params),
     ))
 
     let chainIdSchema = rollbackChainIdSchema(entityConfig.table)
@@ -2536,7 +2508,7 @@ let make = (
     onWrite(~storage=storageName, ~timeSeconds=primaryTimerRef->Performance.secondsSince)
   }
 
-  let close = () => sql->Postgres.endSql
+  let close = () => sql->Sql.close
 
   {
     name: storageName,

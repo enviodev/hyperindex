@@ -143,7 +143,7 @@ let pruneStaleEntityHistory = (
   ~chainIdColumn,
   ~safeCheckpoints,
 ): promise<unit> =>
-  sql->Postgres.preparedUnsafe(
+  sql->Sql.exec(
     makePruneStaleEntityHistoryQuery(
       ~entityName,
       ~entityIndex,
@@ -151,7 +151,7 @@ let pruneStaleEntityHistory = (
       ~chainIdColumn,
       ~safeCheckpoints,
     ),
-    safeCheckpoints->CheckpointSequence.params,
+    ~params=safeCheckpoints->CheckpointSequence.params,
   )
 
 // If an entity doesn't have a history before the update
@@ -200,8 +200,7 @@ let backfillHistory = (
   let idPgType = table->Table.getIdPgFieldType(~pgSchema)
   let chainIdColumn = table->Table.getPgChainIdColumn
   let params = [table->Table.encodeIdsToJson(ids)->(Utils.magic: JSON.t => unknown)]
-  sql
-  ->Postgres.preparedUnsafe(
+  sql->Sql.exec(
     makeBackfillHistoryQuery(
       ~entityName=table.tableName,
       ~entityIndex,
@@ -210,9 +209,8 @@ let backfillHistory = (
       ~chainIdColumn,
       ~chainId,
     ),
-    params->Obj.magic,
+    ~params,
   )
-  ->Utils.Promise.ignoreValue
 }
 
 let rollback = (
@@ -226,10 +224,8 @@ let rollback = (
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   let bounds =
     floors.checkpointBounds->CheckpointSequence.sql(~chainIdColumn, ~tableRef=historyTableRef)
-  sql
-  ->Postgres.preparedUnsafe(
+  sql->Sql.exec(
     `DELETE FROM ${historyTableRef}${bounds.using} WHERE "${checkpointIdFieldName}" > ${bounds.checkpointId}${bounds.usingMatch};`,
-    floors.checkpointBounds->CheckpointSequence.params,
+    ~params=floors.checkpointBounds->CheckpointSequence.params,
   )
-  ->Utils.Promise.ignoreValue
 }

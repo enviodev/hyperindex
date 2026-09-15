@@ -187,7 +187,7 @@ describe("Per-chain entity partitions against Postgres", () => {
 
       // Every relation the Counter entity owns: the parent, its partitions, and
       // its history table — with what each one is attached to.
-      let relations: array<relation> = await sql->Postgres.unsafe(
+      let relations: array<relation> = await sql->Sql.query(
         `SELECT c.relname AS "name", c.relkind::text AS "kind", COALESCE(p.relname, '') AS "parent"
          FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -204,7 +204,7 @@ describe("Per-chain entity partitions against Postgres", () => {
       // satisfy the declaration — a child's copy must never stand in for it.
       let catalog =
         IndexCatalog.fromRows(
-          ~rows=(await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
+          ~rows=(await sql->Sql.query(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
             IndexCatalog.rowsSchema,
           ),
         )
@@ -218,7 +218,7 @@ describe("Per-chain entity partitions against Postgres", () => {
 
       let plan: array<{
         "QUERY PLAN": string,
-      }> = await sql->Postgres.unsafe(
+      }> = await sql->Sql.query(
         `EXPLAIN SELECT * FROM "${pgSchema}"."Counter" WHERE "chainId" = 137`,
       )
 
@@ -310,7 +310,7 @@ describe("Reused chain-scoped statements stay pruned", () => {
       // One transaction pins one connection, so a statement Postgres decides to
       // cache is reused across the runs and its locks accumulate where they can
       // be counted.
-      let lockCounts = await sql->Postgres.beginSql(async sql => {
+      let lockCounts = await sql->Sql.begin(async sql => {
         let storage = PgStorage.make(
           ~sql,
           ~pgSchema,
@@ -340,7 +340,7 @@ describe("Reused chain-scoped statements stay pruned", () => {
             ~table=entityConfig.table,
             ~chainId=Some(chainId),
           )
-          let rows: array<{"count": int}> = await sql->Postgres.unsafe(
+          let rows: array<{"count": int}> = await sql->Sql.query(
             `SELECT count(*)::int AS count FROM pg_locks
              WHERE pid = pg_backend_pid() AND locktype = 'relation'`,
           )

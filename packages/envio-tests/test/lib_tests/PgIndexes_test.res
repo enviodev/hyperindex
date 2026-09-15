@@ -38,24 +38,29 @@ let allEntities = entities
 // fail one kind of query — enough to reproduce a read-back that fails after its
 // DDL has already committed. A Proxy rather than a hand-written stand-in, so
 // the storage reaching for a method this test never thought about still works.
-let makeFlakySql: (
-  Postgres.sql,
+let makeFlakyClient: (
+  PgClient.t,
   array<string>,
   string => bool,
-) => Postgres.sql = %raw(`(sql, log, shouldFail) => new Proxy(sql, {
+) => PgClient.t = %raw(`(client, log, shouldFail) => new Proxy(client, {
   get(target, prop, receiver) {
-    if (prop === "unsafe") {
-      return (query, params, options) => {
+    if (prop === "batch" || prop === "query") {
+      return (query, ...rest) => {
         log.push(query);
         return shouldFail(query)
           ? Promise.reject(new Error("connection terminated unexpectedly"))
-          : target.unsafe(query, params, options);
+          : target[prop](query, ...rest);
       };
     }
     const value = Reflect.get(target, prop, receiver);
     return typeof value === "function" ? value.bind(target) : value;
   },
 })`)
+
+let makeFlakySql = (sql: Sql.t, log, shouldFail): Sql.t => {
+  ...sql,
+  client: makeFlakyClient(sql.client, log, shouldFail),
+}
 
 let makeStorage = (~sql=sql, pgSchema) =>
   PgStorage.make(
@@ -83,7 +88,7 @@ let createdSchemas = []
 
 Async.afterAll(async () => {
   let _ = await createdSchemas
-  ->Array.map(pgSchema => sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`))
+  ->Array.map(pgSchema => sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`))
   ->Promise.all
 })
 
@@ -98,7 +103,7 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEnt
     ~envioInfo=JSON.Encode.object(Dict.make()),
   )
   for idx in 0 to fixtures->Array.length - 1 {
-    let _ = await sql->Postgres.unsafe(fixtures->Array.getUnsafe(idx))
+    let _ = await sql->Sql.query(fixtures->Array.getUnsafe(idx))
   }
   if fixtures->Utils.Array.notEmpty {
     let _ = await storage.resumeInitialState(
@@ -112,7 +117,7 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEnt
 
 let loadCatalog = async pgSchema => {
   let rows =
-    (await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
+    (await sql->Sql.query(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
       IndexCatalog.rowsSchema,
     )
   IndexCatalog.fromRows(~rows)
@@ -155,7 +160,7 @@ let readyAtByChainId = async pgSchema => {
   let rows: array<{
     "id": ChainId.t,
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.query(
     `SELECT "id", "ready_at" FROM "${pgSchema}"."${InternalTable.Chains.table.tableName}" ORDER BY "id";`,
   )
   rows->Array.map(row => (row["id"], row["ready_at"]->Null.toOption->Option.isSome))
@@ -215,11 +220,11 @@ describe("Indexes built against a real schema", () => {
     let pgSchema = testSchema("invalid")
     let storage = await setup(~pgSchema)
 
-    let _ = await sql->Postgres.unsafe(
+    let _ = await sql->Sql.query(
       `INSERT INTO "${pgSchema}"."A" ("id", "b_id") VALUES ('1', 'dup'), ('2', 'dup');`,
     )
     let failure = await sql
-    ->Postgres.unsafe(`CREATE UNIQUE INDEX CONCURRENTLY "A_b_id" ON "${pgSchema}"."A"("b_id");`)
+    ->Sql.query(`CREATE UNIQUE INDEX CONCURRENTLY "A_b_id" ON "${pgSchema}"."A"("b_id");`)
     ->catchMessage
     let _ = await storage.resumeInitialState(
       ~entities,

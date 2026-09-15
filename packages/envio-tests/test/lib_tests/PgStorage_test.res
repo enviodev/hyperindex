@@ -602,12 +602,10 @@ FROM "public"."envio_chains";`
       ],
     )
 
-    // A bytea column binds as the Uint8Array postgres.js serializes, and a
-    // bytea[] one as the array literal Postgres parses itself — postgres.js
-    // types an array parameter after its first element, so an array of
-    // Uint8Arrays would bind as a single bytea. An `in` over a list column
-    // nests one dimension deeper, and Postgres arrays are rectangular, so its
-    // candidates all have the same length.
+    // A bytea column binds as bytes and a bytea[] one as the array literal
+    // Postgres parses itself. An `in` over a list column nests one dimension
+    // deeper, and Postgres arrays are rectangular, so its candidates all have
+    // the same length.
     let bytesTable = Table.mkTable(
       "blobs",
       ~fields=[

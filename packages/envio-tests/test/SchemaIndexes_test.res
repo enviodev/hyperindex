@@ -94,7 +94,7 @@ name: schema-indexes-multichain${contractsYaml}chains:${chainYaml(
 
 let loadCatalog = async (~sql, ~pgSchema) => {
   let rows =
-    (await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
+    (await sql->Sql.query(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
       IndexCatalog.rowsSchema,
     )
   IndexCatalog.fromRows(~rows)
@@ -138,7 +138,7 @@ let readyAtRows = async (~sql, ~pgSchema) => {
   let rows: array<{
     "id": ChainId.t,
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.query(
     `SELECT "id", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows
@@ -455,7 +455,7 @@ describe("Deferred schema indexes", () => {
       // and no schema index has been created yet.
       await Utils.delay(0)
 
-      let _ = await sql->Postgres.unsafe(`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`)
+      let _ = await sql->Sql.query(`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`)
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)

@@ -18,8 +18,8 @@ let enums =
 let pgSchema = TestPgSchema.make()
 
 Async.afterAll(async () => {
-  let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
-  await sql->Postgres.endSql
+  let _ = await sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+  await sql->Sql.close
 })
 
 describe("Resuming Postgres storage", () => {

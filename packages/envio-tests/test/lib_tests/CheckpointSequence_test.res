@@ -56,7 +56,7 @@ describe("CheckpointSequence.params", () => {
     t.expect(
       {CheckpointSequence.sequence: PerChain, byChain: frontier}
       ->CheckpointSequence.params
-      ->(Utils.magic: unknown => array<array<unknown>>),
+      ->(Utils.magic: array<unknown> => array<array<unknown>>),
     ).toEqual([
       [chain1, chain137]->(Utils.magic: array<ChainId.t> => array<unknown>),
       ["9", "2"]->(Utils.magic: array<string> => array<unknown>),
@@ -69,7 +69,7 @@ describe("CheckpointSequence.params", () => {
     t.expect(
       {CheckpointSequence.sequence: SharedAcrossChains, byChain: frontier}
       ->CheckpointSequence.params
-      ->(Utils.magic: unknown => array<string>),
+      ->(Utils.magic: array<unknown> => array<string>),
     ).toEqual(["2"])
   })
 })
