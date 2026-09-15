@@ -7,6 +7,7 @@
 
 pub mod client;
 pub mod ddl;
+pub mod error;
 pub mod index_definition;
 pub mod insert;
 pub mod internal;

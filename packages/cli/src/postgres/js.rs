@@ -12,6 +12,7 @@ use crate::columnar::{self, Arena};
 
 use super::client::{self, PgConnectionOptions, SslSetting};
 use super::ddl::{self, ColumnSpec, TableSpec};
+use super::error::to_napi;
 use super::index_definition::{self, Direction, IndexColumn, IndexDefinition};
 use super::insert;
 use super::internal;
@@ -44,10 +45,6 @@ pub struct PgTableInput {
     pub table_name: String,
     pub columns: Vec<PgColumnInput>,
     pub partition_by_column: Option<String>,
-}
-
-fn to_napi(err: anyhow::Error) -> napi::Error {
-    napi::Error::from_reason(format!("{err:#}"))
 }
 
 impl TryFrom<PgColumnInput> for ColumnSpec {

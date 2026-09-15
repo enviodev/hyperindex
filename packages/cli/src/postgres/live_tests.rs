@@ -636,3 +636,31 @@ async fn a_staged_batch_binds_its_values_one_row_at_a_time() {
         ]
     );
 }
+
+/// A write failure is classified by the server's own message, so that is what
+/// has to reach the other side. Wrapping it in the context of the call that made
+/// it would read fine and match none of the cases the storage layer looks for.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_failure_reports_the_message_the_server_gave() {
+    let client = client();
+    let nul = client
+        .execute("SELECT $1::text", &[Param::Text("a\0b".to_string())])
+        .await
+        .expect_err("a NUL is not something a text column takes");
+    let missing = client
+        .execute("SELECT 1 FROM nothing_is_here", &[])
+        .await
+        .expect_err("the table does not exist");
+
+    assert_eq!(
+        (
+            super::error::message_of(&nul),
+            super::error::message_of(&missing),
+        ),
+        (
+            "invalid byte sequence for encoding \"UTF8\": 0x00".to_string(),
+            "relation \"nothing_is_here\" does not exist".to_string(),
+        )
+    );
+}
