@@ -16,6 +16,8 @@ pub mod index_definition;
 #[allow(dead_code)]
 pub mod param;
 pub mod pg_type;
+#[allow(dead_code)]
+pub mod rows;
 
 // The addon registers these; a test build has no registration and would see
 // every export as dead.
