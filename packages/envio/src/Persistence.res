@@ -44,7 +44,8 @@ type initialState = {
   envioInfo: option<JSON.t>,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
-  checkpointId: Internal.checkpointId,
+  // Where each chain's checkpoint sequence stands in the database.
+  checkpointFrontier: Frontier.t,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
@@ -60,15 +61,34 @@ type updatedEffectCache = {
 }
 
 type rollback = {
-  targetCheckpointId: Internal.checkpointId,
-  diffCheckpointId: Internal.checkpointId,
+  // The id each chain's diff rows are stamped with: the first after what that
+  // chain has committed.
+  diffFrontier: Frontier.t,
+  // The same ids as checkpoint rows, for a sink that resolves current state
+  // through them. Postgres writes the diff to the entity table and ignores these.
+  diffCheckpoints: array<InternalTable.Checkpoints.diffCheckpoint>,
+  // How far back the deletes reach on each chain, travelling with the diff so
+  // the write leaves an untouched sibling's rows alone.
+  floors: RollbackFloors.t,
   // The address registrations the rollback dropped, as the chains' address
   // stores resolved them. Deleted by primary key in the same transaction.
   rolledBackAddresses: array<AddressRows.key>,
-  // Last valid block per chain affected by the rollback. Read by
-  // `RollbackCommit.fire` once the diff is durably written.
-  progressBlockNumberByChainId: dict<int>,
+  // Where the rollback left every chain it moved. Written with the diff rather
+  // than waiting for a batch of those chains' own: the batch that carries the
+  // diff can belong to a chain the rollback never touched, and a chain whose
+  // stored progress outlived the checkpoints backing it would resume past
+  // blocks it never re-indexed. Also what `RollbackCommit.fire` reports once
+  // the diff is durably written.
+  progressedChains: array<InternalTable.Chains.progressedChain>,
 }
+
+// Where a write leaves each chain's sequence. A rollback's diff rows sit on
+// chains the batch may not have progressed at all, so the write reaches them too.
+let writtenFrontier = (~batch: Batch.t, ~rollback: option<rollback>) =>
+  switch rollback {
+  | Some({diffFrontier}) => Frontier.mergeMax(batch->Batch.checkpointFrontier, diffFrontier)
+  | None => batch->Batch.checkpointFrontier
+  }
 
 // One flush group: the changes an entity accumulated within a single chain
 // scope. A per-chain entity contributes one group per chain, and the scope is
@@ -77,6 +97,7 @@ type updatedEntity = {
   entityConfig: Internal.entityConfig,
   scope: Internal.chainScope,
   changes: array<Change.t<Internal.entity>>,
+  shouldSaveHistory: bool,
 }
 
 // An id the rollback must delete, together with the scope its row lives in.
@@ -102,7 +123,21 @@ type storage = {
     ~contractMapping: ContractMapping.t,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
-  resumeInitialState: unit => promise<initialState>,
+  // `throwIfIncompatible` gets what the storage holds before any sink is
+  // resumed, so a config the stored one rules out is reported as such rather
+  // than as the sink tripping over tables it never created.
+  //
+  // `chainIds` is what this run drives. An isolated run resumes a subset of
+  // the stored chains, and the sink's resume trims past each resumed chain's
+  // checkpoint, so chains a sibling process is still writing must stay out.
+  resumeInitialState: (
+    ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
+    ~throwIfIncompatible: (
+      ~storedEnvioInfo: option<JSON.t>,
+      ~storedContractMapping: ContractMapping.t,
+    ) => unit,
+  ) => promise<initialState>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
@@ -110,17 +145,24 @@ type storage = {
   // Creates whatever indexes the filters need and aren't there yet, resolving
   // once they're queryable. Best-effort: it resolves even when a build fails,
   // leaving the query to run unindexed rather than failing the handler.
-  ensureQueryIndexes: (~table: Table.table, ~filters: array<EntityFilter.t>) => promise<unit>,
-  // Creates every schema-defined index still missing, without touching
-  // `ready_at`. For a resumed indexer that is already ready and so never runs
-  // `finalizeBackfill`: an index dropped or invalidated while it was down would
-  // otherwise never be rebuilt. Best-effort, and safe to run with indexing live.
-  ensureSchemaIndexes: (~entities: array<Internal.entityConfig>) => promise<unit>,
-  // Creates every schema-defined index still missing, then stamps `ready_at` on
-  // the given chains. Called once, when backfill completes. The indexes are
-  // committed one at a time so a failure part way through doesn't undo the ones
-  // already built; `ready_at` is only written once they all verify, and all
-  // chains are stamped together.
+  ensureQueryIndexes: (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~filters: array<EntityFilter.t>,
+  ) => promise<unit>,
+  // Creates every index the schema promises for the given chains, without
+  // touching `ready_at`. For a resumed indexer that is already ready and so
+  // never runs `finalizeBackfill`: an index dropped or invalidated while it was
+  // down would otherwise never be rebuilt. Best-effort, and safe to run with
+  // indexing live.
+  ensureSchemaIndexes: (
+    ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
+  ) => promise<unit>,
+  // Creates every index the schema promises for the given chains, then stamps
+  // `ready_at` on them. Called once those chains finish backfill. The indexes
+  // are committed one at a time so a failure part way through doesn't undo the
+  // ones already built; `ready_at` is only written once they all verify.
   finalizeBackfill: (
     ~entities: array<Internal.entityConfig>,
     ~chainIds: array<ChainId.t>,
@@ -132,13 +174,15 @@ type storage = {
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
-  pruneStaleCheckpoints: (~safeCheckpointId: Internal.checkpointId) => promise<unit>,
+  pruneStaleCheckpoints: (
+    ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
+  ) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
     ~chainIdColumn: option<string>,
-    ~safeCheckpointId: Internal.checkpointId,
+    ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (
@@ -147,7 +191,7 @@ type storage = {
   ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
   getRollbackProgressDiff: (
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
+    ~floors: RollbackFloors.t,
   ) => promise<
     array<{
       "chain_id": ChainId.t,
@@ -160,13 +204,12 @@ type storage = {
   // before handing them back.
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
+    ~floors: RollbackFloors.t,
   ) => promise<(array<rollbackRemoval>, array<Internal.entity>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,
     ~rollback: option<rollback>,
-    ~isInReorgThreshold: bool,
     ~config: Config.t,
     ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,
@@ -221,12 +264,18 @@ let make = (
 let init = {
   async (
     persistence,
-    ~chainConfigs,
+    ~chainConfigs: array<Config.chain>,
     ~contractMapping,
     ~envioInfo,
     ~resetCommand,
     ~runCommand,
     ~reset=false,
+    ~lowercaseAddresses=false,
+    // An isolated run needs the schema to exist already: initializing under it
+    // would create rows for this process's chains only, leaving the ones it
+    // skipped with no state for their own processes to resume.
+    ~requireInitialized=false,
+    ~startBlockRetry=StartBlockResolver.UntilItAnswers,
   ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
@@ -244,7 +293,20 @@ let init = {
         })
         persistence.storageStatus = Initializing(promise)
         if reset || !(await persistence.storage.isInitialized()) {
+          if requireInitialized {
+            JsError.throwWithMessage(
+              "`envio start --chain` needs a database that already holds every chain. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+            )
+          }
           Logging.info(`Initializing the indexer storage...`)
+          // Only runs once per schema (this branch is the "first deploy or
+          // reset" gate), which is exactly when a `latest` start block must be
+          // resolved: every later resume reads `envio_chains.start_block` back
+          // verbatim instead of re-running this.
+          let chainConfigs = await chainConfigs->StartBlockResolver.resolveAllOrThrow(
+            ~lowercaseAddresses,
+            ~retry=startBlockRetry,
+          )
           let initialState = await persistence.storage.initialize(
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
@@ -263,27 +325,19 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          let initialState = await persistence.storage.resumeInitialState()
-          let changedPaths = switch initialState.envioInfo {
-          | None => ["storage was initialized by an older envio version"]
-          | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
-          }
-          let hasClickhouse = switch envioInfo {
-          | Object(d) =>
-            switch d->Dict.get("storage") {
-            | Some(Object(s)) =>
-              switch s->Dict.get("clickhouse") {
-              | Some(Boolean(true)) => true
-              | _ => false
-              }
-            | _ => false
-            }
-          | _ => false
-          }
-          Config.throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
-          if !(initialState.contractMapping->ContractMapping.isEqual(contractMapping)) {
-            Config.throwIfIncompatible(["contracts"], ~resetCommand, ~runCommand, ~hasClickhouse)
-          }
+          let initialState = await persistence.storage.resumeInitialState(
+            ~entities=persistence.allEntities,
+            ~chainIds=chainConfigs->Array.map(chain => chain.id),
+            ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) =>
+              Config.throwIfResumeIncompatible(
+                ~storedEnvioInfo,
+                ~storedContractMapping,
+                ~envioInfo,
+                ~contractMapping,
+                ~resetCommand,
+                ~runCommand,
+              ),
+          )
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

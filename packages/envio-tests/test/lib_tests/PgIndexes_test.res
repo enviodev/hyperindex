@@ -101,7 +101,11 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEnt
     let _ = await sql->Postgres.unsafe(fixtures->Array.getUnsafe(idx))
   }
   if fixtures->Utils.Array.notEmpty {
-    let _ = await storage.resumeInitialState()
+    let _ = await storage.resumeInitialState(
+      ~entities,
+      ~chainIds=config.chainMap->ChainMap.keys,
+      ~throwIfIncompatible=(~storedEnvioInfo as _, ~storedContractMapping as _) => (),
+    )
   }
   storage
 }
@@ -217,7 +221,11 @@ describe("Indexes built against a real schema", () => {
     let failure = await sql
     ->Postgres.unsafe(`CREATE UNIQUE INDEX CONCURRENTLY "A_b_id" ON "${pgSchema}"."A"("b_id");`)
     ->catchMessage
-    let _ = await storage.resumeInitialState()
+    let _ = await storage.resumeInitialState(
+      ~entities,
+      ~chainIds=config.chainMap->ChainMap.keys,
+      ~throwIfIncompatible=(~storedEnvioInfo as _, ~storedContractMapping as _) => (),
+    )
 
     let leftBehind = await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"])
 
@@ -260,8 +268,16 @@ describe("Indexes built against a real schema", () => {
     let storage = await setup(~pgSchema)
     let column = "optionalStringToTestLinkedEntities"
 
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName=column)])
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName=column)])
+    await storage.ensureQueryIndexes(
+      ~entityConfig=entityA,
+      ~scope=CrossChain,
+      ~filters=[eq(~fieldName=column)],
+    )
+    await storage.ensureQueryIndexes(
+      ~entityConfig=entityA,
+      ~scope=CrossChain,
+      ~filters=[eq(~fieldName=column)],
+    )
 
     t.expect(
       (await findIndexes(~pgSchema, ~tableName="A", ~columns=[column]))->Array.map(describeIndex),
@@ -289,10 +305,7 @@ describe("Indexes built against a real schema", () => {
         ],
       ),
     }
-    let storage = await setup(
-      ~pgSchema,
-      ~entities=[entity],
-    )
+    let storage = await setup(~pgSchema, ~entities=[entity])
     let definition = IndexDefinition.single(~tableName, ~column="b_id")
 
     await storage.finalizeBackfill(~entities=[entity], ~chainIds=[], ~readyAt)
@@ -330,7 +343,7 @@ describe("Indexes built against a real schema", () => {
     let filters = [eq(~fieldName="b_id")]
 
     failNextRead := true
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters)
+    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters)
 
     let built = await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"])
     t.expect(
@@ -341,8 +354,8 @@ describe("Indexes built against a real schema", () => {
     // The resync happens on the failure path, so by now the storage should
     // already know the index exists.
     queries->Utils.Array.clearInPlace
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters)
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters)
+    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters)
+    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters)
 
     t.expect(
       (
@@ -389,11 +402,7 @@ describe("Indexes built against a real schema", () => {
         query->String.includes("CREATE INDEX") &&
         query->String.includes(secondName),
     )
-    let storage = await setup(
-      ~pgSchema,
-      ~sql=flakySql,
-      ~entities=[entity],
-    )
+    let storage = await setup(~pgSchema, ~sql=flakySql, ~entities=[entity])
     let chainIds = config.chainMap->ChainMap.values->Array.map(chain => chain.id)
     let createdIndexNames = async () =>
       (await loadCatalog(pgSchema))
@@ -450,7 +459,11 @@ describe("Indexes built against a real schema", () => {
     let pgSchema = testSchema("shared")
     let storage = await setup(~pgSchema)
 
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndexes(
+      ~entityConfig=entityA,
+      ~scope=CrossChain,
+      ~filters=[eq(~fieldName="b_id")],
+    )
     await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(

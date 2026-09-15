@@ -188,6 +188,7 @@ describe("Test PgStorage SQL generation functions", () => {
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
+          ~checkpointSequence=SharedAcrossChains,
           ~entities,
           ~enums,
           ~chainConfigs=[
@@ -195,7 +196,7 @@ describe("Test PgStorage SQL generation functions", () => {
               name: "Chain1",
               id: 1->ChainId.fromInt,
               ecosystem: Ecosystem.Evm,
-              startBlock: 100,
+              startBlock: Config.Block(100),
               endBlock: 200,
               maxReorgDepth: 10,
               blockLag: 0,
@@ -206,7 +207,7 @@ describe("Test PgStorage SQL generation functions", () => {
               name: "Chain137",
               id: 137->ChainId.fromInt,
               ecosystem: Ecosystem.Evm,
-              startBlock: 0,
+              startBlock: Config.Block(0),
               maxReorgDepth: 200,
               blockLag: 0,
               contracts: [],
@@ -228,11 +229,11 @@ GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
 CREATE TYPE "test_schema".AccountType AS ENUM('ADMIN', 'USER');
 CREATE TYPE "test_schema".GravatarSize AS ENUM('SMALL', 'MEDIUM', 'LARGE');
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, "checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "test_schema"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_A"("id" TEXT NOT NULL, "b_id" TEXT, "optionalStringToTestLinkedEntities" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
@@ -279,9 +280,9 @@ SELECT
   "start_block" AS "start_block",
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "test_schema"."envio_chains";
-INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, NULL, 0, false),
-       (137, 'evm', 0, NULL, 200, 0, NULL, -1, -1, NULL, NULL, 0, false);`
+INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
+VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, NULL, 0, false, 0),
+       (137, 'evm', 0, NULL, 200, 0, NULL, -1, -1, NULL, NULL, 0, false, 0);`
 
         t.expect(mainQuery, ~message="Main query should match expected SQL exactly").toBe(
           expectedMainQuery,
@@ -295,6 +296,7 @@ VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, NULL, 0, false),
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
+          ~checkpointSequence=PerChain,
           ~enums=[],
           ~isHasuraEnabled=false,
         )
@@ -307,11 +309,11 @@ VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, NULL, 0, false),
 CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, "checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("chain_id", "id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
@@ -361,6 +363,7 @@ FROM "test_schema"."envio_chains";`
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
           ~pgUser="postgres",
+          ~checkpointSequence=SharedAcrossChains,
           ~entities,
           ~enums=[],
           ~isHasuraEnabled=false,
@@ -374,11 +377,11 @@ FROM "test_schema"."envio_chains";`
 CREATE SCHEMA "public";
 GRANT ALL ON SCHEMA "public" TO "postgres";
 GRANT ALL ON SCHEMA "public" TO public;
-CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, "checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
-CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "public"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_history_A"("id" TEXT NOT NULL, "b_id" TEXT, "optionalStringToTestLinkedEntities" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "public".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
@@ -435,6 +438,7 @@ FROM "public"."envio_chains";`
           PgStorage.makeInitializeTransaction(
             ~pgSchema="test_schema",
             ~pgUser="postgres",
+            ~checkpointSequence=SharedAcrossChains,
             ~entities,
             ~enums=[],
             ~isHasuraEnabled=false,
@@ -474,6 +478,42 @@ FROM "public"."envio_chains";`
             `CREATE INDEX "${definition->IndexDefinition.name}" ON "test_schema"."A"("b_id");`,
           ),
         ])
+      },
+    )
+
+    // An isolated run builds a per-chain entity's index on its own chains'
+    // partitions; a run driving every chain declares it once, on the parent.
+    Async.it(
+      "Places a per-chain entity's index on the parent, or on the isolated chains' partitions",
+      async t => {
+        let perChain: Internal.entityConfig = {
+          ...entityConfig("A"),
+          name: "PerChain",
+          table: Table.mkTable(
+            "PerChain",
+            ~fields=[
+              Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+              Table.mkField(
+                Config.chainIdFieldName,
+                ChainId,
+                ~fieldSchema=ChainId.schema,
+                ~isPrimaryKey=true,
+                ~isChainId=true,
+              ),
+              Table.mkField("owner", String, ~isIndex=true, ~fieldSchema=S.string),
+            ],
+          ),
+        }
+
+        let tableNames = (~partitionChainIds=?) =>
+          PgStorage.getSchemaIndexes(~entities=[perChain], ~partitionChainIds?)->Array.map(
+            definition => definition.IndexDefinition.tableName,
+          )
+
+        t.expect((
+          tableNames(),
+          tableNames(~partitionChainIds=[ChainId.fromInt(1), ChainId.fromInt(137)]),
+        )).toEqual((["PerChain"], ["PerChain$1", "PerChain$137"]))
       },
     )
 
@@ -565,6 +605,68 @@ FROM "public"."envio_chains";`
       ],
     )
 
+    // A bytea column binds as the Uint8Array postgres.js serializes, and a
+    // bytea[] one as the array literal Postgres parses itself — postgres.js
+    // types an array parameter after its first element, so an array of
+    // Uint8Arrays would bind as a single bytea. An `in` over a list column
+    // nests one dimension deeper, and Postgres arrays are rectangular, so its
+    // candidates all have the same length.
+    let bytesTable = Table.mkTable(
+      "blobs",
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField("tag", Bytea, ~fieldSchema=Utils.Schema.bytes),
+        Table.mkField("chunks", Bytea, ~isArray=true, ~fieldSchema=Utils.Schema.bytesArray),
+      ],
+    )
+
+    Async.it(
+      "Binds bytea values as bytes and bytea arrays as array literals",
+      async t => {
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=And({
+            filters: [
+              Eq({
+                fieldName: "tag",
+                fieldValue: Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+              }),
+              In({
+                fieldName: "tag",
+                fieldValue: [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
+                  Utils.magic: array<Uint8Array.t> => array<unknown>
+                ),
+              }),
+              Eq({
+                fieldName: "chunks",
+                fieldValue: [Uint8Array.fromArray([3])]->(
+                  Utils.magic: array<Uint8Array.t> => unknown
+                ),
+              }),
+              In({
+                fieldName: "chunks",
+                fieldValue: [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
+                  Utils.magic: array<array<Uint8Array.t>> => array<unknown>
+                ),
+              }),
+            ],
+          }),
+          ~table=bytesTable,
+          ~params,
+        )
+
+        t.expect((condition, params)).toEqual((
+          `("tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4))`,
+          [
+            Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+            `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
+            `{"\\\\x03"}`->(Utils.magic: string => unknown),
+            `{{"\\\\x04"},{"\\\\x05"}}`->(Utils.magic: string => unknown),
+          ],
+        ))
+      },
+    )
+
     Async.it(
       "Should create condition and params for loading multiple records by IDs",
       async t => {
@@ -580,7 +682,7 @@ FROM "public"."envio_chains";`
 
         t.expect((condition, params)).toEqual((
           `"id" = ANY($1)`,
-          [["1", "2"]->(Utils.magic: array<string> => JSON.t)],
+          [["1", "2"]->(Utils.magic: array<string> => unknown)],
         ))
       },
     )
@@ -595,7 +697,7 @@ FROM "public"."envio_chains";`
           ~params,
         )
 
-        t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => JSON.t)]))
+        t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => unknown)]))
       },
     )
 
@@ -622,9 +724,9 @@ FROM "public"."envio_chains";`
         t.expect((condition, params)).toEqual((
           `("id" = $1 AND ("score" > $2 AND "score" < $3))`,
           [
-            "1"->(Utils.magic: string => JSON.t),
-            5->(Utils.magic: int => JSON.t),
-            10->(Utils.magic: int => JSON.t),
+            "1"->(Utils.magic: string => unknown),
+            5->(Utils.magic: int => unknown),
+            10->(Utils.magic: int => unknown),
           ],
         ))
       },
@@ -792,7 +894,8 @@ FROM "test_schema"."envio_checkpoints" cp
 INNER JOIN reorg_chains rc 
   ON cp."chain_id" = rc.id
 WHERE cp."block_hash" IS NOT NULL
-  AND cp."block_number" >= rc.safe_block;`
+  AND cp."block_number" >= rc.safe_block
+ORDER BY cp."id";`
 
         t.expect(
           query,
@@ -824,7 +927,7 @@ WHERE cp."block_hash" IS NOT NULL
           name: "Chain1",
           id: 1->ChainId.fromInt,
           ecosystem: Ecosystem.Evm,
-          startBlock: 100,
+          startBlock: Config.Block(100),
           endBlock: 200,
           maxReorgDepth: 5,
           blockLag: 0,
@@ -837,8 +940,8 @@ WHERE cp."block_hash" IS NOT NULL
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
+VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false, 0);`
 
         t.expect(query, ~message="Should generate correct INSERT VALUES SQL for single chain").toBe(
           Some(expectedQuery),
@@ -853,7 +956,7 @@ VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false);`
           name: "Chain1",
           id: 1->ChainId.fromInt,
           ecosystem: Ecosystem.Evm,
-          startBlock: 100,
+          startBlock: Config.Block(100),
           maxReorgDepth: 5,
           blockLag: 0,
           contracts: [],
@@ -865,8 +968,8 @@ VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false);`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
+VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, NULL, 0, false, 0);`
 
         t.expect(
           query,
@@ -882,7 +985,7 @@ VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, NULL, 0, false);`
           name: "Chain1",
           id: 1->ChainId.fromInt,
           ecosystem: Ecosystem.Evm,
-          startBlock: 100,
+          startBlock: Config.Block(100),
           endBlock: 200,
           maxReorgDepth: 5,
           blockLag: 0,
@@ -894,7 +997,7 @@ VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, NULL, 0, false);`
           name: "Chain42",
           id: 42->ChainId.fromInt,
           ecosystem: Ecosystem.Evm,
-          startBlock: 500,
+          startBlock: Config.Block(500),
           maxReorgDepth: 0,
           blockLag: 0,
           contracts: [],
@@ -906,9 +1009,9 @@ VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, NULL, 0, false);`
           ~chainConfigs=[chainConfig1, chainConfig2],
         )
 
-        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false),
-       (42, 'evm', 500, NULL, 0, 0, NULL, -1, -1, NULL, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
+VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false, 0),
+       (42, 'evm', 500, NULL, 0, 0, NULL, -1, -1, NULL, NULL, 0, false, 0);`
 
         t.expect(
           query,
@@ -933,7 +1036,8 @@ VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false),
 "events_processed"::float8 as "numEventsProcessed",
 "progress_block" as "progressBlockNumber",
 "progress_block_time" as "progressBlockTime",
-"source_block" as "sourceBlockNumber"
+"source_block" as "sourceBlockNumber",
+"checkpoint_id"::TEXT as "checkpointId"
 FROM "test_schema"."envio_chains";`
 
         t.expect(query, ~message="Initial state SQL should match exactly").toBe(expectedQuery)
@@ -958,16 +1062,16 @@ FROM "test_schema"."envio_addresses";`
     )
   })
 
-  describe("InternalTable.Checkpoints.makeCommitedCheckpointIdQuery", () => {
+  describe("InternalTable.Chains.makeSetCheckpointFrontierQuery", () => {
     Async.it(
-      "Should create correct SQL to get committed checkpoint id",
+      "Writes every chain's committed checkpoint id in one statement",
       async t => {
-        let query = InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema="test_schema")
+        let query = InternalTable.Chains.makeSetCheckpointFrontierQuery(~pgSchema="test_schema")
 
-        t.expect(
-          query,
-          ~message="Committed checkpoint id SQL should match exactly",
-        ).toBe(`SELECT COALESCE(MAX(id), 0) AS id FROM "test_schema"."envio_checkpoints";`)
+        t.expect(query).toBe(`UPDATE "test_schema"."envio_chains"
+SET "checkpoint_id" = envio_frontier.checkpoint_id
+FROM unnest($1::INTEGER[],$2::BIGINT[]) AS envio_frontier(chain_id, checkpoint_id)
+WHERE "envio_chains"."id" = envio_frontier.chain_id;`)
       },
     )
   })
@@ -992,12 +1096,26 @@ SELECT * FROM unnest($1::BIGINT[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INT
       async t => {
         let query = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
           ~pgSchema="test_schema",
+          ~safeCheckpoints={
+            CheckpointSequence.sequence: SharedAcrossChains,
+            byChain: Frontier.fromEntries([(1->ChainId.fromInt, 10n)]),
+          },
+        )
+        let narrowed = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
+          ~pgSchema="test_schema",
+          ~safeCheckpoints={
+            CheckpointSequence.sequence: PerChain,
+            byChain: Frontier.fromEntries([(137->ChainId.fromInt, 20n)]),
+          },
         )
 
         t.expect(
-          query,
+          (query, narrowed),
           ~message="Prune stale checkpoints SQL should match exactly",
-        ).toBe(`DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1;`)
+        ).toEqual((
+          `DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1;`,
+          `DELETE FROM "test_schema"."envio_checkpoints" USING unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) WHERE "id" < envio_bounds.checkpoint_id AND envio_bounds.chain_id = "test_schema"."envio_checkpoints"."chain_id";`,
+        ))
       },
     )
   })
@@ -1028,31 +1146,84 @@ LIMIT 1;`
     Async.it(
       "Should create correct SQL for rollback progress diff",
       async t => {
-        let query = InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery(
-          ~pgSchema="test_schema",
+        let makeQuery = floors =>
+          InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery(
+            ~pgSchema="test_schema",
+            ~floors,
+          )
+        let query = makeQuery(
+          RollbackFloors.make(
+            ~sequence=SharedAcrossChains,
+            ~chainIds=[1->ChainId.fromInt, 137->ChainId.fromInt],
+            ~floorCheckpointId=10n,
+            ~reorgChainId=137->ChainId.fromInt,
+            ~forkBlockNumber=100,
+          ),
+        )
+        let narrowed = makeQuery(
+          RollbackFloors.make(
+            ~sequence=PerChain,
+            ~chainIds=[1->ChainId.fromInt, 137->ChainId.fromInt],
+            ~floorCheckpointId=10n,
+            ~reorgChainId=137->ChainId.fromInt,
+            ~forkBlockNumber=100,
+          ),
         )
 
-        let expectedQuery = `SELECT 
-  "chain_id"::float8 as "chain_id",
-  SUM("events_processed") as events_processed_diff,
-  MIN("block_number") - 1 as new_progress_block_number
-FROM "test_schema"."envio_checkpoints"
-WHERE "id" > $1
-GROUP BY "chain_id";`
-
-        t.expect(query, ~message="Rollback progress diff SQL should match exactly").toBe(
-          expectedQuery,
-        )
+        t.expect(
+          (query, narrowed),
+          ~message="Rollback progress diff SQL should match exactly",
+        ).toEqual((
+          `SELECT 
+  t."chain_id"::float8 as "chain_id",
+  SUM(t."events_processed") as events_processed_diff,
+  MIN(t."block_number") - 1 as new_progress_block_number
+FROM "test_schema"."envio_checkpoints" t
+WHERE t."id" > $1
+GROUP BY t."chain_id";`,
+          `SELECT 
+  t."chain_id"::float8 as "chain_id",
+  SUM(t."events_processed") as events_processed_diff,
+  MIN(t."block_number") - 1 as new_progress_block_number
+FROM "test_schema"."envio_checkpoints" t JOIN unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) ON envio_bounds.chain_id = t."chain_id"
+WHERE t."id" > envio_bounds.checkpoint_id
+GROUP BY t."chain_id";`,
+        ))
       },
     )
   })
 })
 
+// Runs the validation path in makeStorageFromEnv taken only when
+// `storage.clickhouse: true` in config.yaml. The vars are cleared around the
+// call rather than assumed absent: the scenario's own ClickHouse tests need them
+// set, so an ambient value would leave nothing missing to report.
+let withoutClickHouseEnv = fn => {
+  let names = [
+    "ENVIO_CLICKHOUSE_HOST",
+    "ENVIO_CLICKHOUSE_USERNAME",
+    "ENVIO_CLICKHOUSE_PASSWORD",
+    "ENVIO_CLICKHOUSE_DATABASE",
+  ]
+  let env = NodeJs.Process.process.env
+  let saved = names->Array.map(name => (name, env->Utils.Dict.dangerouslyGetNonOption(name)))
+  names->Array.forEach(name => env->Dict.delete(name))
+  let result = try Ok(fn()) catch {
+  | exn => Error(exn)
+  }
+  saved->Array.forEach(((name, value)) =>
+    switch value {
+    | Some(value) => env->Dict.set(name, value)
+    | None => ()
+    }
+  )
+  switch result {
+  | Ok(value) => value
+  | Error(exn) => throw(exn)
+  }
+}
+
 describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
-  // Exercises the validation path in makeStorageFromEnv that's only taken
-  // when `storage.clickhouse: true` in config.yaml. The test suite does not
-  // set any ENVIO_CLICKHOUSE_* vars, so this should throw a user-friendly
-  // error listing every missing required env var in a single message.
   Async.it(
     "Throws listing all missing ENVIO_CLICKHOUSE_* env vars when storage.clickhouse=true",
     async t => {
@@ -1067,16 +1238,19 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
           }: Config.storage
         ),
       }
-      let message = switch try {
-        let _ = PgStorage.makeStorageFromEnv(~config)
-        None
-      } catch {
-      | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
-      | _ => None
-      } {
-      | Some(m) => m
-      | None => ""
-      }
+      let message = withoutClickHouseEnv(
+        () =>
+          switch try {
+            let _ = PgStorage.makeStorageFromEnv(~config)
+            None
+          } catch {
+          | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
+          | _ => None
+          } {
+          | Some(m) => m
+          | None => ""
+          },
+      )
       t.expect(
         message,
         ~message="Should throw a helpful error naming every missing env var at once",

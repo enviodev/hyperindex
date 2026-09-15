@@ -280,7 +280,7 @@ let makeInitialState = (
     envioInfo: Some(JSON.Encode.object(Dict.make())),
     cache: Dict.make(),
     chains,
-    checkpointId: InternalTable.Checkpoints.initialCheckpointId,
+    checkpointFrontier: Frontier.empty(),
     reorgCheckpoints: [],
   }
 }
@@ -356,13 +356,14 @@ let parseBlockRange = (
     JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
   }
   let configChain = config.chainMap->ChainMap.get(chain)
+  let configStartBlock = configChain->Config.startBlockOrZero
 
   let startBlock = switch rawChainConfig.startBlock {
   | Some(sb) => sb
   | None =>
     switch progressBlock {
     | Some(prevEndBlock) => prevEndBlock + 1
-    | None => configChain.startBlock
+    | None => configStartBlock
     }
   }
 
@@ -379,10 +380,10 @@ let parseBlockRange = (
   | None => None // auto-exit mode: will fetch first block with events and exit
   }
 
-  if startBlock < configChain.startBlock {
+  if startBlock < configStartBlock {
     JsError.throwWithMessage(
-      `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) is less than config.startBlock (${configChain.startBlock->Int.toString}). ` ++
-      `Either use startBlock >= ${configChain.startBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
+      `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) is less than config.startBlock (${configStartBlock->Int.toString}). ` ++
+      `Either use startBlock >= ${configStartBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
   }
 
@@ -590,7 +591,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
-  resumeInitialState: async () =>
+  resumeInitialState: async (~entities as _, ~chainIds as _, ~throwIfIncompatible as _) =>
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
     ),
@@ -599,13 +600,12 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     ->handleLoad(~tableName=table.tableName, ~filter)
     ->(Utils.magic: array<Internal.entity> => array<unknown>),
   // The in-memory storage has no indexes to build, and it's always ready.
-  ensureQueryIndexes: async (~table as _, ~filters as _) => (),
-  ensureSchemaIndexes: async (~entities as _) => (),
+  ensureQueryIndexes: async (~entityConfig as _, ~scope as _, ~filters as _) => (),
+  ensureSchemaIndexes: async (~entities as _, ~chainIds as _) => (),
   finalizeBackfill: async (~entities as _, ~chainIds as _, ~readyAt as _) => (),
   writeBatch: async (
     ~batch,
     ~rollback as _,
-    ~isInReorgThreshold as _,
     ~config,
     ~allEntities as _,
     ~updatedEffectsCache as _,
@@ -626,22 +626,22 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   dumpEffectCache: async () => (),
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
-  pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
+  pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
   pruneStaleEntityHistory: async (
     ~entityName as _,
     ~entityIndex as _,
     ~chainIdColumn as _,
-    ~safeCheckpointId as _,
+    ~safeCheckpoints as _,
   ) => (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
-  getRollbackProgressDiff: async (~rollbackTargetCheckpointId as _) =>
+  getRollbackProgressDiff: async (~floors as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
-  getRollbackData: async (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
+  getRollbackData: async (~entityConfig as _, ~floors as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
@@ -755,7 +755,7 @@ let createTestIndexer = (): t<'processConfig> => {
     ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
     ->Utils.Object.definePropertyWithValue(
       "startBlock",
-      {enumerable: true, value: chainConfig.startBlock},
+      {enumerable: true, value: chainConfig->Config.startBlockOrZero},
     )
     ->Utils.Object.definePropertyWithValue(
       "endBlock",

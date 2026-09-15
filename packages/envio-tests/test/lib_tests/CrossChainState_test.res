@@ -153,11 +153,12 @@ let emptyBatch: Batch.t = {
   totalBatchSize: 0,
   items: [],
   progressedChainsById: Dict.make(),
-  isInReorgThreshold: false,
+  history: Dict.make(),
   checkpointIds: [],
   checkpointChainIds: [],
   checkpointBlockNumbers: [],
   checkpointBlockHashes: [],
+  checkpointItemsCount: [],
   checkpointEventsProcessed: [],
   registeredAddresses: [],
 }
@@ -167,7 +168,7 @@ let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSiz
   chainStatesList->Array.forEach(cs =>
     chainStates->ChainId.Dict.set((cs->ChainState.chainConfig).id, cs)
   )
-  CrossChainState.make(~chainStates, ~isInReorgThreshold=false, ~isRealtime, ~targetBufferSize)
+  CrossChainState.make(~chainStates, ~isRealtime, ~targetBufferSize)
 }
 
 let makeRegistration = (~contractName, ~index): Internal.onEventRegistration =>
@@ -601,8 +602,8 @@ describe("CrossChainState fetch control", () => {
 
       t.expect(
         estimatesByChain,
-        ~message="The follower fetches up to the anchor's 50% line (+10% margin = block 600), not to nothing",
-      ).toEqual(Dict.fromArray([("1", 500), ("2", 80)]))
+        ~message="The follower fetches up to the anchor's 50% line (+20% margin = block 700), not to nothing",
+      ).toEqual(Dict.fromArray([("1", 500), ("2", 180)]))
     },
   )
 

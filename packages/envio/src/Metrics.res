@@ -37,7 +37,17 @@ type chainMetrics = {
   reorgCount: int,
   reorgDetectedBlock: option<int>,
   rollbackTargetBlock: option<int>,
+  rateLimitTimeMs: float,
+  rateLimitResetInMs: option<float>,
 }
+
+// Mirrors `ChainState.hasProcessedToEndblock`, which is what clamps
+// `knownHeight` to the end block — the two must agree.
+let hasProcessedToEndblock = (m: chainMetrics) =>
+  switch m.endBlock {
+  | Some(endBlock) => m.progressBlockNumber >= endBlock
+  | None => false
+  }
 
 type handlerMetrics = {
   contract: string,
@@ -91,12 +101,23 @@ type sourceRequestMetrics = {
   method: string,
   count: int,
   seconds: float,
+  // None for methods whose responses aren't measured in blocks; they render no
+  // block series at all.
+  responseBlocks: option<int>,
+  emptyResponseCount: int,
 }
 
 type sourceHeightMetrics = {
   source: string,
   chainId: ChainId.t,
   height: int,
+}
+
+type sourceHeightStreamMetrics = {
+  source: string,
+  chainId: ChainId.t,
+  connectCount: int,
+  disconnectsByReason: array<(string, int)>,
 }
 
 type t = {
@@ -125,6 +146,7 @@ type t = {
   historyPrunes: array<historyPruneMetrics>,
   sourceRequests: array<sourceRequestMetrics>,
   sourceHeights: array<sourceHeightMetrics>,
+  sourceHeightStreams: array<sourceHeightStreamMetrics>,
 }
 
 // Prometheus floats keep at most 3 decimals; integral values render without a
@@ -221,18 +243,37 @@ let renderMetrics = (b: builder, metrics: t) => {
     metrics.storageWrites->Array.map(s => (`{storage="${s.storage->escapeLabelValue}"}`, s))
   let historyPrunes =
     metrics.historyPrunes->Array.map(s => (`{entity="${s.entity->escapeLabelValue}"}`, s))
+  // Every per-source series shares this label set: a scrape whose labels
+  // disagree between two of them is one nothing can join on.
+  let sourceLabels = (~source, ~chainId, ~extra: option<(string, string)>=?) => {
+    let pair = `{source="${source->escapeLabelValue}",chainId="${chainId->ChainId.toString}"`
+    switch extra {
+    | Some((name, value)) => `${pair},${name}="${value->escapeLabelValue}"}`
+    | None => pair ++ "}"
+    }
+  }
+
   // Two sources can share a name (e.g. primary and fallback RPC urls on the
   // same host), so aggregate by label set — duplicate samples would make
   // Prometheus reject the scrape.
   let sourceRequests = {
     let byLabels: dict<sourceRequestMetrics> = Dict.make()
     metrics.sourceRequests->Array.forEach(s => {
-      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}",method="${s.method->escapeLabelValue}"}`
+      let labels = sourceLabels(~source=s.source, ~chainId=s.chainId, ~extra=("method", s.method))
       switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
       | Some(existing) =>
         byLabels->Dict.set(
           labels,
-          {...existing, count: existing.count + s.count, seconds: existing.seconds +. s.seconds},
+          {
+            ...existing,
+            count: existing.count + s.count,
+            seconds: existing.seconds +. s.seconds,
+            responseBlocks: switch (existing.responseBlocks, s.responseBlocks) {
+            | (Some(a), Some(b)) => Some(a + b)
+            | (some, None) | (None, some) => some
+            },
+            emptyResponseCount: existing.emptyResponseCount + s.emptyResponseCount,
+          },
         )
       | None => byLabels->Dict.set(labels, s)
       }
@@ -242,12 +283,40 @@ let renderMetrics = (b: builder, metrics: t) => {
   let sources = {
     let byLabels: dict<int> = Dict.make()
     metrics.sourceHeights->Array.forEach(s => {
-      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}"}`
+      let labels = sourceLabels(~source=s.source, ~chainId=s.chainId)
       switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
       | Some(existing) if existing >= s.height => ()
       | _ => byLabels->Dict.set(labels, s.height)
       }
     })
+    byLabels->Dict.toArray
+  }
+
+  // Zero connects is the one count worth rendering flat: it is a stream that
+  // has never come up, which the disconnects say nothing about — retries at a
+  // connection that never opened are not disconnections — and which is
+  // otherwise indistinguishable from a chain that was never configured to
+  // stream at all.
+  let heightStreamConnects = {
+    let byLabels: dict<int> = Dict.make()
+    metrics.sourceHeightStreams->Array.forEach(s =>
+      byLabels->Utils.Dict.incrementBy(
+        sourceLabels(~source=s.source, ~chainId=s.chainId),
+        s.connectCount,
+      )
+    )
+    byLabels->Dict.toArray
+  }
+  let heightStreamDisconnects = {
+    let byLabels: dict<int> = Dict.make()
+    metrics.sourceHeightStreams->Array.forEach(s =>
+      s.disconnectsByReason->Array.forEach(((reason, count)) =>
+        byLabels->Utils.Dict.incrementBy(
+          sourceLabels(~source=s.source, ~chainId=s.chainId, ~extra=("reason", reason)),
+          count,
+        )
+      )
+    )
     byLabels->Dict.toArray
   }
 
@@ -464,6 +533,41 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~entries=sourceRequests,
     ~value=s => s.seconds !== 0. ? Some(s.seconds) : None,
   )
+  b->seriesOpt(
+    ~name="envio_source_response_blocks_total",
+    ~help="The number of blocks a data source returned, summed over its responses. Counted as the source sent them, before the indexer drops the blocks no event needs. Only sources whose responses are measured in blocks report it.",
+    ~kind="counter",
+    ~entries=sourceRequests,
+    ~value=s => s.responseBlocks->Option.map(Int.toFloat),
+  )
+  // Rendered flat at zero for any method that reports blocks: a chain scanning
+  // ranges it finds nothing in is the reading this exists for, and a series
+  // that only appears once the first empty response lands can't be alerted on.
+  b->seriesOpt(
+    ~name="envio_source_response_empty_total",
+    ~help="The number of responses that came back with no blocks at all — a range the source scanned and matched nothing in. Compare against envio_source_request_total for the share of requests that returned nothing.",
+    ~kind="counter",
+    ~entries=sourceRequests,
+    ~value=s => s.responseBlocks->Option.map(_ => s.emptyResponseCount->Int.toFloat),
+  )
+  if heightStreamConnects->Array.length > 0 {
+    b->series(
+      ~name="envio_source_height_stream_connects_total",
+      ~help="The number of times a source's height subscription connected. Compare against the disconnects total, which is absent until the first disconnect and counts as zero while it is: one more connect than disconnects means the stream is up, and equal counts mean it is down and the indexer is polling instead. Zero connects means the stream has not come up, which is the normal reading for a chain that is still backfilling: subscriptions are only opened once a chain reaches the head.",
+      ~kind="counter",
+      ~entries=heightStreamConnects,
+      ~value=count => count->Int.toFloat,
+    )
+  }
+  if heightStreamDisconnects->Array.length > 0 {
+    b->series(
+      ~name="envio_source_height_stream_disconnects_total",
+      ~help="The number of times a source's height subscription lost a connection, by reason. Failed retries are not counted, so this is outages rather than their length. A rotated disconnect is a connection that served its time; unsubscribed is the source being benched; every other reason ended a connection early.",
+      ~kind="counter",
+      ~entries=heightStreamDisconnects,
+      ~value=count => count->Int.toFloat,
+    )
+  }
   b->series(
     ~name="envio_source_known_height",
     ~help="The latest known block number reported by the source. This value may lag behind the actual chain height, as it is updated only when queried.",
@@ -714,10 +818,12 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~help="The number of address registrations per contract on chain, static and dynamic. An address shared by N contracts counts N times.",
     ~kind="gauge",
     ~entries=metrics.chains->Array.flatMap(m =>
-      m.addressesByContract->Array.map(((contract, count)) => (
-        `{chainId="${m.chainId->ChainId.toString}",contract="${contract->escapeLabelValue}"}`,
-        count,
-      ))
+      m.addressesByContract->Array.map(
+        ((contract, count)) => (
+          `{chainId="${m.chainId->ChainId.toString}",contract="${contract->escapeLabelValue}"}`,
+          count,
+        ),
+      )
     ),
     ~value=count => count->Int.toFloat,
   )

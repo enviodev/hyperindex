@@ -20,15 +20,13 @@ let register = (callback: callback) => {
     }
 }
 
-// Fired after a rollback diff is durably written, once per affected chain.
-// `progressBlockNumberByChainId` is the last valid block per chain, taken from
-// the in-memory store's rollback object. A throwing callback bubbles to the
-// write loop's onError, crashing the indexer like a failed write.
-let fire = async (~progressBlockNumberByChainId: dict<int>) => {
-  let _ = await progressBlockNumberByChainId
-  ->Dict.toArray
-  ->Array.flatMap(((chainIdKey, rollbackToBlock)) => {
-    let args = {chainId: chainIdKey->ChainId.normalizeOrThrow, rollbackToBlock}
+// Fired after a rollback diff is durably written, once per affected chain, with
+// the last valid block the rollback left that chain at. A throwing callback
+// bubbles to the write loop's onError, crashing the indexer like a failed write.
+let fire = async (~progressedChains: array<InternalTable.Chains.progressedChain>) => {
+  let _ = await progressedChains
+  ->Array.flatMap(({chainId, progressBlockNumber}) => {
+    let args = {chainId, rollbackToBlock: progressBlockNumber}
     callbacks->Array.map(callback => callback(args))
   })
   ->Promise.all

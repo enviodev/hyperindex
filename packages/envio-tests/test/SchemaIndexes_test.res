@@ -38,13 +38,6 @@ contracts:
       - event: "TestEvent()"
 `
 
-let unsupported = [
-  {
-    Scenario.backend: #memory,
-    reason: "asserts on the Postgres index catalog",
-  },
-]
-
 let scenario = Scenario.make(
   ~configYaml=`
 name: schema-indexes${contractsYaml}chains:${chainYaml(
@@ -52,7 +45,42 @@ name: schema-indexes${contractsYaml}chains:${chainYaml(
       "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
     )}`,
   ~schema,
-  ~unsupported,
+)
+
+// An `end_block` the chain never reaches: the indexer still counts itself caught
+// up once progress sits at the head, so the deferred indexes are owed then, not
+// at the unreachable end block.
+let unreachableEndBlockScenario = Scenario.make(
+  ~configYaml=`
+name: schema-indexes-unreachable-end${contractsYaml}chains:
+  - id: 1337
+    rpc:
+      url: https://rpc1337.example.test
+      for: sync
+    start_block: 1
+    end_block: 1000000
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+`,
+  ~schema,
+)
+
+// A `start_block` past the head: the chain is at its head from the first moment
+// and never has a batch to process, so nothing ever writes its progress row.
+let aheadOfHeadScenario = Scenario.make(
+  ~configYaml=`
+name: schema-indexes-ahead-of-head${contractsYaml}chains:
+  - id: 1337
+    rpc:
+      url: https://rpc1337.example.test
+      for: sync
+    start_block: 5000
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+`,
+  ~schema,
 )
 
 let multichainScenario = Scenario.make(
@@ -62,7 +90,6 @@ name: schema-indexes-multichain${contractsYaml}chains:${chainYaml(
       "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
     )}${chainYaml(1337, "0x3B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}`,
   ~schema,
-  ~unsupported,
 )
 
 let loadCatalog = async (~sql, ~pgSchema) => {
@@ -146,12 +173,59 @@ let asContext = (context: Internal.handlerContext) =>
   context->(Utils.magic: Internal.handlerContext => indexesContext)
 
 describe("Deferred schema indexes", () => {
+  aheadOfHeadScenario->Scenario.it(
+    "Are committed for a chain that starts past the head and never processes a batch",
+    ~sources=[{chain: 1337}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      let {sql, pgSchema} = indexer.pg
+
+      source.resolveGetHeightOrThrow(100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+
+      t.expect(
+        (
+          (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
+            entry => entry.name,
+          ),
+          await readyAtByChainId(~sql, ~pgSchema),
+        ),
+        ~message="A chain with nothing to do is caught up, and the indexes are owed on that",
+      ).toEqual(([aBIdIndexName], [(ChainId.fromInt(1337), true)]))
+    },
+  )
+
+  unreachableEndBlockScenario->Scenario.it(
+    "Are committed once the chain sits at the head, even with an end block it never reaches",
+    ~sources=[{chain: 1337}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      let {sql, pgSchema} = indexer.pg
+
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+
+      t.expect(
+        (
+          (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
+            entry => entry.name,
+          ),
+          await readyAtByChainId(~sql, ~pgSchema),
+        ),
+        ~message="Sitting at the head is what the indexes are owed on, not reaching the end block",
+      ).toEqual(([aBIdIndexName], [(ChainId.fromInt(1337), true)]))
+    },
+  )
+
   scenario->Scenario.it(
     "Are absent through backfill, committed with ready_at, and kept across a restart",
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await Utils.delay(0)
 
       t.expect(
@@ -211,7 +285,7 @@ describe("Deferred schema indexes", () => {
     async (~t, ~indexer, ~source) => {
       let gate = gate.contents
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -277,8 +351,11 @@ describe("Deferred schema indexes", () => {
         ~message="Finalization is under way and nothing is ready while it is held",
       ).toEqual((1, [{value: "0", labels: dict{"chainId": "1337"}}]))
 
+      let heightCallsAtHead = source.getHeightOrThrowCalls->Array.length
+
       // A height update while the build is held: the chain fetches the new range
       // and its response schedules processing again.
+      await MockSource.waitHeightQuery(source, ~since=heightCallsAtHead)
       source.resolveGetHeightOrThrow(200)
       await MockSource.waitItemsQuery(source)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200)
@@ -320,7 +397,7 @@ describe("Deferred schema indexes", () => {
       let finalizeCalls = multichainFinalizeCalls
       let chainA = source(100)
       let chainB = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       chainA.resolveGetHeightOrThrow(100)
       chainB.resolveGetHeightOrThrow(100)
@@ -373,7 +450,7 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       // The height is unresolved, so the tables exist but the backfill is stalled
       // and no schema index has been created yet.
       await Utils.delay(0)
@@ -413,7 +490,7 @@ describe("Automatic getWhere indexes", () => {
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       let matched = ref([])
       let optionalColumn = "optionalStringToTestLinkedEntities"
 

@@ -1216,6 +1216,9 @@ export type SvmAllTransactionFields = {
   readonly err: string | undefined;
   readonly fee: bigint;
   readonly computeUnitsConsumed: bigint | undefined;
+  /** Every account the transaction resolves to: the static keys, then the
+   *  address lookup tables' writable then readonly addresses. A transaction's
+   *  account indexes address this list. */
   readonly accountKeys: readonly string[];
   readonly recentBlockhash: string;
   readonly version: string | undefined;
@@ -1377,7 +1380,7 @@ type SvmNamedAccounts<
   Acc extends Readonly<Record<string, unknown>>,
   Fields extends SvmFieldsSelection,
 > = {
-  readonly [K in keyof Acc & string]: SvmInstructionAccount<Fields, K>;
+  readonly [K in keyof Acc]: SvmInstructionAccount<Fields, K & string>;
 };
 
 /** The parent transaction of a {@link SvmInstruction}, narrowed to the
@@ -1423,7 +1426,7 @@ type SvmSelectedInstruction<Fields extends SvmFieldsSelection, ProgInstr> = {
   readonly instructionName: string;
   readonly discriminator: string;
   readonly programId: SvmInstrField<Fields, "programId", string>;
-  readonly data: SvmInstrField<Fields, "data", string>;
+  readonly data: SvmInstrField<Fields, "data", Uint8Array>;
   readonly path: SvmInstrField<Fields, "path", readonly number[]>;
   readonly isInner: SvmInstrField<Fields, "isInner", boolean>;
   readonly args: SvmInstrField<
@@ -1484,6 +1487,37 @@ export type SvmOnInstructionHandlerArgs<
   Instruction extends keyof SvmProgramsT[Program] & string = never,
 > = SvmOnInstructionArgsFor<SvmInstruction<Fields, Program, Instruction>, GlobalConfig>;
 
+/** The named accounts of a configured instruction. Falls back to an open
+ * record when the instruction carries no resolved schema, so its filter keys
+ * are unconstrained rather than unusable. */
+type SvmAccountsOf<Program extends string, Instruction extends string> =
+  SvmConfiguredInstruction<Program, Instruction>["accounts"];
+
+/** One AND-group of account narrowings: every named account must match one of
+ * its listed pubkeys. Names are the instruction's own account names. */
+export type SvmAccountsFilter<Accounts> = {
+  readonly [K in keyof Accounts]?: string | readonly string[];
+};
+
+/** The `where` option value of `indexer.onInstruction`.
+ *
+ * `accounts` accepts either a single AND-group of account narrowings, or an
+ * array of them (OR semantics). `block.slot._gte` promotes to the
+ * registration's startBlock and overrides the chain-level `start_block` — use
+ * it to restrict per-instruction processing without touching `config.yaml`.
+ * Only `_gte` is supported here; use `indexer.onSlot` for `_lte` / `_every`. */
+export type SvmOnInstructionWhere<Accounts> = {
+  /** Match only inner (CPI-invoked) or only outer instructions. Absent
+   * matches both. */
+  readonly isInner?: boolean;
+  readonly accounts?: SvmAccountsFilter<Accounts> | readonly SvmAccountsFilter<Accounts>[];
+  readonly block?: {
+    readonly slot?: {
+      readonly _gte?: number;
+    };
+  };
+};
+
 /** Options for an SVM `indexer.onInstruction` registration. */
 export type SvmOnInstructionOptions<
   P extends string = string,
@@ -1493,10 +1527,11 @@ export type SvmOnInstructionOptions<
   /** Program name as declared under `chains[].programs[].name` in
    * `config.yaml`. */
   readonly program: P;
-  /** Instruction name as declared under
-   * `chains[].programs[].instructions[].name` in `config.yaml`. */
+  /** Instruction name from the program's IDL, or from
+   * `chains[].programs[].instructions[].name` when the layout is inline. */
   readonly instruction: I;
   readonly fields?: Fields & SvmFieldsLiteralCheck<Fields>;
+  readonly where?: SvmOnInstructionWhere<SvmAccountsOf<P, I>>;
 };
 
 /** Handler function for an SVM `indexer.onInstruction` registration. Takes
@@ -1736,9 +1771,10 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
           }
             ? {
                 /**
-                 * Register an instruction handler. Dispatch matches on
-                 * `(programId, discriminator)` from the YAML config.
-                 * Handler `fields` is the only source of payload selection.
+                 * Register an instruction handler. `program` and `instruction`
+                 * name an entry from the IDL or YAML. Dispatch uses that
+                 * instruction's discriminator. Handler `fields` is the only
+                 * source of payload selection.
                  */
                 readonly onInstruction: <
                   P extends keyof Programs & string,
@@ -1905,8 +1941,8 @@ type SvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
             path?: readonly number[];
             /** Override the program id. Defaults to the configured `program_id`. */
             programId?: string;
-            /** Raw instruction data, `0x`-prefixed hex. */
-            data?: string;
+            /** Raw instruction data. Defaults to the configured discriminator bytes. */
+            data?: Uint8Array;
             /** Whether this is a CPI-invoked inner instruction. */
             isInner?: boolean;
             /** Decoded args. Keys match the instruction's arg names. */

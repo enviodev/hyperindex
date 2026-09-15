@@ -25,6 +25,11 @@ type sourceMock = {
   // Feed this chain's items through a wildcard registration rather than an
   // address-dependent one, so its partition takes the wildcard path.
   isWildcard?: bool,
+  // Pre-configures the standing height answer before the indexer starts -
+  // needed to answer a height call made during startup itself (e.g.
+  // resolving a `latest` start block), which a test body can't reach in time
+  // via `setAutoHeight` since it only runs once startup has already awaited.
+  autoHeight?: int,
 }
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
@@ -34,7 +39,7 @@ let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrTh
 // patching the parsed config — that way the entities pick up their ClickHouse
 // storage flags through the same parse a user's would.
 let withClickHouseStorage = configYaml =>
-  if configYaml->String.match(%re("/^storage:/m"))->Option.isSome {
+  if configYaml->String.match(/^storage:/m)->Option.isSome {
     // The scenario configures storage itself; leave its choice alone.
     configYaml
   } else {
@@ -51,7 +56,7 @@ let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=
   // file down before the skip could apply.
   let configYaml = switch IndexerRunner.selectedBackend {
   | #clickhouse if !isUnsupported => configYaml->withClickHouseStorage
-  | #clickhouse | #memory | #postgres => configYaml
+  | #clickhouse | #postgres => configYaml
   }
 
   let withIndexerTypes = handlers->Option.isSome
@@ -104,7 +109,9 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
     ->Array.map(ChainId.toString)
   if missing->Utils.Array.notEmpty {
     JsError.throwWithMessage(
-      `Chains ${missing->Array.join(", ")} are configured but have no mock source. Add them to \`~sources\`, or drop them from the scenario's YAML.`,
+      `Chains ${missing->Array.join(
+          ", ",
+        )} are configured but have no mock source. Add them to \`~sources\`, or drop them from the scenario's YAML.`,
     )
   }
 
@@ -114,7 +121,9 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
     ->Array.map(ChainId.toString)
   if unknown->Utils.Array.notEmpty {
     JsError.throwWithMessage(
-      `Mock sources given for chains ${unknown->Array.join(", ")}, which the scenario's YAML doesn't configure.`,
+      `Mock sources given for chains ${unknown->Array.join(
+          ", ",
+        )}, which the scenario's YAML doesn't configure.`,
     )
   }
 
@@ -165,7 +174,14 @@ let run = async (
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
-    sources->Array.map(({chain, ?methods, ?sourceFor, ?pollingInterval, ?isWildcard}) => (
+    sources->Array.map(({
+      chain,
+      ?methods,
+      ?sourceFor,
+      ?pollingInterval,
+      ?isWildcard,
+      ?autoHeight,
+    }) => (
       chain,
       MockSource.make(
         methods->Option.getOr(defaultMethods),
@@ -173,6 +189,7 @@ let run = async (
         ~sourceFor?,
         ~pollingInterval?,
         ~isWildcard?,
+        ~autoHeight?,
       ),
     ))
 
@@ -282,10 +299,21 @@ let it = (
         (~indexer, ~source) => body(~t, ~indexer, ~source),
       )
     switch retry {
-    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, timeout: ?timeout}, runBody)
+    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, ?timeout}, runBody)
     | None => Vitest.Async.it(name, runBody, ~timeout?)
     }
   }
+}
+
+let resolveInitialHeight = async (~t: Vitest.testContext, ~source: MockSource.t, ~head) => {
+  await Utils.delay(0)
+  t.expect(
+    source.getHeightOrThrowCalls->Array.length,
+    ~message="should have called getHeightOrThrow to get initial height",
+  ).toEqual(1)
+  source.resolveGetHeightOrThrow(head)
+  await Utils.delay(0)
+  await Utils.delay(0)
 }
 
 // Drives a chain through the reorg-threshold transition: the first query stops
@@ -300,14 +328,7 @@ let enterReorgThreshold = async (
   ~preThresholdTo=100,
   ~fromBlock=1,
 ) => {
-  await Utils.delay(0)
-  t.expect(
-    source.getHeightOrThrowCalls->Array.length,
-    ~message="should have called getHeightOrThrow to get initial height",
-  ).toEqual(1)
-  source.resolveGetHeightOrThrow(head)
-  await Utils.delay(0)
-  await Utils.delay(0)
+  await resolveInitialHeight(~t, ~source, ~head)
 
   t.expect(
     source.getItemsOrThrowCalls->Array.map(call => call.payload),
@@ -326,5 +347,46 @@ let waitUntil = async (predicate, ~message, ~timeoutMs=5000.) => {
       JsError.throwWithMessage(`Timed out waiting for ${message}`)
     }
     await Utils.delay(1)
+  }
+}
+
+// A refused write reaches the indexer's error boundary rather than a promise the
+// test could await, so `onError` captures it there. `awaitStorageError` answers
+// with what an operator would have been shown: the storage error's own message
+// and the reason underneath it.
+type refusal = {
+  onError: ErrorHandling.t => unit,
+  awaitStorageError: unit => promise<option<(string, string)>>,
+  // Just the reason, for a refusal whose wording is the whole point. Which
+  // internal step refused the write is not something an operator acts on, so a
+  // test about the wording shouldn't fail when the refusal merely moves.
+  awaitRefusalReason: unit => promise<option<string>>,
+}
+
+let captureRefusal = () => {
+  let captured: ref<option<ErrorHandling.t>> = ref(None)
+  let awaitStorageError = async () => {
+    // Generous: the refusal crosses a real ClickHouse round trip and the
+    // indexer's error boundary, and a slow runner missing it fails as a
+    // timeout rather than as the assertion the test is about.
+    await waitUntil(
+      () => captured.contents->Option.isSome,
+      ~message="the write to be refused",
+      ~timeoutMs=15000.,
+    )
+    switch captured.contents {
+    | Some({exn: Persistence.StorageError({message, reason})}) =>
+      Some((
+        message,
+        (reason->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
+      ))
+    | _ => None
+    }
+  }
+  {
+    onError: errHandler => captured := Some(errHandler),
+    awaitStorageError,
+    awaitRefusalReason: async () =>
+      (await awaitStorageError())->Option.map(((_, reason)) => reason),
   }
 }

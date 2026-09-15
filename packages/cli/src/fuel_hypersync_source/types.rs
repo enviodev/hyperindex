@@ -203,7 +203,7 @@ mod tests {
     fn binary_field(name: &str, values: Vec<Option<&[u8]>>) -> (Field, Box<dyn Array>) {
         (
             Field::new(name, ArrowDataType::Binary, true),
-            Box::new(BinaryArray::<i32>::from_iter(values.into_iter())),
+            Box::new(BinaryArray::<i32>::from_iter(values)),
         )
     }
 

@@ -126,7 +126,9 @@ let buildChainsObject = (~config: Config.t) => {
         get: () => {
           switch getInitialChainState(~chainId=chainConfig.id) {
           | Some(chainState) => chainState.startBlock
-          | None => chainConfig.startBlock
+          // Only before persistence is ready, which in a real run is before any
+          // handler module has loaded. The test indexer sits here for good.
+          | None => chainConfig->Config.startBlockOrZero
           }
         },
       },
@@ -486,7 +488,12 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: bool) => {
+let startServer = (
+  ~getMetrics: unit => option<Metrics.t>,
+  ~envioVersion: string,
+  ~persistence: Persistence.t,
+  ~isDevelopmentMode: bool,
+) => {
   open Express
 
   let app = make()
@@ -518,10 +525,20 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
   })
 
   app->get("/console/state", (_req, res) => {
-    let state = if isDevelopmentMode {
-      getState()
-    } else {
+    let state = if !isDevelopmentMode {
       Disabled({})
+    } else {
+      switch getMetrics() {
+      | None => Initializing({})
+      | Some(metrics) =>
+        Active({
+          envioVersion,
+          chains: metrics.chains->Array.map(toChainData),
+          indexerStartTime: metrics.startTime,
+          isPreRegisteringDynamicContracts: false,
+          rollbackOnReorg: metrics.rollbackEnabled,
+        })
+      }
     }
 
     res->json(state->S.reverseConvertToJsonOrThrow(stateSchema))
@@ -541,10 +558,7 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
 
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", Metrics.contentType)
-    let _ =
-      res->endWithData(
-        Metrics.collect(~metrics=getIndexerState()->Option.map(IndexerState.toMetrics)),
-      )
+    let _ = res->endWithData(Metrics.collect(~metrics=getMetrics()))
   })
 
   app->get("/metrics/runtime", (_req, res) => {
@@ -589,6 +603,10 @@ let migrate = async (~reset) => {
     ~envioInfo=getEnvioInfo(),
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
+    ~lowercaseAddresses=config.lowercaseAddresses,
+    // A migration command runs once and exits, with nobody watching it recover:
+    // an unreachable chain should say so now rather than hold the command open.
+    ~startBlockRetry=StartBlockResolver.Once,
   )
   await persistence.storage.close()
 }
@@ -641,6 +659,8 @@ let start = async (
     ~envioInfo=getEnvioInfo(),
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
+    ~lowercaseAddresses=config.lowercaseAddresses,
+    ~requireInitialized=config.isolated,
   )
 
   // Loads user handler files, which register handler/contractRegister/where
@@ -676,22 +696,10 @@ let start = async (
   }
   let envioVersion = Utils.EnvioPackage.value.version
 
+  let getMetrics = () => getIndexerState()->Option.map(IndexerState.toMetrics)
+
   if !isTest {
-    startServer(~persistence, ~isDevelopmentMode, ~getState=() =>
-      switch getIndexerState() {
-      | None => Initializing({})
-      | Some(state) => {
-          let chains = (state->IndexerState.toMetrics).chains->Array.map(toChainData)
-          Active({
-            envioVersion,
-            chains,
-            indexerStartTime: state->IndexerState.indexerStartTime,
-            isPreRegisteringDynamicContracts: false,
-            rollbackOnReorg: config.shouldRollbackOnReorg,
-          })
-        }
-      }
-    )
+    startServer(~persistence, ~isDevelopmentMode, ~envioVersion, ~getMetrics)
   }
 
   let state = IndexerState.makeFromDbState(
@@ -705,7 +713,7 @@ let start = async (
     ~onError,
   )
   if shouldUseTui {
-    let _rerender = Tui.start(~getState=() => state)
+    let _rerender = Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
   }
   setIndexerState(state)
   state->IndexerLoop.start

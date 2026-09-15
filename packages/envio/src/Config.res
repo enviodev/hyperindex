@@ -26,10 +26,18 @@ type evmRpcConfig = {
   headers: option<dict<string>>,
 }
 
+// Unboxed so the runtime value is exactly what the public config JSON holds -
+// a number, or the string "latest" - which is why `startBlockSchema` only has
+// to validate it rather than convert it.
+@unboxed
+type startBlock =
+  | Block(int)
+  | @as("latest") Latest
+
 type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
-  | SvmSourceConfig({hypersync: option<string>, rpc: option<string>})
+  | SvmSourceConfig({hypersync: string})
   // A `simulate` run: the items the test fed in, parsed against the chain's
   // registrations. The source itself is built with the chain's address store,
   // like every other source, so it can apply the same gates.
@@ -46,7 +54,11 @@ type chain = {
   name: string,
   id: ChainId.t,
   ecosystem: Ecosystem.name,
-  startBlock: int,
+  // What config.yaml says, never rewritten. Once `Latest` is resolved against
+  // the chain's head the block lives in the database
+  // (`envio_chains.start_block`), and that is what every consumer past startup
+  // reads.
+  startBlock: startBlock,
   endBlock?: int,
   maxReorgDepth: int,
   blockLag: int,
@@ -124,9 +136,17 @@ type t = {
   reorgThresholdReadyTolerance: int,
   lowercaseAddresses: bool,
   isDev: bool,
+  // An `envio start --chain` process: drives a subset of the schema's chains
+  // while sibling processes drive the rest, so it only touches what its own
+  // chains own — their partitions' indexes, their `ready_at`, their resume.
+  isolated: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
+  // Whether checkpoint ids come from one counter or one per chain. Decided by
+  // the schema alone: a cross-chain entity has rows any chain's reorg can
+  // reach, so its checkpoints have to be comparable across chains.
+  checkpointSequence: CheckpointSequence.t,
 }
 
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
@@ -157,10 +177,36 @@ let chainContractSchema = S.schema(s =>
   }
 )
 
+// For everything downstream of `StartBlockResolver`, which rewrites `Latest`
+// into the chain's head before storage is initialized. The throw is an
+// invariant check, not a case a user can reach.
+let startBlockOrThrow = (chain: chain) =>
+  switch chain.startBlock {
+  | Block(startBlock) => startBlock
+  | Latest =>
+    JsError.throwWithMessage(
+      `Chain ${chain.id->ChainId.toString}: the "latest" start block was read before it was resolved. This is a bug in envio - please report it.`,
+    )
+  }
+
+// For the paths that have no chain to read a head from - the test indexer and
+// simulated items - where `Latest` never gets resolved and every simulated
+// block should be in range.
+let startBlockOrZero = (chain: chain) =>
+  switch chain.startBlock {
+  | Block(startBlock) => startBlock
+  | Latest => 0
+  }
+
+let startBlockSchema = S.union([
+  S.int->S.shape(n => Block(n)),
+  S.literal("latest")->S.shape(_ => Latest),
+])
+
 let publicConfigChainSchema = S.schema(s =>
   {
     "id": s.matches(ChainId.schema),
-    "startBlock": s.matches(S.int),
+    "startBlock": s.matches(startBlockSchema),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
     "blockLag": s.matches(S.option(S.int)),
@@ -168,41 +214,37 @@ let publicConfigChainSchema = S.schema(s =>
     "hypersync": s.matches(S.option(S.string)),
     "rpcs": s.matches(S.option(S.array(rpcConfigSchema))),
     // SVM source config
-    "rpc": s.matches(S.option(S.string)),
     // Per-chain contract data (addresses and optional start block)
     "contracts": s.matches(S.option(S.dict(chainContractSchema))),
   }
 )
 
+type svmAccountSlotItem = {"name": option<string>, "optional": option<bool>}
+
+let svmAccountSlotSchema: S.t<svmAccountSlotItem> = S.schema(s =>
+  {
+    "name": s.matches(S.option(S.string)),
+    "optional": s.matches(S.option(S.bool)),
+  }
+)
+
+let svmAccountSlotFromItem = (slot: svmAccountSlotItem): Internal.svmAccountSlot =>
+  switch (slot["name"], slot["optional"]) {
+  | (None, _) => Unnamed
+  | (Some(name), Some(true)) => Optional(name)
+  | (Some(name), _) => Required(name)
+  }
+
 let svmEventDescriptorSchema = S.schema(s =>
   {
     "discriminator": s.matches(S.option(S.string)),
-    "discriminatorByteLen": s.matches(S.int),
-    // An array of AND-groups OR-ed together: the CLI normalizes both the flat
-    // and `any_of` YAML shapes to `Vec<Vec<SvmAccountFilterJson>>`.
-    "accountFilters": s.matches(
-      S.option(
-        S.array(
-          S.array(
-            S.schema(s =>
-              {
-                "position": s.matches(S.int),
-                "values": s.matches(S.array(S.string)),
-              }
-            ),
-          ),
-        ),
-      ),
-    ),
-    "isInner": s.matches(S.option(S.bool)),
-    "accounts": s.matches(S.option(S.array(S.string))),
+    "accounts": s.matches(S.option(S.array(svmAccountSlotSchema))),
     "args": s.matches(S.option(S.json(~validate=false))),
   }
 )
 
 let svmAbiSchema = S.schema(s =>
   {
-    "programId": s.matches(S.string),
     "definedTypes": s.matches(S.json(~validate=false)),
     "source": s.matches(S.string),
   }
@@ -341,6 +383,7 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
 
   let (fieldType, baseSchema) = switch typ {
   | "string" => (Table.String, S.string->S.toUnknown)
+  | "bytes" => (Table.Bytea, Utils.Schema.bytes->S.toUnknown)
   | "boolean" => (Table.Boolean, S.bool->S.toUnknown)
   | "int" => (Table.Int32, S.int->S.toUnknown)
   | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), Utils.BigInt.schema->S.toUnknown)
@@ -374,13 +417,13 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
   | other => JsError.throwWithMessage("Unknown field type in entity config: " ++ other)
   }
 
-  let fieldSchema = if isArray {
-    S.array(baseSchema)->S.toUnknown
-  } else {
-    baseSchema
+  let fieldSchema = switch (fieldType, isArray) {
+  | (Table.Bytea, true) => Utils.Schema.bytesArray->S.toUnknown
+  | (_, true) => S.array(baseSchema)->S.toUnknown
+  | (_, false) => baseSchema
   }
   let fieldSchema = if isNullable {
-    S.null(fieldSchema)->S.toUnknown
+    Utils.Schema.nullTolerant(fieldSchema)->S.toUnknown
   } else {
     fieldSchema
   }
@@ -551,6 +594,7 @@ let publicConfigSchema = S.schema(s =>
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
     "isDev": s.matches(S.option(S.bool)),
+    "isolatedChains": s.matches(S.option(S.array(ChainId.schema))),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
@@ -572,6 +616,44 @@ let contractMappingOf = (~chainConfigs: array<chain>): ContractMapping.t => {
     chain.contracts->Array.forEach(contract => names->Array.push(contract.name)->ignore)
   )
   ContractMapping.make(~names)
+}
+
+let getChain = (config, ~chainId) =>
+  config.chainMap->ChainMap.has(chainId)
+    ? chainId
+    : JsError.throwWithMessage(
+        "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
+      )
+
+// Narrows a config to the chains one `envio start --chain` process drives.
+// `contractMapping` is deliberately left whole: its ids are what the migration
+// that created the schema stored, and one rebuilt from a subset would hand the
+// same contract a different id.
+let isolate = (config: t, ~chainIds: array<ChainId.t>) => {
+  // Chains indexed in separate processes each advance their own checkpoint
+  // counter, which only holds while no entity has rows another chain can reach.
+  switch config.userEntities->Array.filter(entityConfig => entityConfig.crossChain) {
+  | [] => ()
+  | shared =>
+    JsError.throwWithMessage(
+      `Only a schema whose entities are all per-chain can be split across processes. Shared across chains: ${shared
+        ->Array.map(entityConfig => entityConfig.name)
+        ->Array.joinUnsafe(", ")}.`,
+    )
+  }
+  chainIds->Array.forEach(chainId => config->getChain(~chainId)->ignore)
+
+  // Filtered out of the config's own chain order rather than built from the
+  // argument order, so a repeated `--chain` collapses and `defaultChain` doesn't
+  // depend on how the flags were typed.
+  let chains =
+    config.chainMap->ChainMap.values->Array.filter(chain => chainIds->Array.includes(chain.id))
+  {
+    ...config,
+    chainMap: chains->Array.map(chain => (chain.id, chain))->ChainMap.fromArrayUnsafe,
+    defaultChain: chains->Array.get(0),
+    isolated: true,
+  }
 }
 
 let fromPublic = (publicConfigJson: JSON.t) => {
@@ -657,7 +739,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     "eventSignatures": array<string>,
     "events": option<array<_>>,
     "svmAbi": option<{
-      "programId": string,
       "definedTypes": JSON.t,
       "source": string,
     }>,
@@ -675,13 +756,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       }
       let widened =
         contractConfig->(
-          Utils.magic: _ => {
-            "svmAbi": option<{
-              "programId": string,
-              "definedTypes": JSON.t,
-              "source": string,
-            }>,
-          }
+          Utils.magic: _ => {"svmAbi": option<{"definedTypes": JSON.t, "source": string}>}
         )
       contractDataByName->Dict.set(
         capitalizedName,
@@ -753,12 +828,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               Utils.magic: _ => {
                 "svm": option<{
                   "discriminator": option<string>,
-                  "discriminatorByteLen": int,
-                  "accountFilters": option<
-                    array<array<{"position": int, "values": array<string>}>>,
-                  >,
-                  "isInner": option<bool>,
-                  "accounts": option<array<string>>,
+                  "accounts": option<array<svmAccountSlotItem>>,
                   "args": option<JSON.t>,
                 }>,
               }
@@ -770,26 +840,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               `SVM instruction ${contractName}.${eventName} is missing the "svm" descriptor in internal config`,
             )
           }
-          let accountFilters =
-            svm["accountFilters"]
-            ->Option.getOr([])
-            ->Array.map(group =>
-              group->Array.map(
-                af => {
-                  Internal.position: af["position"],
-                  values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
-                },
-              )
-            )
           (EventConfigBuilder.buildSvmInstructionEventConfig(
             ~contractName,
             ~instructionName=eventName,
             ~programId,
             ~discriminator=svm["discriminator"],
-            ~discriminatorByteLen=svm["discriminatorByteLen"],
-            ~accountFilters,
-            ~isInner=svm["isInner"],
-            ~accounts=svm["accounts"]->Option.getOr([]),
+            ~accounts=svm["accounts"]->Option.getOr([])->Array.map(svmAccountSlotFromItem),
             ~args=svm["args"]->Option.getOr(JSON.Null),
             ~definedTypes=svmDefinedTypes,
           ) :> Internal.eventConfig)
@@ -843,6 +899,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       let contracts =
         contractDataByName
         ->Dict.toArray
+        // Svm programs are defined once for the project and placed per chain by
+        // `program_id`. A program the config left off this chain has nothing to
+        // index here, and no dynamic registration can add it later.
+        ->Array.filter(((capitalizedName, _)) =>
+          switch ecosystemName {
+          | Ecosystem.Svm => chainContracts->Dict.get(capitalizedName)->Option.isSome
+          | _ => true
+          }
+        )
         ->Array.map(((capitalizedName, contractData)) => {
           let chainContract = chainContracts->Dict.get(capitalizedName)
           let rawAddresses =
@@ -950,14 +1015,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
       | Ecosystem.Svm =>
-        let hypersync = publicChainConfig["hypersync"]
-        let rpc = publicChainConfig["rpc"]
-        if hypersync->Option.isNone && rpc->Option.isNone {
-          JsError.throwWithMessage(
-            `Chain ${chainName} is missing a data source: provide either an rpc endpoint or an experimental hypersync config`,
-          )
+        switch publicChainConfig["hypersync"] {
+        | Some(hypersync) => SvmSourceConfig({hypersync: hypersync})
+        | None =>
+          JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
-        SvmSourceConfig({hypersync, rpc})
       }
 
       {
@@ -1043,7 +1105,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => []
   }
 
-  {
+  let config = {
     name: publicConfig["name"],
     description: publicConfig["description"],
     handlers: publicConfig["handlers"]->Option.getOr("src/handlers"),
@@ -1064,9 +1126,16 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
+    isolated: false,
     userEntitiesByName,
     userEntities,
     allEnums,
+    checkpointSequence: CheckpointSequence.fromEntities(userEntities),
+  }
+
+  switch publicConfig["isolatedChains"] {
+  | None => config
+  | Some(chainIds) => config->isolate(~chainIds)
   }
 }
 
@@ -1141,24 +1210,12 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<Cha
   })
 }
 
-let shouldSaveHistory = (config, ~isInReorgThreshold) =>
-  config.shouldSaveFullHistory || (config.shouldRollbackOnReorg && isInReorgThreshold)
-
-let shouldPruneHistory = (config, ~isInReorgThreshold) =>
-  !config.shouldSaveFullHistory && (config.shouldRollbackOnReorg && isInReorgThreshold)
-
-let getChain = (config, ~chainId) =>
-  config.chainMap->ChainMap.has(chainId)
-    ? chainId
-    : JsError.throwWithMessage(
-        "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
-      )
-
 // A CLI command payload already contains the resolved JSON; priming lets
 // downstream callers skip the NAPI `getConfigJson` round-trip. Calling
 // `prime` again invalidates the memo.
 %%private(let primedJson: ref<option<JSON.t>> = ref(None))
 %%private(let cached: ref<option<t>> = ref(None))
+
 let prime = (json: JSON.t): unit => {
   primedJson := Some(json)
   cached := None
@@ -1187,7 +1244,6 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
           switch chainJson {
           | Object(chain) => {
               chain->Utils.Dict.deleteInPlace("rpcs")
-              chain->Utils.Dict.deleteInPlace("rpc")
               chain->Utils.Dict.deleteInPlace("hypersync")
             }
           | _ => ()
@@ -1200,6 +1256,7 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
   switch cloned {
   | Object(obj) => {
       obj->Utils.Dict.deleteInPlace("isDev")
+      obj->Utils.Dict.deleteInPlace("isolatedChains")
       stripChains(obj->Dict.get("evm"))
       stripChains(obj->Dict.get("fuel"))
       stripChains(obj->Dict.get("svm"))
@@ -1360,6 +1417,33 @@ let throwIfIncompatible = (
         )}# delete all indexed data and start over${option3}`,
     )
   }
+}
+
+let throwIfResumeIncompatible = (
+  ~storedEnvioInfo: option<JSON.t>,
+  ~storedContractMapping: ContractMapping.t,
+  ~envioInfo: JSON.t,
+  ~contractMapping: ContractMapping.t,
+  ~resetCommand: string,
+  ~runCommand: option<string>,
+) => {
+  let changedPaths = switch storedEnvioInfo {
+  | None => ["storage was initialized by an older envio version"]
+  | Some(stored) => diffPaths(~stored, ~current=envioInfo)
+  }
+  let changedPaths =
+    storedContractMapping->ContractMapping.isEqual(contractMapping)
+      ? changedPaths
+      : changedPaths->Array.concat(["contracts"])
+  let hasClickhouse = switch envioInfo {
+  | Object(d) =>
+    switch d->Dict.get("storage") {
+    | Some(Object(s)) => s->Dict.get("clickhouse") == Some(Boolean(true))
+    | _ => false
+    }
+  | _ => false
+  }
+  throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
 }
 
 // The returned value is a pure function of the JSON: it holds only event

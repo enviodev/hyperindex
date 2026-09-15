@@ -1781,6 +1781,7 @@ dependencies = [
  "async-recursion",
  "bollard",
  "bs58",
+ "bytes",
  "capnp",
  "clap",
  "clap-markdown",

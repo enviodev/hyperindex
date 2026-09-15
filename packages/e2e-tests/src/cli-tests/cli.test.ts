@@ -40,7 +40,7 @@ describe("envio config view", () => {
 // their own, well within the timeout.
 describe("envio local db-migrate", () => {
   const dbEnv = {
-    ENVIO_PG_PORT: "5433",
+    ENVIO_PG_PORT: String(config.pgPort),
     ENVIO_PG_SCHEMA: PG_SCHEMA,
     // Hasura isn't reachable in the test environment; without this, retries
     // dominate runtime and obscure whether the process actually exited.

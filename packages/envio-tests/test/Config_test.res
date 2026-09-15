@@ -176,30 +176,6 @@ describe("Field selection enum schemas", () => {
   })
 })
 
-describe("svmEventDescriptorSchema", () => {
-  // Regression: the CLI emits `accountFilters` as an array of AND-groups
-  // (`Vec<Vec<SvmAccountFilterJson>>`, OR-ed together). The schema used to
-  // declare a flat array, so any config using `account_filters` failed to
-  // load with `Failed parsing at ["accountFilters"]["0"]["position"].
-  // Reason: Expected int32, received undefined`.
-  it("parses accountFilters as an array of AND-groups", t => {
-    let json: JSON.t = %raw(`{
-      "discriminator": "0x0c",
-      "discriminatorByteLen": 1,
-      "accountFilters": [
-        [{"position": 1, "values": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]}],
-        [{"position": 0, "values": ["So11111111111111111111111111111111111111112"]}]
-      ]
-    }`)
-    let parsed = json->S.parseOrThrow(Config.svmEventDescriptorSchema)
-    let expected = Some([
-      [{"position": 1, "values": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]}],
-      [{"position": 0, "values": ["So11111111111111111111111111111111111111112"]}],
-    ])
-    t.expect(parsed["accountFilters"]).toEqual(expected)
-  })
-})
-
 describe("EventConfigBuilder", () => {
   it("buildParamsSchema handles simple types", t => {
     let params: array<EventConfigBuilder.paramMeta> = [

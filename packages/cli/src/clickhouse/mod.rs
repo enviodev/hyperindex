@@ -1,0 +1,2693 @@
+pub mod ch_type;
+pub mod ddl;
+#[cfg(test)]
+mod mock_server;
+pub mod row_binary;
+
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use anyhow::{anyhow, bail, Context, Result};
+use bytes::Bytes;
+use napi::bindgen_prelude::{ArrayBuffer, Object};
+use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use napi::{Env, Status};
+use napi_derive::napi;
+
+use crate::columnar::{self, Arena, ColumnKind};
+use crate::config_parsing::system_config::ChainIdMode;
+use ch_type::{ChType, FieldSpec};
+use ddl::ResumeBounds;
+use row_binary::{Column, EncodedRows};
+
+const MAX_RETRIES: u32 = 8;
+
+/// `@clickhouse/client`'s `request_timeout` default, which the JS insert path
+/// ran under. Without it a peer that accepts a connection and then goes silent
+/// — a black-holed socket through a load balancer sends neither RST nor FIN —
+/// leaves the request hanging forever, and with it the whole write batch.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// What a schema or maintenance statement gets instead. `DROP DATABASE ... SYNC`
+/// and the reorg trim's `ALTER ... DELETE ... mutations_sync` both run for as
+/// long as the data takes, so holding them to the insert deadline would fail a
+/// restart on a large history table — the one case the trim exists for.
+const STATEMENT_TIMEOUT: Duration = Duration::from_secs(600);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Probes an idle pooled socket so a connection dropped by a NAT or proxy is
+/// discovered before a batch is handed to it.
+const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
+/// How long a pooled socket may sit idle before the client drops it. Deliberately
+/// under ClickHouse's own `keep_alive_timeout` (3s on older servers, 10s by
+/// default), which is the deadline that matters: past it the server closes the
+/// socket, and a batch dispatched onto one already carrying a FIN fails with
+/// `connection closed before message completed`. `@clickhouse/client` set its
+/// `idle_socket_ttl` to 2.5s for the same reason.
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_millis(2_500);
+const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
+/// How long one batch may spend on the whole retry ladder. Halving turns a
+/// failure into two more attempts, so a range that keeps failing costs
+/// exponentially many requests — cheap when each is refused in milliseconds,
+/// hours when each one first has to reach [`REQUEST_TIMEOUT`] against a peer
+/// that accepts the connection and then goes silent. `retries` bounds how deep
+/// a single range may go; this bounds what the batch as a whole may cost.
+const RETRY_BUDGET: Duration = Duration::from_secs(120);
+
+#[derive(Debug, Clone, Copy)]
+struct Tuning {
+    retries: u32,
+    statement_timeout: Duration,
+    max_retry_delay: Duration,
+    request_timeout: Duration,
+    retry_budget: Duration,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self {
+            retries: MAX_RETRIES,
+            max_retry_delay: MAX_RETRY_DELAY,
+            request_timeout: REQUEST_TIMEOUT,
+            statement_timeout: STATEMENT_TIMEOUT,
+            retry_budget: RETRY_BUDGET,
+        }
+    }
+}
+
+impl Tuning {
+    fn delay(&self, retries_left: u32) -> Duration {
+        if self.retries < 2 {
+            return Duration::ZERO;
+        }
+        let span = self.max_retry_delay.as_millis() as u64;
+        Duration::from_millis(
+            (span / 10
+                + (span - span / 10) * u64::from(self.retries - retries_left)
+                    / u64::from(self.retries - 1))
+            .min(span),
+        )
+    }
+}
+
+#[napi(object)]
+pub struct ColumnSpecInput {
+    pub name: String,
+    /// Omitted when it matches `name`, which it does unless a column rename is
+    /// configured.
+    pub field_name: Option<String>,
+    pub field_type: String,
+    pub is_nullable: Option<bool>,
+    pub is_array: Option<bool>,
+    pub precision: Option<u32>,
+    pub scale: Option<u32>,
+    pub enum_variants: Option<Vec<String>>,
+}
+
+impl From<ColumnSpecInput> for ddl::ColumnSpec {
+    fn from(input: ColumnSpecInput) -> Self {
+        let ColumnSpecInput {
+            name,
+            field_name,
+            field_type,
+            is_nullable,
+            is_array,
+            precision,
+            scale,
+            enum_variants,
+        } = input;
+        ddl::ColumnSpec {
+            field_name: field_name.unwrap_or_else(|| name.clone()),
+            name,
+            field: FieldSpec {
+                field_type,
+                is_nullable: is_nullable.unwrap_or(false),
+                is_array: is_array.unwrap_or(false),
+                precision,
+                scale,
+                enum_variants,
+            },
+        }
+    }
+}
+
+#[napi(object)]
+pub struct EntitySpecInput {
+    pub name: String,
+    pub history_table: String,
+    pub columns: Vec<ColumnSpecInput>,
+    pub chain_id_column: Option<String>,
+    pub partition_by: Option<String>,
+    pub order_by: Option<Vec<String>>,
+    pub ttl: Option<String>,
+    pub skipping_indexes: Option<Vec<ddl::SkippingIndexSpec>>,
+}
+
+impl From<EntitySpecInput> for ddl::EntitySpec {
+    fn from(input: EntitySpecInput) -> Self {
+        ddl::EntitySpec {
+            name: input.name,
+            history_table: input.history_table,
+            columns: input.columns.into_iter().map(Into::into).collect(),
+            chain_id_column: input.chain_id_column,
+            partition_by: input.partition_by,
+            order_by: input.order_by,
+            ttl: input.ttl,
+            skipping_indexes: input.skipping_indexes.unwrap_or_default(),
+        }
+    }
+}
+
+#[napi(object)]
+pub struct InitializeInput {
+    pub entities: Vec<EntitySpecInput>,
+    pub checkpoint_columns: Vec<ColumnSpecInput>,
+    pub replicated: bool,
+    pub database_engine: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Debug)]
+pub struct RegisteredTable {
+    pub handle: u32,
+    pub names: Vec<String>,
+    pub kinds: Vec<u8>,
+    pub nullable: Vec<bool>,
+}
+
+/// How far a chain has been committed, as `envio_chains` and the checkpoints
+/// Postgres kept record it.
+#[napi(object)]
+pub struct ChainProgressInput {
+    /// Decimal digits: chain ids outrun what a JS number holds exactly.
+    pub chain_id: String,
+    pub progress_block_number: i32,
+    /// The chain's own committed checkpoint id. Under a shared sequence these
+    /// come from one counter, so the highest of them is what the whole resume
+    /// trims to.
+    pub committed_checkpoint_id: String,
+}
+
+/// A history table this schema owns, and the column naming the chain each of
+/// its rows belongs to. Absent only for a cross-chain entity, which a per-chain
+/// sequence can't coexist with.
+#[napi(object)]
+pub struct HistoryTableInput {
+    pub name: String,
+    pub chain_id_column: Option<String>,
+}
+
+#[napi(object)]
+pub struct ResumeInput {
+    /// Whether each chain counts its own checkpoint ids.
+    pub per_chain: bool,
+    pub chain_progress: Vec<ChainProgressInput>,
+    /// The history tables this schema owns. A table no entity claims is one an
+    /// older schema left behind, and a schema change means a resync anyway.
+    pub history_tables: Vec<HistoryTableInput>,
+}
+
+struct ColumnSchema {
+    name: String,
+    ch_type: ChType,
+    kind: ColumnKind,
+}
+
+struct TableSchema {
+    table: String,
+    columns: Vec<ColumnSchema>,
+    insert_query: String,
+}
+
+struct Staged {
+    schema: Arc<TableSchema>,
+    arena: Arena,
+}
+
+#[napi]
+pub struct ClickHouseSink {
+    client: reqwest::Client,
+    url: String,
+    username: String,
+    password: String,
+    database: String,
+    tables: Mutex<HashMap<u32, Arc<TableSchema>>>,
+    staged: Mutex<HashMap<u32, Staged>>,
+    next_handle: AtomicU32,
+    tuning: Tuning,
+    warn: WarningSink,
+    chain_id_mode: ChainIdMode,
+    history: ddl::HistorySchema,
+    /// The node that answered the first request. Every later answer has to come
+    /// from it: the write order is only the read order on the node that took
+    /// the writes, so an address that starts balancing across replicas is an
+    /// error, not a slower path.
+    served_by: Mutex<Option<String>>,
+}
+
+type WarningSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+#[napi(object)]
+pub struct ClickHouseSinkOptions {
+    pub url: String,
+    pub username: String,
+    pub password: String,
+    pub database: String,
+    pub chain_id_mode: String,
+    pub history: ddl::HistorySchema,
+}
+
+/// Guards a number that is about to be spliced into a statement as itself.
+fn digits_only(value: &str, what: &str) -> Result<()> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        bail!("`{value}` is not {what}");
+    }
+    Ok(())
+}
+
+/// Backtick-quotes an identifier. ClickHouse reads C-style escapes inside one
+/// just as it does inside a string, so a backslash is doubled alongside the
+/// backtick — left alone, a name holding `a\tb` would be created with a tab in
+/// it.
+pub(crate) fn quoted(name: &str) -> String {
+    format!("`{}`", name.replace('\\', "\\\\").replace('`', "``"))
+}
+
+/// Single-quotes a string literal. ClickHouse reads C-style escapes inside one,
+/// so a backslash has to be doubled as well as a quote — left alone, `a\tb`
+/// would be stored as `a`, a tab, `b`.
+pub(crate) fn literal(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
+}
+
+fn to_napi(err: anyhow::Error) -> napi::Error {
+    napi::Error::from_reason(format!("{err:#}"))
+}
+
+#[napi]
+impl ClickHouseSink {
+    #[napi(factory)]
+    pub fn new(
+        env: &Env,
+        options: ClickHouseSinkOptions,
+        mut on_warning: ThreadsafeFunction<String, (), String, Status, false>,
+    ) -> napi::Result<Self> {
+        // A referenced threadsafe function holds the event loop open, so a sink
+        // that outlives the run keeps the whole process from exiting. The
+        // deprecation points at the `Weak` type parameter instead, but a weak
+        // callback can be collected once JS drops its own reference — which it
+        // does immediately, the closure being passed inline — and warnings would
+        // then stop arriving with nothing to show for it.
+        #[allow(deprecated)]
+        on_warning.unref(env)?;
+        Self::build(
+            options,
+            Tuning::default(),
+            Arc::new(move |message: &str| {
+                on_warning.call(message.to_string(), ThreadsafeFunctionCallMode::NonBlocking);
+            }),
+        )
+    }
+
+    fn build(
+        options: ClickHouseSinkOptions,
+        tuning: Tuning,
+        warn: WarningSink,
+    ) -> napi::Result<Self> {
+        let client = reqwest::Client::builder()
+            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+            .pool_max_idle_per_host(8)
+            .timeout(tuning.request_timeout)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .tcp_keepalive(TCP_KEEPALIVE)
+            // reqwest picks up HTTP_PROXY/HTTPS_PROXY by default; Node's http
+            // client never did, so honouring them here would silently start
+            // routing a deployment's inserts through a proxy that nothing asked
+            // to be in the path.
+            .no_proxy()
+            .build()
+            .map_err(|e| napi::Error::from_reason(format!("Failed building HTTP client: {e}")))?;
+        let chain_id_mode = ChainIdMode::parse(&options.chain_id_mode).map_err(to_napi)?;
+        Ok(Self {
+            client,
+            url: options.url.trim_end_matches('/').to_string(),
+            username: options.username,
+            password: options.password,
+            database: options.database,
+            tables: Mutex::new(HashMap::new()),
+            staged: Mutex::new(HashMap::new()),
+            next_handle: AtomicU32::new(1),
+            tuning,
+            warn,
+            chain_id_mode,
+            history: options.history,
+            served_by: Mutex::new(None),
+        })
+    }
+
+    #[napi]
+    pub fn register_entity_table(&self, entity: EntitySpecInput) -> napi::Result<RegisteredTable> {
+        let entity: ddl::EntitySpec = entity.into();
+        let columns = entity
+            .history_columns(&self.history, self.chain_id_mode)
+            .map_err(to_napi)?;
+        self.register(entity.history_table.clone(), columns)
+    }
+
+    #[napi]
+    pub fn register_checkpoints_table(
+        &self,
+        columns: Vec<ColumnSpecInput>,
+    ) -> napi::Result<RegisteredTable> {
+        let columns = self
+            .checkpoint_column_types(columns.into_iter().map(Into::into).collect())
+            .map_err(to_napi)?;
+        self.register(self.history.checkpoints_table.clone(), columns)
+    }
+
+    #[napi]
+    pub async fn initialize(&self, input: InitializeInput) -> napi::Result<()> {
+        self.initialize_inner(input).await.map_err(to_napi)
+    }
+
+    #[napi]
+    pub async fn resume(&self, input: ResumeInput) -> napi::Result<()> {
+        self.resume_inner(input)
+            .await
+            .map_err(|err| self.reinitialize_if_gone(err))
+            .map_err(to_napi)
+    }
+
+    /// Allocates a batch's columns and lends them to JavaScript as
+    /// `ArrayBuffer`s to fill in place, in the order the table was registered.
+    /// Returns `{ handle, buffers }`; the handle goes to `commitStage` and then
+    /// `writeBatch`.
+    ///
+    /// Synchronous by necessity: handing memory to the isolate needs the
+    /// isolate. Nothing may await between here and `commitStage` — see the
+    /// phase rules in `columnar`.
+    #[napi]
+    pub fn begin_stage<'env>(
+        &self,
+        env: &'env Env,
+        table: u32,
+        rows: u32,
+    ) -> napi::Result<Object<'env>> {
+        let schema = self.table_schema(table).map_err(to_napi)?;
+        let kinds: Vec<ColumnKind> = schema.columns.iter().map(|column| column.kind).collect();
+        let mut arena = Arena::new(rows as usize, &kinds).map_err(to_napi)?;
+        let buffers = columnar::js::expose(env, &mut arena)?;
+        let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
+        // Storing the arena moves its `Vec` headers, not the allocations the
+        // buffers above point into, so the lending survives the move.
+        self.staged
+            .lock()
+            .unwrap()
+            .insert(handle, Staged { schema, arena });
+        let mut result = Object::new(env)?;
+        result.set("handle", handle)?;
+        result.set("buffers", buffers)?;
+        Ok(result)
+    }
+
+    /// Replaces a variable-width column's payload with a larger one holding the
+    /// same bytes, detaching `stale` first. Fixed-width columns are sized from
+    /// the row count and never reach here.
+    #[napi]
+    pub fn grow_stage<'env>(
+        &self,
+        env: &'env Env,
+        handle: u32,
+        column: u32,
+        needed: u32,
+        stale: ArrayBuffer,
+    ) -> napi::Result<ArrayBuffer<'env>> {
+        let mut staged = self.staged.lock().unwrap();
+        let staged = staged
+            .get_mut(&handle)
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
+        columnar::js::grow(env, &mut staged.arena, column, needed, stale)
+    }
+
+    /// Ends the filling phase: every buffer is detached, so a view JavaScript
+    /// kept throws rather than writing into memory Rust is about to read.
+    #[napi]
+    pub fn commit_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+        let mut staged = self.staged.lock().unwrap();
+        Self::detach_or_abandon(&mut staged, handle, buffers)?;
+        let staged = staged
+            .get_mut(&handle)
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
+        let names: Vec<String> = staged
+            .schema
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect();
+        staged.arena.seal(&names).map_err(to_napi)
+    }
+
+    /// Drops a batch that threw while it was being filled. The buffers are
+    /// detached before the arena goes, which is what keeps a JavaScript view
+    /// from outliving the bytes it points at on the error path.
+    #[napi]
+    pub fn abort_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+        let mut staged = self.staged.lock().unwrap();
+        if !staged.contains_key(&handle) {
+            return Ok(());
+        }
+        // An abort is already carrying an error out, and that error is the one
+        // worth reading. A batch that cannot be handed back has been abandoned
+        // and is safe either way, so say so rather than throwing over it.
+        if let Err(failed) = Self::detach_or_abandon(&mut staged, handle, buffers) {
+            (self.warn)(&format!(
+                "A staged ClickHouse batch could not be handed back and its memory was abandoned: \
+                 {}",
+                failed.reason
+            ));
+            return Ok(());
+        }
+        staged.remove(&handle);
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn write_batch(
+        &self,
+        entities: Vec<u32>,
+        checkpoints: Option<u32>,
+    ) -> napi::Result<()> {
+        let (staged, checkpoints) = self.take_staged(&entities, checkpoints).map_err(to_napi)?;
+
+        futures_util::future::try_join_all(
+            staged.into_iter().map(|staged| self.insert_staged(staged)),
+        )
+        .await
+        .map_err(to_napi)?;
+
+        if let Some(checkpoints) = checkpoints {
+            self.insert_staged(checkpoints).await.map_err(to_napi)?;
+        }
+        Ok(())
+    }
+
+    /// Drops batches that were committed but never written — the rest of a
+    /// write that failed partway through staging. Their buffers were detached
+    /// by `commitStage`, so there is nothing left pointing at the arenas.
+    #[napi]
+    pub fn discard(&self, handles: Vec<u32>) {
+        let mut staged = self.staged.lock().unwrap();
+        for handle in handles {
+            staged.remove(&handle);
+        }
+    }
+}
+
+impl ClickHouseSink {
+    fn register(
+        &self,
+        table: String,
+        columns: Vec<(String, ChType)>,
+    ) -> napi::Result<RegisteredTable> {
+        if columns.is_empty() {
+            return Err(napi::Error::from_reason(format!(
+                "ClickHouse table `{table}` was registered with no columns"
+            )));
+        }
+        let columns: Vec<ColumnSchema> = columns
+            .into_iter()
+            .map(|(name, ch_type)| ColumnSchema {
+                kind: ch_type.column_kind(),
+                ch_type,
+                name,
+            })
+            .collect();
+        let names = columns.iter().map(|column| column.name.clone()).collect();
+        let kinds = columns.iter().map(|column| column.kind as u8).collect();
+        let nullable = columns
+            .iter()
+            .map(|column| matches!(column.ch_type, ChType::Nullable(_)))
+            .collect();
+        let insert_query = ddl::insert_query(
+            &self.database,
+            &table,
+            columns.iter().map(|column| &column.name),
+        );
+        let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
+        self.tables.lock().unwrap().insert(
+            handle,
+            Arc::new(TableSchema {
+                table,
+                columns,
+                insert_query,
+            }),
+        );
+        Ok(RegisteredTable {
+            handle,
+            names,
+            kinds,
+            nullable,
+        })
+    }
+
+    fn checkpoint_column_types(
+        &self,
+        columns: Vec<ddl::ColumnSpec>,
+    ) -> Result<Vec<(String, ChType)>> {
+        let context = format!("ClickHouse table `{}`", self.history.checkpoints_table);
+        columns
+            .iter()
+            .map(|column| column.typed(self.chain_id_mode, &context))
+            .collect()
+    }
+
+    async fn initialize_inner(&self, input: InitializeInput) -> Result<()> {
+        let InitializeInput {
+            entities,
+            checkpoint_columns,
+            replicated: env_replicated,
+            database_engine,
+        } = input;
+        let entities: Vec<ddl::EntitySpec> = entities.into_iter().map(Into::into).collect();
+        let checkpoint_columns =
+            self.checkpoint_column_types(checkpoint_columns.into_iter().map(Into::into).collect())?;
+
+        let has_replicated_engine = has_replicated_engine(database_engine.as_deref());
+        let replicated = env_replicated || has_replicated_engine;
+        if has_replicated_engine && !env_replicated {
+            (self.warn)(
+                "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so \
+                 tables use the ReplicatedMergeTree engine.",
+            );
+        }
+        let topology = ddl::Topology {
+            replicated,
+            // DDL a Replicated database engine propagates itself must not carry
+            // ON CLUSTER on top of it.
+            ddl_on_cluster: replicated && !has_replicated_engine,
+        };
+        let database_ident = quoted(&self.database);
+
+        if let Some(engine_spec) = &database_engine {
+            let expected = ddl::database_engine_name(engine_spec);
+            match self.existing_database_engine().await?.as_deref() {
+                Some(engine) if engine != expected => bail!(
+                    "ClickHouse database \"{}\" exists with engine \"{engine}\" but \
+                     ENVIO_CLICKHOUSE_DATABASE_ENGINE specifies \"{expected}\" (from \
+                     \"{engine_spec}\"). Drop the database manually to change its engine.",
+                    self.database
+                ),
+                _ => {}
+            }
+        }
+
+        let history_tables = entities
+            .iter()
+            .map(|entity| {
+                ddl::create_history_table(
+                    entity,
+                    &self.database,
+                    &self.history,
+                    topology,
+                    self.chain_id_mode,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if has_replicated_engine {
+            // TRUNCATE DATABASE is unsupported on Replicated databases, so a
+            // reset has to DROP and recreate instead. ON CLUSTER removes the
+            // database from every node — the engine's own log can't replicate
+            // the drop of the database it lives in — and SYNC waits for the drop
+            // to finish before the CREATE below.
+            self.post_statement(format!(
+                "DROP DATABASE IF EXISTS {database_ident} ON CLUSTER '{{cluster}}' SYNC"
+            ))
+            .await?;
+        } else {
+            self.post_statement(format!(
+                "TRUNCATE DATABASE IF EXISTS {database_ident}{}",
+                ddl::on_cluster_clause(topology.ddl_on_cluster)
+            ))
+            .await?;
+        }
+        self.post_statement(format!(
+            "CREATE DATABASE IF NOT EXISTS {database_ident}{}{}",
+            ddl::on_cluster_clause(replicated),
+            match &database_engine {
+                Some(engine) => format!(" ENGINE = {engine}"),
+                None => String::new(),
+            }
+        ))
+        .await?;
+
+        futures_util::future::try_join_all(
+            history_tables
+                .into_iter()
+                .map(|query| self.post_statement(query)),
+        )
+        .await?;
+
+        self.post_statement(ddl::create_checkpoints_table(
+            &checkpoint_columns,
+            &self.database,
+            &self.history,
+            topology,
+        ))
+        .await?;
+        let chain_id_type = checkpoint_columns
+            .iter()
+            .find(|(name, _)| name == &self.history.checkpoint_chain_id_column)
+            .map(|(_, ch_type)| ch_type)
+            .with_context(|| {
+                format!(
+                    "ClickHouse table `{}` has no `{}` column",
+                    self.history.checkpoints_table, self.history.checkpoint_chain_id_column
+                )
+            })?;
+        self.post_statement(ddl::create_chains_table(
+            chain_id_type,
+            &self.database,
+            &self.history,
+            topology,
+        ))
+        .await?;
+
+        self.post_statement(ddl::create_chains_materialized_view(
+            &self.database,
+            &self.history,
+            topology,
+        ))
+        .await?;
+
+        futures_util::future::try_join_all(entities.iter().map(|entity| {
+            self.post_statement(ddl::create_view(
+                entity,
+                &self.database,
+                &self.history,
+                topology,
+            ))
+        }))
+        .await?;
+
+        Ok(())
+    }
+
+    async fn existing_database_engine(&self) -> Result<Option<String>> {
+        let answer = self
+            .post_statement(format!(
+                "SELECT engine FROM system.databases WHERE name = {} FORMAT TabSeparated",
+                literal(&self.database)
+            ))
+            .await?;
+        Ok(match answer.trim() {
+            "" => None,
+            engine => Some(engine.to_string()),
+        })
+    }
+
+    /// The checkpoint each chain keeps everything up to.
+    ///
+    /// A checkpoint is Postgres-committed if either witness says so: it is at or
+    /// below its chain's committed checkpoint id, or it is at or below its
+    /// chain's recorded progress. The second witness is the one that matters
+    /// outside the reorg threshold, where Postgres saves no checkpoint at all —
+    /// the committed id is then the one meaning "nothing committed" while
+    /// ClickHouse holds every row of the backfill, and the chains restart from
+    /// their progress instead of replaying it. Progress and checkpoints are
+    /// written in the same transaction, so a checkpoint its chain's progress has
+    /// passed is one whose rows a replay will not write again.
+    async fn resume_bounds(
+        &self,
+        per_chain: bool,
+        chain_progress: &[ChainProgressInput],
+    ) -> Result<ResumeBounds> {
+        let mut committed_by_chain: Vec<(String, u64)> = Vec::with_capacity(chain_progress.len());
+        for chain in chain_progress {
+            digits_only(&chain.chain_id, "a chain id")?;
+            digits_only(&chain.committed_checkpoint_id, "a checkpoint id")?;
+            committed_by_chain.push((
+                chain.chain_id.clone(),
+                chain.committed_checkpoint_id.parse()?,
+            ));
+        }
+        // Under a shared sequence every chain counts from the same run of the
+        // counter, so the highest committed id is where the whole resume trims.
+        let committed = committed_by_chain
+            .iter()
+            .map(|(_, committed)| *committed)
+            .max()
+            .unwrap_or_default();
+        let covered = chain_progress
+            .iter()
+            .map(|chain| {
+                format!(
+                    "({} = {} AND {} <= {})",
+                    quoted(&self.history.checkpoint_chain_id_column),
+                    chain.chain_id,
+                    quoted(&self.history.checkpoint_block_number_column),
+                    chain.progress_block_number
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let id = quoted(&self.history.id_column);
+        let aggregates = format!("minIf({id}, NOT ({covered})), max({id})");
+        let table = format!(
+            "{}.{}",
+            quoted(&self.database),
+            quoted(&self.history.checkpoints_table)
+        );
+
+        if !per_chain {
+            let answer = self
+                .post_statement(format!(
+                    "SELECT {aggregates} FROM {table} FORMAT TabSeparated"
+                ))
+                .await?;
+            let (first_uncovered, highest) = read_aggregates(&answer);
+            return Ok(ResumeBounds::SharedAcrossChains(
+                safe_of(first_uncovered, highest, committed).to_string(),
+            ));
+        }
+
+        // One read for every chain: the group-by narrows `covered` to the chain
+        // whose rows the group holds, so each chain's own progress decides it.
+        let chain_column = quoted(&self.history.checkpoint_chain_id_column);
+        let answer = self
+            .post_statement(format!(
+                "SELECT {chain_column}, {aggregates} FROM {table} GROUP BY {chain_column} FORMAT \
+                 TabSeparated"
+            ))
+            .await?;
+        let mut answered: HashMap<&str, (u64, u64)> = HashMap::new();
+        for line in answer
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            let mut columns = line.split('\t');
+            let chain_id = columns
+                .next()
+                .with_context(|| format!("Unexpected safe checkpoint answer {line:?}"))?
+                .trim();
+            let rest = columns.collect::<Vec<_>>().join("\t");
+            answered.insert(chain_id, read_aggregates(&rest));
+        }
+        Ok(ResumeBounds::PerChain(
+            committed_by_chain
+                .into_iter()
+                .map(|(chain_id, committed)| {
+                    // A chain the checkpoints table says nothing about holds
+                    // nothing to trim beyond what Postgres already committed.
+                    let (first_uncovered, highest) = answered
+                        .get(chain_id.as_str())
+                        .copied()
+                        .unwrap_or((0, committed));
+                    let safe = safe_of(first_uncovered, highest, committed).to_string();
+                    (chain_id, safe)
+                })
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    /// Code 81 is the database itself being gone, 60 one of its tables. No
+    /// schema of ours survives either, so both are answered with the way back
+    /// rather than with the statement that tripped over it.
+    fn reinitialize_if_gone(&self, err: anyhow::Error) -> anyhow::Error {
+        let reinitialize = "Please run 'envio start -r' to reinitialize the indexer (it'll also \
+                            drop Postgres database).";
+        match clickhouse_error_code(&format!("{err:#}")) {
+            Some(81) => anyhow!(
+                "ClickHouse storage database \"{}\" not found. {reinitialize}",
+                self.database
+            ),
+            Some(60) => err.context(format!(
+                "ClickHouse storage database \"{}\" is missing a table the indexer needs. \
+                 {reinitialize}",
+                self.database
+            )),
+            _ => err,
+        }
+    }
+
+    async fn resume_inner(&self, input: ResumeInput) -> Result<()> {
+        let ResumeInput {
+            per_chain,
+            chain_progress,
+            history_tables,
+        } = input;
+        // No chain, no rows to hold to anything. Postgres inserts every chain's
+        // row in the transaction that creates the schema, so an empty list here
+        // means a config without chains, never a row that went missing with a
+        // frontier still to lower. Every trim below is an `ALTER ... DELETE`,
+        // and on replicated storage it is run unconditionally and waited on
+        // across replicas — not worth one per table here.
+        if chain_progress.is_empty() {
+            return Ok(());
+        }
+        let bounds = self.resume_bounds(per_chain, &chain_progress).await?;
+
+        // Before any trim: from here nothing above the id is readable, whether
+        // or not the trims below get to run.
+        let frontier_rows =
+            bounds.frontier_rows(chain_progress.iter().map(|chain| chain.chain_id.as_str()));
+        self.post_statement(ddl::set_chains_frontier(
+            &self.database,
+            &self.history,
+            &frontier_rows,
+        ))
+        .await?;
+
+        let histories_above = history_tables
+            .iter()
+            .map(|table| -> Result<(String, String)> {
+                Ok((
+                    table.name.clone(),
+                    bounds.above(
+                        table.chain_id_column.as_deref(),
+                        &self.history.checkpoint_id_column,
+                    )?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let checkpoints_above = bounds.above(
+            Some(&self.history.checkpoint_chain_id_column),
+            &self.history.id_column,
+        )?;
+
+        let above_by_table: Vec<(String, String)> = histories_above
+            .iter()
+            .cloned()
+            .chain(std::iter::once((
+                self.history.checkpoints_table.clone(),
+                checkpoints_above.clone(),
+            )))
+            .collect();
+        let holding = self.tables_holding_rows_above(&above_by_table).await?;
+
+        futures_util::future::try_join_all(
+            histories_above
+                .iter()
+                .filter(|(table, _)| holding.contains(table.as_str()))
+                .map(|(table, above)| {
+                    self.post_statement(ddl::trim_history_table(&self.database, table, above))
+                }),
+        )
+        .await?;
+
+        // Last, so that a resume interrupted before this point still has the
+        // checkpoints proving which history rows the next one must remove.
+        if holding.contains(self.history.checkpoints_table.as_str()) {
+            self.post_statement(ddl::trim_checkpoints(
+                &self.database,
+                &self.history,
+                &checkpoints_above,
+            ))
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Which of the history tables, and whether the checkpoints table, hold a
+    /// row above the checkpoint. TabSeparated answers one `name<TAB>0|1` per
+    /// table, in whatever order the server ran the branches. The shape is
+    /// fully known here, so anything else is an answer to refuse rather than a
+    /// table to skip: a skipped trim leaves rolled-back rows visible.
+    async fn tables_holding_rows_above(
+        &self,
+        above_by_table: &[(String, String)],
+    ) -> Result<HashSet<String>> {
+        let answer = self
+            .post_statement(ddl::holds_rows_above_checkpoint(
+                &self.database,
+                above_by_table,
+            ))
+            .await?;
+        let answered: HashMap<&str, bool> = answer
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let (table, holds) = line
+                    .split_once('\t')
+                    .with_context(|| format!("Unexpected row count answer {line:?}"))?;
+                let holds = match holds.trim() {
+                    "0" => false,
+                    "1" => true,
+                    _ => bail!("Unexpected row count answer {line:?}"),
+                };
+                Ok((table.trim(), holds))
+            })
+            .collect::<Result<_>>()?;
+        above_by_table
+            .iter()
+            .filter_map(|(table, _)| match answered.get(table.as_str()) {
+                Some(true) => Some(Ok(table.clone())),
+                Some(false) => None,
+                None => Some(Err(anyhow!("No row count answered for table {table}"))),
+            })
+            .collect()
+    }
+
+    fn table_schema(&self, handle: u32) -> Result<Arc<TableSchema>> {
+        self.tables
+            .lock()
+            .unwrap()
+            .get(&handle)
+            .cloned()
+            .with_context(|| format!("Unknown ClickHouse table handle {handle}"))
+    }
+
+    /// Detaches a staged batch's buffers. A batch that cannot hand them all back
+    /// still has a JavaScript view into its arena, and that allocation has to
+    /// outlive the view — so it leaves the registry without being freed. The
+    /// handle stops working, which is what makes the leak one batch rather than
+    /// a write into memory that has been handed to something else.
+    fn detach_or_abandon(
+        staged: &mut HashMap<u32, Staged>,
+        handle: u32,
+        buffers: Vec<ArrayBuffer>,
+    ) -> napi::Result<()> {
+        let Some(entry) = staged.get_mut(&handle) else {
+            return Err(napi::Error::from_reason(format!(
+                "Unknown staged batch {handle}"
+            )));
+        };
+        let detached = columnar::js::detach_all(&mut entry.arena, buffers);
+        if detached.is_err() {
+            std::mem::forget(staged.remove(&handle));
+        }
+        detached
+    }
+
+    fn take_staged(
+        &self,
+        entities: &[u32],
+        checkpoints: Option<u32>,
+    ) -> Result<(Vec<Staged>, Option<Staged>)> {
+        let (entities, checkpoints) = {
+            let mut staged = self.staged.lock().unwrap();
+            let entities: Vec<(u32, Option<Staged>)> = entities
+                .iter()
+                .map(|&handle| (handle, staged.remove(&handle)))
+                .collect();
+            let checkpoints = checkpoints.map(|handle| (handle, staged.remove(&handle)));
+            (entities, checkpoints)
+        };
+        let found = |(handle, staged): (u32, Option<Staged>)| {
+            staged.with_context(|| format!("Unknown staged ClickHouse batch {handle}"))
+        };
+        Ok((
+            entities
+                .into_iter()
+                .map(found)
+                .collect::<Result<Vec<_>>>()?,
+            checkpoints.map(found).transpose()?,
+        ))
+    }
+
+    async fn post_statement(&self, query: String) -> Result<String> {
+        let response = self
+            .client
+            .post(&self.url)
+            .timeout(self.tuning.statement_timeout)
+            .basic_auth(&self.username, Some(&self.password))
+            .body(query)
+            .send()
+            .await
+            .context("ClickHouse request failed")?;
+        self.check_served_by(&response)?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            bail!("ClickHouse returned {status}: {text}");
+        }
+        Ok(text)
+    }
+
+    /// ClickHouse names the node that answered in every response. The first
+    /// one is the node this run is pinned to; an answer from any other means
+    /// the address in front is balancing, and the next read could land on a
+    /// replica still fetching what was just written. A response without the
+    /// header (a proxy that strips it) leaves the pin unchecked.
+    fn check_served_by(&self, response: &reqwest::Response) -> Result<()> {
+        let Some(node) = response
+            .headers()
+            .get("X-ClickHouse-Server-Display-Name")
+            .and_then(|value| value.to_str().ok())
+        else {
+            return Ok(());
+        };
+        let mut served_by = self.served_by.lock().unwrap();
+        match served_by.as_deref() {
+            None => {
+                *served_by = Some(node.to_string());
+                Ok(())
+            }
+            Some(pinned) if pinned == node => Ok(()),
+            Some(pinned) => bail!(
+                "ClickHouse answered from node \"{node}\" after earlier answers came from \
+                 \"{pinned}\". The indexer has to read and write one replica: point \
+                 ENVIO_CLICKHOUSE_HOST at a single node rather than a load balancer."
+            ),
+        }
+    }
+
+    async fn insert_staged(&self, staged: Staged) -> Result<()> {
+        let Staged { schema, arena } = staged;
+        if !arena.is_sealed() {
+            bail!(
+                "a batch staged for ClickHouse table `{}` was never committed",
+                schema.table
+            );
+        }
+        let rows = arena.rows();
+        let encode_schema = schema.clone();
+        let encoded = tokio::task::spawn_blocking(move || {
+            let columns: Vec<Column> = encode_schema
+                .columns
+                .iter()
+                .zip(arena.columns())
+                .map(|(spec, values)| Column {
+                    name: Cow::Borrowed(&spec.name),
+                    ch_type: Cow::Borrowed(&spec.ch_type),
+                    values,
+                })
+                .collect();
+            row_binary::encode(&columns, rows)
+        })
+        .await
+        .context("ClickHouse encode task failed")?
+        .with_context(|| {
+            format!(
+                "Failed encoding rows for ClickHouse table `{}`",
+                schema.table
+            )
+        })?;
+        if encoded.rows() == 0 {
+            return Ok(());
+        }
+        self.insert_with_retry(&schema.table, &schema.insert_query, &encoded)
+            .await
+            .with_context(|| format!("Failed inserting into ClickHouse table `{}`", schema.table))
+    }
+
+    async fn insert_with_retry(
+        &self,
+        table: &str,
+        query: &str,
+        encoded: &EncodedRows,
+    ) -> Result<()> {
+        let mut failures = 0usize;
+        let started = std::time::Instant::now();
+        let mut pending = vec![(0usize, encoded.rows(), self.tuning.retries)];
+        while let Some((start, end, retries)) = pending.pop() {
+            match self.post_rows(query, encoded.slice(start, end)).await {
+                Ok(()) => continue,
+                Err(failure) => {
+                    let spent = started.elapsed();
+                    let out_of_budget = spent >= self.tuning.retry_budget;
+                    if retries == 0
+                        || out_of_budget
+                        || matches!(failure.retry, Retry::Never | Retry::Ambiguous)
+                    {
+                        return Err(match (failures, out_of_budget) {
+                            (0, _) => failure.error,
+                            (n, false) => failure
+                                .error
+                                .context(format!("after {n} failed attempt(s)")),
+                            (n, true) => failure.error.context(format!(
+                                "after {n} failed attempt(s) over {spent:.1?}, which is all the \
+                                 time one batch may spend retrying"
+                            )),
+                        });
+                    }
+                    failures += 1;
+                    let rows = end - start;
+                    (self.warn)(&format!(
+                        "ClickHouse insert of {rows} row(s) into `{table}` failed, \
+                         {retries} retries left: {:#}",
+                        failure.error
+                    ));
+                    tokio::time::sleep(self.tuning.delay(retries)).await;
+                    match failure.retry {
+                        Retry::Halved if rows > 1 => {
+                            let mid = start + rows / 2;
+                            pending.push((mid, end, retries - 1));
+                            pending.push((start, mid, retries - 1));
+                        }
+                        _ => pending.push((start, end, retries - 1)),
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn post_rows(&self, query: &str, body: Bytes) -> std::result::Result<(), InsertFailure> {
+        let request = self
+            .client
+            .post(&self.url)
+            .query(&[("query", query), ("database", &self.database)])
+            // Base64 of the credentials rather than the X-ClickHouse-User/Key
+            // headers: a header value may only carry visible ASCII, so a password
+            // with a non-ASCII character in it fails every request before it is
+            // sent. `@clickhouse/client` authenticated this way too.
+            .basic_auth(&self.username, Some(&self.password))
+            .header("Content-Type", "application/octet-stream")
+            .body(body);
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(err) => {
+                return Err(InsertFailure {
+                    retry: retry_for_send_error(&err),
+                    error: anyhow::Error::new(err).context("ClickHouse insert request failed"),
+                });
+            }
+        };
+        if let Err(error) = self.check_served_by(&response) {
+            return Err(InsertFailure {
+                retry: Retry::Never,
+                error,
+            });
+        }
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let text = response.text().await.unwrap_or_default();
+        Err(InsertFailure {
+            retry: retry_for(status, &text),
+            error: anyhow!("ClickHouse returned {status}: {text}"),
+        })
+    }
+}
+
+struct InsertFailure {
+    error: anyhow::Error,
+    retry: Retry,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Retry {
+    Never,
+    SameRows,
+    Halved,
+    /// The server may already have the rows. Another send would double-write,
+    /// so the batch fails and a restart trims back to the Postgres checkpoint.
+    Ambiguous,
+}
+
+/// Conditions a smaller batch is answered differently by, because what ran out
+/// was proportional to the batch's size. Resending is safe for a table in one
+/// partition, where an insert commits a single part or none; an entity with its
+/// own `partitionBy` writes a part per partition, and one of those already
+/// committed would be sent again — the entity view's `LIMIT 1 BY` reads past the
+/// duplicate, a direct query of the history table does not.
+/// A resend can leave the same rows in the history table twice: insert dedup is
+/// off on purpose (see `Topology::settings`) so trim-then-replay recovery works.
+/// Duplicates cost storage, not correctness — the serving view collapses them
+/// with `LIMIT 1 BY`, and a resent row repeats the id, checkpoint id and values
+/// of the one it duplicates. So a verdict answers whether sending again has a
+/// mechanism to go differently, not whether the rows could already have landed:
+/// a batch that outran a deadline or a memory limit fits once it is smaller.
+const HALVED_ERROR_CODES: &[u32] = &[
+    173, // CANNOT_ALLOCATE_MEMORY
+    241, // MEMORY_LIMIT_EXCEEDED
+    159, // TIMEOUT_EXCEEDED
+    209, // SOCKET_TIMEOUT
+];
+
+/// Failures that say nothing about size or reachability, so a resend is only the
+/// same request again for the same likely answer.
+const AMBIGUOUS_ERROR_CODES: &[u32] = &[
+    210, // NETWORK_ERROR
+    319, // UNKNOWN_STATUS_OF_INSERT
+];
+
+/// Codes that say the deployment or the rows are what failed — a table that is
+/// not there, credentials the server does not accept, a value it cannot read.
+/// No retry of any size talks it out of one.
+const NEVER_ERROR_CODES: &[u32] = &[
+    6,   // CANNOT_PARSE_TEXT
+    16,  // NO_SUCH_COLUMN_IN_TABLE
+    27,  // CANNOT_PARSE_INPUT_ASSERTION_FAILED
+    33,  // CANNOT_READ_ALL_DATA
+    44,  // ILLEGAL_COLUMN
+    47,  // UNKNOWN_IDENTIFIER
+    53,  // TYPE_MISMATCH
+    60,  // UNKNOWN_TABLE
+    62,  // SYNTAX_ERROR
+    81,  // UNKNOWN_DATABASE
+    117, // INCORRECT_DATA
+    192, // UNKNOWN_USER
+    193, // WRONG_PASSWORD
+    194, // REQUIRED_PASSWORD
+    497, // ACCESS_DENIED
+    516, // AUTHENTICATION_FAILED
+];
+
+/// A request that never reached the server carries no risk of a double write, so
+/// it is resent whole. A timeout is resent smaller: the deadline is the one
+/// thing a halved batch meets differently, whether it ran out mid-upload or
+/// waiting on the server to finish. Anything else that failed after the body
+/// went out leaves the same unknown as 319.
+fn retry_for_send_error(err: &reqwest::Error) -> Retry {
+    if err.is_connect() {
+        Retry::SameRows
+    } else if err.is_timeout() {
+        Retry::Halved
+    } else {
+        Retry::Ambiguous
+    }
+}
+
+/// A code nobody has classified is retried rather than surfaced: an overloaded
+/// server has far more codes for saying so than this file can enumerate, and the
+/// retry budget bounds what being wrong costs. Only the lists above,
+/// and a 4xx the server never wrote, end a write on the first answer.
+fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
+    match clickhouse_error_code(body) {
+        Some(code) if HALVED_ERROR_CODES.contains(&code) => Retry::Halved,
+        Some(code) if AMBIGUOUS_ERROR_CODES.contains(&code) => Retry::Ambiguous,
+        Some(code) if NEVER_ERROR_CODES.contains(&code) => Retry::Never,
+        Some(_) => Retry::SameRows,
+        // Nothing in the body is ClickHouse's, so something in front of it
+        // answered — a proxy or load balancer — and only its status says what.
+        None => match status {
+            // A body-size limit is the one proxy verdict a smaller batch meets
+            // differently. Left unretried, a batch that outgrows the limit fails
+            // the same way on every restart.
+            reqwest::StatusCode::PAYLOAD_TOO_LARGE => Retry::Halved,
+            // Rate limiting counts requests, so halving spends the budget
+            // faster, and a 5xx from in front of ClickHouse is the same shape of
+            // answer — an overloaded proxy, a refused upstream.
+            reqwest::StatusCode::TOO_MANY_REQUESTS => Retry::SameRows,
+            status if status.is_server_error() => Retry::SameRows,
+            // Any other 4xx is the deployment's own configuration —
+            // credentials, a route — which no smaller batch talks it out of.
+            _ => Retry::Never,
+        },
+    }
+}
+
+/// `minIf, max` off a TabSeparated answer. Both aggregates answer 0 over no
+/// rows, and an unreadable column reads as 0 — which `safe_of` treats as "every
+/// checkpoint is covered".
+fn read_aggregates(answer: &str) -> (u64, u64) {
+    let mut columns = answer
+        .trim()
+        .split('\t')
+        .map(|column| column.trim().parse::<u64>().unwrap_or_default());
+    (
+        columns.next().unwrap_or_default(),
+        columns.next().unwrap_or_default(),
+    )
+}
+
+/// Ids start at 1, so a first-uncovered of 0 means no checkpoint is uncovered —
+/// and the highest of them is then the frontier. It is the highest rather than
+/// "no trim" so that history rows left above the checkpoints by an interrupted
+/// resume still go.
+fn safe_of(first_uncovered: u64, highest: u64, committed: u64) -> u64 {
+    match first_uncovered {
+        0 => highest,
+        first => first - 1,
+    }
+    .max(committed)
+}
+
+/// A Replicated database engine only replicates data when its tables use the
+/// ReplicatedMergeTree engine, so it implies replicated DDL even when
+/// ENVIO_CLICKHOUSE_REPLICATED is unset.
+fn has_replicated_engine(database_engine: Option<&str>) -> bool {
+    database_engine.map(ddl::database_engine_name) == Some("Replicated")
+}
+
+/// The code out of a ClickHouse error body. A proxy in front of the server can
+/// quote a `Code:` of its own, so the marker ClickHouse puts in every exception
+/// it writes is what makes the number the server's own verdict rather than
+/// someone else's.
+fn clickhouse_error_code(body: &str) -> Option<u32> {
+    if !body.contains("DB::Exception") {
+        return None;
+    }
+    let digits: String = body
+        .split_once("Code: ")?
+        .1
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// Stages a single-text-column batch without an isolate, which is what
+    /// `begin_stage` would otherwise have to hand out `ArrayBuffer`s for.
+    fn stage_texts(sink: &ClickHouseSink, table: u32, values: &[&str]) -> u32 {
+        let schema = sink.table_schema(table).unwrap();
+        let kinds: Vec<ColumnKind> = schema.columns.iter().map(|column| column.kind).collect();
+        let names: Vec<String> = schema
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect();
+        let mut arena = Arena::new(values.len(), &kinds).unwrap();
+        for (row, value) in values.iter().enumerate() {
+            arena.set_bytes(0, row, value.as_bytes());
+        }
+        arena.seal_unlent(&names).unwrap();
+        let handle = sink.next_handle.fetch_add(1, Ordering::Relaxed);
+        sink.staged
+            .lock()
+            .unwrap()
+            .insert(handle, Staged { schema, arena });
+        handle
+    }
+
+    fn spec(name: &str, field_type: &str) -> ColumnSpecInput {
+        ColumnSpecInput {
+            name: name.to_string(),
+            field_name: None,
+            field_type: field_type.to_string(),
+            is_nullable: None,
+            is_array: None,
+            precision: None,
+            scale: None,
+            enum_variants: None,
+        }
+    }
+
+    fn options(url: String) -> ClickHouseSinkOptions {
+        ClickHouseSinkOptions {
+            url,
+            username: "default".to_string(),
+            password: String::new(),
+            database: "mock".to_string(),
+            chain_id_mode: "int32".to_string(),
+            history: ddl::test_support::history_schema(),
+        }
+    }
+
+    #[test]
+    fn a_literal_survives_whatever_it_is_given() {
+        let escaped = [
+            r"abc\",
+            r"a\'b",
+            "it's",
+            "''",
+            r"a\tb",
+            "x'; DROP TABLE y; --",
+            "plain",
+        ]
+        .map(literal);
+        assert_eq!(
+            escaped,
+            [
+                r"'abc\\'",
+                r"'a\\''b'",
+                "'it''s'",
+                "''''''",
+                r"'a\\tb'",
+                "'x''; DROP TABLE y; --'",
+                "'plain'",
+            ]
+        );
+    }
+
+    #[test]
+    fn registering_rejects_a_field_type_it_cannot_encode() {
+        let server_less = ClickHouseSink::build(
+            options("http://127.0.0.1:1".to_string()),
+            Tuning::default(),
+            Arc::new(|_: &str| {}),
+        )
+        .unwrap();
+
+        let err = server_less
+            .register_checkpoints_table(vec![spec("t", "Tuple")])
+            .unwrap_err();
+
+        assert_eq!(
+            err.reason,
+            "Column `t` of ClickHouse table `envio_checkpoints`: unsupported field type `Tuple`"
+        );
+    }
+
+    /// Answers a resume's two reads: `first_uncovered` for the safe-checkpoint
+    /// calculation (`0` when no checkpoint lies past a chain's recorded
+    /// progress), and `holds` for whether each table has rows above it.
+    fn resume_answers(
+        first_uncovered: &str,
+        holds: &[(&str, u8)],
+    ) -> Arc<mock_server::StatementFn> {
+        let first_uncovered = first_uncovered.to_string();
+        let holds = holds
+            .iter()
+            .map(|(table, above)| format!("{table}\t{above}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Arc::new(move |statement: &str| {
+            if statement.contains("minIf(") {
+                (200, first_uncovered.clone())
+            } else if statement.contains("_envio_holds") {
+                (200, holds.clone())
+            } else {
+                (200, String::new())
+            }
+        })
+    }
+
+    fn resume_input(
+        chain_progress: Vec<ChainProgressInput>,
+        history_tables: Vec<String>,
+    ) -> ResumeInput {
+        ResumeInput {
+            per_chain: false,
+            chain_progress,
+            history_tables: history_tables
+                .into_iter()
+                .map(|name| HistoryTableInput {
+                    name,
+                    chain_id_column: Some("chain_id".to_string()),
+                })
+                .collect(),
+        }
+    }
+
+    /// The per-chain counterpart of `resume_answers`: the safe-checkpoint read
+    /// groups by chain, so it answers one `chain<TAB>first_uncovered<TAB>max`
+    /// per chain.
+    fn per_chain_resume_answers(
+        safe_by_chain: &[(&str, &str, &str)],
+        holds: &[(&str, u8)],
+    ) -> Arc<mock_server::StatementFn> {
+        let safe = safe_by_chain
+            .iter()
+            .map(|(chain, first_uncovered, highest)| {
+                format!("{chain}\t{first_uncovered}\t{highest}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let holds = holds
+            .iter()
+            .map(|(table, above)| format!("{table}\t{above}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Arc::new(move |statement: &str| {
+            if statement.contains("minIf(") {
+                (200, safe.clone())
+            } else if statement.contains("_envio_holds") {
+                (200, holds.clone())
+            } else {
+                (200, String::new())
+            }
+        })
+    }
+
+    fn committed(
+        chain_id: &str,
+        progress_block_number: i32,
+        committed: &str,
+    ) -> ChainProgressInput {
+        ChainProgressInput {
+            chain_id: chain_id.to_string(),
+            progress_block_number,
+            committed_checkpoint_id: committed.to_string(),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_per_chain_resume_trims_each_chain_to_its_own_checkpoint() {
+        let server = mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(
+            // Chain 1 has a checkpoint its progress doesn't cover at id 6, so
+            // it keeps 5; chain 137 has none, so its highest (9) is the
+            // frontier.
+            &[("1", "6", "8"), ("137", "0", "9")],
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(ResumeInput {
+            per_chain: true,
+            chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "9")],
+            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+        })
+        .await
+        .unwrap();
+
+        let trims: Vec<String> = server
+            .statements_seen()
+            .into_iter()
+            .filter(|statement| statement.starts_with("ALTER") || statement.starts_with("DELETE"))
+            .collect();
+        assert_eq!(
+            trims,
+            vec![
+                "ALTER TABLE `mock`.`envio_history_a` DELETE WHERE (`chain_id` = 1 AND \
+                 `envio_checkpoint_id` > 5) OR (`chain_id` = 137 AND `envio_checkpoint_id` > 9) \
+                 SETTINGS mutations_sync = 1"
+                    .to_string(),
+                "DELETE FROM `mock`.`envio_checkpoints` WHERE (`chain_id` = 1 AND `id` > 5) OR \
+                 (`chain_id` = 137 AND `id` > 9) SETTINGS lightweight_deletes_sync = 1"
+                    .to_string(),
+            ]
+        );
+    }
+
+    // Readers hold every chain to the frontier table, so the resume lowers it to
+    // the id it trims back to before a single row goes: nothing above the id is
+    // readable while the trims run, or if they never finish.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_sets_each_chains_frontier_before_it_trims() {
+        let server = mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(
+            &[("1", "6", "8"), ("137", "0", "9")],
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(ResumeInput {
+            per_chain: true,
+            chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "9")],
+            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+        })
+        .await
+        .unwrap();
+
+        let statements = server.statements_seen();
+        let frontier = statements
+            .iter()
+            .position(|statement| statement.starts_with("INSERT INTO `mock`.`envio_chains`"));
+        let first_trim = statements.iter().position(|statement| {
+            statement.starts_with("ALTER") || statement.starts_with("DELETE")
+        });
+        assert_eq!(
+            (frontier.map(|index| statements[index].clone()), frontier < first_trim),
+            (
+                Some(
+                    "INSERT INTO `mock`.`envio_chains` (`chain_id`, `checkpoint_id`) VALUES (1, 5), \
+                     (137, 9)"
+                        .to_string()
+                ),
+                true
+            ),
+            "got: {statements:?}"
+        );
+    }
+
+    // The write order is only the read order on the node that took the writes.
+    // A second node answering means the address balances across replicas, and
+    // the run stops rather than read a replica that may be behind.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_answer_from_a_second_node_fails_the_statement() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[("envio_history_a", 0), ("envio_checkpoints", 0)],
+        ))
+        .await;
+        server.serve_as("node-a");
+        let sink = sink_for(&server, 4);
+        let input = || {
+            resume_input(
+                vec![committed("1", 100, "42")],
+                vec!["envio_history_a".to_string()],
+            )
+        };
+
+        sink.resume(input()).await.unwrap();
+        server.serve_as("node-b");
+        let err = sink.resume(input()).await.unwrap_err();
+
+        assert!(
+            err.reason.contains("node \"node-b\"") && err.reason.contains("\"node-a\""),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_insert_answered_by_a_second_node_fails_without_retrying() {
+        let server = mock_server::MockClickHouse::start(0).await;
+        server.serve_as("node-a");
+        let sink = sink_for(&server, 4);
+        write(&sink, stage_ids(&sink, &["a"])).await.unwrap();
+
+        server.serve_as("node-b");
+        let err = write(&sink, stage_ids(&sink, &["b"])).await.unwrap_err();
+
+        assert_eq!(
+            (server.inserts_seen(), err.reason.contains("\"node-b\"")),
+            (2, true),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_per_chain_resume_keeps_a_chain_the_checkpoints_say_nothing_about_at_its_committed_id(
+    ) {
+        let server = mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(
+            &[("1", "0", "8")],
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(ResumeInput {
+            per_chain: true,
+            chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "3")],
+            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            server
+                .statements_seen()
+                .into_iter()
+                .any(|statement| statement
+                    .contains("(`chain_id` = 137 AND `envio_checkpoint_id` > 3)")),
+            "chain 137 should be trimmed to the id Postgres committed"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_with_no_chains_trims_nothing_under_either_sequence() {
+        let server =
+            mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(&[], &[]))
+                .await;
+        let sink = sink_for(&server, 4);
+
+        for per_chain in [true, false] {
+            sink.resume(ResumeInput {
+                per_chain,
+                chain_progress: Vec::new(),
+                ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+            })
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(
+            server.statements_seen(),
+            Vec::<String>::new(),
+            "a bound no row can be above is not worth an ALTER ... DELETE per table"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_per_chain_resume_refuses_a_history_table_with_no_chain_column() {
+        let server = mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(
+            &[("1", "0", "8")],
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        let err = sink
+            .resume(ResumeInput {
+                per_chain: true,
+                chain_progress: vec![committed("1", 100, "5")],
+                history_tables: vec![HistoryTableInput {
+                    name: "envio_history_a".to_string(),
+                    chain_id_column: None,
+                }],
+            })
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.reason.contains("no chain-id column"),
+            "unexpected error: {}",
+            err.reason
+        );
+    }
+
+    fn progress(chain_id: &str, progress_block_number: i32) -> ChainProgressInput {
+        ChainProgressInput {
+            chain_id: chain_id.to_string(),
+            progress_block_number,
+            committed_checkpoint_id: "0".to_string(),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_that_cannot_reach_the_server_does_not_report_a_missing_database() {
+        let unreachable = ClickHouseSink::build(
+            options("http://127.0.0.1:1".to_string()),
+            Tuning::default(),
+            Arc::new(|_: &str| {}),
+        )
+        .unwrap();
+
+        let err = unreachable
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("start -r"),
+                err.reason.contains("ClickHouse request failed"),
+            ),
+            (false, true),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_a_proxy_refuses_does_not_report_a_missing_database() {
+        let server = mock_server::MockClickHouse::answering_statements(Arc::new(|_: &str| {
+            (502, "upstream connect error".to_string())
+        }))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        let err = sink
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("start -r"),
+                err.reason.contains("upstream connect error"),
+            ),
+            (false, true),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_against_a_database_that_is_gone_says_how_to_reinitialize() {
+        let server = mock_server::MockClickHouse::answering_statements(Arc::new(|_: &str| {
+            (
+                404,
+                "Code: 81. DB::Exception: Database mock does not exist. (UNKNOWN_DATABASE)"
+                    .to_string(),
+            )
+        }))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        let err = sink
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("start -r"),
+                err.reason.contains("\"mock\" not found"),
+            ),
+            (true, true),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_against_a_database_missing_a_table_says_how_to_reinitialize() {
+        let server = mock_server::MockClickHouse::answering_statements(Arc::new(|_: &str| {
+            (
+                404,
+                "Code: 60. DB::Exception: Unknown table expression identifier \
+                 'mock.envio_checkpoints' in scope SELECT count() FROM mock.envio_checkpoints. \
+                 (UNKNOWN_TABLE)"
+                    .to_string(),
+            )
+        }))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        let err = sink
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("start -r"),
+                err.reason.contains("\"mock\" is missing a table"),
+                err.reason.contains("mock.envio_checkpoints"),
+            ),
+            (true, true, true),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    /// The read that spares a clean restart its mutations answers for one
+    /// replica; another may still be fetching what the last run wrote.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_trims_every_history_table_and_then_the_checkpoints() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[
+                ("envio_history_a", 1),
+                ("envio_history_b", 1),
+                ("envio_checkpoints", 1),
+            ],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(resume_input(
+            vec![committed("1", 100, "42")],
+            vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
+        ))
+        .await
+        .unwrap();
+
+        let mut trims: Vec<String> = server
+            .statements_seen()
+            .into_iter()
+            .filter(|statement| statement.starts_with("ALTER") || statement.starts_with("DELETE"))
+            .collect();
+        let checkpoints = trims.pop();
+        trims.sort();
+        assert_eq!(
+            (trims, checkpoints),
+            (
+                vec![
+                    "ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 42 \
+                     SETTINGS mutations_sync = 1"
+                        .to_string(),
+                    "ALTER TABLE `mock`.`envio_history_b` DELETE WHERE `envio_checkpoint_id` > 42 \
+                     SETTINGS mutations_sync = 1"
+                        .to_string(),
+                ],
+                Some(
+                    "DELETE FROM `mock`.`envio_checkpoints` WHERE `id` > 42 \
+                     SETTINGS lightweight_deletes_sync = 1"
+                        .to_string()
+                )
+            )
+        );
+    }
+
+    /// Under a shared sequence every chain counts from the same run of the
+    /// counter, so the id the resume trims to is the highest any chain has
+    /// committed — read off the chain progress rather than taken as a separate
+    /// number that can disagree with it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_shared_resume_trims_to_the_highest_committed_chain() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0\t0",
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(resume_input(
+            vec![committed("1", 100, "5"), committed("137", 200, "42")],
+            vec!["envio_history_a".to_string()],
+        ))
+        .await
+        .unwrap();
+
+        assert!(
+            server
+                .statements_seen()
+                .into_iter()
+                .any(|statement| statement.contains("`envio_checkpoint_id` > 42")),
+            "the trim should follow the highest committed chain, got: {:?}",
+            server.statements_seen()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_reads_nothing_out_of_the_servers_catalog() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(resume_input(
+            Vec::new(),
+            vec!["envio_history_a".to_string()],
+        ))
+        .await
+        .unwrap();
+
+        let statements = server.statements_seen();
+        assert_eq!(
+            statements
+                .iter()
+                .filter(|statement| statement.contains("system."))
+                .collect::<Vec<_>>(),
+            Vec::<&String>::new(),
+            "a resume should name no system table, got: {statements:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_with_nothing_above_the_checkpoint_rewrites_no_parts() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[
+                ("envio_history_a", 0),
+                ("envio_history_b", 0),
+                ("envio_checkpoints", 0),
+            ],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(resume_input(
+            vec![committed("1", 100, "42")],
+            vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
+        ))
+        .await
+        .unwrap();
+
+        let statements = server.statements_seen();
+        assert_eq!(
+            statements
+                .iter()
+                .filter(
+                    |statement| statement.starts_with("ALTER") || statement.starts_with("DELETE")
+                )
+                .collect::<Vec<_>>(),
+            Vec::<&String>::new(),
+            "a clean restart should schedule no mutation, got: {statements:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_refuses_a_row_count_answer_missing_one_of_its_tables() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[("envio_history_a", 0), ("envio_checkpoints", 0)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        let err = sink
+            .resume(resume_input(
+                vec![committed("1", 100, "0")],
+                vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
+            ))
+            .await
+            .unwrap_err();
+
+        let statements = server.statements_seen();
+        assert_eq!(
+            (
+                err.reason.clone(),
+                statements
+                    .iter()
+                    .filter(|statement| statement.starts_with("ALTER"))
+                    .count()
+            ),
+            (
+                "No row count answered for table envio_history_b".to_string(),
+                0
+            ),
+            "an answer short of a table is refused rather than read as empty, got: {statements:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_trims_only_the_tables_holding_rows_above_the_checkpoint() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[
+                ("envio_history_a", 1),
+                ("envio_history_b", 0),
+                ("envio_checkpoints", 0),
+            ],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(resume_input(
+            vec![committed("1", 100, "42")],
+            vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
+        ))
+        .await
+        .unwrap();
+
+        let statements = server.statements_seen();
+        assert_eq!(
+            statements
+                .iter()
+                .filter(
+                    |statement| statement.starts_with("ALTER") || statement.starts_with("DELETE")
+                )
+                .collect::<Vec<_>>(),
+            vec![
+                &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 42 \
+                  SETTINGS mutations_sync = 1"
+                    .to_string()
+            ],
+            "only the table holding rows should be trimmed, got: {statements:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_during_backfill_keeps_what_each_chains_progress_covers() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "7",
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        // What Postgres commits during backfill: no checkpoint at all.
+        sink.resume(resume_input(
+            vec![progress("1", 10), progress("137", -1)],
+            vec!["envio_history_a".to_string()],
+        ))
+        .await
+        .unwrap();
+
+        let statements = server.statements_seen();
+        assert_eq!(
+            (
+                statements
+                    .iter()
+                    .find(|statement| statement.starts_with("SELECT minIf(")),
+                statements
+                    .iter()
+                    .find(|statement| statement.starts_with("ALTER")),
+            ),
+            (
+                Some(
+                    &"SELECT minIf(`id`, NOT ((`chain_id` = 1 AND `block_number` <= 10) OR \
+                      (`chain_id` = 137 AND `block_number` <= -1))), max(`id`) \
+                      FROM `mock`.`envio_checkpoints` FORMAT TabSeparated"
+                        .to_string()
+                ),
+                Some(
+                    &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 6 \
+                      SETTINGS mutations_sync = 1"
+                        .to_string()
+                ),
+            ),
+            "got: {statements:?}"
+        );
+    }
+
+    /// The mixed case: one chain inside the reorg threshold saving checkpoints,
+    /// another still backfilling and saving none. The committed id only accounts
+    /// for the first, so progress is what keeps the second one's rows.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_keeps_what_progress_covers_past_the_committed_checkpoint() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "99",
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(resume_input(
+            vec![progress("1", 10)],
+            vec!["envio_history_a".to_string()],
+        ))
+        .await
+        .unwrap();
+
+        assert_eq!(
+            server
+                .statements_seen()
+                .iter()
+                .find(|statement| statement.starts_with("ALTER")),
+            Some(
+                &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 98 \
+                  SETTINGS mutations_sync = 1"
+                    .to_string()
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_that_every_chains_progress_covers_trims_to_the_last_checkpoint() {
+        // No checkpoint past a chain's progress, and 12 is the highest.
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0\t12",
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(resume_input(
+            vec![progress("1", 500)],
+            vec!["envio_history_a".to_string()],
+        ))
+        .await
+        .unwrap();
+
+        assert_eq!(
+            server
+                .statements_seen()
+                .iter()
+                .find(|statement| statement.starts_with("ALTER")),
+            Some(
+                &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 12 \
+                  SETTINGS mutations_sync = 1"
+                    .to_string()
+            )
+        );
+    }
+
+    struct TestSink {
+        sink: ClickHouseSink,
+        warnings: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl TestSink {
+        fn warnings(&self) -> Vec<String> {
+            self.warnings.lock().unwrap().clone()
+        }
+    }
+
+    impl std::ops::Deref for TestSink {
+        type Target = ClickHouseSink;
+        fn deref(&self) -> &ClickHouseSink {
+            &self.sink
+        }
+    }
+
+    fn sink_at(url: String, tuning: Tuning) -> TestSink {
+        let warnings = Arc::new(Mutex::new(Vec::new()));
+        let collected = warnings.clone();
+        let sink = ClickHouseSink::build(
+            options(url),
+            tuning,
+            Arc::new(move |message: &str| collected.lock().unwrap().push(message.to_string())),
+        )
+        .unwrap();
+        TestSink { sink, warnings }
+    }
+
+    fn sink_with(server: &mock_server::MockClickHouse, tuning: Tuning) -> TestSink {
+        sink_at(server.url.clone(), tuning)
+    }
+
+    fn sink_for(server: &mock_server::MockClickHouse, retries: u32) -> TestSink {
+        sink_with(
+            server,
+            Tuning {
+                retries,
+                max_retry_delay: Duration::ZERO,
+                ..Tuning::default()
+            },
+        )
+    }
+
+    fn stage_ids(sink: &ClickHouseSink, values: &[&str]) -> u32 {
+        let table = sink
+            .register_checkpoints_table(vec![spec("id", "String")])
+            .unwrap();
+        stage_texts(sink, table.handle, values)
+    }
+
+    async fn write(sink: &ClickHouseSink, handle: u32) -> napi::Result<()> {
+        sink.write_batch(vec![handle], None).await
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_write_naming_an_unknown_handle_frees_the_batches_beside_it() {
+        let server = mock_server::MockClickHouse::start(0).await;
+        let sink = sink_for(&server, 4);
+        let first = stage_ids(&sink, &["a"]);
+        let last = stage_ids(&sink, &["b"]);
+        let unknown = last + 1;
+
+        let err = sink
+            .write_batch(vec![first, unknown, last], None)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("Unknown staged ClickHouse batch"),
+                sink.staged.lock().unwrap().len()
+            ),
+            (true, 0),
+            "expected an unknown-handle error, got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rejected_insert_is_retried_as_halves_and_every_row_lands_once() {
+        let server = mock_server::MockClickHouse::start(1).await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (
+                server.accepted_strings(),
+                server.inserts_seen(),
+                sink.warnings().len()
+            ),
+            (
+                vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string()
+                ],
+                3,
+                1
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_condition_the_batch_is_not_to_blame_for_is_retried_whole() {
+        let server = mock_server::MockClickHouse::rejecting_with(
+            2,
+            "Code: 242. DB::Exception: Table is in readonly mode",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            (
+                vec![vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string()
+                ]],
+                3
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_batch_too_large_for_a_proxy_is_retried_in_halves() {
+        let server = mock_server::MockClickHouse::rejecting_with_status(
+            1,
+            413,
+            "<html>413 Request Entity Too Large</html>",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            (
+                vec![
+                    vec!["a".to_string(), "b".to_string()],
+                    vec!["c".to_string(), "d".to_string()]
+                ],
+                3
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_proxy_that_is_overloaded_is_retried_whole() {
+        let server = mock_server::MockClickHouse::rejecting_with_status(
+            2,
+            503,
+            "<html>503 Service Temporarily Unavailable</html>",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            (
+                vec![vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string()
+                ]],
+                3
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_proxy_rejection_a_smaller_batch_cannot_answer_is_not_retried() {
+        let server =
+            mock_server::MockClickHouse::rejecting_with_status(usize::MAX, 403, "Forbidden").await;
+        let sink = sink_for(&server, 8);
+        let handle = stage_ids(&sink, &["a", "b"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (err.reason.contains("403"), server.inserts_seen()),
+            (true, 1),
+            "expected a single attempt and the proxy's status, got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_single_row_is_retried_in_place_until_it_lands() {
+        let server = mock_server::MockClickHouse::start(2).await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["only"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_strings(), server.inserts_seen()),
+            (vec!["only".to_string()], 3)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_insert_that_never_succeeds_surfaces_the_error() {
+        let server = mock_server::MockClickHouse::start(usize::MAX).await;
+        let sink = sink_for(&server, 2);
+        let handle = stage_ids(&sink, &["a", "b"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("mock rejection"),
+                err.reason.contains("envio_checkpoints"),
+                server.accepted_strings()
+            ),
+            (true, true, Vec::<String>::new()),
+            "expected the server's message and the table, got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rejection_the_rows_are_to_blame_for_is_not_retried() {
+        let server = mock_server::MockClickHouse::rejecting_with(
+            usize::MAX,
+            "Code: 60. DB::Exception: Table mock.t does not exist",
+        )
+        .await;
+        let sink = sink_for(&server, 8);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("does not exist"),
+                server.inserts_seen(),
+                sink.warnings()
+            ),
+            (true, 1, Vec::<String>::new()),
+            "expected one attempt and the server's message, got: {}",
+            err.reason
+        );
+    }
+
+    /// An address nothing listens on, so every connection to it is refused.
+    async fn refused_url() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        url
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refused_connection_is_retried() {
+        let sink = sink_at(
+            refused_url().await,
+            Tuning {
+                retries: 3,
+                max_retry_delay: Duration::ZERO,
+                ..Tuning::default()
+            },
+        );
+        let handle = stage_ids(&sink, &["a"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("ClickHouse insert request failed"),
+                sink.warnings().len(),
+                sink.warnings()
+                    .first()
+                    .is_some_and(|warning| warning.contains("3 retries left")),
+            ),
+            (true, 3, true),
+            "expected three retries counted down from three, got: {:?} / {}",
+            sink.warnings(),
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_transient_code_nobody_listed_is_retried_whole() {
+        let server = mock_server::MockClickHouse::rejecting_with(
+            2,
+            "Code: 439. DB::Exception: Cannot schedule a task",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            (vec![vec!["a".to_string(), "b".to_string()]], 3)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_proxy_page_quoting_a_code_is_read_as_the_proxys_own() {
+        let server = mock_server::MockClickHouse::rejecting_with_status(
+            1,
+            502,
+            "Error Code: 60. upstream unavailable",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            (vec![vec!["a".to_string(), "b".to_string()]], 2)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_insert_whose_status_is_unknown_is_not_resent() {
+        let server = mock_server::MockClickHouse::accepting_then_erroring(
+            1,
+            "Code: 319. DB::Exception: Unknown status of insert",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("319"),
+                server.inserts_seen(),
+                server.accepted_batches(),
+            ),
+            (
+                true,
+                1,
+                vec![vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string()
+                ]],
+            ),
+            "expected one accepted insert of the original four, got: {}",
+            err.reason
+        );
+    }
+
+    /// The row counts each warning reports, in order — the shape of the retry
+    /// ladder a batch walked before giving up.
+    fn retried_row_counts(sink: &TestSink) -> Vec<String> {
+        sink.warnings()
+            .iter()
+            .filter_map(|warning| {
+                let rest = warning.strip_prefix("ClickHouse insert of ")?;
+                let (count, _) = rest.split_once(" row(s)")?;
+                Some(count.to_string())
+            })
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_request_that_times_out_is_retried_as_halves() {
+        let server = mock_server::MockClickHouse::start_unresponsive().await;
+        let sink = sink_with(
+            &server,
+            Tuning {
+                retries: 3,
+                max_retry_delay: Duration::ZERO,
+                request_timeout: Duration::from_millis(150),
+                statement_timeout: Duration::from_millis(150),
+                ..Tuning::default()
+            },
+        );
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                retried_row_counts(&sink),
+                err.reason.contains("operation timed out"),
+            ),
+            (
+                vec!["4".to_string(), "2".to_string(), "1".to_string()],
+                true
+            ),
+            "expected the batch to be halved on the way down, got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_batch_stops_retrying_once_it_is_out_of_time() {
+        let sink = sink_at(
+            refused_url().await,
+            Tuning {
+                retries: 8,
+                max_retry_delay: Duration::ZERO,
+                retry_budget: Duration::ZERO,
+                ..Tuning::default()
+            },
+        );
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                retried_row_counts(&sink),
+                err.reason.contains("ClickHouse insert request failed"),
+            ),
+            (Vec::<String>::new(), true),
+            "expected the first failure to end the batch, got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_server_that_never_answers_times_out_rather_than_hanging() {
+        let server = mock_server::MockClickHouse::start_unresponsive().await;
+        let sink = sink_with(
+            &server,
+            Tuning {
+                retries: 1,
+                max_retry_delay: Duration::ZERO,
+                request_timeout: Duration::from_millis(150),
+                statement_timeout: Duration::from_millis(150),
+                ..Tuning::default()
+            },
+        );
+        let handle = stage_ids(&sink, &["a"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            err.reason.contains("operation timed out"),
+            true,
+            "expected a timeout, got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_sink_asks_the_server_for_nothing_but_the_insert() {
+        let server = mock_server::MockClickHouse::start(0).await;
+        let sink = sink_for(&server, 4);
+        for _ in 0..3 {
+            let handle = stage_ids(&sink, &["x"]);
+            write(&sink, handle).await.unwrap();
+        }
+        assert_eq!((server.inserts_seen(), server.queries_seen()), (3, 0));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_value_the_column_cannot_hold_fails_before_anything_is_sent() {
+        let server = mock_server::MockClickHouse::start(0).await;
+        let sink = sink_for(&server, 4);
+        let table = sink
+            .register_checkpoints_table(vec![ColumnSpecInput {
+                enum_variants: Some(vec!["SET".to_string()]),
+                ..spec("e", "Enum")
+            }])
+            .unwrap();
+        let handle = stage_texts(&sink, table.handle, &["NOPE"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (err.reason.contains("not a variant"), server.inserts_seen()),
+            (true, 0),
+            "expected the encoder's message, got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_non_ascii_password_still_authenticates() {
+        let server = mock_server::MockClickHouse::start(0).await;
+        let sink = ClickHouseSink::build(
+            ClickHouseSinkOptions {
+                username: "défaut".to_string(),
+                password: "pässwörd".to_string(),
+                ..options(server.url.clone())
+            },
+            Tuning::default(),
+            Arc::new(|_: &str| ()),
+        )
+        .unwrap();
+        let handle = stage_ids(&sink, &["a"]);
+
+        write(&sink, handle).await.unwrap();
+
+        let head = server.heads().first().cloned().unwrap_or_default();
+        assert_eq!(
+            (
+                head.to_lowercase().contains(
+                    "authorization: basic ZMOpZmF1dDpww6Rzc3fDtnJk"
+                        .to_lowercase()
+                        .as_str()
+                ),
+                head.contains("database=mock"),
+                server.accepted_strings()
+            ),
+            (true, true, vec!["a".to_string()]),
+            "expected a Basic credential, got head: {head}"
+        );
+    }
+}

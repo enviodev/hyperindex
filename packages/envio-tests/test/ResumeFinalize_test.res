@@ -34,18 +34,10 @@ let chainYaml = (chainId, address, extra) =>
 let gravatar1337 = "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 let gravatar1 = "0x3B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 
-let unsupported = [
-  {
-    Scenario.backend: #memory,
-    reason: "reads envio_chains and the Postgres index catalog directly",
-  },
-]
-
 let scenario = Scenario.make(
   ~configYaml=`
 name: resume-finalize${contractsYaml}chains:${chainYaml(1337, gravatar1337, "")}`,
   ~schema,
-  ~unsupported,
 )
 
 let endBlockScenario = Scenario.make(
@@ -56,7 +48,6 @@ name: resume-finalize-end-block${contractsYaml}chains:${chainYaml(
       "\n    end_block: 100",
     )}`,
   ~schema,
-  ~unsupported,
 )
 
 let multichainScenario = Scenario.make(
@@ -67,7 +58,6 @@ name: resume-finalize-multichain${contractsYaml}chains:${chainYaml(1, gravatar1,
       "",
     )}`,
   ~schema,
-  ~unsupported,
 )
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
@@ -157,7 +147,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -194,12 +184,21 @@ describe("Resuming a backfill that never finalized", () => {
       // Catching up here flips the chain to realtime, which changes the source
       // waitForNewBlock parks on. Fetching started before processing did, so the
       // waiter in flight is bound to the pre-realtime source and has to be
-      // replaced rather than left to time out. Counts unresolved calls across both
-      // runs: 3 are parked without the handoff, the 4th is the re-parked waiter.
+      // replaced rather than left to time out. A re-parked waiter is one the next
+      // head still reaches, so answering the poll that follows the flip has to
+      // put the chain back to work on the range it opened up.
+      let heightCallsWhenReady = source.getHeightOrThrowCalls->Array.length
+      await MockSource.waitHeightQuery(source, ~since=heightCallsWhenReady)
+      source.resolveGetHeightOrThrow(200)
+      await MockSource.waitItemsQuery(source)
+
       t.expect(
-        source.getHeightOrThrowCalls->Array.length,
+        (
+          source.getItemsOrThrowCalls->Array.length,
+          source.getHeightOrThrowCalls->Array.length > heightCallsWhenReady,
+        ),
         ~message="Finalizing on resume re-parks the fetch waiter on the realtime source",
-      ).toEqual(4)
+      ).toEqual((1, true))
     },
   )
 
@@ -217,7 +216,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -244,6 +243,47 @@ describe("Resuming a backfill that never finalized", () => {
     },
   )
 
+  // A resumed run seeds its chains' caught-up timestamps from the database, and
+  // a batch that progresses must not be read as "already realtime": the run is
+  // past the head it committed, but the indexes it owes for that head are still
+  // missing.
+  let (finalizeCalls, mapStorage) = makeFlakyFinalize(~failCount=1)
+
+  scenario->Scenario.it(
+    "Finalizes after the resumed run processes a fresh block",
+    ~sources=[{chain: 1337, methods}],
+    ~mapStorage,
+    ~onError=_ => (),
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      let {sql, pgSchema} = indexer.pg
+
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        (finalizeCalls.contents, await hasIndex(aBIdIndex, ~sql, ~pgSchema)),
+        ~message="The first run reached the head, then died before committing the indexes",
+      ).toEqual((1, false))
+
+      let restarted = await indexer.restart()
+      source.resolveGetHeightOrThrow(101)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
+      await restarted.waitUntilReady()
+      await restarted.waitUntilIdle()
+
+      t.expect(
+        (
+          finalizeCalls.contents,
+          await hasIndex(aBIdIndex, ~sql, ~pgSchema),
+          await persistedChains(~sql, ~pgSchema),
+        ),
+        ~message="A progressing batch doesn't excuse the indexes the resumed run still owes",
+      ).toEqual((2, true, [{id: 1337, progressBlock: 101, isReady: true}]))
+    },
+  )
+
   // Same crash, but "caught up" is the configured endBlock rather than a live
   // head — so the resumed run doesn't need a height response at all.
   let (finalizeCalls, mapStorage) = makeFlakyFinalize(~failCount=1)
@@ -259,7 +299,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onExit=() => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -308,7 +348,7 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source1337 = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source1337.resolveGetHeightOrThrow(100)
       source1.resolveGetHeightOrThrow(55)
@@ -366,7 +406,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -411,7 +451,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -464,7 +504,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -527,7 +567,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -594,7 +634,7 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source1337 = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source1337.resolveGetHeightOrThrow(100)
       source1.resolveGetHeightOrThrow(55)

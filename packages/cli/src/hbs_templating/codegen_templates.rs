@@ -10,7 +10,7 @@ use crate::{
         entity_parsing::{Entity, Field, GraphQLEnum, IndexField},
         event_parsing::abi_to_rescript_type,
         field_types,
-        human_config::HumanConfig,
+        human_config::{HumanConfig, StartBlock},
         system_config::{
             self, Abi, ChainIdMode, Ecosystem, EventKind, FuelEventKind, SelectedField,
             SystemConfig,
@@ -767,7 +767,7 @@ struct NetworkTemplate {
     pub id: u64,
     max_reorg_depth: Option<u32>,
     block_lag: Option<u32>,
-    start_block: u64,
+    start_block: StartBlock,
     end_block: Option<u64>,
 }
 
@@ -2272,7 +2272,7 @@ type testIndexer = {{
             // SVM programs table: per-program record of per-instruction
             // `{ args, accounts }` shapes. Empty when no SVM programs
             // configured, or when no instruction in any program carries a
-            // resolved schema (bundled / IDL / inline).
+            // resolved schema (IDL / inline).
             //
             // Each instruction emits both `args` (typed from the Borsh
             // schema) and `accounts` (named string slots from the schema).
@@ -2292,23 +2292,22 @@ type testIndexer = {{
                             EventKind::Svm(k) => k,
                             _ => continue,
                         };
-                        let args_ts = if svm_kind.args.is_empty() {
-                            "{}".to_string()
-                        } else {
-                            let fields = svm_kind
-                                .args
-                                .iter()
-                                .map(|f| {
-                                    let ts = field_type_to_ts_type(
-                                        &f.ty,
-                                        &svm_abi.defined_types,
-                                        &mut Vec::new(),
-                                    );
-                                    format!("readonly {}: {}", ts_safe_property_name(&f.name), ts)
-                                })
-                                .collect::<Vec<_>>()
-                                .join("; ");
-                            format!("{{ {fields} }}")
+                        // No declared layout means nothing to decode; registration
+                        // rejects selecting the field, and `never` keeps a
+                        // handler from reading it as an object. A declared but
+                        // empty one decodes to `{}`, which is selectable.
+                        let args_ts = match &svm_kind.args {
+                            None => "never".to_string(),
+                            Some(args) => {
+                                let fields = args
+                                    .iter()
+                                    .map(|f| {
+                                        ts_svm_field(f, &svm_abi.idl.defined_types, &mut Vec::new())
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("; ");
+                                format!("{{ {fields} }}")
+                            }
                         };
                         let accounts_ts = if svm_kind.accounts.is_empty() {
                             "Readonly<Record<string, string>>".to_string()
@@ -2316,25 +2315,30 @@ type testIndexer = {{
                             let fields = svm_kind
                                 .accounts
                                 .iter()
-                                .map(|name| {
-                                    format!("readonly {}: string", ts_safe_property_name(name))
+                                .filter_map(|slot| {
+                                    let name = slot.name()?;
+                                    let optional = if slot.is_optional() { "?" } else { "" };
+                                    Some(format!(
+                                        "readonly {}{optional}: string",
+                                        ts_safe_property_name(name)
+                                    ))
                                 })
                                 .collect::<Vec<_>>()
                                 .join("; ");
                             format!("{{ {fields} }}")
                         };
                         instruction_entries.push(format!(
-                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: \
+                            "          {instr}: {{ readonly args: {args}; readonly accounts: \
                              {accs} }};",
-                            instr = event.name,
+                            instr = ts_string_literal(&event.name),
                             args = args_ts,
                             accs = accounts_ts,
                         ));
                     }
                     if !instruction_entries.is_empty() {
                         program_entries.push(format!(
-                            "        \"{name}\": {{\n{body}\n        }};",
-                            name = contract.name,
+                            "        {name}: {{\n{body}\n        }};",
+                            name = ts_string_literal(&contract.name),
                             body = instruction_entries.join("\n"),
                         ));
                     }
@@ -2570,11 +2574,14 @@ struct ConfigBodies<'a> {
 /// the program-level nominal-type registry, used when the field is
 /// `Defined("Name")`. `seen` tracks the recursion stack to break cycles.
 ///
-/// Locked conventions (mirror `STAGE_7B_DECISIONS.md` decision 3):
+/// Locked conventions:
 /// - sub-64-bit integers / floats → `number`
-/// - 64-/128-bit integers → `string` (decimal)
-/// - pubkey + `[u8; 32]` → `string` (base58)
-/// - `Vec<u8>` (Borsh `bytes`) → `string` (hex)
+/// - 64-/128-bit integers → `bigint`
+/// - pubkey → `string` (base58)
+/// - Borsh `bytes`, `vec<u8>`, `[u8; N]` → `Uint8Array`
+/// - `vec<T>` → `readonly T[]`; `[T; N]` → a readonly N-tuple
+/// - enum variant without fields → its name as a string literal; with fields
+///   → `{ Name: { ...fields } }`
 fn field_type_to_ts_type(
     ty: &hypersync_client_solana::decode::FieldType,
     defined_types: &std::collections::BTreeMap<String, hypersync_client_solana::decode::FieldType>,
@@ -2584,30 +2591,28 @@ fn field_type_to_ts_type(
     match ty {
         F::Bool => "boolean".to_string(),
         F::U8 | F::U16 | F::U32 | F::I8 | F::I16 | F::I32 | F::F32 | F::F64 => "number".to_string(),
-        F::U64 | F::U128 | F::I64 | F::I128 => "string".to_string(),
-        F::String | F::Bytes | F::Pubkey => "string".to_string(),
+        F::U64 | F::U128 | F::I64 | F::I128 => "bigint".to_string(),
+        F::String | F::Pubkey => "string".to_string(),
+        F::Bytes => "Uint8Array".to_string(),
         F::Option(inner) => format!(
             "({}) | null",
             field_type_to_ts_type(inner, defined_types, seen)
         ),
-        F::Vec(inner) => format!("({})[]", field_type_to_ts_type(inner, defined_types, seen)),
+        F::Vec(inner) | F::Array { ty: inner, .. } if matches!(**inner, F::U8) => {
+            "Uint8Array".to_string()
+        }
+        F::Vec(inner) => format!(
+            "readonly ({})[]",
+            field_type_to_ts_type(inner, defined_types, seen)
+        ),
         F::Array { ty: inner, len } => {
-            if matches!(**inner, F::U8) && *len == 32 {
-                "string".to_string()
-            } else {
-                format!("({})[]", field_type_to_ts_type(inner, defined_types, seen))
-            }
+            let element = field_type_to_ts_type(inner, defined_types, seen);
+            format!("readonly [{}]", vec![element; *len].join(", "))
         }
         F::Struct(fields) => {
             let body = fields
                 .iter()
-                .map(|f| {
-                    format!(
-                        "readonly {}: {}",
-                        ts_safe_property_name(&f.name),
-                        field_type_to_ts_type(&f.ty, defined_types, seen)
-                    )
-                })
+                .map(|f| ts_svm_field(f, defined_types, seen))
                 .collect::<Vec<_>>()
                 .join("; ");
             format!("{{ {body} }}")
@@ -2618,25 +2623,20 @@ fn field_type_to_ts_type(
             }
             variants
                 .iter()
-                .map(|v| {
-                    let body = match &v.fields {
-                        None => "{}".to_string(),
-                        Some(fields) => {
-                            let body = fields
-                                .iter()
-                                .map(|f| {
-                                    format!(
-                                        "readonly {}: {}",
-                                        ts_safe_property_name(&f.name),
-                                        field_type_to_ts_type(&f.ty, defined_types, seen)
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join("; ");
-                            format!("{{ {body} }}")
-                        }
-                    };
-                    format!("{{ readonly {}: {body} }}", ts_safe_property_name(&v.name))
+                .map(|v| match v.fields.as_deref() {
+                    // Mirrors the decoder: a variant without fields is its bare name.
+                    None | Some([]) => ts_string_literal(&v.name),
+                    Some(fields) => {
+                        let body = fields
+                            .iter()
+                            .map(|f| ts_svm_field(f, defined_types, seen))
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        format!(
+                            "{{ readonly {}: {{ {body} }} }}",
+                            ts_safe_property_name(&v.name)
+                        )
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join(" | ")
@@ -2658,6 +2658,31 @@ fn field_type_to_ts_type(
             }
         }
     }
+}
+
+/// One `readonly name: type` member of a generated args object. A fixed-size
+/// byte array renders as `Uint8Array`, which drops its length from the type,
+/// so the length rides along as a doc comment.
+fn ts_svm_field(
+    field: &hypersync_client_solana::decode::NamedField,
+    defined_types: &std::collections::BTreeMap<String, hypersync_client_solana::decode::FieldType>,
+    seen: &mut Vec<String>,
+) -> String {
+    use hypersync_client_solana::decode::FieldType as F;
+    fn fixed_bytes_len(ty: &F) -> Option<usize> {
+        match ty {
+            F::Array { ty, len } if matches!(**ty, F::U8) => Some(*len),
+            F::Option(inner) => fixed_bytes_len(inner),
+            _ => None,
+        }
+    }
+    let doc =
+        fixed_bytes_len(&field.ty).map_or(String::new(), |len| format!("/** {len} bytes */ "));
+    format!(
+        "{doc}readonly {}: {}",
+        ts_safe_property_name(&field.name),
+        field_type_to_ts_type(&field.ty, defined_types, seen)
+    )
 }
 
 /// One selected field line of a generated `.d.ts` record: a doc comment plus the
@@ -2708,8 +2733,16 @@ fn ts_safe_property_name(name: &str) -> String {
     if is_bare_ident {
         name.to_string()
     } else {
-        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+        ts_string_literal(name)
     }
+}
+
+/// JSON's string grammar is a subset of TypeScript's, so serde does the
+/// escaping. An IDL is a file the program's authors wrote, and its names are
+/// held to no identifier rule: a quote would end the literal early, and a
+/// control character would break the line it sits on.
+fn ts_string_literal(value: &str) -> String {
+    serde_json::to_string(value).expect("a string always serializes")
 }
 
 #[cfg(test)]
@@ -3628,6 +3661,92 @@ type GlobalCounter @crossChain {
     }
 
     #[test]
+    fn svm_arg_types_render_bytes_vecs_and_fixed_arrays() {
+        use hypersync_client_solana::decode::{FieldType as F, NamedField};
+        let defined = std::collections::BTreeMap::new();
+        let array = |ty: F, len: usize| F::Array {
+            ty: Box::new(ty),
+            len,
+        };
+        let rendered = [
+            F::Bytes,
+            F::Option(Box::new(F::Bytes)),
+            F::Vec(Box::new(F::Bytes)),
+            F::Vec(Box::new(F::U8)),
+            F::Vec(Box::new(F::U64)),
+            array(F::U8, 4),
+            array(F::U8, 32),
+            array(F::U16, 2),
+            array(F::Pubkey, 3),
+        ]
+        .map(|ty| field_type_to_ts_type(&ty, &defined, &mut Vec::new()));
+        assert_eq!(
+            rendered,
+            [
+                "Uint8Array",
+                "(Uint8Array) | null",
+                "readonly (Uint8Array)[]",
+                "Uint8Array",
+                "readonly (bigint)[]",
+                "Uint8Array",
+                "Uint8Array",
+                "readonly [number, number]",
+                "readonly [string, string, string]",
+            ]
+        );
+        // The Uint8Array type drops the array's length, so a fixed-size byte
+        // field carries it as a doc comment; nothing else gets one.
+        let fields = [
+            ("hash", array(F::U8, 32)),
+            ("seed", F::Option(Box::new(array(F::U8, 8)))),
+            ("payload", F::Bytes),
+            ("amount", F::U64),
+        ]
+        .map(|(name, ty)| {
+            let field = NamedField {
+                name: name.to_string(),
+                ty,
+            };
+            ts_svm_field(&field, &defined, &mut Vec::new())
+        });
+        assert_eq!(
+            fields,
+            [
+                "/** 32 bytes */ readonly hash: Uint8Array",
+                "/** 8 bytes */ readonly seed: (Uint8Array) | null",
+                "readonly payload: Uint8Array",
+                "readonly amount: bigint",
+            ]
+        );
+    }
+
+    #[test]
+    fn svm_enum_variants_render_as_literals_or_tagged_objects() {
+        use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
+        let ty = FieldType::Enum(vec![
+            EnumVariant {
+                name: "Bid".into(),
+                fields: None,
+            },
+            EnumVariant {
+                name: "say \"hi\"".into(),
+                fields: Some(vec![]),
+            },
+            EnumVariant {
+                name: "Limit".into(),
+                fields: Some(vec![NamedField {
+                    name: "price".into(),
+                    ty: FieldType::U64,
+                }]),
+            },
+        ]);
+        assert_eq!(
+            field_type_to_ts_type(&ty, &Default::default(), &mut vec![]),
+            r#""Bid" | "say \"hi\"" | { readonly Limit: { readonly price: bigint } }"#
+        );
+    }
+
+    #[test]
     fn svm_projects_get_no_rescript_indexer() {
         use tempdir::TempDir;
 
@@ -3636,16 +3755,13 @@ name: svm-no-rescript
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Swapper
-          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
+    start_slot: 0
+programs:
+  - name: Swapper
+    program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+    instructions:
+      - name: swap
+        discriminator: "0x09"
 "#;
         let schema = r#"
 type Swap {

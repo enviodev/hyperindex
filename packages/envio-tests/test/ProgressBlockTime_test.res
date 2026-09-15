@@ -249,8 +249,8 @@ describe("Progress block time", () => {
 
       t.expect(
         trace,
-        ~message="block 300 is orphaned, so its timestamp can't stand for progress at block 299",
-      ).toEqual(["300|300", "299|", "301|301"])
+        ~message="block 300 is orphaned, so its timestamp can't stand for the block progress lands on",
+      ).toEqual(["300|300", "101|", "301|301"])
     },
   )
 })

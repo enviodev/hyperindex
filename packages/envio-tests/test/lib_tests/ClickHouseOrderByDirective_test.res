@@ -53,19 +53,11 @@ type Token @storage(clickhouse: {orderBy: ["id", "timestamp"]}) {
 `)
 
     t.expect(
-      ClickHouse.makeCreateHistoryTableQuery(
+      ClickHouse.entitySpec(
         ~entityConfig=config.userEntitiesByName->Dict.getUnsafe("Token"),
-        ~database="db",
-      ),
+      ).orderBy,
       ~message="id leads a sorting key that narrows further",
-    ).toBe(`CREATE TABLE IF NOT EXISTS db.\`envio_history_Token\` (
-  \`id\` String,
-  \`timestamp\` DateTime64(3, 'UTC'),
-  \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
-)
-ENGINE = MergeTree()
-ORDER BY (\`id\`, \`timestamp\`, envio_checkpoint_id)`)
+    ).toEqual(Some(["id", "timestamp"]))
   })
 
   it("Rejects an empty list, which would sort by nothing at all", t => {
@@ -172,19 +164,13 @@ type Token @storage(clickhouse: {orderBy: ["amount"]}) {
   it("Sorts by a BigInt that fits a Decimal", t => {
     let config = parse(schema("BigInt", " @config(precision: 38)"))
 
+    let spec = ClickHouse.entitySpec(
+      ~entityConfig=config.userEntitiesByName->Dict.getUnsafe("Token"),
+    )
+
     t.expect(
-      ClickHouse.makeCreateHistoryTableQuery(
-        ~entityConfig=config.userEntitiesByName->Dict.getUnsafe("Token"),
-        ~database="db",
-      ),
+      (spec.columns->Array.map(column => (column.fieldType, column.precision)), spec.orderBy),
       ~message="a bounded BigInt stores as a Decimal, which sorts numerically",
-    ).toBe(`CREATE TABLE IF NOT EXISTS db.\`envio_history_Token\` (
-  \`id\` String,
-  \`amount\` Decimal(38,0),
-  \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
-)
-ENGINE = MergeTree()
-ORDER BY (\`amount\`, envio_checkpoint_id)`)
+    ).toEqual(([("String", None), ("BigInt", Some(38))], Some(["amount"])))
   })
 })

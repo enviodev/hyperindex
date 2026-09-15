@@ -11,13 +11,16 @@ type options = {
 }
 
 let namedAccounts = (
-  ~idlNames: array<string>,
+  ~slots: array<Internal.svmAccountSlot>,
   ~accountArguments: array<string>,
+  ~programId: string,
 ): dict<Envio.svmInstructionAccount> => {
   let out = Dict.make()
-  idlNames->Array.forEachWithIndex((name, i) =>
-    switch accountArguments->Array.get(i) {
-    | Some(address) =>
+  slots->Array.forEachWithIndex((slot, i) =>
+    switch (slot, accountArguments->Array.get(i)) {
+    | (Unnamed, _) | (_, None) => ()
+    | (Optional(_), Some(address)) if address === programId => ()
+    | (Required(name), Some(address)) | (Optional(name), Some(address)) =>
       out->Dict.set(
         name,
         {
@@ -26,13 +29,15 @@ let namedAccounts = (
           instructionAccountIndex: i,
         },
       )
-    | None => ()
     }
   )
   out
 }
 
-let selectedLog = (log: SvmHyperSyncClient.EventItems.log, ~logFields: Utils.Set.t<string>): Envio.svmLog => {
+let selectedLog = (
+  log: SvmHyperSyncClient.EventItems.log,
+  ~logFields: Utils.Set.t<string>,
+): Envio.svmLog => {
   let out = Dict.make()
   if logFields->Utils.Set.has("kind") {
     switch log.kind->Null.toOption {
@@ -63,9 +68,11 @@ let toSvmInstruction = (
   ~fieldSelection: Internal.fieldSelection,
 ): Envio.svmInstruction => {
   let hasSelection = name => fieldSelection.instructionFields->Utils.Set.has(name)
+  // A program-wide registration has no configured discriminator, so the whole
+  // data stands in, hex-encoded like a configured one would be.
   let discriminator = switch eventConfig.discriminator {
   | Some(d) => d
-  | None => item.data
+  | None => "0x" ++ item.data->NodeJs.Buffer.fromUint8Array->NodeJs.Buffer.toHex
   }
   let out = Dict.make()
   out->setField("programName", programName)
@@ -83,13 +90,18 @@ let toSvmInstruction = (
   if hasSelection("isInner") {
     out->setField("isInner", item.isInner)
   }
-  if hasSelection("args") {
-    out->setField("args", item.argsJson->JSON.parseOrThrow)
+  switch item.args->Null.toOption {
+  | Some(args) => out->setField("args", args)
+  | None => ()
   }
   if hasSelection("accounts") {
     out->setField(
       "accounts",
-      namedAccounts(~idlNames=eventConfig.accounts, ~accountArguments=item.accounts),
+      namedAccounts(
+        ~slots=eventConfig.accounts,
+        ~accountArguments=item.accounts,
+        ~programId=item.programId,
+      ),
     )
   }
   if hasSelection("accountArguments") {
@@ -118,16 +130,16 @@ let make = (
 ): t => {
   let name = "SvmHyperSync"
 
+  let apiToken = apiToken->HyperSync.requireApiToken
+
   // The whole per-(instruction, chain) registration set crosses the boundary
   // once at construction; the client derives instruction selections, field
   // selections, Borsh decoders, and the routing index from it.
   let client = SvmHyperSyncClient.make(
     ~url=endpointUrl,
-    ~apiToken?,
+    ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventRegistrations=SvmHyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~addressStore,
   )
 
@@ -198,7 +210,7 @@ let make = (
         ~fieldSelection=onEventRegistration.fieldSelection,
       )
       Internal.Event({
-        onEventRegistration,
+        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         chainId,
         blockNumber: item.slot,
         // A slot orders by `(transactionIndex, path)` — the
@@ -236,15 +248,15 @@ let make = (
 
   // Called through the client rather than passed as a value: the client is a
   // napi class, so a detached method reference loses the instance it belongs to.
-  let getBlockHashes = HyperSync.makeGetBlockHashes(
-    ~query=(~blockNumbers) => client.getBlockHashes(~blockNumbers),
+  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=(~blockNumbers) =>
+    client.getBlockHashes(~blockNumbers)
   )
 
   {
     name,
     sourceFor: Sync,
     chainId,
-    pollingInterval: 1000,
+    pollingInterval: HyperSync.pollingInterval,
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {
@@ -254,5 +266,7 @@ let make = (
       {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
+    createHeightSubscription: (~onHeight, ~onStatus) =>
+      HyperSyncSSE.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
   }
 }

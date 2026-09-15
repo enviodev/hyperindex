@@ -8,6 +8,14 @@ use strum::IntoEnumIterator;
 
 const HIDDEN_TIERS: &[&str] = &["INTERNAL", "HIDDEN", "EXPERIMENTAL"];
 
+// Chains whose endpoints answer on <id>.hypersync.xyz but which the
+// active_chains listing omits. Reporting them as drift would be a false
+// alarm.
+const UNLISTED_BUT_SERVED: &[u64] = &[
+    HypersyncChain::Xdc as u64,
+    HypersyncChain::XdcTestnet as u64,
+];
+
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
@@ -34,7 +42,7 @@ impl Chain {
 
 pub struct Diff {
     pub missing_chains: Vec<String>,
-    pub extra_chains: Vec<String>,
+    pub extra_chains: Vec<HypersyncChain>,
 }
 
 impl Diff {
@@ -85,12 +93,8 @@ impl Diff {
         let mut extra_chains = Vec::new();
         for network in HypersyncChain::iter() {
             let network_id = network as u64;
-            if !api_chain_ids.contains(&network_id) {
-                extra_chains.push(format!(
-                    "{:?} (ID: {})",
-                    network.get_plain_name(),
-                    network_id
-                ));
+            if !api_chain_ids.contains(&network_id) && !UNLISTED_BUT_SERVED.contains(&network_id) {
+                extra_chains.push(network);
             }
         }
 
@@ -124,11 +128,15 @@ impl Diff {
                      (remove the HypersyncChain subEnum from the chain_helpers.rs file):"
                 );
                 for chain in &self.extra_chains {
-                    println!("- {}", chain);
+                    println!("- {}", format_extra_chain(chain));
                 }
             }
         }
     }
+}
+
+pub fn format_extra_chain(chain: &HypersyncChain) -> String {
+    format!("{} (ID: {})", chain.get_plain_name(), *chain as u64)
 }
 
 pub async fn run() -> Result<()> {

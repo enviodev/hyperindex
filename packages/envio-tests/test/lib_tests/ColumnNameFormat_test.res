@@ -138,41 +138,14 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
   })
 
   it("keeps API field names in ClickHouse when only Postgres renames columns", t => {
-    let query = ClickHouse.makeCreateHistoryTableQuery(
-      ~entityConfig=snapshotEntity,
-      ~database="envio",
-    )
-    t.expect(query).toBe(`CREATE TABLE IF NOT EXISTS envio.\`envio_history_Snapshot\` (
-  \`id\` String,
-  \`transactionIndex\` Int32,
-  \`tokenOwner_id\` String,
-  \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
-)
-ENGINE = MergeTree()
-ORDER BY (id, envio_checkpoint_id)`)
-  })
-
-  it("serializes ClickHouse set updates with ClickHouse column keys", t => {
-    let setUpdateSchema = EntityHistory.makeSetUpdateSchema(
-      ~idSchema=snapshotEntity.table->Table.getIdSchema,
-      ClickHouse.makeClickHouseEntitySchema(snapshotEntity.table),
-    )
-    let json =
-      Change.Set({
-        entityId: "1"->EntityId.unsafeOfString,
-        entity: snapshot1->(Utils.magic: snapshot => Internal.entity),
-        checkpointId: 5n,
-      })->S.reverseConvertToJsonOrThrow(setUpdateSchema)
-    t.expect(json).toEqual(
-      %raw(`{
-        "envio_change": "SET",
-        "envio_checkpoint_id": "5",
-        "id": "1",
-        "transactionIndex": 5,
-        "tokenOwner_id": "user-1"
-      }`),
-    )
+    // The spec is what crosses to Rust, so the column names it carries are the
+    // ones the history table is created with and written to.
+    let spec = ClickHouse.entitySpec(~entityConfig=snapshotEntity)
+    t.expect(spec.columns->Array.map(({name}) => name)).toEqual([
+      "id",
+      "transactionIndex",
+      "tokenOwner_id",
+    ])
   })
 
   it("renames ClickHouse columns independently from Postgres", t => {
@@ -182,23 +155,14 @@ ORDER BY (id, envio_checkpoint_id)`)
       ~pgSchema="test_schema",
       ~isNumericArrayAsText=false,
     )
-    let clickhouseQuery = ClickHouse.makeCreateHistoryTableQuery(
-      ~entityConfig=tokenEntity,
-      ~database="envio",
-    )
     t.expect({
       "postgres": pgQuery,
-      "clickhouse": clickhouseQuery,
+      "clickhouse": ClickHouse.entitySpec(~entityConfig=tokenEntity).columns->Array.map(({name}) =>
+        name
+      ),
     }).toEqual({
       "postgres": `CREATE TABLE IF NOT EXISTS "test_schema"."Token"("id" TEXT NOT NULL, "tokenId" INTEGER NOT NULL, PRIMARY KEY("id"));`,
-      "clickhouse": `CREATE TABLE IF NOT EXISTS envio.\`envio_history_Token\` (
-  \`id\` String,
-  \`token_id\` Int32,
-  \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
-)
-ENGINE = MergeTree()
-ORDER BY (id, envio_checkpoint_id)`,
+      "clickhouse": ["id", "token_id"],
     })
   })
 

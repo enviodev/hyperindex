@@ -69,9 +69,10 @@ let loadById = (
       let entity = dbEntities->Array.getUnsafe(idx)
       entitiesMap->Dict.set(entity.id, entity)
     }
+    let committedCheckpointId = indexerState->IndexerState.committedCheckpointIdFor(~scope)
     idsToLoad->Array.forEach(entityId => {
       inMemTable->InMemoryTable.Entity.initValue(
-        ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
+        ~committedCheckpointId,
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
@@ -109,6 +110,7 @@ let callEffect = (
   effect.handler(arg)
   ->Promise.thenResolve(output => {
     inMemTable->InMemoryStore.setEffectOutput(
+      ~chainId=arg.chainId,
       ~checkpointId=arg.checkpointId,
       ~cacheKey=arg.cacheKey,
       ~output,
@@ -294,7 +296,11 @@ let loadEffect = (
         try {
           let output = dbEntity.output->S.parseOrThrow(outputSchema)
           idsFromCache->Utils.Set.add(dbEntity.id)->ignore
-          inMemTable->InMemoryStore.initEffectOutputFromDb(~cacheKey=dbEntity.id, ~output)
+          inMemTable->InMemoryStore.initEffectOutputFromDb(
+            ~chainId=item->Internal.getItemChainId,
+            ~cacheKey=dbEntity.id,
+            ~output,
+          )
         } catch {
         | S.Raised(error) =>
           inMemTable->EffectState.recordInvalidation
@@ -379,7 +385,7 @@ let loadByFilter = (
     // Inside the load timing: waiting on the build is time the handler spends
     // waiting for this operation, and it's the only thing that explains an
     // occasional very slow getWhere.
-    await storage.ensureQueryIndexes(~table=entityConfig.table, ~filters)
+    await storage.ensureQueryIndexes(~entityConfig, ~scope, ~filters)
 
     // Loading a superset of rows via a merged query is safe: every loaded
     // entity is matched against all registered indexes, not only the
@@ -397,9 +403,10 @@ let loadByFilter = (
             )
           )->(Utils.magic: array<unknown> => array<Internal.entity>)
 
+        let committedCheckpointId = indexerState->IndexerState.committedCheckpointIdFor(~scope)
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
-            ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
+            ~committedCheckpointId,
             ~key=entity.id,
             ~entity=Some(entity),
           )

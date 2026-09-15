@@ -567,26 +567,33 @@ type svmAccountFilter = {
 /** AND-group: every entry must match the same instruction. */
 type svmAccountFilterGroup = array<svmAccountFilter>
 
+/** One positional account slot of an instruction. An `Optional` slot is absent
+ from the payload when the call carries no such slot, or fills it with the id of
+ the program being invoked. `Unnamed` holds a position and surfaces nothing. */
+type svmAccountSlot =
+  | Unnamed
+  | Required(string)
+  | Optional(string)
+
+let svmAccountSlotName = slot =>
+  switch slot {
+  | Unnamed => None
+  | Required(name) | Optional(name) => Some(name)
+  }
+
 type svmInstructionEventConfig = {
   ...eventConfig,
   /** Base58 Solana program id this instruction belongs to. */
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */
   discriminator: option<string>,
-  /** Length of the discriminator in bytes (0 / 1 / 2 / 4 / 8). Drives the
-   `dN` selector at query time and the dispatch-key precomputation in the
-   router. */
-  discriminatorByteLen: int,
-  /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
-   AND across positions. Empty outer array means "no account filter". */
-  accountFilters: array<svmAccountFilterGroup>,
-  /** `None` matches both outer and inner (CPI-invoked) instructions. */
-  isInner: option<bool>,
-  /** Positional account names from the Borsh schema, in declared order.
-   `[]` means no schema is attached for this instruction. */
-  accounts: array<string>,
+  /** Positional account slots in declared order. `[]` means no schema is
+   attached for this instruction. */
+  accounts: array<svmAccountSlot>,
   /** Borsh args layout as `Vec<ArgDef>` JSON (see `human_config::svm::ArgDef`
-   on the Rust side). `JSON.Null` means no schema is attached. */
+   on the Rust side). `JSON.Null` attaches no decoder, so every matched call is
+   delivered with its payload raw. An array attaches one, `[]` included: a call
+   whose data the layout rejects is skipped. */
   args: JSON.t,
   /** Program-level nominal-type registry (`BTreeMap<String, ArgType>` JSON).
    Duplicated on every event of the same program — the runtime dedups by
@@ -597,10 +604,11 @@ type svmInstructionEventConfig = {
 // Per-(event, chain) registration produced when user handler code registers an
 // event (`onEvent`) or a dynamic contract registers. References its definition
 // by value as `.eventConfig` and adds the handler binding plus the
-// registration/`where`-derived fetch state. Not `private`: Fuel/SVM
-// registrations add no ecosystem-specific fields (so they're bare aliases that
-// must stay directly constructable), and the evm→base cast in sources is sound
-// by ecosystem homogeneity — an EVM chain only ever holds `evmOnEventRegistration`s.
+// registration/`where`-derived fetch state. Not `private`: Fuel registrations
+// add no ecosystem-specific fields (so the alias must stay directly
+// constructable), and the ecosystem→base casts in sources are sound by
+// ecosystem homogeneity — an EVM chain only ever holds
+// `evmOnEventRegistration`s.
 type onEventRegistration = {
   // Chain-scoped sequential index — the registration's position in the
   // chain's onEventRegistrations array, assigned when registration finishes
@@ -639,11 +647,18 @@ type evmOnEventRegistration = {
   resolvedWhere: resolvedWhere,
 }
 
-// Fuel and SVM registrations add no ecosystem-specific fetch state (their
-// filters are config-derived and live on the definition), so they're bare
-// aliases of the base registration.
+// Fuel registrations add no ecosystem-specific fetch state, so it's a bare
+// alias of the base registration.
 type fuelOnEventRegistration = onEventRegistration
-type svmOnEventRegistration = onEventRegistration
+
+type svmOnEventRegistration = {
+  ...onEventRegistration,
+  /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
+   AND across positions. Empty outer array means "no account filter". */
+  accountFilters: array<svmAccountFilterGroup>,
+  /** `None` matches both outer and inner (CPI-invoked) instructions. */
+  isInner: option<bool>,
+}
 
 type svmProgramConfig = {
   name: string,
@@ -839,8 +854,10 @@ type effectArgs = {
   input: effectInput,
   context: effectContext,
   cacheKey: string,
-  // The processing checkpoint that referenced this effect; stamped on the
-  // in-memory cache entry so it's evicted once the checkpoint commits.
+  // The processing checkpoint that referenced this effect, on the chain whose
+  // handler ran it; stamped on the in-memory cache entry so it's evicted once
+  // that chain commits the checkpoint.
+  chainId: ChainId.t,
   checkpointId: bigint,
 }
 type effectCacheItem = {id: string, output: effectOutput}

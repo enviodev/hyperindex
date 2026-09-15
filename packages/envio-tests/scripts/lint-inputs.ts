@@ -10,6 +10,10 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const testRoot = fileURLToPath(new URL("../test", import.meta.url));
+// Paths are reported against the repo root rather than the cwd, so they mean the
+// same thing whether this runs from the package, from the root, or from CI — and
+// so GitHub can attach an annotation to the line.
+const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 const delay = /^\s*(?:await\s+)?Utils\.delay\(0\)\s*$/;
 const resolveCall =
@@ -57,22 +61,36 @@ const resFiles = (dir: string): string[] =>
     return entry.isFile() && entry.name.endsWith(".res") ? [path] : [];
   });
 
-const violations: string[] = [];
+const violations: { file: string; line: number; resolver: string }[] = [];
 for (const path of resFiles(testRoot)) {
   const lines = readFileSync(path, "utf8").split("\n");
   lines.forEach((line, index) => {
     if (!delay.test(line)) return;
     const match = nextCodeLine(lines, index + 1)?.match(resolveCall) ?? null;
-    if (match) violations.push(`${relative(process.cwd(), path)}:${index + 1}: before ${match[1]}`);
+    if (match) {
+      violations.push({ file: relative(repoRoot, path), line: index + 1, resolver: match[1] });
+    }
   });
 }
 
 if (violations.length > 0) {
+  // An annotation puts the rule on the line that broke it, in the PR diff. The log
+  // alone is prose under a step named for the tests, which a reader reaches only
+  // after scrolling past the service-container dumps that follow a failed job.
+  if (process.env.GITHUB_ACTIONS) {
+    for (const { file, line, resolver } of violations) {
+      console.log(
+        `::error file=${file},line=${line},title=Utils.delay(0) before a mock resolve::` +
+          `Delete this Utils.delay(0). The ${resolver} below holds its answer for the next ` +
+          `matching call, so it can answer before the call arrives.`,
+      );
+    }
+  }
   console.error(
     [
       "Utils.delay(0) waits for a mock call that the resolve below can answer in advance:",
       "",
-      ...violations,
+      ...violations.map(({ file, line, resolver }) => `${file}:${line}: before ${resolver}`),
       "",
       "Delete the delay. With nothing pending the resolve holds its answer for the next",
       "matching call; Scenario.run fails the test if no call ever claims it.",
