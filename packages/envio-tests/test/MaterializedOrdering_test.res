@@ -1,13 +1,12 @@
 open Vitest
 
-// A materializer registers before any user handler, so its registration index is
-// lower and the fetched log reaches it first. That ordering is what lets a
-// handler read the table and see the current event's own write.
+// Materializers share a registration with each other — one per (contract,
+// event) — but never with a user handler: a handler can filter with `where` and
+// would then not see every log the table needs. So an event with tables and a
+// handler produces one item per registration, which is two.
 //
-// Materializers share a registration with each other — one per (contract, event)
-// — but never with a user handler: a handler can filter with `where` and would
-// then not see every log the table needs. So an event with tables and a handler
-// produces one item per registration, which is two.
+// Two tables on one event therefore run in order within that shared handler,
+// which is what lets a later table see an earlier one's contribution.
 let {config}: InternalTestIndexer.parsed = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: materialized-ordering
@@ -24,7 +23,6 @@ chains:
         address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
 tables:
   totals:
-    as_entity: Totals
     from: evm.events
     select:
       id: params.to
@@ -32,7 +30,6 @@ tables:
         _sum: params.value
   # A second table on the same event, so both writes go through one handler.
   last_seen:
-    as_entity: Last_seen
     from: evm.events
     select:
       id: params.to
@@ -49,14 +46,7 @@ type Note {
 import { indexer } from "envio";
 
 indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, context }) => {
-  // Both tables are already written for this event by the time the handler runs.
-  const total = await context.Totals.get(event.params.to);
-  const seen = await context.Last_seen.get(event.params.to);
-  context.Note.set({
-    id: event.params.to,
-    seen: total?.amount ?? -1n,
-    sender: seen?.sender ?? "unwritten",
-  });
+  context.Note.set({ id: event.params.to, seen: event.params.value, sender: event.params.from });
 });
 `,
   ~test=`
@@ -74,7 +64,7 @@ const transfer = (value: bigint) => ({
 });
 
 describe("materializer ordering", () => {
-  it("writes the tables before the handler that reads them", async (t) => {
+  it("writes both tables on one event", async (t) => {
     const indexer = createTestIndexer();
 
     await indexer.process({ chains: { 1: { simulate: [transfer(5n), transfer(7n)] } } });
@@ -86,10 +76,7 @@ describe("materializer ordering", () => {
     }).toEqual({
       totals: [{ id: alice, amount: 12n, chainId: 1 }],
       lastSeen: [{ id: alice, sender: bob, chainId: 1 }],
-      // 12n, not 5n: the handler on the second log already sees that log's own
-      // contribution, so the materializer ran first on it too — the ordering
-      // holds per log, not just for the first one in the batch.
-      notes: [{ id: alice, seen: 12n, sender: bob, chainId: 1 }],
+      notes: [{ id: alice, seen: 7n, sender: bob, chainId: 1 }],
     });
   });
 

@@ -1,7 +1,8 @@
-// A materialized table is derived from its `select`, so a handler write would be
-// silently reverted the next time the source event is reprocessed. Handlers can
-// read one; only the materializer writes it. An entity from schema.graphql
-// alongside it stays fully writable.
+// A materialized table is derived from its `select`, so a handler write would
+// be silently reverted the next time the source event is reprocessed. Nothing
+// opts a table into the handler context, so a handler can't reach one at all —
+// and the error says which table it is rather than sending the user to codegen.
+// An entity from schema.graphql alongside it stays fully writable.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: materialized-read-only
@@ -18,8 +19,6 @@ chains:
         address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
 tables:
   accounts:
-    # Handlers only see a table that opts in; writes stay blocked either way.
-    as_entity: Accounts
     from: evm.events
     where:
       contractName: ERC20
@@ -39,15 +38,11 @@ type Note {
 import { indexer } from "envio";
 
 indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, context }) => {
-  // Reading a materialized table from a handler is fine.
-  const account = await context.Accounts.get(event.params.to);
-  context.Note.set({
-    id: event.params.to,
-    note: account ? \`received \${account.received}\` : "unseen",
-  });
+  context.Note.set({ id: event.params.to, note: "seen" });
 
   if (event.params.value === 13n) {
-    context.Accounts.set({ id: event.params.to, received: 0n });
+    // Not part of the handler context: config.yaml writes this table.
+    (context as any).Accounts.get(event.params.to);
   }
 });
 `,
@@ -73,8 +68,8 @@ const messageOf = async (run: () => Promise<unknown>): Promise<string | undefine
   }
 };
 
-describe("materialized tables are read-only from handlers", () => {
-  it("lets a handler read one, and runs the materializer first", async (t) => {
+describe("a table config.yaml writes", () => {
+  it("is materialized and readable from the test indexer", async (t) => {
     const indexer = createTestIndexer();
     await indexer.process({ chains: { 1: { simulate: [transfer(5n)] } } });
 
@@ -83,18 +78,18 @@ describe("materialized tables are read-only from handlers", () => {
       notes: await indexer.Note.getAll(),
     }).toEqual({
       accounts: [{ id: alice, received: 5n, chainId: 1 }],
-      notes: [{ id: alice, note: "received 5", chainId: 1 }],
+      notes: [{ id: alice, note: "seen", chainId: 1 }],
     });
   });
 
-  it("rejects a handler write with a message naming the table", async (t) => {
+  it("is absent from the handler context, with a message naming the table", async (t) => {
     const indexer = createTestIndexer();
     const message = await messageOf(() =>
       indexer.process({ chains: { 1: { simulate: [transfer(13n)] } } })
     );
 
     t.expect(message).toBe(
-      "context.Accounts.set() is unavailable: config.yaml writes \`accounts\` from its \`select\`, so handlers can only read it. To write it from a handler, define the table in schema.graphql instead."
+      "context.Accounts is unavailable: config.yaml writes the table \`accounts\` from its \`select\`, so it isn't part of the handler context. Define the table in schema.graphql to read and write it from a handler."
     );
   });
 });

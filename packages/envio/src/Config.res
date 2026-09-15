@@ -589,8 +589,7 @@ let parseEntitiesFromJson = (
       codeName: entityJson["codeName"],
       written: switch entityJson["written"] {
       | None => Handlers
-      | Some("materialized") => Materialized({hidden: false})
-      | Some("materializedHidden") => Materialized({hidden: true})
+      | Some("materialized") => Materialized
       | Some(other) =>
         JsError.throwWithMessage(
           `Invalid indexer config: entity \`${entityName}\` says it is written by \`${other}\`, which this envio version doesn't know. Run \`envio codegen\` again.`,
@@ -1098,8 +1097,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     userEntities
     ->Array.filter(entityConfig =>
       switch entityConfig.written {
-      | Materialized({hidden: true}) | Internal => false
-      | Handlers | Materialized({hidden: false}) => true
+      | Materialized | Internal => false
+      | Handlers => true
       }
     )
     ->Array.map(entityConfig => (entityConfig.codeName, entityConfig))
@@ -1463,4 +1462,11 @@ let load = () =>
     }
   }
 
-let getPgUserEntities = (config: t) => config.userEntities->Array.filter(e => e.storage.postgres)
+let getPgUserEntities = (config: t) =>
+  config.userEntities->Array.filter(e =>
+    e.storage.postgres &&
+      switch e.written {
+      | Handlers => true
+      | Materialized | Internal => false
+      }
+  )

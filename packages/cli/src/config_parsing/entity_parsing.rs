@@ -217,9 +217,8 @@ impl Schema {
     // capitalized name, so entities whose names differ only by the first
     // letter's case (e.g. `user` and `User`) would map to the same accessor
     // and silently shadow each other at runtime.
-    // A table from `tables` is exempt: it can be given a name of its own with
-    // `as_entity`, so the capitalized name isn't what code calls it, and the
-    // compiler checks the names it really uses before it gets here.
+    // A table from `tables` is exempt: the compiler checks the code names it
+    // really uses before it gets here.
     fn check_capitalized_entity_name_collisions(self) -> anyhow::Result<Self> {
         let mut by_capitalized: HashMap<String, Vec<String>> = HashMap::new();
         for (name, entity) in &self.entities {

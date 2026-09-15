@@ -234,12 +234,11 @@ impl CompositeIndexFieldTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
-    // What code calls the entity: the `as_entity` name for a materialized
-    // table, else the capitalized entity name. Names the generated module, the
-    // TS type, `context.<X>` and `indexer.<X>`, while `name` stays the
-    // database and GraphQL spelling.
+    // What code calls the entity. Names the generated module, the TS type,
+    // `context.<X>` and `indexer.<X>`, while `name` stays the database and
+    // GraphQL spelling.
     pub code_name: String,
-    // A materialized table without `as_entity` is stored and queryable but
+    // A table from `tables` is stored and reachable from the test indexer, but
     // absent from the handler context.
     pub hidden_from_handlers: bool,
     pub type_code: String,

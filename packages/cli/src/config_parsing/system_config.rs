@@ -398,9 +398,8 @@ pub struct SystemConfig {
     pub is_rescript: bool,
     // Write plans compiled from `tables`. One per (table, event, union branch).
     pub materializations: Vec<Materialization>,
-    // Per-table handler exposure from `as_entity`, keyed by table name. A table
-    // absent from the map (every entity in schema.graphql) is reachable under
-    // its capitalized name; `None` keeps it out of the handler context.
+    // How each declared table is named and written, keyed by table name. An
+    // entity absent from the map is one from schema.graphql, which handlers own.
     pub entity_access: HashMap<String, materialization::EntityAccess>,
 }
 

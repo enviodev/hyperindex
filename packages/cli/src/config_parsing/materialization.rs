@@ -205,13 +205,6 @@ pub struct TableConfig {
     pub storage: Option<TableStorage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Let handlers read this table, under this name: `as_entity: Account` gives \
-                       them `context.Account`. Left out, the table is still stored and queryable \
-                       over GraphQL, just not visible to handlers. Handlers can never write it."
-    )]
-    pub as_entity: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(
         with = "Option<BTreeMap<String, Queries>>",
         description = "Intermediate queries this table can read through `from`, like SQL CTEs. A \
                        list of queries is read as one combined result, so every query in it must \
@@ -1095,8 +1088,9 @@ pub enum Written {
     /// By handler code, through `context.<X>`.
     Handlers,
     /// By the runtime, from the table's `select`. Handlers can read it only
-    /// when the table opted in with `as_entity`, and can never write it.
-    Materialized { hidden: bool },
+    /// Never reachable from a handler: nothing opts a table into the handler
+    /// context, so no handler can read or write one.
+    Materialized,
 }
 
 impl EntityAccess {
@@ -1108,22 +1102,17 @@ impl EntityAccess {
         }
     }
 
-    fn materialized(table_name: &str, table: &TableConfig) -> Self {
+    fn materialized(table_name: &str) -> Self {
         Self {
-            // Hidden or not, the generated types and the test indexer still
-            // have to call the table something.
-            code_name: table
-                .as_entity
-                .clone()
-                .unwrap_or_else(|| text::to_code_name(table_name)),
-            written: Written::Materialized {
-                hidden: table.as_entity.is_none(),
-            },
+            // Out of the handler context, but the generated types and the test
+            // indexer still have to call the table something.
+            code_name: text::to_code_name(table_name),
+            written: Written::Materialized,
         }
     }
 
     pub fn is_hidden(&self) -> bool {
-        matches!(self.written, Written::Materialized { hidden: true })
+        matches!(self.written, Written::Materialized)
     }
 }
 
@@ -2383,10 +2372,10 @@ pub fn compile(
         }
     }
 
-    // Handlers, generated modules and the test indexer address a table by its
-    // code name, so two tables that share one are indistinguishable there even
-    // though their database tables differ. Entities from schema.graphql are in
-    // the same namespace, and `as_entity` picks the name outright.
+    // Generated modules and the test indexer address a table by its code name,
+    // so two tables that share one are indistinguishable there even though
+    // their database tables differ. Entities from schema.graphql are in the
+    // same namespace.
     let mut by_code_name: BTreeMap<String, String> = schema
         .entities
         .keys()
@@ -2397,21 +2386,13 @@ pub fn compile(
             )
         })
         .collect();
-    for (table_name, table) in &tables.0 {
-        let (code_name, source) = match &table.as_entity {
-            Some(as_entity) => {
-                validate_handler_name(as_entity, table_name)?;
-                (
-                    as_entity.clone(),
-                    format!("`tables.{table_name}.as_entity`"),
-                )
-            }
-            None => (text::to_code_name(table_name), format!("`{table_name}`")),
-        };
+    for table_name in tables.0.keys() {
+        let code_name = text::to_code_name(table_name);
+        let source = format!("`{table_name}`");
         if let Some(existing) = by_code_name.insert(code_name.clone(), source.clone()) {
             return Err(anyhow!(
                 "{source} and {existing} are both `{code_name}` in the generated code, which \
-                 can't tell them apart. Rename one of them, or give one a different `as_entity`."
+                 can't tell them apart. Rename one of them."
             ));
         }
     }
@@ -2448,7 +2429,7 @@ pub fn compile(
     for (table_name, table) in &tables.0 {
         entity_access.insert(
             table_name.clone(),
-            EntityAccess::materialized(table_name, table),
+            EntityAccess::materialized(table_name),
         );
 
         let compiled = compile_table(table_name, table, &ctx, &mut demand)
@@ -3083,21 +3064,6 @@ fn resolve_event_branches(
         }
     }
     Ok(branches)
-}
-
-/// The name becomes a field in generated ReScript and a key in generated
-/// TypeScript, so it has the same rules as a contract name.
-fn validate_handler_name(name: &str, table_name: &str) -> Result<()> {
-    let mut chars = name.chars();
-    let valid = matches!(chars.next(), Some(c) if c.is_ascii_uppercase())
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if valid {
-        return Ok(());
-    }
-    Err(anyhow!(
-        "`tables.{table_name}.as_entity` is `{name}`, which handlers can't use as a name. Use \
-         letters, digits and underscores, starting with a capital."
-    ))
 }
 
 /// `_ref` and `_derived_from` name tables, and the generated SDL uses those

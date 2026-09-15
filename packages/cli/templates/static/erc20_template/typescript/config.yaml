@@ -27,9 +27,6 @@ chains:
 # events it reads, and each event fetches only the fields its tables select.
 tables:
   accounts:
-    # Handlers reach the table under this name, and it gets an `accounts_by_pk`
-    # GraphQL root. Left out, a table is still stored and queryable as a set.
-    as_entity: Account
     with:
       balance_changes:
         # An approval's owner and spender should exist even if neither has
@@ -76,7 +73,6 @@ tables:
       approvals:
         _derived_from: approvals.owner
   approvals:
-    as_entity: Approval
     from: evm.events
     where:
       contractName: ERC20

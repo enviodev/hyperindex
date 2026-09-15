@@ -793,13 +793,6 @@
               }
             ]
           },
-          "as_entity": {
-            "description": "Let handlers read this table, under this name: `as_entity: Account` gives them `context.Account`. Left out, the table is still stored and queryable over GraphQL, just not visible to handlers. Handlers can never write it.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "with": {
             "description": "Intermediate queries this table can read through `from`, like SQL CTEs. A list of queries is read as one combined result, so every query in it must select the same columns.",
             "type": [

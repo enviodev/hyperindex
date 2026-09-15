@@ -603,15 +603,6 @@ describe("tables: names and storage", () => {
       "Config parse error: tables `totals` and `_Totals` are both `Totals` in the generated code, which can't tell them apart. Rename one of them.",
     ),
     (
-      "rejects an `as_entity` name handlers can't use",
-      `  totals:
-    as_entity: totals
-    from: evm.events
-    select:
-      id: params.to`,
-      "Config parse error: Failed compiling `tables`: `tables.totals.as_entity` is `totals`, which handlers can't use as a name. Use letters, digits and underscores, starting with a capital.",
-    ),
-    (
       "rejects an index on a field the table doesn't select",
       `  totals:
     storage:
@@ -793,7 +784,7 @@ describe("tables: wildcard", () => {
       eventName: Transfer
     select:
       id: params.to`->table,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: tables.totals: unknown field `wildcard`, expected one of `cross_chain`, `storage`, `as_entity`, `with`, `from`, `where`, `select` at line 18 column 5",
+      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: tables.totals: unknown field `wildcard`, expected one of `cross_chain`, `storage`, `with`, `from`, `where`, `select` at line 18 column 5",
     )
   )
 })
@@ -839,57 +830,10 @@ describe("tables: code-name collisions", () => {
     from: evm.events
     select:
       id: params.to`->table,
-      "Config parse error: Failed compiling `tables`: `totals` and `Totals` in schema.graphql are both `Totals` in the generated code, which can't tell them apart. Rename one of them, or give one a different `as_entity`.",
+      "Config parse error: Failed compiling `tables`: `totals` and `Totals` in schema.graphql are both `Totals` in the generated code, which can't tell them apart. Rename one of them.",
     )
   )
 
-  it("rejects an `as_entity` that collides with a schema.graphql entity", t =>
-    expectError(
-      t,
-      ~schema="type Receipt { id: ID! }",
-      `  totals:
-    as_entity: Receipt
-    from: evm.events
-    select:
-      id: params.to`->table,
-      "Config parse error: Failed compiling `tables`: `tables.totals.as_entity` and `Receipt` in schema.graphql are both `Receipt` in the generated code, which can't tell them apart. Rename one of them, or give one a different `as_entity`.",
-    )
-  )
-
-  it("rejects two tables that pick the same `as_entity`", t =>
-    expectError(
-      t,
-      `  totals:
-    as_entity: Receipt
-    from: evm.events
-    select:
-      id: params.to
-  other_totals:
-    as_entity: Receipt
-    from: evm.events
-    select:
-      id: params.to`->table,
-      "Config parse error: Failed compiling `tables`: `tables.other_totals.as_entity` and `tables.totals.as_entity` are both `Receipt` in the generated code, which can't tell them apart. Rename one of them, or give one a different `as_entity`.",
-    )
-  )
-
-  // The whole point of `as_entity`: a table whose name would collide keeps its
-  // own database name and answers to a different one in code.
-  it("accepts a collision that `as_entity` resolves", t => {
-    let {config}: InternalTestIndexer.parsed = InternalTestIndexer.fromUserApi(
-      ~schema="type Totals { id: ID! }",
-      ~configYaml=`  totals:
-    as_entity: Receipt
-    from: evm.events
-    where:
-      eventName: Transfer
-    select:
-      id: params.to`->table,
-    )
-    t.expect(
-      config.userEntities->Array.map((e: Internal.entityConfig) => (e.name, e.codeName)),
-    ).toEqual([("Totals", "Totals"), ("totals", "Receipt")])
-  })
 })
 
 // A `_ref` writes the target's id into the referencing column, so it has to

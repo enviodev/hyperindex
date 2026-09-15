@@ -881,12 +881,7 @@ impl SystemConfig {
                     code_name: access.code_name,
                     written: match access.written {
                         materialization::Written::Handlers => None,
-                        materialization::Written::Materialized { hidden: false } => {
-                            Some("materialized")
-                        }
-                        materialization::Written::Materialized { hidden: true } => {
-                            Some("materializedHidden")
-                        }
+                        materialization::Written::Materialized => Some("materialized"),
                     },
                     cross_chain: Some(system_config::entity_is_cross_chain(
                         entity,

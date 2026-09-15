@@ -807,10 +807,9 @@ type entityStorage = {
 // reach it. Kept as one answer so a table can't be hidden without a reason.
 type written =
   | Handlers
-  // The runtime writes it from the table's `select` in config.yaml. Handlers
-  // can read it only when the table opted in with `as_entity`, and can never
-  // write it.
-  | Materialized({hidden: bool})
+  // The runtime writes it from the table's `select` in config.yaml. Nothing
+  // opts a table into the handler context, so no handler can reach one.
+  | Materialized
   // Envio's own bookkeeping table.
   | Internal
 

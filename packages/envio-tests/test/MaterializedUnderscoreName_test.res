@@ -17,7 +17,6 @@ chains:
         address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
 tables:
   _totals:
-    as_entity: Total
     from: evm.events
     select:
       id: params.to
@@ -30,30 +29,12 @@ tables:
       sent:
         _sum: params.value
 `,
-  ~handlers=`
-import { indexer } from "envio";
-
-declare global {
-  var totals: (bigint | undefined)[];
-}
-globalThis.totals = [];
-
-indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, context }) => {
-  if (context.isPreload) return;
-  // The database and GraphQL name is \`_totals\`; handlers use \`as_entity\`.
-  globalThis.totals.push((await context.Total.get(event.params.to))?.received);
-});
-`,
   ~test=`
 import { describe, it } from "vitest";
 import { createTestIndexer, TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;
 const alice = Addresses.mockAddresses[0];
-
-declare global {
-  var totals: (bigint | undefined)[];
-}
 
 describe("a table named with leading underscores", () => {
   it("is reached by its name capitalized and stripped of underscores", async (t) => {
@@ -74,14 +55,11 @@ describe("a table named with leading underscores", () => {
     });
 
     t.expect({
-      // \`as_entity\` names this one; \`_senders\` falls back to the derived name.
-      totals: await indexer.Total.getAll(),
+      totals: await indexer.Totals.getAll(),
       senders: await indexer.Senders.getAll(),
-      seenByHandler: globalThis.totals,
     }).toEqual({
       totals: [{ id: alice, received: 6n, chainId: 1 }],
       senders: [{ id: Addresses.defaultAddress, sent: 6n, chainId: 1 }],
-      seenByHandler: [6n],
     });
   });
 });
