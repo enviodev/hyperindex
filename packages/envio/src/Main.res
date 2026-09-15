@@ -658,6 +658,9 @@ let start = async (
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
   let config = Config.load()
+  // In per-chain mode every line this process writes belongs to the chains it
+  // drives, whether or not a supervisor split the run across processes.
+  config->Config.logContext->Option.forEach(Logging.setContext)
   // isDevelopmentMode controls whether the indexer stays alive after all
   // chains finish (keepProcessAlive) and whether the console API is exposed.
   // Set by `envio dev` via the public config's `isDev` field; `envio start`

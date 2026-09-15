@@ -77,14 +77,8 @@ let hypersyncClientEnableQueryCaching =
 let hypersyncLogLevel =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_LOG_LEVEL", HyperSyncClient.logLevelSchema, ~fallback=#info)
 
-// The chains a supervisor forked this process to drive. Present only on a
-// worker, and the chain ids it carries are what every line that worker logs is
-// stamped with, so a split run's output says which chain it came from without
-// anyone having to rewrite it downstream.
-let workerChainIds =
-  envSafe
-  ->EnvSafe.get("ENVIO_WORKER", S.option(S.string))
-  ->Option.map(value => value->String.split(",")->Array.filterMap(Float.fromString))
+// Set by a supervisor on the processes it forks, and by nothing else.
+let isWorker = envSafe->EnvSafe.get("ENVIO_WORKER", S.option(S.bool))->Option.getOr(false)
 
 let logStrategy =
   envSafe->EnvSafe.get(
@@ -103,7 +97,6 @@ let logStrategy =
 
 Logging.setLogger(
   Logging.makeLogger(
-    ~base=Logging.makeBase(~workerChainIds),
     ~logStrategy,
     ~logFilePath,
     ~defaultFileLogLevel,

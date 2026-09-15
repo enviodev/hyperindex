@@ -625,6 +625,34 @@ let getChain = (config, ~chainId) =>
         "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
       )
 
+// Whether every entity belongs to exactly one chain. Only then is a unit of
+// this indexer's work attributable to a chain at all, which is what lets a run
+// be split across processes and what lets its logs name a chain.
+let isPerChain = (config: t) => !(config.userEntities->Array.some(entity => entity.crossChain))
+
+// What every line this indexer logs is attributed to: the chains it drives.
+// A schema shared across chains has none, since its work is no single chain's.
+let logContext = (config: t): option<JSON.t> =>
+  if config->isPerChain {
+    let chainIds = config.chainMap->ChainMap.keys
+    Some(
+      switch chainIds {
+      | [chainId] =>
+        JSON.Object(
+          Dict.fromArray([("chainId", chainId->S.reverseConvertToJsonOrThrow(ChainId.schema))]),
+        )
+      | chainIds =>
+        JSON.Object(
+          Dict.fromArray([
+            ("chainIds", chainIds->S.reverseConvertToJsonOrThrow(S.array(ChainId.schema))),
+          ]),
+        )
+      },
+    )
+  } else {
+    None
+  }
+
 // Narrows a config to the chains one `envio start --chain` process drives.
 // `contractMapping` is deliberately left whole: its ids are what the migration
 // that created the schema stored, and one rebuilt from a subset would hand the

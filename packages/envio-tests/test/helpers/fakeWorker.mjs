@@ -11,7 +11,6 @@ process.on("message", (message) => {
         isolatedChains: message.config.isolatedChains,
         maxConnections: process.env.ENVIO_PG_MAX_CONNECTIONS,
         logFile: process.env.LOG_FILE,
-        workerChains: process.env.ENVIO_WORKER,
         // A Date survives only under structured-clone serialization, which is
         // what a metrics snapshot's timestamps need.
         startTime: new Date(1700000000000),

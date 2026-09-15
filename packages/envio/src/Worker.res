@@ -4,7 +4,7 @@
 
 // Set by the supervisor on the processes it forks. An indexer a user started
 // themselves never has it, and takes every path it takes today.
-let isEnabled = Env.workerChainIds->Option.isSome
+let isEnabled = Env.isWorker
 
 @tag("kind")
 type parentMessage =

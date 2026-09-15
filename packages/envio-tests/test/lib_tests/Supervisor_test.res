@@ -41,9 +41,7 @@ describe("Supervisor.plan volume spreading", () => {
   let assignment = (~chainIds, ~maxConnections) =>
     Supervisor.plan(~chainIds=chainIds->Array.map(ChainId.fromInt), ~maxConnections)
     ->Option.getOrThrow
-    ->Array.map(worker =>
-      worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(",")
-    )
+    ->Array.map(worker => worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(","))
 
   it("Keeps the busiest chains apart, and pairs them with the quietest", t => {
     t.expect([
@@ -63,8 +61,7 @@ describe("Supervisor.plan volume spreading", () => {
   })
 })
 
-describe("Supervisor.planForRun", () => {
-  let configYaml = `
+let configYaml = `
 name: supervised-run
 disable_default_cross_chain: true
 contracts:
@@ -84,22 +81,22 @@ chains:
         address: "0x2222222222222222222222222222222222222222"
 `
 
-  let config = (~schema, ~isolatedChains=?) => {
-    let json = Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow
-    switch (json, isolatedChains) {
-    | (Object(obj), Some(chainIds)) => obj->Dict.set("isolatedChains", JSON.Encode.array(chainIds))
-    | _ => ()
-    }
-    Config.fromPublic(json)
+let config = (~schema, ~isolatedChains=?) => {
+  let json = Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow
+  switch (json, isolatedChains) {
+  | (Object(obj), Some(chainIds)) => obj->Dict.set("isolatedChains", JSON.Encode.array(chainIds))
+  | _ => ()
   }
+  Config.fromPublic(json)
+}
 
-  let perChain = `
+let perChain = `
 type Counter {
   id: ID!
   count: BigInt!
 }
 `
-  let crossChain = `
+let crossChain = `
 type Counter {
   id: ID!
   count: BigInt!
@@ -110,6 +107,7 @@ type GlobalCounter @crossChain {
 }
 `
 
+describe("Supervisor.planForRun", () => {
   it("Splits a per-chain schema, and leaves everything else in one process", t => {
     let workerChains = (~schema, ~maxConnections, ~isolatedChains=?) =>
       Supervisor.planForRun(~config=config(~schema, ~isolatedChains?), ~maxConnections)->Option.map(
@@ -168,19 +166,23 @@ describe("Supervisor worker plumbing", () => {
   })
 })
 
-describe("Logging.makeBase", () => {
-  it("Stamps a worker's chains onto every line it logs", t => {
+describe("Config.logContext", () => {
+  it("Attributes a per-chain run's logs to its chains, and a shared one's to none", t => {
     t.expect([
-      // Not a worker: nothing extra, which is what keeps pid and hostname out.
-      Logging.makeBase(~workerChainIds=None),
-      Logging.makeBase(~workerChainIds=Some([137.])),
-      Logging.makeBase(~workerChainIds=Some([1., 137.])),
+      // Every entity is per-chain, and this process drives one of them.
+      config(~schema=perChain, ~isolatedChains=[JSON.Number(137.)])->Config.logContext,
+      // Still per-chain, but this process drives both: no single chain owns a line.
+      config(~schema=perChain)->Config.logContext,
+      // An entity shared across chains: the work isn't any one chain's.
+      config(~schema=crossChain)->Config.logContext,
     ]).toStrictEqual([
-      JSON.Object(Dict.make()),
-      JSON.Object(Dict.fromArray([("chainId", JSON.Number(137.))])),
-      JSON.Object(
-        Dict.fromArray([("chainIds", JSON.Array([JSON.Number(1.), JSON.Number(137.)]))]),
+      Some(JSON.Object(Dict.fromArray([("chainId", JSON.Number(137.))]))),
+      Some(
+        JSON.Object(
+          Dict.fromArray([("chainIds", JSON.Array([JSON.Number(1.), JSON.Number(137.)]))]),
+        ),
       ),
+      None,
     ])
   })
 })

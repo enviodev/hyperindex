@@ -6,7 +6,6 @@ type fixtureReport = {
   isolatedChains: array<float>,
   maxConnections: string,
   logFile: string,
-  workerChains: string,
   startTime: Date.t,
 }
 
@@ -40,8 +39,6 @@ describe("Supervisor.fork", () => {
       isolatedChains: [1., 137.],
       maxConnections: "3",
       logFile: Supervisor.logFilePath(~workerIndex=1),
-      // What the worker's logger stamps onto every line it writes.
-      workerChains: "1,137",
       // Proof the channel clones rather than stringifies: a JSON round trip
       // would have turned this into a string.
       startTime: Date.fromTime(1700000000000.),

@@ -25,23 +25,11 @@ let logLevels = [
 ]->Dict.fromArray
 
 %%private(let logger = ref(None))
+// The logger as configured, before any context a run added to it. Kept so
+// setting context twice in one process replaces it rather than stacking it.
+%%private(let rootLogger = ref(None))
 
-// The fields every line a process logs carries. Empty is what keeps pid and
-// hostname out. A worker names the chains it drives, so a split run's output
-// says which chain a line came from wherever the call site had no chain in hand.
-let makeBase = (~workerChainIds: option<array<float>>): JSON.t =>
-  switch workerChainIds {
-  | Some([chainId]) => JSON.Object(Dict.fromArray([("chainId", JSON.Number(chainId))]))
-  | Some([]) | None => JSON.Object(Dict.make())
-  | Some(chainIds) =>
-    JSON.Object(
-      Dict.fromArray([
-        ("chainIds", JSON.Array(chainIds->Array.map(chainId => JSON.Number(chainId)))),
-      ]),
-    )
-  }
-
-let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel, ~base) => {
+let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel) => {
   // Currently unused - useful if using multiple transports.
   // let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}
   let pinoFile: Transport.transportTarget = {
@@ -53,6 +41,9 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
     }->Transport.makeTransportOptions,
     level: defaultFileLogLevel,
   }
+
+  // Empty base disables pid and hostname in logs
+  let base: JSON.t = %raw("{}")
 
   let makeMultiStreamLogger = MultiStreamLogger.make(
     ~userLogLevel,
@@ -96,6 +87,7 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
 }
 
 let setLogger = l => {
+  rootLogger := Some(l)
   logger := Some(l)
 }
 
@@ -163,6 +155,14 @@ let childFatal = (logger, params: 'a) => {
 let createChild = (~params: 'a) => {
   getLogger()->child(params->createChildParams)
 }
+// Fields every line this process logs from here on carries. What belongs on
+// them is the run's to decide; the logger only carries what it is handed.
+let setContext = (params: 'a) =>
+  switch rootLogger.contents {
+  | Some(root) => logger := Some(root->child(params->createChildParams))
+  | None => ()
+  }
+
 let createChildFrom = (~logger: t, ~params: 'a) => {
   logger->child(params->createChildParams)
 }

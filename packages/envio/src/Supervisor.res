@@ -78,7 +78,7 @@ let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<wor
 // holds while no entity has rows another chain can reach. A run that is already
 // one chain's process doesn't split again — whoever started it owns the layout.
 let planForRun = (~config: Config.t, ~maxConnections=Env.Db.maxConnections) =>
-  if config.isolated || config.userEntities->Array.some(entity => entity.crossChain) {
+  if config.isolated || !(config->Config.isPerChain) {
     None
   } else {
     plan(~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id), ~maxConnections)
@@ -138,9 +138,7 @@ let fork = (
   ~entryPath=NodeJs.Process.argv->Array.getUnsafe(1),
 ) => {
   let env = NodeJs.Process.process.env->Dict.copy
-  // Marks the process a worker, and names the chains it drives: its logger
-  // stamps them onto every line it writes.
-  env->Dict.set("ENVIO_WORKER", worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(","))
+  env->Dict.set("ENVIO_WORKER", "true")
   // The worker's slice of the budget. Read when the worker's own Env module
   // loads, which is why it rides in the spawn environment rather than a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
