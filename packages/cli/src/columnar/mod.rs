@@ -393,6 +393,14 @@ impl Arena {
         }
     }
 
+    /// Hands a laid-out arena back to JavaScript to fill. The reading direction
+    /// lays one out and reads it here; the writing direction lays one out and
+    /// lets JavaScript write it, which is the same memory before anything is in
+    /// it.
+    pub fn reopen_for_filling(&mut self) {
+        self.phase = Phase::Filling;
+    }
+
     pub fn rows(&self) -> usize {
         self.rows
     }
@@ -456,7 +464,14 @@ impl Arena {
             .columns
             .get_mut(index)
             .with_context(|| format!("no column {index} to grow"))?;
-        let Storage::Variable { data, .. } = &mut column.storage else {
+        // A list's payload is its elements', so growing the column grows that:
+        // the elements are sized from a count taken up front, but how many bytes
+        // they come to is only known as they are written.
+        let storage = match &mut column.storage {
+            Storage::List { elements, .. } => &mut elements.storage,
+            storage => storage,
+        };
+        let Storage::Variable { data, .. } = storage else {
             bail!("a fixed-width column is sized from the row count and never grows");
         };
         if !std::ptr::eq(data.as_ptr(), current) {
@@ -658,6 +673,23 @@ mod tests {
                 &[0xbe][..]
             )
         );
+    }
+
+    #[test]
+    fn a_list_grows_the_payload_its_elements_share() {
+        let long = "x".repeat(MIN_VARIABLE_CAPACITY * 2);
+        let mut arena = Arena::new_filled(
+            1,
+            &[ColumnSpec::List {
+                element: ColumnKind::Text,
+                elements: 1,
+            }],
+        );
+        arena.set_element_bytes(0, 0, long.as_bytes());
+        arena.end_list_row(0, 0, 1);
+        arena.seal(&["xs".to_string()]).unwrap();
+        let (elements, _) = arena.columns()[0].list().unwrap();
+        assert_eq!(elements.str_at(0).unwrap(), long.as_str());
     }
 
     #[test]

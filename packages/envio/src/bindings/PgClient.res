@@ -57,6 +57,41 @@ external transactionQueryRaw: (t, int, string, array<Null.t<string>>) => promise
 
 @send external rollback: (t, int) => promise<unit> = "rollback"
 
+@send
+external registerWriteTable: (t, array<string>, array<int>) => int = "registerWriteTable"
+
+@send external beginStage: (t, ~table: int, ~rows: int) => Staging.begun = "beginStage"
+
+@send
+external growStage: (
+  t,
+  ~handle: int,
+  ~column: int,
+  ~needed: int,
+  ~stale: ArrayBuffer.t,
+) => ArrayBuffer.t = "growStage"
+
+@send external commitStage: (t, ~handle: int, ~buffers: array<ArrayBuffer.t>) => unit = "commitStage"
+
+@send external abortStage: (t, ~handle: int, ~buffers: array<ArrayBuffer.t>) => unit = "abortStage"
+
+@send
+external executeStaged: (
+  t,
+  ~transaction: Null.t<int>,
+  ~sql: string,
+  ~handle: int,
+  ~unnest: bool,
+) => promise<unit> = "executeStaged"
+
+let arena = (client): Staging.arena => {
+  beginStage: (~table, ~rows) => client->beginStage(~table, ~rows),
+  growStage: (~handle, ~column, ~needed, ~stale) =>
+    client->growStage(~handle, ~column, ~needed, ~stale),
+  commitStage: (~handle, ~buffers) => client->commitStage(~handle, ~buffers),
+  abortStage: (~handle, ~buffers) => client->abortStage(~handle, ~buffers),
+}
+
 @send external close: t => promise<unit> = "close"
 
 let make = options => Core.getAddon().pgClient->classCreate(options)
