@@ -41,23 +41,63 @@ type queryResult = {
 
 @send external releaseResult: (t, int, array<ArrayBuffer.t>) => unit = "releaseResult"
 
+@send external begin: t => promise<int> = "begin"
+
+@send external transactionBatch: (t, int, string) => promise<unit> = "transactionBatch"
+
+@send
+external transactionExecute: (t, int, string, array<Null.t<string>>) => promise<int> =
+  "transactionExecute"
+
+@send
+external transactionQueryRaw: (t, int, string, array<Null.t<string>>) => promise<queryResult> =
+  "transactionQuery"
+
+@send external commit: (t, int) => promise<unit> = "commit"
+
+@send external rollback: (t, int) => promise<unit> = "rollback"
+
 @send external close: t => promise<unit> = "close"
 
 let make = options => Core.getAddon().pgClient->classCreate(options)
 
-// Runs the query and reads its rows out of the arena, handing the buffers back
-// before returning. Nothing outside this function holds a view into them, which
-// is what makes the memory safe to free.
-let query = async (client, sql, ~params=[]) => {
-  let {handle, names, kinds, elementKinds, rows} = await client->queryRaw(sql, params)
-  let buffers = client->lendResult(handle)
-  let result = try {
-    Reading.columns(~buffers, ~names, ~kinds, ~elementKinds)->Reading.rows(~rows)
-  } catch {
-  | exn =>
+// Reads a result out of the arena and hands the buffers back. Nothing outside
+// this function keeps a view into them, which is what makes the memory safe to
+// free.
+%%private(
+  let read = (client, {handle, names, kinds, elementKinds, rows}) => {
+    let buffers = client->lendResult(handle)
+    let result = try {
+      Reading.columns(~buffers, ~names, ~kinds, ~elementKinds)->Reading.rows(~rows)
+    } catch {
+    | exn =>
+      client->releaseResult(handle, buffers)
+      throw(exn)
+    }
     client->releaseResult(handle, buffers)
+    result
+  }
+)
+
+let query = async (client, sql, ~params=[]) => client->read(await client->queryRaw(sql, params))
+
+let transactionQuery = async (client, transaction, sql, ~params=[]) =>
+  client->read(await client->transactionQueryRaw(transaction, sql, params))
+
+// Opens a transaction, runs `body` in it, and commits. Anything thrown rolls
+// back instead and is re-thrown — the transaction holds a connection until one
+// or the other happens, so neither path may leave without ending it.
+let transaction = async (client, body) => {
+  let handle = await client->begin
+  let result = try await body(handle) catch {
+  | exn =>
+    // The rollback is what frees the connection. If it fails too, that failure
+    // would otherwise replace the one worth reporting.
+    try await client->rollback(handle) catch {
+    | _ => ()
+    }
     throw(exn)
   }
-  client->releaseResult(handle, buffers)
+  await client->commit(handle)
   result
 }

@@ -12,6 +12,7 @@ use super::client::{PgClient, PgConnectionOptions, SslSetting};
 use super::param::Param;
 use super::rows::Cell;
 use super::rows::ReadKind;
+use futures_util::future;
 
 fn client() -> PgClient {
     PgClient::connect(PgConnectionOptions {
@@ -369,4 +370,117 @@ async fn an_empty_result_still_describes_its_columns() {
         .collect::<Vec<_>>();
     let arena = super::rows::into_arena(&rows, &types).expect("the rows lay out");
     assert_eq!((arena.rows(), arena.columns().len()), (0, 2));
+}
+
+/// A transaction holds one connection, so a temporary table made inside it is
+/// visible to every statement in it and gone with it.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_transaction_commits_what_it_did() {
+    let client = client();
+    let transaction = client.begin().await.expect("the transaction opens");
+    transaction
+        .batch("CREATE TEMPORARY TABLE committed_rows (n int4) ON COMMIT DROP")
+        .await
+        .expect("the table is made");
+    transaction
+        .execute("INSERT INTO committed_rows VALUES (1), (2)", &[])
+        .await
+        .expect("the rows go in");
+    let (rows, _) = transaction
+        .query("SELECT n FROM committed_rows ORDER BY n", &[])
+        .await
+        .expect("the rows come back");
+    transaction.commit().await.expect("the transaction commits");
+
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.get::<_, Cell>(0))
+            .collect::<Vec<_>>(),
+        vec![Cell::Num(1.0), Cell::Num(2.0)]
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_rollback_undoes_what_it_did() {
+    let client = client();
+    let transaction = client.begin().await.expect("the transaction opens");
+    transaction
+        .batch("CREATE TEMPORARY TABLE rolled_back_rows (n int4)")
+        .await
+        .expect("the table is made");
+    transaction
+        .execute("INSERT INTO rolled_back_rows VALUES (1)", &[])
+        .await
+        .expect("the row goes in");
+    transaction
+        .rollback()
+        .await
+        .expect("the transaction rolls back");
+
+    // The table went with the transaction that made it, which is the rollback
+    // reaching the DDL as well as the rows.
+    let (rows, _) = client
+        .query(
+            "SELECT to_regclass('pg_temp.rolled_back_rows') IS NULL AS gone",
+            &[],
+        )
+        .await
+        .expect("the check runs");
+    assert_eq!(rows[0].get::<_, Cell>(0), Cell::Bool(true));
+}
+
+/// A batch write issues its statements at once rather than one after another,
+/// which is what the driver being replaced did on its transaction's connection.
+/// They have to all land, and land in a transaction that is still whole.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn statements_issued_together_all_land() {
+    let client = client();
+    let transaction = client.begin().await.expect("the transaction opens");
+    transaction
+        .batch("CREATE TEMPORARY TABLE together_rows (n int4) ON COMMIT DROP")
+        .await
+        .expect("the table is made");
+
+    let writes = (0..16).map(|n| {
+        let transaction = transaction.clone();
+        async move {
+            transaction
+                .execute(
+                    "INSERT INTO together_rows VALUES ($1::int4)",
+                    &[Param::text(n.to_string())],
+                )
+                .await
+        }
+    });
+    future::try_join_all(writes)
+        .await
+        .expect("every statement lands");
+
+    let (rows, _) = transaction
+        .query("SELECT count(*)::int4 FROM together_rows", &[])
+        .await
+        .expect("the count comes back");
+    transaction.commit().await.expect("the transaction commits");
+    assert_eq!(rows[0].get::<_, Cell>(0), Cell::Num(16.0));
+}
+
+/// Once a statement has failed the server refuses the rest of the transaction,
+/// and the only thing it will take is the rollback. Sending one has to work
+/// rather than report the failure a second time.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_failed_statement_leaves_a_transaction_that_can_still_be_rolled_back() {
+    let client = client();
+    let transaction = client.begin().await.expect("the transaction opens");
+    let failure = transaction
+        .execute("SELECT 1 FROM nothing_is_here", &[])
+        .await;
+    assert!(failure.is_err(), "the statement names no table");
+    transaction
+        .rollback()
+        .await
+        .expect("the rollback is taken even so");
 }

@@ -1,5 +1,7 @@
 //! The connection pool and the statements run against it.
 
+use std::sync::Arc;
+
 use anyhow::{anyhow, bail, Context, Result};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
@@ -77,6 +79,76 @@ pub struct PgClient {
     pool: Pool,
 }
 
+/// A transaction, pinned to the connection it was opened on.
+///
+/// Cloning one shares that connection. Statements issued on it at the same time
+/// are pipelined rather than serialised — which is what the driver being
+/// replaced did for the concurrent statements a batch write issues — so the
+/// connection is behind an `Arc` and never a lock.
+#[derive(Clone)]
+pub struct Transaction {
+    connection: Arc<deadpool_postgres::Object>,
+}
+
+impl Transaction {
+    pub async fn execute(&self, sql: &str, params: &[Param]) -> Result<u64> {
+        execute_on(&self.connection, sql, params).await
+    }
+
+    pub async fn query(&self, sql: &str, params: &[Param]) -> Result<(Vec<Row>, Vec<Column>)> {
+        query_on(&self.connection, sql, params).await
+    }
+
+    pub async fn batch(&self, sql: &str) -> Result<()> {
+        self.connection.batch_execute(sql).await?;
+        Ok(())
+    }
+
+    pub async fn commit(&self) -> Result<()> {
+        self.connection.batch_execute("COMMIT").await?;
+        Ok(())
+    }
+
+    /// Undoes everything the transaction did. Safe to send after a statement
+    /// has already failed: the server has aborted the transaction by then and
+    /// is waiting for exactly this.
+    pub async fn rollback(&self) -> Result<()> {
+        self.connection.batch_execute("ROLLBACK").await?;
+        Ok(())
+    }
+}
+
+async fn execute_on(client: &tokio_postgres::Client, sql: &str, params: &[Param]) -> Result<u64> {
+    let params = params.iter().map(|param| param as &(dyn ToSql + Sync));
+    Ok(client.execute_raw(sql, params).await?)
+}
+
+/// The rows, and what the statement says its columns are.
+///
+/// The types come from the prepared statement rather than from a row, so a
+/// result with no rows in it still describes its shape and the caller lays out
+/// the same columns either way.
+async fn query_on(
+    client: &tokio_postgres::Client,
+    sql: &str,
+    params: &[Param],
+) -> Result<(Vec<Row>, Vec<Column>)> {
+    let statement = client.prepare(sql).await?;
+    let columns = statement
+        .columns()
+        .iter()
+        .map(|column| Column {
+            name: column.name().to_string(),
+            ty: column.type_().clone(),
+        })
+        .collect();
+    let params: Vec<&(dyn ToSql + Sync)> = params
+        .iter()
+        .map(|param| param as &(dyn ToSql + Sync))
+        .collect();
+    Ok((client.query(&statement, &params).await?, columns))
+}
+
 fn build_config(options: &PgConnectionOptions) -> Config {
     let mut config = Config::new();
     config
@@ -138,7 +210,7 @@ impl PgClient {
     /// Runs one or more statements with no parameters, discarding any rows.
     ///
     /// This is the path for DDL and for the multi-statement text the
-    /// initialization builds; `simple_query` is what allows more than one
+    /// initialization builds; a simple query is what allows more than one
     /// statement in a single round trip.
     pub async fn batch(&self, sql: &str) -> Result<()> {
         self.client().await?.batch_execute(sql).await?;
@@ -147,29 +219,26 @@ impl PgClient {
 
     pub async fn execute(&self, sql: &str, params: &[Param]) -> Result<u64> {
         let client = self.client().await?;
-        let params = params.iter().map(|p| p as &(dyn ToSql + Sync));
-        Ok(client.execute_raw(sql, params).await?)
+        execute_on(&client, sql, params).await
     }
 
-    /// The rows, and what the statement says its columns are.
-    ///
-    /// The types come from the prepared statement rather than from a row, so a
-    /// result with no rows in it still describes its shape and the caller lays
-    /// out the same columns either way.
     pub async fn query(&self, sql: &str, params: &[Param]) -> Result<(Vec<Row>, Vec<Column>)> {
         let client = self.client().await?;
-        let statement = client.prepare(sql).await?;
-        let columns = statement
-            .columns()
-            .iter()
-            .map(|column| Column {
-                name: column.name().to_string(),
-                ty: column.type_().clone(),
-            })
-            .collect();
-        let params: Vec<&(dyn ToSql + Sync)> =
-            params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
-        Ok((client.query(&statement, &params).await?, columns))
+        query_on(&client, sql, params).await
+    }
+
+    /// Opens a transaction on a connection of its own and keeps it there.
+    ///
+    /// `BEGIN` is sent as a statement rather than taken from the driver's own
+    /// transaction type, which borrows the connection it runs on and so could
+    /// not be held in a map across calls. What matters is the same either way:
+    /// every statement until the commit runs on this one connection.
+    pub async fn begin(&self) -> Result<Transaction> {
+        let connection = self.client().await?;
+        connection.batch_execute("BEGIN").await?;
+        Ok(Transaction {
+            connection: Arc::new(connection),
+        })
     }
 
     pub async fn close(&self) {

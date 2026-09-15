@@ -107,3 +107,58 @@ describe("Reading a result set through the arena", () => {
     },
   )
 })
+
+describe("Running statements in a transaction", () => {
+  Async.it(
+    "Commits what the body did and reads it back",
+    async t => {
+      let pg = client()
+      let rows = await pg->PgClient.transaction(async handle => {
+        await pg->PgClient.transactionBatch(
+          handle,
+          "CREATE TEMPORARY TABLE committed_here (n int4) ON COMMIT DROP",
+        )
+        let _ = await pg->PgClient.transactionExecute(
+          handle,
+          "INSERT INTO committed_here VALUES ($1::int4)",
+          [Null.make("7")],
+        )
+        await pg->PgClient.transactionQuery(handle, "SELECT n FROM committed_here")
+      })
+      await pg->PgClient.close
+      t.expect(rows->plainRows).toStrictEqual([{"n": 7}->Obj.magic])
+    },
+  )
+
+  // The transaction holds a connection until it ends, so a body that throws has
+  // to roll back rather than leave it held.
+  Async.it(
+    "Rolls back when the body throws, and reports what the body threw",
+    async t => {
+      let pg = client()
+      let thrown = switch await pg->PgClient.transaction(async handle => {
+        await pg->PgClient.transactionBatch(handle, "CREATE TEMPORARY TABLE undone_here (n int4)")
+        JsError.throwWithMessage("the body gave up")
+      }) {
+      | _ => None
+      | exception exn => Some(
+          exn
+          ->Utils.prettifyExn
+          ->(Utils.magic: exn => {"message": string})
+          ->(error => error["message"]),
+        )
+      }
+
+      // The table went with the transaction, and the connection came back:
+      // another statement on the same client would block otherwise.
+      let rows = await pg->PgClient.query(
+        `SELECT to_regclass('pg_temp.undone_here') IS NULL AS gone`,
+      )
+      await pg->PgClient.close
+      t.expect((thrown, rows->plainRows)).toStrictEqual((
+        Some("the body gave up"),
+        [{"gone": true}->Obj.magic],
+      ))
+    },
+  )
+})

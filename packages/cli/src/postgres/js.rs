@@ -243,6 +243,9 @@ pub struct PgClient {
     /// Result sets handed out but not yet read and released. An entry lives
     /// only between `query` and `releaseResult`.
     results: Mutex<HashMap<u32, Arena>>,
+    /// Transactions between their `begin` and their commit or rollback. Each
+    /// holds a connection out of the pool for as long as it is open.
+    transactions: Mutex<HashMap<u32, client::Transaction>>,
     next_handle: AtomicU32,
 }
 
@@ -266,6 +269,7 @@ impl PgClient {
         Ok(Self {
             inner,
             results: Mutex::new(HashMap::new()),
+            transactions: Mutex::new(HashMap::new()),
             next_handle: AtomicU32::new(0),
         })
     }
@@ -290,26 +294,12 @@ impl PgClient {
         sql: String,
         params: Vec<Option<String>>,
     ) -> napi::Result<PgQueryResult> {
-        let params = to_params(params);
-        let (rows, columns) = self.inner.query(&sql, &params).await.map_err(to_napi)?;
-        let types = columns
-            .iter()
-            .map(|column| column.ty.clone())
-            .collect::<Vec<_>>();
-        let arena = rows::into_arena(&rows, &types).map_err(to_napi)?;
-
-        let result = PgQueryResult {
-            handle: self.next_handle.fetch_add(1, Ordering::Relaxed),
-            names: columns.into_iter().map(|column| column.name).collect(),
-            kinds: types
-                .iter()
-                .map(|ty| rows::column_read_kind(ty) as u8)
-                .collect(),
-            element_kinds: types.iter().map(rows::element_read_kind).collect(),
-            rows: arena.rows() as u32,
-        };
-        self.results.lock().unwrap().insert(result.handle, arena);
-        Ok(result)
+        let (rows, columns) = self
+            .inner
+            .query(&sql, &to_params(params))
+            .await
+            .map_err(to_napi)?;
+        self.hold(rows, columns)
     }
 
     /// The buffers a result's columns live in. They stay valid until
@@ -349,9 +339,118 @@ impl PgClient {
         }
     }
 
+    /// Opens a transaction and returns the handle every statement in it is
+    /// given. It holds a connection until `commit` or `rollback`.
+    #[napi]
+    pub async fn begin(&self) -> napi::Result<u32> {
+        let transaction = self.inner.begin().await.map_err(to_napi)?;
+        let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
+        self.transactions
+            .lock()
+            .unwrap()
+            .insert(handle, transaction);
+        Ok(handle)
+    }
+
+    #[napi]
+    pub async fn transaction_batch(&self, transaction: u32, sql: String) -> napi::Result<()> {
+        self.transaction(transaction)?
+            .batch(&sql)
+            .await
+            .map_err(to_napi)
+    }
+
+    #[napi]
+    pub async fn transaction_execute(
+        &self,
+        transaction: u32,
+        sql: String,
+        params: Vec<Option<String>>,
+    ) -> napi::Result<u32> {
+        let affected = self
+            .transaction(transaction)?
+            .execute(&sql, &to_params(params))
+            .await
+            .map_err(to_napi)?;
+        Ok(affected as u32)
+    }
+
+    #[napi]
+    pub async fn transaction_query(
+        &self,
+        transaction: u32,
+        sql: String,
+        params: Vec<Option<String>>,
+    ) -> napi::Result<PgQueryResult> {
+        let transaction = self.transaction(transaction)?;
+        let (rows, columns) = transaction
+            .query(&sql, &to_params(params))
+            .await
+            .map_err(to_napi)?;
+        self.hold(rows, columns)
+    }
+
+    #[napi]
+    pub async fn commit(&self, transaction: u32) -> napi::Result<()> {
+        let held = self.take_transaction(transaction)?;
+        held.commit().await.map_err(to_napi)
+    }
+
+    #[napi]
+    pub async fn rollback(&self, transaction: u32) -> napi::Result<()> {
+        let held = self.take_transaction(transaction)?;
+        held.rollback().await.map_err(to_napi)
+    }
+
     #[napi]
     pub async fn close(&self) {
         self.inner.close().await;
+    }
+}
+
+impl PgClient {
+    /// A transaction's connection, taken out of the map rather than held under
+    /// its lock: statements issued at the same time have to reach the server
+    /// together, and waiting on a lock would put them in a queue instead.
+    fn transaction(&self, handle: u32) -> napi::Result<client::Transaction> {
+        self.transactions
+            .lock()
+            .unwrap()
+            .get(&handle)
+            .cloned()
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown transaction {handle}")))
+    }
+
+    fn take_transaction(&self, handle: u32) -> napi::Result<client::Transaction> {
+        self.transactions
+            .lock()
+            .unwrap()
+            .remove(&handle)
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown transaction {handle}")))
+    }
+
+    fn hold(
+        &self,
+        rows: Vec<tokio_postgres::Row>,
+        columns: Vec<client::Column>,
+    ) -> napi::Result<PgQueryResult> {
+        let types = columns
+            .iter()
+            .map(|column| column.ty.clone())
+            .collect::<Vec<_>>();
+        let arena = rows::into_arena(&rows, &types).map_err(to_napi)?;
+        let result = PgQueryResult {
+            handle: self.next_handle.fetch_add(1, Ordering::Relaxed),
+            names: columns.into_iter().map(|column| column.name).collect(),
+            kinds: types
+                .iter()
+                .map(|ty| rows::column_read_kind(ty) as u8)
+                .collect(),
+            element_kinds: types.iter().map(rows::element_read_kind).collect(),
+            rows: arena.rows() as u32,
+        };
+        self.results.lock().unwrap().insert(result.handle, arena);
+        Ok(result)
     }
 }
 
