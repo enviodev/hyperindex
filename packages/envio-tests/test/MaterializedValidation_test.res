@@ -773,6 +773,24 @@ tables:
   )
 })
 
+// Which addresses a table reads is derived: from its contract, or from what its
+// `where` says about `srcAddress`. There is nothing left for a flag to answer.
+describe("tables: wildcard", () => {
+  it("rejects a `wildcard` key", t =>
+    expectError(
+      t,
+      `  totals:
+    from: evm.events
+    wildcard: true
+    where:
+      eventName: Transfer
+    select:
+      id: params.to`->table,
+      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: tables.totals: unknown field `wildcard`, expected one of `cross_chain`, `storage`, `as_entity`, `with`, `from`, `where`, `select` at line 18 column 5",
+    )
+  )
+})
+
 // Without per-chain rows every table shares one row per id across all chains,
 // which for a token indexer silently merges two chains' balances.
 describe("tables: cross-chain default", () => {

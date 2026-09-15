@@ -238,8 +238,12 @@ let addOnEventRegistration = (
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
   ~eventOptions: option<Internal.eventOptions<JSON.t>>,
+  // A materialized table binds to its contract's addresses, so on a chain where
+  // that contract has none it reads every address instead — binding to an empty
+  // set would fetch nothing and leave the table silently empty.
+  ~wildcardWhenUnbound=false,
 ) => {
-  let isWildcard = eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
+  let optedOutOfBinding = eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
   let where = eventOptions->Option.flatMap(v => v.where)
   // The inline selection doesn't vary by chain: resolve it once here and share
   // the one value (and its sets) across every chain's registration.
@@ -273,6 +277,9 @@ let addOnEventRegistration = (
       | None => ()
       | Some(eventConfig) =>
         matched := true
+        let isWildcard =
+          optedOutOfBinding ||
+            (wildcardWhenUnbound && contract.addresses->Utils.Array.isEmpty)
         let reg = buildOnEventRegistrationWith(
           ~config=registration.config,
           ~chainId=chainConfig.id,
@@ -333,6 +340,7 @@ let registerMaterializers = (r: activeRegistration) =>
       ~handler=Some(handler),
       ~contractRegister=None,
       ~eventOptions=wildcard ? Some({wildcard: true}) : None,
+      ~wildcardWhenUnbound=true,
     )
   )
 

@@ -198,13 +198,6 @@ pub struct TableConfig {
     pub cross_chain: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Read this event from every address that emits it, not only the addresses \
-                       configured for the contract. Needed when the contract has no `address` in \
-                       config.yaml."
-    )]
-    pub wildcard: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(
         description = "Where this table is stored, overriding the top-level `storage`. `postgres` \
                        and `clickhouse` each take true/false, or an object of settings (which \
                        also turns the backend on)."
@@ -990,6 +983,22 @@ enum CFilter {
     },
 }
 
+impl CFilter {
+    /// Whether the filter says anything about which address emitted the event.
+    /// One that does takes over the contract's address binding: the runtime
+    /// reads every address and answers the condition itself.
+    fn constrains_src_address(&self) -> bool {
+        match self {
+            CFilter::And { filters } | CFilter::Or { filters } => {
+                filters.iter().any(CFilter::constrains_src_address)
+            }
+            CFilter::Cmp { path, .. } | CFilter::In { path, .. } => {
+                path.as_slice() == ["srcAddress"]
+            }
+        }
+    }
+}
+
 /// A filter evaluated as far as it can be at compile time. `Unknown` carries
 /// what is left for the runtime to check.
 #[derive(Debug, Clone)]
@@ -1061,6 +1070,8 @@ pub struct Materialization {
     pub table: String,
     #[serde(flatten)]
     pub event: EventRef,
+    /// The `where` answers for itself which addresses the event comes from, so
+    /// the runtime reads every address rather than binding to the contract's.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub wildcard: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2706,7 +2717,10 @@ fn compile_table(
         materializations.push(Materialization {
             table: table_name.to_string(),
             event: branch.event.clone(),
-            wildcard: table.wildcard.unwrap_or(false),
+            wildcard: branch
+                .filter
+                .as_ref()
+                .is_some_and(CFilter::constrains_src_address),
             filter: branch.filter.clone(),
             id: id.ok_or_else(|| anyhow!("every table must select an `id`"))?,
             fields,

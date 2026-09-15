@@ -1,7 +1,6 @@
-// A contract with no configured addresses is only reachable through a wildcard
-// registration. The materializer's own registration is address-bound, so
-// without `wildcard: true` on the table it would fetch nothing and the table
-// would sit silently empty.
+// A contract with no configured addresses has no address set to bind to, so
+// binding to it would fetch nothing and leave the table silently empty. Such a
+// table reads any address instead.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: materialized-wildcard
@@ -18,7 +17,6 @@ chains:
 tables:
   receipts:
     from: evm.events
-    wildcard: true
     where:
       contractName: ERC20
       eventName: Transfer

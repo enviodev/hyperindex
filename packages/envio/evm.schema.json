@@ -782,13 +782,6 @@
               "null"
             ]
           },
-          "wildcard": {
-            "description": "Read this event from every address that emits it, not only the addresses configured for the contract. Needed when the contract has no `address` in config.yaml.",
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
           "storage": {
             "description": "Where this table is stored, overriding the top-level `storage`. `postgres` and `clickhouse` each take true/false, or an object of settings (which also turns the backend on).",
             "anyOf": [
