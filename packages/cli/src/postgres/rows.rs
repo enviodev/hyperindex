@@ -211,7 +211,12 @@ pub fn decode(ty: &Type, raw: &[u8]) -> Result<Cell> {
         NUMERIC => Cell::Str(numeric_to_string(raw)?),
         TIMESTAMP | TIMESTAMPTZ => {
             let micros = be_i64(raw, 0)?;
-            Cell::Timestamp((micros / 1000 + POSTGRES_EPOCH_DAYS * MILLIS_PER_DAY) as f64)
+            // Floored, not truncated. Before 2000 the count is negative, and
+            // truncating toward zero would land a sub-millisecond value a
+            // millisecond later than the text the old driver parsed — which
+            // renders the fraction of a second and so always rounds the same
+            // way whichever side of the epoch it is on.
+            Cell::Timestamp((micros.div_euclid(1000) + POSTGRES_EPOCH_DAYS * MILLIS_PER_DAY) as f64)
         }
         DATE => {
             let days = i64::from(be_i32(raw, 0)?);
@@ -520,6 +525,24 @@ mod tests {
                 Cell::Str("9007199254740993".to_string()),
                 Cell::Num(42.0),
                 Cell::Num(-7.0),
+            )
+        );
+    }
+
+    /// A time before 2000 counts down from it, and a fraction of a millisecond
+    /// belongs to the millisecond below rather than the one nearer zero.
+    #[test]
+    fn a_fraction_of_a_millisecond_rounds_the_same_way_on_both_sides_of_the_epoch() {
+        assert_eq!(
+            (
+                decode(&Type::TIMESTAMPTZ, &(-500i64).to_be_bytes()).unwrap(),
+                decode(&Type::TIMESTAMPTZ, &500i64.to_be_bytes()).unwrap(),
+                decode(&Type::TIMESTAMPTZ, &(-1500i64).to_be_bytes()).unwrap(),
+            ),
+            (
+                Cell::Timestamp(946_684_800_000.0 - 1.0),
+                Cell::Timestamp(946_684_800_000.0),
+                Cell::Timestamp(946_684_800_000.0 - 2.0),
             )
         );
     }

@@ -77,12 +77,18 @@ pub fn values_params(arena: &Arena) -> Result<Vec<Param>> {
     let mut params = Vec::with_capacity(arena.columns().len() * arena.rows());
     for column in arena.columns() {
         for row in 0..arena.rows() {
-            params.push(match column.kind() {
-                ColumnKind::List => Param::Text(list_literal(column, row)?),
-                _ => match render(column, row)? {
-                    None => Param::Null,
-                    Some(text) => Param::Text(text),
-                },
+            // A null array is not an empty one, and the arena keeps them apart;
+            // binding `{}` for a null would quietly store the wrong value.
+            params.push(if column.is_null(row) {
+                Param::Null
+            } else {
+                match column.kind() {
+                    ColumnKind::List => Param::Text(list_literal(column, row)?),
+                    _ => match render(column, row)? {
+                        None => Param::Null,
+                        Some(text) => Param::Text(text),
+                    },
+                }
             });
         }
     }
@@ -126,7 +132,7 @@ mod tests {
         let arena = text_column(&[Some("a"), None, Some("b")]);
         assert_eq!(
             unnest_params(&arena).unwrap(),
-            vec![Param::text("{\"a\",NULL,\"b\"}")]
+            vec![Param::Text("{\"a\",NULL,\"b\"}".to_string())]
         );
     }
 
@@ -140,7 +146,7 @@ mod tests {
         arena.seal(&["b".to_string()]).unwrap();
         assert_eq!(
             unnest_params(&arena).unwrap(),
-            vec![Param::text("{\"\\\\xdead\",NULL}")]
+            vec![Param::Text("{\"\\\\xdead\",NULL}".to_string())]
         );
     }
 
@@ -156,7 +162,9 @@ mod tests {
         arena.seal(&["n".to_string()]).unwrap();
         assert_eq!(
             unnest_params(&arena).unwrap(),
-            vec![Param::text("{\"1\",\"-7\",\"1.5\",\"9007199254740991\"}")]
+            vec![Param::Text(
+                "{\"1\",\"-7\",\"1.5\",\"9007199254740991\"}".to_string()
+            )]
         );
     }
 
@@ -177,11 +185,32 @@ mod tests {
         assert_eq!(
             values_params(&arena).unwrap(),
             vec![
-                Param::text("a"),
-                Param::text("b"),
-                Param::text("1"),
+                Param::Text("a".to_string()),
+                Param::Text("b".to_string()),
+                Param::Text("1".to_string()),
                 Param::Null,
             ]
+        );
+    }
+
+    /// An array that is absent binds as nothing, not as an array with nothing
+    /// in it — two values a column tells apart.
+    #[test]
+    fn a_null_array_is_not_an_empty_one() {
+        let mut arena = Arena::new_filled(
+            2,
+            &[ColumnSpec::List {
+                element: ColumnKind::Text,
+                elements: 0,
+            }],
+        );
+        arena.end_list_row(0, 0, 0);
+        arena.mark_null(0, 1);
+        arena.end_list_row(0, 1, 0);
+        arena.seal(&["xs".to_string()]).unwrap();
+        assert_eq!(
+            values_params(&arena).unwrap(),
+            vec![Param::Text("{}".to_string()), Param::Null]
         );
     }
 
@@ -203,7 +232,10 @@ mod tests {
         arena.seal(&["xs".to_string()]).unwrap();
         assert_eq!(
             values_params(&arena).unwrap(),
-            vec![Param::text("{\"a\",\"b\"}"), Param::text("{\"c\"}")]
+            vec![
+                Param::Text("{\"a\",\"b\"}".to_string()),
+                Param::Text("{\"c\"}".to_string())
+            ]
         );
     }
 

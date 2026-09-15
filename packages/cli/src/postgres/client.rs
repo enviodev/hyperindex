@@ -104,16 +104,32 @@ impl Transaction {
         Ok(())
     }
 
-    pub async fn commit(&self) -> Result<()> {
-        self.connection.batch_execute("COMMIT").await?;
-        Ok(())
+    pub async fn commit(self) -> Result<()> {
+        self.finish("COMMIT").await
     }
 
     /// Undoes everything the transaction did. Safe to send after a statement
     /// has already failed: the server has aborted the transaction by then and
     /// is waiting for exactly this.
-    pub async fn rollback(&self) -> Result<()> {
-        self.connection.batch_execute("ROLLBACK").await?;
+    pub async fn rollback(self) -> Result<()> {
+        self.finish("ROLLBACK").await
+    }
+
+    /// Ends the transaction and lets the connection go.
+    ///
+    /// If ending it fails, the transaction may still be open on that connection
+    /// and nothing downstream would know: the next caller to be handed it would
+    /// run inside a stranger's transaction. So the connection is detached
+    /// instead of returned — one lost from the pool against statements landing
+    /// somewhere they were never meant to.
+    async fn finish(self, statement: &str) -> Result<()> {
+        let outcome = self.connection.batch_execute(statement).await;
+        if outcome.is_err() {
+            if let Ok(connection) = Arc::try_unwrap(self.connection) {
+                let _ = deadpool_postgres::Object::take(connection);
+            }
+        }
+        outcome?;
         Ok(())
     }
 }
@@ -167,8 +183,10 @@ fn build_config(options: &PgConnectionOptions) -> Config {
 impl PgClient {
     pub fn connect(options: PgConnectionOptions) -> Result<Self> {
         let config = build_config(&options);
-        // Every connection is handed back to the pool ready to reuse, so a
-        // session setting left behind by one caller would leak into the next.
+        // A returned connection is checked for being closed and nothing more.
+        // Nothing here leaves session state behind to reset — the one thing
+        // that would, an unfinished transaction, is kept out of the pool by
+        // `Transaction::finish` rather than cleaned up after.
         let manager_config = ManagerConfig {
             recycling_method: RecyclingMethod::Fast,
         };

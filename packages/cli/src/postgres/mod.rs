@@ -10,13 +10,12 @@ pub mod ddl;
 pub mod index_definition;
 #[cfg(test)]
 mod live_tests;
-// Rendering a value into a bound parameter is reached from the tests that check
-// it against a server; the statements that bind arrays and bytes are the write
-// path's, and go live with it.
-#[allow(dead_code)]
 pub mod param;
 pub mod pg_type;
 pub mod rows;
+// Reached from the checks that put it through a server. It goes live with the
+// storage layer that binds these parameters, in the change that retires the
+// driver still doing so.
 #[allow(dead_code)]
 pub mod write;
 

@@ -23,12 +23,6 @@ pub enum Param {
     Text(String),
 }
 
-impl Param {
-    pub fn text(value: impl Into<String>) -> Self {
-        Param::Text(value.into())
-    }
-}
-
 impl ToSql for Param {
     fn to_sql(
         &self,
@@ -160,6 +154,6 @@ mod tests {
 
     #[test]
     fn an_empty_string_is_not_null() {
-        assert_ne!(Param::text(""), Param::Null);
+        assert_ne!(Param::Text(String::new()), Param::Null);
     }
 }

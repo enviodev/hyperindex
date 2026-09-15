@@ -190,27 +190,27 @@ async fn a_text_parameter_round_trips() {
     let cases = [
         (
             "$1::text",
-            Param::text("plain"),
+            Param::Text("plain".to_string()),
             Cell::Str("plain".to_string()),
         ),
         (
             "$1::text",
-            Param::text("with 'quotes' and \\ backslash"),
+            Param::Text("with 'quotes' and \\ backslash".to_string()),
             Cell::Str("with 'quotes' and \\ backslash".to_string()),
         ),
         (
             "$1::numeric",
-            Param::text("1.50"),
+            Param::Text("1.50".to_string()),
             Cell::Str("1.50".to_string()),
         ),
         (
             "$1::int8",
-            Param::text("9007199254740993"),
+            Param::Text("9007199254740993".to_string()),
             Cell::Str("9007199254740993".to_string()),
         ),
         (
             "$1::bytea",
-            Param::text("\\xdeadbeef"),
+            Param::Text("\\xdeadbeef".to_string()),
             Cell::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
         ),
         ("$1::text", Param::Null, Cell::Null),
@@ -452,7 +452,7 @@ async fn statements_issued_together_all_land() {
             transaction
                 .execute(
                     "INSERT INTO together_rows VALUES ($1::int4)",
-                    &[Param::text(n.to_string())],
+                    &[Param::Text(n.to_string())],
                 )
                 .await
         }
