@@ -75,8 +75,6 @@ module Process = {
   @val @scope("process")
   external onDisconnect: (@as("disconnect") _, unit => unit) => unit = "on"
   @val @scope("process") external argv: array<string> = "argv"
-  @val @scope(("process", "stdout")) external writeStdout: string => unit = "write"
-  @val @scope(("process", "stderr")) external writeStderr: string => unit = "write"
 }
 
 module Buffer = {
@@ -156,7 +154,6 @@ module ChildProcess = {
   external execWithOptions: (string, execOptions, callback) => unit = "exec"
 
   type child
-  type readable
   type forkOptions = {
     cwd?: string,
     env?: dict<string>,
@@ -174,10 +171,6 @@ module ChildProcess = {
   @send external onChildError: (child, @as("error") _, exn => unit) => unit = "on"
   @send external kill: (child, string) => bool = "kill"
   @get external pid: child => Null.t<int> = "pid"
-  @get external stdout: child => Null.t<readable> = "stdout"
-  @get external stderr: child => Null.t<readable> = "stderr"
-  @send external onData: (readable, @as("data") _, string => unit) => unit = "on"
-  @send external setEncoding: (readable, string) => unit = "setEncoding"
 }
 
 module Url = {

@@ -4,8 +4,7 @@
 
 // Set by the supervisor on the processes it forks. An indexer a user started
 // themselves never has it, and takes every path it takes today.
-let isEnabled =
-  NodeJs.Process.process.env->Utils.Dict.dangerouslyGetNonOption("ENVIO_WORKER")->Option.isSome
+let isEnabled = Env.workerChainIds->Option.isSome
 
 @tag("kind")
 type parentMessage =

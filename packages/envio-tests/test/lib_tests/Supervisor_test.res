@@ -29,10 +29,36 @@ describe("Supervisor.plan", () => {
     ]).toStrictEqual([
       None,
       None,
-      Some([("1,3", 2), ("2,4", 2)]),
+      Some([("1,4", 2), ("2,3", 2)]),
       Some([("1", 3), ("2", 3), ("3", 2), ("4", 2)]),
       Some([("1", 4), ("2", 4), ("3", 4)]),
       None,
+    ])
+  })
+})
+
+describe("Supervisor.plan volume spreading", () => {
+  let assignment = (~chainIds, ~maxConnections) =>
+    Supervisor.plan(~chainIds=chainIds->Array.map(ChainId.fromInt), ~maxConnections)
+    ->Option.getOrThrow
+    ->Array.map(worker =>
+      worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(",")
+    )
+
+  it("Keeps the busiest chains apart, and pairs them with the quietest", t => {
+    t.expect([
+      // Ethereum and BNB are the two busiest of these, so they lead different
+      // workers, and each is paired with the lighter of the remaining two.
+      assignment(~chainIds=[8453, 56, 42161, 1], ~maxConnections=4),
+      // Unranked chains sort behind the ranked ones, keeping config order.
+      assignment(~chainIds=[999, 137, 888, 1], ~maxConnections=4),
+      // Three workers take the top three, then fold back so the heaviest
+      // worker picks up the lightest chain.
+      assignment(~chainIds=[1, 56, 137, 8453, 42161, 10], ~maxConnections=6),
+    ]).toStrictEqual([
+      ["1,42161", "56,8453"],
+      ["1,888", "137,999"],
+      ["1,10", "56,42161", "137,8453"],
     ])
   })
 })
@@ -107,17 +133,6 @@ type GlobalCounter @crossChain {
 })
 
 describe("Supervisor worker plumbing", () => {
-  it("Holds back a chunk's partial tail until the rest of the line arrives", t => {
-    let split = Supervisor.makeLineSplitter()
-
-    t.expect([
-      split("one\ntw"),
-      split("o\nthree\n"),
-      split(""),
-      split("four\nfive\n"),
-    ]).toStrictEqual([["one\n"], ["two\n", "three\n"], [], ["four\n", "five\n"]])
-  })
-
   it("Narrows the config it hands a worker to that worker's chains", t => {
     let configJson = JSON.Object(
       Dict.fromArray([("name", JSON.String("indexer")), ("isolatedChains", JSON.Null)]),
@@ -149,6 +164,23 @@ describe("Supervisor worker plumbing", () => {
       "logs/envio.worker-1.log",
       "./logs/envio.worker-1",
       "envio.worker-2",
+    ])
+  })
+})
+
+describe("Logging.makeBase", () => {
+  it("Stamps a worker's chains onto every line it logs", t => {
+    t.expect([
+      // Not a worker: nothing extra, which is what keeps pid and hostname out.
+      Logging.makeBase(~workerChainIds=None),
+      Logging.makeBase(~workerChainIds=Some([137.])),
+      Logging.makeBase(~workerChainIds=Some([1., 137.])),
+    ]).toStrictEqual([
+      JSON.Object(Dict.make()),
+      JSON.Object(Dict.fromArray([("chainId", JSON.Number(137.))])),
+      JSON.Object(
+        Dict.fromArray([("chainIds", JSON.Array([JSON.Number(1.), JSON.Number(137.)]))]),
+      ),
     ])
   })
 })

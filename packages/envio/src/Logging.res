@@ -26,7 +26,22 @@ let logLevels = [
 
 %%private(let logger = ref(None))
 
-let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel) => {
+// The fields every line a process logs carries. Empty is what keeps pid and
+// hostname out. A worker names the chains it drives, so a split run's output
+// says which chain a line came from wherever the call site had no chain in hand.
+let makeBase = (~workerChainIds: option<array<float>>): JSON.t =>
+  switch workerChainIds {
+  | Some([chainId]) => JSON.Object(Dict.fromArray([("chainId", JSON.Number(chainId))]))
+  | Some([]) | None => JSON.Object(Dict.make())
+  | Some(chainIds) =>
+    JSON.Object(
+      Dict.fromArray([
+        ("chainIds", JSON.Array(chainIds->Array.map(chainId => JSON.Number(chainId)))),
+      ]),
+    )
+  }
+
+let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel, ~base) => {
   // Currently unused - useful if using multiple transports.
   // let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}
   let pinoFile: Transport.transportTarget = {
@@ -45,9 +60,6 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
     ~customLevels=logLevels,
     ...
   )
-
-  // Empty base disables pid and hostname in logs
-  let base: JSON.t = %raw("{}")
 
   switch logStrategy {
   | EcsFile =>

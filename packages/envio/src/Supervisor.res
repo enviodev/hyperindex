@@ -6,27 +6,67 @@ type worker = {chainIds: array<ChainId.t>, maxConnections: int}
 // on a single one, so the budget buys workers two at a time.
 let minConnectionsPerWorker = 2
 
+// Roughly how much a chain costs to index, busiest first. An estimate only:
+// it decides nothing but which worker a chain lands on, so a chain in the wrong
+// place, or missing from the list entirely, costs balance and nothing else.
+// Chains it doesn't name sort behind the ones it does, in config order.
+let byDescendingVolume = [
+  1, // Ethereum
+  56, // BNB Smart Chain
+  137, // Polygon
+  8453, // Base
+  42161, // Arbitrum One
+  10, // Optimism
+  43114, // Avalanche
+  81457, // Blast
+  59144, // Linea
+  534352, // Scroll
+  324, // zkSync Era
+  5000, // Mantle
+  204, // opBNB
+  100, // Gnosis
+  42220, // Celo
+]
+
+let volumeRank = (chainId: ChainId.t) =>
+  switch byDescendingVolume->Array.indexOf(chainId->ChainId.toInt) {
+  | -1 => byDescendingVolume->Array.length
+  | rank => rank
+  }
+
 // How to spend a connection budget on the chains a run indexes. `None` keeps
 // the run in one process, which is what a budget too small to afford two
 // workers, or a config with nothing to split, has to do.
 //
-// Chains go round-robin over the config's own order rather than by size: what
-// balances a run is knowing how much work each chain has left, and that isn't
-// known until the chains report their heights.
+// Chains are dealt busiest-first and the direction reverses each pass, so the
+// heaviest chains lead different workers and the worker that took the heaviest
+// picks up the lightest. Volume is only ever an estimate, which is why the
+// layout it produces is a starting balance rather than a guarantee.
 let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<worker>> => {
   let workerCount = Pervasives.min(chainIds->Array.length, maxConnections / minConnectionsPerWorker)
   if workerCount < 2 {
     None
   } else {
+    let byVolume =
+      chainIds
+      ->Array.mapWithIndex((chainId, configIndex) => (chainId, chainId->volumeRank, configIndex))
+      ->Array.toSorted(((_, aRank, aIndex), (_, bRank, bIndex)) =>
+        // Two chains the list doesn't rank keep the order config gave them.
+        aRank === bRank ? Int.compare(aIndex, bIndex) : Int.compare(aRank, bRank)
+      )
+      ->Array.map(((chainId, _, _)) => chainId)
+
     // The remainder is handed out one connection at a time rather than left
     // unspent, so a budget with slack widens the earliest workers' pools.
     let evenShare = maxConnections / workerCount
     let remainder = mod(maxConnections, workerCount)
     Some(
       Array.fromInitializer(~length=workerCount, workerIndex => {
-        chainIds: chainIds->Array.filterWithIndex((_, chainIndex) =>
-          mod(chainIndex, workerCount) === workerIndex
-        ),
+        chainIds: byVolume->Array.filterWithIndex((_, dealIndex) => {
+          let position = mod(dealIndex, workerCount)
+          let isReversePass = mod(dealIndex / workerCount, 2) === 1
+          (isReversePass ? workerCount - 1 - position : position) === workerIndex
+        }),
         maxConnections: evenShare + (workerIndex < remainder ? 1 : 0),
       }),
     )
@@ -76,31 +116,6 @@ let logFilePath = (~workerIndex, ~path=Env.logFilePath) => {
   }
 }
 
-// Only the pretty strategy is written for a person to read, so only it takes a
-// prefix. The structured strategies pass through untouched, since a line a log
-// shipper has to parse must stay exactly what the worker emitted.
-let shouldPrefixLogs = Env.logStrategy === Logging.ConsolePretty
-
-// A chunk off a worker's pipe ends mid-line as often as not, so the tail is
-// held back until the rest of it arrives. Returns the whole lines a chunk
-// completed, each still newline-terminated so it writes through unchanged.
-let makeLineSplitter = () => {
-  let pending = ref("")
-  chunk => {
-    let lines = (pending.contents ++ chunk)->String.split("\n")
-    pending := lines->Array.pop->Option.getOr("")
-    lines->Array.map(line => `${line}\n`)
-  }
-}
-
-let forward = (stream, ~prefix, ~write) => {
-  let split = makeLineSplitter()
-  stream->NodeJs.ChildProcess.setEncoding("utf8")
-  stream->NodeJs.ChildProcess.onData(chunk =>
-    split(chunk)->Array.forEach(line => write(`${prefix}${line}`))
-  )
-}
-
 let configForWorker = (configJson: JSON.t, ~worker) =>
   switch configJson->JSON.Decode.object {
   | Some(fields) => {
@@ -123,7 +138,9 @@ let fork = (
   ~entryPath=NodeJs.Process.argv->Array.getUnsafe(1),
 ) => {
   let env = NodeJs.Process.process.env->Dict.copy
-  env->Dict.set("ENVIO_WORKER", "true")
+  // Marks the process a worker, and names the chains it drives: its logger
+  // stamps them onto every line it writes.
+  env->Dict.set("ENVIO_WORKER", worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(","))
   // The worker's slice of the budget. Read when the worker's own Env module
   // loads, which is why it rides in the spawn environment rather than a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
@@ -135,22 +152,15 @@ let fork = (
     {
       env,
       serialization: "advanced",
-      stdio: ["pipe", "pipe", "pipe", "ipc"],
+      // Workers write straight to the run's own output. Their lines already say
+      // which chain they came from, so there is nothing for the supervisor to
+      // add by reading them first.
+      stdio: ["inherit", "inherit", "inherit", "ipc"],
     },
   )
   child
   ->NodeJs.ChildProcess.send(Worker.Init({config: configJson->configForWorker(~worker)}))
   ->ignore
-
-  let prefix = shouldPrefixLogs ? `${worker->label} ` : ""
-  child
-  ->NodeJs.ChildProcess.stdout
-  ->Null.toOption
-  ->Option.forEach(stream => stream->forward(~prefix, ~write=NodeJs.Process.writeStdout))
-  child
-  ->NodeJs.ChildProcess.stderr
-  ->Null.toOption
-  ->Option.forEach(stream => stream->forward(~prefix, ~write=NodeJs.Process.writeStderr))
 
   {worker, child, snapshot: None, settled: false}
 }
