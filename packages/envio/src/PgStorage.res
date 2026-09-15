@@ -529,83 +529,34 @@ let makeInsertUnnestSetQuery = (
   ~itemSchema,
   ~isRawEvents,
   ~chainIdMode: ChainId.mode=Int32,
-) => {
-  let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
-    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
-
-  let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
-
-  `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Array.joinUnsafe(", ")})
-SELECT * FROM unnest(${arrayFieldTypes
-    ->Array.mapWithIndex((arrayFieldType, idx) => {
-      `$${(idx + 1)->Int.toString}::${arrayFieldType}`
-    })
-    ->Array.joinUnsafe(",")})` ++
-  switch (isRawEvents, primaryKeyFieldNames) {
-  | (true, _)
-  | (_, []) => ``
-  | (false, primaryKeyFieldNames) =>
-    `ON CONFLICT(${primaryKeyFieldNames
-      ->Array.map(fieldName => `"${fieldName}"`)
-      ->Array.joinUnsafe(",")}) DO ` ++ (
-      quotedNonPrimaryFieldNames->Utils.Array.isEmpty
-        ? `NOTHING`
-        : `UPDATE SET ${quotedNonPrimaryFieldNames
-            ->Array.map(fieldName => {
-              `${fieldName} = EXCLUDED.${fieldName}`
-            })
-            ->Array.joinUnsafe(",")}`
-    )
-  } ++ ";"
-}
+) =>
+  Core.pgInsertUnnestQuery(
+    ~table={
+      tableName: table.tableName,
+      columns: table->Table.schemaOrderedFields(~schema=itemSchema)->Array.map(pgColumnInput),
+    },
+    ~pgSchema,
+    // Raw events are only ever appended, so a row already there is one the
+    // batch has seen before rather than one to overwrite.
+    ~appendOnly=isRawEvents,
+    ~chainIdMode=(chainIdMode :> string),
+  )
 
 let makeInsertValuesSetQuery = (
   ~pgSchema,
   ~table: Table.table,
   ~itemSchema,
   ~itemsCount,
-  ~chainIdMode: ChainId.mode=Int32,
-) => {
-  let {quotedFieldNames, quotedNonPrimaryFieldNames} =
-    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
-
-  let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
-  let fieldsCount = quotedFieldNames->Array.length
-
-  // Create placeholder variables for the VALUES clause - using $1, $2, etc.
-  let placeholders = ref("")
-  for idx in 1 to itemsCount {
-    if idx > 1 {
-      placeholders := placeholders.contents ++ ","
-    }
-    placeholders := placeholders.contents ++ "("
-    for fieldIdx in 0 to fieldsCount - 1 {
-      if fieldIdx > 0 {
-        placeholders := placeholders.contents ++ ","
-      }
-      placeholders := placeholders.contents ++ `$${(fieldIdx * itemsCount + idx)->Int.toString}`
-    }
-    placeholders := placeholders.contents ++ ")"
-  }
-
-  `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Array.joinUnsafe(", ")})
-VALUES${placeholders.contents}` ++
-  switch primaryKeyFieldNames {
-  | [] => ``
-  | primaryKeyFieldNames =>
-    `ON CONFLICT(${primaryKeyFieldNames
-      ->Array.map(fieldName => `"${fieldName}"`)
-      ->Array.joinUnsafe(",")}) DO ` ++ (
-      quotedNonPrimaryFieldNames->Utils.Array.isEmpty
-        ? `NOTHING`
-        : `UPDATE SET ${quotedNonPrimaryFieldNames
-            ->Array.map(fieldName => {
-              `${fieldName} = EXCLUDED.${fieldName}`
-            })
-            ->Array.joinUnsafe(",")}`
-    )
-  } ++ ";"
-}
+  ~chainIdMode as _: ChainId.mode=Int32,
+) =>
+  Core.pgInsertValuesQuery(
+    ~table={
+      tableName: table.tableName,
+      columns: table->Table.schemaOrderedFields(~schema=itemSchema)->Array.map(pgColumnInput),
+    },
+    ~pgSchema,
+    ~rows=itemsCount,
+  )
 
 // Constants for chunking
 let maxItemsPerQuery = 500

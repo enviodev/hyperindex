@@ -436,6 +436,27 @@ type sqlParams<'entity> = {
   hasArrayField: bool,
 }
 
+// The table's fields in the order the schema names them, which is the order an
+// insert names its columns and binds its values.
+//
+// A `@derivedFrom` field is not one of them: it is resolved from the other side
+// of the relationship rather than stored, so no row schema carries one and
+// there is no column for it to be.
+let schemaOrderedFields = (table: table, ~schema): array<field> =>
+  switch schema->S.classify {
+  | Object({items}) =>
+    items->Array.map(({location}) =>
+      switch table->getFieldByApiName(location) {
+      | Some(Field(field)) => field
+      | Some(DerivedFrom(_)) | None => throw(NonExistingTableField(location))
+      }
+    )
+  | _ =>
+    JsError.throwWithMessage(
+      `Failed reading the columns of "${table.tableName}". Expected an object schema for a table.`,
+    )
+  }
+
 let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
   let quotedFieldNames = []
   let quotedNonPrimaryFieldNames = []

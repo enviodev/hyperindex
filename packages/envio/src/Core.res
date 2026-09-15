@@ -73,6 +73,13 @@ type addon = {
     ~isNumericArrayAsText: bool,
     ~chainIdMode: string,
   ) => string,
+  pgInsertUnnestQuery: (
+    ~table: pgTableInput,
+    ~pgSchema: string,
+    ~appendOnly: bool,
+    ~chainIdMode: string,
+  ) => string,
+  pgInsertValuesQuery: (~table: pgTableInput, ~pgSchema: string, ~rows: int) => string,
   pgFieldType: (
     ~fieldType: string,
     ~pgSchema: string,
@@ -359,3 +366,9 @@ let pgIndexCreateQuery = (~definition, ~pgSchema) =>
   getAddon().pgIndexCreateQuery(~definition, ~pgSchema)
 let pgIndexDropQuery = (~pgSchema, ~indexName) =>
   getAddon().pgIndexDropQuery(~pgSchema, ~indexName)
+
+let pgInsertUnnestQuery = (~table, ~pgSchema, ~appendOnly, ~chainIdMode) =>
+  getAddon().pgInsertUnnestQuery(~table, ~pgSchema, ~appendOnly, ~chainIdMode)
+
+let pgInsertValuesQuery = (~table, ~pgSchema, ~rows) =>
+  getAddon().pgInsertValuesQuery(~table, ~pgSchema, ~rows)

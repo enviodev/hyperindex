@@ -13,6 +13,7 @@ use crate::columnar::{self, Arena};
 use super::client::{self, PgConnectionOptions, SslSetting};
 use super::ddl::{self, ColumnSpec, TableSpec};
 use super::index_definition::{self, Direction, IndexColumn, IndexDefinition};
+use super::insert;
 use super::param::Param;
 use super::pg_type::{self, ChainIdMode, FieldType};
 use super::rows;
@@ -119,6 +120,33 @@ pub fn pg_create_table_query(
     let chain_id_mode = ChainIdMode::parse(&chain_id_mode).map_err(to_napi)?;
     ddl::create_table_query(&spec, &pg_schema, is_numeric_array_as_text, chain_id_mode)
         .map_err(to_napi)
+}
+
+#[napi]
+pub fn pg_insert_unnest_query(
+    table: PgTableInput,
+    pg_schema: String,
+    append_only: bool,
+    chain_id_mode: String,
+) -> napi::Result<String> {
+    let spec = TableSpec::try_from(table).map_err(to_napi)?;
+    let chain_id_mode = ChainIdMode::parse(&chain_id_mode).map_err(to_napi)?;
+    Ok(insert::unnest_query(
+        &spec,
+        &pg_schema,
+        append_only,
+        chain_id_mode,
+    ))
+}
+
+#[napi]
+pub fn pg_insert_values_query(
+    table: PgTableInput,
+    pg_schema: String,
+    rows: u32,
+) -> napi::Result<String> {
+    let spec = TableSpec::try_from(table).map_err(to_napi)?;
+    Ok(insert::values_query(&spec, &pg_schema, rows as usize))
 }
 
 #[napi(object)]
