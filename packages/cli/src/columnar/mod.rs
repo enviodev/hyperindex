@@ -164,6 +164,14 @@ impl Column {
         }
     }
 
+    /// The elements of a list column, and where each row's run of them stops.
+    pub fn list(&self) -> Result<(&Column, &[u32])> {
+        match &self.storage {
+            Storage::List { elements, row_ends } => Ok((elements, row_ends)),
+            _ => bail!("this column is not a list"),
+        }
+    }
+
     // The encoder calls these once per cell, and the `envio` profile builds with
     // neither LTO nor a single codegen unit, so what would otherwise be a field
     // read becomes a cross-module call in the innermost loop there is.

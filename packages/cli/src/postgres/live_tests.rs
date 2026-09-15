@@ -14,6 +14,8 @@ use super::rows::Cell;
 use super::rows::ReadKind;
 use futures_util::future;
 
+use crate::columnar::{Arena, ColumnKind, ColumnSpec};
+
 fn client() -> PgClient {
     PgClient::connect(PgConnectionOptions {
         host: std::env::var("ENVIO_PG_HOST").unwrap_or_else(|_| "localhost".to_string()),
@@ -483,4 +485,154 @@ async fn a_failed_statement_leaves_a_transaction_that_can_still_be_rolled_back()
         .rollback()
         .await
         .expect("the rollback is taken even so");
+}
+
+/// The write path end to end: rows laid into the arena, rendered into the
+/// arrays an unnest insert binds, and read back as what went in. The rendering
+/// is what replaces building these literals in JavaScript.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_staged_batch_unnests_into_its_table() {
+    let client = client();
+    let transaction = client.begin().await.expect("the transaction opens");
+    transaction
+        .batch(
+            "CREATE TEMPORARY TABLE unnested (t text, n int4, b bytea, d numeric) ON COMMIT DROP",
+        )
+        .await
+        .expect("the table is made");
+
+    let mut arena = Arena::new_filled(
+        3,
+        &[
+            ColumnSpec::Scalar(ColumnKind::Text),
+            ColumnSpec::Scalar(ColumnKind::F64),
+            ColumnSpec::Scalar(ColumnKind::Bytes),
+            ColumnSpec::Scalar(ColumnKind::Text),
+        ],
+    );
+    // A comma, a brace, a quote and a backslash are every character the array
+    // literal itself reads, and an empty string is the one a bare NULL would be
+    // confused with.
+    for (row, text) in ["a,b", "{\"x\"}\\", ""].iter().enumerate() {
+        arena.set_bytes(0, row, text.as_bytes());
+        arena.set_f64(1, row, row as f64);
+        arena.set_bytes(2, row, &[0xde, row as u8]);
+        arena.set_bytes(3, row, b"1.50");
+    }
+    arena.mark_null(3, 2);
+    arena
+        .seal(&["t", "n", "b", "d"].map(str::to_string))
+        .unwrap();
+
+    let params = super::write::unnest_params(&arena).expect("the rows render");
+    transaction
+        .execute(
+            "INSERT INTO unnested (t, n, b, d) SELECT * FROM unnest($1::text[], $2::int4[], \
+             $3::bytea[], $4::numeric[])",
+            &params,
+        )
+        .await
+        .expect("the batch goes in");
+
+    let (rows, _) = transaction
+        .query("SELECT t, n, b, d FROM unnested ORDER BY n", &[])
+        .await
+        .expect("the rows come back");
+    transaction.commit().await.expect("the transaction commits");
+
+    let read = rows
+        .iter()
+        .map(|row| {
+            (
+                row.get::<_, Cell>(0),
+                row.get::<_, Cell>(1),
+                row.get::<_, Cell>(2),
+                row.get::<_, Cell>(3),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        read,
+        vec![
+            (
+                Cell::Str("a,b".to_string()),
+                Cell::Num(0.0),
+                Cell::Bytes(vec![0xde, 0]),
+                Cell::Str("1.50".to_string()),
+            ),
+            (
+                Cell::Str("{\"x\"}\\".to_string()),
+                Cell::Num(1.0),
+                Cell::Bytes(vec![0xde, 1]),
+                Cell::Str("1.50".to_string()),
+            ),
+            (
+                Cell::Str(String::new()),
+                Cell::Num(2.0),
+                Cell::Bytes(vec![0xde, 2]),
+                Cell::Null,
+            ),
+        ]
+    );
+}
+
+/// The other statement: every cell bound on its own, including a row's array as
+/// one value rather than spread across the rows.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_staged_batch_binds_its_values_one_row_at_a_time() {
+    let client = client();
+    let transaction = client.begin().await.expect("the transaction opens");
+    transaction
+        .batch("CREATE TEMPORARY TABLE listed (t text, xs text[]) ON COMMIT DROP")
+        .await
+        .expect("the table is made");
+
+    let mut arena = Arena::new_filled(
+        2,
+        &[
+            ColumnSpec::Scalar(ColumnKind::Text),
+            ColumnSpec::List {
+                element: ColumnKind::Text,
+                elements: 3,
+            },
+        ],
+    );
+    arena.set_bytes(0, 0, b"first");
+    arena.set_bytes(0, 1, b"second");
+    arena.set_element_bytes(1, 0, b"a,b");
+    arena.set_element_bytes(1, 1, b"c");
+    arena.end_list_row(1, 0, 2);
+    arena.set_element_bytes(1, 2, b"d");
+    arena.end_list_row(1, 1, 3);
+    arena.seal(&["t", "xs"].map(str::to_string)).unwrap();
+
+    let params = super::write::values_params(&arena).expect("the rows render");
+    transaction
+        .execute(
+            "INSERT INTO listed (t, xs) VALUES ($1::text, $3::text[]), ($2::text, $4::text[])",
+            &params,
+        )
+        .await
+        .expect("the rows go in");
+
+    let (rows, _) = transaction
+        .query("SELECT xs FROM listed ORDER BY t", &[])
+        .await
+        .expect("the rows come back");
+    transaction.commit().await.expect("the transaction commits");
+
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.get::<_, Cell>(0))
+            .collect::<Vec<_>>(),
+        vec![
+            Cell::Arr(vec![
+                Cell::Str("a,b".to_string()),
+                Cell::Str("c".to_string())
+            ]),
+            Cell::Arr(vec![Cell::Str("d".to_string())]),
+        ]
+    );
 }

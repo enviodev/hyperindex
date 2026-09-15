@@ -17,6 +17,8 @@ mod live_tests;
 pub mod param;
 pub mod pg_type;
 pub mod rows;
+#[allow(dead_code)]
+pub mod write;
 
 // The addon registers these; a test build has no registration and would see
 // every export as dead.
