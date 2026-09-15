@@ -4,6 +4,12 @@ open Utils.UnsafeIntOperators
 type chainAfterBatch = {
   batchSize: int,
   progressBlockNumber: int,
+  // Timestamp of `progressBlockNumber` itself, never of a lower block, so it
+  // measures how far behind chain time the committed progress is. `None` when
+  // the source didn't return that block's header - during backfill it only
+  // returns blocks carrying items, and an SVM slot may have produced no block
+  // at all.
+  progressBlockTime: option<int>,
   sourceBlockNumber: int,
   totalEventsProcessed: float,
   fetchState: FetchState.t,
@@ -23,6 +29,10 @@ type reorgHashSnapshot = {
 type chainBeforeBatch = {
   fetchState: FetchState.t,
   scannedHashes: reorgHashSnapshot,
+  // The chain's live store, read once the batch's progress block is known.
+  // Safe to read live: the build is synchronous, and the store is only pruned
+  // when the batch commits.
+  blockStore: BlockStore.t,
   shouldRollbackOnReorg: bool,
   progressBlockNumber: int,
   sourceBlockNumber: int,
@@ -62,6 +72,9 @@ let getProgressedChainsById = {
           {
             batchSize,
             progressBlockNumber: progressBlockNumberAfterBatch,
+            progressBlockTime: chainBeforeBatch.blockStore
+            ->BlockStore.getTimestamp(progressBlockNumberAfterBatch)
+            ->Null.toOption,
             sourceBlockNumber: chainBeforeBatch.sourceBlockNumber,
             totalEventsProcessed: chainBeforeBatch.totalEventsProcessed +. batchSize->Int.toFloat,
             fetchState: fetchStateAfterBatch,

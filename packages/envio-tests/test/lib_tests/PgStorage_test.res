@@ -228,7 +228,7 @@ GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
 CREATE TYPE "test_schema".AccountType AS ENUM('ADMIN', 'USER');
 CREATE TYPE "test_schema".GravatarSize AS ENUM('SMALL', 'MEDIUM', 'LARGE');
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
@@ -255,6 +255,7 @@ SELECT
   "start_block" AS "startBlock", 
   "end_block" AS "endBlock",
   "progress_block" AS "progressBlock",
+  "progress_block_time" AS "progressBlockTime",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
   "events_processed"::float4 AS "eventsProcessed",
@@ -278,9 +279,9 @@ SELECT
   "start_block" AS "start_block",
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "test_schema"."envio_chains";
-INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
-       (137, 'evm', 0, NULL, 200, 0, NULL, -1, -1, NULL, 0, false);`
+INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync")
+VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, NULL, 0, false),
+       (137, 'evm', 0, NULL, 200, 0, NULL, -1, -1, NULL, NULL, 0, false);`
 
         t.expect(mainQuery, ~message="Main query should match expected SQL exactly").toBe(
           expectedMainQuery,
@@ -306,7 +307,7 @@ VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
 CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
@@ -319,6 +320,7 @@ SELECT
   "start_block" AS "startBlock", 
   "end_block" AS "endBlock",
   "progress_block" AS "progressBlock",
+  "progress_block_time" AS "progressBlockTime",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
   "events_processed"::float4 AS "eventsProcessed",
@@ -372,7 +374,7 @@ FROM "test_schema"."envio_chains";`
 CREATE SCHEMA "public";
 GRANT ALL ON SCHEMA "public" TO "postgres";
 GRANT ALL ON SCHEMA "public" TO public;
-CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
@@ -391,6 +393,7 @@ SELECT
   "start_block" AS "startBlock", 
   "end_block" AS "endBlock",
   "progress_block" AS "progressBlock",
+  "progress_block_time" AS "progressBlockTime",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
   "events_processed"::float4 AS "eventsProcessed",
@@ -752,8 +755,9 @@ WHERE "id" = $1;`
 
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
 SET "progress_block" = $2,
-    "events_processed" = $3,
-    "source_block" = $4
+    "progress_block_time" = $3,
+    "events_processed" = $4,
+    "source_block" = $5
 WHERE "id" = $1;`
 
         t.expect(
@@ -833,8 +837,8 @@ WHERE cp."block_hash" IS NOT NULL
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync")
+VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false);`
 
         t.expect(query, ~message="Should generate correct INSERT VALUES SQL for single chain").toBe(
           Some(expectedQuery),
@@ -861,8 +865,8 @@ VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync")
+VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, NULL, 0, false);`
 
         t.expect(
           query,
@@ -902,9 +906,9 @@ VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
           ~chainConfigs=[chainConfig1, chainConfig2],
         )
 
-        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
-       (42, 'evm', 500, NULL, 0, 0, NULL, -1, -1, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync")
+VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false),
+       (42, 'evm', 500, NULL, 0, 0, NULL, -1, -1, NULL, NULL, 0, false);`
 
         t.expect(
           query,
@@ -928,6 +932,7 @@ VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
 "ready_at" as "timestampCaughtUpToHeadOrEndblock",
 "events_processed"::float8 as "numEventsProcessed",
 "progress_block" as "progressBlockNumber",
+"progress_block_time" as "progressBlockTime",
 "source_block" as "sourceBlockNumber"
 FROM "test_schema"."envio_chains";`
 

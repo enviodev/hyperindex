@@ -31,6 +31,7 @@ type chainRow = {
   endBlock: option<int>,
   maxReorgDepth: int,
   mutable progressBlockNumber: int,
+  mutable progressBlockTime: option<int>,
   mutable sourceBlockNumber: int,
   mutable numEventsProcessed: float,
   mutable firstEventBlockNumber: option<int>,
@@ -144,6 +145,7 @@ let toInitialChainStates = (state: t): array<Persistence.initialChainState> => {
     endBlock: chain.endBlock,
     maxReorgDepth: chain.maxReorgDepth,
     progressBlockNumber: chain.progressBlockNumber,
+    progressBlockTime: chain.progressBlockTime,
     numEventsProcessed: chain.numEventsProcessed,
     firstEventBlockNumber: chain.firstEventBlockNumber,
     timestampCaughtUpToHeadOrEndblock: chain.timestampCaughtUpToHeadOrEndblock,
@@ -378,6 +380,7 @@ let writeBatch = (
     switch state.chains->Dict.get(key) {
     | Some(chain) =>
       chain.progressBlockNumber = chainAfterBatch.progressBlockNumber
+      chain.progressBlockTime = chainAfterBatch.progressBlockTime
       chain.sourceBlockNumber = chainAfterBatch.sourceBlockNumber
       chain.numEventsProcessed = chainAfterBatch.totalEventsProcessed
     | None => ()
@@ -535,6 +538,7 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
           endBlock: chainConfig.endBlock,
           maxReorgDepth: chainConfig.maxReorgDepth,
           progressBlockNumber: -1,
+          progressBlockTime: None,
           sourceBlockNumber: 0,
           numEventsProcessed: 0.,
           firstEventBlockNumber: None,

@@ -44,6 +44,7 @@ let makeResumedChainState = (
   endBlock: None,
   maxReorgDepth: 200,
   progressBlockNumber,
+  progressBlockTime: None,
   numEventsProcessed,
   firstEventBlockNumber,
   timestampCaughtUpToHeadOrEndblock: None,
@@ -138,6 +139,7 @@ describe("ChainState chain density EMA (per batch)", () => {
           {
             batchSize: 0,
             progressBlockNumber,
+            progressBlockTime: None,
             sourceBlockNumber: 1000,
             totalEventsProcessed,
             fetchState,
