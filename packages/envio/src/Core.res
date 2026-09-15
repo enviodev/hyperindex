@@ -50,6 +50,17 @@ type pgTableInput = {
   partitionByColumn?: string,
 }
 
+type pgHistoryQueryInput = {
+  pgSchema: string,
+  historyTable: string,
+  dataColumns: array<string>,
+  keyColumns: array<string>,
+  chainIdColumn?: string,
+  checkpointColumn: string,
+  changeColumn: string,
+  sequence: string,
+}
+
 type pgIndexColumnInput = {
   name: string,
   direction: string,
@@ -97,6 +108,8 @@ type addon = {
   pgIndexColumnKey: (~column: pgIndexColumnInput) => string,
   pgIndexCreateQuery: (~definition: pgIndexInput, ~pgSchema: string) => string,
   pgIndexDropQuery: (~pgSchema: string, ~indexName: string) => string,
+  pgRollbackPreTargetRowsQuery: (~input: pgHistoryQueryInput) => string,
+  pgRollbackRemovedIdsQuery: (~input: pgHistoryQueryInput) => string,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
@@ -372,3 +385,6 @@ let pgInsertUnnestQuery = (~table, ~pgSchema, ~appendOnly, ~chainIdMode) =>
 
 let pgInsertValuesQuery = (~table, ~pgSchema, ~rows) =>
   getAddon().pgInsertValuesQuery(~table, ~pgSchema, ~rows)
+
+let pgRollbackPreTargetRowsQuery = (~input) => getAddon().pgRollbackPreTargetRowsQuery(~input)
+let pgRollbackRemovedIdsQuery = (~input) => getAddon().pgRollbackRemovedIdsQuery(~input)

@@ -1523,88 +1523,60 @@ let rollbackKeyColumns = (entityConfig: Internal.entityConfig) =>
   | None => [Table.idFieldName]
   }
 
+%%private(
+  let historyQueryInput = (
+    ~entityConfig: Internal.entityConfig,
+    ~pgSchema,
+    ~sequence: CheckpointSequence.t,
+  ): Core.pgHistoryQueryInput => {
+    pgSchema,
+    historyTable: EntityHistory.historyTableName(
+      ~entityName=entityConfig.name,
+      ~entityIndex=entityConfig.index,
+    ),
+    dataColumns: entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
+      switch fieldOrDerived {
+      | Field(field) => field->Table.getPgDbFieldName->Some
+      | DerivedFrom(_) => None
+      }
+    ),
+    keyColumns: rollbackKeyColumns(entityConfig),
+    chainIdColumn: ?entityConfig.table->Table.getPgChainIdColumn,
+    checkpointColumn: EntityHistory.checkpointIdFieldName,
+    changeColumn: EntityHistory.changeFieldName,
+    sequence: switch sequence {
+    | SharedAcrossChains => "SharedAcrossChains"
+    | PerChain => "PerChain"
+    },
+  }
+)
+
 let makeGetRollbackPreTargetRowsQuery = (
   ~entityConfig: Internal.entityConfig,
   ~pgSchema,
   ~floors: RollbackFloors.t,
-) => {
-  let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
-    switch fieldOrDerived {
-    | Field(field) => field->Table.getPgDbFieldName->Some
-    | DerivedFrom(_) => None
-    }
+) =>
+  Core.pgRollbackPreTargetRowsQuery(
+    ~input=historyQueryInput(
+      ~entityConfig,
+      ~pgSchema,
+      ~sequence=floors.checkpointBounds.sequence,
+    ),
   )
 
-  let historyTableName = EntityHistory.historyTableName(
-    ~entityName=entityConfig.name,
-    ~entityIndex=entityConfig.index,
-  )
-  // Every column is qualified: the per-chain bounds relation joined in has a
-  // `chain_id` of its own, which a snake_case chain column shares.
-  let tableRef = `"${historyTableName}"`
-  let dataFieldsCommaSeparated =
-    dataFieldNames->Array.map(name => `${tableRef}."${name}"`)->Array.joinUnsafe(", ")
-
-  // A per-chain entity's rows are only comparable within a chain, so the row's
-  // identity here is (id, chain id) rather than the id alone.
-  let keyColumns = rollbackKeyColumns(entityConfig)
-  let keyColumnsCommaSeparated =
-    keyColumns->Array.map(c => `${tableRef}."${c}"`)->Array.joinUnsafe(", ")
-  let keyMatch =
-    keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
-  let bounds =
-    floors.checkpointBounds->CheckpointSequence.sql(
-      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
-      ~tableRef,
-    )
-
-  `SELECT DISTINCT ON (${keyColumnsCommaSeparated}) ${dataFieldsCommaSeparated}, ${tableRef}."${EntityHistory.changeFieldName}"
-  FROM "${pgSchema}"."${historyTableName}"${bounds.join}
-  WHERE ${tableRef}."${EntityHistory.checkpointIdFieldName}" <= ${bounds.checkpointId}
-    AND EXISTS (
-      SELECT 1
-      FROM "${pgSchema}"."${historyTableName}" h
-      WHERE ${keyMatch}
-        AND h."${EntityHistory.checkpointIdFieldName}" > ${bounds.checkpointId}
-    )
-  ORDER BY ${keyColumnsCommaSeparated}, ${tableRef}."${EntityHistory.checkpointIdFieldName}" DESC`
-}
-
-// Returns entity IDs that were created after the rollback target and have no history before it.
-// DELETE rows at or before the target are returned by the restore query and classified in ReScript.
 let makeGetRollbackRemovedIdsQuery = (
   ~entityConfig: Internal.entityConfig,
   ~pgSchema,
   ~floors: RollbackFloors.t,
-) => {
-  let historyTableName = EntityHistory.historyTableName(
-    ~entityName=entityConfig.name,
-    ~entityIndex=entityConfig.index,
+) =>
+  Core.pgRollbackRemovedIdsQuery(
+    ~input=historyQueryInput(
+      ~entityConfig,
+      ~pgSchema,
+      ~sequence=floors.checkpointBounds.sequence,
+    ),
   )
-  let tableRef = `"${historyTableName}"`
-  let keyColumns = rollbackKeyColumns(entityConfig)
-  let keyMatch =
-    keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
-  let bounds =
-    floors.checkpointBounds->CheckpointSequence.sql(
-      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
-      ~tableRef,
-    )
 
-  `SELECT DISTINCT ${keyColumns->Array.map(c => `${tableRef}."${c}"`)->Array.joinUnsafe(", ")}
-  FROM "${pgSchema}"."${historyTableName}"${bounds.join}
-  WHERE ${tableRef}."${EntityHistory.checkpointIdFieldName}" > ${bounds.checkpointId}
-    AND NOT EXISTS (
-      SELECT 1
-      FROM "${pgSchema}"."${historyTableName}" h
-      WHERE ${keyMatch}
-        AND h."${EntityHistory.checkpointIdFieldName}" <= ${bounds.checkpointId}
-    )`
-}
-
-// Memoized per table so the id is parsed with that entity's id schema (a
-// numeric id comes back from Postgres as a number, not a string) and the
-// schema's operations compile once rather than per rollback row.
 let rollbackRowStateSchema: Table.table => S.t<(
   EntityId.t,
   EntityHistory.RowAction.t,

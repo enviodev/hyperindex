@@ -16,6 +16,7 @@ use super::index_definition::{self, Direction, IndexColumn, IndexDefinition};
 use super::insert;
 use super::param::Param;
 use super::pg_type::{self, ChainIdMode, FieldType};
+use super::rollback::{HistoryQuery, Sequence};
 use super::rows;
 
 /// One column, flattened for the boundary: napi carries no tagged union, so the
@@ -490,4 +491,48 @@ fn to_params(params: Vec<Option<String>>) -> Vec<Param> {
             Some(text) => Param::Text(text),
         })
         .collect()
+}
+
+/// What a history table is asked about, for the two statements a rollback runs.
+#[napi(object)]
+pub struct PgHistoryQueryInput {
+    pub pg_schema: String,
+    pub history_table: String,
+    pub data_columns: Vec<String>,
+    pub key_columns: Vec<String>,
+    pub chain_id_column: Option<String>,
+    pub checkpoint_column: String,
+    pub change_column: String,
+    /// `SharedAcrossChains` or `PerChain`.
+    pub sequence: String,
+}
+
+impl From<PgHistoryQueryInput> for HistoryQuery {
+    fn from(input: PgHistoryQueryInput) -> Self {
+        HistoryQuery {
+            pg_schema: input.pg_schema,
+            history_table: input.history_table,
+            data_columns: input.data_columns,
+            key_columns: input.key_columns,
+            chain_id_column: input.chain_id_column,
+            checkpoint_column: input.checkpoint_column,
+            change_column: input.change_column,
+        }
+    }
+}
+
+#[napi]
+pub fn pg_rollback_pre_target_rows_query(input: PgHistoryQueryInput) -> napi::Result<String> {
+    let sequence = Sequence::parse(&input.sequence).map_err(to_napi)?;
+    HistoryQuery::from(input)
+        .pre_target_rows(sequence)
+        .map_err(to_napi)
+}
+
+#[napi]
+pub fn pg_rollback_removed_ids_query(input: PgHistoryQueryInput) -> napi::Result<String> {
+    let sequence = Sequence::parse(&input.sequence).map_err(to_napi)?;
+    HistoryQuery::from(input)
+        .removed_ids(sequence)
+        .map_err(to_napi)
 }

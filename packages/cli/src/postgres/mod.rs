@@ -13,6 +13,7 @@ pub mod insert;
 mod live_tests;
 pub mod param;
 pub mod pg_type;
+pub mod rollback;
 pub mod rows;
 // Reached from the checks that put it through a server. It goes live with the
 // storage layer that binds these parameters, in the change that retires the
