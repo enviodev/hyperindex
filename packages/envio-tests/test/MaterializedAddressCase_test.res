@@ -22,11 +22,9 @@ tables:
     from: evm.events
     where:
       eventName: Transfer
-      srcAddress:
-        _eq: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"
+      srcAddress: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"
       params:
-        from:
-          _eq: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+        from: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
     select:
       id: params.to
       total:

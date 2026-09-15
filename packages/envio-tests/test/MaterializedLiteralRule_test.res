@@ -55,6 +55,17 @@ describe("the literal rule in a comparison", () => {
     ).toEqual([("ERC20.Transfer", true)])
   )
 
+  it("reads a value with no operator as the equality the shorthand means", t =>
+    t.expect(
+      plansFor(`      eventName: Transfer
+      srcAddress: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"`),
+    ).toEqual(
+      plansFor(`      eventName: Transfer
+      srcAddress:
+        _eq: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"`),
+    )
+  )
+
   it("still reads a bare string as a path when one resolves", t =>
     t.expect(
       plansFor(`      eventName: Transfer
