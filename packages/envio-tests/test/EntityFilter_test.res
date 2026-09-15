@@ -383,54 +383,116 @@ describe("EntityFilter.makeMatcher", () => {
 describe("EntityFilter.toString", () => {
   let u = value => value->toUnknown
 
-  it("Serializes each value type into a stable, unambiguous cache key", t => {
+  // Column types drive the key the same way they drive the matcher, so the
+  // table names one field per kind the projections cover.
+  let table = Table.mkTable(
+    "users",
+    ~fields=[
+      Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+      Table.mkField("a", String, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("ab", String, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("b", String, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("num", Int32, ~isIndex=true, ~fieldSchema=S.int),
+      Table.mkField("big", BigInt({}), ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("flag", Boolean, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("price", BigDecimal({}), ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("at", Date, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("meta", Json, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("tag", Bytea, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("tags", String, ~isArray=true, ~isIndex=true, ~fieldSchema=S.string),
+    ],
+  )
+  let toKey = filter => filter->EntityFilter.toString(~table)
+
+  // The key stands in for structural equality: two filters share an index if
+  // and only if their keys match. Any pair colliding here would silently
+  // answer one getWhere with another's rows.
+  it("Gives distinct filters distinct keys", t => {
+    let filters = [
+      dict{"a": dict{"_eq": u("hello")}},
+      dict{"a": dict{"_eq": u("hell")}},
+      // A string and the number that prints the same.
+      dict{"num": dict{"_eq": u("5")}},
+      dict{"num": dict{"_eq": u(5)}},
+      dict{"big": dict{"_eq": u("10")}},
+      dict{"big": dict{"_eq": u(BigInt.fromInt(10))}},
+      dict{"flag": dict{"_eq": u("true")}},
+      dict{"flag": dict{"_eq": u(true)}},
+      // A value that looks like the encoding's own punctuation.
+      dict{"a": dict{"_eq": u(`"hello"`)}},
+      dict{"a": dict{"_eq": u("5:hello")}},
+      dict{"a": dict{"_eq": u("")}},
+      dict{"a": dict{"_eq": u(5)}},
+      dict{"a": dict{"_eq": u(BigInt.fromInt(10))}},
+      dict{"a": dict{"_eq": u(true)}},
+      dict{"a": dict{"_eq": u(BigDecimal.fromFloat(1.5))}},
+      dict{"a": dict{"_gt": u(5)}},
+      dict{"a": dict{"_lt": u(5)}},
+      dict{"a": dict{"_gte": u(5)}},
+      dict{"a": dict{"_lte": u(5)}},
+      dict{"a": dict{"_in": u([1, 2])}},
+      dict{"a": dict{"_in": u([12])}},
+      dict{"a": dict{"_in": u([])}},
+      // Sub-second instants, which a Date toString collapses onto one key.
+      dict{"a": dict{"_eq": u(Date.fromTime(1000.))}},
+      dict{"a": dict{"_eq": u(Date.fromTime(1500.))}},
+      // Objects, which all stringify to "[object Object]".
+      dict{"a": dict{"_eq": u({"x": 1})}},
+      dict{"a": dict{"_eq": u({"x": 2})}},
+      // A separator inside an element could imitate the element separator.
+      dict{"a": dict{"_eq": u(["x,y"])}},
+      dict{"a": dict{"_eq": u(["x", "y"])}},
+      dict{"a": dict{"_eq": u(["xy"])}},
+      // The same values split differently across fields and operators.
+      dict{"a": dict{"_gt": u(1)}, "b": dict{"_lt": u(2)}},
+      dict{"a": dict{"_gt": u(1), "_lt": u(2)}},
+      dict{"ab": dict{"_eq": u(1)}},
+      dict{"a": dict{"_eq": u(1)}, "b": dict{"_eq": u(1)}},
+    ]
+    let keys = filters->Array.map(toKey)
+    t.expect((keys->Utils.Set.fromArray->Utils.Set.size, keys->Array.length)).toEqual((
+      filters->Array.length,
+      filters->Array.length,
+    ))
+  })
+
+  it("Builds the key from the column's own value projection", t => {
     t.expect(
       [
         dict{"a": dict{"_eq": u("hello")}},
-        dict{"a": dict{"_eq": u(5)}},
-        dict{"a": dict{"_eq": u(BigInt.fromInt(10))}},
-        dict{"a": dict{"_eq": u(true)}},
-        dict{"a": dict{"_eq": u(BigDecimal.fromFloat(1.5))}},
-        dict{"a": dict{"_gt": u(5)}},
-        dict{"a": dict{"_lt": u(5)}},
-        dict{"a": dict{"_in": u([1, 2])}},
-        dict{"a": dict{"_eq": u(["x", "y"])}},
-        dict{"a": dict{"_gt": u(1)}, "b": dict{"_lt": u(2)}},
-      ]->Array.map(EntityFilter.toString),
+        dict{"num": dict{"_eq": u(5)}},
+        dict{"big": dict{"_eq": u(BigInt.fromInt(10))}},
+        dict{"flag": dict{"_eq": u(true)}},
+        dict{"price": dict{"_eq": u(BigDecimal.fromFloat(1.5))}},
+        // A Date keys by its epoch millis, not a string that stops at seconds.
+        dict{"at": dict{"_eq": u(Date.fromTime(1500.))}},
+        dict{"meta": dict{"_eq": u({"x": 1})}},
+        dict{"tag": dict{"_eq": u(Uint8Array.fromArray([0xab]))}},
+        dict{"tags": dict{"_eq": u(["x", "y"])}},
+        dict{"num": dict{"_gt": u(5)}},
+        dict{"num": dict{"_in": u([1, 2])}},
+        dict{"num": dict{"_gt": u(1)}, "b": dict{"_lt": u("z")}},
+      ]->Array.map(toKey),
     ).toEqual([
-      `a_eq"hello"`,
-      "a_eq5",
-      "a_eq10",
-      "a_eqtrue",
-      `a_eq"1.5"`,
-      "a_gt5",
-      "a_lt5",
-      "a_in[1,2]",
-      `a_eq["x","y"]`,
-      "a_gt1b_lt2",
+      "a_eqs5:hello",
+      "num_eqn1:5",
+      "big_eqg2:10",
+      "flag_eqt",
+      "price_eqs3:1.5",
+      "at_eqn4:1500",
+      `meta_eqs7:{"x":1}`,
+      "tag_eqs2:ab",
+      `tags_eqs9:["x","y"]`,
+      "num_gtn1:5",
+      "num_inn1:1n1:2",
+      "num_gtn1:1b_lts1:z",
     ])
   })
 
-  it("Keeps values apart that a toString-based key collapsed onto one", t => {
-    t.expect(
-      [
-        // Sub-second instants: Date.prototype.toString stops at seconds.
-        dict{"a": dict{"_eq": u(Date.fromTime(1000.))}},
-        dict{"a": dict{"_eq": u(Date.fromTime(1500.))}},
-        // Any object stringifies to "[object Object]".
-        dict{"a": dict{"_eq": u({"x": 1})}},
-        dict{"a": dict{"_eq": u({"x": 2})}},
-        // A separator inside a string could imitate the element separator.
-        dict{"a": dict{"_eq": u(["x,y"])}},
-        dict{"a": dict{"_eq": u(["x", "y"])}},
-      ]->Array.map(EntityFilter.toString),
-    ).toEqual([
-      `a_eq"1970-01-01T00:00:01.000Z"`,
-      `a_eq"1970-01-01T00:00:01.500Z"`,
-      `a_eq{"x":1}`,
-      `a_eq{"x":2}`,
-      `a_eq["x,y"]`,
-      `a_eq["x","y"]`,
-    ])
+  // The key is built before the filter is validated, so a value the column's
+  // projection can't read still has to produce one to fail under.
+  it("Falls back to a marked key for a value the projection rejects", t => {
+    t.expect(toKey(dict{"at": dict{"_eq": u("not a date")}})).toEqual(`~at_eq"not a date"`)
   })
+
 })

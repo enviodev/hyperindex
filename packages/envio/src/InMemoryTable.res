@@ -269,7 +269,7 @@ module Entity = {
     }
 
   let addEmptyIndex = (inMemTable: t, ~filter: EntityFilter.t, ~table: Table.table) => {
-    let filterKey = filter->EntityFilter.toString
+    let filterKey = filter->EntityFilter.toString(~table)
     switch inMemTable.indexesByKey->Utils.Dict.dangerouslyGetNonOption(filterKey) {
     | Some(_) => () //Should not happen, this means the index already exists
     | None =>

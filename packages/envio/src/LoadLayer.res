@@ -396,7 +396,7 @@ let loadByFilter = (
       | Ok() =>
         inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter=rawFilter, ~table=entityConfig.table)
         filters->Array.push(rawFilter)->ignore
-      | Error(exn) => onError(~inputKey=rawFilter->EntityFilter.toString, ~exn)
+      | Error(exn) => onError(~inputKey=rawFilter->EntityFilter.toString(~table=entityConfig.table), ~exn)
       }
     )
 
@@ -466,7 +466,7 @@ let loadByFilter = (
     )
   }
 
-  let filterKey = filter->EntityFilter.toString
+  let filterKey = filter->EntityFilter.toString(~table=entityConfig.table)
 
   // Hashing an _in filter walks every value, so it's computed once here and
   // handed to the load manager rather than recomputed by the hasher.

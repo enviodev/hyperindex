@@ -1,14 +1,14 @@
-// JSON is what makes the rest of the value space unambiguous: it quotes and
-// escapes strings so a delimiter inside one can't imitate a separator, renders
-// a Date as an ISO instant down to the millisecond, and a BigDecimal through
-// its own toJSON. Serializing with toString instead collapsed distinct values
-// onto one key — every object to "[object Object]" and any two instants in the
-// same second to the same string — which silently shared one filter index.
 let jsonStringify: unknown => string = %raw(`v => JSON.stringify(v)`)
 
 let nullish: unknown => bool = %raw(`v => v === undefined || v === null`)
 
-// Built once per getWhere registration, never per entity.
+// The last resort for a value no column projection collapsed to a primitive.
+// JSON is what keeps those unambiguous: it quotes and escapes strings so a
+// delimiter inside one can't imitate a separator, renders a Date as an ISO
+// instant down to the millisecond, and a BigDecimal through its own toJSON.
+// Serializing with toString instead collapsed distinct values onto one key —
+// every object to "[object Object]" and any two instants in the same second to
+// the same string — which silently shared one filter index.
 let rec serializeValue = (value: unknown): string =>
   if value->nullish {
     "undefined"
@@ -415,30 +415,92 @@ let arrayCompare = (element: valueCompare): valueCompare => {
   }
 }
 
+// Resolved once per table and then found by name. Table.getFieldByApiName is a
+// linear scan of every field, and this is consulted per getWhere.
+let comparesByField: Table.table => dict<
+  valueCompare,
+> = Utils.WeakMap.memoize((table: Table.table) => {
+  let compares = Dict.make()
+  table.fields->Array.forEach(field =>
+    switch field {
+    | Field(field) =>
+      let element = scalarCompare(field.fieldType)
+      compares->Dict.set(
+        field->Table.getApiFieldName,
+        field.isArray ? arrayCompare(element) : element,
+      )
+    | DerivedFrom(_) => ()
+    }
+  )
+  compares
+})
+
 let fieldCompare = (~table: Table.table, fieldName) =>
-  switch table->Table.getFieldByApiName(fieldName) {
-  | Some(Field({fieldType, isArray})) =>
-    let element = scalarCompare(fieldType)
-    isArray ? arrayCompare(element) : element
+  switch table->comparesByField->Utils.Dict.dangerouslyGetNonOption(fieldName) {
   // Filters are validated against the table before reaching here, so a
   // missing or derived field is unexpected; compare structurally instead of
   // crashing.
-  | _ => json
+  | None => json
+  | Some(compare) => compare
   }
 
 // Projects a field's values onto Map keys, so an index can be found by value
 // instead of by a serialized filter.
 let makeValueKey = (~table: Table.table, ~fieldName) => (fieldName->fieldCompare(~table)).key
 
-let toString = (filter: t) => {
+// Type tag, then length, then the value. The tag keeps "5" apart from 5, and
+// the length means a delimiter inside a value can't imitate the delimiter, so
+// no escaping pass is needed. Both together make the encoding injective — the
+// only property the key needs — which is what lets it skip JSON.stringify for
+// everything but the objects a column's projection didn't collapse.
+let taggedValueKey: (unknown, unknown => string) => string = %raw(`(v, serialize) => {
+  switch (typeof v) {
+    case "string": return "s" + v.length + ":" + v
+    case "number": { const s = "" + v; return "n" + s.length + ":" + s }
+    case "bigint": { const s = "" + v; return "g" + s.length + ":" + s }
+    case "boolean": return v ? "t" : "f"
+    default: { const s = serialize(v); return "o" + s.length + ":" + s }
+  }
+}`)
+
+let lengthPrefixed = (value: unknown) => taggedValueKey(value, serializeValue)
+
+// The cache key stands in for structural equality between filters. Values go
+// through the same per-field projection the equality buckets key by, so the
+// two agree on which values are distinct.
+let toStringOrThrow = (filter: t, ~table: Table.table) => {
   let key = ref("")
-  filter->Utils.Dict.forEachWithKey((operators, fieldName) =>
-    operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
-      key := key.contents ++ fieldName ++ operator ++ fieldValue->serializeValue
-    )
-  )
+  filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
+    let keyOf = fieldName->fieldCompare(~table)
+    operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
+      key := key.contents ++ fieldName ++ operator
+      if operator === "_in" {
+        fieldValue
+        ->(Utils.magic: unknown => array<unknown>)
+        ->Array.forEach(value => key := key.contents ++ lengthPrefixed(keyOf.key(value)))
+      } else {
+        key := key.contents ++ lengthPrefixed(keyOf.key(fieldValue))
+      }
+    })
+  })
   key.contents
 }
+
+// The projections are type-specific, and the key is needed before the filter
+// has been validated, so a malformed value can throw out of one. Such a filter
+// still needs a key to fail under — the "~" prefix keeps it clear of every key
+// above, since a field name can't start with one.
+let toString = (filter: t, ~table: Table.table) =>
+  try filter->toStringOrThrow(~table) catch {
+  | _ =>
+    let key = ref("~")
+    filter->Utils.Dict.forEachWithKey((operators, fieldName) =>
+      operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
+        key := key.contents ++ fieldName ++ operator ++ fieldValue->serializeValue
+      )
+    )
+    key.contents
+  }
 
 // Values are replaced by placeholders so calls that differ only in what they
 // filter for batch together.
