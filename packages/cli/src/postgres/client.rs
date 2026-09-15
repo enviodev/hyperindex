@@ -5,7 +5,7 @@ use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use postgres_openssl::MakeTlsConnector;
 use tokio_postgres::config::SslMode;
-use tokio_postgres::types::ToSql;
+use tokio_postgres::types::{ToSql, Type};
 use tokio_postgres::{Config, NoTls, Row};
 
 use super::param::Param;
@@ -65,6 +65,12 @@ pub struct PgConnectionOptions {
     pub ssl: SslSetting,
     pub max_connections: usize,
     pub application_name: Option<String>,
+}
+
+/// One column of a result, as the statement describes it.
+pub struct Column {
+    pub name: String,
+    pub ty: Type,
 }
 
 pub struct PgClient {
@@ -145,11 +151,25 @@ impl PgClient {
         Ok(client.execute_raw(sql, params).await?)
     }
 
-    pub async fn query(&self, sql: &str, params: &[Param]) -> Result<Vec<Row>> {
+    /// The rows, and what the statement says its columns are.
+    ///
+    /// The types come from the prepared statement rather than from a row, so a
+    /// result with no rows in it still describes its shape and the caller lays
+    /// out the same columns either way.
+    pub async fn query(&self, sql: &str, params: &[Param]) -> Result<(Vec<Row>, Vec<Column>)> {
         let client = self.client().await?;
+        let statement = client.prepare(sql).await?;
+        let columns = statement
+            .columns()
+            .iter()
+            .map(|column| Column {
+                name: column.name().to_string(),
+                ty: column.type_().clone(),
+            })
+            .collect();
         let params: Vec<&(dyn ToSql + Sync)> =
             params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
-        Ok(client.query(sql, &params).await?)
+        Ok((client.query(&statement, &params).await?, columns))
     }
 
     pub async fn close(&self) {

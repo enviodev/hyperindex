@@ -13,11 +13,11 @@
 //! OIDs 21, 23, 26, 700 and 701 into JavaScript numbers and left everything else
 //! as text.
 
-use std::ffi::CString;
-
 use anyhow::{bail, Context, Result};
-use napi::bindgen_prelude::{Null, ToNapiValue, Uint8Array};
 use tokio_postgres::types::{FromSql, Kind, Type};
+use tokio_postgres::Row;
+
+use crate::columnar::{Arena, ColumnKind};
 
 /// A decoded column value, in the shape it will take in JavaScript.
 #[derive(Debug, Clone, PartialEq)]
@@ -30,7 +30,6 @@ pub enum Cell {
     /// Milliseconds since the Unix epoch, becoming a `Date`.
     Timestamp(f64),
     Arr(Vec<Cell>),
-    Obj(Vec<(String, Cell)>),
 }
 
 /// Days between 2000-01-01, which Postgres counts from, and the Unix epoch.
@@ -195,24 +194,6 @@ fn decode_array(raw: &[u8], element: &Type) -> Result<Cell> {
     Ok(Cell::Arr(nested))
 }
 
-fn json_to_cell(value: serde_json::Value) -> Cell {
-    match value {
-        serde_json::Value::Null => Cell::Null,
-        serde_json::Value::Bool(value) => Cell::Bool(value),
-        // A number past what a double holds loses precision here, exactly as it
-        // did going through `JSON.parse`.
-        serde_json::Value::Number(value) => Cell::Num(value.as_f64().unwrap_or(f64::NAN)),
-        serde_json::Value::String(value) => Cell::Str(value),
-        serde_json::Value::Array(items) => Cell::Arr(items.into_iter().map(json_to_cell).collect()),
-        serde_json::Value::Object(entries) => Cell::Obj(
-            entries
-                .into_iter()
-                .map(|(key, value)| (key, json_to_cell(value)))
-                .collect(),
-        ),
-    }
-}
-
 pub fn decode(ty: &Type, raw: &[u8]) -> Result<Cell> {
     if let Kind::Array(element) = ty.kind() {
         return decode_array(raw, element);
@@ -236,14 +217,16 @@ pub fn decode(ty: &Type, raw: &[u8]) -> Result<Cell> {
             let days = i64::from(be_i32(raw, 0)?);
             Cell::Timestamp(((days + POSTGRES_EPOCH_DAYS) * MILLIS_PER_DAY) as f64)
         }
-        JSON => json_to_cell(serde_json::from_slice(raw).context("a json column is not json")?),
+        // The document's own text. The driver this replaces ran `JSON.parse`
+        // over exactly these bytes, so parsing stays on the other side.
+        JSON => Cell::Str(String::from_utf8(raw.to_vec()).context("a json column is not UTF-8")?),
         JSONB => {
             // One version byte, then the same text a `json` column holds.
             let (version, document) = raw.split_first().context("a jsonb column is empty")?;
             if *version != 1 {
                 bail!("jsonb version {version} is not one this can read");
             }
-            json_to_cell(serde_json::from_slice(document).context("a jsonb column is not json")?)
+            Cell::Str(String::from_utf8(document.to_vec()).context("a jsonb column is not UTF-8")?)
         }
         // Text, and every type an enum or a domain resolves to. The driver had
         // no parser for these either and handed back the bytes as a string.
@@ -268,46 +251,70 @@ impl<'a> FromSql<'a> for Cell {
     }
 }
 
-impl ToNapiValue for Cell {
-    unsafe fn to_napi_value(
-        raw_env: napi::sys::napi_env,
-        val: Self,
-    ) -> napi::Result<napi::sys::napi_value> {
-        match val {
-            Cell::Null => Null::to_napi_value(raw_env, Null),
-            Cell::Bool(value) => bool::to_napi_value(raw_env, value),
-            Cell::Num(value) => f64::to_napi_value(raw_env, value),
-            Cell::Str(value) => String::to_napi_value(raw_env, value),
-            Cell::Bytes(value) => Uint8Array::to_napi_value(raw_env, Uint8Array::from(value)),
-            Cell::Timestamp(millis) => {
-                let mut date = std::ptr::null_mut();
-                let status = napi::sys::napi_create_date(raw_env, millis, &mut date);
-                if status != napi::sys::Status::napi_ok {
-                    return Err(napi::Error::from_reason("Failed creating a Date"));
+/// Which arena column a result column is laid into, and so which view
+/// JavaScript builds over it.
+///
+/// Two of these are wider than the slot that carries them: `int8` and `numeric`
+/// are text because that is what the driver being replaced produced, and a
+/// timestamp is the milliseconds a `Date` is built from rather than a `Date`.
+/// Everything a column holds beyond that — a JSON document, an array — travels
+/// as the text Postgres stores and is parsed on the other side, which is also
+/// what that driver did.
+pub fn column_kind(ty: &Type) -> ColumnKind {
+    if let Kind::Array(_) = ty.kind() {
+        // Stands in until the arena has a list column; `into_arena` refuses the
+        // value rather than laying it out wrongly.
+        return ColumnKind::Text;
+    }
+    match ty.oid() {
+        BYTEA => ColumnKind::Bytes,
+        BOOL | INT2 | INT4 | OID | FLOAT4 | FLOAT8 | DATE | TIMESTAMP | TIMESTAMPTZ => {
+            ColumnKind::F64
+        }
+        _ => ColumnKind::Text,
+    }
+}
+
+/// Lays a result set out column by column, ready to be lent to JavaScript.
+///
+/// The types come from the statement rather than from the rows, so an empty
+/// result still describes its columns and the other side builds the same views
+/// over it as for a full one.
+pub fn into_arena(rows: &[Row], types: &[Type]) -> Result<Arena> {
+    let kinds = types.iter().map(column_kind).collect::<Vec<_>>();
+    let mut arena = Arena::new_filled(rows.len(), &kinds);
+
+    for (row_index, row) in rows.iter().enumerate() {
+        for column_index in 0..types.len() {
+            let cell: Cell = row
+                .try_get(column_index)
+                .with_context(|| format!("Failed reading column {column_index}"))?;
+            match cell {
+                Cell::Null => arena.mark_null(column_index, row_index),
+                Cell::Bool(value) => {
+                    arena.set_f64(column_index, row_index, if value { 1.0 } else { 0.0 })
                 }
-                Ok(date)
-            }
-            Cell::Arr(items) => Vec::<Cell>::to_napi_value(raw_env, items),
-            Cell::Obj(entries) => {
-                let mut object = std::ptr::null_mut();
-                let status = napi::sys::napi_create_object(raw_env, &mut object);
-                if status != napi::sys::Status::napi_ok {
-                    return Err(napi::Error::from_reason("Failed creating an object"));
+                Cell::Num(value) | Cell::Timestamp(value) => {
+                    arena.set_f64(column_index, row_index, value)
                 }
-                for (key, value) in entries {
-                    let value = Cell::to_napi_value(raw_env, value)?;
-                    let key = CString::new(key)
-                        .map_err(|_| napi::Error::from_reason("a column name holds a NUL"))?;
-                    let status =
-                        napi::sys::napi_set_named_property(raw_env, object, key.as_ptr(), value);
-                    if status != napi::sys::Status::napi_ok {
-                        return Err(napi::Error::from_reason("Failed setting a property"));
-                    }
+                Cell::Str(value) => arena.set_bytes(column_index, row_index, value.as_bytes()),
+                Cell::Bytes(value) => arena.set_bytes(column_index, row_index, &value),
+                // Needs the list column the arena does not have yet: an array
+                // of `bytea` rules out carrying these as text, since its
+                // elements are not text.
+                Cell::Arr(_) => {
+                    bail!("column {column_index} is an array, which the arena cannot carry yet")
                 }
-                Ok(object)
             }
         }
     }
+
+    let names = types
+        .iter()
+        .map(|ty| ty.name().to_string())
+        .collect::<Vec<_>>();
+    arena.seal(&names)?;
+    Ok(arena)
 }
 
 #[cfg(test)]
@@ -433,13 +440,7 @@ mod tests {
         raw.extend_from_slice(br#"{"a":[1,true,null],"b":"x"}"#);
         assert_eq!(
             decode(&Type::JSONB, &raw).unwrap(),
-            Cell::Obj(vec![
-                (
-                    "a".to_string(),
-                    Cell::Arr(vec![Cell::Num(1.0), Cell::Bool(true), Cell::Null])
-                ),
-                ("b".to_string(), Cell::Str("x".to_string())),
-            ])
+            Cell::Str(r#"{"a":[1,true,null],"b":"x"}"#.to_string())
         );
     }
 

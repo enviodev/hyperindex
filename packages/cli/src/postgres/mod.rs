@@ -5,18 +5,17 @@
 //! columns, their types, what the primary key is — and what comes back is the
 //! SQL. The storage interface itself stays in ReScript.
 
-// Not yet reached from ReScript: the driver it replaces owns the connection
-// pool, and a second pool alongside it would double what
-// `ENVIO_PG_MAX_CONNECTIONS` allows. Both go live in the same change that
-// retires it.
-#[allow(dead_code)]
 pub mod client;
 pub mod ddl;
 pub mod index_definition;
+#[cfg(test)]
+mod live_tests;
+// Rendering a value into a bound parameter is reached from the tests that check
+// it against a server; the statements that bind arrays and bytes are the write
+// path's, and go live with it.
 #[allow(dead_code)]
 pub mod param;
 pub mod pg_type;
-#[allow(dead_code)]
 pub mod rows;
 
 // The addon registers these; a test build has no registration and would see

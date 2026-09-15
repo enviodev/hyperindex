@@ -1,10 +1,21 @@
 //! The addon surface for the Postgres backend.
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
+
+use napi::bindgen_prelude::ArrayBuffer;
+use napi::Env;
 use napi_derive::napi;
 
+use crate::columnar::{self, Arena};
+
+use super::client::{self, PgConnectionOptions, SslSetting};
 use super::ddl::{self, ColumnSpec, TableSpec};
 use super::index_definition::{self, Direction, IndexColumn, IndexDefinition};
+use super::param::Param;
 use super::pg_type::{self, ChainIdMode, FieldType};
+use super::rows;
 
 /// One column, flattened for the boundary: napi carries no tagged union, so the
 /// variant arrives as `fieldType` plus whichever of the modifiers it takes.
@@ -192,4 +203,156 @@ pub fn pg_index_create_query(definition: PgIndexInput, pg_schema: String) -> nap
 #[napi]
 pub fn pg_index_drop_query(pg_schema: String, index_name: String) -> String {
     index_definition::drop_query(&pg_schema, &index_name)
+}
+
+/// A result set laid out in the arena, waiting to be read.
+///
+/// The rows are not in this object: they are in arena memory, and
+/// `lendResult` hands JavaScript the buffers to read them from. Only the shape
+/// crosses here.
+#[napi(object)]
+pub struct PgQueryResult {
+    pub handle: u32,
+    pub names: Vec<String>,
+    /// One per column, as `columnar`'s ordinals. JavaScript picks the view to
+    /// build over each buffer from these.
+    pub kinds: Vec<u8>,
+    pub rows: u32,
+}
+
+#[napi(object)]
+pub struct PgClientOptions {
+    pub host: String,
+    pub port: u32,
+    pub user: String,
+    pub password: String,
+    pub database: String,
+    /// As `ENVIO_PG_SSL_MODE` spells it.
+    pub ssl: String,
+    pub max_connections: u32,
+    pub application_name: Option<String>,
+}
+
+#[napi]
+pub struct PgClient {
+    inner: client::PgClient,
+    /// Result sets handed out but not yet read and released. An entry lives
+    /// only between `query` and `releaseResult`.
+    results: Mutex<HashMap<u32, Arena>>,
+    next_handle: AtomicU32,
+}
+
+#[napi]
+impl PgClient {
+    #[napi(factory)]
+    pub fn create(options: PgClientOptions) -> napi::Result<Self> {
+        let port = u16::try_from(options.port)
+            .map_err(|_| napi::Error::from_reason(format!("`{}` is not a port", options.port)))?;
+        let inner = client::PgClient::connect(PgConnectionOptions {
+            host: options.host,
+            port,
+            user: options.user,
+            password: options.password,
+            database: options.database,
+            ssl: SslSetting::parse(&options.ssl).map_err(to_napi)?,
+            max_connections: options.max_connections as usize,
+            application_name: options.application_name,
+        })
+        .map_err(to_napi)?;
+        Ok(Self {
+            inner,
+            results: Mutex::new(HashMap::new()),
+            next_handle: AtomicU32::new(0),
+        })
+    }
+
+    /// Runs statements that take no parameters, discarding any rows. More than
+    /// one may be given at once, which is what the initialization relies on.
+    #[napi]
+    pub async fn batch(&self, sql: String) -> napi::Result<()> {
+        self.inner.batch(&sql).await.map_err(to_napi)
+    }
+
+    #[napi]
+    pub async fn execute(&self, sql: String, params: Vec<Option<String>>) -> napi::Result<u32> {
+        let params = to_params(params);
+        let affected = self.inner.execute(&sql, &params).await.map_err(to_napi)?;
+        Ok(affected as u32)
+    }
+
+    #[napi]
+    pub async fn query(
+        &self,
+        sql: String,
+        params: Vec<Option<String>>,
+    ) -> napi::Result<PgQueryResult> {
+        let params = to_params(params);
+        let (rows, columns) = self.inner.query(&sql, &params).await.map_err(to_napi)?;
+        let types = columns
+            .iter()
+            .map(|column| column.ty.clone())
+            .collect::<Vec<_>>();
+        let arena = rows::into_arena(&rows, &types).map_err(to_napi)?;
+
+        let result = PgQueryResult {
+            handle: self.next_handle.fetch_add(1, Ordering::Relaxed),
+            names: columns.into_iter().map(|column| column.name).collect(),
+            kinds: types.iter().map(|ty| rows::column_kind(ty) as u8).collect(),
+            rows: arena.rows() as u32,
+        };
+        self.results.lock().unwrap().insert(result.handle, arena);
+        Ok(result)
+    }
+
+    /// The buffers a result's columns live in. They stay valid until
+    /// `releaseResult` takes them back, and reading through one after that is
+    /// what detaching prevents.
+    #[napi]
+    pub fn lend_result<'env>(
+        &self,
+        env: &'env Env,
+        handle: u32,
+    ) -> napi::Result<Vec<ArrayBuffer<'env>>> {
+        let mut results = self.results.lock().unwrap();
+        let arena = results
+            .get_mut(&handle)
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown result {handle}")))?;
+        columnar::js::lend_for_reading(env, arena)
+    }
+
+    /// Detaches a result's buffers and frees it. A result that cannot hand them
+    /// all back still has a JavaScript view into its memory, so that memory is
+    /// abandoned rather than freed.
+    #[napi]
+    pub fn release_result(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+        let mut results = self.results.lock().unwrap();
+        let Some(arena) = results.get_mut(&handle) else {
+            return Ok(());
+        };
+        match columnar::js::detach_all(arena, buffers) {
+            Ok(()) => {
+                results.remove(&handle);
+                Ok(())
+            }
+            Err(failed) => {
+                std::mem::forget(results.remove(&handle));
+                Err(failed)
+            }
+        }
+    }
+
+    #[napi]
+    pub async fn close(&self) {
+        self.inner.close().await;
+    }
+}
+
+fn to_params(params: Vec<Option<String>>) -> Vec<Param> {
+    params
+        .into_iter()
+        .map(|param| match param {
+            None => Param::Null,
+            Some(text) => Param::Text(text),
+        })
+        .collect()
 }

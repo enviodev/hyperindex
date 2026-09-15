@@ -245,6 +245,10 @@ enum Phase {
     Detached,
     /// The values have been checked against the row count and Rust may read them.
     Sealed,
+    /// JavaScript holds the buffers and reads through them. The mirror of
+    /// `Filling`, and it ends the same way: every buffer detached before the
+    /// memory behind it is freed.
+    Reading,
 }
 
 /// One batch's columns, allocated together and filled by JavaScript.
@@ -259,11 +263,27 @@ impl Arena {
         if rows == 0 {
             bail!("a staged batch needs at least one row");
         }
-        Ok(Self {
+        Ok(Self::with_rows(rows, kinds))
+    }
+
+    fn with_rows(rows: usize, kinds: &[ColumnKind]) -> Self {
+        Self {
             rows,
             columns: kinds.iter().map(|&kind| Column::new(kind, rows)).collect(),
             phase: Phase::Filling,
-        })
+        }
+    }
+
+    /// An arena Rust fills and JavaScript reads — a result set on its way out,
+    /// rather than a batch on its way in. Nothing is lent yet, so it starts
+    /// where a filled one that has handed its buffers back would be.
+    /// Unlike a staged batch, this one may hold no rows: a query matching
+    /// nothing is an ordinary answer, and the columns still have to be
+    /// described so the other side builds the same views over them.
+    pub fn new_filled(rows: usize, kinds: &[ColumnKind]) -> Self {
+        let mut arena = Self::with_rows(rows, kinds);
+        arena.phase = Phase::Detached;
+        arena
     }
 
     pub fn rows(&self) -> usize {
@@ -278,8 +298,21 @@ impl Arena {
         self.phase == Phase::Sealed
     }
 
-    fn is_filling(&self) -> bool {
-        self.phase == Phase::Filling
+    /// Whether JavaScript currently holds the arena's buffers, in either
+    /// direction. Both end by detaching every one of them.
+    fn is_lent(&self) -> bool {
+        self.phase == Phase::Filling || self.phase == Phase::Reading
+    }
+
+    /// Hands sealed values to JavaScript to read. Only from `Sealed`: the
+    /// values have been checked against the row count by then, so the views
+    /// built over them describe what is actually there.
+    fn start_reading(&mut self) -> Result<()> {
+        if self.phase != Phase::Sealed {
+            bail!("only a sealed batch can be read, and only once");
+        }
+        self.phase = Phase::Reading;
+        Ok(())
     }
 
     /// Records that nothing outside the arena points into it any more. Only
@@ -349,19 +382,24 @@ impl Arena {
     }
 }
 
-/// Filling an arena from Rust, which is how the encoder's own tests build a
-/// batch without an isolate. JavaScript writes the same bytes through the lent
-/// views instead.
-#[cfg(test)]
+/// Filling an arena from Rust: how a result set is laid out on its way to
+/// JavaScript, and how the encoder's own tests build a batch without an isolate.
+/// On the way in it is JavaScript that writes these same bytes, through the
+/// lent views.
 impl Arena {
     pub fn set_f64(&mut self, column: usize, row: usize, value: f64) {
         self.set_word(column, row, value.to_bits());
     }
 
+    /// No column is laid out as an unsigned or signed 64-bit slot on the way
+    /// out yet; a result set uses the float, text and byte slots. The write
+    /// direction fills these from JavaScript, through the lent views.
+    #[cfg(test)]
     pub fn set_u64(&mut self, column: usize, row: usize, value: u64) {
         self.set_word(column, row, value);
     }
 
+    #[cfg(test)]
     pub fn set_i64(&mut self, column: usize, row: usize, value: i64) {
         self.set_word(column, row, value as u64);
     }
@@ -395,11 +433,13 @@ impl Arena {
 
     /// Nothing was lent out — the values came from Rust, not from an isolate —
     /// so there is no buffer to detach before sealing.
+    #[cfg(test)]
     pub fn seal_unlent(&mut self, names: &[String]) -> Result<()> {
         self.finish_lending();
         self.seal(names)
     }
 
+    #[cfg(test)]
     pub fn seal_for_test(&mut self) -> Result<()> {
         let names: Vec<String> = (0..self.columns.len()).map(|i| i.to_string()).collect();
         self.seal_unlent(&names)
