@@ -14,6 +14,7 @@ use super::client::{self, PgConnectionOptions, SslSetting};
 use super::ddl::{self, ColumnSpec, TableSpec};
 use super::index_definition::{self, Direction, IndexColumn, IndexDefinition};
 use super::insert;
+use super::internal;
 use super::param::Param;
 use super::pg_type::{self, ChainIdMode, FieldType};
 use super::rollback::{self, HistoryQuery, Sequence};
@@ -568,5 +569,36 @@ pub fn pg_insert_delete_rows_query(input: PgDeleteRowsInput) -> String {
         input.chain_id_column.as_deref(),
         &input.id_pg_type,
         &input.checkpoint_pg_type,
+    )
+}
+
+#[napi]
+pub fn pg_update_by_id_query(
+    pg_schema: String,
+    table: String,
+    id_column: String,
+    columns: Vec<String>,
+) -> String {
+    internal::update_by_id_query(&pg_schema, &table, &id_column, &columns)
+}
+
+#[napi]
+pub fn pg_set_by_unnest_query(
+    pg_schema: String,
+    table: String,
+    id_column: String,
+    set_column: String,
+    id_array_type: String,
+    value_array_type: String,
+    relation: String,
+) -> String {
+    internal::set_by_unnest_query(
+        &pg_schema,
+        &table,
+        &id_column,
+        &set_column,
+        &id_array_type,
+        &value_array_type,
+        &relation,
     )
 }

@@ -9,6 +9,7 @@ pub mod client;
 pub mod ddl;
 pub mod index_definition;
 pub mod insert;
+pub mod internal;
 #[cfg(test)]
 mod live_tests;
 pub mod param;

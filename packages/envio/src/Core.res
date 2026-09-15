@@ -124,6 +124,21 @@ type addon = {
   pgRollbackPreTargetRowsQuery: (~input: pgHistoryQueryInput) => string,
   pgRollbackRemovedIdsQuery: (~input: pgHistoryQueryInput) => string,
   pgInsertDeleteRowsQuery: (~input: pgDeleteRowsInput) => string,
+  pgUpdateByIdQuery: (
+    ~pgSchema: string,
+    ~table: string,
+    ~idColumn: string,
+    ~columns: array<string>,
+  ) => string,
+  pgSetByUnnestQuery: (
+    ~pgSchema: string,
+    ~table: string,
+    ~idColumn: string,
+    ~setColumn: string,
+    ~idArrayType: string,
+    ~valueArrayType: string,
+    ~relation: string,
+  ) => string,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
@@ -404,3 +419,25 @@ let pgRollbackPreTargetRowsQuery = (~input) => getAddon().pgRollbackPreTargetRow
 let pgRollbackRemovedIdsQuery = (~input) => getAddon().pgRollbackRemovedIdsQuery(~input)
 
 let pgInsertDeleteRowsQuery = (~input) => getAddon().pgInsertDeleteRowsQuery(~input)
+
+let pgUpdateByIdQuery = (~pgSchema, ~table, ~idColumn, ~columns) =>
+  getAddon().pgUpdateByIdQuery(~pgSchema, ~table, ~idColumn, ~columns)
+
+let pgSetByUnnestQuery = (
+  ~pgSchema,
+  ~table,
+  ~idColumn,
+  ~setColumn,
+  ~idArrayType,
+  ~valueArrayType,
+  ~relation,
+) =>
+  getAddon().pgSetByUnnestQuery(
+    ~pgSchema,
+    ~table,
+    ~idColumn,
+    ~setColumn,
+    ~idArrayType,
+    ~valueArrayType,
+    ~relation,
+  )

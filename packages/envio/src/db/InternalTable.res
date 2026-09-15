@@ -331,18 +331,13 @@ VALUES ${valuesRows->Array.joinUnsafe(",\n       ")};`,
   // Fields that can be updated outside of the batch transaction
   let metaFields: array<field> = [#buffer_block, #first_event_block, #ready_at, #_is_hyper_sync]
 
-  let makeMetaFieldsUpdateQuery = (~pgSchema) => {
-    // Generate SET clauses with parameter placeholders
-    let setClauses = Array.mapWithIndex(metaFields, (field, index) => {
-      let fieldName = (field :> string)
-      let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
-      `"${fieldName}" = $${Int.toString(paramIndex)}`
-    })
-
-    `UPDATE "${pgSchema}"."${table.tableName}"
-SET ${setClauses->Array.joinUnsafe(",\n    ")}
-WHERE "${(#id: field :> string)}" = $1;`
-  }
+  let makeMetaFieldsUpdateQuery = (~pgSchema) =>
+    Core.pgUpdateByIdQuery(
+      ~pgSchema,
+      ~table=table.tableName,
+      ~idColumn=(#id: field :> string),
+      ~columns=metaFields->Array.map(field => (field :> string)),
+    )
 
   // Written only once every schema-defined index is verified, so a chain is
   // never reported ready without the indexes the schema promises. One row at a
@@ -419,17 +414,13 @@ FROM "${pgSchema}"."${table.tableName}";`
 
   let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]
 
-  let makeProgressFieldsUpdateQuery = (~pgSchema) => {
-    let setClauses = Array.mapWithIndex(progressFields, (field, index) => {
-      let fieldName = (field :> string)
-      let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
-      `"${fieldName}" = $${Int.toString(paramIndex)}`
-    })
-
-    `UPDATE "${pgSchema}"."${table.tableName}"
-SET ${setClauses->Array.joinUnsafe(",\n    ")}
-WHERE "id" = $1;`
-  }
+  let makeProgressFieldsUpdateQuery = (~pgSchema) =>
+    Core.pgUpdateByIdQuery(
+      ~pgSchema,
+      ~table=table.tableName,
+      ~idColumn=(#id: field :> string),
+      ~columns=progressFields->Array.map(field => (field :> string)),
+    )
 
   let setMeta = (sql, ~pgSchema, ~chainsData: dict<metaFields>) => {
     let query = makeMetaFieldsUpdateQuery(~pgSchema)
@@ -490,13 +481,16 @@ WHERE "id" = $1;`
     Promise.all(promises)->Utils.Promise.ignoreValue
   }
 
-  let makeSetCheckpointFrontierQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
-    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
-    `UPDATE "${pgSchema}"."${table.tableName}"
-SET "${(#checkpoint_id: field :> string)}" = envio_frontier.checkpoint_id
-FROM unnest($1::${chainIdArrayType},$2::${(BigInt: Postgres.columnType :> string)}[]) AS envio_frontier(chain_id, checkpoint_id)
-WHERE "${table.tableName}"."${(#id: field :> string)}" = envio_frontier.chain_id;`
-  }
+  let makeSetCheckpointFrontierQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) =>
+    Core.pgSetByUnnestQuery(
+      ~pgSchema,
+      ~table=table.tableName,
+      ~idColumn=(#id: field :> string),
+      ~setColumn=(#checkpoint_id: field :> string),
+      ~idArrayType=chainIdArrayType(~pgSchema, ~chainIdMode),
+      ~valueArrayType=(BigInt: Postgres.columnType :> string) ++ "[]",
+      ~relation="envio_frontier",
+    )
 
   // The chains the write moved, in one statement and in the batch's own
   // transaction — so a chain's stored id can never outlive the rows it covers,
