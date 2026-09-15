@@ -1,33 +1,37 @@
-let jsonStringify: unknown => string = %raw(`v => JSON.stringify(v)`)
+@scope("JSON") @val external jsonStringify: unknown => string = "stringify"
 
 let nullish: unknown => bool = %raw(`v => v === undefined || v === null`)
 
-// The last resort for a value no column projection collapsed to a primitive.
-// JSON is what keeps those unambiguous: it quotes and escapes strings so a
-// delimiter inside one can't imitate a separator, renders a Date as an ISO
-// instant down to the millisecond, and a BigDecimal through its own toJSON.
-// Serializing with toString instead collapsed distinct values onto one key —
-// every object to "[object Object]" and any two instants in the same second to
-// the same string — which silently shared one filter index.
-let rec serializeValue = (value: unknown): string =>
-  if value->nullish {
-    "undefined"
-  } else {
-    switch value->Utils.Bytes.asUint8Array {
-    | Some(bytes) => bytes->Utils.Bytes.toHex
-    | None =>
-      if value->Array.isArray {
-        `[${value
-          ->(Utils.magic: unknown => array<unknown>)
-          ->Array.map(serializeValue)
-          ->Array.join(",")}]`
-      } else if value->typeof === #bigint {
-        value->(Utils.magic: unknown => bigint)->BigInt.toString
-      } else {
-        value->jsonStringify
-      }
-    }
+// Renders one already-projected value into a cache key: a type tag, then the
+// length, then the value. The tag keeps "5" apart from 5, and the length means
+// a delimiter inside a value can't imitate the delimiter, so no escaping pass
+// is needed. Both together make the encoding injective, which is the only
+// property a key needs.
+//
+// Every branch but the last is reached because the column's projection already
+// collapsed its values to a primitive — a Date to its epoch millis, a Bytea to
+// hex — so nothing here has to guess a value's type at runtime. JSON is the
+// last resort, for a column whose values are objects in the first place.
+let encodeValueKey: unknown => string = %raw(`v => {
+  if (v === null) return "z"
+  switch (typeof v) {
+    case "string": return "s" + v.length + ":" + v
+    case "number": { const s = "" + v; return "n" + s.length + ":" + s }
+    case "bigint": { const s = "" + v; return "g" + s.length + ":" + s }
+    case "boolean": return v ? "t" : "f"
+    case "undefined": return "u"
+    default: { const s = JSON.stringify(v); return "o" + s.length + ":" + s }
   }
+}`)
+
+// JSON is the one step above that can fail, and only on an object: one holding
+// a bigint, or one that refers to itself. An array is walked rather than
+// stringified, because its key is built from its elements' keys.
+let isKeyable: unknown => bool = %raw(`function isKeyable(v) {
+  if (typeof v !== "object" || v === null) return true
+  if (Array.isArray(v)) return v.every(isKeyable)
+  try { JSON.stringify(v); return true } catch { return false }
+}`)
 
 // The filter as the handler wrote it: field -> operator -> value. Everything
 // downstream reads this shape, so what reaches storage is a flat map rather
@@ -78,28 +82,14 @@ let expectedValueType = (field: Table.field) =>
   | _ => None
   }
 
-// Whether building the cache key for this column runs a value through a JSON
-// serializer, which is the only thing that can fail on it. Date, Bytea and
-// BigDecimal project to a primitive first, so their values never reach one.
+// Whether this column's values can reach JSON when a key is built. Date, Bytea
+// and BigDecimal collapse to a primitive first, and an array's elements follow
+// the same rule as the scalar they hold.
 let keyUsesSerializer = (field: Table.field) =>
-  field.isArray ||
   switch field.fieldType {
   | Date | Bytea | BigDecimal(_) => false
   | _ => true
   }
-
-// The cache key has to render every value it is handed, and an object holding
-// a bigint or a circular reference can't be. Asking serializeValue itself keeps
-// the check from drifting from what the key actually does. Only objects can
-// fail, so a filter over primitives pays a single typeof per value.
-let isKeyable = (value: unknown) =>
-  value->typeof !== #object ||
-    switch try Ok(value->serializeValue) catch {
-    | _ => Error()
-    } {
-    | Ok(_) => true
-    | Error() => false
-    }
 
 let matchesFieldType = (value: unknown, ~field: Table.field) => {
   let matchesScalar = value =>
@@ -319,7 +309,7 @@ let merge = (filters: array<t>) =>
       )
       [
         Dict.fromArray([
-          (fieldName, Dict.fromArray([("_in", values->(Utils.magic: array<unknown> => unknown))])),
+          (fieldName, dict{"_in": values->(Utils.magic: array<unknown> => unknown)}),
         ]),
       ]
     | _ => filters
@@ -359,38 +349,49 @@ let nativeLt: (unknown, unknown) => bool = %raw(`(a, b) => a < b`)
 let identityKey = (v: unknown) => v
 let native = {eq: nativeEq, gt: nativeGt, lt: nativeLt, key: identityKey}
 
-let asBigDecimal = (v: unknown) => v->(Utils.magic: unknown => BigDecimal.t)
-let bigDecimal = {
-  eq: (a, b) => !(a->nullish) && BigDecimal.equals(a->asBigDecimal, b->asBigDecimal),
-  gt: (a, b) => !(a->nullish) && BigDecimal.gt(a->asBigDecimal, b->asBigDecimal),
-  lt: (a, b) => !(a->nullish) && BigDecimal.lt(a->asBigDecimal, b->asBigDecimal),
-  key: v => v->asBigDecimal->BigDecimal.toString->(Utils.magic: string => unknown),
+// A nullable column holds null where a row has no value, and a comparison that
+// calls a method on it would throw. Matching nothing is what SQL does, and
+// saying so once here keeps every comparison below a plain two-value compare.
+// The filter's own value needs no such guard — validation rejects a nullish one.
+let nullSafe = (compare: valueCompare): valueCompare => {
+  eq: (a, b) => !(a->nullish) && compare.eq(a, b),
+  gt: (a, b) => !(a->nullish) && compare.gt(a, b),
+  lt: (a, b) => !(a->nullish) && compare.lt(a, b),
+  key: compare.key,
 }
 
+let asBigDecimal = (v: unknown) => v->(Utils.magic: unknown => BigDecimal.t)
+let bigDecimal = nullSafe({
+  eq: (a, b) => BigDecimal.equals(a->asBigDecimal, b->asBigDecimal),
+  gt: (a, b) => BigDecimal.gt(a->asBigDecimal, b->asBigDecimal),
+  lt: (a, b) => BigDecimal.lt(a->asBigDecimal, b->asBigDecimal),
+  key: v => v->asBigDecimal->BigDecimal.toString->(Utils.magic: string => unknown),
+})
+
 let getTime = (v: unknown) => v->(Utils.magic: unknown => Date.t)->Date.getTime
-let date = {
-  eq: (a, b) => !(a->nullish) && getTime(a) === getTime(b),
-  gt: (a, b) => !(a->nullish) && getTime(a) > getTime(b),
-  lt: (a, b) => !(a->nullish) && getTime(a) < getTime(b),
+let date = nullSafe({
+  eq: (a, b) => getTime(a) === getTime(b),
+  gt: (a, b) => getTime(a) > getTime(b),
+  lt: (a, b) => getTime(a) < getTime(b),
   key: v => v->getTime->(Utils.magic: float => unknown),
-}
+})
 
 // Json has no meaningful ordering, so reuse the structural compare for every
 // operator. Polymorphic `==` is intentional here.
-let json = {
-  eq: (a: unknown, b: unknown) => !(a->nullish) && a == b,
-  gt: (a, b) => !(a->nullish) && a > b,
-  lt: (a, b) => !(a->nullish) && a < b,
+let json = nullSafe({
+  eq: (a: unknown, b: unknown) => a == b,
+  gt: (a, b) => a > b,
+  lt: (a, b) => a < b,
   key: v => v->jsonStringify->(Utils.magic: string => unknown),
-}
+})
 
 let asBytes = (v: unknown) => v->(Utils.magic: unknown => Uint8Array.t)
-let bytes = {
-  eq: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) === 0.,
-  gt: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) > 0.,
-  lt: (a, b) => !(a->nullish) && Utils.Bytes.compare(a->asBytes, b->asBytes) < 0.,
+let bytes = nullSafe({
+  eq: (a, b) => Utils.Bytes.compare(a->asBytes, b->asBytes) === 0.,
+  gt: (a, b) => Utils.Bytes.compare(a->asBytes, b->asBytes) > 0.,
+  lt: (a, b) => Utils.Bytes.compare(a->asBytes, b->asBytes) < 0.,
   key: v => v->asBytes->Utils.Bytes.toHex->(Utils.magic: string => unknown),
-}
+})
 
 let scalarCompare = (fieldType: Table.fieldType): valueCompare =>
   switch fieldType {
@@ -417,49 +418,53 @@ let asArray = (v: unknown) => v->(Utils.magic: unknown => array<unknown>)
 
 // Array-valued fields compare element-wise with the element type's comparator:
 // equality is length + pairwise eq, ordering is lexicographic where the first
-// differing element decides and a proper prefix is the smaller array.
+// differing element decides and a proper prefix is the smaller array. The key
+// follows the same rule, concatenating each element's own key, so a Date[]
+// keys by epoch millis and a Bytea[] by hex without inspecting a value.
 let arrayCompare = (element: valueCompare): valueCompare => {
-  let eq = (a, b) =>
-    !(a->nullish) && {
-      let a = a->asArray
-      let b = b->asArray
-      let len = a->Array.length
-      len === b->Array.length && {
-          let rec go = i =>
-            i >= len || (element.eq(a->Array.getUnsafe(i), b->Array.getUnsafe(i)) && go(i + 1))
-          go(0)
-        }
-    }
-  let order = (~gt) =>
-    (a, b) =>
-      !(a->nullish) && {
-        let a = a->asArray
-        let b = b->asArray
-        let la = a->Array.length
-        let lb = b->Array.length
-        let len = la < lb ? la : lb
+  let eq = (a, b) => {
+    let a = a->asArray
+    let b = b->asArray
+    let len = a->Array.length
+    len === b->Array.length && {
         let rec go = i =>
-          if i >= len {
-            gt ? la > lb : la < lb
-          } else {
-            let x = a->Array.getUnsafe(i)
-            let y = b->Array.getUnsafe(i)
-            if element.eq(x, y) {
-              go(i + 1)
-            } else if gt {
-              element.gt(x, y)
-            } else {
-              element.lt(x, y)
-            }
-          }
+          i >= len || (element.eq(a->Array.getUnsafe(i), b->Array.getUnsafe(i)) && go(i + 1))
         go(0)
       }
-  {
+  }
+  let order = (~gt) =>
+    (a, b) => {
+      let a = a->asArray
+      let b = b->asArray
+      let la = a->Array.length
+      let lb = b->Array.length
+      let len = la < lb ? la : lb
+      let rec go = i =>
+        if i >= len {
+          gt ? la > lb : la < lb
+        } else {
+          let x = a->Array.getUnsafe(i)
+          let y = b->Array.getUnsafe(i)
+          if element.eq(x, y) {
+            go(i + 1)
+          } else if gt {
+            element.gt(x, y)
+          } else {
+            element.lt(x, y)
+          }
+        }
+      go(0)
+    }
+  nullSafe({
     eq,
     gt: order(~gt=true),
     lt: order(~gt=false),
-    key: v => v->serializeValue->(Utils.magic: string => unknown),
-  }
+    key: v => {
+      let key = ref("")
+      v->asArray->Array.forEach(item => key := key.contents ++ encodeValueKey(element.key(item)))
+      key.contents->(Utils.magic: string => unknown)
+    },
+  })
 }
 
 // Built once per table: an array field's comparator closes over its element's,
@@ -495,21 +500,6 @@ let fieldCompare = (~table: Table.table, fieldName) =>
 // instead of by a serialized filter.
 let makeValueKey = (~table: Table.table, ~fieldName) => (fieldName->fieldCompare(~table)).key
 
-// Type tag, then length, then the value. The tag keeps "5" apart from 5, and
-// the length means a delimiter inside a value can't imitate the delimiter, so
-// no escaping pass is needed. Both together make the encoding injective — the
-// only property the key needs — which is what lets it skip JSON.stringify for
-// everything but the objects a column's projection didn't collapse.
-let encodeValueKey: (unknown, unknown => string) => string = %raw(`(v, serialize) => {
-  switch (typeof v) {
-    case "string": return "s" + v.length + ":" + v
-    case "number": { const s = "" + v; return "n" + s.length + ":" + s }
-    case "bigint": { const s = "" + v; return "g" + s.length + ":" + s }
-    case "boolean": return v ? "t" : "f"
-    default: { const s = serialize(v); return "o" + s.length + ":" + s }
-  }
-}`)
-
 // The cache key stands in for structural equality between filters. Values go
 // through the same per-field projection the equality buckets key by, so the
 // two agree on which values are distinct.
@@ -522,9 +512,11 @@ let toString = (filter: t, ~table: Table.table) => {
       if operator === "_in" {
         fieldValue
         ->(Utils.magic: unknown => array<unknown>)
-        ->Array.forEach(value => key := key.contents ++ encodeValueKey(keyOf(value), serializeValue))
+        ->Array.forEach(
+          value => key := key.contents ++ encodeValueKey(keyOf(value)),
+        )
       } else {
-        key := key.contents ++ encodeValueKey(keyOf(fieldValue), serializeValue)
+        key := key.contents ++ encodeValueKey(keyOf(fieldValue))
       }
     })
   })

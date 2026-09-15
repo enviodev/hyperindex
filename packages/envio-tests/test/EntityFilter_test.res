@@ -142,16 +142,10 @@ describe("EntityFilter.getParams", () => {
   it("Reports one value per operator, in the order the query binds them", t => {
     let v = i => i->(Utils.magic: int => unknown)
     t.expect((
-      Dict.fromArray([("a", Dict.fromArray([("_eq", v(1))]))])->EntityFilter.getParams,
-      Dict.fromArray([("a", Dict.fromArray([("_gt", v(1))]))])->EntityFilter.getParams,
-      Dict.fromArray([
-        ("a", Dict.fromArray([("_in", [v(1), v(2)]->(Utils.magic: array<unknown> => unknown))])),
-      ])->EntityFilter.getParams,
-      Dict.fromArray([
-        ("a", Dict.fromArray([("_gt", v(1))])),
-        ("b", Dict.fromArray([("_lt", v(2))])),
-        ("c", Dict.fromArray([("_in", [v(3), v(4)]->(Utils.magic: array<unknown> => unknown))])),
-      ])->EntityFilter.getParams,
+      dict{"a": dict{"_eq": v(1)}}->EntityFilter.getParams,
+      dict{"a": dict{"_gt": v(1)}}->EntityFilter.getParams,
+      dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}}->EntityFilter.getParams,
+      dict{"a": dict{"_gt": v(1)}, "b": dict{"_lt": v(2)}, "c": dict{"_in": [v(3), v(4)]->(Utils.magic: array<unknown> => unknown)}}->EntityFilter.getParams,
     )).toEqual((
       [v(1)],
       [v(1)],
@@ -166,42 +160,31 @@ describe("EntityFilter.merge", () => {
     let v = i => i->(Utils.magic: int => unknown)
     t.expect((
       [
-        Dict.fromArray([("a", Dict.fromArray([("_eq", v(1))]))]),
-        Dict.fromArray([("a", Dict.fromArray([("_eq", v(2))]))]),
+        dict{"a": dict{"_eq": v(1)}},
+        dict{"a": dict{"_eq": v(2)}},
       ]->EntityFilter.merge,
       [
-        Dict.fromArray([
-          ("a", Dict.fromArray([("_in", [v(1), v(2)]->(Utils.magic: array<unknown> => unknown))])),
-        ]),
-        Dict.fromArray([
-          ("a", Dict.fromArray([("_in", [v(3)]->(Utils.magic: array<unknown> => unknown))])),
-        ]),
+        dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}},
+        dict{"a": dict{"_in": [v(3)]->(Utils.magic: array<unknown> => unknown)}},
       ]->EntityFilter.merge,
       [
-        Dict.fromArray([("a", Dict.fromArray([("_gt", v(1))]))]),
-        Dict.fromArray([("a", Dict.fromArray([("_gt", v(2))]))]),
+        dict{"a": dict{"_gt": v(1)}},
+        dict{"a": dict{"_gt": v(2)}},
       ]->EntityFilter.merge,
-      [Dict.fromArray([("a", Dict.fromArray([("_eq", v(1))]))])]->EntityFilter.merge,
+      [dict{"a": dict{"_eq": v(1)}}]->EntityFilter.merge,
       []->EntityFilter.merge,
     )).toEqual((
       [
-        Dict.fromArray([
-          ("a", Dict.fromArray([("_in", [v(1), v(2)]->(Utils.magic: array<unknown> => unknown))])),
-        ]),
+        dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}},
       ],
       [
-        Dict.fromArray([
-          (
-            "a",
-            Dict.fromArray([("_in", [v(1), v(2), v(3)]->(Utils.magic: array<unknown> => unknown))]),
-          ),
-        ]),
+        dict{"a": dict{"_in": [v(1), v(2), v(3)]->(Utils.magic: array<unknown> => unknown)}},
       ],
       [
-        Dict.fromArray([("a", Dict.fromArray([("_gt", v(1))]))]),
-        Dict.fromArray([("a", Dict.fromArray([("_gt", v(2))]))]),
+        dict{"a": dict{"_gt": v(1)}},
+        dict{"a": dict{"_gt": v(2)}},
       ],
-      [Dict.fromArray([("a", Dict.fromArray([("_eq", v(1))]))])],
+      [dict{"a": dict{"_eq": v(1)}}],
       [],
     ))
   })
@@ -211,11 +194,8 @@ describe("EntityFilter.merge", () => {
     t->toThrowErrorEqual(
       () =>
         [
-          Dict.fromArray([("a", Dict.fromArray([("_eq", v(1))]))]),
-          Dict.fromArray([
-            ("a", Dict.fromArray([("_eq", v(2))])),
-            ("b", Dict.fromArray([("_eq", v(3))])),
-          ]),
+          dict{"a": dict{"_eq": v(1)}},
+          dict{"a": dict{"_eq": v(2)}, "b": dict{"_eq": v(3)}},
         ]->EntityFilter.merge,
       "Unexpected composite filter in a merged batch. Filters batched into a single query must use the same operator and field.",
     )
@@ -409,6 +389,7 @@ describe("EntityFilter.toString", () => {
       Table.mkField("meta", Json, ~isIndex=true, ~fieldSchema=S.string),
       Table.mkField("tag", Bytea, ~isIndex=true, ~fieldSchema=S.string),
       Table.mkField("tags", String, ~isArray=true, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("ats", Date, ~isArray=true, ~isIndex=true, ~fieldSchema=S.string),
     ],
   )
   let toKey = filter => filter->EntityFilter.toString(~table)
@@ -452,6 +433,9 @@ describe("EntityFilter.toString", () => {
       dict{"a": dict{"_eq": u(["x,y"])}},
       dict{"a": dict{"_eq": u(["x", "y"])}},
       dict{"a": dict{"_eq": u(["xy"])}},
+      dict{"tags": dict{"_eq": u(["x", "y"])}},
+      dict{"tags": dict{"_eq": u(["xy"])}},
+      dict{"tags": dict{"_eq": u(["x,y"])}},
       // The same values split differently across fields and operators.
       dict{"a": dict{"_gt": u(1)}, "b": dict{"_lt": u(2)}},
       dict{"a": dict{"_gt": u(1), "_lt": u(2)}},
@@ -478,6 +462,9 @@ describe("EntityFilter.toString", () => {
         dict{"meta": dict{"_eq": u({"x": 1})}},
         dict{"tag": dict{"_eq": u(Uint8Array.fromArray([0xab]))}},
         dict{"tags": dict{"_eq": u(["x", "y"])}},
+        // An array keys by its elements' own keys, so a Date[] keys by epoch
+        // millis just as a Date does — no second rule for what is in an array.
+        dict{"ats": dict{"_eq": u([Date.fromTime(1500.), Date.fromTime(20.)])}},
         dict{"num": dict{"_gt": u(5)}},
         dict{"num": dict{"_in": u([1, 2])}},
         dict{"num": dict{"_gt": u(1)}, "b": dict{"_lt": u("z")}},
@@ -491,7 +478,8 @@ describe("EntityFilter.toString", () => {
       "at_eqn4:1500",
       `meta_eqs7:{"x":1}`,
       "tag_eqs2:ab",
-      `tags_eqs9:["x","y"]`,
+      "tags_eqs8:s1:xs1:y",
+      "ats_eqs12:n4:1500n2:20",
       "num_gtn1:5",
       "num_inn1:1n1:2",
       "num_gtn1:1b_lts1:z",

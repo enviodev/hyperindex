@@ -16,7 +16,7 @@ let scopeFilter = (filter: EntityFilter.t, ~table: Table.table, ~scope: Internal
     let scoped = filter->Utils.Dict.shallowCopy
     scoped->Dict.set(
       field.fieldName,
-      Dict.fromArray([("_eq", chainId->(Utils.magic: ChainId.t => unknown))]),
+      dict{"_eq": chainId->(Utils.magic: ChainId.t => unknown)},
     )
     scoped
   | _ => filter
@@ -50,7 +50,7 @@ let loadById = (
           ~filter=Dict.fromArray([
             (
               Table.idFieldName,
-              Dict.fromArray([("_in", idsToLoad->(Utils.magic: array<string> => unknown))]),
+              dict{"_in": idsToLoad->(Utils.magic: array<string> => unknown)},
             ),
           ])->scopeFilter(~table=entityConfig.table, ~scope),
         )
@@ -280,7 +280,7 @@ let loadEffect = (
             ~filter=Dict.fromArray([
               (
                 Table.idFieldName,
-                Dict.fromArray([("_in", idsToLoad->(Utils.magic: array<string> => unknown))]),
+                dict{"_in": idsToLoad->(Utils.magic: array<string> => unknown)},
               ),
             ]),
           )

@@ -300,10 +300,7 @@ describe("Reused chain-scoped statements stay pruned", () => {
       let chainId = 137->ChainId.fromInt
       // The shape `LoadLayer.scopeFilter` builds for a per-chain entity: the
       // handler's own filter, narrowed to the chain the handler runs on.
-      let filter: EntityFilter.t = Dict.fromArray([
-        ("owner", Dict.fromArray([("_eq", "alice"->(Utils.magic: string => unknown))])),
-        ("chainId", Dict.fromArray([("_eq", chainId->(Utils.magic: ChainId.t => unknown))])),
-      ])
+      let filter: EntityFilter.t = dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}, "chainId": dict{"_eq": chainId->(Utils.magic: ChainId.t => unknown)}}
 
       // One transaction pins one connection, so a statement Postgres decides to
       // cache is reused across the runs and its locks accumulate where they can

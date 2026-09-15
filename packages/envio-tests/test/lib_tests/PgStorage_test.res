@@ -622,32 +622,11 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=Dict.fromArray([
-            (
-              "tag",
-              Dict.fromArray([
-                ("_eq", Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown)),
-                (
-                  "_in",
-                  [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
+          ~filter=dict{"tag": dict{"_eq": Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown), "_in": [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
                     Utils.magic: array<Uint8Array.t> => unknown
-                  ),
-                ),
-              ]),
-            ),
-            (
-              "chunks",
-              Dict.fromArray([
-                ("_eq", [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown)),
-                (
-                  "_in",
-                  [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
+                  )}, "chunks": dict{"_eq": [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown), "_in": [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
                     Utils.magic: array<array<Uint8Array.t>> => unknown
-                  ),
-                ),
-              ]),
-            ),
-          ]),
+                  )}},
           ~table=bytesTable,
           ~params,
         )
@@ -669,9 +648,7 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=Dict.fromArray([
-            ("id", Dict.fromArray([("_in", ["1", "2"]->(Utils.magic: array<string> => unknown))])),
-          ]),
+          ~filter=dict{"id": dict{"_in": ["1", "2"]->(Utils.magic: array<string> => unknown)}},
           ~table,
           ~params,
         )
@@ -688,9 +665,7 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=Dict.fromArray([
-            ("score", Dict.fromArray([("_gt", 5->(Utils.magic: int => unknown))])),
-          ]),
+          ~filter=dict{"score": dict{"_gt": 5->(Utils.magic: int => unknown)}},
           ~table,
           ~params,
         )
@@ -707,10 +682,7 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=Dict.fromArray([
-            ("score", Dict.fromArray([("_gte", 5->(Utils.magic: int => unknown))])),
-            ("id", Dict.fromArray([("_lte", "9"->(Utils.magic: string => unknown))])),
-          ]),
+          ~filter=dict{"score": dict{"_gte": 5->(Utils.magic: int => unknown)}, "id": dict{"_lte": "9"->(Utils.magic: string => unknown)}},
           ~table,
           ~params,
         )
@@ -727,16 +699,7 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=Dict.fromArray([
-            ("id", Dict.fromArray([("_eq", "1"->(Utils.magic: string => unknown))])),
-            (
-              "score",
-              Dict.fromArray([
-                ("_gt", 5->(Utils.magic: int => unknown)),
-                ("_lt", 10->(Utils.magic: int => unknown)),
-              ]),
-            ),
-          ]),
+          ~filter=dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}, "score": dict{"_gt": 5->(Utils.magic: int => unknown), "_lt": 10->(Utils.magic: int => unknown)}},
           ~table,
           ~params,
         )

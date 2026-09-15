@@ -1717,7 +1717,7 @@ let make = (
   // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
   let containerName = "envio-postgres"
   let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
-    env: Dict.fromArray([("PGPASSWORD", pgPassword), ("PATH", %raw(`process.env.PATH`))]),
+    env: dict{"PGPASSWORD": pgPassword, "PATH": %raw(`process.env.PATH`)},
   }
 
   let cacheDirPath = NodeJs.Path.resolve([
