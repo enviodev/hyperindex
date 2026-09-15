@@ -8,14 +8,14 @@ describe("Rpc.makeClient - headers", () => {
         MockRpcServer.expectCall(
           ~method="eth_getBlockByNumber",
           ~params=JSON.parseOrThrow(`["0x1",false]`),
-          ~headers=Dict.fromArray([("authorization", "Bearer rest-token")]),
+          ~headers=dict{"authorization": "Bearer rest-token"},
           ~reply=RpcResult(JSON.Null),
         ),
       ],
       async mock => {
         let client = Rpc.makeClient(
           mock.url,
-          ~headers=Dict.fromArray([("Authorization", "Bearer rest-token")]),
+          ~headers=dict{"Authorization": "Bearer rest-token"},
         )
         let result = await Rpc.GetBlockByNumber.route->Rest.fetch(
           {"blockNumber": 1, "includeTransactions": false},

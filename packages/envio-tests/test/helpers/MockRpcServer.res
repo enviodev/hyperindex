@@ -197,7 +197,7 @@ let addHeaders = (~base: dict<string>, extra: option<dict<string>>) => {
 
 let writeRaw = (res, ~status, ~headers=?, ~body) => {
   let responseHeaders = addHeaders(
-    ~base=Dict.fromArray([("Content-Type", "application/json")]),
+    ~base=dict{"Content-Type": "application/json"},
     headers,
   )
   res->writeHead(status, responseHeaders)
@@ -219,10 +219,7 @@ let rec sendReply = (res, request, reply, ~onTimer) =>
   switch reply {
   | RpcResult(result) => res->writeEnvelope(~id=request.id, ~fieldName="result", ~value=result)
   | RpcError({code, message, ?data}) => {
-      let error = Dict.fromArray([
-        ("code", JSON.Number(code->Int.toFloat)),
-        ("message", JSON.String(message)),
-      ])
+      let error = dict{"code": JSON.Number(code->Int.toFloat), "message": JSON.String(message)}
       switch data {
       | Some(value) => error->Dict.set("data", value)
       | None => ()
@@ -345,7 +342,7 @@ let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?) =>
                     res->writeRaw(
                       ~status=500,
                       ~body=JSON.stringify(
-                        JSON.Object(Dict.fromArray([("error", JSON.String(detail))])),
+                        JSON.Object(dict{"error": JSON.String(detail)}),
                       ),
                     )
                   }
@@ -435,11 +432,7 @@ let makeWithParams = (~getResult: (~method: string, ~params: JSON.t) => JSON.t) 
       200,
       JSON.stringify(
         JSON.Object(
-          Dict.fromArray([
-            ("jsonrpc", JSON.String("2.0")),
-            ("id", id),
-            ("result", getResult(~method, ~params)),
-          ]),
+          dict{"jsonrpc": JSON.String("2.0"), "id": id, "result": getResult(~method, ~params)},
         ),
       ),
     )
