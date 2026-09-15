@@ -20,6 +20,7 @@ type chainMetrics = {
   // Raw committed progress (may be -1), unlike the optional latestProcessedBlock.
   progressBlockNumber: int,
   progressLatencyMs: option<int>,
+  progressBlockTime: option<int>,
   concurrency: int,
   partitionsCount: int,
   bufferSize: int,
@@ -658,6 +659,13 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~kind="gauge",
     ~entries=chains,
     ~value=m => m.numEventsProcessed,
+  )
+  b->seriesOpt(
+    ~name="envio_progress_block_time_seconds",
+    ~help="Unix timestamp of the block the chain has processed up to. Subtract it from the scrape time for how far behind chain time the indexer is, which stays honest when the data source itself is behind the chain. Best effort in realtime mode, absent during backfill.",
+    ~kind="gauge",
+    ~entries=chains,
+    ~value=m => m.progressBlockTime->Option.map(Int.toFloat),
   )
   b->seriesOpt(
     ~name="envio_progress_latency",

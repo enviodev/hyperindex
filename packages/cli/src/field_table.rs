@@ -472,6 +472,14 @@ impl StoreCol {
         }
     }
 
+    /// Signed counterpart of `u64_cell`. Panics on a non-`I64` column.
+    fn i64_cell(&self, slot: usize) -> i64 {
+        match self {
+            StoreCol::I64(v) => v[slot],
+            _ => panic!("expected an i64 column"),
+        }
+    }
+
     /// Boolean cell, for the account-activity table's direct-by-slot reads.
     /// Panics on a non-`Bool` column.
     fn bool_cell(&self, slot: usize) -> bool {
@@ -623,6 +631,16 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         self.cols[field]
             .as_ref()
             .and_then(|c| c.cell_bytes(slot as usize))
+    }
+
+    /// Value of `field`'s `I64` cell for `key`, if the row exists and carries
+    /// the field.
+    pub(crate) fn field_i64(&self, key: &K, field: usize) -> Option<i64> {
+        let &slot = self.by_key.get(key)?;
+        if self.masks[slot as usize] & (1u64 << field) == 0 {
+            return None;
+        }
+        self.cols[field].as_ref().map(|c| c.i64_cell(slot as usize))
     }
 
     /// Lowest key `>= from` carrying `field` in both tables whose cells differ,

@@ -269,6 +269,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           sourceBlockNumber: 305,
           progressBlockNumber: 200,
           progressLatencyMs: Some(1500),
+          progressBlockTime: Some(1700000000),
           concurrency: 2,
           partitionsCount: 3,
           bufferSize: 42,
@@ -586,6 +587,10 @@ envio_progress_block{chainId="1"} 200
 # HELP envio_progress_events The number of events processed and reflected in the database.
 # TYPE envio_progress_events gauge
 envio_progress_events{chainId="1"} 12345
+
+# HELP envio_progress_block_time_seconds Unix timestamp of the block the chain has processed up to. Subtract it from the scrape time for how far behind chain time the indexer is, which stays honest when the data source itself is behind the chain. Best effort in realtime mode, absent during backfill.
+# TYPE envio_progress_block_time_seconds gauge
+envio_progress_block_time_seconds{chainId="1"} 1700000000
 
 # HELP envio_progress_latency The latency in milliseconds between the latest processed event creation and the time it was written to storage.
 # TYPE envio_progress_latency gauge
