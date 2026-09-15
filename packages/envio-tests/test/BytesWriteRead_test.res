@@ -109,7 +109,7 @@ describe("Bytes as Uint8Array", () => {
         await (indexer.queryHistory("Blob"): promise<array<Change.t<blob>>>),
       )).toEqual((
         [first, second],
-        Dict.fromArray([("eq", [first]), ("in", [second])]),
+        dict{"eq": [first], "in": [second]},
         [
           Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
           Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),

@@ -11,15 +11,14 @@ let scopeKeySuffix = (scope: Internal.chainScope) =>
 let scopeFilter = (filter: EntityFilter.t, ~table: Table.table, ~scope: Internal.chainScope) =>
   switch (scope, table->Table.getChainIdField) {
   | (Chain(chainId), Some(field)) =>
-    EntityFilter.And({
-      filters: [
-        filter,
-        Eq({
-          fieldName: field.fieldName,
-          fieldValue: chainId->(Utils.magic: ChainId.t => unknown),
-        }),
-      ],
-    })
+    // Copied, because the filter the handler passed in must not gain a column
+    // it never asked for.
+    let scoped = filter->Utils.Dict.shallowCopy
+    scoped->Dict.set(
+      field.fieldName,
+      dict{"_eq": chainId->(Utils.magic: ChainId.t => unknown)},
+    )
+    scoped
   | _ => filter
   }
 
@@ -48,10 +47,12 @@ let loadById = (
       (
         await storage.loadOrThrow(
           ~table=entityConfig.table,
-          ~filter=EntityFilter.In({
-            fieldName: Table.idFieldName,
-            fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
-          })->scopeFilter(~table=entityConfig.table, ~scope),
+          ~filter=Dict.fromArray([
+            (
+              Table.idFieldName,
+              dict{"_in": idsToLoad->(Utils.magic: array<string> => unknown)},
+            ),
+          ])->scopeFilter(~table=entityConfig.table, ~scope),
         )
       )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
@@ -276,10 +277,12 @@ let loadEffect = (
         (
           await storage.loadOrThrow(
             ~table,
-            ~filter=EntityFilter.In({
-              fieldName: Table.idFieldName,
-              fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
-            }),
+            ~filter=Dict.fromArray([
+              (
+                Table.idFieldName,
+                dict{"_in": idsToLoad->(Utils.magic: array<string> => unknown)},
+              ),
+            ]),
           )
         )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
@@ -378,7 +381,9 @@ let loadByFilter = (
 
     let size = ref(0)
 
-    filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
+    filters->Array.forEach(filter =>
+      inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter, ~table=entityConfig.table)
+    )
 
     // Any non-derived field can be filtered on, so the columns this query reads
     // are indexed on demand before it runs rather than promised by the schema.
@@ -412,6 +417,10 @@ let loadByFilter = (
           )
         })
 
+        // Every row this filter's values could match is now in the table, so a
+        // later getWhere naming any of them needs no round trip of its own.
+        inMemTable->InMemoryTable.Entity.recordLoadedValues(~filter, ~table=entityConfig.table)
+
         size := size.contents + entities->Array.length
       } catch {
       | Persistence.StorageError({message, reason}) =>
@@ -442,13 +451,33 @@ let loadByFilter = (
     )
   }
 
-  loadManager->LoadManager.call(
-    ~key,
-    ~load,
-    ~input=filter,
-    ~shouldGroup,
-    ~hasher=EntityFilter.toString,
-    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
-    ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
-  )
+  // Everything downstream — the key, the index, the matcher, the query — reads
+  // the filter without re-checking it, so it is checked once here, before any
+  // of them sees it. Rejecting rather than throwing keeps a bad filter failing
+  // only its own call, even when the caller batches several with Promise.all.
+  switch try Ok(
+    filter->EntityFilter.validateOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table),
+  ) catch {
+  | exn => Error(exn)
+  } {
+  | Error(exn) => Promise.reject(exn->Utils.prettifyExn)
+  | Ok() =>
+    // Keying an _in walks every value, so it's computed once here and handed to
+    // the load manager rather than recomputed by the hasher.
+    let filterKey = filter->EntityFilter.toString(~table=entityConfig.table)
+
+    if !(inMemTable->InMemoryTable.Entity.hasIndex)(filterKey) {
+      inMemTable->InMemoryTable.Entity.tryIndexFromLoadedValues(~filter, ~table=entityConfig.table)
+    }
+
+    loadManager->LoadManager.call(
+      ~key,
+      ~load,
+      ~input=filter,
+      ~shouldGroup,
+      ~hasher=_ => filterKey,
+      ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
+      ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
+    )
+  }
 }

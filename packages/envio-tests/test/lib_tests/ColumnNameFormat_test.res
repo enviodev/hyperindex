@@ -238,17 +238,11 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
 
     let rawRows = await sql->Postgres.unsafe(`SELECT * FROM "${pgSchema}"."Snapshot";`)
     let loadedByIds = await storage.loadOrThrow(
-      ~filter=EntityFilter.In({
-        fieldName: "id",
-        fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>),
-      }),
+      ~filter=dict{"id": dict{"_in": ["1"]->(Utils.magic: array<string> => unknown)}},
       ~table=snapshotEntity.table,
     )
     let loadedByField = await storage.loadOrThrow(
-      ~filter=EntityFilter.Eq({
-        fieldName: "transactionIndex",
-        fieldValue: 5->(Utils.magic: int => unknown),
-      }),
+      ~filter=dict{"transactionIndex": dict{"_eq": 5->(Utils.magic: int => unknown)}},
       ~table=snapshotEntity.table,
     )
 

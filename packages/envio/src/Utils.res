@@ -273,7 +273,7 @@ module Dict = {
 }
 
 module Math = {
-  let minOptInt = (a, b) =>
+  let minOptInt = (a: option<int>, b: option<int>) =>
     switch (a, b) {
     | (Some(a), Some(b)) => Some(a < b ? a : b)
     | (Some(a), None) => Some(a)
@@ -374,9 +374,6 @@ module Array = {
   /**
 Helper to check if a value exists in an array
 */
-  let includes = (arr: array<'a>, val: 'a) =>
-    arr->Array.find(item => item == val)->Stdlib.Option.isSome
-
   let isEmpty = (arr: array<_>) =>
     switch arr {
     | [] => true

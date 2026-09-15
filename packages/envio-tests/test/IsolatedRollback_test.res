@@ -306,8 +306,8 @@ let counterSet = (~checkpointId, ~chain, ~count): Change.t<counter> => Set({
 })
 
 let progress = (~chain100, ~chain1337): array<IndexerRunner.metric> => [
-  {value: chain100, labels: Dict.fromArray([("chainId", "100")])},
-  {value: chain1337, labels: Dict.fromArray([("chainId", "1337")])},
+  {value: chain100, labels: dict{"chainId": "100"}},
+  {value: chain1337, labels: dict{"chainId": "1337"}},
 ]
 
 describe("Isolated multichain rollback", () => {
