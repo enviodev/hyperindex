@@ -160,6 +160,11 @@ let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
     | Some(Field(field)) => field
     }
 
+    // Constant per field, and None for every column that accepts any runtime
+    // shape — so the per-value check below is a single comparison on the path
+    // that matters, an _in of many values that are all about to pass.
+    let expectedType = field->expectedValueType
+
     operatorKeys->Array.forEach(operatorKey => {
       let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
       switch fieldValue->getUndefinedOrNullName {
@@ -171,14 +176,10 @@ let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
         )
       | None => ()
       }
-      let throwOnUnexpectedType = (fieldValue, ~hint="") =>
-        switch field->expectedValueType {
-        | Some(typeName) if !(fieldValue->matchesFieldType(~field)) =>
-          JsError.throwWithMessage(
-            `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). The field "${apiFieldName}" expects ${typeName}.${hint}`,
-          )
-        | _ => ()
-        }
+      let throwUnexpectedType = (~typeName, ~hint) =>
+        JsError.throwWithMessage(
+          `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: { ${operatorKey}: ... } }). The field "${apiFieldName}" expects ${typeName}.${hint}`,
+        )
 
       switch operatorKey {
       | "_in" => {
@@ -201,13 +202,23 @@ let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
                 )
               | None => ()
               }
-              fieldValue->throwOnUnexpectedType(
-                ~hint=` The value is at index ${index->Int.toString} of the _in array.`,
-              )
+              switch expectedType {
+              | Some(typeName) if !(fieldValue->matchesFieldType(~field)) =>
+                throwUnexpectedType(
+                  ~typeName,
+                  ~hint=` The value is at index ${index->Int.toString} of the _in array.`,
+                )
+              | _ => ()
+              }
             },
           )
         }
-      | _ => fieldValue->throwOnUnexpectedType
+      | _ =>
+        switch expectedType {
+        | Some(typeName) if !(fieldValue->matchesFieldType(~field)) =>
+          throwUnexpectedType(~typeName, ~hint="")
+        | _ => ()
+        }
       }
     })
   })
@@ -415,8 +426,8 @@ let arrayCompare = (element: valueCompare): valueCompare => {
   }
 }
 
-// Resolved once per table and then found by name. Table.getFieldByApiName is a
-// linear scan of every field, and this is consulted per getWhere.
+// Built once per table: an array field's comparator closes over its element's,
+// so resolving it per lookup would allocate that chain on every getWhere.
 let comparesByField: Table.table => dict<
   valueCompare,
 > = Utils.WeakMap.memoize((table: Table.table) => {
@@ -453,7 +464,7 @@ let makeValueKey = (~table: Table.table, ~fieldName) => (fieldName->fieldCompare
 // no escaping pass is needed. Both together make the encoding injective — the
 // only property the key needs — which is what lets it skip JSON.stringify for
 // everything but the objects a column's projection didn't collapse.
-let taggedValueKey: (unknown, unknown => string) => string = %raw(`(v, serialize) => {
+let encodeValueKey: (unknown, unknown => string) => string = %raw(`(v, serialize) => {
   switch (typeof v) {
     case "string": return "s" + v.length + ":" + v
     case "number": { const s = "" + v; return "n" + s.length + ":" + s }
@@ -463,44 +474,28 @@ let taggedValueKey: (unknown, unknown => string) => string = %raw(`(v, serialize
   }
 }`)
 
-let lengthPrefixed = (value: unknown) => taggedValueKey(value, serializeValue)
-
 // The cache key stands in for structural equality between filters. Values go
 // through the same per-field projection the equality buckets key by, so the
 // two agree on which values are distinct.
-let toStringOrThrow = (filter: t, ~table: Table.table) => {
+let toString = (filter: t, ~table: Table.table) => {
   let key = ref("")
   filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
-    let keyOf = fieldName->fieldCompare(~table)
+    let compare = fieldName->fieldCompare(~table)
     operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
       key := key.contents ++ fieldName ++ operator
       if operator === "_in" {
         fieldValue
         ->(Utils.magic: unknown => array<unknown>)
-        ->Array.forEach(value => key := key.contents ++ lengthPrefixed(keyOf.key(value)))
+        ->Array.forEach(
+          value => key := key.contents ++ encodeValueKey(compare.key(value), serializeValue),
+        )
       } else {
-        key := key.contents ++ lengthPrefixed(keyOf.key(fieldValue))
+        key := key.contents ++ encodeValueKey(compare.key(fieldValue), serializeValue)
       }
     })
   })
   key.contents
 }
-
-// The projections are type-specific, and the key is needed before the filter
-// has been validated, so a malformed value can throw out of one. Such a filter
-// still needs a key to fail under — the "~" prefix keeps it clear of every key
-// above, since a field name can't start with one.
-let toString = (filter: t, ~table: Table.table) =>
-  try filter->toStringOrThrow(~table) catch {
-  | _ =>
-    let key = ref("~")
-    filter->Utils.Dict.forEachWithKey((operators, fieldName) =>
-      operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
-        key := key.contents ++ fieldName ++ operator ++ fieldValue->serializeValue
-      )
-    )
-    key.contents
-  }
 
 // Values are replaced by placeholders so calls that differ only in what they
 // filter for batch together.

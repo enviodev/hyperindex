@@ -314,7 +314,7 @@ module Entity = {
     }
 
   let isFullyLoaded = (inMemTable: t, ~filter: EntityFilter.t) =>
-    try switch filter->singleFieldValues {
+    switch filter->singleFieldValues {
     | Some((fieldName, fieldValues)) =>
       switch inMemTable.eqBucketsByField->Utils.Dict.dangerouslyGetNonOption(fieldName) {
       | Some(bucket) =>
@@ -324,11 +324,6 @@ module Entity = {
       | None => false
       }
     | None => false
-    } catch {
-    // The filter is still the unvalidated object the handler passed in, so
-    // anything malformed here simply isn't covered. The load reports it with
-    // the message naming the field the user wrote.
-    | _ => false
     }
 
   // Builds the index for a filter whose every value an earlier query already

@@ -489,10 +489,4 @@ describe("EntityFilter.toString", () => {
     ])
   })
 
-  // The key is built before the filter is validated, so a value the column's
-  // projection can't read still has to produce one to fail under.
-  it("Falls back to a marked key for a value the projection rejects", t => {
-    t.expect(toKey(dict{"at": dict{"_eq": u("not a date")}})).toEqual(`~at_eq"not a date"`)
-  })
-
 })
