@@ -758,6 +758,28 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     expect(actual[0]?.[0]).toBe(expected[0]?.[0]);
   });
 
+  it("reads every address when a table's where takes over the binding", async () => {
+    // `any_erc20_transfers` says `srcAddress: {_nin: []}`, so it is registered
+    // as a wildcard and picks up ERC-20 transfers from contracts the config
+    // never named. `transfer_totals` has no `srcAddress` condition, so it stays
+    // bound to the one configured address.
+    const emitters = await runPgSql(
+      `SELECT count(DISTINCT id)::text FROM any_erc20_transfers`
+    );
+    expect(Number(emitters[0]?.[0])).toBeGreaterThan(1);
+
+    // Every transfer the bound table saw came from the configured address, and
+    // the wildcard table counted at least those.
+    const configured = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984";
+    const [boundTotal] = await runPgSql(
+      `SELECT count(*)::text FROM "Transfer"`
+    );
+    const [wildcardForConfigured] = await runPgSql(
+      `SELECT transfers::text FROM any_erc20_transfers WHERE id = '${configured}'`
+    );
+    expect(wildcardForConfigured?.[0]).toBe(boundTotal?.[0]);
+  });
+
   it("follows a reference between two config.yaml tables with a numeric id", async () => {
     // `_block_totals` keys rows by block number, so `transfer_blocks.block_id`
     // is an INTEGER column rather than the usual text id — and the leading

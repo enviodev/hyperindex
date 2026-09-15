@@ -1,8 +1,7 @@
-// A materialized table is derived from its `select`, so a handler write would
-// be silently reverted the next time the source event is reprocessed. Nothing
-// opts a table into the handler context, so a handler can't reach one at all —
-// and the error says which table it is rather than sending the user to codegen.
-// An entity from schema.graphql alongside it stays fully writable.
+// A table isn't an entity: nothing opts one into the handler context, so a
+// handler can't reach it at all, and the error says which table it is rather
+// than sending the user to codegen. An entity from schema.graphql alongside it
+// stays fully writable.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: materialized-read-only
@@ -69,17 +68,13 @@ const messageOf = async (run: () => Promise<unknown>): Promise<string | undefine
 };
 
 describe("a table config.yaml writes", () => {
-  it("is materialized and readable from the test indexer", async (t) => {
+  it("leaves a handler on the same event running normally", async (t) => {
     const indexer = createTestIndexer();
     await indexer.process({ chains: { 1: { simulate: [transfer(5n)] } } });
 
-    t.expect({
-      accounts: await indexer.Accounts.getAll(),
-      notes: await indexer.Note.getAll(),
-    }).toEqual({
-      accounts: [{ id: alice, received: 5n, chainId: 1 }],
-      notes: [{ id: alice, note: "seen", chainId: 1 }],
-    });
+    t.expect(await indexer.Note.getAll()).toEqual([
+      { id: alice, note: "seen", chainId: 1 },
+    ]);
   });
 
   it("is absent from the handler context, with a message naming the table", async (t) => {

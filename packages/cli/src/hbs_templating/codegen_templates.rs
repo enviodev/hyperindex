@@ -238,8 +238,8 @@ pub struct EntityRecordTypeTemplate {
     // `context.<X>` and `indexer.<X>`, while `name` stays the database and
     // GraphQL spelling.
     pub code_name: String,
-    // A table from `tables` is stored and reachable from the test indexer, but
-    // absent from the handler context.
+    // A table from `tables` is stored, but it isn't an entity: absent from the
+    // handler context, from the `Entities` lookup and from the test indexer.
     pub hidden_from_handlers: bool,
     pub type_code: String,
     pub get_where_filter_code: String,
@@ -1840,6 +1840,7 @@ type testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
         // entity plus its chain id rather than the entity alone.
         let test_indexer_entity_fields = entities
             .iter()
+            .filter(|entity| !entity.hidden_from_handlers)
             .map(|entity| {
                 let name = &entity.code_name;
                 let row = format!("Entities.{name}.testIndexerRow");
@@ -2408,6 +2409,7 @@ type testIndexer = {{
 
             let entity_entries: Vec<String> = entities
                 .iter()
+                .filter(|entity| !entity.hidden_from_handlers)
                 .map(|entity| {
                     let field_entries: Vec<String> = entity
                         .params
@@ -2447,7 +2449,11 @@ type testIndexer = {{
         // (`import type { User } from "envio"`). Enums skip aliasing —
         // their schema names often clash with TS reserved words or
         // existing envio exports, so users go through `Enum<"Name">`.
-        let entity_aliases: Vec<String> = entities.iter().map(|e| e.code_name.clone()).collect();
+        let entity_aliases: Vec<String> = entities
+            .iter()
+            .filter(|e| !e.hidden_from_handlers)
+            .map(|e| e.code_name.clone())
+            .collect();
 
         Ok(ProjectTemplate {
             chain_configs,
@@ -2470,7 +2476,7 @@ type testIndexer = {{
                     per_chain_entities: {
                         let names: Vec<String> = entities
                             .iter()
-                            .filter(|e| !e.cross_chain)
+                            .filter(|e| !e.cross_chain && !e.hidden_from_handlers)
                             .map(|e| format!("\"{}\"", e.code_name))
                             .collect();
                         if names.is_empty() {

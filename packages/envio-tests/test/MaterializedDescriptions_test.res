@@ -31,48 +31,15 @@ tables:
         _description: "Who sent the most recent transfer"
       undescribed: params.value
 `,
-  ~test=`
-import { describe, it } from "vitest";
-import { createTestIndexer, TestHelpers } from "envio";
-
-const { Addresses } = TestHelpers;
-const alice = Addresses.mockAddresses[0];
-
-describe("described fields", () => {
-  it("materializes exactly as an undescribed field would", async (t) => {
-    const indexer = createTestIndexer();
-    await indexer.process({
-      chains: {
-        1: {
-          simulate: [
-            {
-              contract: "ERC20",
-              event: "Transfer",
-              params: { from: Addresses.defaultAddress, to: alice, value: 7n },
-            },
-          ],
-        },
-      },
-    });
-
-    t.expect(await indexer.Accounts.getAll()).toEqual([
-      {
-        id: alice,
-        balance: 7n,
-        last_sender: Addresses.defaultAddress,
-        undescribed: 7n,
-        chainId: 1,
-      },
-    ]);
-  });
-});
-`,
 )
 
+// Nothing applies these today: a table isn't tracked in Hasura, which is the
+// only thing that turns a column config into a Postgres comment. The mapping is
+// pinned so the descriptions are ready if a table is served again.
 describe("_description", () => {
   it("Becomes the column comment, and only on the fields that have one", t => {
     let entityConfig =
-      config.userEntities
+      config.entitiesByTableName->Dict.valuesToArray
       ->Array.find((e: Internal.entityConfig) => e.table.tableName === "accounts")
       ->Option.getOrThrow
     t.expect(

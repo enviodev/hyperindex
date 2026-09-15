@@ -64,20 +64,16 @@ const transfer = (value: bigint) => ({
 });
 
 describe("materializer ordering", () => {
-  it("writes both tables on one event", async (t) => {
+  it("runs a handler alongside the tables on one event", async (t) => {
     const indexer = createTestIndexer();
 
     await indexer.process({ chains: { 1: { simulate: [transfer(5n), transfer(7n)] } } });
 
-    t.expect({
-      totals: await indexer.Totals.getAll(),
-      lastSeen: await indexer.Last_seen.getAll(),
-      notes: await indexer.Note.getAll(),
-    }).toEqual({
-      totals: [{ id: alice, amount: 12n, chainId: 1 }],
-      lastSeen: [{ id: alice, sender: bob, chainId: 1 }],
-      notes: [{ id: alice, seen: 7n, sender: bob, chainId: 1 }],
-    });
+    // The tables themselves are read back in MaterializedWrites_test; what
+    // this run pins is that a handler on the same event still runs.
+    t.expect(await indexer.Note.getAll()).toEqual([
+      { id: alice, seen: 7n, sender: bob, chainId: 1 },
+    ]);
   });
 
 

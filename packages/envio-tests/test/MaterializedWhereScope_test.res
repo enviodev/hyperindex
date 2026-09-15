@@ -6,7 +6,10 @@
 // predicate the runtime evaluates per event, and a block/transaction field a
 // `where` reads is added to that event's `field_selection` so it is there to
 // read.
-let _ = InternalTestIndexer.fromUserApi(
+//
+// All three are settled before an event is processed, so they are asserted on
+// the compiled plans rather than on rows.
+let {config}: InternalTestIndexer.parsed = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: where-scope
 disable_default_cross_chain: true
@@ -66,64 +69,51 @@ tables:
             - params.to
       value: params.value
 `,
-  ~test=`
-import { describe, it } from "vitest";
-import { createTestIndexer, TestHelpers } from "envio";
+)
 
-const { Addresses } = TestHelpers;
-const alice = Addresses.mockAddresses[0];
-const bob = Addresses.mockAddresses[1];
+open Vitest
 
-const transfer = (block: number, gasPrice: bigint, value: bigint) => ({
-  contract: "ERC20" as const,
-  event: "Transfer" as const,
-  block: { number: block },
-  transaction: { gasPrice },
-  params: { from: bob, to: alice, value },
-});
+// Which events feed a table, and whether anything is left for the runtime.
+let plansFor = table =>
+  config.materializations
+  ->Array.filter(m => m.table === table)
+  ->Array.map(({contractName, eventName, filter}) => (
+    `${contractName}.${eventName}`,
+    filter->Option.isSome,
+  ))
 
-// No \`transaction.gasPrice\` here: demand is per event, and only Transfer's
-// plans read it, so the generated types don't offer it on Approval.
-const approval = (block: number) => ({
-  contract: "ERC20" as const,
-  event: "Approval" as const,
-  block: { number: block },
-  params: { owner: alice, spender: bob, value: 1n },
-});
+let fieldsFor = eventName =>
+  switch config.chainMap
+  ->ChainMap.values
+  ->Array.flatMap(chain => chain.contracts)
+  ->Array.flatMap((c: Config.contract) => c.events)
+  ->Array.find((e: Internal.eventConfig) => e.name === eventName) {
+  | Some(eventConfig) =>
+    eventConfig.fieldSelection.transactionFields->Utils.Set.toArray->Array.toSorted(String.compare)
+  | None => []
+  }
 
 describe("the scope of a table's where", () => {
-  it("spans every event without a where, one event with discriminators, and filters context at runtime", async (t) => {
-    const indexer = createTestIndexer();
+  it("gives a plan to every event when there is no where", t =>
+    t.expect(plansFor("block_activity")).toEqual([
+      ("ERC20.Approval", false),
+      ("ERC20.Transfer", false),
+    ])
+  )
 
-    await indexer.process({
-      chains: {
-        1: {
-          simulate: [
-            approval(2),
-            transfer(2, 5n, 10n), // too early for late_cheap_transfers
-            transfer(4, 5n, 20n), // kept
-            transfer(4, 900n, 40n), // too expensive
-          ],
-        },
-      },
-    });
+  it("settles discriminators at compile time, leaving nothing to check", t =>
+    t.expect(plansFor("transfers")).toEqual([("ERC20.Transfer", false)])
+  )
 
+  it("leaves context conditions to the runtime", t =>
+    t.expect(plansFor("late_cheap_transfers")).toEqual([("ERC20.Transfer", true)])
+  )
+
+  // Only Transfer's plans read it, so Approval doesn't pay for the fetch.
+  it("fetches a transaction field only for the events whose tables read it", t =>
     t.expect({
-      // Both events feed this one, so block 2 counts the approval too.
-      blockActivity: await indexer.Block_activity.getAll(),
-      // Approval never reaches this one, so every transfer is summed.
-      transfers: await indexer.Transfers.getAll(),
-      // Only the transfer that cleared both context conditions.
-      lateCheap: await indexer.Late_cheap_transfers.getAll(),
-    }).toEqual({
-      blockActivity: [
-        { id: 2, events: 2, chainId: 1 },
-        { id: 4, events: 2, chainId: 1 },
-      ],
-      transfers: [{ id: alice, received: 70n, chainId: 1 }],
-      lateCheap: [{ id: \`4/\${alice}\`, value: 20n, chainId: 1 }],
-    });
-  });
-});
-`,
-)
+      "transfer": fieldsFor("Transfer"),
+      "approval": fieldsFor("Approval"),
+    }).toEqual({"transfer": ["gasPrice"], "approval": []})
+  )
+})
