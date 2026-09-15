@@ -200,7 +200,7 @@ and executeRollback = async (
       ->Array.push({
         chainId,
         progressBlockNumber: toBlock,
-        progressBlockTime: cs->ChainState.progressBlockTime,
+        progressBlockTime: cs->ChainState.committedProgressBlockTime,
         sourceBlockNumber: cs->ChainState.knownHeight,
         totalEventsProcessed: cs->ChainState.numEventsProcessed,
       })

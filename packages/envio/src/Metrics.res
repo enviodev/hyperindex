@@ -662,7 +662,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   )
   b->seriesOpt(
     ~name="envio_progress_block_time_seconds",
-    ~help="Unix timestamp of the block the chain has processed up to. Subtract it from the scrape time for how far behind chain time the indexer is - a measure that stays honest when the data source itself is behind the chain. Absent while the source doesn't report the progress block's header, which is the common case during backfill.",
+    ~help="Unix timestamp of the block the chain has processed up to. Subtract it from the scrape time for how far behind chain time the indexer is, which stays honest when the data source itself is behind the chain. Best effort in realtime mode, absent during backfill.",
     ~kind="gauge",
     ~entries=chains,
     ~value=m => m.progressBlockTime->Option.map(Int.toFloat),

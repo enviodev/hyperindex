@@ -29,10 +29,10 @@ type reorgHashSnapshot = {
 type chainBeforeBatch = {
   fetchState: FetchState.t,
   scannedHashes: reorgHashSnapshot,
-  // The chain's live store, read once the batch's progress block is known.
-  // Safe to read live: the build is synchronous, and the store is only pruned
-  // when the batch commits.
-  blockStore: BlockStore.t,
+  // The progress block isn't known until the build computes it, so its
+  // timestamp can't be snapshotted with the rest. Reads the chain's store,
+  // which the synchronous build can't see mutate.
+  blockTimeAt: int => option<int>,
   shouldRollbackOnReorg: bool,
   progressBlockNumber: int,
   sourceBlockNumber: int,
@@ -80,9 +80,7 @@ let getProgressedChainsById = {
           {
             batchSize: counts.size,
             progressBlockNumber: progressBlockNumberAfterBatch,
-            progressBlockTime: chainBeforeBatch.blockStore
-            ->BlockStore.getTimestamp(progressBlockNumberAfterBatch)
-            ->Null.toOption,
+            progressBlockTime: chainBeforeBatch.blockTimeAt(progressBlockNumberAfterBatch),
             sourceBlockNumber: chainBeforeBatch.sourceBlockNumber,
             totalEventsProcessed: chainBeforeBatch.totalEventsProcessed +.
             counts.eventsProcessed->Int.toFloat,

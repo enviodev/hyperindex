@@ -588,7 +588,7 @@ envio_progress_block{chainId="1"} 200
 # TYPE envio_progress_events gauge
 envio_progress_events{chainId="1"} 12345
 
-# HELP envio_progress_block_time_seconds Unix timestamp of the block the chain has processed up to. Subtract it from the scrape time for how far behind chain time the indexer is - a measure that stays honest when the data source itself is behind the chain. Absent while the source doesn't report the progress block's header, which is the common case during backfill.
+# HELP envio_progress_block_time_seconds Unix timestamp of the block the chain has processed up to. Subtract it from the scrape time for how far behind chain time the indexer is, which stays honest when the data source itself is behind the chain. Best effort in realtime mode, absent during backfill.
 # TYPE envio_progress_block_time_seconds gauge
 envio_progress_block_time_seconds{chainId="1"} 1700000000
 

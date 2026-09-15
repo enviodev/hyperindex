@@ -23,7 +23,7 @@ let make: (
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
-  ~progressBlockTime: option<int>=?,
+  ~committedProgressBlockTime: option<int>=?,
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
   ~shouldRollbackOnReorg: bool,
   ~maxReorgDepth: int,
@@ -69,7 +69,7 @@ let getLatestValidScannedBlock: (
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
-let progressBlockTime: t => option<int>
+let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
 let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit

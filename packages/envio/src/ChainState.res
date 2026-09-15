@@ -64,7 +64,7 @@ type t = {
   mutable progressLatencyMs: option<int>,
   // Timestamp of the committed progress block itself. See
   // `Batch.chainAfterBatch.progressBlockTime`.
-  mutable progressBlockTime: option<int>,
+  mutable committedProgressBlockTime: option<int>,
 }
 
 // The chain's config-declared addresses as storage rows: what a clean run
@@ -128,7 +128,7 @@ let make = (
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
-  ~progressBlockTime=None,
+  ~committedProgressBlockTime=None,
   ~safeCheckpointTracking=None,
   ~shouldRollbackOnReorg,
   ~maxReorgDepth,
@@ -175,7 +175,7 @@ let make = (
     reorgDetectedBlock: None,
     rollbackTargetBlock: None,
     progressLatencyMs: None,
-    progressBlockTime,
+    committedProgressBlockTime,
   }
 }
 
@@ -189,7 +189,7 @@ let makeInternal = (
   ~endBlock,
   ~firstEventBlock=None,
   ~progressBlockNumber,
-  ~progressBlockTime=None,
+  ~committedProgressBlockTime=None,
   ~config: Config.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~logger,
@@ -325,7 +325,7 @@ let makeInternal = (
       ~chainReorgCheckpoints,
     ),
     ~committedProgressBlockNumber=progressBlockNumber,
-    ~progressBlockTime,
+    ~committedProgressBlockTime,
     ~perChainEntities=config.userEntities->EntityTables.perChain,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
@@ -378,7 +378,7 @@ let makeFromDbState = (
     // A block's time never changes, so the stored one stays true for the block
     // progress is at - and keeps the metric reporting from the first scrape
     // after a restart, rather than only once a batch commits.
-    ~progressBlockTime=resumedChainState.progressBlockTime,
+    ~committedProgressBlockTime=resumedChainState.progressBlockTime,
     ~timestampCaughtUpToHeadOrEndblock=resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~logger,
@@ -418,7 +418,7 @@ let getLatestValidScannedBlock = (cs: t, ~blockStore: BlockStore.t, ~blockNumber
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
-let progressBlockTime = (cs: t) => cs.progressBlockTime
+let committedProgressBlockTime = (cs: t) => cs.committedProgressBlockTime
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
@@ -997,7 +997,7 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   sourceBlockNumber: cs.fetchState.knownHeight,
   progressBlockNumber: cs.committedProgressBlockNumber,
   progressLatencyMs: cs.progressLatencyMs,
-  progressBlockTime: cs.progressBlockTime,
+  progressBlockTime: cs.committedProgressBlockTime,
   concurrency: cs.sourceManager->SourceManager.inFlightCount,
   partitionsCount: cs.fetchState->FetchState.partitionsCount,
   bufferSize: cs.fetchState->FetchState.bufferSize,
@@ -1019,7 +1019,7 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
 
 // Snapshot the inputs a batch build needs from this chain. The scanned
 // in-threshold block hashes are copied up front because the build reuses the
-// whole set; the store itself comes along for the one point read whose key -
+// whole set; the block time comes as a lookup instead, since the key it needs -
 // the batch's own progress block - isn't known until the build computes it.
 let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
   let {blockNumbers, hashes} =
@@ -1037,7 +1037,8 @@ let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
     totalEventsProcessed: cs.numEventsProcessed,
     sourceBlockNumber: cs.fetchState.knownHeight,
     scannedHashes: {blockNumbers, hashByBlockNumber},
-    blockStore: cs.blockStore,
+    blockTimeAt: blockNumber =>
+      cs.blockStore->BlockStore.getTimestamp(blockNumber)->Null.toOption,
     shouldRollbackOnReorg: cs.shouldRollbackOnReorg,
     chainConfig: cs.chainConfig,
   }
@@ -1137,7 +1138,7 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       }
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
-      cs.progressBlockTime = chainAfterBatch.progressBlockTime
+      cs.committedProgressBlockTime = chainAfterBatch.progressBlockTime
 
       // Normally already set by advanceAfterBatch at batch creation; catch up
       // here for paths that commit progress without it.
@@ -1193,7 +1194,8 @@ let markReady = (cs: t, ~readyAt) =>
 let rollbackCommittedProgress = (cs: t, blockNumber) =>
   if blockNumber !== cs.committedProgressBlockNumber {
     cs.committedProgressBlockNumber = blockNumber
-    cs.progressBlockTime = cs.blockStore->BlockStore.getTimestamp(blockNumber)->Null.toOption
+    cs.committedProgressBlockTime =
+      cs.blockStore->BlockStore.getTimestamp(blockNumber)->Null.toOption
   }
 
 type progressDiff = {blockNumber: int, eventsProcessed: float}
