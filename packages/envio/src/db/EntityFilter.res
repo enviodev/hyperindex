@@ -516,17 +516,15 @@ let encodeValueKey: (unknown, unknown => string) => string = %raw(`(v, serialize
 let toString = (filter: t, ~table: Table.table) => {
   let key = ref("")
   filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
-    let compare = fieldName->fieldCompare(~table)
+    let keyOf = makeValueKey(~table, ~fieldName)
     operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
       key := key.contents ++ fieldName ++ operator
       if operator === "_in" {
         fieldValue
         ->(Utils.magic: unknown => array<unknown>)
-        ->Array.forEach(
-          value => key := key.contents ++ encodeValueKey(compare.key(value), serializeValue),
-        )
+        ->Array.forEach(value => key := key.contents ++ encodeValueKey(keyOf(value), serializeValue))
       } else {
-        key := key.contents ++ encodeValueKey(compare.key(fieldValue), serializeValue)
+        key := key.contents ++ encodeValueKey(keyOf(fieldValue), serializeValue)
       }
     })
   })
