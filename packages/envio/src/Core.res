@@ -61,6 +61,19 @@ type pgHistoryQueryInput = {
   sequence: string,
 }
 
+type pgDeleteRowsInput = {
+  pgSchema: string,
+  historyTable: string,
+  columns: array<string>,
+  idColumn: string,
+  checkpointColumn: string,
+  changeColumn: string,
+  deleteVariant: string,
+  chainIdColumn?: string,
+  idPgType: string,
+  checkpointPgType: string,
+}
+
 type pgIndexColumnInput = {
   name: string,
   direction: string,
@@ -110,6 +123,7 @@ type addon = {
   pgIndexDropQuery: (~pgSchema: string, ~indexName: string) => string,
   pgRollbackPreTargetRowsQuery: (~input: pgHistoryQueryInput) => string,
   pgRollbackRemovedIdsQuery: (~input: pgHistoryQueryInput) => string,
+  pgInsertDeleteRowsQuery: (~input: pgDeleteRowsInput) => string,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
@@ -388,3 +402,5 @@ let pgInsertValuesQuery = (~table, ~pgSchema, ~rows) =>
 
 let pgRollbackPreTargetRowsQuery = (~input) => getAddon().pgRollbackPreTargetRowsQuery(~input)
 let pgRollbackRemovedIdsQuery = (~input) => getAddon().pgRollbackRemovedIdsQuery(~input)
+
+let pgInsertDeleteRowsQuery = (~input) => getAddon().pgInsertDeleteRowsQuery(~input)

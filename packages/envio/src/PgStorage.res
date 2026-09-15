@@ -954,61 +954,40 @@ let makeInsertDeleteUpdatesQuery = (
   ~entityConfig: Internal.entityConfig,
   ~pgSchema,
   ~chainId: option<ChainId.t>,
-) => {
-  let historyTableName = EntityHistory.historyTableName(
-    ~entityName=entityConfig.name,
-    ~entityIndex=entityConfig.index,
+) =>
+  Core.pgInsertDeleteRowsQuery(
+    ~input={
+      pgSchema,
+      historyTable: EntityHistory.historyTableName(
+        ~entityName=entityConfig.name,
+        ~entityIndex=entityConfig.index,
+      ),
+      columns: entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
+        switch fieldOrDerived {
+        | Field(field) => field->Table.getPgDbFieldName->Some
+        | DerivedFrom(_) => None
+        }
+      ),
+      idColumn: Table.idFieldName,
+      checkpointColumn: EntityHistory.checkpointIdFieldName,
+      changeColumn: EntityHistory.changeFieldName,
+      deleteVariant: (EntityHistory.RowAction.DELETE :> string),
+      // Only when the flush group names a chain: without one there is no value
+      // to stamp, and the column takes the NULL the other data columns get.
+      chainIdColumn: ?switch (entityConfig.table->Table.getChainIdField, chainId) {
+      | (Some(field), Some(_)) => Some(field->Table.getPgDbFieldName)
+      | _ => None
+      },
+      idPgType: entityConfig.table->Table.getIdPgFieldType(~pgSchema),
+      checkpointPgType: Table.getPgFieldType(
+        ~fieldType=EntityHistory.checkpointIdFieldType,
+        ~pgSchema,
+        ~isArray=false,
+        ~isNumericArrayAsText=false,
+        ~isNullable=false,
+      ),
+    },
   )
-
-  // Get all field names for the INSERT statement
-  let allHistoryFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
-    switch fieldOrDerived {
-    | Field(field) => field->Table.getPgDbFieldName->Some
-    | DerivedFrom(_) => None
-    }
-  )
-  allHistoryFieldNames->Array.push(EntityHistory.checkpointIdFieldName)->ignore
-  allHistoryFieldNames->Array.push(EntityHistory.changeFieldName)->ignore
-
-  let allHistoryFieldNamesStr =
-    allHistoryFieldNames->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
-
-  // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
-  // The chain-id column is part of the history primary key, so a DELETE row
-  // carries the scope's chain — bound once as $3 — rather than the NULL every
-  // other data field gets.
-  let chainIdColumn = switch (entityConfig.table->Table.getChainIdField, chainId) {
-  | (Some(field), Some(_)) => field->Table.getPgDbFieldName
-  | _ => ""
-  }
-  let selectParts = allHistoryFieldNames->Array.map(fieldName => {
-    switch fieldName {
-    | field if field == Table.idFieldName => `u.${Table.idFieldName}`
-    | field if field == EntityHistory.checkpointIdFieldName =>
-      `u.${EntityHistory.checkpointIdFieldName}`
-    | field if field == EntityHistory.changeFieldName =>
-      `'${(EntityHistory.RowAction.DELETE :> string)}'`
-    | field if chainIdColumn !== "" && field == chainIdColumn => "$3"
-    | _ => "NULL"
-    }
-  })
-  let selectPartsStr = selectParts->Array.joinUnsafe(", ")
-
-  // Get the PostgreSQL type for the checkpoint ID field
-  let checkpointIdPgType = Table.getPgFieldType(
-    ~fieldType=EntityHistory.checkpointIdFieldType,
-    ~pgSchema,
-    ~isArray=false,
-    ~isNumericArrayAsText=false,
-    ~isNullable=false,
-  )
-
-  let idPgType = entityConfig.table->Table.getIdPgFieldType(~pgSchema)
-
-  `INSERT INTO "${pgSchema}"."${historyTableName}" (${allHistoryFieldNamesStr})
-SELECT ${selectPartsStr}
-FROM UNNEST($1::${idPgType}[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
-}
 
 let executeSet = (
   sql: Postgres.sql,

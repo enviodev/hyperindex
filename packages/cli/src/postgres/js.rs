@@ -16,7 +16,7 @@ use super::index_definition::{self, Direction, IndexColumn, IndexDefinition};
 use super::insert;
 use super::param::Param;
 use super::pg_type::{self, ChainIdMode, FieldType};
-use super::rollback::{HistoryQuery, Sequence};
+use super::rollback::{self, HistoryQuery, Sequence};
 use super::rows;
 
 /// One column, flattened for the boundary: napi carries no tagged union, so the
@@ -535,4 +535,38 @@ pub fn pg_rollback_removed_ids_query(input: PgHistoryQueryInput) -> napi::Result
     HistoryQuery::from(input)
         .removed_ids(sequence)
         .map_err(to_napi)
+}
+
+/// What a delete needs recorded in an entity's history.
+#[napi(object)]
+pub struct PgDeleteRowsInput {
+    pub pg_schema: String,
+    pub history_table: String,
+    /// The entity's own columns, in the order the table declares them.
+    pub columns: Vec<String>,
+    pub id_column: String,
+    pub checkpoint_column: String,
+    pub change_column: String,
+    pub delete_variant: String,
+    /// Set only when the flush group names a chain and the entity has a column
+    /// for one.
+    pub chain_id_column: Option<String>,
+    pub id_pg_type: String,
+    pub checkpoint_pg_type: String,
+}
+
+#[napi]
+pub fn pg_insert_delete_rows_query(input: PgDeleteRowsInput) -> String {
+    rollback::insert_delete_rows_query(
+        &input.pg_schema,
+        &input.history_table,
+        &input.columns,
+        &input.id_column,
+        &input.checkpoint_column,
+        &input.change_column,
+        &input.delete_variant,
+        input.chain_id_column.as_deref(),
+        &input.id_pg_type,
+        &input.checkpoint_pg_type,
+    )
 }

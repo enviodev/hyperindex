@@ -169,6 +169,59 @@ impl HistoryQuery {
     }
 }
 
+/// Records a delete as a history row: the id and the checkpoint it happened at,
+/// and nothing else.
+///
+/// Every data column is NULL because a delete says what the row stopped being,
+/// not what it was. The exception is the chain column of a per-chain entity,
+/// which is part of the history key — a row keyed on a NULL chain would not be
+/// the row that was deleted.
+pub fn insert_delete_rows_query(
+    pg_schema: &str,
+    history_table: &str,
+    columns: &[String],
+    id_column: &str,
+    checkpoint_column: &str,
+    change_column: &str,
+    delete_variant: &str,
+    chain_id_column: Option<&str>,
+    id_pg_type: &str,
+    checkpoint_pg_type: &str,
+) -> String {
+    let mut all = columns.to_vec();
+    all.push(checkpoint_column.to_string());
+    all.push(change_column.to_string());
+
+    let selected = all
+        .iter()
+        .map(|column| {
+            if column == id_column {
+                format!("u.{id_column}")
+            } else if column == checkpoint_column {
+                format!("u.{checkpoint_column}")
+            } else if column == change_column {
+                format!("'{delete_variant}'")
+            } else if chain_id_column == Some(column.as_str()) {
+                "$3".to_string()
+            } else {
+                "NULL".to_string()
+            }
+        })
+        .collect::<Vec<_>>();
+
+    format!(
+        "INSERT INTO \"{pg_schema}\".\"{history_table}\" ({names})\nSELECT {selected}\nFROM \
+         UNNEST($1::{id_pg_type}[], $2::{checkpoint_pg_type}[]) AS \
+         u({id_column}, {checkpoint_column})",
+        names = all
+            .iter()
+            .map(|column| format!("\"{column}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+        selected = selected.join(", "),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +323,46 @@ mod tests {
                 query.contains("$1\n"),
             ),
             (true, true, false)
+        );
+    }
+
+    fn delete_rows(chain_id_column: Option<&str>, columns: &[&str]) -> String {
+        insert_delete_rows_query(
+            "public",
+            "envio_history_Counter",
+            &columns.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+            "id",
+            "envio_checkpoint_id",
+            "envio_change",
+            "DELETE",
+            chain_id_column,
+            "TEXT",
+            "BIGINT",
+        )
+    }
+
+    /// A delete says what the row stopped being, so every data column is NULL.
+    #[test]
+    fn a_delete_row_carries_nothing_but_its_key() {
+        assert_eq!(
+            delete_rows(None, &["id", "b_id", "optional"]),
+            "INSERT INTO \"public\".\"envio_history_Counter\" (\"id\", \"b_id\", \"optional\", \
+             \"envio_checkpoint_id\", \"envio_change\")\n\
+             SELECT u.id, NULL, NULL, u.envio_checkpoint_id, 'DELETE'\n\
+             FROM UNNEST($1::TEXT[], $2::BIGINT[]) AS u(id, envio_checkpoint_id)"
+        );
+    }
+
+    /// The chain is part of the history key, so it is bound rather than nulled —
+    /// a row keyed on a NULL chain is not the row that was deleted.
+    #[test]
+    fn a_per_chain_delete_row_keeps_its_chain() {
+        assert_eq!(
+            delete_rows(Some("chainId"), &["id", "count", "chainId"]),
+            "INSERT INTO \"public\".\"envio_history_Counter\" (\"id\", \"count\", \"chainId\", \
+             \"envio_checkpoint_id\", \"envio_change\")\n\
+             SELECT u.id, NULL, $3, u.envio_checkpoint_id, 'DELETE'\n\
+             FROM UNNEST($1::TEXT[], $2::BIGINT[]) AS u(id, envio_checkpoint_id)"
         );
     }
 

@@ -782,6 +782,22 @@ SELECT * FROM unnest($1::INTEGER[],$2::BIGINT[],$3::TEXT[],$4::TEXT[],$5::INTEGE
     )
   })
 
+  describe("makeInsertDeleteUpdatesQuery", () => {
+    Async.it(
+      "Should record a delete as a history row of nulls",
+      async t => {
+        let query = PgStorage.makeInsertDeleteUpdatesQuery(
+          ~entityConfig=entityConfig("A"),
+          ~pgSchema="test_schema",
+          ~chainId=None,
+        )
+        t.expect(query).toBe(`INSERT INTO "test_schema"."envio_history_A" ("id", "b_id", "optionalStringToTestLinkedEntities", "envio_checkpoint_id", "envio_change")
+SELECT u.id, NULL, NULL, u.envio_checkpoint_id, 'DELETE'
+FROM UNNEST($1::TEXT[], $2::BIGINT[]) AS u(id, envio_checkpoint_id)`)
+      },
+    )
+  })
+
   describe("makeInsertValuesSetQuery", () => {
     Async.it(
       "Should create correct SQL for inserting with values",

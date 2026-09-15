@@ -381,6 +381,21 @@ describe("Per-chain rollback and delete SQL", () => {
     )).toEqual((true, true))
   })
 
+  // The chain-id column is part of the history primary key, so a delete row
+  // carries the flush group's chain rather than the NULL every other data
+  // column gets.
+  it("Stamps a per-chain delete row with its chain", t => {
+    t.expect(
+      PgStorage.makeInsertDeleteUpdatesQuery(
+        ~entityConfig=counter,
+        ~pgSchema="public",
+        ~chainId=Some(137->ChainId.fromInt),
+      ),
+    ).toBe(`INSERT INTO "public"."envio_history_Counter" ("id", "count", "chainId", "envio_checkpoint_id", "envio_change")
+SELECT u.id, NULL, $3, u.envio_checkpoint_id, 'DELETE'
+FROM UNNEST($1::TEXT[], $2::BIGINT[]) AS u(id, envio_checkpoint_id)`)
+  })
+
   it("Narrows a delete to the flush group's chain", t => {
     t.expect(
       PgStorage.makeDeleteByIdQuery(
