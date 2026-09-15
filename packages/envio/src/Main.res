@@ -491,7 +491,7 @@ let getGlobalIndexer = (): 'indexer => {
 let startServer = (
   ~getMetrics: unit => option<Metrics.t>,
   ~envioVersion: string,
-  ~persistence: Persistence.t,
+  ~onSyncCache: unit => promise<unit>,
   ~isDevelopmentMode: bool,
 ) => {
   open Express
@@ -546,8 +546,8 @@ let startServer = (
 
   app->post("/console/syncCache", (_req, res) => {
     if isDevelopmentMode {
-      (persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
-      ->Promise.thenResolve(_ => res->json(Boolean(true)))
+      onSyncCache()
+      ->Promise.thenResolve(() => res->json(Boolean(true)))
       ->Promise.ignore
     } else {
       res->json(Boolean(false))
@@ -593,7 +593,17 @@ type mainArgs = Yargs.parsedArgs<args>
 // `envio_info` (on initialize) and validates against (on resume).
 let getEnvioInfo = () => Config.getPublicConfigJson()->Config.stripSensitiveData
 
-let migrate = async (~reset) => {
+let migrate = async (
+  ~reset,
+  // A supervisor creating the schema for a run it is about to start names that
+  // run's commands, not the migration's, in what a config change prints.
+  ~resetCommand="envio local db-migrate setup",
+  ~runCommand=None,
+  // A migration command runs once and exits, with nobody watching it recover:
+  // an unreachable chain should say so now rather than hold the command open.
+  // A run that is about to start wants the opposite.
+  ~startBlockRetry=StartBlockResolver.Once,
+) => {
   let config = Config.load()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   await persistence->Persistence.init(
@@ -601,12 +611,10 @@ let migrate = async (~reset) => {
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
     ~envioInfo=getEnvioInfo(),
-    ~resetCommand="envio local db-migrate setup",
-    ~runCommand=None,
+    ~resetCommand,
+    ~runCommand,
     ~lowercaseAddresses=config.lowercaseAddresses,
-    // A migration command runs once and exits, with nobody watching it recover:
-    // an unreachable chain should say so now rather than hold the command open.
-    ~startBlockRetry=StartBlockResolver.Once,
+    ~startBlockRetry,
   )
   await persistence.storage.close()
 }
@@ -622,6 +630,22 @@ let dropSchema = async () => {
 // context, so callers should act on it (exit / re-throw) without logging again.
 exception FatalError(exn)
 
+// Whether this process draws the progress display: `--tui-off` first, then
+// `ENVIO_TUI`, then whether anything is watching. A supervisor asks the same
+// question its workers would have, since it is the one drawing for the run.
+let shouldUseTui = (~suppressed=false) => {
+  let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
+  let explicitTui = switch mainArgs.tuiOff {
+  | Some(off) => Some(!off)
+  | None => Env.tuiEnvVar
+  }
+  switch (suppressed, explicitTui) {
+  | (true, _) => false
+  | (_, Some(tui)) => tui
+  | (_, None) => !Envio.isNonInteractive()
+  }
+}
+
 let start = async (
   ~persistence: option<Persistence.t>=?,
   ~reset=false,
@@ -629,16 +653,8 @@ let start = async (
   ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrationsByChainId) => Config.t>=?,
 ) => {
-  let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-  let explicitTui = switch mainArgs.tuiOff {
-  | Some(off) => Some(!off)
-  | None => Env.tuiEnvVar
-  }
-  let shouldUseTui = switch (isTest, explicitTui) {
-  | (true, _) => false
-  | (_, Some(tui)) => tui
-  | (_, None) => !Envio.isNonInteractive()
-  }
+  // A worker reports to its supervisor, which draws for the whole run.
+  let shouldUseTui = shouldUseTui(~suppressed=isTest || Worker.isEnabled)
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
   let config = Config.load()
@@ -697,9 +713,18 @@ let start = async (
   let envioVersion = Utils.EnvioPackage.value.version
 
   let getMetrics = () => getIndexerState()->Option.map(IndexerState.toMetrics)
+  let dumpEffectCache = () =>
+    (persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
 
-  if !isTest {
-    startServer(~persistence, ~isDevelopmentMode, ~envioVersion, ~getMetrics)
+  // A worker reports through its supervisor, which owns the one server and the
+  // one display the run has.
+  if !isTest && !Worker.isEnabled {
+    startServer(
+      ~onSyncCache=() => dumpEffectCache()->Promise.thenResolve(ignore),
+      ~isDevelopmentMode,
+      ~envioVersion,
+      ~getMetrics,
+    )
   }
 
   let state = IndexerState.makeFromDbState(
@@ -714,6 +739,18 @@ let start = async (
   )
   if shouldUseTui {
     let _rerender = Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
+  }
+  if Worker.isEnabled {
+    Worker.onParentMessage(message =>
+      switch message {
+      | SyncCache(_) => dumpEffectCache()->Promise.ignore
+      | Init(_) => ()
+      }
+    )
+    let _intervalId = setInterval(
+      () => Worker.send(Snapshot({metrics: state->IndexerState.toMetrics})),
+      Worker.snapshotIntervalMillis,
+    )
   }
   setIndexerState(state)
   state->IndexerLoop.start

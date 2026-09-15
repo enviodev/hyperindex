@@ -51,23 +51,35 @@ let applyEnv = (env: dict<JSON.t>) =>
 
 let run = async args => {
   try {
-    switch (await Core.runCli(args))->Null.toOption {
-    // Rust-only command (codegen / init / stop / docker / metrics / help /
-    // version / scripts) — nothing for JS to do, exit cleanly.
-    | None => ()
-    | Some(json) =>
-      switch decodeCommand(json->JSON.parseOrThrow) {
-      | Start({reset, cwd, env, config}) =>
-        Config.prime(config)
-        processChdir(cwd)
-        applyEnv(env)
-        await Main.start(~reset)
-      | Migrate({reset, config}) =>
-        Config.prime(config)
-        await Main.migrate(~reset)
-      | DropSchema({config}) =>
-        Config.prime(config)
-        await Main.dropSchema()
+    if Worker.isEnabled {
+      Worker.exitWithSupervisor()
+      // A worker is handed the config its supervisor already parsed, narrowed to
+      // the chains it drives, so the two can't disagree about what is indexed.
+      // Its working directory and environment came with the fork.
+      Config.prime(await Worker.awaitInit())
+      await Main.start()
+    } else {
+      switch (await Core.runCli(args))->Null.toOption {
+      // Rust-only command (codegen / init / stop / docker / metrics / help /
+      // version / scripts) — nothing for JS to do, exit cleanly.
+      | None => ()
+      | Some(json) =>
+        switch decodeCommand(json->JSON.parseOrThrow) {
+        | Start({reset, cwd, env, config}) =>
+          Config.prime(config)
+          processChdir(cwd)
+          applyEnv(env)
+          switch Supervisor.planForRun(~config=Config.load()) {
+          | Some(workers) => await Supervisor.run(~workers, ~configJson=config, ~reset)
+          | None => await Main.start(~reset)
+          }
+        | Migrate({reset, config}) =>
+          Config.prime(config)
+          await Main.migrate(~reset)
+        | DropSchema({config}) =>
+          Config.prime(config)
+          await Main.dropSchema()
+        }
       }
     }
   } catch {

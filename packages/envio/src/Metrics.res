@@ -148,6 +148,106 @@ type t = {
   sourceHeightStreams: array<sourceHeightStreamMetrics>,
 }
 
+// Folds items that share a key into one, keeping first-seen order so the
+// rendered series doesn't reshuffle between scrapes.
+let sumByKey = (items: array<'item>, ~key: 'item => string, ~add: ('item, 'item) => 'item) => {
+  let byKey = Dict.make()
+  let order = []
+  items->Array.forEach(item => {
+    let k = item->key
+    switch byKey->Utils.Dict.dangerouslyGetNonOption(k) {
+    | Some(existing) => byKey->Dict.set(k, add(existing, item))
+    | None => {
+        byKey->Dict.set(k, item)
+        order->Array.push(k)
+      }
+    }
+  })
+  order->Array.map(k => byKey->Dict.getUnsafe(k))
+}
+
+// Combines the snapshots a supervised run's workers reported into the one an
+// unsplit run would have produced. Series keyed by chain concatenate, since a
+// chain belongs to exactly one worker; series keyed by name are summed, since
+// every worker runs the same handlers and effects over its own chains. The
+// clock is the caller's: it belongs to the group, not to any worker.
+let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds) => {
+  let concat = select => snapshots->Array.flatMap(select)
+  let sumInt = select => snapshots->Array.reduce(0, (acc, snapshot) => acc + snapshot->select)
+  let sumFloat = select => snapshots->Array.reduce(0., (acc, snapshot) => acc +. snapshot->select)
+
+  {
+    startTime,
+    metricTime,
+    elapsedSeconds,
+    targetBufferSize: sumInt(s => s.targetBufferSize),
+    isInReorgThreshold: snapshots->Array.some(s => s.isInReorgThreshold),
+    rollbackEnabled: snapshots->Array.some(s => s.rollbackEnabled),
+    maxBatchSize: snapshots->Array.reduce(0, (acc, s) => Pervasives.max(acc, s.maxBatchSize)),
+    preloadSeconds: sumFloat(s => s.preloadSeconds),
+    processingSeconds: sumFloat(s => s.processingSeconds),
+    processingStalledOnFetchSeconds: sumFloat(s => s.processingStalledOnFetchSeconds),
+    processingStalledOnStorageWriteSeconds: sumFloat(s => s.processingStalledOnStorageWriteSeconds),
+    rollbackSeconds: sumFloat(s => s.rollbackSeconds),
+    rollbackCount: sumInt(s => s.rollbackCount),
+    rollbackEventsCount: sumFloat(s => s.rollbackEventsCount),
+    chains: concat(s => s.chains),
+    sourceRequests: concat(s => s.sourceRequests),
+    sourceHeights: concat(s => s.sourceHeights),
+    sourceHeightStreams: concat(s => s.sourceHeightStreams),
+    handlers: concat(s => s.handlers)->sumByKey(
+      ~key=h => `${h.contract}.${h.event}`,
+      ~add=(a, b) => {
+        ...a,
+        processingSeconds: a.processingSeconds +. b.processingSeconds,
+        processingCount: a.processingCount +. b.processingCount,
+        preloadSeconds: a.preloadSeconds +. b.preloadSeconds,
+        preloadCount: a.preloadCount +. b.preloadCount,
+        preloadSecondsTotal: a.preloadSecondsTotal +. b.preloadSecondsTotal,
+      },
+    ),
+    effects: concat(s => s.effects)->sumByKey(
+      ~key=e => `${e.effect}.${e.scope}`,
+      ~add=(a, b) => {
+        ...a,
+        callSeconds: a.callSeconds +. b.callSeconds,
+        callSecondsTotal: a.callSecondsTotal +. b.callSecondsTotal,
+        callCount: a.callCount +. b.callCount,
+        activeCallsCount: a.activeCallsCount + b.activeCallsCount,
+        queueCount: a.queueCount + b.queueCount,
+        queueWaitSeconds: a.queueWaitSeconds +. b.queueWaitSeconds,
+        invalidationsCount: a.invalidationsCount +. b.invalidationsCount,
+        // An effect's cache rows are per chain, so worker counts are disjoint.
+        // Absent unless some worker persists the cache at all.
+        cacheCount: switch (a.cacheCount, b.cacheCount) {
+        | (Some(x), Some(y)) => Some(x + y)
+        | (Some(x), None) => Some(x)
+        | (None, y) => y
+        },
+      },
+    ),
+    storageLoads: concat(s => s.storageLoads)->sumByKey(
+      ~key=l => `${l.storage}.${l.operation}`,
+      ~add=(a, b) => {
+        ...a,
+        seconds: a.seconds +. b.seconds,
+        secondsTotal: a.secondsTotal +. b.secondsTotal,
+        count: a.count +. b.count,
+        whereSize: a.whereSize +. b.whereSize,
+        size: a.size +. b.size,
+      },
+    ),
+    storageWrites: concat(s => s.storageWrites)->sumByKey(
+      ~key=w => w.storage,
+      ~add=(a, b) => {...a, seconds: a.seconds +. b.seconds, count: a.count + b.count},
+    ),
+    historyPrunes: concat(s => s.historyPrunes)->sumByKey(
+      ~key=p => p.entity,
+      ~add=(a, b) => {...a, seconds: a.seconds +. b.seconds, count: a.count + b.count},
+    ),
+  }
+}
+
 // Prometheus floats keep at most 3 decimals; integral values render without a
 // fractional part.
 @inline

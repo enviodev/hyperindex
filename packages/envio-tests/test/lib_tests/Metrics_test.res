@@ -663,3 +663,134 @@ envio_indexing_contract_addresses{chainId="1",contract="NftFactory"} 2
     )
   })
 })
+
+describe("Metrics.merge", () => {
+  let startTime = Date.fromTime(1000.)
+  let metricTime = Date.fromTime(5000.)
+
+  let handler = (~event, ~processingCount): Metrics.handlerMetrics => {
+    contract: "Token",
+    event,
+    processingSeconds: 1.,
+    processingCount,
+    preloadSeconds: 0.5,
+    preloadCount: 2.,
+    preloadSecondsTotal: 3.,
+  }
+
+  let effect = (~cacheCount): Metrics.effectMetrics => {
+    effect: "getMetadata",
+    scope: "crossChain",
+    callSeconds: 1.,
+    callSecondsTotal: 2.,
+    callCount: 3.,
+    activeCallsCount: 1,
+    queueCount: 2,
+    queueWaitSeconds: 0.25,
+    invalidationsCount: 1.,
+    cacheCount,
+  }
+
+  it("Returns one worker's snapshot unchanged, taking the clock from the caller", t => {
+    let only: Metrics.t = {
+      ...baseMetrics,
+      startTime: Date.fromTime(777.),
+      metricTime: Date.fromTime(888.),
+      elapsedSeconds: 42.,
+      processingSeconds: 1.5,
+      maxBatchSize: 5000,
+      chains: [TestChainMetrics.make(~progressBlockNumber=400, ~firstEventBlockNumber=Some(150))],
+      handlers: [handler(~event="Transfer", ~processingCount=4.)],
+      effects: [effect(~cacheCount=Some(7))],
+    }
+
+    t.expect(Metrics.merge([only], ~startTime, ~metricTime, ~elapsedSeconds=9.)).toStrictEqual({
+      ...only,
+      startTime,
+      metricTime,
+      elapsedSeconds: 9.,
+    })
+  })
+
+  it("Concatenates chain series, sums what shares a key, and folds the scalars", t => {
+    let chainOne = TestChainMetrics.make(~progressBlockNumber=400, ~firstEventBlockNumber=None)
+    let chainTwo = {...chainOne, Metrics.chainId: 137->ChainId.fromInt}
+
+    let first: Metrics.t = {
+      ...baseMetrics,
+      targetBufferSize: 100,
+      maxBatchSize: 5000,
+      isInReorgThreshold: false,
+      rollbackEnabled: true,
+      processingSeconds: 1.5,
+      rollbackCount: 1,
+      chains: [chainOne],
+      handlers: [handler(~event="Transfer", ~processingCount=4.)],
+      effects: [effect(~cacheCount=Some(7))],
+      storageWrites: [{storage: "Postgres", seconds: 2., count: 3}],
+    }
+    let second: Metrics.t = {
+      ...baseMetrics,
+      targetBufferSize: 50,
+      maxBatchSize: 1000,
+      isInReorgThreshold: true,
+      rollbackEnabled: true,
+      processingSeconds: 0.5,
+      rollbackCount: 2,
+      chains: [chainTwo],
+      handlers: [
+        handler(~event="Transfer", ~processingCount=6.),
+        handler(~event="Approval", ~processingCount=1.),
+      ],
+      effects: [effect(~cacheCount=None)],
+      storageWrites: [{storage: "Postgres", seconds: 1., count: 4}],
+    }
+
+    t.expect(
+      Metrics.merge([first, second], ~startTime, ~metricTime, ~elapsedSeconds=9.),
+    ).toStrictEqual({
+      ...baseMetrics,
+      startTime,
+      metricTime,
+      elapsedSeconds: 9.,
+      targetBufferSize: 150,
+      maxBatchSize: 5000,
+      isInReorgThreshold: true,
+      rollbackEnabled: true,
+      processingSeconds: 2.,
+      rollbackCount: 3,
+      chains: [chainOne, chainTwo],
+      handlers: [
+        {
+          ...handler(~event="Transfer", ~processingCount=10.),
+          processingSeconds: 2.,
+          preloadSeconds: 1.,
+          preloadCount: 4.,
+          preloadSecondsTotal: 6.,
+        },
+        handler(~event="Approval", ~processingCount=1.),
+      ],
+      effects: [
+        {
+          ...effect(~cacheCount=Some(7)),
+          callSeconds: 2.,
+          callSecondsTotal: 4.,
+          callCount: 6.,
+          activeCallsCount: 2,
+          queueCount: 4,
+          queueWaitSeconds: 0.5,
+          invalidationsCount: 2.,
+        },
+      ],
+      storageWrites: [{storage: "Postgres", seconds: 3., count: 7}],
+    })
+  })
+
+  it("Renders an empty group as an indexer that has reported nothing yet", t => {
+    t.expect(Metrics.merge([], ~startTime, ~metricTime, ~elapsedSeconds=0.)).toStrictEqual({
+      ...baseMetrics,
+      startTime,
+      metricTime,
+    })
+  })
+})

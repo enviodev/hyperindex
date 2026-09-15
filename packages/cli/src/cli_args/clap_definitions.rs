@@ -145,6 +145,9 @@ pub struct StartArgs {
     pub restart: bool,
 
     ///Index only this chain, leaving the others to their own `envio start --chain` processes.
+    ///Only needed to place the chains yourself: a plain `envio start` already splits them across
+    ///processes when `ENVIO_PG_MAX_CONNECTIONS` affords two connections per process, and manages
+    ///those processes for you.
     ///Repeat the flag for several chains. Requires a schema whose entities are all per-chain,
     ///created for every chain by `envio local db-migrate up` before any process starts.
     ///Assign each configured chain to exactly one process, and give each its own
