@@ -640,9 +640,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         if self.masks[slot as usize] & (1u64 << field) == 0 {
             return None;
         }
-        self.cols[field]
-            .as_ref()
-            .map(|c| c.i64_cell(slot as usize))
+        self.cols[field].as_ref().map(|c| c.i64_cell(slot as usize))
     }
 
     /// Lowest key `>= from` carrying `field` in both tables whose cells differ,
