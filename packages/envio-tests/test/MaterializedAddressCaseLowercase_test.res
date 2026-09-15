@@ -24,8 +24,7 @@ tables:
       eventName: Transfer
       params:
         from:
-          _eq:
-            _literal: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+          _eq: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
     select:
       id: params.to
       total:

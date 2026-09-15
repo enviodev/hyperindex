@@ -1922,6 +1922,21 @@ fn discriminator_value(field: &str, text: &str) -> String {
     }
 }
 
+/// The name a discriminator is compared to. These take a closed vocabulary, so
+/// a bare string is the name itself rather than a path — and `_literal` says
+/// the same thing the long way, which the general rule allows everywhere else.
+fn discriminator_name(value: &Yaml) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(text.to_string());
+    }
+    match as_operator(value) {
+        Ok(Some(ExprObject {
+            operator, inner, ..
+        })) if operator == "_literal" => inner.as_str().map(str::to_string),
+        _ => None,
+    }
+}
+
 /// The `contractName`/`eventName` a filter can match, so a table only gets
 /// plans for events it could actually be written by.
 fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<String>)) {
@@ -1932,7 +1947,8 @@ fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<S
             }
         }
         Condition::Cmp { path, op, value } if *op == Comparison::Eq && path.len() == 1 => {
-            if let Some(text) = value.as_str() {
+            if let Some(text) = discriminator_name(value) {
+                let text = text.as_str();
                 if path[0] == "contractName" {
                     out.0.insert(discriminator_value(&path[0], text));
                 } else if path[0] == "eventName" {
@@ -1946,7 +1962,8 @@ fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<S
             values,
         } if path.len() == 1 => {
             for value in values {
-                if let Some(text) = value.as_str() {
+                if let Some(text) = discriminator_name(value) {
+                    let text = text.as_str();
                     if path[0] == "contractName" {
                         out.0.insert(discriminator_value(&path[0], text));
                     } else if path[0] == "eventName" {
@@ -2025,8 +2042,8 @@ fn evaluate(
         }
         Condition::Cmp { path, op, value } => {
             if let Some(known) = known_discriminator(path, contract_name, event_name) {
-                if let Some(text) = value.as_str() {
-                    let matches = known == discriminator_value(&path[0], text);
+                if let Some(text) = discriminator_name(value) {
+                    let matches = known == discriminator_value(&path[0], &text);
                     return Ok(match (*op, matches) {
                         (Comparison::Eq, true) | (Comparison::Ne, false) => Residual::True,
                         (Comparison::Eq, false) | (Comparison::Ne, true) => Residual::False,
@@ -2048,7 +2065,7 @@ fn evaluate(
             let target = shape
                 .resolve(path, demand)
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
-            let compiled = compile_expr(value, &ctx, demand)
+            let compiled = compile_comparand(value, &target, &ctx, demand)
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
             let value = compiled
                 .coerce(&target, addresses)
@@ -2067,10 +2084,10 @@ fn evaluate(
             if let Some(known) = known_discriminator(path, contract_name, event_name) {
                 let mut matches = false;
                 for value in values {
-                    let text = value.as_str().ok_or_else(|| {
+                    let text = discriminator_name(value).ok_or_else(|| {
                         anyhow!("`{}` must be compared to strings", path.join("."))
                     })?;
-                    matches = matches || discriminator_value(&path[0], text) == known;
+                    matches = matches || discriminator_value(&path[0], &text) == known;
                 }
                 return Ok(if matches != *negated {
                     Residual::True
@@ -2089,7 +2106,7 @@ fn evaluate(
             let compiled = values
                 .iter()
                 .map(|value| {
-                    compile_expr(value, &ctx, demand)
+                    compile_comparand(value, &target, &ctx, demand)
                         .and_then(|compiled| compiled.coerce(&target, addresses))
                 })
                 .collect::<Result<Vec<_>>>()
@@ -2101,6 +2118,34 @@ fn evaluate(
             }))
         }
     }
+}
+
+/// A comparison knows the type it expects, so an address needs no `_literal`:
+/// a bare string is a path where one resolves, and the value itself where none
+/// does. Only addresses qualify — every other string type would make a typo
+/// into data, which is what `_literal` exists to prevent.
+fn compile_comparand(
+    value: &Yaml,
+    target: &Ty,
+    ctx: &ExprCtx,
+    demand: &mut Demand,
+) -> Result<Typed> {
+    if target.scalar == Scalar::Address && !target.is_list() {
+        if let Yaml::String(text) = value {
+            let resolves = split_path(text).is_ok_and(|path| {
+                ctx.shape.resolve(&path, &mut Demand::default()).is_ok()
+            });
+            if !resolves {
+                return Ok(Typed {
+                    expr: CExpr::LitString {
+                        value: text.clone(),
+                    },
+                    typing: Typing::Known(Ty::new(Scalar::String)),
+                });
+            }
+        }
+    }
+    compile_expr(value, ctx, demand)
 }
 
 fn known_discriminator<'a>(

@@ -23,12 +23,10 @@ tables:
     where:
       eventName: Transfer
       srcAddress:
-        _eq:
-          _literal: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"
+        _eq: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"
       params:
         from:
-          _eq:
-            _literal: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+          _eq: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
     select:
       id: params.to
       total:

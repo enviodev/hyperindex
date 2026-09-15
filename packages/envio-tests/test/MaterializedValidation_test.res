@@ -518,6 +518,13 @@ describe("tables: where conditions", () => {
         _gt: Transfer`,
       "`eventName` only supports `_eq`/`_neq`/`_in`",
     ),
+    (
+      "rejects a `_literal` name that isn't configured",
+      `      eventName:
+        _eq:
+          _literal: Mint`,
+      "`eventName: Mint` is not configured on any contract. Configured events: Approval, Transfer",
+    ),
     // `_eq: null` asks for the rows where a value isn't there, so a field that
     // is always there makes it a condition nothing can satisfy.
     (
