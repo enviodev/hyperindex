@@ -297,7 +297,7 @@ impl PgClient {
         let result = PgQueryResult {
             handle: self.next_handle.fetch_add(1, Ordering::Relaxed),
             names: columns.into_iter().map(|column| column.name).collect(),
-            kinds: types.iter().map(|ty| rows::column_kind(ty) as u8).collect(),
+            kinds: types.iter().map(|ty| rows::slot_kind(ty) as u8).collect(),
             rows: arena.rows() as u32,
         };
         self.results.lock().unwrap().insert(result.handle, arena);

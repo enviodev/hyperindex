@@ -11,6 +11,7 @@
 use super::client::{PgClient, PgConnectionOptions, SslSetting};
 use super::param::Param;
 use super::rows::Cell;
+use crate::columnar::ColumnKind;
 
 fn client() -> PgClient {
     PgClient::connect(PgConnectionOptions {
@@ -278,4 +279,91 @@ async fn an_array_keeps_null_apart_from_the_word() {
             .collect::<Vec<_>>(),
         vec![None, Some("NULL".to_string())]
     );
+}
+
+/// Array columns go into a list slot: the elements laid out as a column of
+/// their own, and a row boundary saying which of them belong to which row.
+/// `[Bytes!]!` is why they cannot travel as text the way a JSON document does.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn array_columns_lay_out_as_lists() {
+    let client = client();
+    let (rows, columns) = client
+        .query(
+            "SELECT * FROM (VALUES \
+               (ARRAY['a','bb']::text[], ARRAY[1,2,3]::int4[], ARRAY['\\xde'::bytea]), \
+               (ARRAY[]::text[],         ARRAY[]::int4[],      ARRAY[]::bytea[]), \
+               (ARRAY['c']::text[],      NULL::int4[],         ARRAY[NULL]::bytea[]) \
+             ) AS t(texts, ints, blobs)",
+            &[],
+        )
+        .await
+        .expect("the query runs");
+    let types = columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect::<Vec<_>>();
+
+    let arena = super::rows::into_arena(&rows, &types).expect("the rows lay out");
+
+    assert_eq!(
+        (
+            arena.rows(),
+            types.iter().map(super::rows::slot_kind).collect::<Vec<_>>(),
+            // the null array in the third row, and nothing else
+            (0..3)
+                .map(|row| arena.columns()[1].is_null(row))
+                .collect::<Vec<_>>(),
+        ),
+        (
+            3,
+            vec![ColumnKind::List, ColumnKind::List, ColumnKind::List],
+            vec![false, false, true],
+        )
+    );
+}
+
+/// Every column type the schema can declare, in one result, laid out without
+/// complaint. The point is coverage of `into_arena`'s dispatch rather than of
+/// any one value.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn every_column_type_lays_out() {
+    let client = client();
+    let (rows, columns) = client
+        .query(
+            "SELECT 'x'::text, 1::int4, 1::int8, 1.5::float8, 1.25::numeric, true, \
+             '\\xde'::bytea, now()::timestamptz, '{\"a\":1}'::jsonb, \
+             ARRAY['a']::text[], ARRAY[1]::int4[], ARRAY[1.25]::numeric[]",
+            &[],
+        )
+        .await
+        .expect("the query runs");
+    let types = columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect::<Vec<_>>();
+    let arena = super::rows::into_arena(&rows, &types).expect("the rows lay out");
+    assert_eq!(arena.rows(), 1);
+}
+
+/// A query matching nothing still has to describe its columns, or the other
+/// side has nothing to build views over.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn an_empty_result_still_describes_its_columns() {
+    let client = client();
+    let (rows, columns) = client
+        .query(
+            "SELECT 'x'::text AS a, ARRAY[1]::int4[] AS b WHERE false",
+            &[],
+        )
+        .await
+        .expect("the query runs");
+    let types = columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect::<Vec<_>>();
+    let arena = super::rows::into_arena(&rows, &types).expect("the rows lay out");
+    assert_eq!((arena.rows(), arena.columns().len()), (0, 2));
 }

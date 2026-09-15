@@ -17,7 +17,7 @@ use anyhow::{bail, Context, Result};
 use tokio_postgres::types::{FromSql, Kind, Type};
 use tokio_postgres::Row;
 
-use crate::columnar::{Arena, ColumnKind};
+use crate::columnar::{Arena, ColumnKind, ColumnSpec};
 
 /// A decoded column value, in the shape it will take in JavaScript.
 #[derive(Debug, Clone, PartialEq)]
@@ -251,21 +251,15 @@ impl<'a> FromSql<'a> for Cell {
     }
 }
 
-/// Which arena column a result column is laid into, and so which view
+/// Which arena slot a value of this type is laid into, and so which view
 /// JavaScript builds over it.
 ///
 /// Two of these are wider than the slot that carries them: `int8` and `numeric`
 /// are text because that is what the driver being replaced produced, and a
-/// timestamp is the milliseconds a `Date` is built from rather than a `Date`.
-/// Everything a column holds beyond that — a JSON document, an array — travels
-/// as the text Postgres stores and is parsed on the other side, which is also
-/// what that driver did.
-pub fn column_kind(ty: &Type) -> ColumnKind {
-    if let Kind::Array(_) = ty.kind() {
-        // Stands in until the arena has a list column; `into_arena` refuses the
-        // value rather than laying it out wrongly.
-        return ColumnKind::Text;
-    }
+/// timestamp is the milliseconds a `Date` is built from rather than a `Date`. A
+/// JSON document travels as its own text, which is what that driver's parser was
+/// handed too.
+pub fn scalar_kind(ty: &Type) -> ColumnKind {
     match ty.oid() {
         BYTEA => ColumnKind::Bytes,
         BOOL | INT2 | INT4 | OID | FLOAT4 | FLOAT8 | DATE | TIMESTAMP | TIMESTAMPTZ => {
@@ -275,36 +269,100 @@ pub fn column_kind(ty: &Type) -> ColumnKind {
     }
 }
 
+/// The slot JavaScript sees for a column: a list where the type is an array,
+/// and the scalar's own slot otherwise.
+pub fn slot_kind(ty: &Type) -> ColumnKind {
+    match ty.kind() {
+        Kind::Array(_) => ColumnKind::List,
+        _ => scalar_kind(ty),
+    }
+}
+
+fn write_cell(arena: &mut Arena, column: usize, row: usize, cell: &Cell) -> Result<()> {
+    match cell {
+        Cell::Null => arena.mark_null(column, row),
+        Cell::Bool(value) => arena.set_f64(column, row, if *value { 1.0 } else { 0.0 }),
+        Cell::Num(value) | Cell::Timestamp(value) => arena.set_f64(column, row, *value),
+        Cell::Str(value) => arena.set_bytes(column, row, value.as_bytes()),
+        Cell::Bytes(value) => arena.set_bytes(column, row, value),
+        Cell::Arr(_) => bail!("column {column} holds an array inside an array"),
+    }
+    Ok(())
+}
+
+fn write_element(arena: &mut Arena, column: usize, element: usize, cell: &Cell) -> Result<()> {
+    match cell {
+        Cell::Null => arena.mark_element_null(column, element),
+        Cell::Bool(value) => arena.set_element_f64(column, element, if *value { 1.0 } else { 0.0 }),
+        Cell::Num(value) | Cell::Timestamp(value) => arena.set_element_f64(column, element, *value),
+        Cell::Str(value) => arena.set_element_bytes(column, element, value.as_bytes()),
+        Cell::Bytes(value) => arena.set_element_bytes(column, element, value),
+        Cell::Arr(_) => bail!("column {column} holds an array inside an array"),
+    }
+    Ok(())
+}
+
 /// Lays a result set out column by column, ready to be lent to JavaScript.
 ///
 /// The types come from the statement rather than from the rows, so an empty
 /// result still describes its columns and the other side builds the same views
-/// over it as for a full one.
+/// over it as for a full one. The values are decoded before the columns are
+/// sized because a list column cannot be laid out until its elements have been
+/// counted.
 pub fn into_arena(rows: &[Row], types: &[Type]) -> Result<Arena> {
-    let kinds = types.iter().map(column_kind).collect::<Vec<_>>();
-    let mut arena = Arena::new_filled(rows.len(), &kinds);
+    let decoded = rows
+        .iter()
+        .map(|row| {
+            (0..types.len())
+                .map(|column| {
+                    row.try_get::<_, Cell>(column)
+                        .with_context(|| format!("Failed reading column {column}"))
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    for (row_index, row) in rows.iter().enumerate() {
-        for column_index in 0..types.len() {
-            let cell: Cell = row
-                .try_get(column_index)
-                .with_context(|| format!("Failed reading column {column_index}"))?;
-            match cell {
-                Cell::Null => arena.mark_null(column_index, row_index),
-                Cell::Bool(value) => {
-                    arena.set_f64(column_index, row_index, if value { 1.0 } else { 0.0 })
+    let specs = types
+        .iter()
+        .enumerate()
+        .map(|(column, ty)| match ty.kind() {
+            Kind::Array(element) => ColumnSpec::List {
+                element: scalar_kind(element),
+                elements: decoded
+                    .iter()
+                    .map(|cells| match &cells[column] {
+                        Cell::Arr(items) => items.len(),
+                        _ => 0,
+                    })
+                    .sum(),
+            },
+            _ => ColumnSpec::Scalar(scalar_kind(ty)),
+        })
+        .collect::<Vec<_>>();
+
+    let mut arena = Arena::new_filled(rows.len(), &specs);
+    let mut written = vec![0usize; types.len()];
+
+    for (row, cells) in decoded.iter().enumerate() {
+        for (column, cell) in cells.iter().enumerate() {
+            match (&specs[column], cell) {
+                (ColumnSpec::List { .. }, Cell::Arr(items)) => {
+                    for item in items {
+                        write_element(&mut arena, column, written[column], item)?;
+                        written[column] += 1;
+                    }
+                    arena.end_list_row(column, row, written[column]);
                 }
-                Cell::Num(value) | Cell::Timestamp(value) => {
-                    arena.set_f64(column_index, row_index, value)
+                // A null array is a row with no elements of its own and the
+                // null flag set, not an empty one.
+                (ColumnSpec::List { .. }, Cell::Null) => {
+                    arena.mark_null(column, row);
+                    arena.end_list_row(column, row, written[column]);
                 }
-                Cell::Str(value) => arena.set_bytes(column_index, row_index, value.as_bytes()),
-                Cell::Bytes(value) => arena.set_bytes(column_index, row_index, &value),
-                // Needs the list column the arena does not have yet: an array
-                // of `bytea` rules out carrying these as text, since its
-                // elements are not text.
-                Cell::Arr(_) => {
-                    bail!("column {column_index} is an array, which the arena cannot carry yet")
+                (ColumnSpec::List { .. }, other) => {
+                    bail!("column {column} is an array but holds {other:?}")
                 }
+                (ColumnSpec::Scalar(_), cell) => write_cell(&mut arena, column, row, cell)?,
             }
         }
     }
