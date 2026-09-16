@@ -65,7 +65,7 @@ type running = {
 
 // A worker is named by the chains it drives, which is what an operator reading
 // its memory or its event loop wants to know.
-let name = (worker: worker) => worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(",")
+let name = (worker: worker) => worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(";")
 
 let label = (worker: worker) => `[chain ${worker->name}]`
 
