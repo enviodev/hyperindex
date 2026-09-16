@@ -327,9 +327,7 @@ type matcher = Internal.entity => bool
 
 // Compares (entityValue, filterValue) raw runtime values for one field. A
 // nullish entity value (a missing or null column) matches nothing, mirroring
-// SQL NULL semantics and the Postgres-side filter. Native operators already
-// return false for undefined, so only the object-typed comparators guard
-// explicitly to avoid calling methods on a missing value.
+// SQL NULL semantics and the Postgres-side filter.
 type valueCompare = {
   eq: (unknown, unknown) => bool,
   gt: (unknown, unknown) => bool,
@@ -342,10 +340,12 @@ type valueCompare = {
 
 // `>`/`<` on `unknown` would compile to the polymorphic Primitive_object path; the raw
 // operators give native JS comparison for primitive (string/number/bigint)
-// fields. `===` is already physical equality.
+// fields. `===` is already physical equality and false for a nullish column,
+// but `<` and `>` coerce a `null` column to 0 (a JS handler can write one for
+// a nullable field), so the ordering operators check for it first.
 let nativeEq = (a: unknown, b: unknown) => a === b
-let nativeGt: (unknown, unknown) => bool = %raw(`(a, b) => a > b`)
-let nativeLt: (unknown, unknown) => bool = %raw(`(a, b) => a < b`)
+let nativeGt: (unknown, unknown) => bool = %raw(`(a, b) => a != null && a > b`)
+let nativeLt: (unknown, unknown) => bool = %raw(`(a, b) => a != null && a < b`)
 let identityKey = (v: unknown) => v
 let native = {eq: nativeEq, gt: nativeGt, lt: nativeLt, key: identityKey}
 
