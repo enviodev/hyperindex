@@ -170,6 +170,7 @@ FROM "${pgSchema}"."${table.tableName}";`
 module Chains = {
   type progressFields = [
     | #progress_block
+    | #progress_block_time
     | #events_processed
     | #source_block
   ]
@@ -199,6 +200,7 @@ module Chains = {
     #first_event_block,
     #buffer_block,
     #progress_block,
+    #progress_block_time,
     #ready_at,
     #events_processed,
     #_is_hyper_sync,
@@ -207,12 +209,7 @@ module Chains = {
 
   type metaFields = {
     @as("first_event_block")
-    firstEventBlockNumber: Null.t<
-      // Push id first (for WHERE clause)
-
-      // Then push all updateable field values (for SET clause)
-      int,
-    >,
+    firstEventBlockNumber: Null.t<int>,
     @as("buffer_block") latestFetchedBlockNumber: int,
     @as("ready_at")
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
@@ -227,6 +224,7 @@ module Chains = {
     @as("max_reorg_depth") maxReorgDepth: int,
     @as("source_block") blockHeight: int,
     @as("progress_block") progressBlockNumber: int,
+    @as("progress_block_time") progressBlockTime: Null.t<Date.t>,
     @as("events_processed") numEventsProcessed: float,
     @as("checkpoint_id") checkpointId: Internal.checkpointId,
     ...metaFields,
@@ -268,6 +266,15 @@ module Chains = {
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // Fully processed block number
       mkField((#progress_block: field :> string), Int32, ~fieldSchema=S.int),
+      // When the block in progress_block was produced, so that `now() -
+      // progress_block_time` is how far behind chain time the indexer is. Null
+      // while the source hasn't reported that block's header.
+      mkField(
+        (#progress_block_time: field :> string),
+        Date,
+        ~fieldSchema=S.null(Utils.Schema.dbDate),
+        ~isNullable,
+      ),
       // The last checkpoint id the chain has committed. Kept here rather than
       // read off the checkpoints table: checkpoint rows are only written while
       // a rollback could reach them, but an append-only sink holds a row for
@@ -290,6 +297,7 @@ module Chains = {
       latestFetchedBlockNumber: -1,
       timestampCaughtUpToHeadOrEndblock: Null.null,
       progressBlockNumber: -1,
+      progressBlockTime: Null.null,
       isHyperSync: false,
       numEventsProcessed: 0.,
       checkpointId: Internal.initialCheckpointId,
@@ -369,6 +377,7 @@ WHERE "${(#id: field :> string)}" = $2
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     numEventsProcessed: float,
     progressBlockNumber: int,
+    progressBlockTime: Null.t<Date.t>,
     addressRows: AddressRows.seedRows,
     sourceBlockNumber: int,
     // BIGINT, which the driver hands back as a string.
@@ -384,6 +393,7 @@ WHERE "${(#id: field :> string)}" = $2
 "${(#ready_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
 "${(#events_processed: field :> string)}"::float8 as "numEventsProcessed",
 "${(#progress_block: field :> string)}" as "progressBlockNumber",
+"${(#progress_block_time: field :> string)}" as "progressBlockTime",
 "${(#source_block: field :> string)}" as "sourceBlockNumber",
 "${(#checkpoint_id: field :> string)}"::TEXT as "checkpointId"
 FROM "${pgSchema}"."${table.tableName}";`
@@ -417,7 +427,20 @@ FROM "${pgSchema}"."${table.tableName}";`
     })
   }
 
-  let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]
+  // Block timestamps are unix seconds everywhere inside the indexer - that's
+  // what a block header carries - and a timestamp in storage, where `now() -
+  // progress_block_time` is the query the column exists for.
+  let blockTimeToDb = (blockTime: option<int>) =>
+    blockTime->Option.map(seconds => Date.fromTime(seconds->Int.toFloat *. 1000.))->Null.fromOption
+  let blockTimeFromDb = (date: Null.t<Date.t>) =>
+    date->Null.toOption->Option.map(date => (date->Date.getTime /. 1000.)->Float.toInt)
+
+  let progressFields: array<progressFields> = [
+    #progress_block,
+    #progress_block_time,
+    #events_processed,
+    #source_block,
+  ]
 
   let makeProgressFieldsUpdateQuery = (~pgSchema) => {
     let setClauses = Array.mapWithIndex(progressFields, (field, index) => {
@@ -458,6 +481,7 @@ WHERE "id" = $1;`
   type progressedChain = {
     chainId: ChainId.t,
     progressBlockNumber: int,
+    progressBlockTime: option<int>,
     sourceBlockNumber: int,
     totalEventsProcessed: float,
   }
@@ -477,6 +501,8 @@ WHERE "id" = $1;`
         ->Array.push(
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
+          | #progress_block_time =>
+            data.progressBlockTime->blockTimeToDb->(Utils.magic: Null.t<Date.t> => unknown)
           | #events_processed => data.totalEventsProcessed->(Utils.magic: float => unknown)
           | #source_block => data.sourceBlockNumber->(Utils.magic: int => unknown)
           },
@@ -907,6 +933,7 @@ SELECT
   "${(#start_block: Chains.field :> string)}" AS "startBlock", 
   "${(#end_block: Chains.field :> string)}" AS "endBlock",
   "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
+  "${(#progress_block_time: Chains.field :> string)}" AS "progressBlockTime",
   "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
   "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
   "${(#events_processed: Chains.field :> string)}"::float4 AS "eventsProcessed",

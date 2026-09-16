@@ -49,6 +49,7 @@ let make = (
       endBlock,
       maxReorgDepth: 200,
       progressBlockNumber,
+      progressBlockTime: None,
       numEventsProcessed: 7.,
       firstEventBlockNumber,
       timestampCaughtUpToHeadOrEndblock,
