@@ -381,6 +381,7 @@ describe("EntityFilter.toString", () => {
       Table.mkField("a", String, ~isIndex=true, ~fieldSchema=S.string),
       Table.mkField("ab", String, ~isIndex=true, ~fieldSchema=S.string),
       Table.mkField("b", String, ~isIndex=true, ~fieldSchema=S.string),
+      Table.mkField("tb", String, ~isIndex=true, ~fieldSchema=S.string),
       Table.mkField("num", Int32, ~isIndex=true, ~fieldSchema=S.int),
       Table.mkField("big", BigInt({}), ~isIndex=true, ~fieldSchema=S.string),
       Table.mkField("flag", Boolean, ~isIndex=true, ~fieldSchema=S.string),
@@ -441,6 +442,10 @@ describe("EntityFilter.toString", () => {
       dict{"a": dict{"_gt": u(1), "_lt": u(2)}},
       dict{"ab": dict{"_eq": u(1)}},
       dict{"a": dict{"_eq": u(1)}, "b": dict{"_eq": u(1)}},
+      // A fixed-width value key followed by a field name could read as an
+      // empty value list followed by a longer field name.
+      dict{"a": dict{"_in": u([true])}, "b": dict{"_eq": u(1)}},
+      dict{"a": dict{"_in": u([])}, "tb": dict{"_eq": u(1)}},
     ]
     let keys = filters->Array.map(toKey)
     t.expect((keys->Utils.Set.fromArray->Utils.Set.size, keys->Array.length)).toEqual((
@@ -470,19 +475,19 @@ describe("EntityFilter.toString", () => {
         dict{"num": dict{"_gt": u(1)}, "b": dict{"_lt": u("z")}},
       ]->Array.map(toKey),
     ).toEqual([
-      "a_eqs5:hello",
-      "num_eqn1:5",
-      "big_eqg2:10",
-      "flag_eqt",
-      "price_eqs3:1.5",
-      "at_eqn4:1500",
-      `meta_eqs7:{"x":1}`,
-      "tag_eqs2:ab",
-      "tags_eqs8:s1:xs1:y",
-      "ats_eqs12:n4:1500n2:20",
-      "num_gtn1:5",
-      "num_inn1:1n1:2",
-      "num_gtn1:1b_lts1:z",
+      "a_eqs5:hello;",
+      "num_eqn1:5;",
+      "big_eqg2:10;",
+      "flag_eqt;",
+      "price_eqs3:1.5;",
+      "at_eqn4:1500;",
+      `meta_eqs7:{"x":1};`,
+      "tag_eqs2:ab;",
+      "tags_eqs8:s1:xs1:y;",
+      "ats_eqs12:n4:1500n2:20;",
+      "num_gtn1:5;",
+      "num_inn1:1n1:2;",
+      "num_gtn1:1;b_lts1:z;",
     ])
   })
 

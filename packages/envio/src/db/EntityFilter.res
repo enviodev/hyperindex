@@ -503,6 +503,11 @@ let makeValueKey = (~table: Table.table, ~fieldName) => (fieldName->fieldCompare
 // The cache key stands in for structural equality between filters. Values go
 // through the same per-field projection the equality buckets key by, so the
 // two agree on which values are distinct.
+//
+// Each field/operator entry ends with ";", which no field name or value key
+// starts with, so an _in's value list can't run into the next field name: a
+// one-letter key like "t" for true followed by field "b" would otherwise read
+// the same as an empty list followed by field "tb".
 let toString = (filter: t, ~table: Table.table) => {
   let key = ref("")
   filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
@@ -518,6 +523,7 @@ let toString = (filter: t, ~table: Table.table) => {
       } else {
         key := key.contents ++ encodeValueKey(keyOf(fieldValue))
       }
+      key := key.contents ++ ";"
     })
   })
   key.contents
