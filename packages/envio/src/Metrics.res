@@ -61,7 +61,7 @@ type handlerMetrics = {
 
 type effectMetrics = {
   effect: string,
-  scope: string,
+  chainId: string,
   callSeconds: float,
   callSecondsTotal: float,
   callCount: float,
@@ -231,7 +231,7 @@ let renderMetrics = (b: builder, metrics: t) => {
     ))
   let effects =
     metrics.effects->Array.map(s => (
-      `{effect="${s.effect->escapeLabelValue}",scope="${s.scope->escapeLabelValue}"}`,
+      `{effect="${s.effect->escapeLabelValue}",chainId="${s.chainId->escapeLabelValue}"}`,
       s,
     ))
   let storageLoads =
@@ -716,7 +716,7 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~value=s => s.cacheCount->Option.map(Int.toFloat),
   )
   // Unlike the rest of the effect metrics, invalidations and queue waits keep
-  // the effect-only label set, aggregated across scopes.
+  // the effect-only label set, aggregated across chains.
   let effectTotals = {
     let byEffect = Dict.make()
     metrics.effects->Array.forEach(s => {

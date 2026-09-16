@@ -53,7 +53,7 @@ describe("EffectState rollback", () => {
       [
         {
           Metrics.effect: "withRateLimit",
-          scope: "crossChain",
+          chainId: "crossChain",
           callSeconds: 0.,
           callSecondsTotal: 0.,
           callCount: 0.,
@@ -71,7 +71,7 @@ describe("EffectState rollback", () => {
 describe("EffectState unregistered cache count", () => {
   let cacheOnlyMetric = (~effect, ~count): Metrics.effectMetrics => {
     effect,
-    scope: "crossChain",
+    chainId: "crossChain",
     callSeconds: 0.,
     callSecondsTotal: 0.,
     callCount: 0.,
