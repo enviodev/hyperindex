@@ -71,6 +71,8 @@ module Process = {
   @val @scope("process") external sendToParent: 'msg => bool = "send"
   @val @scope("process")
   external onMessage: (@as("message") _, 'msg => unit) => unit = "on"
+  @val @scope("process")
+  external onceMessage: (@as("message") _, 'msg => unit) => unit = "once"
   @val @scope("process") external onSignal: (string, unit => unit) => unit = "on"
   @val @scope("process")
   external onDisconnect: (@as("disconnect") _, unit => unit) => unit = "on"
@@ -170,7 +172,6 @@ module ChildProcess = {
   external onExit: (child, @as("exit") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
   @send external onChildError: (child, @as("error") _, exn => unit) => unit = "on"
   @send external kill: (child, string) => bool = "kill"
-  @get external pid: child => Null.t<int> = "pid"
 }
 
 module Url = {

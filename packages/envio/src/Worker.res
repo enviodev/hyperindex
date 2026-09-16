@@ -25,12 +25,10 @@ let snapshotIntervalMillis = 500
 // it: the supervisor could have died before it ever got to tear the group down.
 // Losing the channel is that signal.
 let exitWithSupervisor = () =>
-  if isEnabled {
-    NodeJs.Process.onDisconnect(() => {
-      Logging.error("The indexer supervisor is gone. Stopping this chain's process.")
-      NodeJs.process->NodeJs.exitWithCode(Failure)
-    })
-  }
+  NodeJs.Process.onDisconnect(() => {
+    Logging.error("The indexer supervisor is gone. Stopping this chain's process.")
+    NodeJs.process->NodeJs.exitWithCode(Failure)
+  })
 
 let send = (message: workerMessage) =>
   if isEnabled {
@@ -39,14 +37,14 @@ let send = (message: workerMessage) =>
 
 let onParentMessage = (handle: parentMessage => unit) => NodeJs.Process.onMessage(handle)
 
-// Resolves with the init payload the supervisor sends immediately after the
-// fork. Nothing else can run first: the worker has no config until it lands.
+// Resolves with the init payload. The supervisor sends it right after the
+// fork, before anything else, so the first message is the only one to read.
 let awaitInit = (): promise<JSON.t> =>
-  Promise.make((resolve, _) =>
-    onParentMessage(message =>
+  Promise.make((resolve, reject) =>
+    NodeJs.Process.onceMessage((message: parentMessage) =>
       switch message {
       | Init({config}) => resolve(config)
-      | SyncCache(_) => ()
+      | SyncCache(_) => reject(Utils.Error.make("Expected the supervisor's init message first"))
       }
     )
   )

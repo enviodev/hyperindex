@@ -627,13 +627,14 @@ let getChain = (config, ~chainId) =>
 
 // Whether every entity belongs to exactly one chain. Only then is a unit of
 // this indexer's work attributable to a chain at all, which is what lets a run
-// be split across processes and what lets its logs name a chain.
+// be split across processes.
 let isPerChain = (config: t) => !(config.userEntities->Array.some(entity => entity.crossChain))
 
-// What every line this indexer logs is attributed to: the chains it drives.
-// A schema shared across chains has none, since its work is no single chain's.
+// What every line this process logs is attributed to: the chains it drives,
+// when sibling processes drive the rest. A process driving every chain has
+// nothing to tell apart from, and its chain-scoped lines already name theirs.
 let logContext = (config: t): option<JSON.t> =>
-  if config->isPerChain {
+  if config.isolated {
     let chainIds = config.chainMap->ChainMap.keys
     Some(
       switch chainIds {

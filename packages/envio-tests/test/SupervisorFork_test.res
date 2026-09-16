@@ -47,20 +47,35 @@ describe("Supervisor.fork", () => {
 })
 
 describe("Supervisor.awaitExit", () => {
-  Async.it("Returns once every worker has finished on its own", async t => {
+  let outcome = async group =>
+    switch await group->Supervisor.awaitExit {
+    | outcome => Ok(outcome)
+    | exception _ => Error()
+    }
+
+  Async.it("Reports a group whose every worker finished on its own", async t => {
     NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "succeed")
     let group: Supervisor.group = {
       running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
       stopping: false,
     }
 
-    let outcome = switch await group->Supervisor.awaitExit {
-    | () => "returned"
-    | exception _ => "threw"
-    }
-
-    t.expect(outcome).toBe("returned")
+    t.expect(await outcome(group)).toStrictEqual(Ok(Supervisor.Finished))
   })
+
+  Async.it(
+    "Reports a group its supervisor took down as stopped, whatever the exit codes",
+    async t => {
+      NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "linger")
+      let group: Supervisor.group = {
+        running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
+        stopping: false,
+      }
+      group->Supervisor.stop
+
+      t.expect(await outcome(group)).toStrictEqual(Ok(Supervisor.Stopped))
+    },
+  )
 
   Async.it("Stops the group and fails the run when one worker dies", async t => {
     NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "fail")
@@ -69,12 +84,11 @@ describe("Supervisor.awaitExit", () => {
     let lingering = forkFixture(~chainIds=[137])
     let group: Supervisor.group = {running: [failing, lingering], stopping: false}
 
-    let outcome = switch await group->Supervisor.awaitExit {
-    | () => "returned"
-    | exception _ => "threw"
-    }
-
     // The survivor was taken down rather than left indexing half a schema.
-    t.expect((outcome, group.stopping, lingering.settled)).toStrictEqual(("threw", true, true))
+    t.expect((await outcome(group), group.stopping, lingering.settled)).toStrictEqual((
+      Error(),
+      true,
+      true,
+    ))
   })
 })

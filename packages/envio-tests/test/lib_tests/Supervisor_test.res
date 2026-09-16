@@ -37,26 +37,25 @@ describe("Supervisor.plan", () => {
   })
 })
 
-describe("Supervisor.plan volume spreading", () => {
+describe("Supervisor.plan dealing order", () => {
   let assignment = (~chainIds, ~maxConnections) =>
     Supervisor.plan(~chainIds=chainIds->Array.map(ChainId.fromInt), ~maxConnections)
     ->Option.getOrThrow
     ->Array.map(worker => worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(","))
 
-  it("Keeps the busiest chains apart, and pairs them with the quietest", t => {
+  it("Deals chains in config order, reversing direction each pass", t => {
     t.expect([
-      // Ethereum and BNB are the two busiest of these, so they lead different
-      // workers, and each is paired with the lighter of the remaining two.
+      // The first two lead different workers; the worker that took the first
+      // picks up the last. Config order is the ranking, not the chain ids.
       assignment(~chainIds=[8453, 56, 42161, 1], ~maxConnections=4),
-      // Unranked chains sort behind the ranked ones, keeping config order.
-      assignment(~chainIds=[999, 137, 888, 1], ~maxConnections=4),
-      // Three workers take the top three, then fold back so the heaviest
-      // worker picks up the lightest chain.
+      // Three workers take the first three, then fold back.
       assignment(~chainIds=[1, 56, 137, 8453, 42161, 10], ~maxConnections=6),
+      // An odd count leaves the fold short: the last chain lands mid-pass.
+      assignment(~chainIds=[1, 56, 137, 8453, 42161], ~maxConnections=4),
     ]).toStrictEqual([
-      ["1,42161", "56,8453"],
-      ["1,888", "137,999"],
+      ["8453,1", "56,42161"],
       ["1,10", "56,42161", "137,8453"],
+      ["1,8453,42161", "56,137"],
     ])
   })
 })
@@ -167,13 +166,17 @@ describe("Supervisor worker plumbing", () => {
 })
 
 describe("Config.logContext", () => {
-  it("Attributes a per-chain run's logs to its chains, and a shared one's to none", t => {
+  it("Attributes an isolated run's logs to its chains, and any other run's to none", t => {
     t.expect([
-      // Every entity is per-chain, and this process drives one of them.
+      // This process drives one of the schema's chains while siblings drive the rest.
       config(~schema=perChain, ~isolatedChains=[JSON.Number(137.)])->Config.logContext,
-      // Still per-chain, but this process drives both: no single chain owns a line.
+      config(
+        ~schema=perChain,
+        ~isolatedChains=[JSON.Number(1.), JSON.Number(137.)],
+      )->Config.logContext,
+      // One process driving every chain: chain-scoped lines already name theirs,
+      // and the rest belong to the run as a whole.
       config(~schema=perChain)->Config.logContext,
-      // An entity shared across chains: the work isn't any one chain's.
       config(~schema=crossChain)->Config.logContext,
     ]).toStrictEqual([
       Some(JSON.Object(Dict.fromArray([("chainId", JSON.Number(137.))]))),
@@ -182,6 +185,7 @@ describe("Config.logContext", () => {
           Dict.fromArray([("chainIds", JSON.Array([JSON.Number(1.), JSON.Number(137.)]))]),
         ),
       ),
+      None,
       None,
     ])
   })

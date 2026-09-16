@@ -6,63 +6,27 @@ type worker = {chainIds: array<ChainId.t>, maxConnections: int}
 // on a single one, so the budget buys workers two at a time.
 let minConnectionsPerWorker = 2
 
-// Roughly how much a chain costs to index, busiest first. An estimate only:
-// it decides nothing but which worker a chain lands on, so a chain in the wrong
-// place, or missing from the list entirely, costs balance and nothing else.
-// Chains it doesn't name sort behind the ones it does, in config order.
-let byDescendingVolume = [
-  1, // Ethereum
-  56, // BNB Smart Chain
-  137, // Polygon
-  8453, // Base
-  42161, // Arbitrum One
-  10, // Optimism
-  43114, // Avalanche
-  81457, // Blast
-  59144, // Linea
-  534352, // Scroll
-  324, // zkSync Era
-  5000, // Mantle
-  204, // opBNB
-  100, // Gnosis
-  42220, // Celo
-]
-
-let volumeRank = (chainId: ChainId.t) =>
-  switch byDescendingVolume->Array.indexOf(chainId->ChainId.toInt) {
-  | -1 => byDescendingVolume->Array.length
-  | rank => rank
-  }
-
 // How to spend a connection budget on the chains a run indexes. `None` keeps
 // the run in one process, which is what a budget too small to afford two
 // workers, or a config with nothing to split, has to do.
 //
-// Chains are dealt busiest-first and the direction reverses each pass, so the
-// heaviest chains lead different workers and the worker that took the heaviest
-// picks up the lightest. Volume is only ever an estimate, which is why the
-// layout it produces is a starting balance rather than a guarantee.
+// Chains are dealt in config order and the direction reverses each pass, so
+// the first chains lead different workers and the worker that took the first
+// picks up the last. How much work a chain has is the contracts' to decide,
+// not the chain's, so config order is the one ranking the run can be given:
+// listing chains busiest-first in config.yaml is what balances the layout.
 let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<worker>> => {
   let workerCount = Pervasives.min(chainIds->Array.length, maxConnections / minConnectionsPerWorker)
   if workerCount < 2 {
     None
   } else {
-    let byVolume =
-      chainIds
-      ->Array.mapWithIndex((chainId, configIndex) => (chainId, chainId->volumeRank, configIndex))
-      ->Array.toSorted(((_, aRank, aIndex), (_, bRank, bIndex)) =>
-        // Two chains the list doesn't rank keep the order config gave them.
-        aRank === bRank ? Int.compare(aIndex, bIndex) : Int.compare(aRank, bRank)
-      )
-      ->Array.map(((chainId, _, _)) => chainId)
-
     // The remainder is handed out one connection at a time rather than left
     // unspent, so a budget with slack widens the earliest workers' pools.
     let evenShare = maxConnections / workerCount
     let remainder = mod(maxConnections, workerCount)
     Some(
       Array.fromInitializer(~length=workerCount, workerIndex => {
-        chainIds: byVolume->Array.filterWithIndex((_, dealIndex) => {
+        chainIds: chainIds->Array.filterWithIndex((_, dealIndex) => {
           let position = mod(dealIndex, workerCount)
           let isReversePass = mod(dealIndex / workerCount, 2) === 1
           (isReversePass ? workerCount - 1 - position : position) === workerIndex
@@ -173,11 +137,15 @@ let stop = group => {
   group.running->Array.forEach(r => r.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore)
 }
 
+// How a group ended. `Finished` is every worker exiting cleanly on its own,
+// which is what indexing to every end block looks like.
+type outcome = Finished | Stopped
+
 // Resolves once every worker has ended. Throws if any of them ended in a way
 // the supervisor didn't ask for, having first taken the rest down: one worker
 // short leaves its chains unindexed, and a run that kept the others going would
 // look healthy while falling behind.
-let awaitExit = async group => {
+let awaitExit = async (group): outcome => {
   let failed = ref(false)
   let alive = ref(group.running->Array.length)
 
@@ -216,6 +184,7 @@ let awaitExit = async group => {
   if failed.contents {
     JsError.throwWithMessage("An indexer process exited with a failure. Stopped the others.")
   }
+  group.stopping ? Stopped : Finished
 }
 
 // Runs the group: creates the schema for every chain, forks a worker per plan
@@ -287,7 +256,8 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
     },
   )
 
-  if Main.shouldUseTui() {
+  let shouldUseTui = Main.shouldUseTui()
+  if shouldUseTui {
     let _rerender = Tui.start(~config, ~getMetrics=() => reported()->merge)
   }
 
@@ -296,5 +266,15 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
   NodeJs.Process.onSignal("SIGTERM", () => group->stop)
   NodeJs.Process.onSignal("SIGINT", () => group->stop)
 
-  await group->awaitExit
+  // The server and the signal handlers would keep this process up after its
+  // last worker is gone, so the group's end has to end the process. A display
+  // is the exception, as it is for a single process: it keeps the final state
+  // on screen until the terminal closes it.
+  switch await group->awaitExit {
+  | Stopped => NodeJs.process->NodeJs.exitWithCode(Success)
+  | Finished if !shouldUseTui =>
+    Logging.info("Exiting with success")
+    NodeJs.process->NodeJs.exitWithCode(Success)
+  | Finished => ()
+  }
 }
