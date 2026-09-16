@@ -45,6 +45,7 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
       ~fromBlock as _,
       ~toBlock as _,
       ~addressSet as _,
+      ~includeAllBlocks as _,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,

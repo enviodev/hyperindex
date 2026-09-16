@@ -174,6 +174,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     let source = makeSource(~onEventRegistrations=[reg])
 
     let response = await source.getItemsOrThrow(
+      ~includeAllBlocks=false,
       ~fromBlock=slot - 10,
       ~toBlock=Some(slot + 10),
       ~addressSet=programSet,

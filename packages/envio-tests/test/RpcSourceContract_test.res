@@ -95,6 +95,7 @@ let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration
 
 let invoke = (source: Source.t, ~registration: Internal.evmOnEventRegistration, ~retry=0) => {
   source.getItemsOrThrow(
+    ~includeAllBlocks=false,
     ~fromBlock=100,
     ~toBlock=Some(100),
     ~addressSet=makeAddressStore(~registration)->AddressStore.makeSet(
@@ -425,6 +426,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let call = () =>
             RpcSourcePins.capture(() =>
               source.getItemsOrThrow(
+                ~includeAllBlocks=false,
                 ~fromBlock=0,
                 ~toBlock=Some(1_000_000),
                 ~addressSet=addressStore->AddressStore.makeSet(
@@ -557,6 +559,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let source = makeSource(~factory, ~url=mock.url, ~registration)
           switch await RpcSourcePins.capture(() =>
             source.getItemsOrThrow(
+              ~includeAllBlocks=false,
               ~fromBlock=100,
               ~toBlock=Some(100),
               ~addressSet=makeAddressStore(~registration)->AddressStore.emptySet,
@@ -676,6 +679,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let source = factory(options)
           switch await RpcSourcePins.capture(() =>
             source.getItemsOrThrow(
+              ~includeAllBlocks=false,
               ~fromBlock=100,
               ~toBlock=Some(100),
               ~addressSet=addressStore

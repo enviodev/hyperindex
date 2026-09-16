@@ -109,11 +109,18 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
   (source, addressStore->AddressStore.makeSet(~contractName="Token"))
 }
 
-let fetch = (source: Source.t, ~addressSet, ~fromBlock=10, ~toBlock=Some(11)) =>
+let fetch = (
+  source: Source.t,
+  ~addressSet,
+  ~fromBlock=10,
+  ~toBlock=Some(11),
+  ~includeAllBlocks=false,
+) =>
   source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock,
     ~addressSet,
+    ~includeAllBlocks,
     ~knownHeight=100,
     ~partitionId="mock-partition",
     ~selection={
@@ -236,6 +243,27 @@ describe("HyperSync source contract", () => {
         "max_num_logs": 5000
       }`),
     ])
+  })
+
+  // At the head the progress block is often a block no event landed on, and its
+  // timestamp is what says how far behind chain time the indexer is. Asking for
+  // every block in the range is what puts that header in the response.
+  Async.it("asks for every block in the range once the chain is at the head", async t => {
+    let queries = await MockHyperSyncServer.withServer(~height=100, async server => {
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      server->MockHyperSyncServer.pushResponse(page)
+      let _ = await source->fetch(~addressSet, ~includeAllBlocks=true)
+      server->MockHyperSyncServer.takeQueries
+    })
+
+    t.expect(
+      queries->Array.map(query =>
+        query
+        ->JSON.Decode.object
+        ->Option.flatMap(o => o->Dict.get("include_all_blocks"))
+        ->Option.getOr(JSON.Encode.null)
+      ),
+    ).toEqual([JSON.Encode.bool(true)])
   })
 
   Async.it("materialises the selected fields onto the page's items", async t => {

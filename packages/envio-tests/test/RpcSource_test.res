@@ -897,6 +897,7 @@ describe("RpcSource - empty selection", () => {
 
     let caught = try {
       let _ = await source.getItemsOrThrow(
+        ~includeAllBlocks=false,
         ~fromBlock=0,
         ~toBlock=Some(1),
         ~addressSet=TestAddresses.makeStore()->AddressStore.emptySet,
@@ -986,6 +987,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       let callGetItemsOrThrow = async (~toBlock) =>
         try {
           let _ = await source.getItemsOrThrow(
+            ~includeAllBlocks=false,
             ~fromBlock=0,
             ~toBlock,
             ~addressSet=addressStore->AddressStore.makeSet(
@@ -1119,6 +1121,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       let call = async () =>
         try {
           let _ = await source.getItemsOrThrow(
+            ~includeAllBlocks=false,
             ~fromBlock=0,
             ~toBlock=Some(1_000_000),
             ~addressSet=addressStore->AddressStore.makeSet(
@@ -1272,6 +1275,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
       let retry = try {
         let result = try {
           let _ = await source.getItemsOrThrow(
+            ~includeAllBlocks=false,
             ~fromBlock=0,
             ~toBlock=Some(1_000_000),
             ~addressSet=addressStore->AddressStore.makeSet(
@@ -1371,6 +1375,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
         let callGetItemsOrThrow = async (~retry) =>
           try {
             let _ = await source.getItemsOrThrow(
+              ~includeAllBlocks=false,
               ~fromBlock=0,
               ~toBlock=Some(100),
               ~addressSet=addressStore->AddressStore.makeSet(
@@ -1525,6 +1530,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
 
       let result = try {
         let page = await source.getItemsOrThrow(
+          ~includeAllBlocks=false,
           ~fromBlock=0,
           ~toBlock=Some(100),
           ~addressSet=addressStore->AddressStore.makeSet(
@@ -1660,6 +1666,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
 
       let (page, filters) = try {
         let page = await source.getItemsOrThrow(
+          ~includeAllBlocks=false,
           ~fromBlock=0,
           ~toBlock=Some(100),
           ~addressSet=addressStore->AddressStore.makeSet(
@@ -1754,6 +1761,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
 
       let result = try {
         let page = await source.getItemsOrThrow(
+          ~includeAllBlocks=false,
           ~fromBlock=0,
           ~toBlock=Some(100),
           ~addressSet=addressStore->AddressStore.emptySet,
@@ -1922,6 +1930,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
 
       let result = try {
         let page = await source.getItemsOrThrow(
+          ~includeAllBlocks=false,
           ~fromBlock=0,
           ~toBlock=Some(100),
           ~addressSet=addressStore

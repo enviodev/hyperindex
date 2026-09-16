@@ -242,6 +242,7 @@ impl EvmHyperSyncClient {
                     LogField::TransactionIndex,
                 ]),
             },
+            include_all_blocks: params.include_all_blocks,
             ..Default::default()
         };
 
@@ -331,6 +332,9 @@ pub struct EventItemsQuery {
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
     pub client_filtered_contracts: Option<Vec<String>>,
+    /// Return a header for every block in the range, not only the ones a log
+    /// landed on. Absent means only the blocks logs came from.
+    pub include_all_blocks: Option<bool>,
 }
 
 fn log_selection_from_built(

@@ -150,6 +150,39 @@ describe("Progress block time", () => {
     },
   )
 
+  // The flag only pays for itself at the head, where the range is a handful of
+  // blocks. Over a backfill range it would be a header per block for no gain.
+  scenario->Scenario.it(
+    "asks for every block in the range only once the chain is at the head",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      // Resolving a query drops it from the pending list, so each one's flag is
+      // read while it is still in flight.
+      let asked = []
+      let recordPending = () =>
+        mock.getItemsOrThrowCalls->Array.forEach(call =>
+          asked->Array.push(call.includeAllBlocks)->ignore
+        )
+
+      mock.resolveGetHeightOrThrow(300)
+      await MockSource.waitItemsQuery(mock)
+      recordPending()
+      mock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await indexer.getBatchWritePromise()
+      await indexer.waitUntilReady()
+
+      mock.resolveGetHeightOrThrow(301)
+      await MockSource.waitItemsQuery(mock)
+      recordPending()
+
+      t.expect(
+        asked,
+        ~message="the backfill query asks only for the blocks its logs came from",
+      ).toEqual([false, true])
+    },
+  )
+
   scenario->Scenario.it(
     "restores the timestamp on resume, since a block's time doesn't change",
     ~sources=[{chain: 1}],
