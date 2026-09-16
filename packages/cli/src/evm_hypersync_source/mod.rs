@@ -598,8 +598,10 @@ fn process_response(
 
     // Full fields for referenced blocks, whose trio and any selected fields
     // decode from the store like any other field. Blocks whose logs were all
-    // dropped by client-side routing keep a hash-only row so every returned
-    // header still backs reorg detection.
+    // dropped by client-side routing, and blocks `include_all_blocks` returned
+    // that carried no log at all, keep the always-required trio: the hash backs
+    // reorg detection, and the timestamp is what says how far behind chain time
+    // a progress block no event landed on leaves the indexer.
     let store_blocks: Vec<simple_types::Block> = returned_blocks
         .into_iter()
         .map(|b| {
@@ -611,6 +613,7 @@ fn process_response(
                 simple_types::Block {
                     number: b.number,
                     hash: b.hash,
+                    timestamp: b.timestamp,
                     ..Default::default()
                 }
             }

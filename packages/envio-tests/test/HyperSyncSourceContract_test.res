@@ -341,6 +341,34 @@ describe("HyperSync source contract", () => {
     ])
   })
 
+  // The whole point of asking for every block: the one the chain has processed
+  // up to usually carries no log of its own, and its timestamp is what measures
+  // how far behind chain time the indexer is.
+  Async.it("keeps the timestamp of a block no log came from", async t => {
+    let timestamps = await MockHyperSyncServer.withServer(~height=100, async server => {
+      server->MockHyperSyncServer.pushResponse({
+        ...page,
+        blocks: page.blocks->Option.getOr([])->Array.concat([
+          JSON.parseOrThrow(
+            `{"number":12,"timestamp":1700000024,"hash":"${blockHash(
+                12,
+              )}","parent_hash":"${blockHash(11)}","miner":"${minerAddress}","state_root":"${stateRoot}"}`,
+          ),
+        ]),
+      })
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      let page = await source->fetch(~addressSet, ~toBlock=Some(12), ~includeAllBlocks=true)
+      [10, 12]->Array.map(blockNumber =>
+        page.blockStore->BlockStore.getTimestamp(blockNumber, ~allowSkippedSlot=false)->Null.toOption
+      )
+    })
+
+    t.expect(
+      timestamps,
+      ~message="block 12 has no log, but the header the query asked for still carries its time",
+    ).toEqual([Some(1700000000), Some(1700000024)])
+  })
+
   Async.it("reads the height off the server", async t => {
     let height = await MockHyperSyncServer.withServer(~height=42, async server => {
       let (source, _) = makeSource(~url=server->MockHyperSyncServer.url)
