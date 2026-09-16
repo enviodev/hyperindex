@@ -1479,6 +1479,7 @@ let rec writeBatch = async (
                 ): InternalTable.Chains.progressedChain => {
                   chainId: chainAfterBatch.fetchState.chainId,
                   progressBlockNumber: chainAfterBatch.progressBlockNumber,
+                  progressBlockTime: chainAfterBatch.progressBlockTime,
                   sourceBlockNumber: chainAfterBatch.sourceBlockNumber,
                   totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
                 }),
@@ -2022,6 +2023,7 @@ let make = (
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
         addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf,
+        progressBlockTime: None,
         sourceBlockNumber: 0,
       }),
       checkpointFrontier: Frontier.empty(),
@@ -2457,6 +2459,7 @@ let make = (
             timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
             numEventsProcessed: rawInitialState.numEventsProcessed,
             progressBlockNumber: rawInitialState.progressBlockNumber,
+            progressBlockTime: rawInitialState.progressBlockTime->InternalTable.Chains.blockTimeFromDb,
             addressRows: rawInitialState.addressRows,
             sourceBlockNumber: rawInitialState.sourceBlockNumber,
           }),

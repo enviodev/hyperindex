@@ -62,6 +62,9 @@ type t = {
   mutable reorgDetectedBlock: option<int>,
   mutable rollbackTargetBlock: option<int>,
   mutable progressLatencyMs: option<int>,
+  // Timestamp of the committed progress block itself. See
+  // `Batch.chainAfterBatch.progressBlockTime`.
+  mutable committedProgressBlockTime: option<int>,
 }
 
 // The chain's config-declared addresses as storage rows: what a clean run
@@ -125,6 +128,7 @@ let make = (
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
+  ~committedProgressBlockTime=None,
   ~safeCheckpointTracking=None,
   ~shouldRollbackOnReorg,
   ~maxReorgDepth,
@@ -171,6 +175,7 @@ let make = (
     reorgDetectedBlock: None,
     rollbackTargetBlock: None,
     progressLatencyMs: None,
+    committedProgressBlockTime,
   }
 }
 
@@ -184,6 +189,7 @@ let makeInternal = (
   ~endBlock,
   ~firstEventBlock=None,
   ~progressBlockNumber,
+  ~committedProgressBlockTime=None,
   ~config: Config.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~logger,
@@ -319,6 +325,7 @@ let makeInternal = (
       ~chainReorgCheckpoints,
     ),
     ~committedProgressBlockNumber=progressBlockNumber,
+    ~committedProgressBlockTime,
     ~perChainEntities=config.userEntities->EntityTables.perChain,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
@@ -368,6 +375,10 @@ let makeFromDbState = (
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
     ~firstEventBlock=resumedChainState.firstEventBlockNumber,
     ~progressBlockNumber,
+    // A block's time never changes, so the stored one stays true for the block
+    // progress is at - and keeps the metric reporting from the first scrape
+    // after a restart, rather than only once a batch commits.
+    ~committedProgressBlockTime=resumedChainState.progressBlockTime,
     ~timestampCaughtUpToHeadOrEndblock=resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~logger,
@@ -407,6 +418,7 @@ let getLatestValidScannedBlock = (cs: t, ~blockStore: BlockStore.t, ~blockNumber
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
+let committedProgressBlockTime = (cs: t) => cs.committedProgressBlockTime
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
@@ -985,6 +997,7 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   sourceBlockNumber: cs.fetchState.knownHeight,
   progressBlockNumber: cs.committedProgressBlockNumber,
   progressLatencyMs: cs.progressLatencyMs,
+  progressBlockTime: cs.committedProgressBlockTime,
   concurrency: cs.sourceManager->SourceManager.inFlightCount,
   partitionsCount: cs.fetchState->FetchState.partitionsCount,
   bufferSize: cs.fetchState->FetchState.bufferSize,
@@ -1004,9 +1017,10 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   rateLimitResetInMs: cs.sourceManager->SourceManager.getRateLimitResetInMs,
 }
 
-// Snapshot the inputs a batch build needs from this chain, including an
-// immutable copy of the scanned in-threshold block hashes so the batch never
-// reads the live store mid-build.
+// Snapshot the inputs a batch build needs from this chain. The scanned
+// in-threshold block hashes are copied up front because the build reuses the
+// whole set; the block time comes as a lookup instead, since the key it needs -
+// the batch's own progress block - isn't known until the build computes it.
 let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
   let {blockNumbers, hashes} =
     cs.blockStore->BlockStore.getHashes(
@@ -1023,6 +1037,8 @@ let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
     totalEventsProcessed: cs.numEventsProcessed,
     sourceBlockNumber: cs.fetchState.knownHeight,
     scannedHashes: {blockNumbers, hashByBlockNumber},
+    blockTimeAt: blockNumber =>
+      cs.blockStore->BlockStore.getTimestamp(blockNumber)->Null.toOption,
     shouldRollbackOnReorg: cs.shouldRollbackOnReorg,
     chainConfig: cs.chainConfig,
   }
@@ -1122,6 +1138,7 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       }
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
+      cs.committedProgressBlockTime = chainAfterBatch.progressBlockTime
 
       // Normally already set by advanceAfterBatch at batch creation; catch up
       // here for paths that commit progress without it.
@@ -1166,6 +1183,19 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
 let markReady = (cs: t, ~readyAt) =>
   if !(cs->isReady) {
     cs.timestampCaughtUpToHeadOrEndblock = Some(readyAt)
+  }
+
+// Rewind progress to a reorg target. Moving it means the timestamp now belongs
+// to an orphaned block, so it's re-read for the block progress actually lands
+// on - normally `None`, since the store keeps only hashes below the last
+// committed progress, until the re-fetch commits a new progress block. A target
+// at or above the progress block leaves both alone: that block was never
+// orphaned, and re-reading its long-pruned header would drop a valid timestamp.
+let rollbackCommittedProgress = (cs: t, blockNumber) =>
+  if blockNumber !== cs.committedProgressBlockNumber {
+    cs.committedProgressBlockNumber = blockNumber
+    cs.committedProgressBlockTime =
+      cs.blockStore->BlockStore.getTimestamp(blockNumber)->Null.toOption
   }
 
 type progressDiff = {blockNumber: int, eventsProcessed: float}
@@ -1215,7 +1245,7 @@ let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
     let rolledBackAddresses = rollbackTo(newProgressBlockNumber)
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
     cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
-    cs.committedProgressBlockNumber = newProgressBlockNumber
+    cs->rollbackCommittedProgress(newProgressBlockNumber)
     cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
     rolledBackAddresses
@@ -1225,7 +1255,7 @@ let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
     let rolledBackAddresses = rollbackTo(forkBlock)
     cs.transactionStore->TransactionStore.rollback(forkBlock)
     cs.blockStore->BlockStore.rollback(forkBlock)
-    cs.committedProgressBlockNumber = Pervasives.min(cs.committedProgressBlockNumber, forkBlock)
+    cs->rollbackCommittedProgress(Pervasives.min(cs.committedProgressBlockNumber, forkBlock))
     cs.processingBlockNumber = Pervasives.min(cs.processingBlockNumber, forkBlock)
     rolledBackAddresses
   | Untouched => []

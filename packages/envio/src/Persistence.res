@@ -24,6 +24,7 @@ type initialChainState = {
   endBlock: option<int>,
   maxReorgDepth: int,
   progressBlockNumber: int,
+  progressBlockTime: option<int>,
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,

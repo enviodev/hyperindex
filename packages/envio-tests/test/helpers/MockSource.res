@@ -606,6 +606,7 @@ let make = (
                     {
                       blockNumber: latestFetchedBlockNumber,
                       blockHash: evmBlockHash(latestFetchedBlockHash),
+                      blockTimestamp: latestFetchedBlockNumber,
                     }: BlockStore.inputBlock
                   ),
                 ]
@@ -638,15 +639,17 @@ let make = (
                 | None => ()
                 }
                 // A real source returns the header of every block a matched
-                // item came from, so those blocks carry a hash too. Without
-                // them the store only ever learns the range's seam and end,
-                // and reorg detection never sees the blocks events landed on.
+                // item came from, so those blocks carry a hash and a timestamp
+                // too. Without them the store only ever learns the range's seam
+                // and end, and reorg detection never sees the blocks events
+                // landed on.
                 items->Array.forEach(
                   item => {
                     if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
                       observedBlocks->Array.push({
                         blockNumber: item.blockNumber,
                         blockHash: mockBlockHash(item.blockNumber),
+                        blockTimestamp: item.blockNumber,
                       })
                     }
                   },
