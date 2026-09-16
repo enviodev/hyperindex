@@ -739,11 +739,16 @@ impl BlockStore {
                 .and_then(|b| map_i64(&Some(b)).ok().flatten()),
             Ecosystem::Fuel => inner.table.field_i64(&key, field),
             Ecosystem::Svm => {
-                let slot = match inner.table.field_i64(&key, field) {
-                    Some(time) => return Some(time),
-                    None if allow_skipped_slot => inner.table.last_key_with_field(key, field)?,
-                    None => return None,
-                };
+                if let Some(time) = inner.table.field_i64(&key, field) {
+                    return Some(time);
+                }
+                // A slot the store holds a row for produced a block, whether or
+                // not that row carries a time, so no earlier slot's time is its
+                // own. Only a slot with no row at all was skipped.
+                if !allow_skipped_slot || inner.table.contains_key(&key) {
+                    return None;
+                }
+                let slot = inner.table.last_key_with_field(key, field)?;
                 inner.table.field_i64(&slot, field)
             }
         }
@@ -1427,6 +1432,25 @@ mod tests {
             ),
             (Some(100), Some(120), None)
         );
+    }
+
+    #[test]
+    fn get_timestamp_does_not_treat_a_timeless_svm_block_as_skipped() {
+        let store = BlockStore::new_svm();
+        store.insert_svm_blocks(vec![
+            solana_simple::Block {
+                block_time: Some(100),
+                ..raw_svm_block(10)
+            },
+            // The slot produced a block; the response just carried no time for
+            // it. That is not a skipped slot, so slot 10's time is not its own.
+            solana_simple::Block {
+                block_time: None,
+                ..raw_svm_block(11)
+            },
+        ]);
+
+        assert_eq!(store.get_timestamp(11, true), None);
     }
 
     #[test]
