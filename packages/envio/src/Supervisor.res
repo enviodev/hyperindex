@@ -297,14 +297,12 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
       | snapshots => Some(snapshots->merge)
       },
     ~envioVersion=Utils.EnvioPackage.value.version,
-    // Every process of the run, the supervisor included, under a `worker`
-    // label: the memory and the event loop that matter are the workers' own.
+    // The workers' readings, each under a `worker` label: theirs are the memory
+    // and the event loop the indexing runs on.
     ~collectRuntime=() =>
       Metrics.renderRuntime(
-        [(`worker="supervisor"`, Metrics.sampleRuntime())]->Array.concat(
-          group.running->Array.filterMap(r =>
-            r.runtime->Option.map(runtime => (`worker="${r.worker->name}"`, runtime))
-          ),
+        group.running->Array.filterMap(r =>
+          r.runtime->Option.map(runtime => (`worker="${r.worker->name}"`, runtime))
         ),
       ),
     ~isDevelopmentMode=config.isDev,

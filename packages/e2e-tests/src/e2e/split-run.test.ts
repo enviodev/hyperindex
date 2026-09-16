@@ -100,7 +100,7 @@ describe.skipIf(!reachable)("E2E: a split run is one indexer", () => {
     await waitForOutput(indexer, "Splitting 2 chains across 2 processes", config.timeouts.indexerStartup);
 
     const [runtime, metrics] = await Promise.all([
-      // The supervisor's own readings alongside each worker's, told apart by label.
+      // Each worker's readings, told apart by label.
       scrapeUntil("/metrics/runtime", (body) => body.includes('worker="8453"')),
       // Both chains on one endpoint, whichever process drives each.
       scrapeUntil(
@@ -115,7 +115,7 @@ describe.skipIf(!reachable)("E2E: a split run is one indexer", () => {
     expect({
       exitCode: await exit,
       // Workers are named by the chains they drive.
-      runtimeWorkers: ["supervisor", "1", "8453"].map((worker) =>
+      runtimeWorkers: ["1", "8453"].map((worker) =>
         runtime.includes(`nodejs_heap_size_used_bytes{worker="${worker}"}`)
       ),
       metricsChains: [1, 8453].map((chainId) =>
@@ -123,7 +123,7 @@ describe.skipIf(!reachable)("E2E: a split run is one indexer", () => {
       ),
     }).toEqual({
       exitCode: 0,
-      runtimeWorkers: [true, true, true],
+      runtimeWorkers: [true, true],
       metricsChains: [true, true],
     });
   });
