@@ -605,9 +605,7 @@ FROM "public"."envio_chains";`
     // A bytea column binds as the Uint8Array postgres.js serializes, and a
     // bytea[] one as the array literal Postgres parses itself — postgres.js
     // types an array parameter after its first element, so an array of
-    // Uint8Arrays would bind as a single bytea. An `in` over a list column
-    // nests one dimension deeper, and Postgres arrays are rectangular, so its
-    // candidates all have the same length.
+    // Uint8Arrays would bind as a single bytea.
     let bytesTable = Table.mkTable(
       "blobs",
       ~fields=[
@@ -636,12 +634,13 @@ FROM "public"."envio_chains";`
         )
 
         t.expect((condition, params)).toEqual((
-          `"tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4)`,
+          `"tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND ("chunks" = $4 OR "chunks" = $5)`,
           [
             Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
             `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
             `{"\\\\x03"}`->(Utils.magic: string => unknown),
-            `{{"\\\\x04"},{"\\\\x05"}}`->(Utils.magic: string => unknown),
+            `{"\\\\x04"}`->(Utils.magic: string => unknown),
+            `{"\\\\x05"}`->(Utils.magic: string => unknown),
           ],
         ))
       },
@@ -719,6 +718,52 @@ FROM "public"."envio_chains";`
             5->(Utils.magic: int => unknown),
             10->(Utils.magic: int => unknown),
           ],
+        ))
+      },
+    )
+
+    // Candidates for a list column go out one equality each: Postgres arrays
+    // are rectangular, so a single bound array can't hold candidates of
+    // different lengths. A boolean column takes the same route, because
+    // postgres.js can't bind a boolean array. An empty list matches nothing.
+    Async.it(
+      "Expands an _in over a list or boolean column into one equality per candidate",
+      async t => {
+        let listTable = Table.mkTable(
+          "lists",
+          ~fields=[
+            Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+            Table.mkField("tags", String, ~isArray=true, ~fieldSchema=S.array(S.string)),
+            Table.mkField("flag", Boolean, ~fieldSchema=S.bool),
+          ],
+        )
+        let condition = (filter: dict<dict<unknown>>) => {
+          let params = []
+          let condition = PgStorage.makeFilterCondition(
+            ~filter=filter->parse(~table=listTable),
+            ~table=listTable,
+            ~pgSchema="test_schema",
+            ~params,
+          )
+          (condition, params)
+        }
+        let tagsIn = candidates =>
+          dict{"tags": dict{"_in": candidates->(Utils.magic: array<array<string>> => unknown)}}
+
+        t.expect((
+          condition(tagsIn([["a"], ["a", "b"]])),
+          condition(tagsIn([])),
+          condition(dict{"flag": dict{"_in": [true, false]->(Utils.magic: array<bool> => unknown)}}),
+        )).toEqual((
+          (
+            `("tags" = $1 OR "tags" = $2)`,
+            [["a"]->(Utils.magic: array<string> => unknown), ["a", "b"]->(Utils.magic: array<string> => unknown)],
+          ),
+          ("FALSE", []),
+          (
+            `("flag" = $1 OR "flag" = $2)`,
+            [true->(Utils.magic: bool => unknown), false->(Utils.magic: bool => unknown)],
+          ),
         ))
       },
     )

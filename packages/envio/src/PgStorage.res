@@ -475,6 +475,27 @@ let makeFilterCondition = (
       // but digits.
       | "_eq" if queryField.isChainId =>
         `${column} = ${fieldValue->ChainId.normalizeOrThrow->ChainId.toString}`
+      // Postgres arrays are rectangular, so candidates for a list column can't
+      // be bound as one array unless they all have the same length, and
+      // postgres.js can't bind a boolean array at all
+      // (https://github.com/porsager/postgres/issues/471). One equality per
+      // candidate has neither problem.
+      | "_in" if queryField.isArray || queryField.fieldType === Boolean =>
+        switch fieldValue->EntityFilter.asArray {
+        | [] => "FALSE"
+        | candidates =>
+          `(${candidates
+            ->Array.map(
+              candidate =>
+                `${column} = ${serializeParamOrThrow(
+                    ~queryField,
+                    ~fieldName,
+                    ~fieldValue=candidate,
+                    ~isArray=false,
+                  )}`,
+            )
+            ->Array.join(" OR ")})`
+        }
       | "_in" =>
         let param = serializeParamOrThrow(~queryField, ~fieldName, ~fieldValue, ~isArray=true)
         switch queryField.fieldType {
