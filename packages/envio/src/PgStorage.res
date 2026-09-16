@@ -552,20 +552,23 @@ let makeInsertValuesSetQuery = (
 // Constants for chunking
 let maxItemsPerQuery = 500
 
+// How a table's batch reaches its statement.
+type binding =
+  // One array per column, laid into the arena and rendered by Rust. `writeTable`
+  // is the arena's name for the table, taken the first time a batch is staged.
+  | Staged({columns: array<Staging.column>, mutable writeTable: option<int>})
+  // A parameter per cell, rendered here. What a table with an array column
+  // takes, and the history tables whose schema doesn't survive the conversion.
+  | PerCell
+
 // What a table's batch write needs, built once and cached per table.
 type batchSet = {
   query: string,
   // The table's own schema, compiled: rows in, one array per column out.
   convertOrThrow: array<unknown> => array<array<unknown>>,
-  // Whether `query` binds every cell on its own rather than unnesting columns.
-  isInsertValues: bool,
-  // Columns of bytes a caller rendering parameters itself has to render; only
-  // the unnest statement has any, and only when its table can't be staged.
-  byteaColumns: array<int>,
-  // Where the batch is laid out for Rust to render, when the table can be.
-  stagedColumns: option<array<Staging.column>>,
-  // The arena's name for this table, taken the first time a batch is staged.
-  mutable writeTable: option<int>,
+  // How the batch reaches the statement: laid into the arena for Rust to render
+  // as one array per column, or rendered as a parameter per cell.
+  binding: binding,
 }
 
 let makeTableBatchSetQuery = (
@@ -574,7 +577,7 @@ let makeTableBatchSetQuery = (
   ~itemSchema: S.t<'item>,
   ~chainIdMode: ChainId.mode=Int32,
 ): batchSet => {
-  let {dbSchema, hasArrayField, byteaColumnIndexes} =
+  let {dbSchema, hasArrayField} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
   // Should move this to a better place
@@ -602,18 +605,24 @@ let makeTableBatchSetQuery = (
       Utils.magic: (unknown => unknown) => array<unknown> => array<array<unknown>>
     )
 
-  if (isRawEvents || !hasArrayField) && !isHistoryUpdate {
+  // The unnest statement takes a table whose columns the arena can hold, which
+  // rules out one of arrays: the arena carries a value per row, and an array is
+  // a value a row holds rather than a run of them. Deciding it here is what lets
+  // the caller stage without asking again.
+  let staged = if (isRawEvents || !hasArrayField) && !isHistoryUpdate {
     let fields = table->Table.schemaOrderedFields(~schema=itemSchema->S.toUnknown)
-    {
+    PgWriting.canStage(fields) ? Some(PgWriting.columns(fields)) : None
+  } else {
+    None
+  }
+
+  switch staged {
+  | Some(columns) => {
       query: makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents, ~chainIdMode),
       convertOrThrow: compile(S.unnest(dbSchema)),
-      isInsertValues: false,
-      byteaColumns: byteaColumnIndexes,
-      stagedColumns: PgWriting.canStage(fields) ? Some(PgWriting.columns(fields)) : None,
-      writeTable: None,
+      binding: Staged({columns, writeTable: None}),
     }
-  } else {
-    {
+  | None => {
       query: makeInsertValuesSetQuery(
         ~pgSchema,
         ~table,
@@ -628,10 +637,7 @@ let makeTableBatchSetQuery = (
           ),
         }),
       ),
-      isInsertValues: true,
-      byteaColumns: [],
-      stagedColumns: None,
-      writeTable: None,
+      binding: PerCell,
     }
   }
 }
@@ -712,7 +718,7 @@ let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table,
 let makeSetQueryCache = () => Utils.WeakMap.make()
 
 let setOrThrow = async (
-  sql,
+  sql: Sql.t,
   ~items,
   ~table: Table.table,
   ~itemSchema,
@@ -739,12 +745,37 @@ let setOrThrow = async (
     }
 
     try {
-      if data.isInsertValues {
-        let chunks = chunkArray(items, ~chunkSize=maxItemsPerQuery)
+      switch data.binding {
+      | Staged(staged) =>
+        let columns = data.convertOrThrow(items->(Utils.magic: array<'item> => array<unknown>))
+        let writeTable = switch staged.writeTable {
+        | Some(writeTable) => writeTable
+        | None =>
+          let writeTable =
+            sql.client->PgClient.registerWriteTable(
+              staged.columns->Array.map(column => column.name),
+              staged.columns->Array.map(column => (column.kind :> int)),
+            )
+          staged.writeTable = Some(writeTable)
+          writeTable
+        }
+        await sql.client->PgClient.executeStaged(
+          ~transaction=sql.transaction,
+          ~sql=data.query,
+          ~handle=sql.client
+          ->PgClient.arena
+          ->PgWriting.stage(
+            ~table=writeTable,
+            ~columns=staged.columns,
+            ~values=columns,
+            ~rows=items->Array.length,
+          ),
+          ~unnest=true,
+        )
+      | PerCell =>
         let responses = []
-        chunks->Array.forEach(chunk => {
+        chunkArray(items, ~chunkSize=maxItemsPerQuery)->Array.forEach(chunk => {
           let chunkSize = chunk->Array.length
-          let isFullChunk = chunkSize === maxItemsPerQuery
 
           // Every cell is bound on its own, so this comes back as one run of
           // parameters rather than a column each.
@@ -752,11 +783,13 @@ let setOrThrow = async (
             data.convertOrThrow(chunk->(Utils.magic: array<'item> => array<unknown>))->(
               Utils.magic: array<array<unknown>> => array<unknown>
             )
-          // Use prepared query only for full batches where the cached query is reused.
-          // Partial chunks generate unique SQL each time, so preparation has no benefit.
-          let response =
+          // A partial chunk is a statement of its own, which the server has no
+          // reason to have seen before, so only a full one reuses the cached
+          // text the connection already prepared.
+          responses
+          ->Array.push(
             sql->Sql.exec(
-              isFullChunk
+              chunkSize === maxItemsPerQuery
                 ? data.query
                 : makeInsertValuesSetQuery(
                     ~pgSchema,
@@ -766,58 +799,11 @@ let setOrThrow = async (
                     ~chainIdMode,
                   ),
               ~params,
-            )
-          responses->Array.push(response)->ignore
+            ),
+          )
+          ->ignore
         })
         let _ = await Promise.all(responses)
-      } else {
-        // Use UNNEST approach for single query
-        let columns = data.convertOrThrow(items->(Utils.magic: array<'item> => array<unknown>))
-        switch data.stagedColumns {
-        | Some(stagedColumns) =>
-          let writeTable = switch data.writeTable {
-          | Some(writeTable) => writeTable
-          | None =>
-            let writeTable =
-              sql.client->PgClient.registerWriteTable(
-                stagedColumns->Array.map(column => column.name),
-                stagedColumns->Array.map(column => (column.kind :> int)),
-              )
-            data.writeTable = Some(writeTable)
-            writeTable
-          }
-          let staged =
-            sql.client
-            ->PgClient.arena
-            ->PgWriting.stage(
-              ~table=writeTable,
-              ~columns=stagedColumns,
-              ~values=columns,
-              ~rows=items->Array.length,
-            )
-          await sql.client->PgClient.executeStaged(
-            ~transaction=sql.transaction,
-            ~sql=data.query,
-            ~handle=staged,
-            ~unnest=true,
-          )
-        | None =>
-          // A column of bytes has to reach the server as the literal its array
-          // parser reads, which only the caller rendering the parameters can do.
-          data.byteaColumns->Array.forEach(index =>
-            columns->Array.setUnsafe(
-              index,
-              columns
-              ->Array.getUnsafe(index)
-              ->Utils.Bytes.toPgArrayLiteral
-              ->(Utils.magic: string => array<unknown>),
-            )
-          )
-          await sql->Sql.exec(
-            data.query,
-            ~params=columns->(Utils.magic: array<array<unknown>> => array<unknown>),
-          )
-        }
       }
     } catch {
     | S.Raised(_) as exn =>

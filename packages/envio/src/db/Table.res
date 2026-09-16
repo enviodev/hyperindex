@@ -432,7 +432,6 @@ type sqlParams<'entity> = {
   quotedFieldNames: array<string>,
   quotedNonPrimaryFieldNames: array<string>,
   arrayFieldTypes: array<string>,
-  byteaColumnIndexes: array<int>,
   hasArrayField: bool,
 }
 
@@ -461,9 +460,6 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
   let quotedFieldNames = []
   let quotedNonPrimaryFieldNames = []
   let arrayFieldTypes = []
-  // Positions of the bytea columns among the unnest parameters, which the
-  // caller binds as array literals (see `Utils.Bytes.toPgArrayLiteral`).
-  let byteaColumnIndexes = []
   let hasArrayField = ref(false)
 
   let dbSchema: S.t<dict<unknown>> = S.schema(s =>
@@ -500,8 +496,6 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
         }
         switch field {
         | Field({isArray: true}) => hasArrayField := true
-        | Field({fieldType: Bytea}) =>
-          byteaColumnIndexes->Array.push(arrayFieldTypes->Array.length)->ignore
         | _ => ()
         }
 
@@ -553,7 +547,6 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
     quotedFieldNames,
     quotedNonPrimaryFieldNames,
     arrayFieldTypes,
-    byteaColumnIndexes,
     hasArrayField: hasArrayField.contents,
   }
 }

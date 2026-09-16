@@ -14,6 +14,7 @@
 //! as text.
 
 use anyhow::{bail, Context, Result};
+use std::borrow::Cow;
 use tokio_postgres::types::{FromSql, Kind, Type};
 use tokio_postgres::Row;
 
@@ -21,15 +22,35 @@ use crate::columnar::{Arena, ColumnKind, ColumnSpec};
 
 /// A decoded column value, in the shape it will take in JavaScript.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Cell {
+pub enum Cell<'a> {
     Null,
     Bool(bool),
     Num(f64),
-    Str(String),
-    Bytes(Vec<u8>),
+    /// Borrowed where the column's text is already the value's text, which is
+    /// every type but the two that have to render themselves.
+    Str(Cow<'a, str>),
+    Bytes(Cow<'a, [u8]>),
     /// Milliseconds since the Unix epoch, becoming a `Date`.
     Timestamp(f64),
-    Arr(Vec<Cell>),
+    Arr(Vec<Cell<'a>>),
+}
+
+impl Cell<'_> {
+    /// The same value owning what it borrowed. Nothing in the indexer needs
+    /// this — a cell is written into the arena and dropped before the rows it
+    /// borrows from are — but a check that reads one back does.
+    #[cfg(test)]
+    pub fn into_owned(self) -> Cell<'static> {
+        match self {
+            Cell::Null => Cell::Null,
+            Cell::Bool(value) => Cell::Bool(value),
+            Cell::Num(value) => Cell::Num(value),
+            Cell::Str(value) => Cell::Str(Cow::Owned(value.into_owned())),
+            Cell::Bytes(value) => Cell::Bytes(Cow::Owned(value.into_owned())),
+            Cell::Timestamp(value) => Cell::Timestamp(value),
+            Cell::Arr(items) => Cell::Arr(items.into_iter().map(Cell::into_owned).collect()),
+        }
+    }
 }
 
 /// Days between 2000-01-01, which Postgres counts from, and the Unix epoch.
@@ -154,7 +175,7 @@ pub fn numeric_to_string(raw: &[u8]) -> Result<String> {
     Ok(rendered)
 }
 
-fn decode_array(raw: &[u8], element: &Type) -> Result<Cell> {
+fn decode_array<'a>(raw: &'a [u8], element: &Type) -> Result<Cell<'a>> {
     let dimensions = be_i32(raw, 0)? as usize;
     if dimensions == 0 {
         return Ok(Cell::Arr(Vec::new()));
@@ -194,21 +215,21 @@ fn decode_array(raw: &[u8], element: &Type) -> Result<Cell> {
     Ok(Cell::Arr(nested))
 }
 
-pub fn decode(ty: &Type, raw: &[u8]) -> Result<Cell> {
+pub fn decode<'a>(ty: &Type, raw: &'a [u8]) -> Result<Cell<'a>> {
     if let Kind::Array(element) = ty.kind() {
         return decode_array(raw, element);
     }
     Ok(match ty.oid() {
         BOOL => Cell::Bool(raw.first().copied().unwrap_or(0) != 0),
-        BYTEA => Cell::Bytes(raw.to_vec()),
+        BYTEA => Cell::Bytes(Cow::Borrowed(raw)),
         INT2 => Cell::Num(f64::from(be_i16(raw, 0)?)),
         INT4 | OID => Cell::Num(f64::from(be_i32(raw, 0)?)),
         FLOAT4 => Cell::Num(f64::from(f32::from_bits(be_i32(raw, 0)? as u32))),
         FLOAT8 => Cell::Num(f64::from_bits(be_i64(raw, 0)? as u64)),
         // Not a number: a 64-bit integer does not fit one, and the driver this
         // replaces left it as text for that reason.
-        INT8 => Cell::Str(be_i64(raw, 0)?.to_string()),
-        NUMERIC => Cell::Str(numeric_to_string(raw)?),
+        INT8 => Cell::Str(Cow::Owned(be_i64(raw, 0)?.to_string())),
+        NUMERIC => Cell::Str(Cow::Owned(numeric_to_string(raw)?)),
         TIMESTAMP | TIMESTAMPTZ => {
             let micros = be_i64(raw, 0)?;
             // Floored, not truncated. Before 2000 the count is negative, and
@@ -224,22 +245,28 @@ pub fn decode(ty: &Type, raw: &[u8]) -> Result<Cell> {
         }
         // The document's own text. The driver this replaces ran `JSON.parse`
         // over exactly these bytes, so parsing stays on the other side.
-        JSON => Cell::Str(String::from_utf8(raw.to_vec()).context("a json column is not UTF-8")?),
+        JSON => Cell::Str(Cow::Borrowed(
+            str::from_utf8(raw).context("a json column is not UTF-8")?,
+        )),
         JSONB => {
             // One version byte, then the same text a `json` column holds.
             let (version, document) = raw.split_first().context("a jsonb column is empty")?;
             if *version != 1 {
                 bail!("jsonb version {version} is not one this can read");
             }
-            Cell::Str(String::from_utf8(document.to_vec()).context("a jsonb column is not UTF-8")?)
+            Cell::Str(Cow::Borrowed(
+                str::from_utf8(document).context("a jsonb column is not UTF-8")?,
+            ))
         }
         // Text, and every type an enum or a domain resolves to. The driver had
         // no parser for these either and handed back the bytes as a string.
-        _ => Cell::Str(String::from_utf8(raw.to_vec()).context("a text column is not UTF-8")?),
+        _ => Cell::Str(Cow::Borrowed(
+            str::from_utf8(raw).context("a text column is not UTF-8")?,
+        )),
     })
 }
 
-impl<'a> FromSql<'a> for Cell {
+impl<'a> FromSql<'a> for Cell<'a> {
     fn from_sql(
         ty: &Type,
         raw: &'a [u8],
@@ -330,7 +357,7 @@ pub fn element_read_kind(ty: &Type) -> i32 {
     }
 }
 
-fn write_cell(arena: &mut Arena, column: usize, row: usize, cell: &Cell) -> Result<()> {
+fn write_cell(arena: &mut Arena, column: usize, row: usize, cell: &Cell<'_>) -> Result<()> {
     match cell {
         Cell::Null => arena.mark_null(column, row),
         Cell::Bool(value) => arena.set_f64(column, row, if *value { 1.0 } else { 0.0 }),
@@ -342,7 +369,7 @@ fn write_cell(arena: &mut Arena, column: usize, row: usize, cell: &Cell) -> Resu
     Ok(())
 }
 
-fn write_element(arena: &mut Arena, column: usize, element: usize, cell: &Cell) -> Result<()> {
+fn write_element(arena: &mut Arena, column: usize, element: usize, cell: &Cell<'_>) -> Result<()> {
     match cell {
         Cell::Null => arena.mark_element_null(column, element),
         Cell::Bool(value) => arena.set_element_f64(column, element, if *value { 1.0 } else { 0.0 }),
@@ -362,17 +389,20 @@ fn write_element(arena: &mut Arena, column: usize, element: usize, cell: &Cell) 
 /// sized because a list column cannot be laid out until its elements have been
 /// counted.
 pub fn into_arena(rows: &[Row], types: &[Type]) -> Result<Arena> {
-    let decoded = rows
-        .iter()
-        .map(|row| {
-            (0..types.len())
-                .map(|column| {
-                    row.try_get::<_, Cell>(column)
-                        .with_context(|| format!("Failed reading column {column}"))
-                })
-                .collect::<Result<Vec<_>>>()
-        })
-        .collect::<Result<Vec<_>>>()?;
+    // One run of cells for the whole result rather than a `Vec` per row: the
+    // cells borrow the bytes the rows already hold, so this is the only
+    // allocation the decode makes, and `int8` and `numeric` the only values in
+    // it that own anything.
+    let width = types.len();
+    let mut decoded = Vec::with_capacity(rows.len() * width);
+    for row in rows {
+        for column in 0..width {
+            decoded.push(
+                row.try_get::<_, Cell>(column)
+                    .with_context(|| format!("Failed reading column {column}"))?,
+            );
+        }
+    }
 
     let specs = types
         .iter()
@@ -382,7 +412,9 @@ pub fn into_arena(rows: &[Row], types: &[Type]) -> Result<Arena> {
                 element: scalar_kind(element),
                 elements: decoded
                     .iter()
-                    .map(|cells| match &cells[column] {
+                    .skip(column)
+                    .step_by(width)
+                    .map(|cell| match cell {
                         Cell::Arr(items) => items.len(),
                         _ => 0,
                     })
@@ -393,9 +425,12 @@ pub fn into_arena(rows: &[Row], types: &[Type]) -> Result<Arena> {
         .collect::<Vec<_>>();
 
     let mut arena = Arena::new_filled(rows.len(), &specs);
-    let mut written = vec![0usize; types.len()];
+    let mut written = vec![0usize; width];
 
-    for (row, cells) in decoded.iter().enumerate() {
+    // Indexed rather than chunked: a statement that returns no columns at all —
+    // which is every insert, update and delete — has nothing to chunk by.
+    for row in 0..rows.len() {
+        let cells = &decoded[row * width..(row + 1) * width];
         for (column, cell) in cells.iter().enumerate() {
             match (&specs[column], cell) {
                 (ColumnSpec::List { .. }, Cell::Arr(items)) => {
@@ -522,7 +557,7 @@ mod tests {
                 decode(&Type::INT2, &(-7i16).to_be_bytes()).unwrap(),
             ),
             (
-                Cell::Str("9007199254740993".to_string()),
+                Cell::Str("9007199254740993".into()),
                 Cell::Num(42.0),
                 Cell::Num(-7.0),
             )
@@ -568,7 +603,7 @@ mod tests {
         raw.extend_from_slice(br#"{"a":[1,true,null],"b":"x"}"#);
         assert_eq!(
             decode(&Type::JSONB, &raw).unwrap(),
-            Cell::Str(r#"{"a":[1,true,null],"b":"x"}"#.to_string())
+            Cell::Str(r#"{"a":[1,true,null],"b":"x"}"#.into())
         );
     }
 
@@ -628,9 +663,9 @@ mod tests {
         assert_eq!(
             decode(&Type::TEXT_ARRAY, &raw).unwrap(),
             Cell::Arr(vec![
-                Cell::Str("a".to_string()),
-                Cell::Str(String::new()),
-                Cell::Str("\u{e9}".to_string()),
+                Cell::Str("a".into()),
+                Cell::Str("".into()),
+                Cell::Str("\u{e9}".into()),
             ])
         );
     }
@@ -639,7 +674,7 @@ mod tests {
     fn bytes_come_back_whole() {
         assert_eq!(
             decode(&Type::BYTEA, &[0xde, 0xad, 0x00, 0xbe]).unwrap(),
-            Cell::Bytes(vec![0xde, 0xad, 0x00, 0xbe])
+            Cell::Bytes(vec![0xde, 0xad, 0x00, 0xbe].into())
         );
     }
 

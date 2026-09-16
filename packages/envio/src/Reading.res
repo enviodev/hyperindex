@@ -44,19 +44,26 @@ type rec reader =
   // rows.
   | Lists({elements: reader, elementNulls: Uint8Array.t, rowEnds: Uint32Array.t})
 
-type column = {name: string, reader: reader, nulls: Uint8Array.t}
-
 @get_index external floatAt: (Float64Array.t, int) => float = ""
 @get_index external flagAt: (Uint8Array.t, int) => int = ""
 @get_index external offsetAt: (Uint32Array.t, int) => int = ""
 
-type textDecoder
-@new external makeTextDecoder: unit => textDecoder = "TextDecoder"
-@send external decode: (textDecoder, Uint8Array.t) => string = "decode"
+// Node decodes UTF-8 from a range of a buffer without being handed a view of
+// that range, which is what makes a column's text one call per row and no
+// allocation per row besides the string itself.
+type nodeBuffer
+@val @scope("Buffer")
+external bufferOver: (ArrayBuffer.t, int, int) => nodeBuffer = "from"
+@send external utf8Between: (nodeBuffer, @as("utf8") _, int, int) => string = "toString"
 
-@val @scope("Buffer") external bufferFrom: Uint8Array.t => Uint8Array.t = "from"
-
-%%private(let decoder = makeTextDecoder())
+%%private(
+  let textOf = (variable: variable) =>
+    bufferOver(
+      variable.data->TypedArray.buffer,
+      variable.data->TypedArray.byteOffset,
+      variable.data->TypedArray.byteLength,
+    )
+)
 
 %%private(
   let boundsOf = (variable, index) => {
@@ -97,75 +104,154 @@ type textDecoder
   }
 )
 
-let columns = (~buffers, ~names, ~kinds, ~elementKinds) => {
-  let cursor = ref(0)
-  names->Array.mapWithIndex((name, index) => {
-    let kind = kinds->Array.getUnsafe(index)->kindOfOrdinal
-    let elementKind = switch elementKinds->Array.getUnsafe(index) {
-    | -1 => Float
-    | ordinal => ordinal->kindOfOrdinal
-    }
-    let reader = takeReader(buffers, cursor, ~kind, ~elementKind)
-    let nulls = Uint8Array.fromBuffer(buffers->Array.getUnsafe(cursor.contents))
-    cursor := cursor.contents + 1
-    {name, reader, nulls}
-  })
-}
-
-// One value, as the driver this replaces would have produced it. A `numeric` and
-// an `int8` are text because that is what it gave; a timestamp arrives as the
-// milliseconds a `Date` is built from.
 %%private(
-  let rec valueAt = (reader, index) =>
-    switch reader {
-    | Floats(values) => values->floatAt(index)->(Utils.magic: float => unknown)
-    | Booleans(values) => (values->floatAt(index) !== 0.)->(Utils.magic: bool => unknown)
-    | Timestamps(values) => values->floatAt(index)->Date.fromTime->(Utils.magic: Date.t => unknown)
-    | Texts(variable) =>
-      let (start, end) = boundsOf(variable, index)
-      decoder
-      ->decode(variable.data->TypedArray.subarray(~start, ~end))
-      ->(Utils.magic: string => unknown)
-    | Documents(variable) =>
-      let (start, end) = boundsOf(variable, index)
-      decoder
-      ->decode(variable.data->TypedArray.subarray(~start, ~end))
-      ->JSON.parseOrThrow
-      ->(Utils.magic: JSON.t => unknown)
-    | Blobs(variable) =>
-      let (start, end) = boundsOf(variable, index)
-      // A `Buffer`, and a copy of the bytes rather than a view over them: the
-      // driver this replaces handed back a `Buffer`, and the arena's memory is
-      // detached once the result is returned.
-      bufferFrom(variable.data->TypedArray.subarray(~start, ~end))->(
-        Utils.magic: Uint8Array.t => unknown
-      )
-    | Lists({elements, elementNulls, rowEnds}) =>
-      let end = rowEnds->offsetAt(index)
-      let start = index === 0 ? 0 : rowEnds->offsetAt(index - 1)
-      let items = []
-      for element in start to end - 1 {
-        items
-        ->Array.push(
-          elementNulls->flagAt(element) === 0 ? elements->valueAt(element) : %raw(`null`),
-        )
-        ->ignore
+  let readers = (~buffers, ~kinds, ~elementKinds) => {
+    let cursor = ref(0)
+    kinds->Array.mapWithIndex((ordinal, index) => {
+      let elementKind = switch elementKinds->Array.getUnsafe(index) {
+      | -1 => Float
+      | ordinal => ordinal->kindOfOrdinal
       }
-      items->(Utils.magic: array<unknown> => unknown)
-    }
+      let reader = takeReader(buffers, cursor, ~kind=ordinal->kindOfOrdinal, ~elementKind)
+      let nulls = Uint8Array.fromBuffer(buffers->Array.getUnsafe(cursor.contents))
+      cursor := cursor.contents + 1
+      (reader, nulls)
+    })
+  }
 )
 
-// The rows as objects, which is the shape the entity schemas parse. Every row
-// is built the same way in the same order, so they share one hidden class
-// rather than one per row.
-let rows = (columns: array<column>, ~rows as rowCount) => {
-  let result = []
-  for row in 0 to rowCount - 1 {
-    let object = Dict.make()
-    columns->Array.forEach(({name, reader, nulls}) => {
-      object->Dict.set(name, nulls->flagAt(row) === 0 ? reader->valueAt(row) : %raw(`null`))
-    })
-    result->Array.push(object)->ignore
+// A column's values as a plain array, decoded in one pass. The kind is
+// switched on once for the whole column rather than once per cell, which is
+// what lets each of these be a tight loop over one buffer.
+//
+// A row the statement returned NULL for keeps the `null` the array starts out
+// holding.
+%%private(
+  let rec materialize = (reader, ~nulls, ~count): array<unknown> => {
+    let values = Array.make(~length=count, %raw(`null`))
+    let present = row => nulls->flagAt(row) === 0
+    switch reader {
+    | Floats(source) =>
+      for row in 0 to count - 1 {
+        if present(row) {
+          values->Array.setUnsafe(row, source->floatAt(row)->(Utils.magic: float => unknown))
+        }
+      }
+    | Booleans(source) =>
+      for row in 0 to count - 1 {
+        if present(row) {
+          values->Array.setUnsafe(
+            row,
+            (source->floatAt(row) !== 0.)->(Utils.magic: bool => unknown),
+          )
+        }
+      }
+    | Timestamps(source) =>
+      for row in 0 to count - 1 {
+        if present(row) {
+          values->Array.setUnsafe(
+            row,
+            source->floatAt(row)->Date.fromTime->(Utils.magic: Date.t => unknown),
+          )
+        }
+      }
+    | Texts(variable) =>
+      let text = textOf(variable)
+      for row in 0 to count - 1 {
+        if present(row) {
+          let (start, end) = boundsOf(variable, row)
+          values->Array.setUnsafe(
+            row,
+            text->utf8Between(start, end)->(Utils.magic: string => unknown),
+          )
+        }
+      }
+    | Documents(variable) =>
+      let text = textOf(variable)
+      for row in 0 to count - 1 {
+        if present(row) {
+          let (start, end) = boundsOf(variable, row)
+          values->Array.setUnsafe(
+            row,
+            text->utf8Between(start, end)->JSON.parseOrThrow->(Utils.magic: JSON.t => unknown),
+          )
+        }
+      }
+    | Blobs(variable) =>
+      // The arena's memory is detached once the result is handed back, so the
+      // bytes have to be copied out — but once for the column rather than once
+      // per row, leaving each row a view over what the column already owns.
+      let owned = variable.data->TypedArray.slice(~start=0, ~end=variable.data->TypedArray.length)
+      for row in 0 to count - 1 {
+        if present(row) {
+          let (start, end) = boundsOf(variable, row)
+          values->Array.setUnsafe(
+            row,
+            owned->TypedArray.subarray(~start, ~end)->(Utils.magic: Uint8Array.t => unknown),
+          )
+        }
+      }
+    | Lists({elements, elementNulls, rowEnds}) =>
+      // The elements are a column of their own, so they decode the same way
+      // once, and a row is the run of them `rowEnds` cuts out.
+      let elementValues = materialize(
+        elements,
+        ~nulls=elementNulls,
+        ~count=count === 0 ? 0 : rowEnds->offsetAt(count - 1),
+      )
+      for row in 0 to count - 1 {
+        if present(row) {
+          let end = rowEnds->offsetAt(row)
+          let start = row === 0 ? 0 : rowEnds->offsetAt(row - 1)
+          values->Array.setUnsafe(
+            row,
+            elementValues->Array.slice(~start, ~end)->(Utils.magic: array<unknown> => unknown),
+          )
+        }
+      }
+    }
+    values
   }
-  result
-}
+)
+
+// Builds the rows of one result shape. Compiled per set of column names so a
+// row is one object literal with every field in place: adding them one at a
+// time instead costs a hidden-class transition each, per row.
+type builder = (array<array<unknown>>, int) => array<dict<unknown>>
+
+%%private(
+  let compile: array<string> => builder = %raw(`(names) => new Function(
+    "columns",
+    "rows",
+    names.map((_, index) => "const c" + index + " = columns[" + index + "];").join("") +
+      "const out = new Array(rows);" +
+      "for (let row = 0; row < rows; row++) out[row] = {" +
+      names.map((name, index) => JSON.stringify(name) + ": c" + index + "[row]").join(",") +
+      "};" +
+      "return out;",
+  )`)
+)
+
+%%private(let builders: Map.t<string, builder> = Map.make())
+
+%%private(
+  let builderFor = names => {
+    let key = names->(Utils.magic: array<string> => JSON.t)->JSON.stringify
+    switch builders->Map.get(key) {
+    | Some(builder) => builder
+    | None =>
+      let builder = compile(names)
+      builders->Map.set(key, builder)
+      builder
+    }
+  }
+)
+
+// The result as the objects the entity schemas parse.
+let rows = (~buffers, ~names, ~kinds, ~elementKinds, ~rows as count) =>
+  builderFor(names)(
+    readers(~buffers, ~kinds, ~elementKinds)->Array.map(((reader, nulls)) =>
+      materialize(reader, ~nulls, ~count)
+    ),
+    count,
+  )

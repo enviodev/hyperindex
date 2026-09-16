@@ -34,7 +34,7 @@ fn client() -> PgClient {
 }
 
 /// Asks for `expression` as a value and as its own text, and returns both.
-async fn both(client: &PgClient, expression: &str) -> (Cell, Option<String>) {
+async fn both(client: &PgClient, expression: &str) -> (Cell<'static>, Option<String>) {
     let sql = format!("SELECT ({expression}) AS value, ({expression})::text AS rendered");
     let (rows, _) = client
         .query(&sql, &[])
@@ -42,10 +42,10 @@ async fn both(client: &PgClient, expression: &str) -> (Cell, Option<String>) {
         .unwrap_or_else(|error| panic!("`{sql}` failed: {error:#}"));
     let row = rows.first().expect("one row");
     let rendered = match row.get::<_, Cell>(1) {
-        Cell::Str(rendered) => Some(rendered),
+        Cell::Str(rendered) => Some(rendered.into_owned()),
         _ => None,
     };
-    (row.get(0), rendered)
+    (row.get::<_, Cell>(0).into_owned(), rendered)
 }
 
 /// Everything Postgres renders as text should come back from binary spelled the
@@ -76,7 +76,7 @@ async fn text_and_binary_agree_on_every_numeric() {
         let (value, rendered) = both(&client, expression).await;
         assert_eq!(
             value,
-            Cell::Str(rendered.clone().unwrap()),
+            Cell::Str(rendered.clone().unwrap().into()),
             "`{expression}` decoded to {value:?} but Postgres renders it as {rendered:?}"
         );
     }
@@ -94,11 +94,11 @@ async fn the_integer_types_keep_their_javascript_shape() {
         // Past what a double holds exactly, which is why it is text.
         (
             "9007199254740993::int8",
-            Cell::Str("9007199254740993".to_string()),
+            Cell::Str("9007199254740993".into()),
         ),
         (
             "(-9223372036854775808)::int8",
-            Cell::Str("-9223372036854775808".to_string()),
+            Cell::Str("-9223372036854775808".into()),
         ),
         ("true", Cell::Bool(true)),
         ("false", Cell::Bool(false)),
@@ -116,19 +116,19 @@ async fn the_integer_types_keep_their_javascript_shape() {
 async fn text_bytea_and_json_come_back_as_themselves() {
     let client = client();
     let cases = [
-        ("'hello'::text", Cell::Str("hello".to_string())),
-        ("''::text", Cell::Str(String::new())),
+        ("'hello'::text", Cell::Str("hello".into())),
+        ("''::text", Cell::Str("".into())),
         (
             "'h\u{e9}llo \u{1f600}'::text",
-            Cell::Str("h\u{e9}llo \u{1f600}".to_string()),
+            Cell::Str("h\u{e9}llo \u{1f600}".into()),
         ),
         (
             "'\\xdeadbeef'::bytea",
-            Cell::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+            Cell::Bytes(vec![0xde, 0xad, 0xbe, 0xef].into()),
         ),
-        ("'\\x'::bytea", Cell::Bytes(vec![])),
-        (r#"'{"a": 1}'::jsonb"#, Cell::Str(r#"{"a": 1}"#.to_string())),
-        ("'null'::jsonb", Cell::Str("null".to_string())),
+        ("'\\x'::bytea", Cell::Bytes(vec![].into())),
+        (r#"'{"a": 1}'::jsonb"#, Cell::Str(r#"{"a": 1}"#.into())),
+        ("'null'::jsonb", Cell::Str("null".into())),
     ];
     for (expression, expected) in cases {
         let (value, _) = both(&client, expression).await;
@@ -191,27 +191,27 @@ async fn a_text_parameter_round_trips() {
         (
             "$1::text",
             Param::Text("plain".to_string()),
-            Cell::Str("plain".to_string()),
+            Cell::Str("plain".into()),
         ),
         (
             "$1::text",
             Param::Text("with 'quotes' and \\ backslash".to_string()),
-            Cell::Str("with 'quotes' and \\ backslash".to_string()),
+            Cell::Str("with 'quotes' and \\ backslash".into()),
         ),
         (
             "$1::numeric",
             Param::Text("1.50".to_string()),
-            Cell::Str("1.50".to_string()),
+            Cell::Str("1.50".into()),
         ),
         (
             "$1::int8",
             Param::Text("9007199254740993".to_string()),
-            Cell::Str("9007199254740993".to_string()),
+            Cell::Str("9007199254740993".into()),
         ),
         (
             "$1::bytea",
             Param::Text("\\xdeadbeef".to_string()),
-            Cell::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+            Cell::Bytes(vec![0xde, 0xad, 0xbe, 0xef].into()),
         ),
         ("$1::text", Param::Null, Cell::Null),
     ];
@@ -556,21 +556,21 @@ async fn a_staged_batch_unnests_into_its_table() {
         read,
         vec![
             (
-                Cell::Str("a,b".to_string()),
+                Cell::Str("a,b".into()),
                 Cell::Num(0.0),
-                Cell::Bytes(vec![0xde, 0]),
-                Cell::Str("1.50".to_string()),
+                Cell::Bytes(vec![0xde, 0].into()),
+                Cell::Str("1.50".into()),
             ),
             (
-                Cell::Str("{\"x\"}\\".to_string()),
+                Cell::Str("{\"x\"}\\".into()),
                 Cell::Num(1.0),
-                Cell::Bytes(vec![0xde, 1]),
-                Cell::Str("1.50".to_string()),
+                Cell::Bytes(vec![0xde, 1].into()),
+                Cell::Str("1.50".into()),
             ),
             (
-                Cell::Str(String::new()),
+                Cell::Str("".into()),
                 Cell::Num(2.0),
-                Cell::Bytes(vec![0xde, 2]),
+                Cell::Bytes(vec![0xde, 2].into()),
                 Cell::Null,
             ),
         ]
@@ -628,11 +628,8 @@ async fn a_staged_batch_binds_its_values_one_row_at_a_time() {
             .map(|row| row.get::<_, Cell>(0))
             .collect::<Vec<_>>(),
         vec![
-            Cell::Arr(vec![
-                Cell::Str("a,b".to_string()),
-                Cell::Str("c".to_string())
-            ]),
-            Cell::Arr(vec![Cell::Str("d".to_string())]),
+            Cell::Arr(vec![Cell::Str("a,b".into()), Cell::Str("c".into())]),
+            Cell::Arr(vec![Cell::Str("d".into())]),
         ]
     );
 }
@@ -663,4 +660,23 @@ async fn a_failure_reports_the_message_the_server_gave() {
             "relation \"nothing_is_here\" does not exist".to_string(),
         )
     );
+}
+
+/// An insert, an update and a delete all come back describing no columns at
+/// all. Laying that out must give an empty result rather than divide the cells
+/// it has none of into rows of width zero.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_statement_that_returns_no_columns_is_an_empty_result() {
+    let client = client();
+    client
+        .batch("CREATE TEMPORARY TABLE no_columns (n int4)")
+        .await
+        .unwrap();
+    let (rows, columns) = client
+        .query("INSERT INTO no_columns VALUES (1)", &[])
+        .await
+        .unwrap();
+    assert_eq!((rows.len(), columns.len()), (0, 0));
+    super::rows::into_arena(&rows, &[]).unwrap();
 }

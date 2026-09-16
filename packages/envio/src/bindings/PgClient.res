@@ -71,7 +71,8 @@ external growStage: (
   ~stale: ArrayBuffer.t,
 ) => ArrayBuffer.t = "growStage"
 
-@send external commitStage: (t, ~handle: int, ~buffers: array<ArrayBuffer.t>) => unit = "commitStage"
+@send
+external commitStage: (t, ~handle: int, ~buffers: array<ArrayBuffer.t>) => unit = "commitStage"
 
 @send external abortStage: (t, ~handle: int, ~buffers: array<ArrayBuffer.t>) => unit = "abortStage"
 
@@ -103,7 +104,7 @@ let make = options => Core.getAddon().pgClient->classCreate(options)
   let read = (client, {handle, names, kinds, elementKinds, rows}) => {
     let buffers = client->lendResult(handle)
     let result = try {
-      Reading.columns(~buffers, ~names, ~kinds, ~elementKinds)->Reading.rows(~rows)
+      Reading.rows(~buffers, ~names, ~kinds, ~elementKinds, ~rows)
     } catch {
     | exn =>
       client->releaseResult(handle, buffers)
