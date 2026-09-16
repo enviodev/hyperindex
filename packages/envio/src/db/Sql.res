@@ -99,8 +99,17 @@ let query = ({client, transaction}, sql, ~params as values: array<unknown>=[]): 
   }->(Utils.magic: promise<array<dict<unknown>>> => promise<array<'row>>)
 }
 
-let exec = (self, sql, ~params: array<unknown>=[]) =>
-  self->query(sql, ~params)->Utils.Promise.ignoreValue
+// A statement with nothing to read back. It goes through the addon's own
+// execute rather than a query whose rows are then dropped: an insert describes
+// no columns at all, and building a result for it would be an arena, a handle
+// and a pair of boundary crossings for nothing.
+let exec = ({client, transaction}, sql, ~params as values: array<unknown>=[]) => {
+  let params = params(values)
+  switch transaction {
+  | Null => client->PgClient.execute(sql, params)
+  | Value(handle) => client->PgClient.transactionExecute(handle, sql, params)
+  }->Utils.Promise.ignoreValue
+}
 
 // Statements that take no parameters and return nothing worth reading. More
 // than one may be given at once, which the schema initialization relies on.

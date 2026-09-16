@@ -770,7 +770,6 @@ let setOrThrow = async (
             ~values=columns,
             ~rows=items->Array.length,
           ),
-          ~unnest=true,
         )
       | PerCell =>
         let responses = []

@@ -747,27 +747,18 @@ impl PgClient {
     }
 
     /// Runs `sql` with the staged batch bound, and frees the batch either way.
-    ///
-    /// `unnest` says which of the two statements it is: one array per column, or
-    /// every cell its own parameter.
     #[napi]
     pub async fn execute_staged(
         &self,
         transaction: Option<u32>,
         sql: String,
         handle: u32,
-        unnest: bool,
     ) -> napi::Result<()> {
         let staged =
             self.staged.lock().unwrap().remove(&handle).ok_or_else(|| {
                 napi::Error::from_reason(format!("Unknown staged batch {handle}"))
             })?;
-        let params = if unnest {
-            write::unnest_params(&staged.arena)
-        } else {
-            write::values_params(&staged.arena)
-        }
-        .map_err(to_napi)?;
+        let params = write::unnest_params(&staged.arena).map_err(to_napi)?;
         match transaction {
             Some(transaction) => self.transaction(transaction)?.execute(&sql, &params).await,
             None => self.inner.execute(&sql, &params).await,

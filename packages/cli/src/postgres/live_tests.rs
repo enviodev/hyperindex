@@ -577,63 +577,6 @@ async fn a_staged_batch_unnests_into_its_table() {
     );
 }
 
-/// The other statement: every cell bound on its own, including a row's array as
-/// one value rather than spread across the rows.
-#[tokio::test]
-#[ignore = "needs a Postgres server"]
-async fn a_staged_batch_binds_its_values_one_row_at_a_time() {
-    let client = client();
-    let transaction = client.begin().await.expect("the transaction opens");
-    transaction
-        .batch("CREATE TEMPORARY TABLE listed (t text, xs text[]) ON COMMIT DROP")
-        .await
-        .expect("the table is made");
-
-    let mut arena = Arena::new_filled(
-        2,
-        &[
-            ColumnSpec::Scalar(ColumnKind::Text),
-            ColumnSpec::List {
-                element: ColumnKind::Text,
-                elements: 3,
-            },
-        ],
-    );
-    arena.set_bytes(0, 0, b"first");
-    arena.set_bytes(0, 1, b"second");
-    arena.set_element_bytes(1, 0, b"a,b");
-    arena.set_element_bytes(1, 1, b"c");
-    arena.end_list_row(1, 0, 2);
-    arena.set_element_bytes(1, 2, b"d");
-    arena.end_list_row(1, 1, 3);
-    arena.seal(&["t", "xs"].map(str::to_string)).unwrap();
-
-    let params = super::write::values_params(&arena).expect("the rows render");
-    transaction
-        .execute(
-            "INSERT INTO listed (t, xs) VALUES ($1::text, $3::text[]), ($2::text, $4::text[])",
-            &params,
-        )
-        .await
-        .expect("the rows go in");
-
-    let (rows, _) = transaction
-        .query("SELECT xs FROM listed ORDER BY t", &[])
-        .await
-        .expect("the rows come back");
-    transaction.commit().await.expect("the transaction commits");
-
-    assert_eq!(
-        rows.iter()
-            .map(|row| row.get::<_, Cell>(0))
-            .collect::<Vec<_>>(),
-        vec![
-            Cell::Arr(vec![Cell::Str("a,b".into()), Cell::Str("c".into())]),
-            Cell::Arr(vec![Cell::Str("d".into())]),
-        ]
-    );
-}
-
 /// A write failure is classified by the server's own message, so that is what
 /// has to reach the other side. Wrapping it in the context of the call that made
 /// it would read fine and match none of the cases the storage layer looks for.

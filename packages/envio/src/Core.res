@@ -212,10 +212,6 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   var path = Nodepath;
   var fs = Nodefs;
 
-  // Vitest test.env points workers at the addon globalSetup already built.
-  var preBuilt = process.env.ENVIO_DEV_ADDON;
-  if (preBuilt && fs.existsSync(preBuilt)) return req(preBuilt);
-
   var repoRoot = null;
   var dir = path.resolve(envioDir);
   for (var i = 0; i < 10; i++) {
@@ -281,6 +277,17 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
 // `code`, and any other fields a diagnostic might rely on.
 let rethrow: JsExn.t => 'a = %raw(`function(e) { throw e }`)
 
+// An addon named outright, which a test run or a bisect points at the build it
+// just made. Checked before the installed platform package, or a stale one left
+// in `node_modules` would silently shadow it — the failure that follows is an
+// argument-count mismatch at a boundary whose two sides look like they agree.
+%%private(
+  let namedAddon: unit => option<string> = %raw(`() => {
+    var named = process.env.ENVIO_DEV_ADDON;
+    return named && Nodefs.existsSync(named) ? named : undefined;
+  }`)
+)
+
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
 
@@ -313,20 +320,24 @@ let loadAddon = () => {
       }
     }
 
-  switch tryRequire(0) {
-  | Some(addon) => addon
+  switch namedAddon() {
+  | Some(named) => callRequire(req, named)
   | None =>
-    // Dev build fallback (cargo build on every run)
-    switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
+    switch tryRequire(0) {
     | Some(addon) => addon
     | None =>
-      let host = `${processPlatform}-${processArch}`
-      let msg = if candidates->Array.length === 0 {
-        `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
-      } else {
-        `Couldn't load the envio native addon for ${host}. Reinstall envio (ensure optional dependencies aren't skipped).`
+      // Dev build fallback (cargo build on every run)
+      switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
+      | Some(addon) => addon
+      | None =>
+        let host = `${processPlatform}-${processArch}`
+        let msg = if candidates->Array.length === 0 {
+          `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
+        } else {
+          `Couldn't load the envio native addon for ${host}. Reinstall envio (ensure optional dependencies aren't skipped).`
+        }
+        JsError.throwWithMessage(msg)
       }
-      JsError.throwWithMessage(msg)
     }
   }
 }
@@ -406,8 +417,7 @@ let pgIndexReadablePrefix = (~definition) => getAddon().pgIndexReadablePrefix(~d
 let pgIndexColumnKey = (~column) => getAddon().pgIndexColumnKey(~column)
 let pgIndexCreateQuery = (~definition, ~pgSchema) =>
   getAddon().pgIndexCreateQuery(~definition, ~pgSchema)
-let pgIndexDropQuery = (~pgSchema, ~indexName) =>
-  getAddon().pgIndexDropQuery(~pgSchema, ~indexName)
+let pgIndexDropQuery = (~pgSchema, ~indexName) => getAddon().pgIndexDropQuery(~pgSchema, ~indexName)
 
 let pgInsertUnnestQuery = (~table, ~pgSchema, ~appendOnly, ~chainIdMode) =>
   getAddon().pgInsertUnnestQuery(~table, ~pgSchema, ~appendOnly, ~chainIdMode)

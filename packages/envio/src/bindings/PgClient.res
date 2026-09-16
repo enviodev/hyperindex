@@ -82,7 +82,6 @@ external executeStaged: (
   ~transaction: Null.t<int>,
   ~sql: string,
   ~handle: int,
-  ~unnest: bool,
 ) => promise<unit> = "executeStaged"
 
 let arena = (client): Staging.arena => {
