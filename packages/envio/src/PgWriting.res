@@ -1,10 +1,14 @@
 // Laying a batch of rows into the arena for Postgres to take.
 //
 // The values are written where they will be read from, and the statement's
-// parameters are built from them in Rust. The path this replaces serialized
-// each row in JavaScript and handed the driver arrays to render — which for a
-// `bytea` column meant building a hex literal a character at a time, the most
-// expensive thing a batch write did.
+// parameters are built from them in Rust rather than by the driver.
+//
+// Measured against the driver this replaced, on a six-column table of 60k rows,
+// this is a wash: the batch write spends most of its time waiting on the server,
+// and the values still cross from JavaScript one at a time either way. It is
+// here because it is the shape the ClickHouse sink already writes through, not
+// because it made the write cheaper. `packages/envio-tests/bench.mjs` is what
+// says so.
 
 // Which arena slot a column's values travel in.
 //
