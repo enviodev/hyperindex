@@ -236,12 +236,25 @@ describe("EntityFilter.makeMatcher", () => {
       Table.mkField("price", BigDecimal({}), ~isIndex=true, ~fieldSchema=S.string),
       Table.mkField("tags", String, ~isArray=true, ~isIndex=true, ~fieldSchema=S.string),
       Table.mkField("created", Date, ~isIndex=true, ~fieldSchema=S.string),
+      // Declared out of alphabetical order: Postgres orders an enum by its
+      // declaration, and the matcher follows.
+      Table.mkField(
+        "kind",
+        Enum({
+          config: Table.makeEnumConfig(
+            ~name="Kind",
+            ~variants=["ZETA", "ALPHA", "MID"],
+          )->Table.fromGenericEnumConfig,
+        }),
+        ~isIndex=true,
+        ~fieldSchema=S.string,
+      ),
     ],
   )
 
   let u = value => value->toUnknown
 
-  let mkEntity = (~score, ~balance, ~active, ~nickname, ~price, ~tags, ~created) => {
+  let mkEntity = (~score, ~balance, ~active, ~nickname, ~price, ~tags, ~created, ~kind) => {
     let entity = Dict.make()
     entity->Dict.set("id", "id"->u)
     entity->Dict.set("score", score->u)
@@ -250,6 +263,7 @@ describe("EntityFilter.makeMatcher", () => {
     entity->Dict.set("price", price->u)
     entity->Dict.set("tags", tags->u)
     entity->Dict.set("created", created->u)
+    entity->Dict.set("kind", kind->u)
     switch nickname {
     | Some(nickname) => entity->Dict.set("nickname", nickname->u)
     | None => ()
@@ -267,6 +281,7 @@ describe("EntityFilter.makeMatcher", () => {
       ~price=BigDecimal.fromInt(3),
       ~tags=["x", "y"],
       ~created=Date.fromTime(1000.),
+      ~kind="ZETA",
     ),
     mkEntity(
       ~score=7,
@@ -276,6 +291,7 @@ describe("EntityFilter.makeMatcher", () => {
       ~price=BigDecimal.fromInt(5),
       ~tags=["x"],
       ~created=Date.fromTime(2000.),
+      ~kind="ALPHA",
     ),
     mkEntity(
       ~score=2,
@@ -285,6 +301,7 @@ describe("EntityFilter.makeMatcher", () => {
       ~price=BigDecimal.fromInt(1),
       ~tags=["x", "y"],
       ~created=Date.fromTime(500.),
+      ~kind="MID",
     ),
   ]
 
@@ -312,6 +329,10 @@ describe("EntityFilter.makeMatcher", () => {
     (f(dict{"tags": dict{"_lt": u(["x", "y"])}}), [false, true, false]),
     (f(dict{"created": dict{"_eq": u(Date.fromTime(1000.))}}), [true, false, false]),
     (f(dict{"created": dict{"_gt": u(Date.fromTime(1000.))}}), [false, true, false]),
+    // ZETA < ALPHA < MID by declaration, whatever the names would say.
+    (f(dict{"kind": dict{"_gt": u("ALPHA")}}), [false, false, true]),
+    (f(dict{"kind": dict{"_lte": u("ALPHA")}}), [true, true, false]),
+    (f(dict{"kind": dict{"_in": u(["ZETA", "MID"])}}), [true, false, true]),
     // Every field in the filter must match, and a mismatch on the first one
     // skips the rest.
     (f(dict{"score": dict{"_gt": u(3)}, "active": dict{"_eq": u(true)}}), [true, false, false]),

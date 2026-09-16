@@ -415,12 +415,29 @@ let bytes = nullSafe({
   key: v => v->asBytes->Utils.Bytes.toHex->(Utils.magic: string => unknown),
 })
 
+// Postgres orders an enum by the position its members were declared in, not
+// by their names. Equality stays native so an _in keeps the Set fast path.
+let enum_ = (config: Table.enumConfig<Table.enum>): valueCompare => {
+  let ranks = Dict.make()
+  config.variants->Array.forEachWithIndex((variant, rank) =>
+    ranks->Dict.set(variant->(Utils.magic: Table.enum => string), rank)
+  )
+  let rank = (v: unknown) => ranks->Dict.getUnsafe(v->(Utils.magic: unknown => string))
+  {
+    eq: nativeEq,
+    gt: (a, b) => !(a->nullish) && rank(a) > rank(b),
+    lt: (a, b) => !(a->nullish) && rank(a) < rank(b),
+    key: identityKey,
+  }
+}
+
 let scalarCompare = (fieldType: Table.fieldType): valueCompare =>
   switch fieldType {
   | BigDecimal(_) => bigDecimal
   | Date => date
   | Json => json
   | Bytea => bytes
+  | Enum({config}) => enum_(config)
   | String
   | Boolean
   | Uint32
@@ -432,8 +449,7 @@ let scalarCompare = (fieldType: Table.fieldType): valueCompare =>
   | Number
   | BigInt(_)
   | Serial
-  | BigSerial
-  | Enum(_) => native
+  | BigSerial => native
   }
 
 // Array-valued fields compare element-wise with the element type's comparator:
