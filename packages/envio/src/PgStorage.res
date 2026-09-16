@@ -1016,18 +1016,6 @@ let makeInsertDeleteUpdatesQuery = (
     },
   )
 
-let executeSet = (
-  sql: Sql.t,
-  ~items: array<'a>,
-  ~dbFunction: (Sql.t, array<'a>) => promise<unit>,
-) => {
-  if items->Array.length > 0 {
-    sql->dbFunction(items)
-  } else {
-    Promise.resolve()
-  }
-}
-
 // The checkpoints a write inserts: every one the batch made, or those of the
 // chains whose history it keeps.
 type pickedCheckpoints = AllCheckpoints | CheckpointIndexes(array<int>)
@@ -1106,16 +1094,14 @@ let rec writeBatch = async (
 
     let setRawEvents = async sql => {
       try {
-        await sql->executeSet(~dbFunction=(sql, items) => {
-          sql->setOrThrow(
-            ~items,
-            ~table=InternalTable.RawEvents.table,
-            ~itemSchema=InternalTable.RawEvents.schema,
-            ~pgSchema,
-            ~chainIdMode,
-            ~setQueryCache,
-          )
-        }, ~items=rawEvents)
+        await sql->setOrThrow(
+          ~items=rawEvents,
+          ~table=InternalTable.RawEvents.table,
+          ~itemSchema=InternalTable.RawEvents.schema,
+          ~pgSchema,
+          ~chainIdMode,
+          ~setQueryCache,
+        )
       } catch {
       | exn => classifyWriteError(~specificError, ~table=InternalTable.RawEvents.table, ~exn)
       }

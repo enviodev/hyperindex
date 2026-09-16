@@ -17,6 +17,11 @@ let columns = [
   ("text", "TEXT", `a,b{"x"}\\`->(Utils.magic: string => unknown)),
   ("empty", "TEXT", ""->(Utils.magic: string => unknown)),
   ("number", "INTEGER", -7->(Utils.magic: int => unknown)),
+  // The statement that binds a parameter per cell sends a boolean field as the
+  // JavaScript boolean the entity holds, rather than the number the unnest
+  // statement's cast expects.
+  ("yes", "BOOLEAN", true->(Utils.magic: bool => unknown)),
+  ("no", "BOOLEAN", false->(Utils.magic: bool => unknown)),
   ("float", "DOUBLE PRECISION", 1.5->(Utils.magic: float => unknown)),
   ("big", "NUMERIC", 123456789012345678901234567890n->(Utils.magic: bigint => unknown)),
   ("scaled", "NUMERIC", "1.50"->(Utils.magic: string => unknown)),
@@ -73,6 +78,8 @@ describe("Binding a parameter", () => {
         ("text", `text a,b{"x"}\\`),
         ("empty", "text "),
         ("number", "number -7"),
+        ("yes", "boolean true"),
+        ("no", "boolean false"),
         ("float", "number 1.5"),
         ("big", "text 123456789012345678901234567890"),
         ("scaled", "text 1.50"),
