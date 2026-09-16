@@ -746,7 +746,10 @@ let start = async (
   if Worker.isEnabled {
     Worker.onParentMessage(message =>
       switch message {
-      | SyncCache(_) => dumpEffectCache()->Promise.ignore
+      | SyncCache(_) =>
+        dumpEffectCache()
+        ->Promise.thenResolve(() => Worker.send(CacheSynced({})))
+        ->Promise.ignore
       | Init(_) => ()
       }
     )

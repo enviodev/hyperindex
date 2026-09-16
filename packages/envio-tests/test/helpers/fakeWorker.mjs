@@ -20,7 +20,12 @@ process.on("message", (message) => {
     if (mode === "fail") process.exit(1);
   }
   if (message.kind === "syncCache") {
-    process.exit(0);
+    // Reports the dump through a snapshot before acknowledging it, so a
+    // supervisor that answers early can be caught having answered before it.
+    setTimeout(() => {
+      process.send({ kind: "snapshot", metrics: { synced: true } });
+      process.send({ kind: "cacheSynced" });
+    }, 50);
   }
 });
 

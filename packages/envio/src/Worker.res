@@ -15,7 +15,11 @@ type parentMessage =
   | @as("syncCache") SyncCache({})
 
 @tag("kind")
-type workerMessage = | @as("snapshot") Snapshot({metrics: Metrics.t})
+type workerMessage =
+  | @as("snapshot") Snapshot({metrics: Metrics.t})
+  // Sent once the worker's effect cache is on disk, so the supervisor's
+  // console can answer for a dump that has actually happened.
+  | @as("cacheSynced") CacheSynced({})
 
 // How often a worker reports. Matches the TUI's own refresh, so the supervised
 // display moves at the same rate an unsplit run's does.

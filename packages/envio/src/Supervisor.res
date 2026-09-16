@@ -58,6 +58,8 @@ type running = {
   // A spawn failure can raise `error` and `exit` both, and a worker counted
   // twice would end the run while its siblings are still indexing.
   mutable settled: bool,
+  // Waiting for this worker's cache dump, when a console asked for one.
+  mutable onCacheSynced: option<unit => unit>,
 }
 
 let label = (worker: worker) =>
@@ -124,7 +126,20 @@ let fork = (
   ->NodeJs.ChildProcess.send(Worker.Init({config: configJson->configForWorker(~worker)}))
   ->ignore
 
-  {worker, child, snapshot: None, settled: false}
+  let running = {worker, child, snapshot: None, settled: false, onCacheSynced: None}
+  child->NodeJs.ChildProcess.onMessage(message =>
+    switch message {
+    | Worker.Snapshot({metrics}) => running.snapshot = Some(metrics)
+    | Worker.CacheSynced(_) =>
+      switch running.onCacheSynced {
+      | Some(resolve) =>
+        running.onCacheSynced = None
+        resolve()
+      | None => ()
+      }
+    }
+  )
+  running
 }
 
 // The forked workers of one run, and whether their supervisor is the one
@@ -135,6 +150,22 @@ type group = {running: array<running>, mutable stopping: bool}
 let stop = group => {
   group.stopping = true
   group.running->Array.forEach(r => r.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore)
+}
+
+// Dumps every worker's effect cache. Resolves once they have all reported the
+// dump done, so the console the supervisor serves can't answer for writes that
+// are still in flight.
+let syncCache = async group => {
+  let _: array<unit> =
+    await group.running
+    ->Array.filter(r => !r.settled)
+    ->Array.map(r =>
+      Promise.make((resolve, _) => {
+        r.onCacheSynced = Some(() => resolve())
+        r.child->NodeJs.ChildProcess.send(Worker.SyncCache({}))->ignore
+      })
+    )
+    ->Promise.all
 }
 
 // How a group ended. `Finished` is every worker exiting cleanly on its own,
@@ -230,14 +261,6 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
       ~elapsedSeconds=startTimeRef->Performance.secondsSince,
     )
 
-  group.running->Array.forEach(r =>
-    r.child->NodeJs.ChildProcess.onMessage(message =>
-      switch message {
-      | Worker.Snapshot({metrics}) => r.snapshot = Some(metrics)
-      }
-    )
-  )
-
   Main.startServer(
     // Nothing to report until a worker has: the run reads as initializing
     // rather than as an indexer with no chains.
@@ -248,12 +271,7 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
       },
     ~envioVersion=Utils.EnvioPackage.value.version,
     ~isDevelopmentMode=config.isDev,
-    ~onSyncCache=() => {
-      group.running->Array.forEach(r =>
-        r.child->NodeJs.ChildProcess.send(Worker.SyncCache({}))->ignore
-      )
-      Promise.resolve()
-    },
+    ~onSyncCache=() => group->syncCache,
   )
 
   let shouldUseTui = Main.shouldUseTui()

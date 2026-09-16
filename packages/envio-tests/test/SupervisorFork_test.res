@@ -9,6 +9,9 @@ type fixtureReport = {
   startTime: Date.t,
 }
 
+// What it reports once its dump is done.
+type fixtureDump = {synced: bool}
+
 let fixturePath = `${NodeJs.Process.cwd()}/test/helpers/fakeWorker.mjs`
 
 let forkFixture = (~chainIds, ~maxConnections=2, ~workerIndex=0) =>
@@ -30,6 +33,7 @@ describe("Supervisor.fork", () => {
             switch message {
             | Worker.Snapshot({metrics}) =>
               resolve(metrics->(Utils.magic: Metrics.t => fixtureReport))
+            | Worker.CacheSynced(_) => ()
             },
         ),
     )
@@ -43,6 +47,25 @@ describe("Supervisor.fork", () => {
       // would have turned this into a string.
       startTime: Date.fromTime(1700000000000.),
     })
+  })
+})
+
+describe("Supervisor.syncCache", () => {
+  Async.it("Answers only once every worker has dumped its cache", async t => {
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "linger")
+    let group: Supervisor.group = {
+      running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
+      stopping: false,
+    }
+
+    await group->Supervisor.syncCache
+    let dumped =
+      group.running->Array.map(r =>
+        r.snapshot->Option.map(metrics => (metrics->(Utils.magic: Metrics.t => fixtureDump)).synced)
+      )
+    group->Supervisor.stop
+
+    t.expect(dumped).toStrictEqual([Some(true), Some(true)])
   })
 })
 
