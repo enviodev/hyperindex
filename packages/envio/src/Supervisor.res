@@ -63,8 +63,11 @@ type running = {
   mutable onCacheSynced: option<unit => unit>,
 }
 
-let label = (worker: worker) =>
-  `[chain ${worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(",")}]`
+// A worker is named by the chains it drives, which is what an operator reading
+// its memory or its event loop wants to know.
+let name = (worker: worker) => worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(",")
+
+let label = (worker: worker) => `[chain ${worker->name}]`
 
 // Workers append to files of their own. Pino writes a line per call, and
 // several processes appending to one file can still tear a long line apart.
@@ -299,8 +302,8 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
     ~collectRuntime=() =>
       Metrics.renderRuntime(
         [(`worker="supervisor"`, Metrics.sampleRuntime())]->Array.concat(
-          group.running->Array.filterMapWithIndex((r, workerIndex) =>
-            r.runtime->Option.map(runtime => (`worker="${workerIndex->Int.toString}"`, runtime))
+          group.running->Array.filterMap(r =>
+            r.runtime->Option.map(runtime => (`worker="${r.worker->name}"`, runtime))
           ),
         ),
       ),
