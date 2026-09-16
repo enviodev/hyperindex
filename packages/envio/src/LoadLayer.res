@@ -457,13 +457,7 @@ let loadByFilter = (
 ) =>
   // Rejecting rather than throwing keeps a bad filter failing only its own
   // call, even when the caller batches several with Promise.all.
-  switch try Ok(
-    filter->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table),
-  ) catch {
-  | exn => Error(exn)
-  } {
-  | Error(exn) => Promise.reject(exn->Utils.prettifyExn)
-  | Ok(filter) =>
+  try {
     loadByParsedFilter(
       ~loadManager,
       ~persistence,
@@ -473,6 +467,11 @@ let loadByFilter = (
       ~shouldGroup,
       ~item,
       ~ecosystem,
-      ~filter,
+      ~filter=filter->EntityFilter.parseOrThrow(
+        ~entityName=entityConfig.name,
+        ~table=entityConfig.table,
+      ),
     )
+  } catch {
+  | exn => Promise.reject(exn->Utils.prettifyExn)
   }
