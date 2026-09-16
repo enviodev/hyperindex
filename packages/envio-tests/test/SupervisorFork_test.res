@@ -56,6 +56,7 @@ describe("Supervisor.syncCache", () => {
     let group: Supervisor.group = {
       running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
       stopping: false,
+      syncing: None,
     }
 
     await group->Supervisor.syncCache
@@ -66,6 +67,27 @@ describe("Supervisor.syncCache", () => {
     group->Supervisor.stop
 
     t.expect(dumped).toStrictEqual([Some(true), Some(true)])
+  })
+
+  Async.it("Answers requests that overlap rather than leaving the first hanging", async t => {
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "linger")
+    let group: Supervisor.group = {
+      running: [forkFixture(~chainIds=[1])],
+      stopping: false,
+      syncing: None,
+    }
+
+    let answered = async request =>
+      await Promise.race([
+        request->Promise.thenResolve(() => "answered"),
+        Utils.delay(2000)->Promise.thenResolve(() => "still waiting"),
+      ])
+    let first = group->Supervisor.syncCache
+    let second = group->Supervisor.syncCache
+    let outcomes = (await first->answered, await second->answered)
+    group->Supervisor.stop
+
+    t.expect(outcomes).toStrictEqual(("answered", "answered"))
   })
 })
 
@@ -81,6 +103,7 @@ describe("Supervisor.awaitExit", () => {
     let group: Supervisor.group = {
       running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
       stopping: false,
+      syncing: None,
     }
 
     t.expect(await outcome(group)).toStrictEqual(Ok(Supervisor.Finished))
@@ -93,6 +116,7 @@ describe("Supervisor.awaitExit", () => {
       let group: Supervisor.group = {
         running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
         stopping: false,
+        syncing: None,
       }
       group->Supervisor.stop
 
@@ -105,7 +129,7 @@ describe("Supervisor.awaitExit", () => {
     let failing = forkFixture(~chainIds=[1])
     NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "linger")
     let lingering = forkFixture(~chainIds=[137])
-    let group: Supervisor.group = {running: [failing, lingering], stopping: false}
+    let group: Supervisor.group = {running: [failing, lingering], stopping: false, syncing: None}
 
     // The survivor was taken down rather than left indexing half a schema.
     t.expect((await outcome(group), group.stopping, lingering.settled)).toStrictEqual((

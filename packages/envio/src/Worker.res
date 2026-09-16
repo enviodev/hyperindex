@@ -39,7 +39,26 @@ let send = (message: workerMessage) =>
     NodeJs.Process.sendToParent(message)->ignore
   }
 
-let onParentMessage = (handle: parentMessage => unit) => NodeJs.Process.onMessage(handle)
+%%private(let pending: ref<array<parentMessage>> = ref([]))
+%%private(let handler: ref<option<parentMessage => unit>> = ref(None))
+
+// Installed before the indexer starts. A request can reach a worker while it is
+// still coming up, and a dropped one leaves the supervisor waiting for an answer
+// that will never be sent, so it waits for its handler instead.
+let listen = () =>
+  NodeJs.Process.onMessage((message: parentMessage) =>
+    switch handler.contents {
+    | Some(handle) => handle(message)
+    | None => pending := pending.contents->Array.concat([message])
+    }
+  )
+
+let onParentMessage = (handle: parentMessage => unit) => {
+  handler := Some(handle)
+  let held = pending.contents
+  pending := []
+  held->Array.forEach(handle)
+}
 
 // Resolves with the init payload. The supervisor sends it right after the
 // fork, before anything else, so the first message is the only one to read.

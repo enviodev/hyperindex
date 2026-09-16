@@ -77,6 +77,8 @@ module Process = {
   @val @scope("process")
   external onDisconnect: (@as("disconnect") _, unit => unit) => unit = "on"
   @val @scope("process") external argv: array<string> = "argv"
+  @val @scope("process")
+  external emitMessage: (@as("message") _, 'msg) => bool = "emit"
 }
 
 module Buffer = {

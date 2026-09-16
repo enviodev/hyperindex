@@ -145,7 +145,13 @@ let fork = (
 // The forked workers of one run, and whether their supervisor is the one
 // taking them down. A stop it asked for is expected; every other way a worker
 // can end is a failure.
-type group = {running: array<running>, mutable stopping: bool}
+type group = {
+  running: array<running>,
+  mutable stopping: bool,
+  // The dump in flight, if any. A second request joins it rather than asking
+  // for a dump of its own, so overlapping requests both get an answer.
+  mutable syncing: option<promise<unit>>,
+}
 
 let stop = group => {
   group.stopping = true
@@ -155,18 +161,24 @@ let stop = group => {
 // Dumps every worker's effect cache. Resolves once they have all reported the
 // dump done, so the console the supervisor serves can't answer for writes that
 // are still in flight.
-let syncCache = async group => {
-  let _: array<unit> =
-    await group.running
-    ->Array.filter(r => !r.settled)
-    ->Array.map(r =>
-      Promise.make((resolve, _) => {
-        r.onCacheSynced = Some(() => resolve())
-        r.child->NodeJs.ChildProcess.send(Worker.SyncCache({}))->ignore
-      })
-    )
-    ->Promise.all
-}
+let syncCache = group =>
+  switch group.syncing {
+  | Some(inFlight) => inFlight
+  | None =>
+    let inFlight =
+      group.running
+      ->Array.filter(r => !r.settled)
+      ->Array.map(r =>
+        Promise.make((resolve, _) => {
+          r.onCacheSynced = Some(() => resolve())
+          r.child->NodeJs.ChildProcess.send(Worker.SyncCache({}))->ignore
+        })
+      )
+      ->Promise.all
+      ->Promise.thenResolve(_ => group.syncing = None)
+    group.syncing = Some(inFlight)
+    inFlight
+  }
 
 // How a group ended. `Finished` is every worker exiting cleanly on its own,
 // which is what indexing to every end block looks like.
@@ -250,6 +262,7 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
       worker->fork(~workerIndex, ~configJson)
     ),
     stopping: false,
+    syncing: None,
   }
 
   let reported = () => group.running->Array.filterMap(r => r.snapshot)
