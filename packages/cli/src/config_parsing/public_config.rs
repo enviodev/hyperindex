@@ -1,8 +1,7 @@
 use super::materialization;
 use super::{
-    entity_parsing::{self, IndexFieldDirection},
-    field_types,
-    human_config::{self, evm::For, ColumnNameFormat},
+    entity_parsing, field_types,
+    human_config::{self, evm::For, svm::AccountSlot, ColumnNameFormat},
     materialization::Materialization,
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
@@ -130,6 +129,10 @@ struct EntityJson {
     // JSON byte-identical for projects predating per-backend `default`.
     #[serde(skip_serializing_if = "Option::is_none")]
     storage: Option<EntityStorageJson>,
+    // `@internal`: stored but never exposed through the GraphQL API. Omitted
+    // while false so projects predating the directive keep the same JSON.
+    #[serde(skip_serializing_if = "is_false")]
+    internal: bool,
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
@@ -168,6 +171,18 @@ struct EntityClickHouseOptionsJson {
     order_by: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ttl: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipping_indexes: Option<Vec<EntityClickHouseSkippingIndexJson>>,
+}
+
+#[derive(Serialize, Debug)]
+struct EntityClickHouseSkippingIndexJson {
+    name: String,
+    expr: String,
+    #[serde(rename = "type")]
+    index_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    granularity: Option<u32>,
 }
 
 impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJson {
@@ -177,8 +192,24 @@ impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJ
             entity_parsing::ClickHouseEntityStorage::Options(options) => {
                 Self::Options(EntityClickHouseOptionsJson {
                     partition_by: options.partition_by.clone(),
-                    order_by: options.order_by.clone(),
+                    order_by: options.order_by.as_ref().map(|columns| {
+                        columns
+                            .iter()
+                            .map(|column| column.field_name().to_string())
+                            .collect()
+                    }),
                     ttl: options.ttl.clone(),
+                    skipping_indexes: options.skipping_indexes.as_ref().map(|indices| {
+                        indices
+                            .iter()
+                            .map(|index| EntityClickHouseSkippingIndexJson {
+                                name: index.name.clone(),
+                                expr: index.expr.clone(),
+                                index_type: index.index_type.clone(),
+                                granularity: index.granularity,
+                            })
+                            .collect()
+                    }),
                 })
             }
         }
@@ -268,13 +299,6 @@ struct SvmConfig<'a> {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct SvmAccountFilterJson {
-    position: u8,
-    values: Vec<String>,
-}
-
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
 struct RpcConfig {
     url: String,
     #[serde(rename = "for")]
@@ -305,7 +329,7 @@ struct RpcConfig {
 #[serde(rename_all = "camelCase")]
 struct ChainConfig {
     id: u64,
-    start_block: u64,
+    start_block: human_config::StartBlock,
     #[serde(skip_serializing_if = "Option::is_none")]
     end_block: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -316,8 +340,6 @@ struct ChainConfig {
     hypersync: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     rpcs: Vec<RpcConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rpc: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     contracts: BTreeMap<String, ChainContractConfig>,
 }
@@ -409,26 +431,36 @@ struct ContractEventItem {
 struct SvmEventItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     discriminator: Option<String>,
-    discriminator_byte_len: u8,
-    /// Selected parent-transaction fields (camelCase), incl. `tokenBalances`.
-    transaction_fields: Vec<String>,
-    /// Selected block fields (camelCase), excluding the always-included `slot`.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    block_fields: Vec<String>,
-    include_logs: bool,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    account_filters: Vec<Vec<SvmAccountFilterJson>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_inner: Option<bool>,
-    /// Positional account names, in the order the on-chain program expects.
+    /// Positional account slots, in the order the on-chain program expects.
     /// `[]` means the runtime won't expose `decoded.accounts.<name>`; the
     /// raw `instruction.accounts[i]` array is still available.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    accounts: Vec<String>,
-    /// Borsh args layout. `[]` means the runtime won't expose
-    /// `decoded.args`; the raw `instruction.data` hex is still available.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    args: Vec<human_config::svm::ArgDef>,
+    accounts: Vec<SvmAccountSlotItem>,
+    /// Borsh args layout. Absent means no decoder is attached, so the runtime
+    /// won't expose `decoded.args` and every matched call is delivered with
+    /// the raw `instruction.data` hex. Present attaches one, `[]` included:
+    /// a call whose data the layout rejects never reaches a handler.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    args: Option<Vec<human_config::svm::ArgDef>>,
+}
+
+/// One account slot. An unnamed slot carries neither key, so it reaches the
+/// runtime as `{}` — a position to skip over.
+#[derive(Serialize, Debug)]
+struct SvmAccountSlotItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    optional: bool,
+}
+
+impl From<&AccountSlot> for SvmAccountSlotItem {
+    fn from(slot: &AccountSlot) -> Self {
+        Self {
+            name: slot.name().map(str::to_string),
+            optional: slot.is_optional(),
+        }
+    }
 }
 
 /// Program-level Borsh schema metadata. Emitted onto `ContractConfig.svm_abi`
@@ -436,13 +468,12 @@ struct SvmEventItem {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SvmAbiJson {
-    program_id: String,
     /// Nominal-type registry referenced by `ArgComposite::Defined`. The
     /// runtime resolves these once per program at startup.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     defined_types: std::collections::BTreeMap<String, human_config::svm::ArgType>,
-    /// `"anchorIdl"`, `"bundled"`, or `"inline"`. Carried for diagnostics; the
-    /// runtime treats all three identically.
+    /// `"anchorIdl"` or `"inline"`. Carried for diagnostics; the runtime treats
+    /// both identically.
     source: &'static str,
 }
 
@@ -486,7 +517,7 @@ impl SystemConfig {
             .map(|network| {
                 let chain_name = chain_id_to_name(network.id, &cfg.get_ecosystem());
 
-                let (hypersync, rpcs, rpc) = match &network.sync_source {
+                let (hypersync, rpcs) = match &network.sync_source {
                     system_config::DataSource::Evm { main, rpcs } => {
                         let hypersync_url = match main {
                             system_config::MainEvmDataSource::HyperSync {
@@ -518,15 +549,14 @@ impl SystemConfig {
                                 polling_interval: rpc.polling_interval,
                             })
                             .collect();
-                        (hypersync_url, rpc_configs, None)
+                        (hypersync_url, rpc_configs)
                     }
                     system_config::DataSource::Fuel {
                         hypersync_endpoint_url,
-                    } => (Some(hypersync_endpoint_url.clone()), vec![], None),
+                    } => (Some(hypersync_endpoint_url.clone()), vec![]),
                     system_config::DataSource::Svm {
-                        rpc,
                         hypersync_endpoint_url,
-                    } => (hypersync_endpoint_url.clone(), vec![], rpc.clone()),
+                    } => (Some(hypersync_endpoint_url.clone()), vec![]),
                 };
 
                 let chain_contracts: BTreeMap<String, ChainContractConfig> = network
@@ -553,7 +583,6 @@ impl SystemConfig {
                         block_lag: network.block_lag,
                         hypersync,
                         rpcs,
-                        rpc,
                         contracts: chain_contracts,
                     },
                 )
@@ -618,32 +647,14 @@ impl SystemConfig {
                                 EventKind::Svm(svm_kind) => {
                                     let svm_item = SvmEventItem {
                                         discriminator: svm_kind.discriminator.clone(),
-                                        discriminator_byte_len: svm_kind.discriminator_byte_len,
-                                        transaction_fields: svm_kind
-                                            .selected_transaction_fields
-                                            .clone(),
-                                        block_fields: svm_kind.selected_block_fields.clone(),
-                                        include_logs: svm_kind.include_logs,
-                                        account_filters: svm_kind
-                                            .account_filters
+                                        accounts: svm_kind
+                                            .accounts
                                             .iter()
-                                            .map(|group| {
-                                                group
-                                                    .iter()
-                                                    .map(|af| SvmAccountFilterJson {
-                                                        position: af.position,
-                                                        values: af.values.clone(),
-                                                    })
-                                                    .collect()
-                                            })
+                                            .map(SvmAccountSlotItem::from)
                                             .collect(),
-                                        is_inner: svm_kind.is_inner,
-                                        accounts: svm_kind.accounts.clone(),
-                                        args: svm_kind
-                                            .args
-                                            .iter()
-                                            .map(named_field_to_arg_def)
-                                            .collect(),
+                                        args: svm_kind.args.as_ref().map(|args| {
+                                            args.iter().map(named_field_to_arg_def).collect()
+                                        }),
                                     };
                                     (vec![], Some("svmInstruction".to_string()), Some(svm_item))
                                 }
@@ -667,20 +678,14 @@ impl SystemConfig {
                         })
                         .collect();
                     let svm_abi = match &contract.abi {
-                        Abi::Svm(SvmAbi {
-                            program_id,
-                            instructions: _,
-                            defined_types,
-                            source,
-                        }) => Some(SvmAbiJson {
-                            program_id: program_id.clone(),
-                            defined_types: defined_types
+                        Abi::Svm(SvmAbi { idl, source }) => Some(SvmAbiJson {
+                            defined_types: idl
+                                .defined_types
                                 .iter()
                                 .map(|(name, ty)| (name.clone(), field_type_to_arg_type(ty)))
                                 .collect(),
                             source: match source {
                                 SvmSchemaSource::AnchorIdl { .. } => "anchorIdl",
-                                SvmSchemaSource::Bundled { .. } => "bundled",
                                 SvmSchemaSource::Inline => "inline",
                             },
                         }),
@@ -764,6 +769,7 @@ impl SystemConfig {
                             match &f.field_type {
                                 Primitive::Boolean => ("boolean".into(), None, None, None, None),
                                 Primitive::String => ("string".into(), None, None, None, None),
+                                Primitive::Bytes => ("bytes".into(), None, None, None, None),
                                 Primitive::Int32 => ("int".into(), None, None, None, None),
                                 Primitive::BigInt { precision } => {
                                     ("bigint".into(), None, None, *precision, None)
@@ -837,11 +843,8 @@ impl SystemConfig {
                         fields
                             .iter()
                             .map(|f| CompositeIndexJson {
-                                field_name: f.name.clone(),
-                                direction: match f.direction {
-                                    IndexFieldDirection::Asc => "Asc".to_string(),
-                                    IndexFieldDirection::Desc => "Desc".to_string(),
-                                },
+                                field_name: f.column.field_name().to_string(),
+                                direction: f.direction.as_pascal_str().to_string(),
                             })
                             .collect()
                     })
@@ -883,12 +886,13 @@ impl SystemConfig {
                         materialization::Written::Handlers => None,
                         materialization::Written::Materialized => Some("materialized"),
                     },
-                    cross_chain: Some(system_config::entity_is_cross_chain(
-                        entity,
-                        cfg.default_cross_chain,
-                    ))
-                    .filter(|cross_chain| *cross_chain != cfg.default_cross_chain),
+                    cross_chain: Some(entity.is_cross_chain(cfg.default_chain_scope)).filter(
+                        |cross_chain| {
+                            *cross_chain != cfg.default_chain_scope.is_cross_chain_by_default()
+                        },
+                    ),
                     storage,
+                    internal: entity.internal,
                     properties,
                     derived_fields,
                     composite_indexes,
@@ -908,7 +912,7 @@ impl SystemConfig {
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
             chain_id_mode: cfg.chain_id_mode,
-            default_cross_chain: cfg.default_cross_chain,
+            default_cross_chain: cfg.default_chain_scope.is_cross_chain_by_default(),
             storage: (&cfg.storage).into(),
             evm,
             fuel,

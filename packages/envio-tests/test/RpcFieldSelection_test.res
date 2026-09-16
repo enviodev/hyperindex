@@ -68,10 +68,10 @@ describe("RPC field_selection validation", () => {
       ["accessList", "authorizationList"],
       [
         Some(
-          "Config parse error: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
+          "The following selected transaction_fields are unavailable for indexing via RPC: accessList",
         ),
         Some(
-          "Config parse error: The following selected transaction_fields are unavailable for indexing via RPC: authorizationList",
+          "The following selected transaction_fields are unavailable for indexing via RPC: authorizationList",
         ),
       ],
     ))
@@ -94,7 +94,7 @@ chains:
 `),
     ).toBe(
       Some(
-        "Config parse error: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
+        "The following selected transaction_fields are unavailable for indexing via RPC: accessList",
       ),
     )
   })

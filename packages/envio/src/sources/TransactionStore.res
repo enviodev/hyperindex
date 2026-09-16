@@ -31,6 +31,44 @@ let fieldCodes = FieldMask.fieldCodes
 // Drain another store (a fetch-response page) into this one.
 @send external merge: (t, t) => unit = "merge"
 
+type svmTxInput = {
+  slot: int,
+  transactionIndex: int,
+  signature?: string,
+  allSignatures?: array<string>,
+  feePayer?: string,
+  success?: bool,
+  err?: string,
+  fee?: bigint,
+  computeUnitsConsumed?: bigint,
+  accountKeys?: array<string>,
+  recentBlockhash?: string,
+  version?: string,
+}
+
+type svmActivityInput = {
+  slot: int,
+  transactionIndex: int,
+  account: string,
+  accountIndex?: int,
+  isSigner?: bool,
+  isWritable?: bool,
+  preBalance?: bigint,
+  postBalance?: bigint,
+  mint?: string,
+  owner?: string,
+  decimals?: int,
+  preAmount?: bigint,
+  postAmount?: bigint,
+}
+
+@send
+external fromJsSvm: (Core.transactionStoreCtor, array<svmTxInput>, array<svmActivityInput>) => t =
+  "fromJsSvm"
+
+let fromSvmJs = (transactions: array<svmTxInput>, activities: array<svmActivityInput>): t =>
+  Core.getAddon().transactionStore->fromJsSvm(transactions, activities)
+
 // Bulk-materialise transactions off the JS thread, one row per
 // (blockNumbers[i], transactionIndices[i]) key, decoding only the fields set in
 // that row's own masks[i]. Result is aligned with the input.

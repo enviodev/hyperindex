@@ -2121,9 +2121,8 @@ fn compile_comparand(
 ) -> Result<Typed> {
     if target.scalar == Scalar::Address && !target.is_list() {
         if let Yaml::String(text) = value {
-            let resolves = split_path(text).is_ok_and(|path| {
-                ctx.shape.resolve(&path, &mut Demand::default()).is_ok()
-            });
+            let resolves = split_path(text)
+                .is_ok_and(|path| ctx.shape.resolve(&path, &mut Demand::default()).is_ok());
             if !resolves {
                 return Ok(Typed {
                     expr: CExpr::LitString {
@@ -2427,10 +2426,7 @@ pub fn compile(
     let mut entity_access = BTreeMap::new();
 
     for (table_name, table) in &tables.0 {
-        entity_access.insert(
-            table_name.clone(),
-            EntityAccess::materialized(table_name),
-        );
+        entity_access.insert(table_name.clone(), EntityAccess::materialized(table_name));
 
         let compiled = compile_table(table_name, table, &ctx, &mut demand)
             .with_context(|| format!("in `tables.{table_name}`"))?;

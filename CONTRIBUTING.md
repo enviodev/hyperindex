@@ -13,6 +13,7 @@ By submitting a Pull Request or making any contribution to this project, you aut
 - [Generate code according to configuration](#generate-code-according-to-configuration)
 - [Run the indexer](#run-the-indexer)
 - [View the database](#view-the-database)
+- [Linting Rust code](#linting-rust-code)
 
 ## Installation
 
@@ -251,6 +252,24 @@ pnpm start
 To view the data in the database open http://localhost:8080/console.
 
 Admin-secret for local Hasura is `testing`.
+
+## Linting Rust code
+
+CI runs these against `packages/cli` and fails on any warning, so run them
+before pushing:
+
+```sh
+cargo fmt
+cargo clippy --all-targets --all-features
+```
+
+`--all-targets` matters: without it Clippy skips the test code, which is most
+of the crate.
+
+Severity is configured by `[lints]` in `packages/cli/Cargo.toml` rather than by
+flags on the command line, so a bare `cargo clippy` reproduces the CI result.
+The toolchain is pinned in `rust-toolchain.toml`; bump it deliberately, and fix
+any newly-surfaced lints in the same change.
 
 ## Testing
 

@@ -8,16 +8,13 @@ mod config;
 mod selection;
 mod types;
 
-use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
+use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_store::{BlockStore, FuelBlockRow};
 use crate::hex::decode_prefixed;
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
-use selection::{
-    BuiltSelection, FuelOnEventRegistrationInput, ReceiptAddress, RegistrationKind,
-    SelectionBuilder,
-};
+use selection::{BuiltSelection, FuelOnEventRegistrationInput, RegistrationKind, SelectionBuilder};
 use types::{convert_response, Block, ConvertError, RawReceipt};
 
 #[napi]
@@ -263,10 +260,10 @@ fn route_receipts(
         // receipt only reaches wildcard registrations.
         let contract_id = Hash::decode_hex(&src_address).ok();
         let key: &[u8] = contract_id.as_deref().map_or(&[], |bytes| &bytes[..]);
-        let address = ReceiptAddress {
+        let address = Emitter {
             key,
-            contract_name: set_cache.owner_of(key),
-            block_height: receipt.block_height,
+            owners: set_cache.owners_of(key),
+            block: receipt.block_height,
         };
 
         for reg in &built.registrations {

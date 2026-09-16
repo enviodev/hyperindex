@@ -34,6 +34,18 @@ describe("Indexer smoke test", () => {
                   },
                 ],
               },
+              "Holder": {
+                "deleted": [
+                  "holder-deleted-sentinel",
+                ],
+                "sets": [
+                  {
+                    "id": "0x0000000000000000000000000000000000000000",
+                    "lastBlock": 10861674,
+                    "lastValue": 1000000000000000000000000000n,
+                  },
+                ],
+              },
               "NumericArrays": {
                 "sets": [
                   {
@@ -62,6 +74,15 @@ describe("Indexer smoke test", () => {
                 ],
               },
               "TransferChOnly": {
+                "sets": [
+                  {
+                    "from": "0x0000000000000000000000000000000000000000",
+                    "id": "1-10861674-23",
+                    "value": 1000000000000000000000000000n,
+                  },
+                ],
+              },
+              "TransferInternal": {
                 "sets": [
                   {
                     "from": "0x0000000000000000000000000000000000000000",

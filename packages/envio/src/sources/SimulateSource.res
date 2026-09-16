@@ -4,6 +4,8 @@ let make = (
   ~chainId: ChainId.t,
   ~addressStore: AddressStore.t,
   ~ecosystem: Ecosystem.name=Evm,
+  ~transactionStore: option<TransactionStore.t>=None,
+  ~blockStore: option<BlockStore.t>=None,
 ): Source.t => {
   let reportedHeight = max(endBlock, 1)
 
@@ -106,10 +108,12 @@ let make = (
       Promise.resolve({
         Source.knownHeight: reportedHeight,
         parsedQueueItems,
-        // Simulate keeps the transaction and block inline on the payload; no
-        // transaction page and an empty block page (nothing to reorg-check).
-        transactionStore: None,
-        blockStore: BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false),
+        // EVM/Fuel keep transaction and block inline. SVM simulate returns a
+        // store page so materialize + activity attach run the same path as HyperSync.
+        transactionStore,
+        blockStore: blockStore->Option.getOr(
+          BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false),
+        ),
         fromBlockQueried: fromBlock,
         latestFetchedBlockNumber: toBlockQueried,
         stats: {

@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=../../../envio/evm.schema.json
+name: internal-entities
+schema: ../schemas/schema-with-internal.graphql
+chains:
+  - id: 1
+    start_block: 0
+    contracts: []

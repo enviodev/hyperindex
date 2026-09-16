@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
 use napi_derive::napi;
 
-use crate::address_store::{AddressSet, AddressStore, SetCache};
+use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
 use crate::request_stats::{rate_limited_err, RequestStat};
@@ -18,7 +18,7 @@ pub(crate) mod selection;
 pub(crate) mod types;
 
 use config::ClientConfig;
-use decode::{Decoder, LogAddress, SelectionDecoder};
+use decode::{Decoder, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{encode_address, Block, OnEventRegistrationInput, ParamValue, RollbackGuard};
@@ -258,6 +258,8 @@ impl EvmHyperSyncClient {
             RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
         };
 
+        let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
+
         let transaction_store = TransactionStore::new_evm(self.enable_checksum_addresses);
         let block_store = BlockStore::new_evm(self.enable_checksum_addresses);
         let items = tokio::task::block_in_place(|| {
@@ -307,6 +309,7 @@ impl EvmHyperSyncClient {
                 .context("convert next_block")
                 .map_err(map_err)?,
             items,
+            response_blocks,
         };
         Ok((event_items, transaction_store, block_store))
     }
@@ -378,6 +381,10 @@ pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
     pub items: Vec<EventItem>,
+    /// Blocks the server returned for this query, before routing drops the ones
+    /// no item joins to. The server returns one block per number, so this is a
+    /// distinct count.
+    pub response_blocks: i64,
 }
 
 fn convert_response(
@@ -446,7 +453,6 @@ fn push_unique(missing: &mut Vec<String>, name: String) {
 /// (surfaced as `ImpossibleForTheQuery` on the JS side) when the source omitted
 /// a requested non-nullable field or a joined row, and propagates genuine decode
 /// errors otherwise.
-#[allow(clippy::too_many_arguments)]
 fn process_response(
     blocks: Vec<Vec<simple_types::Block>>,
     transactions: Vec<Vec<simple_types::Transaction>>,
@@ -476,10 +482,10 @@ fn process_response(
             // and the effectiveStartBlock gate cost one hash lookup each — no
             // round-trip through the address string.
             let address_key = log.address.as_ref().context("log.address missing")?;
-            let address = LogAddress {
+            let address = Emitter {
                 key: address_key.as_slice(),
-                contract_name: set_cache.owner_of(address_key.as_slice()),
-                block_number: flat.block_number,
+                owners: set_cache.owners_of(address_key.as_slice()),
+                block: flat.block_number,
             };
             // Only structurally malformed logs (missing topic0, bad topic bytes)
             // surface here; per-registration decode failures are dropped inside
@@ -541,16 +547,16 @@ fn process_response(
 
     // The server returns one block per number. Every returned block is
     // validated, items or not, and its number tracked for coverage.
-    let response_blocks: Vec<simple_types::Block> = blocks.into_iter().flatten().collect();
+    let returned_blocks: Vec<simple_types::Block> = blocks.into_iter().flatten().collect();
     let present_block_numbers: HashSet<u64> =
-        response_blocks.iter().filter_map(|b| b.number).collect();
+        returned_blocks.iter().filter_map(|b| b.number).collect();
 
     // Validate the requested block fields once per distinct block. The
     // always-required number/timestamp/hash back every header, so they are
     // checked on every returned block; the rest of the user's selection is only
     // ever read through the store, so it is checked only where an item can
     // reach it — same rule as transactions.
-    for block in &response_blocks {
+    for block in &returned_blocks {
         let referenced = block
             .number
             .is_some_and(|number| referenced_blocks.contains(&number));
@@ -590,7 +596,7 @@ fn process_response(
     // decode from the store like any other field. Blocks whose logs were all
     // dropped by client-side routing keep a hash-only row so every returned
     // header still backs reorg detection.
-    let store_blocks: Vec<simple_types::Block> = response_blocks
+    let store_blocks: Vec<simple_types::Block> = returned_blocks
         .into_iter()
         .map(|b| {
             if b.number
@@ -911,10 +917,11 @@ mod tests {
     #[test]
     fn missing_block_field_named_path() {
         // block is present but timestamp is not.
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        // timestamp left None
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            ..Default::default()
+        };
         let err = process_response(
             vec![vec![block]],
             vec![],
@@ -944,10 +951,11 @@ mod tests {
         // forced set, so number/timestamp/hash are guaranteed present even when
         // the user's config selected no block fields. Here the user requested
         // nothing yet a missing timestamp is still reported.
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        // timestamp left None
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            ..Default::default()
+        };
         let err = process_response(
             vec![vec![block]],
             vec![],
@@ -975,11 +983,13 @@ mod tests {
     fn nullable_block_field_not_reported() {
         // BaseFeePerGas is inherently nullable — server omitting it must not
         // trigger MissingFields, regardless of whether the user requested it.
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        block.timestamp = Some(Default::default());
         // base_fee_per_gas left None
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
         let items = process_response(
             vec![vec![block]],
             vec![],
@@ -1003,15 +1013,19 @@ mod tests {
 
     #[test]
     fn missing_transaction_field_with_transaction_present() {
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        block.timestamp = Some(Default::default());
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
         // The transaction is keyed to the log by (blockNumber, txIndex) but is
         // missing the requested hash, so transaction.hash is reported missing.
-        let mut tx = simple_types::Transaction::default();
-        tx.block_number = Some(1u64.into());
-        tx.transaction_index = Some(0u64.into());
+        let tx = simple_types::Transaction {
+            block_number: Some(1u64.into()),
+            transaction_index: Some(0u64.into()),
+            ..Default::default()
+        };
         let err = process_response(
             vec![vec![block]],
             vec![vec![tx]],
@@ -1039,10 +1053,12 @@ mod tests {
     fn missing_transaction_when_not_returned() {
         // Transaction fields requested but the source returned no transaction for
         // the log's (blockNumber, txIndex).
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        block.timestamp = Some(Default::default());
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
         let err = process_response(
             vec![vec![block]],
             vec![],
@@ -1071,14 +1087,18 @@ mod tests {
         // Block and transaction live in separate response arrays; the log is
         // matched to its block by number and the transaction lands in the store
         // keyed by (blockNumber, txIndex). The page carries one deduplicated block.
-        let mut block = simple_types::Block::default();
-        block.number = Some(7);
-        block.hash = Some(Default::default());
-        block.timestamp = Some(Default::default());
+        let block = simple_types::Block {
+            number: Some(7),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
 
-        let mut tx = simple_types::Transaction::default();
-        tx.block_number = Some(7u64.into());
-        tx.transaction_index = Some(0u64.into());
+        let tx = simple_types::Transaction {
+            block_number: Some(7u64.into()),
+            transaction_index: Some(0u64.into()),
+            ..Default::default()
+        };
 
         let store = TransactionStore::new_evm(false);
         let items = process_response(
@@ -1233,13 +1253,17 @@ mod tests {
         // The source returned a transaction with no (blockNumber, txIndex), so
         // it joins to nothing; its absent `hash` must not fail a page whose
         // routed item got the transaction it asked for.
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        block.timestamp = Some(Default::default());
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
 
-        let mut keyless = simple_types::Transaction::default();
-        keyless.hash = None;
+        let keyless = simple_types::Transaction {
+            hash: None,
+            ..Default::default()
+        };
 
         let items = process_response(
             vec![vec![block]],
@@ -1276,7 +1300,7 @@ mod tests {
         // The reason field carries the JSON payload that the ReScript side
         // parses with JSON.parse.
         let parsed: serde_json::Value =
-            serde_json::from_str(&format!("{}", napi_err.reason)).expect("payload must be JSON");
+            serde_json::from_str(&napi_err.reason.to_string()).expect("payload must be JSON");
         assert_eq!(parsed["kind"], "MissingFields");
         assert_eq!(parsed["fields"][0], "block.timestamp");
         assert_eq!(parsed["fields"][1], "transaction.hash");

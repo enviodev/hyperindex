@@ -77,13 +77,14 @@ describe("materializer ordering", () => {
   });
 
 
-  it("counts the log once per registration", async (t) => {
+  it("counts the log once however many registrations it feeds", async (t) => {
     const indexer = createTestIndexer();
 
     const result = await indexer.process({ chains: { 1: { simulate: [transfer(5n)] } } });
 
-    // One log, two registrations: the shared materializer's and the handler's.
-    t.expect(result.changes.map((c) => c.eventsProcessed)).toEqual([2]);
+    // Two registrations run on it — the shared materializer's and the
+    // handler's — but they are items of one log, so it counts once.
+    t.expect(result.changes.map((c) => c.eventsProcessed)).toEqual([1]);
   });
 });
 `,

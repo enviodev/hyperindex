@@ -43,7 +43,6 @@ describe("Height subscription push metrics", () => {
     ~reducedPollingInterval=1,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       // Backfill to head so the indexer flips to realtime — the height
       // subscription is only created there.
@@ -70,6 +69,12 @@ describe("Height subscription push metrics", () => {
         await Utils.delay(1)
       }
       t.expect(subscriptionOpened(), ~message="the height subscription should be open").toBe(true)
+
+      // Both shipped transports report Live the moment they connect, and the
+      // wait polls at full rate next to the stream until one does, so without
+      // this the pushes below are counted on a path no real source takes.
+      sourceMock.setHeightSubscriptionStatus(Live)
+      await Utils.delay(0)
 
       let heightPushSamples = async () => {
         let samples = await indexer.metric("envio_source_request_total")

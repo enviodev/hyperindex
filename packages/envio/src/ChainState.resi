@@ -3,7 +3,18 @@
 
 type t
 
-let configAddresses: Config.chain => array<Internal.indexingAddress>
+let configStorageRows: (
+  Config.chain,
+  ~ecosystem: Ecosystem.name,
+  ~contractMapping: ContractMapping.t,
+) => array<AddressRows.row>
+
+let seedConfigAddresses: (
+  AddressRows.Table.t,
+  ~chainConfigs: array<Config.chain>,
+  ~ecosystem: Ecosystem.name,
+  ~contractMapping: ContractMapping.t,
+) => unit
 
 let make: (
   ~chainConfig: Config.chain,
@@ -12,9 +23,11 @@ let make: (
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
+  ~committedProgressBlockTime: option<int>=?,
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
   ~shouldRollbackOnReorg: bool,
   ~maxReorgDepth: int,
+  ~isInReorgThreshold: bool=?,
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
@@ -26,13 +39,6 @@ let make: (
   ~logger: Pino.t,
 ) => t
 
-let makeFromConfig: (
-  Config.chain,
-  ~config: Config.t,
-  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
-  ~knownHeight: int,
-) => t
-
 let makeFromDbState: (
   Config.chain,
   ~resumedChainState: Persistence.initialChainState,
@@ -40,6 +46,7 @@ let makeFromDbState: (
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~config: Config.t,
+  ~contractMapping: ContractMapping.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~reducedPollingInterval: int=?,
 ) => t
@@ -62,6 +69,7 @@ let getLatestValidScannedBlock: (
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
+let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
 let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
@@ -149,13 +157,23 @@ let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
+let isInReorgThreshold: t => bool
+let shouldSaveHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit
-let rollback: (
-  t,
-  ~newProgressBlockNumber: option<int>,
-  ~eventsProcessedDiff: option<float>,
-  ~rollbackTargetBlockNumber: int,
-  ~isReorgChain: bool,
-) => unit
+// What a rollback's progress diff says about one chain: the block its surviving
+// checkpoints put it back to, and the events the deleted ones carried away. One
+// record because one diff row yields both — they are never known separately.
+type progressDiff = {blockNumber: int, eventsProcessed: float}
+
+// Where a rollback leaves one chain.
+type rolledBackTo =
+  | RecomputedProgress(progressDiff)
+  // The reorg chain with no checkpoint left at or below the target, so only the
+  // fork block says where it goes.
+  | ForkBlock(int)
+  // A chain this rollback doesn't reach.
+  | Untouched
+
+let rollback: (t, ~rolledBackTo: rolledBackTo) => array<AddressRows.key>

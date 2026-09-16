@@ -71,7 +71,6 @@ describe("Multichain: chain with height subscription stuck at head", () => {
     async (~t, ~indexer, ~source) => {
       let stuckChain = source(100)
       let healthyChain = source(1337)
-      await Utils.delay(0)
 
       // Backfill both chains to head 100 so the indexer flips to realtime —
       // the height subscription is only created in realtime mode.
@@ -110,6 +109,9 @@ describe("Multichain: chain with height subscription stuck at head", () => {
         subscriptionOpened(),
         ~message="realtime transition should open the height subscription",
       ).toBe(true)
+      // The stream connects, so the wait relies on the staleness backstop
+      // rather than the immediate fallback a never-connected stream gets.
+      stuckChain.setHeightSubscriptionStatus(Live)
       // Release any pre-realtime wait still REST-polling at the same height so
       // it exits and gets discarded as stale.
       try stuckChain.resolveGetHeightOrThrow(101) catch {

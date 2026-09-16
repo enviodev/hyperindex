@@ -28,8 +28,10 @@ envio_indexing_addresses{chainId="137"} 0`)
   })
 
   it("Escapes quotes/backslashes/newlines and passes commas and equals through", t => {
-    t.expect(`weird "name",a=b \\ with
-newline`->Metrics.escapeLabelValue).toBe(`weird \\"name\\",a=b \\\\ with\\nnewline`)
+    t.expect(
+      `weird "name",a=b \\ with
+newline`->Metrics.escapeLabelValue,
+    ).toBe(`weird \\"name\\",a=b \\\\ with\\nnewline`)
   })
 
   it("Renders only the header for a series without entries and skips seriesOpt None samples", t => {
@@ -58,32 +60,47 @@ envio_source_request_seconds_total{method="getLogs"} 1.5`)
   })
 })
 
+// The state a Metrics.t carries when a test says nothing about it. Each test
+// below spreads this and names only the fields it asserts on.
+let baseMetrics: Metrics.t = {
+  startTime: Date.fromTime(0.),
+  metricTime: Date.fromTime(0.),
+  elapsedSeconds: 0.,
+  targetBufferSize: 0,
+  isInReorgThreshold: false,
+  rollbackEnabled: false,
+  maxBatchSize: 0,
+  preloadSeconds: 0.,
+  processingSeconds: 0.,
+  processingStalledOnFetchSeconds: 0.,
+  processingStalledOnStorageWriteSeconds: 0.,
+  rollbackSeconds: 0.,
+  rollbackCount: 0,
+  rollbackEventsCount: 0.,
+  chains: [],
+  handlers: [],
+  effects: [],
+  storageLoads: [],
+  storageWrites: [],
+  historyPrunes: [],
+  sourceRequests: [],
+  sourceHeights: [],
+  sourceHeightStreams: [],
+}
+
 describe("Metrics.collect", () => {
   it("Renders only the indexer info when there is no state", t => {
-    t.expect(Metrics.collect(~metrics=None)).toBe(`# HELP envio_info Information about the indexer
+    t.expect(Metrics.collect(~metrics=None)).toBe(
+      `# HELP envio_info Information about the indexer
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
-`)
+`,
+    )
   })
 
   it("Escapes both the effect and the scope label values", t => {
     let metrics: Metrics.t = {
-      startTime: Date.fromTime(0.),
-      metricTime: Date.fromTime(0.),
-      elapsedSeconds: 0.,
-      targetBufferSize: 0,
-      isInReorgThreshold: false,
-      rollbackEnabled: false,
-      maxBatchSize: 0,
-      preloadSeconds: 0.,
-      processingSeconds: 0.,
-      processingStalledOnFetchSeconds: 0.,
-      processingStalledOnStorageWriteSeconds: 0.,
-      rollbackSeconds: 0.,
-      rollbackCount: 0,
-      rollbackEventsCount: 0.,
-      chains: [],
-      handlers: [],
+      ...baseMetrics,
       effects: [
         {
           effect: `a",b=c`,
@@ -98,18 +115,123 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           cacheCount: None,
         },
       ],
-      storageLoads: [],
-      storageWrites: [],
-      historyPrunes: [],
-      sourceRequests: [],
-      sourceHeights: [],
     }
 
     t.expect(
-      Metrics.collect(~metrics=Some(metrics))->String.includes(
-        `envio_effect_call_total{effect="a\\",b=c",scope="d\\"e"} 2`,
-      ),
+      Metrics.collect(
+        ~metrics=Some(metrics),
+      )->String.includes(`envio_effect_call_total{effect="a\\",b=c",scope="d\\"e"} 2`),
     ).toBe(true)
+  })
+
+  it("Omits the height stream families entirely when no source subscribes", t => {
+    // No source samples at all, which is what a chain that only ever polls
+    // reports — the base is already exactly that.
+    t.expect(
+      Metrics.collect(~metrics=Some(baseMetrics))->String.includes("envio_source_height_stream"),
+    ).toBe(false)
+  })
+
+  it("Renders a stream that has never connected as zero connects", t => {
+    let metrics: Metrics.t = {
+      ...baseMetrics,
+      sourceHeightStreams: [
+        {
+          source: "RPC (rpc.example.com)",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 0,
+          disconnectsByReason: [],
+        },
+      ],
+    }
+
+    // Nothing has disconnected, because nothing ever connected. Without the zero
+    // there is no series at all, and a ws url the node will never accept would
+    // go unreported — a sample only exists once a stream has been asked for, so
+    // zero connects here says the stream is down rather than absent.
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))
+      ->String.split("\n")
+      ->Array.filter(line => line->String.startsWith("envio_source_height_stream")),
+    ).toStrictEqual([
+      `envio_source_height_stream_connects_total{source="RPC (rpc.example.com)",chainId="1"} 0`,
+    ])
+  })
+
+  it("Aggregates height stream samples that share a source name and chain", t => {
+    let metrics: Metrics.t = {
+      ...baseMetrics,
+      // Two RPC urls on the same host share a source name, and duplicate
+      // samples would make Prometheus reject the whole scrape.
+      sourceHeightStreams: [
+        {
+          source: "RPC (rpc.example.com)",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 2,
+          disconnectsByReason: [("rotated", 3)],
+        },
+        {
+          source: "RPC (rpc.example.com)",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 1,
+          disconnectsByReason: [("rotated", 4), ("stale", 5)],
+        },
+      ],
+    }
+
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))
+      ->String.split("\n")
+      ->Array.filter(line => line->String.startsWith("envio_source_height_stream")),
+    ).toStrictEqual([
+      `envio_source_height_stream_connects_total{source="RPC (rpc.example.com)",chainId="1"} 3`,
+      `envio_source_height_stream_disconnects_total{source="RPC (rpc.example.com)",chainId="1",reason="rotated"} 7`,
+      `envio_source_height_stream_disconnects_total{source="RPC (rpc.example.com)",chainId="1",reason="stale"} 5`,
+    ])
+  })
+
+  it("Aggregates source request samples that share a source name and chain", t => {
+    let sourceRequest = (
+      ~chainId=1,
+      ~method="getLogs",
+      ~responseBlocks,
+      ~emptyResponseCount,
+    ): Metrics.sourceRequestMetrics => {
+      source: "HyperSync",
+      chainId: chainId->ChainId.fromInt,
+      method,
+      count: 1,
+      seconds: 0.,
+      responseBlocks,
+      emptyResponseCount,
+    }
+    let metrics: Metrics.t = {
+      ...baseMetrics,
+      // Two urls on the same host share a source name, and duplicate samples
+      // would make Prometheus reject the whole scrape.
+      sourceRequests: [
+        sourceRequest(~responseBlocks=Some(30), ~emptyResponseCount=1),
+        sourceRequest(~responseBlocks=Some(12), ~emptyResponseCount=2),
+        // A chain whose every response carried blocks still renders the empty
+        // counter, flat at zero — a series that only appears once the first
+        // empty response lands is one nothing can alert on.
+        sourceRequest(~chainId=2, ~responseBlocks=Some(7), ~emptyResponseCount=0),
+        // A stream push is a response nothing measures in blocks, so it stays
+        // out of both series rather than reading as an empty response.
+        sourceRequest(~method="heightPush", ~responseBlocks=None, ~emptyResponseCount=0),
+      ],
+    }
+
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))
+      ->String.split("\n")
+      ->Array.filter(line => line->String.startsWith("envio_source_response")),
+    ).toStrictEqual([
+      `envio_source_response_blocks_total{source="HyperSync",chainId="1",method="getLogs"} 42`,
+      `envio_source_response_blocks_total{source="HyperSync",chainId="2",method="getLogs"} 7`,
+      `envio_source_response_empty_total{source="HyperSync",chainId="1",method="getLogs"} 3`,
+      `envio_source_response_empty_total{source="HyperSync",chainId="2",method="getLogs"} 0`,
+    ])
   })
 
   it("Renders every metric family from a fully populated snapshot", t => {
@@ -142,10 +264,12 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           startBlock: 0,
           endBlock: Some(1000),
           numAddresses: 7,
+          addressesByContract: [("Gravatar", 5), ("NftFactory", 2)],
           isReady: true,
           sourceBlockNumber: 305,
           progressBlockNumber: 200,
           progressLatencyMs: Some(1500),
+          progressBlockTime: Some(1700000000),
           concurrency: 2,
           partitionsCount: 3,
           bufferSize: 42,
@@ -161,6 +285,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           reorgCount: 2,
           reorgDetectedBlock: Some(199),
           rollbackTargetBlock: Some(180),
+          rateLimitTimeMs: 0.,
+          rateLimitResetInMs: None,
         },
       ],
       handlers: [
@@ -220,6 +346,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           method: "getLogs",
           count: 42,
           seconds: 33.75,
+          responseBlocks: Some(1234),
+          emptyResponseCount: 9,
         },
         {
           source: "HyperSync",
@@ -227,6 +355,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           method: "heightPush",
           count: 7,
           seconds: 0.,
+          responseBlocks: None,
+          emptyResponseCount: 0,
         },
         {
           source: "HyperSync",
@@ -234,6 +364,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           method: "heightPushIgnored",
           count: 0,
           seconds: 0.,
+          responseBlocks: None,
+          emptyResponseCount: 0,
         },
       ],
       sourceHeights: [
@@ -243,9 +375,18 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           height: 305,
         },
       ],
+      sourceHeightStreams: [
+        {
+          source: "HyperSync",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 3,
+          disconnectsByReason: [("rotated", 4), ("401", 1)],
+        },
+      ],
     }
 
-    t.expect(Metrics.collect(~metrics=Some(metrics))).toBe(`# HELP envio_info Information about the indexer
+    t.expect(Metrics.collect(~metrics=Some(metrics))).toBe(
+      `# HELP envio_info Information about the indexer
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
@@ -374,6 +515,23 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
 
+# HELP envio_source_response_blocks_total The number of blocks a data source returned, summed over its responses. Counted as the source sent them, before the indexer drops the blocks no event needs. Only sources whose responses are measured in blocks report it.
+# TYPE envio_source_response_blocks_total counter
+envio_source_response_blocks_total{source="HyperSync",chainId="1",method="getLogs"} 1234
+
+# HELP envio_source_response_empty_total The number of responses that came back with no blocks at all — a range the source scanned and matched nothing in. Compare against envio_source_request_total for the share of requests that returned nothing.
+# TYPE envio_source_response_empty_total counter
+envio_source_response_empty_total{source="HyperSync",chainId="1",method="getLogs"} 9
+
+# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected. Compare against the disconnects total, which is absent until the first disconnect and counts as zero while it is: one more connect than disconnects means the stream is up, and equal counts mean it is down and the indexer is polling instead. Zero connects means the stream has not come up, which is the normal reading for a chain that is still backfilling: subscriptions are only opened once a chain reaches the head.
+# TYPE envio_source_height_stream_connects_total counter
+envio_source_height_stream_connects_total{source="HyperSync",chainId="1"} 3
+
+# HELP envio_source_height_stream_disconnects_total The number of times a source's height subscription lost a connection, by reason. Failed retries are not counted, so this is outages rather than their length. A rotated disconnect is a connection that served its time; unsubscribed is the source being benched; every other reason ended a connection early.
+# TYPE envio_source_height_stream_disconnects_total counter
+envio_source_height_stream_disconnects_total{source="HyperSync",chainId="1",reason="rotated"} 4
+envio_source_height_stream_disconnects_total{source="HyperSync",chainId="1",reason="401"} 1
+
 # HELP envio_source_known_height The latest known block number reported by the source. This value may lag behind the actual chain height, as it is updated only when queried.
 # TYPE envio_source_known_height gauge
 envio_source_known_height{source="HyperSync",chainId="1"} 305
@@ -429,6 +587,10 @@ envio_progress_block{chainId="1"} 200
 # HELP envio_progress_events The number of events processed and reflected in the database.
 # TYPE envio_progress_events gauge
 envio_progress_events{chainId="1"} 12345
+
+# HELP envio_progress_block_time_seconds Unix timestamp of the block the chain has processed up to. Subtract it from the scrape time for how far behind chain time the indexer is, which stays honest when the data source itself is behind the chain. Best effort in realtime mode, absent during backfill.
+# TYPE envio_progress_block_time_seconds gauge
+envio_progress_block_time_seconds{chainId="1"} 1700000000
 
 # HELP envio_progress_latency The latency in milliseconds between the latest processed event creation and the time it was written to storage.
 # TYPE envio_progress_latency gauge
@@ -494,9 +656,15 @@ envio_storage_write_seconds{storage="postgres"} 15.25
 # TYPE envio_storage_write_total counter
 envio_storage_write_total{storage="postgres"} 80
 
-# HELP envio_indexing_addresses The number of addresses indexed on chain. Includes both static and dynamic addresses.
+# HELP envio_indexing_addresses The number of address registrations on chain, static and dynamic. An address shared by N contracts counts N times.
 # TYPE envio_indexing_addresses gauge
 envio_indexing_addresses{chainId="1"} 7
-`)
+
+# HELP envio_indexing_contract_addresses The number of address registrations per contract on chain, static and dynamic. An address shared by N contracts counts N times.
+# TYPE envio_indexing_contract_addresses gauge
+envio_indexing_contract_addresses{chainId="1",contract="Gravatar"} 5
+envio_indexing_contract_addresses{chainId="1",contract="NftFactory"} 2
+`,
+    )
   })
 })

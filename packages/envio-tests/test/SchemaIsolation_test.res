@@ -36,10 +36,7 @@ describe("Schema isolation between indexers in one process", () => {
     let rows = ref([])
     await scenario->Scenario.run(~sources=[{chain: 1337}], ~onError, async (~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       sourceMock.resolveGetItemsOrThrow(
         [

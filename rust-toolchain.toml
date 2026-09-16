@@ -1,0 +1,6 @@
+# Pinned so a new stable release cannot turn CI red on an unrelated PR with
+# newly-added lints, and so contributors lint against the same set as CI.
+# Bump deliberately.
+[toolchain]
+channel = "1.94.1"
+components = ["clippy", "rustfmt"]

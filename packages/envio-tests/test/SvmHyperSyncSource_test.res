@@ -8,7 +8,7 @@ open Vitest
 //      addresses, and the inclusive slot range.
 //   2. Item building: registrations resolved by index, `block` omitted on the
 //      payload (materialised from the block store at batch prep), synthesized
-//      logIndex, and Rust-decoded params parsed from JSON strings.
+//      logIndex, and Rust-decoded params passed through as values.
 
 let metaplexProgramId = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 let chainId = 0->ChainId.fromInt
@@ -29,8 +29,6 @@ let makeEventConfig = (
     simulateParamsSchema: %raw(`null`),
     programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,
     discriminator: Some("0x21"),
-    discriminatorByteLen: 1,
-    includeLogs: false,
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.fromArray(
         selectedBlockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
@@ -43,22 +41,21 @@ let makeEventConfig = (
       ~blockMaskFn=Svm.eventBlockFieldMask,
       ~transactionMaskFn=Svm.eventTransactionFieldMask,
     ),
-    accountFilters: [],
-    isInner: None,
     accounts: [],
     args: JSON.Null,
     definedTypes: JSON.Null,
   }
 }
 
-let makeReg = (~eventConfig=makeEventConfig(), ~index=0) => {
+let makeReg = (~eventConfig=makeEventConfig(), ~where=None, ~index=0) => {
   let reg = EventConfigBuilder.buildSvmOnEventRegistration(
     ~eventConfig,
     ~isWildcard=false,
     ~handler=None,
     ~contractRegister=None,
+    ~where,
   )
-  {...reg, Internal.index: index}
+  {...reg, Internal.index}
 }
 
 let mockResponse: SvmHyperSyncClient.EventItems.response = {
@@ -67,7 +64,7 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
     {
       slot,
       blockhash: blockHash,
-      blockTime,
+      blockTime: Null.make(blockTime),
     },
   ],
   items: [
@@ -75,24 +72,19 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
       onEventRegistrationIndex: 0,
       slot,
       transactionIndex: 965,
-      instructionAddress: [1],
+      path: [1],
       programId: metaplexProgramId,
       accounts: [],
-      data: "0x21",
-      d1: "0x21",
+      data: Uint8Array.fromArray([0x21]),
       isInner: false,
-      decoded: {
-        name: "CreateMetadataAccountV3",
-        argsJson: `{"amount":"1"}`,
-        accountsJson: `{"metadata":"${metaplexProgramId}"}`,
-        extraAccounts: [],
-      },
+      args: Null.null,
+      logs: Null.null,
     },
   ],
 }
 
 let capturedQueries: array<SvmHyperSyncClient.EventItems.query> = []
-let capturedRegistrationInputs: array<array<SvmHyperSyncClient.Registration.input>> = []
+let capturedPrograms: array<array<SvmHyperSyncClient.Registration.program>> = []
 
 // The chain's address index; created outside the mock-addon window below so it
 // loads the real native addon.
@@ -106,8 +98,6 @@ let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
   getBlockHashes: (~blockNumbers as _) =>
     JsError.throwWithMessage("getBlockHashes should not be used in these tests"),
-  get: (~query as _) =>
-    JsError.throwWithMessage("get should only be used for block-data queries in tests"),
   getEventItems: (~query, ~addressSet as _) => {
     capturedQueries->Array.push(query)
     // The real Rust client builds the stores from raw transactions/blocks; the
@@ -126,7 +116,12 @@ let mockClient = makeMockClient()
 // The source captures its client at construction, so the mock addon only
 // needs to be in place for the `make` call; restore the previous addon right
 // after to avoid leaking the mock into other tests.
-let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
+let makeSource = (
+  ~onEventRegistrations=[makeReg()],
+  ~client=mockClient,
+  ~endpointUrl="https://solana.hypersync.xyz",
+  ~apiToken=Some("test-token"),
+) => {
   let prevAddon = Core.addonRef.contents
   Core.addonRef :=
     Some(
@@ -135,10 +130,10 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
           "fromConfig": (
             _: SvmHyperSyncClient.cfg,
             _: string,
-            registrations: array<SvmHyperSyncClient.Registration.input>,
+            programs: array<SvmHyperSyncClient.Registration.program>,
             _: AddressStore.t,
           ) => {
-            capturedRegistrationInputs->Array.push(registrations)
+            capturedPrograms->Array.push(programs)
             client
           },
         },
@@ -146,8 +141,8 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
     )
   let source = try SvmHyperSyncSource.make({
     chainId,
-    endpointUrl: "https://solana.hypersync.xyz",
-    apiToken: None,
+    endpointUrl,
+    apiToken,
     onEventRegistrations,
     clientTimeoutMillis: 10_000,
     addressStore,
@@ -174,156 +169,232 @@ let programSet = {
 }
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
-  Async.it(
-    "passes the selection to the client and builds items by registration index",
-    async t => {
-      let reg = makeReg()
-      let source = makeSource(~onEventRegistrations=[reg])
+  Async.it("passes the selection to the client and builds items by registration index", async t => {
+    let reg = makeReg()
+    let source = makeSource(~onEventRegistrations=[reg])
 
-      let response = await source.getItemsOrThrow(
-        ~fromBlock=slot - 10,
-        ~toBlock=Some(slot + 10),
-        ~addressSet=programSet,
-        ~knownHeight=slot + 1000,
-        ~partitionId="0",
-        ~itemsTarget=Some(5000),
-        ~selection={
-          onEventRegistrations: [reg],
-          dependsOnAddresses: true,
-        },
-        ~retry=0,
-        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
-      )
+    let response = await source.getItemsOrThrow(
+      ~fromBlock=slot - 10,
+      ~toBlock=Some(slot + 10),
+      ~addressSet=programSet,
+      ~knownHeight=slot + 1000,
+      ~partitionId="0",
+      ~itemsTarget=Some(5000),
+      ~selection={
+        onEventRegistrations: [(reg :> Internal.onEventRegistration)],
+        dependsOnAddresses: true,
+      },
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
 
-      let item = switch response.parsedQueueItems {
-      | [
-          Internal.Event({
-            blockNumber,
-            logIndex,
-            orderPath,
-            transactionIndex,
-            payload,
-            onEventRegistration,
-          }),
-        ] =>
-        let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
-        Some({
-          "blockNumber": blockNumber,
-          // A slot orders by (transactionIndex, instructionAddress); the pair
-          // rides the item as (logIndex, orderPath).
-          "logIndex": logIndex,
-          "orderPath": orderPath,
-          "transactionIndex": transactionIndex,
-          // `block` is omitted here; it's materialised from the store at batch
-          // prep, which this test doesn't run.
-          "block": instruction.block,
-          "params": instruction.params,
-          "usesSourceRegistration": onEventRegistration === (reg :> Internal.onEventRegistration),
-        })
-      | _ => None
-      }
-
-      t.expect({
-        "item": item,
-        "query": capturedQueries->Array.getUnsafe(0),
-      }).toEqual({
-        "item": Some({
-          "blockNumber": slot,
-          "logIndex": 965,
-          "orderPath": [1],
-          "transactionIndex": 965,
-          "block": None,
-          "params": Some(
-            (
-              {
-                name: "CreateMetadataAccountV3",
-                args: %raw(`{"amount": "1"}`),
-                accounts: Dict.fromArray([("metadata", metaplexProgramId)]),
-                extraAccounts: [],
-              }: Envio.svmInstructionParams
-            ),
-          ),
-          "usesSourceRegistration": true,
+    let item = switch response.parsedQueueItems {
+    | [
+        Internal.Event({
+          blockNumber,
+          logIndex,
+          orderPath,
+          transactionIndex,
+          payload,
+          onEventRegistration,
         }),
-        // The slot range stays inclusive on the boundary; Rust converts to the
-        // wire's exclusive `toSlot`.
-        "query": (
-          {
-            fromSlot: slot - 10,
-            toSlot: Some(slot + 10),
-            maxNumInstructions: 5000,
-            registrationIndexes: [0],
-            clientFilteredContracts: None,
-          }: SvmHyperSyncClient.EventItems.query
-        ),
+      ] =>
+      let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
+      Some({
+        "blockNumber": blockNumber,
+        // A slot orders by (transactionIndex, path); the pair
+        // rides the item as (logIndex, orderPath).
+        "logIndex": logIndex,
+        "orderPath": orderPath,
+        "transactionIndex": transactionIndex,
+        // `block` is omitted here; it's materialised from the store at batch
+        // prep, which this test doesn't run.
+        "block": instruction.block,
+        "args": instruction.args,
+        "accounts": instruction.accounts,
+        "usesSourceRegistration": onEventRegistration === (reg :> Internal.onEventRegistration),
       })
-    },
-  )
+    | _ => None
+    }
 
-  // The whole registration set crosses the boundary once at construction —
+    t.expect({
+      "item": item,
+      "query": capturedQueries->Array.getUnsafe(0),
+    }).toEqual({
+      "item": Some({
+        "blockNumber": slot,
+        "logIndex": 965,
+        "orderPath": [1],
+        "transactionIndex": 965,
+        "block": None,
+        "args": None,
+        "accounts": None,
+        "usesSourceRegistration": true,
+      }),
+      // The slot range stays inclusive on the boundary; Rust converts to the
+      // wire's exclusive `toSlot`.
+      "query": (
+        {
+          fromSlot: slot - 10,
+          toSlot: Some(slot + 10),
+          maxNumInstructions: 5000,
+          registrationIndexes: [0],
+          clientFilteredContracts: None,
+        }: SvmHyperSyncClient.EventItems.query
+      ),
+    })
+  })
+
+  // The whole registration set crosses the boundary once at construction,
+  // grouped under the config instruction each registration was built from:
   // selections, field unions, decoders, and routing derive from it in Rust.
-  it("builds registration inputs from the event configs", t => {
-    let _ = makeSource(~onEventRegistrations=[makeReg()])
-    let inputs =
-      capturedRegistrationInputs->Array.getUnsafe(capturedRegistrationInputs->Array.length - 1)
-    t.expect(inputs).toEqual([
+  it("groups registrations under their program and instruction", t => {
+    let swap = makeEventConfig()
+    let other = {...makeEventConfig(), name: "UpdateMetadataAccountV2", discriminator: Some("0x0f")}
+    let _ = makeSource(
+      ~onEventRegistrations=[
+        makeReg(~eventConfig=swap, ~index=0),
+        makeReg(~eventConfig=other, ~index=1),
+        makeReg(~eventConfig=swap, ~index=2),
+      ],
+    )
+    let programs = capturedPrograms->Array.getUnsafe(capturedPrograms->Array.length - 1)
+    let registration = index => {
+      SvmHyperSyncClient.Registration.index,
+      isWildcard: false,
+      startBlock: None,
+      accountFilters: [],
+      transactionFields: [],
+      blockFields: [],
+      accountActivityFields: [],
+      logFields: [],
+      instructionFields: [],
+    }
+    t.expect(programs).toEqual([
       {
-        index: 0,
-        instructionName: "CreateMetadataAccountV3",
-        contractName: "TokenMetadata",
+        name: "TokenMetadata",
         programId: metaplexProgramId,
-        isWildcard: false,
-        startBlock: None,
-        discriminator: "0x21",
-        discriminatorByteLen: 1,
-        includeLogs: false,
-        accountFilters: [],
-        transactionFields: [],
-        blockFields: [],
-        accounts: [],
+        instructions: [
+          {
+            name: "CreateMetadataAccountV3",
+            discriminator: "0x21",
+            registrations: [registration(0), registration(2)],
+          },
+          {
+            name: "UpdateMetadataAccountV2",
+            discriminator: "0x0f",
+            registrations: [registration(1)],
+          },
+        ],
       },
     ])
   })
 
-  it("stringifies schema pieces and field selections onto registration inputs", t => {
+  it("stringifies schema pieces and field selections onto the inputs", t => {
     let eventConfig = makeEventConfig(
       ~selectedBlockFields=[Height, ParentHash],
       ~selectedTransactionFields=[Signature, TransactionIndex],
     )
     let eventConfig = {
       ...eventConfig,
-      accounts: ["metadata", "mint"],
+      accounts: [Required("metadata"), Required("mint")],
       args: %raw(`[{"name": "amount", "type": "u64"}]`),
-      isInner: Some(false),
-      accountFilters: [
-        [
-          {
-            Internal.position: 1,
-            values: [metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe],
-          },
-        ],
-      ],
+      fieldSelection: Internal.makeFieldSelection(
+        ~blockFields=eventConfig.fieldSelection.blockFields,
+        ~transactionFields=eventConfig.fieldSelection.transactionFields,
+        ~instructionFields=Utils.Set.fromArray(["args", "accounts"]),
+        ~blockMaskFn=Svm.eventBlockFieldMask,
+        ~transactionMaskFn=Svm.eventTransactionFieldMask,
+      ),
     }
-    let _ = makeSource(~onEventRegistrations=[makeReg(~eventConfig)])
-    let inputs =
-      capturedRegistrationInputs->Array.getUnsafe(capturedRegistrationInputs->Array.length - 1)
-    let input = inputs->Array.getUnsafe(0)
+    let where = Some(
+      {"isInner": false, "accounts": {"mint": [metaplexProgramId]}}->(Utils.magic: 'a => JSON.t),
+    )
+    let _ = makeSource(~onEventRegistrations=[makeReg(~eventConfig, ~where)])
+    let program =
+      capturedPrograms
+      ->Array.getUnsafe(capturedPrograms->Array.length - 1)
+      ->Array.getUnsafe(0)
+    let instruction = program.instructions->Array.getUnsafe(0)
+    let input = instruction.registrations->Array.getUnsafe(0)
     t.expect({
       "accountFilters": input.accountFilters,
       "isInner": input.isInner,
       "transactionFields": input.transactionFields->Array.toSorted(String.compare),
       "blockFields": input.blockFields->Array.toSorted(String.compare),
-      "accounts": input.accounts,
-      "argsJson": input.argsJson,
-      "definedTypesJson": input.definedTypesJson,
+      "instructionFields": input.instructionFields->Array.toSorted(String.compare),
+      "argsJson": instruction.argsJson,
+      "definedTypesJson": program.definedTypesJson,
     }).toEqual({
-      "accountFilters": [[{SvmHyperSyncClient.Registration.position: 1, values: [metaplexProgramId]}]],
+      "accountFilters": [
+        [{SvmHyperSyncClient.Registration.position: 1, values: [metaplexProgramId]}],
+      ],
       "isInner": Some(false),
       "transactionFields": ["signature", "transactionIndex"],
       "blockFields": ["height", "parentHash"],
-      "accounts": ["metadata", "mint"],
+      "instructionFields": ["accounts", "args"],
       "argsJson": Some(`[{"name":"amount","type":"u64"}]`),
       "definedTypesJson": None,
     })
+  })
+})
+
+describe("SvmHyperSyncSource height subscription", () => {
+  Async.it("Streams heights over HyperSync SSE the same way the EVM source does", async t => {
+    let (server, url) = await Promise.make((resolve, _reject) => {
+      let server = MockRpcServer.createServer((_req, res) => {
+        res->MockRpcServer.writeHead(
+          200,
+          Dict.fromArray([("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache")]),
+        )
+        res->MockRpcServer.write("event: height\ndata: 445073332\n\n")
+        res->MockRpcServer.write("event: ping\ndata: \n\n")
+        res->MockRpcServer.write("event: height\ndata: 445073335\n\n")
+      })
+      server->MockRpcServer.listenOnHost(0, "127.0.0.1", () =>
+        resolve((
+          server,
+          `http://127.0.0.1:${(server->MockRpcServer.address).port->Int.toString}`,
+        ))
+      )
+    })
+
+    let source = makeSource(~endpointUrl=url)
+    let statuses = []
+    let heights = []
+    let unsubscribe =
+      (source.createHeightSubscription->Option.getOrThrow)(
+        ~onHeight=height => heights->Array.push(height)->ignore,
+        ~onStatus=status =>
+          statuses
+          ->Array.push(
+            switch status {
+            | Live => "live"
+            | Down({reason}) => `down:${reason->Source.downReasonLabel}`
+            },
+          )
+          ->ignore,
+      )
+
+    await Scenario.waitUntil(
+      () => heights->Array.length === 2,
+      ~message="the SVM height stream",
+    )
+    unsubscribe()
+    server->MockRpcServer.closeAllConnections
+    await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
+
+    t.expect((statuses, heights)).toStrictEqual((["live"], [445073332, 445073335]))
+  })
+})
+
+describe("SvmHyperSyncSource api token", () => {
+  it("Throws the same actionable error as the EVM source when the token is missing", t => {
+    t->toThrowErrorEqual(
+      () => makeSource(~apiToken=None)->ignore,
+      `An Envio API token is required for using HyperSync as a data-source.
+Set the ENVIO_API_TOKEN environment variable in your .env file.
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
+    )
   })
 })

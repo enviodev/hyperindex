@@ -20,6 +20,9 @@ interface TemplateConfig {
 }
 
 const fuelGreeterAbi = path.join(config.rootDir, "packages/e2e-tests/fixtures/fuel-greeter-abi.json");
+// An ABI as older toolchains wrote them: a `signature` on every entry, the
+// constructor listed twice, and entries leaving out what the spec lets them.
+const legacyEvmAbi = path.join(config.rootDir, "packages/e2e-tests/fixtures/legacy-evm-abi.json");
 
 // All available templates and contract imports to test
 const TEMPLATES: TemplateConfig[] = [
@@ -49,10 +52,11 @@ const TEMPLATES: TemplateConfig[] = [
     initArgs: ["fuel", "template", "-t", "greeter", "-l", "typescript"],
     hasTests: true,
   },
-  // SVM Templates (no test file in template)
+  // SVM Templates
   {
-    name: "svm-block-handler",
-    initArgs: ["svm", "template", "-t", "feature-block-handler", "-l", "typescript"],
+    name: "svm-usdc-transfers",
+    initArgs: ["svm", "template", "-t", "usdc-transfers", "-l", "typescript"],
+    hasTests: true,
   },
   // EVM Contract Import (explorer)
   {
@@ -85,6 +89,28 @@ const TEMPLATES: TemplateConfig[] = [
       "--all-events",
       "-l",
       "rescript",
+    ],
+  },
+  // EVM Contract Import (local ABI)
+  {
+    name: "evm-contract-import-local",
+    initArgs: [
+      "contract-import",
+      "-c",
+      "0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b",
+      "local",
+      "-a",
+      legacyEvmAbi,
+      "--contract-name",
+      "Comptroller",
+      "-b",
+      "1",
+      "--start-block",
+      "0",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "typescript",
     ],
   },
   // Fuel Contract Import (local ABI)

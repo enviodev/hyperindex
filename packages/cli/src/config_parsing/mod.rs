@@ -9,5 +9,7 @@ pub mod human_config;
 pub mod hypersync_endpoints;
 pub mod materialization;
 pub mod public_config;
+pub mod svm_catalog;
+pub mod svm_idl;
 pub mod system_config;
 pub mod validation;

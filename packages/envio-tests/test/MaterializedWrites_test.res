@@ -121,8 +121,7 @@ describe("Materialized writes", () => {
       let sourceMock = source(1337)
       await Utils.delay(0)
       sourceMock.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await MockSource.waitItemsQuery(sourceMock)
 
       sourceMock.resolveGetItemsOrThrow(
         [
@@ -134,7 +133,6 @@ describe("Materialized writes", () => {
           transferItem(~block=3, ~from=bob, ~to=alice, ~value=2n, ~handler),
         ],
         ~latestFetchedBlockNumber=3,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
 
@@ -247,8 +245,7 @@ describe("Materialized filters", () => {
       let sourceMock = source(1337)
       await Utils.delay(0)
       sourceMock.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await MockSource.waitItemsQuery(sourceMock)
 
       sourceMock.resolveGetItemsOrThrow(
         [
@@ -256,7 +253,6 @@ describe("Materialized filters", () => {
           filterItem(~block=2, ~from=bob, ~to=bob, ~txTo=Some(bob), ~handler),
         ],
         ~latestFetchedBlockNumber=2,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
 

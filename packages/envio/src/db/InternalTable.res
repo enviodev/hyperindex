@@ -5,11 +5,172 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-module EnvioAddresses = Config.EnvioAddresses
+// Postgres SQLSTATE for "undefined_table" — what a read gets when the schema was
+// initialized by an older envio that didn't have the table.
+let undefinedTableSqlState = "42P01"
+
+@get external getSqlStateCode: JsExn.t => option<string> = "code"
+
+let isUndefinedTable = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) => e->getSqlStateCode === Some(undefinedTableSqlState)
+  | _ => false
+  }
+
+// The array type an unnest binds a chain-id column to. Resolved from the
+// config's mode, so every internal query casts the parameter the same way the
+// column was created.
+let chainIdArrayType = (~pgSchema, ~chainIdMode: ChainId.mode) =>
+  Table.getPgFieldType(
+    ~fieldType=ChainId,
+    ~pgSchema,
+    ~isArray=true,
+    ~isNumericArrayAsText=false,
+    ~isNullable=false,
+    ~chainIdMode,
+  )
+
+// The canonical contract ids. Written once at initialize from the config's
+// contract names in byte order, so an id names the same contract on every
+// chain and across restarts; read back on resume, where the stored mapping is
+// what every address row means.
+module EnvioContracts = {
+  let table = mkTable(
+    "envio_contracts",
+    ~fields=[
+      mkField("id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("name", String, ~fieldSchema=S.string),
+    ],
+  )
+
+  let makeInsertQuery = (~pgSchema) =>
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "name")
+SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(Text: Postgres.columnType :> string)}[]);`
+
+  // `contractNames` is the canonical list: a name's position is its id.
+  let insert = (sql, ~pgSchema, ~contractNames: array<string>) =>
+    sql
+    ->Postgres.preparedUnsafe(
+      makeInsertQuery(~pgSchema),
+      (contractNames->Array.mapWithIndex((_, idx) => idx), contractNames)->(
+        Utils.magic: ((array<int>, array<string>)) => unknown
+      ),
+    )
+    ->Utils.Promise.ignoreValue
+
+  // Ordered by id, so the result is the canonical list itself. None when the
+  // schema has no such table: it was written by an envio that predates the
+  // contract mapping, and every address row in it is shaped differently — so a
+  // resume has to stop at the compat check rather than at a missing column.
+  let read = async (sql, ~pgSchema): option<array<string>> =>
+    try {
+      let rows: array<{
+        "name": string,
+      }> = await sql->Postgres.unsafe(
+        `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
+      )
+      Some(rows->Array.map(row => row["name"]))
+    } catch {
+    | exn => isUndefinedTable(exn) ? None : throw(exn)
+    }
+}
+
+module EnvioAddresses = {
+  let name = "envio_addresses"
+
+  let table = mkTable(
+    name,
+    ~fields=[
+      mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
+      // The field schemas are unused: this table is read and written by the
+      // hand-written queries below, never through the generic row encoding.
+      mkField("address", Bytea, ~fieldSchema=S.string, ~isPrimaryKey),
+      mkField("contract_id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("registration_block", Int32, ~fieldSchema=S.int),
+    ],
+  )
+
+  let makeInsertQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("chain_id", "address", "contract_id", "registration_block")
+SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[],$4::${(Integer: Postgres.columnType :> string)}[])
+ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
+  }
+
+  let insert = (
+    sql,
+    ~pgSchema,
+    ~rows: array<AddressRows.row>,
+    ~chainIdMode: ChainId.mode=Int32,
+  ) => {
+    let chainIds = []
+    let addresses = []
+    let contractIds = []
+    let registrationBlocks = []
+    rows->Array.forEach(row => {
+      chainIds->Array.push(row.chainId)->ignore
+      addresses->Array.push(row.address)->ignore
+      contractIds->Array.push(row.contractId)->ignore
+      registrationBlocks->Array.push(row.registrationBlock)->ignore
+    })
+    sql
+    ->Postgres.preparedUnsafe(
+      makeInsertQuery(~pgSchema, ~chainIdMode),
+      (
+        chainIds,
+        sql->Postgres.typed(addresses, Postgres.byteaArrayOid),
+        contractIds,
+        registrationBlocks,
+      )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>, array<int>)) => unknown),
+    )
+    ->Utils.Promise.ignoreValue
+  }
+
+  let makeDeleteQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
+    `DELETE FROM "${pgSchema}"."${table.tableName}"
+USING unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[]) AS dead(chain_id, address, contract_id)
+WHERE "${table.tableName}"."chain_id" = dead.chain_id
+  AND "${table.tableName}"."address" = dead.address
+  AND "${table.tableName}"."contract_id" = dead.contract_id;`
+  }
+
+  let delete = (
+    sql,
+    ~pgSchema,
+    ~keys: array<AddressRows.key>,
+    ~chainIdMode: ChainId.mode=Int32,
+  ) => {
+    let chainIds = []
+    let addresses = []
+    let contractIds = []
+    keys->Array.forEach(key => {
+      chainIds->Array.push(key.chainId)->ignore
+      addresses->Array.push(key.address)->ignore
+      contractIds->Array.push(key.contractId)->ignore
+    })
+    sql
+    ->Postgres.preparedUnsafe(
+      makeDeleteQuery(~pgSchema, ~chainIdMode),
+      (chainIds, sql->Postgres.typed(addresses, Postgres.byteaArrayOid), contractIds)->(
+        Utils.magic: ((array<ChainId.t>, unknown, array<int>)) => unknown
+      ),
+    )
+    ->Utils.Promise.ignoreValue
+  }
+
+  let makeGetRowsQuery = (~pgSchema) =>
+    `SELECT "chain_id" as "chainId",
+"address" as "address",
+"contract_id" as "contractId",
+"registration_block" as "registrationBlock"
+FROM "${pgSchema}"."${table.tableName}";`
+}
 
 module Chains = {
   type progressFields = [
     | #progress_block
+    | #progress_block_time
     | #events_processed
     | #source_block
   ]
@@ -17,6 +178,7 @@ module Chains = {
   type field = [
     | progressFields
     | #id
+    | #ecosystem
     | #start_block
     | #end_block
     | #max_reorg_depth
@@ -25,10 +187,12 @@ module Chains = {
     | #buffer_block
     | #ready_at
     | #_is_hyper_sync
+    | #checkpoint_id
   ]
 
   let fields: array<field> = [
     #id,
+    #ecosystem,
     #start_block,
     #end_block,
     #max_reorg_depth,
@@ -36,19 +200,16 @@ module Chains = {
     #first_event_block,
     #buffer_block,
     #progress_block,
+    #progress_block_time,
     #ready_at,
     #events_processed,
     #_is_hyper_sync,
+    #checkpoint_id,
   ]
 
   type metaFields = {
     @as("first_event_block")
-    firstEventBlockNumber: Null.t<
-      // Push id first (for WHERE clause)
-
-      // Then push all updateable field values (for SET clause)
-      int,
-    >,
+    firstEventBlockNumber: Null.t<int>,
     @as("buffer_block") latestFetchedBlockNumber: int,
     @as("ready_at")
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
@@ -57,12 +218,15 @@ module Chains = {
 
   type t = {
     @as("id") id: ChainId.t,
+    @as("ecosystem") ecosystem: string,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Null.t<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
     @as("source_block") blockHeight: int,
     @as("progress_block") progressBlockNumber: int,
+    @as("progress_block_time") progressBlockTime: Null.t<Date.t>,
     @as("events_processed") numEventsProcessed: float,
+    @as("checkpoint_id") checkpointId: Internal.checkpointId,
     ...metaFields,
   }
 
@@ -70,6 +234,10 @@ module Chains = {
     "envio_chains",
     ~fields=[
       mkField((#id: field :> string), ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
+      // Which ecosystem the chain belongs to (evm / fuel / svm). Chain ids are
+      // only unique within an ecosystem (HOS-1880: Svm ids are Envio-assigned),
+      // so consumers should treat (ecosystem, id) as the chain's identity.
+      mkField((#ecosystem: field :> string), String, ~fieldSchema=S.string),
       // Values populated from config
       mkField((#start_block: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#end_block: field :> string), Int32, ~fieldSchema=S.null(S.int), ~isNullable),
@@ -98,13 +266,30 @@ module Chains = {
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // Fully processed block number
       mkField((#progress_block: field :> string), Int32, ~fieldSchema=S.int),
+      // When the block in progress_block was produced, so that `now() -
+      // progress_block_time` is how far behind chain time the indexer is. Null
+      // while the source hasn't reported that block's header.
+      mkField(
+        (#progress_block_time: field :> string),
+        Date,
+        ~fieldSchema=S.null(Utils.Schema.dbDate),
+        ~isNullable,
+      ),
+      // The last checkpoint id the chain has committed. Kept here rather than
+      // read off the checkpoints table: checkpoint rows are only written while
+      // a rollback could reach them, but an append-only sink holds a row for
+      // every id ever handed out and resolves current state through them, so a
+      // resume has to continue the sequence even where no checkpoint row backs
+      // it.
+      mkField((#checkpoint_id: field :> string), UInt64, ~fieldSchema=S.bigint),
     ],
   )
 
   let initialFromConfig = (chainConfig: Config.chain) => {
     {
       id: chainConfig.id,
-      startBlock: chainConfig.startBlock,
+      ecosystem: (chainConfig.ecosystem: Ecosystem.name :> string),
+      startBlock: chainConfig->Config.startBlockOrThrow,
       endBlock: chainConfig.endBlock->Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
       blockHeight: 0,
@@ -112,8 +297,10 @@ module Chains = {
       latestFetchedBlockNumber: -1,
       timestampCaughtUpToHeadOrEndblock: Null.null,
       progressBlockNumber: -1,
+      progressBlockTime: Null.null,
       isHyperSync: false,
       numEventsProcessed: 0.,
+      checkpointId: Internal.initialCheckpointId,
     }
   }
 
@@ -131,6 +318,7 @@ module Chains = {
           let value = initialValues->(Utils.magic: t => dict<unknown>)->Dict.get((field :> string))
           switch typeof(value) {
           | #object => "NULL"
+          | #string => `'${value->(Utils.magic: option<unknown> => string)}'`
           | #number => value->(Utils.magic: option<unknown> => int)->Int.toString
           | #bigint => value->(Utils.magic: option<unknown> => bigint)->BigInt.toString
           | #boolean => value->(Utils.magic: option<unknown> => bool) ? "true" : "false"
@@ -189,8 +377,11 @@ WHERE "${(#id: field :> string)}" = $2
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     numEventsProcessed: float,
     progressBlockNumber: int,
-    indexingAddresses: array<Internal.indexingAddress>,
+    progressBlockTime: Null.t<Date.t>,
+    addressRows: AddressRows.seedRows,
     sourceBlockNumber: int,
+    // BIGINT, which the driver hands back as a string.
+    checkpointId: string,
   }
 
   let makeGetInitialStateQuery = (~pgSchema) => {
@@ -202,76 +393,54 @@ WHERE "${(#id: field :> string)}" = $2
 "${(#ready_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
 "${(#events_processed: field :> string)}"::float8 as "numEventsProcessed",
 "${(#progress_block: field :> string)}" as "progressBlockNumber",
-"${(#source_block: field :> string)}" as "sourceBlockNumber"
+"${(#progress_block_time: field :> string)}" as "progressBlockTime",
+"${(#source_block: field :> string)}" as "sourceBlockNumber",
+"${(#checkpoint_id: field :> string)}"::TEXT as "checkpointId"
 FROM "${pgSchema}"."${table.tableName}";`
-  }
-
-  type rawIndexingAddress = {
-    chainId: ChainId.t,
-    address: Address.t,
-    contractName: string,
-    registrationBlock: int,
   }
 
   // Addresses are read as plain rows rather than aggregated per chain with
   // json_agg: a single chain's aggregate can exceed V8's max string length
   // (postgres.js decodes the column with Buffer.toString and throws
   // ERR_STRING_TOO_LONG). Grouping happens in JS instead — see getInitialState.
-  let makeGetIndexingAddressesQuery = (~pgSchema) => {
-    // envio_addresses.id is a composite "{chainId}-{address}" string produced by
-    // Config.EnvioAddresses.makeId; extract the address by taking everything
-    // after the first '-'. Keep in sync with makeId / getAddress.
-    `SELECT "chain_id" as "chainId",
-SUBSTRING("id" FROM POSITION('-' IN "id") + 1) as "address",
-"contract_name" as "contractName",
-"registration_block" as "registrationBlock"
-FROM "${pgSchema}"."${EnvioAddresses.table.tableName}";`
-  }
-
   let getInitialState = async (sql, ~pgSchema) => {
-    let (rawInitialStates, rawIndexingAddresses) = await Promise.all2((
+    let (rawInitialStates, rawAddressRows) = await Promise.all2((
       sql
       ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
       ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>),
       sql
-      ->Postgres.unsafe(makeGetIndexingAddressesQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<rawIndexingAddress>>),
+      ->Postgres.unsafe(EnvioAddresses.makeGetRowsQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<AddressRows.row>>),
     ))
 
-    let indexingAddressesByChainId = Dict.make()
-    rawIndexingAddresses->Array.forEach(row => {
-      // BIGINT chain ids come back as strings; normalizing here keeps the
-      // grouping key identical to the one derived from the chains rows below.
-      let key = row.chainId->ChainId.normalizeOrThrow->ChainId.toString
-      let addresses = switch indexingAddressesByChainId->Dict.get(key) {
-      | Some(addresses) => addresses
-      | None =>
-        let addresses: array<Internal.indexingAddress> = []
-        indexingAddressesByChainId->Dict.set(key, addresses)
-        addresses
-      }
-      addresses
-      ->Array.push({
-        address: row.address,
-        contractName: row.contractName,
-        registrationBlock: row.registrationBlock,
-      })
-      ->ignore
-    })
+    let addressRowsByChainId = rawAddressRows->AddressRows.group
 
     rawInitialStates->Array.map(rawInitialState => {
       let id = rawInitialState.id->ChainId.normalizeOrThrow
       {
         ...rawInitialState,
         id,
-        indexingAddresses: indexingAddressesByChainId
-        ->Dict.get(id->ChainId.toString)
-        ->Option.getOr([]),
+        addressRows: addressRowsByChainId
+        ->Utils.Dict.dangerouslyGetNonOption(id->ChainId.toString)
+        ->Option.getOr(AddressRows.emptySeedRows()),
       }
     })
   }
 
-  let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]
+  // Block timestamps are unix seconds everywhere inside the indexer - that's
+  // what a block header carries - and a timestamp in storage, where `now() -
+  // progress_block_time` is the query the column exists for.
+  let blockTimeToDb = (blockTime: option<int>) =>
+    blockTime->Option.map(seconds => Date.fromTime(seconds->Int.toFloat *. 1000.))->Null.fromOption
+  let blockTimeFromDb = (date: Null.t<Date.t>) =>
+    date->Null.toOption->Option.map(date => (date->Date.getTime /. 1000.)->Float.toInt)
+
+  let progressFields: array<progressFields> = [
+    #progress_block,
+    #progress_block_time,
+    #events_processed,
+    #source_block,
+  ]
 
   let makeProgressFieldsUpdateQuery = (~pgSchema) => {
     let setClauses = Array.mapWithIndex(progressFields, (field, index) => {
@@ -312,6 +481,7 @@ WHERE "id" = $1;`
   type progressedChain = {
     chainId: ChainId.t,
     progressBlockNumber: int,
+    progressBlockTime: option<int>,
     sourceBlockNumber: int,
     totalEventsProcessed: float,
   }
@@ -331,6 +501,8 @@ WHERE "id" = $1;`
         ->Array.push(
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
+          | #progress_block_time =>
+            data.progressBlockTime->blockTimeToDb->(Utils.magic: Null.t<Date.t> => unknown)
           | #events_processed => data.totalEventsProcessed->(Utils.magic: float => unknown)
           | #source_block => data.sourceBlockNumber->(Utils.magic: int => unknown)
           },
@@ -342,6 +514,31 @@ WHERE "id" = $1;`
     })
 
     Promise.all(promises)->Utils.Promise.ignoreValue
+  }
+
+  let makeSetCheckpointFrontierQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
+    `UPDATE "${pgSchema}"."${table.tableName}"
+SET "${(#checkpoint_id: field :> string)}" = envio_frontier.checkpoint_id
+FROM unnest($1::${chainIdArrayType},$2::${(BigInt: Postgres.columnType :> string)}[]) AS envio_frontier(chain_id, checkpoint_id)
+WHERE "${table.tableName}"."${(#id: field :> string)}" = envio_frontier.chain_id;`
+  }
+
+  // The chains the write moved, in one statement and in the batch's own
+  // transaction — so a chain's stored id can never outlive the rows it covers,
+  // nor lag behind them.
+  let setCheckpointFrontier = (
+    sql,
+    ~pgSchema,
+    ~frontier: Frontier.t,
+    ~chainIdMode: ChainId.mode=Int32,
+  ) => {
+    sql
+    ->Postgres.preparedUnsafe(
+      makeSetCheckpointFrontierQuery(~pgSchema, ~chainIdMode),
+      frontier->Frontier.unnestParams->(Utils.magic: Frontier.unnestParams => unknown),
+    )
+    ->Utils.Promise.ignoreValue
   }
 }
 
@@ -362,23 +559,13 @@ module EnvioInfo = {
     ],
   )
 
-  // Postgres SQLSTATE for "undefined_table" — what we get when the schema
-  // was initialized by an older envio that didn't have `envio_info`.
-  let undefinedTableSqlState = "42P01"
-
-  @get external getCode: JsExn.t => option<string> = "code"
-
   let read = async (sql, ~pgSchema): option<JSON.t> => {
     let rows: array<{
       "config": string,
     }> = try await sql->Postgres.unsafe(
       `SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`,
     ) catch {
-    | exn =>
-      switch exn->JsExn.anyToExnInternal {
-      | JsExn(e) if e->getCode === Some(undefinedTableSqlState) => []
-      | _ => throw(exn)
-      }
+    | exn => isUndefinedTable(exn) ? [] : throw(exn)
     }
     rows->Array.get(0)->Option.map(row => row["config"]->JSON.parseOrThrow)
   }
@@ -434,18 +621,117 @@ module Checkpoints = {
 
   let initialCheckpointId = 0n
 
-  let table = mkTable(
-    "envio_checkpoints",
-    ~fields=[
-      mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
-      mkField((#chain_id: field :> string), ChainId, ~fieldSchema=ChainId.schema),
-      mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
-      mkField((#block_hash: field :> string), String, ~fieldSchema=S.null(S.string), ~isNullable),
-      mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
-    ],
+  // The checkpoint a rollback's diff rows are stamped with. It never reaches
+  // Postgres — there the diff is written straight to the entity table — but an
+  // append-only sink resolves current state through the checkpoints, so without
+  // one of these the diff sits above the frontier while the rows it supersedes
+  // sit below it, and the orphaned values are what a reader sees.
+  type diffCheckpoint = {
+    chainId: ChainId.t,
+    checkpointId: Internal.checkpointId,
+    // Where the rollback left the chain. At or below its stored progress, so a
+    // resume counts the row as covered rather than as something to trim back to.
+    blockNumber: int,
+  }
+
+  // One definition per column, carrying what each storage needs: the field
+  // itself, the type ClickHouse gives it where that differs from Postgres, and
+  // where a batch — or a rollback diff — keeps the column's values.
+  type column = {
+    field: fieldOrDerived,
+    clickHouseFieldType: fieldType,
+    valuesOf: Batch.t => array<unknown>,
+    diffValuesOf: array<diffCheckpoint> => array<unknown>,
+  }
+
+  // The chain leads the key: ids are only unique within a chain, and every
+  // query that narrows to one chain reads a contiguous run of it.
+  let columns: array<column> = [
+    {
+      field: mkField(
+        (#chain_id: field :> string),
+        ChainId,
+        ~fieldSchema=ChainId.schema,
+        ~isPrimaryKey,
+      ),
+      clickHouseFieldType: ChainId,
+      valuesOf: batch =>
+        batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(diff => diff.chainId->(Utils.magic: ChainId.t => unknown)),
+    },
+    {
+      field: mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
+      clickHouseFieldType: UInt64,
+      valuesOf: batch => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(diff => diff.checkpointId->(Utils.magic: bigint => unknown)),
+    },
+    {
+      field: mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
+      clickHouseFieldType: Int32,
+      valuesOf: batch => batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(diff => diff.blockNumber->(Utils.magic: int => unknown)),
+    },
+    {
+      field: mkField(
+        (#block_hash: field :> string),
+        String,
+        ~fieldSchema=S.null(S.string),
+        ~isNullable,
+      ),
+      clickHouseFieldType: String,
+      valuesOf: batch =>
+        batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(_ => Null.Null->(Utils.magic: Null.t<string> => unknown)),
+    },
+    {
+      field: mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
+      // A count of every event a chain has processed outgrows an Int32 where
+      // Postgres keeps one, and ClickHouse has the id's width to spare.
+      clickHouseFieldType: UInt64,
+      valuesOf: batch =>
+        batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
+      diffValuesOf: diffs => diffs->Array.map(_ => 0->(Utils.magic: int => unknown)),
+    },
+  ]
+
+  let tableName = "envio_checkpoints"
+
+  let table = mkTable(tableName, ~fields=columns->Array.map(({field}) => field))
+
+  // Where each chain counts its own ids the chain has to be part of the key,
+  // and every bound a rollback or a prune applies names it. Under one shared
+  // sequence the id is unique by itself and those bounds are id ranges with no
+  // chain in them — which a key led by the chain can't serve.
+  let globalTable = mkTable(
+    tableName,
+    ~fields=columns->Array.map(({field: column}) =>
+      switch column {
+      | Table.Field(f) if f.fieldName === (#chain_id: field :> string) =>
+        Table.Field({...f, isPrimaryKey: false})
+      | column => column
+      }
+    ),
   )
 
+  let tableFor = (sequence: CheckpointSequence.t) =>
+    switch sequence {
+    | SharedAcrossChains => globalTable
+    | PerChain => table
+    }
+
   let makeGetReorgCheckpointsQuery = (~pgSchema): string => {
+    // The safe_block checkpoint itself is included, so it can be used for safe
+    // checkpoint tracking.
+    //
+    // Ordered by id, which within a chain is block order: both consumers of
+    // these rows — the safe-checkpoint scan and the block-store seed — read them
+    // as ascending. Physical row order can't stand in for that, since a rollback
+    // frees space that later checkpoints are written back into.
+    //
     // Use CTE to pre-filter chains and compute safe_block once per chain
     // This is faster because:
     // 1. Chains table is small, so filtering it first is cheap
@@ -468,22 +754,12 @@ FROM "${pgSchema}"."${table.tableName}" cp
 INNER JOIN reorg_chains rc 
   ON cp."${(#chain_id: field :> string)}" = rc.id
 WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
-  AND cp."${(#block_number: field :> string)}" >= rc.safe_block;` // Include safe_block checkpoint to use it for safe checkpoint tracking
-  }
-
-  let makeCommitedCheckpointIdQuery = (~pgSchema) => {
-    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->BigInt.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
+  AND cp."${(#block_number: field :> string)}" >= rc.safe_block
+ORDER BY cp."${(#id: field :> string)}";`
   }
 
   let makeInsertCheckpointQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
-    let chainIdArrayType = Table.getPgFieldType(
-      ~fieldType=ChainId,
-      ~pgSchema,
-      ~isArray=true,
-      ~isNumericArrayAsText=false,
-      ~isNullable=false,
-      ~chainIdMode,
-    )
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
 SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chainIdArrayType},$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
   }
@@ -520,27 +796,36 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
     ->Utils.Promise.ignoreValue
   }
 
-  let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
+  // Optional to match the entity tables', where a cross-chain entity has none.
+  let chainIdColumn = Some((#chain_id: field :> string))
+
+  let rollback = (sql, ~pgSchema, ~floors: RollbackFloors.t) => {
+    let tableRef = `"${pgSchema}"."${table.tableName}"`
+    let bounds = floors.checkpointBounds->CheckpointSequence.sql(~chainIdColumn, ~tableRef)
     sql
     ->Postgres.preparedUnsafe(
-      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
-      [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+      `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" > ${bounds.checkpointId}${bounds.usingMatch};`,
+      floors.checkpointBounds->CheckpointSequence.params,
     )
     ->Utils.Promise.ignoreValue
   }
 
-  let makePruneStaleCheckpointsQuery = (~pgSchema) => {
-    `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1;`
+  let makePruneStaleCheckpointsQuery = (
+    ~pgSchema,
+    ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
+  ) => {
+    let tableRef = `"${pgSchema}"."${table.tableName}"`
+    let bounds = safeCheckpoints->CheckpointSequence.sql(~chainIdColumn, ~tableRef)
+    `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" < ${bounds.checkpointId}${bounds.usingMatch};`
   }
 
-  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: bigint) => {
+  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpoints) =>
     sql
     ->Postgres.preparedUnsafe(
-      makePruneStaleCheckpointsQuery(~pgSchema),
-      [safeCheckpointId->BigInt.toString]->Obj.magic,
+      makePruneStaleCheckpointsQuery(~pgSchema, ~safeCheckpoints),
+      safeCheckpoints->CheckpointSequence.params,
     )
     ->Utils.Promise.ignoreValue
-  }
 
   let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
     `SELECT "${(#id: field :> string)}" FROM "${pgSchema}"."${table.tableName}"
@@ -569,25 +854,22 @@ LIMIT 1;`
     })
   }
 
-  let makeGetRollbackProgressDiffQuery = (~pgSchema) => {
+  let makeGetRollbackProgressDiffQuery = (~pgSchema, ~floors: RollbackFloors.t) => {
+    let bounds = floors.checkpointBounds->CheckpointSequence.sql(~chainIdColumn, ~tableRef="t")
     `SELECT 
-  "${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
-  SUM("${(#events_processed: field :> string)}") as events_processed_diff,
-  MIN("${(#block_number: field :> string)}") - 1 as new_progress_block_number
-FROM "${pgSchema}"."${table.tableName}"
-WHERE "${(#id: field :> string)}" > $1
-GROUP BY "${(#chain_id: field :> string)}";`
+  t."${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
+  SUM(t."${(#events_processed: field :> string)}") as events_processed_diff,
+  MIN(t."${(#block_number: field :> string)}") - 1 as new_progress_block_number
+FROM "${pgSchema}"."${table.tableName}" t${bounds.join}
+WHERE t."${(#id: field :> string)}" > ${bounds.checkpointId}
+GROUP BY t."${(#chain_id: field :> string)}";`
   }
 
-  let getRollbackProgressDiff = (
-    sql,
-    ~pgSchema,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => {
+  let getRollbackProgressDiff = (sql, ~pgSchema, ~floors: RollbackFloors.t) =>
     sql
     ->Postgres.preparedUnsafe(
-      makeGetRollbackProgressDiffQuery(~pgSchema),
-      [rollbackTargetCheckpointId->BigInt.toString]->Obj.magic,
+      makeGetRollbackProgressDiffQuery(~pgSchema, ~floors),
+      floors.checkpointBounds->CheckpointSequence.params,
     )
     ->(
       Utils.magic: promise<unknown> => promise<
@@ -598,7 +880,6 @@ GROUP BY "${(#chain_id: field :> string)}";`
         }>,
       >
     )
-  }
 }
 
 module RawEvents = {
@@ -648,9 +929,11 @@ module Views = {
     `CREATE VIEW "${pgSchema}"."${metaViewName}" AS 
 SELECT 
   "${(#id: Chains.field :> string)}" AS "chainId",
+  "${(#ecosystem: Chains.field :> string)}" AS "ecosystem",
   "${(#start_block: Chains.field :> string)}" AS "startBlock", 
   "${(#end_block: Chains.field :> string)}" AS "endBlock",
   "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
+  "${(#progress_block_time: Chains.field :> string)}" AS "progressBlockTime",
   "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
   "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
   "${(#events_processed: Chains.field :> string)}"::float4 AS "eventsProcessed",
@@ -666,6 +949,7 @@ ORDER BY "${(#id: Chains.field :> string)}";`
 SELECT 
   "${(#source_block: Chains.field :> string)}" AS "block_height",
   "${(#id: Chains.field :> string)}" AS "chain_id",
+  "${(#ecosystem: Chains.field :> string)}" AS "ecosystem",
   "${(#end_block: Chains.field :> string)}" AS "end_block", 
   "${(#first_event_block: Chains.field :> string)}" AS "first_event_block_number",
   "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",

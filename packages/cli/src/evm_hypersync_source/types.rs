@@ -1,13 +1,11 @@
-use std::ffi::CString;
-
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Signed, U256};
+use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use hypersync_client::{
     format::{self, FixedSizeData, Hex},
     net_types, simple_types,
 };
-use napi::bindgen_prelude::{BigInt, FromNapiValue, ToNapiValue};
+use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 
 /// Evm log object
@@ -320,55 +318,7 @@ pub struct OnEventRegistrationInput {
     pub transaction_fields: Vec<crate::evm_hypersync_source::query::TransactionField>,
 }
 
-pub enum ParamValue {
-    Bool(bool),
-    BigInt(BigInt),
-    Str(String),
-    Arr(Vec<ParamValue>),
-    Obj(Vec<(String, ParamValue)>),
-}
-
-impl FromNapiValue for ParamValue {
-    unsafe fn from_napi_value(
-        _env: napi::sys::napi_env,
-        _val: napi::sys::napi_value,
-    ) -> napi::Result<Self> {
-        Err(napi::Error::from_reason(
-            "ParamValue is decode-only; it cannot be constructed from JS",
-        ))
-    }
-}
-
-impl ToNapiValue for ParamValue {
-    unsafe fn to_napi_value(
-        raw_env: napi::sys::napi_env,
-        val: Self,
-    ) -> napi::Result<napi::sys::napi_value> {
-        match val {
-            ParamValue::Bool(v) => bool::to_napi_value(raw_env, v),
-            ParamValue::BigInt(v) => BigInt::to_napi_value(raw_env, v),
-            ParamValue::Str(v) => String::to_napi_value(raw_env, v),
-            ParamValue::Arr(items) => Vec::<ParamValue>::to_napi_value(raw_env, items),
-            ParamValue::Obj(entries) => {
-                let mut obj = std::ptr::null_mut();
-                assert_eq!(
-                    napi::sys::napi_create_object(raw_env, &mut obj),
-                    napi::sys::Status::napi_ok
-                );
-                for (key, val) in entries {
-                    let js_val = ParamValue::to_napi_value(raw_env, val)?;
-                    let c_key = CString::new(key)
-                        .map_err(|_| napi::Error::from_reason("invalid param name"))?;
-                    assert_eq!(
-                        napi::sys::napi_set_named_property(raw_env, obj, c_key.as_ptr(), js_val),
-                        napi::sys::Status::napi_ok,
-                    );
-                }
-                Ok(obj)
-            }
-        }
-    }
-}
+pub use crate::param_value::ParamValue;
 
 pub fn sol_value_to_param(
     val: DynSolValue,
@@ -404,8 +354,17 @@ pub fn sol_value_to_param(
 fn sol_value_to_leaf(val: DynSolValue, checksummed: bool) -> ParamValue {
     match val {
         DynSolValue::Bool(b) => ParamValue::Bool(b),
-        DynSolValue::Int(v, _) => ParamValue::BigInt(convert_bigint_signed(v)),
-        DynSolValue::Uint(v, _) => ParamValue::BigInt(convert_bigint_unsigned(v)),
+        DynSolValue::Int(v, _) => {
+            let (sign, abs) = v.into_sign_and_abs();
+            ParamValue::BigInt {
+                sign_bit: sign.is_negative(),
+                words: abs.into_limbs().to_vec(),
+            }
+        }
+        DynSolValue::Uint(v, _) => ParamValue::BigInt {
+            sign_bit: false,
+            words: v.into_limbs().to_vec(),
+        },
         DynSolValue::FixedBytes(bytes, _) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
         DynSolValue::Address(addr) => {
             if checksummed {
@@ -432,14 +391,6 @@ fn sol_value_to_leaf(val: DynSolValue, checksummed: bool) -> ParamValue {
                 .map(|v| sol_value_to_leaf(v, checksummed))
                 .collect(),
         ),
-    }
-}
-
-fn convert_bigint_signed(v: Signed<256, 4>) -> BigInt {
-    let (sign, abs) = v.into_sign_and_abs();
-    BigInt {
-        sign_bit: sign.is_negative(),
-        words: abs.into_limbs().to_vec(),
     }
 }
 

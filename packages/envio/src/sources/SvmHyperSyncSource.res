@@ -10,50 +10,112 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-// Parse the Rust-decoded instruction (args/accounts arrive as JSON strings to
-// side-step napi-rs's lack of native JSON passthrough) into the public shape.
-let parseDecoded = (
-  d: SvmHyperSyncClient.ResponseTypes.decodedInstruction,
-): Envio.svmInstructionParams => {
-  let args = try JSON.parseOrThrow(d.argsJson) catch {
-  | _ => JSON.Object(Dict.make())
-  }
-  let accounts = try {
-    JSON.parseOrThrow(d.accountsJson)->(Utils.magic: JSON.t => dict<string>)
-  } catch {
-  | _ => Dict.make()
-  }
-  {
-    name: d.name,
-    args,
-    accounts,
-    extraAccounts: d.extraAccounts,
-  }
+let namedAccounts = (
+  ~slots: array<Internal.svmAccountSlot>,
+  ~accountArguments: array<string>,
+  ~programId: string,
+): dict<Envio.svmInstructionAccount> => {
+  let out = Dict.make()
+  slots->Array.forEachWithIndex((slot, i) =>
+    switch (slot, accountArguments->Array.get(i)) {
+    | (Unnamed, _) | (_, None) => ()
+    | (Optional(_), Some(address)) if address === programId => ()
+    | (Required(name), Some(address)) | (Optional(name), Some(address)) =>
+      out->Dict.set(
+        name,
+        {
+          Envio.address: address->SvmTypes.Pubkey.fromStringUnsafe,
+          accountName: name,
+          instructionAccountIndex: i,
+        },
+      )
+    }
+  )
+  out
 }
 
-// `block` is omitted; it's materialised from the block store at batch prep.
+let selectedLog = (
+  log: SvmHyperSyncClient.EventItems.log,
+  ~logFields: Utils.Set.t<string>,
+): Envio.svmLog => {
+  let out = Dict.make()
+  if logFields->Utils.Set.has("kind") {
+    switch log.kind->Null.toOption {
+    | Some(kind) => out->Dict.set("kind", kind)
+    | None => ()
+    }
+  }
+  if logFields->Utils.Set.has("message") {
+    switch log.message->Null.toOption {
+    | Some(message) => out->Dict.set("message", message)
+    | None => ()
+    }
+  }
+  out->(Utils.magic: dict<string> => Envio.svmLog)
+}
+
+let setField = (out: dict<unknown>, name: string, value: 'a) =>
+  out->Dict.set(name, value->(Utils.magic: 'a => unknown))
+
+// `block` and `transaction` are omitted; they're materialised from the stores
+// at batch prep. Named-account `.activity` is attached then too.
+// Unselected instruction keys must be omitted, not assigned `undefined`.
 let toSvmInstruction = (
   item: SvmHyperSyncClient.EventItems.item,
   ~programName,
   ~instructionName,
+  ~eventConfig: Internal.svmInstructionEventConfig,
+  ~fieldSelection: Internal.fieldSelection,
 ): Envio.svmInstruction => {
-  programName,
-  instructionName,
-  programId: item.programId->SvmTypes.Pubkey.fromStringUnsafe,
-  data: item.data,
-  accounts: item.accounts->SvmTypes.Pubkey.fromStringsUnsafe,
-  instructionAddress: item.instructionAddress,
-  isInner: item.isInner,
-  d1: ?item.d1,
-  d2: ?item.d2,
-  d4: ?item.d4,
-  d8: ?item.d8,
-  params: ?(item.decoded->Option.map(parseDecoded)),
-  logs: ?(
-    item.logs->Option.map(logs =>
-      logs->Array.map((log): Envio.svmLog => {kind: log.kind, message: log.message})
+  let hasSelection = name => fieldSelection.instructionFields->Utils.Set.has(name)
+  // A program-wide registration has no configured discriminator, so the whole
+  // data stands in, hex-encoded like a configured one would be.
+  let discriminator = switch eventConfig.discriminator {
+  | Some(d) => d
+  | None => "0x" ++ item.data->NodeJs.Buffer.fromUint8Array->NodeJs.Buffer.toHex
+  }
+  let out = Dict.make()
+  out->setField("programName", programName)
+  out->setField("instructionName", instructionName)
+  out->setField("discriminator", discriminator)
+  if hasSelection("programId") {
+    out->setField("programId", item.programId->SvmTypes.Pubkey.fromStringUnsafe)
+  }
+  if hasSelection("data") {
+    out->setField("data", item.data)
+  }
+  if hasSelection("path") {
+    out->setField("path", item.path)
+  }
+  if hasSelection("isInner") {
+    out->setField("isInner", item.isInner)
+  }
+  switch item.args->Null.toOption {
+  | Some(args) => out->setField("args", args)
+  | None => ()
+  }
+  if hasSelection("accounts") {
+    out->setField(
+      "accounts",
+      namedAccounts(
+        ~slots=eventConfig.accounts,
+        ~accountArguments=item.accounts,
+        ~programId=item.programId,
+      ),
     )
-  ),
+  }
+  if hasSelection("accountArguments") {
+    out->setField("accountArguments", item.accounts->SvmTypes.Pubkey.fromStringsUnsafe)
+  }
+  if fieldSelection.logFields->Utils.Set.size > 0 {
+    out->setField(
+      "logs",
+      item.logs
+      ->Null.getOr([])
+      ->Array.map(log => selectedLog(log, ~logFields=fieldSelection.logFields)),
+    )
+  }
+  out->(Utils.magic: dict<unknown> => Envio.svmInstruction)
 }
 
 let make = (
@@ -68,16 +130,16 @@ let make = (
 ): t => {
   let name = "SvmHyperSync"
 
+  let apiToken = apiToken->HyperSync.requireApiToken
+
   // The whole per-(instruction, chain) registration set crosses the boundary
   // once at construction; the client derives instruction selections, field
   // selections, Borsh decoders, and the routing index from it.
   let client = SvmHyperSyncClient.make(
     ~url=endpointUrl,
-    ~apiToken?,
+    ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventRegistrations=SvmHyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~addressStore,
   )
 
@@ -144,18 +206,20 @@ let make = (
         item,
         ~programName=eventConfig.contractName,
         ~instructionName=eventConfig.name,
+        ~eventConfig,
+        ~fieldSelection=onEventRegistration.fieldSelection,
       )
       Internal.Event({
-        onEventRegistration,
+        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         chainId,
         blockNumber: item.slot,
-        // A slot orders by `(transactionIndex, instructionAddress)` — the
+        // A slot orders by `(transactionIndex, path)` — the
         // transaction, then the instruction's position in its CPI tree. Both
         // ride the item so the buffer comparator can order on the pair
         // directly; no single integer can hold it (Solana allows a CPI depth
         // of 5, which needs more bits than a JS integer is exact to).
         logIndex: item.transactionIndex,
-        orderPath: item.instructionAddress,
+        orderPath: item.path,
         // The parent transaction is materialised from the store at batch prep.
         transactionIndex: item.transactionIndex,
         payload: payload->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),
@@ -182,13 +246,17 @@ let make = (
     }
   }
 
-  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=client.getBlockHashes)
+  // Called through the client rather than passed as a value: the client is a
+  // napi class, so a detached method reference loses the instance it belongs to.
+  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=(~blockNumbers) =>
+    client.getBlockHashes(~blockNumbers)
+  )
 
   {
     name,
     sourceFor: Sync,
     chainId,
-    pollingInterval: 1000,
+    pollingInterval: HyperSync.pollingInterval,
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {
@@ -198,5 +266,7 @@ let make = (
       {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
+    createHeightSubscription: (~onHeight, ~onStatus) =>
+      HyperSyncSSE.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
   }
 }

@@ -32,6 +32,7 @@ let callSite: unit => string = %raw(`() => {
       file.startsWith("node:") ||
       file.includes("InternalTestIndexer") ||
       file.includes("UserModule") ||
+      file.includes("MockSource") ||
       file.includes("Scenario")
     )
       continue;

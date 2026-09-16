@@ -22,9 +22,6 @@ type Gravatar {
   owner: String!
 }
 `,
-  ~unsupported=[
-    {backend: #memory, reason: "asserts the raw_events table's Postgres column types"},
-  ],
 )
 
 let mockRawEventRow: InternalTable.RawEvents.t = {
@@ -50,15 +47,17 @@ describe("Raw Events Table Migrations", () => {
     "Raw events table should migrate successfully",
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     async (~t, ~indexer, ~source as _) => {
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       let rawEventsColumnsRes: array<{
         "column_name": string,
         "data_type": string,
-      }> = await sql->Postgres.unsafe(`SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type
+      }> = await sql->Postgres.unsafe(
+        `SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type
            FROM INFORMATION_SCHEMA.COLUMNS
            WHERE TABLE_SCHEMA = '${pgSchema}'
              AND TABLE_NAME = 'raw_events'
-           ORDER BY ORDINAL_POSITION;`)
+           ORDER BY ORDINAL_POSITION;`,
+      )
 
       t.expect(rawEventsColumnsRes).toEqual([
         {"column_name": "chain_id", "data_type": "integer"},
@@ -86,7 +85,7 @@ describe("Raw Events Table Migrations", () => {
     "Inserting 2 rows with the same pk should pass",
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     async (~t as _, ~indexer, ~source as _) => {
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       // Shared across both inserts, so the second one exercises the cached
       // query the way a storage instance would.
       let setQueryCache = PgStorage.makeSetQueryCache()

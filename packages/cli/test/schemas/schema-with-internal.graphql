@@ -1,0 +1,10 @@
+#test schema for the @internal directive
+
+type PublicUser {
+  id: ID!
+}
+
+type Secret @internal {
+  id: ID!
+  user: PublicUser!
+}

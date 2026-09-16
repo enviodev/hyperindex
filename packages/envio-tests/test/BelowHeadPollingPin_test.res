@@ -55,7 +55,6 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
     async (~t, ~indexer, ~source) => {
       let chainAtLaggedHead = source(100)
       let chainWithThresholdWork = source(1337)
-      await Utils.delay(0)
       chainAtLaggedHead.resolveGetHeightOrThrow(1000)
       chainWithThresholdWork.resolveGetHeightOrThrow(1000)
       await Utils.delay(0)

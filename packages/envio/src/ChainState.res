@@ -41,6 +41,8 @@ type t = {
   // detected reorg either rolls back or is only logged.
   shouldRollbackOnReorg: bool,
   maxReorgDepth: int,
+  // One-way: past it, everything the chain writes can still be rolled back.
+  mutable isInReorgThreshold: bool,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
@@ -60,21 +62,52 @@ type t = {
   mutable reorgDetectedBlock: option<int>,
   mutable rollbackTargetBlock: option<int>,
   mutable progressLatencyMs: option<int>,
+  // Timestamp of the committed progress block itself. See
+  // `Batch.chainAfterBatch.progressBlockTime`.
+  mutable committedProgressBlockTime: option<int>,
 }
 
-let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
+// The chain's config-declared addresses as storage rows: what a clean run
+// writes into `envio_addresses`. The keys are encoded by the Rust codec, so the
+// bytes a clean run writes are exactly the bytes a resume seeds from.
+let configStorageRows = (
+  chainConfig: Config.chain,
+  ~ecosystem: Ecosystem.name,
+  ~contractMapping: ContractMapping.t,
+): array<AddressRows.row> => {
   let addresses = []
+  let contractIds = []
   chainConfig.contracts->Array.forEach(contract => {
+    let contractId = contractMapping->ContractMapping.idOfOrThrow(contract.name)
     contract.addresses->Array.forEach(address => {
-      addresses->Array.push({
-        Internal.address,
-        contractName: contract.name,
-        registrationBlock: -1,
-      })
+      addresses->Array.push(address)->ignore
+      contractIds->Array.push(contractId)->ignore
     })
   })
-  addresses
+  Core.getAddon().encodeAddresses(
+    ~ecosystem=(ecosystem :> string),
+    ~addresses,
+  )->Array.mapWithIndex((address, idx) => {
+    AddressRows.chainId: chainConfig.id,
+    address,
+    contractId: contractIds->Array.getUnsafe(idx),
+    registrationBlock: AddressRows.configRegistrationBlock,
+  })
 }
+
+// Seeds an in-memory address table with every chain's config-declared
+// addresses, the twin of what `PgStorage.initialize` writes in one insert.
+let seedConfigAddresses = (
+  table: AddressRows.Table.t,
+  ~chainConfigs: array<Config.chain>,
+  ~ecosystem: Ecosystem.name,
+  ~contractMapping: ContractMapping.t,
+) =>
+  chainConfigs->Array.forEach(chainConfig =>
+    table->AddressRows.Table.insertMany(
+      chainConfig->configStorageRows(~ecosystem, ~contractMapping),
+    )
+  )
 
 let validateOnEventRegistrations = (
   ~chainId: ChainId.t,
@@ -95,9 +128,11 @@ let make = (
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
+  ~committedProgressBlockTime=None,
   ~safeCheckpointTracking=None,
   ~shouldRollbackOnReorg,
   ~maxReorgDepth,
+  ~isInReorgThreshold=false,
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
@@ -127,6 +162,7 @@ let make = (
     safeCheckpointTracking,
     shouldRollbackOnReorg,
     maxReorgDepth,
+    isInReorgThreshold,
     transactionStore,
     blockStore,
     reorgThresholdReadyTolerance,
@@ -139,29 +175,21 @@ let make = (
     reorgDetectedBlock: None,
     rollbackTargetBlock: None,
     progressLatencyMs: None,
+    committedProgressBlockTime,
   }
-}
-
-// Every chain's contracts, not just one chain's: `context.chain.X.add` accepts
-// any config contract, whichever chain declared it, so every chain's address
-// store has to hold the whole set.
-let configContractNames = (config: Config.t) => {
-  let names = Utils.Set.make()
-  config.chainMap
-  ->ChainMap.values
-  ->Array.forEach(chain =>
-    chain.contracts->Array.forEach(contract => names->Utils.Set.add(contract.name)->ignore)
-  )
-  names->Utils.Set.toArray
 }
 
 let makeInternal = (
   ~chainConfig: Config.chain,
-  ~indexingAddresses: array<Internal.indexingAddress>,
+  ~addressRows: AddressRows.seedRows,
+  // Passed rather than read off `config`, because a resume must use the mapping
+  // storage holds: the ids stored rows carry, not the ids this config derives.
+  ~contractMapping: ContractMapping.t,
   ~startBlock,
   ~endBlock,
   ~firstEventBlock=None,
   ~progressBlockNumber,
+  ~committedProgressBlockTime=None,
   ~config: Config.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~logger,
@@ -185,7 +213,9 @@ let makeInternal = (
 
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
-    | Some(startBlock) if startBlock < chainConfig.startBlock =>
+    // Against the resolved `~startBlock`, which came from storage:
+    // `chainConfig.startBlock` still says whatever config.yaml said.
+    | Some(contractStartBlock) if contractStartBlock < startBlock =>
       JsError.throwWithMessage(
         `The start block for contract "${contract.name}" is less than the chain start block. This is not supported yet.`,
       )
@@ -199,16 +229,13 @@ let makeInternal = (
   let addressStore = AddressStore.make(
     ~ecosystem=config.ecosystem.name,
     ~shouldChecksum=!lowercaseAddresses,
-    ~contracts=AddressStore.contractsOf(
-      ~onEventRegistrations,
-      ~configContractNames=config->configContractNames,
-    ),
+    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
   )
 
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~addressStore,
-    ~addresses=indexingAddresses,
+    ~addressRows,
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
@@ -247,72 +274,12 @@ let makeInternal = (
   })
 
   // Create sources lazily here - this is where API token validation happens
-  let chainId = chainConfig.id
-  let sources = switch chainConfig.sourceConfig {
-  | Config.EvmSourceConfig({hypersync, rpcs}) =>
-    let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
-      let syncConfig = rpc.syncConfig
-      let ws = rpc.ws
-      let headers = rpc.headers
-      {
-        url: rpc.url,
-        sourceFor: rpc.sourceFor,
-        ?syncConfig,
-        ?ws,
-        ?headers,
-      }
-    })
-    EvmChain.makeSources(
-      ~chainId,
-      ~onEventRegistrations=onEventRegistrations->(
-        Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
-      ),
-      ~hyperSync=hypersync,
-      ~rpcs=evmRpcs,
-      ~lowercaseAddresses,
-      ~addressStore,
-    )
-  | Config.FuelSourceConfig({hypersync}) => [
-      FuelHyperSyncSource.make({
-        chainId,
-        endpointUrl: hypersync,
-        apiToken: Env.envioApiToken,
-        onEventRegistrations,
-        addressStore,
-      }),
-    ]
-  | Config.SvmSourceConfig({hypersync, rpc}) =>
-    switch (hypersync, rpc) {
-    | (None, None) =>
-      JsError.throwWithMessage(`Chain ${chainId->ChainId.toString} has no SVM data source`)
-    | (None, Some(rpc)) => [Svm.makeRPCSource(~chainId, ~rpc)]
-    | (Some(hypersyncUrl), _) =>
-      // HyperSync drives instruction sync. A configured RPC is ignored for now
-      // (RPC fallback isn't wired up yet).
-      let apiToken = Env.envioApiToken
-      [
-        SvmHyperSyncSource.make({
-          chainId,
-          endpointUrl: hypersyncUrl,
-          apiToken,
-          onEventRegistrations,
-          clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-          addressStore,
-        }),
-      ]
-    }
-  | Config.SimulateSourceConfig({items, endBlock}) => [
-      SimulateSource.make(
-        ~items,
-        ~endBlock,
-        ~chainId,
-        ~addressStore,
-        ~ecosystem=config.ecosystem.name,
-      ),
-    ]
-  // For tests: use ready-to-use sources directly
-  | Config.CustomSources(sources) => sources
-  }
+  let sources = ChainSources.make(
+    ~chainConfig,
+    ~onEventRegistrations,
+    ~addressStore,
+    ~lowercaseAddresses,
+  )
 
   let blockStore = BlockStore.make(
     ~ecosystem=config.ecosystem.name,
@@ -351,13 +318,15 @@ let makeInternal = (
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
     ~maxReorgDepth,
+    ~isInReorgThreshold,
     ~safeCheckpointTracking=SafeCheckpointTracking.make(
       ~maxReorgDepth,
       ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
       ~chainReorgCheckpoints,
     ),
     ~committedProgressBlockNumber=progressBlockNumber,
-    ~perChainEntities=config.allEntities->EntityTables.perChain,
+    ~committedProgressBlockTime,
+    ~perChainEntities=config.userEntities->EntityTables.perChain,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
     ~transactionStore=TransactionStore.make(
@@ -371,33 +340,6 @@ let makeInternal = (
   )
 }
 
-let makeFromConfig = (
-  chainConfig: Config.chain,
-  ~config,
-  ~registrationsByChainId,
-  ~knownHeight,
-) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.id})
-
-  makeInternal(
-    ~chainConfig,
-    ~config,
-    ~registrationsByChainId,
-    ~startBlock=chainConfig.startBlock,
-    ~endBlock=chainConfig.endBlock,
-    ~reorgCheckpoints=[],
-    ~maxReorgDepth=chainConfig.maxReorgDepth,
-    ~progressBlockNumber=-1,
-    ~timestampCaughtUpToHeadOrEndblock=None,
-    ~numEventsProcessed=0.,
-    ~logger,
-    ~indexingAddresses=configAddresses(chainConfig),
-    ~isInReorgThreshold=false,
-    ~isRealtime=false,
-    ~knownHeight,
-  )
-}
-
 /**
  * This function allows a chain state to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
@@ -408,6 +350,7 @@ let makeFromDbState = (
   ~isInReorgThreshold,
   ~isRealtime,
   ~config,
+  ~contractMapping,
   ~registrationsByChainId,
   ~reducedPollingInterval=?,
 ) => {
@@ -421,7 +364,8 @@ let makeFromDbState = (
       : resumedChainState.startBlock - 1
 
   makeInternal(
-    ~indexingAddresses=resumedChainState.indexingAddresses,
+    ~addressRows=resumedChainState.addressRows,
+    ~contractMapping,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,
@@ -431,6 +375,10 @@ let makeFromDbState = (
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
     ~firstEventBlock=resumedChainState.firstEventBlockNumber,
     ~progressBlockNumber,
+    // A block's time never changes, so the stored one stays true for the block
+    // progress is at - and keeps the metric reporting from the first scrape
+    // after a restart, rather than only once a batch commits.
+    ~committedProgressBlockTime=resumedChainState.progressBlockTime,
     ~timestampCaughtUpToHeadOrEndblock=resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~logger,
@@ -470,6 +418,7 @@ let getLatestValidScannedBlock = (cs: t, ~blockStore: BlockStore.t, ~blockNumber
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
+let committedProgressBlockTime = (cs: t) => cs.committedProgressBlockTime
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
@@ -505,7 +454,7 @@ let contractAddresses = (cs: t, ~contractName) =>
 
 // Hands over the dynamically registered addresses the database hasn't seen yet,
 // up to the block the caller is about to commit, each paired with the checkpoint
-// that owns its row. Destructive: the caller must persist them or take the
+// that registered it. Destructive: the caller must persist them or take the
 // indexer down. Throws with nothing consumed when a registration's block has no
 // checkpoint in the batch.
 let drainAddressesForWrite = (cs: t, ~toBlockInclusive, ~checkpointBlockNumbers) =>
@@ -708,15 +657,21 @@ let hasProcessedToEndblock = (cs: t) => {
 // head has run away from it while the indexer was down.
 let isDurablyCaughtUp = (cs: t) => {
   let {committedProgressBlockNumber, fetchState} = cs
-  switch fetchState.endBlock {
-  | Some(endBlock) => committedProgressBlockNumber >= endBlock
-  | None =>
-    // The configured lag, not the fetch state's: pre-threshold that one also
-    // carries maxReorgDepth, which would read a chain a whole reorg depth behind
-    // the head as caught up.
+  let atEndBlock =
+    fetchState.endBlock->Option.mapOr(false, endBlock => committedProgressBlockNumber >= endBlock)
+  // Either one, like `isFetchingAtHead`: an `end_block` above the head is never
+  // reached, and testing only for it would leave such a chain reading as behind
+  // however long it sits at the head.
+  //
+  // The configured lag, not the fetch state's: pre-threshold that one also
+  // carries maxReorgDepth, which would read a chain a whole reorg depth behind
+  // the head as caught up. Clamped at zero: the -1 a run that has processed
+  // nothing carries would otherwise clear a chain younger than its own lag.
+  let atHead =
     fetchState.knownHeight > 0 &&
-      committedProgressBlockNumber >= fetchState.knownHeight - cs.chainConfig.blockLag
-  }
+      committedProgressBlockNumber >=
+      Pervasives.max(0, fetchState.knownHeight - cs.chainConfig.blockLag)
+  atEndBlock || atHead
 }
 
 let getHighestBlockBelowThreshold = (cs: t): int => {
@@ -852,6 +807,12 @@ let applyTransactionGroups = async (store: TransactionStore.t, g: transactionGro
       g.payloadGroups->Array.forEachWithIndex((payloads, i) => {
         let tx = txs->Array.getUnsafe(i)
         payloads->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
+        switch tx
+        ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+        ->Dict.get("accountActivities") {
+        | Some(_) => payloads->Array.forEach(payload => Svm.attachAccountActivities(payload, tx))
+        | None => ()
+        }
       })
     } else {
       g.payloadGroups->Array.forEach(payloads =>
@@ -991,8 +952,18 @@ let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
   }
 
 // Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
-let enterReorgThreshold = (cs: t) =>
+let enterReorgThreshold = (cs: t) => {
+  cs.isInReorgThreshold = true
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
+}
+
+let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
+
+// Whether the chain's writes need history: only what a rollback could still
+// reach. A chain with no reorg depth is never rolled back, however far its
+// progress has run.
+let shouldSaveHistory = (cs: t) =>
+  cs.shouldRollbackOnReorg && cs.maxReorgDepth > 0 && cs.isInReorgThreshold
 
 // Snapshot the chain's metadata fields for staging into the chains table.
 let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
@@ -1019,10 +990,14 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   startBlock: cs.fetchState.startBlock,
   endBlock: cs.fetchState.endBlock,
   numAddresses: cs.addressStore->AddressStore.size,
+  addressesByContract: cs.addressStore
+  ->AddressStore.contractCounts
+  ->Array.map(({contractName, count}) => (contractName, count)),
   isReady: cs->isReady,
   sourceBlockNumber: cs.fetchState.knownHeight,
   progressBlockNumber: cs.committedProgressBlockNumber,
   progressLatencyMs: cs.progressLatencyMs,
+  progressBlockTime: cs.committedProgressBlockTime,
   concurrency: cs.sourceManager->SourceManager.inFlightCount,
   partitionsCount: cs.fetchState->FetchState.partitionsCount,
   bufferSize: cs.fetchState->FetchState.bufferSize,
@@ -1038,11 +1013,14 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   reorgCount: cs.reorgCount,
   reorgDetectedBlock: cs.reorgDetectedBlock,
   rollbackTargetBlock: cs.rollbackTargetBlock,
+  rateLimitTimeMs: cs.sourceManager->SourceManager.getRateLimitTimeMs,
+  rateLimitResetInMs: cs.sourceManager->SourceManager.getRateLimitResetInMs,
 }
 
-// Snapshot the inputs a batch build needs from this chain, including an
-// immutable copy of the scanned in-threshold block hashes so the batch never
-// reads the live store mid-build.
+// Snapshot the inputs a batch build needs from this chain. The scanned
+// in-threshold block hashes are copied up front because the build reuses the
+// whole set; the block time comes as a lookup instead, since the key it needs -
+// the batch's own progress block - isn't known until the build computes it.
 let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
   let {blockNumbers, hashes} =
     cs.blockStore->BlockStore.getHashes(
@@ -1059,6 +1037,8 @@ let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
     totalEventsProcessed: cs.numEventsProcessed,
     sourceBlockNumber: cs.fetchState.knownHeight,
     scannedHashes: {blockNumbers, hashByBlockNumber},
+    blockTimeAt: blockNumber =>
+      cs.blockStore->BlockStore.getTimestamp(blockNumber)->Null.toOption,
     shouldRollbackOnReorg: cs.shouldRollbackOnReorg,
     chainConfig: cs.chainConfig,
   }
@@ -1158,6 +1138,7 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       }
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
+      cs.committedProgressBlockTime = chainAfterBatch.progressBlockTime
 
       // Normally already set by advanceAfterBatch at batch creation; catch up
       // here for paths that commit progress without it.
@@ -1194,37 +1175,63 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
 }
 
 // Mark the chain caught up to head/endblock. Called by CrossChainState only once
-// every chain in the indexer is caught up and the deferred schema indexes are
-// committed, so no chain flips to ready while another is still backfilling or
-// while an index the schema promises is still missing. `readyAt` is the
-// timestamp already committed to `envio_chains.ready_at` in that same
-// transaction. Sticky: a chain stays ready once set.
+// every chain this process drives is caught up and the indexes the schema
+// promises them are committed, so no chain flips to ready while an index it
+// promised is still missing. `readyAt` is the timestamp already committed to
+// `envio_chains.ready_at` in that same transaction. Sticky: a chain stays ready
+// once set.
 let markReady = (cs: t, ~readyAt) =>
   if !(cs->isReady) {
     cs.timestampCaughtUpToHeadOrEndblock = Some(readyAt)
   }
 
-// Roll a chain back to a reorg target. With a progress diff, restore fetch/
-// safe-checkpoint/progress state to `newProgressBlockNumber`. A reorg chain
-// with no diff entry still rewinds fetch state + stores to the target -
-// otherwise the stale block hash stays in the store and re-triggers the same
-// reorg.
-let rollback = (
-  cs: t,
-  ~newProgressBlockNumber,
-  ~eventsProcessedDiff,
-  ~rollbackTargetBlockNumber,
-  ~isReorgChain,
-) => {
-  switch newProgressBlockNumber {
-  | Some(newProgressBlockNumber) =>
-    let newTotalEventsProcessed =
-      cs.numEventsProcessed -.
-      // Both dicts are populated together per progress-diff row, so a chain with
-      // a progress diff always has an events-processed diff too.
-      eventsProcessedDiff->Option.getOrThrow(
-        ~message="Missing events-processed diff for rolled-back chain",
+// Rewind progress to a reorg target. Moving it means the timestamp now belongs
+// to an orphaned block, so it's re-read for the block progress actually lands
+// on - normally `None`, since the store keeps only hashes below the last
+// committed progress, until the re-fetch commits a new progress block. A target
+// at or above the progress block leaves both alone: that block was never
+// orphaned, and re-reading its long-pruned header would drop a valid timestamp.
+let rollbackCommittedProgress = (cs: t, blockNumber) =>
+  if blockNumber !== cs.committedProgressBlockNumber {
+    cs.committedProgressBlockNumber = blockNumber
+    cs.committedProgressBlockTime =
+      cs.blockStore->BlockStore.getTimestamp(blockNumber)->Null.toOption
+  }
+
+type progressDiff = {blockNumber: int, eventsProcessed: float}
+
+type rolledBackTo =
+  | RecomputedProgress(progressDiff)
+  | ForkBlock(int)
+  | Untouched
+
+// Returns the address registrations the storage has to delete along with the
+// chain — the store is what decides which ones died, so the two halves of a
+// rollback can't disagree.
+let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
+  let rollbackTo = targetBlockNumber => {
+    let {fetchState, rolledBackAddresses} =
+      cs.fetchState->FetchState.rollback(
+        ~rolledBackAddressStore=cs.addressStore,
+        ~targetBlockNumber,
       )
+    cs.fetchState = fetchState
+    rolledBackAddresses->Array.map(({address, contractId}): AddressRows.key => {
+      chainId: cs.chainConfig.id,
+      address,
+      contractId,
+    })
+  }
+
+  switch rolledBackTo {
+  | RecomputedProgress({blockNumber, eventsProcessed}) =>
+    // A rollback only ever takes a chain back. The diff recomputes progress from
+    // the checkpoints still in the database, so a chain that an unwritten
+    // rollback already took below them — to a fork block only that rollback
+    // knew — would be handed their MIN back and moved forward onto blocks it
+    // never re-indexed.
+    let newProgressBlockNumber = Pervasives.min(blockNumber, cs.committedProgressBlockNumber)
+    let newTotalEventsProcessed = cs.numEventsProcessed -. eventsProcessed
 
     switch cs.safeCheckpointTracking {
     | Some(safeCheckpointTracking) =>
@@ -1235,30 +1242,22 @@ let rollback = (
       )
     | None => ()
     }
-    cs.fetchState =
-      cs.fetchState->FetchState.rollback(
-        ~addressStore=cs.addressStore,
-        ~targetBlockNumber=newProgressBlockNumber,
-      )
+    let rolledBackAddresses = rollbackTo(newProgressBlockNumber)
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
     cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
-    cs.committedProgressBlockNumber = newProgressBlockNumber
+    cs->rollbackCommittedProgress(newProgressBlockNumber)
     cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
-  | None =>
-    if isReorgChain {
-      cs.fetchState =
-        cs.fetchState->FetchState.rollback(
-          ~addressStore=cs.addressStore,
-          ~targetBlockNumber=rollbackTargetBlockNumber,
-        )
-      cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
-      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
-      cs.committedProgressBlockNumber = Pervasives.min(
-        cs.committedProgressBlockNumber,
-        rollbackTargetBlockNumber,
-      )
-      cs.processingBlockNumber = Pervasives.min(cs.processingBlockNumber, rollbackTargetBlockNumber)
-    }
+    rolledBackAddresses
+  | ForkBlock(forkBlock) =>
+    // Rewinds the stores too, not just progress: otherwise the stale block hash
+    // survives and re-triggers the same reorg.
+    let rolledBackAddresses = rollbackTo(forkBlock)
+    cs.transactionStore->TransactionStore.rollback(forkBlock)
+    cs.blockStore->BlockStore.rollback(forkBlock)
+    cs->rollbackCommittedProgress(Pervasives.min(cs.committedProgressBlockNumber, forkBlock))
+    cs.processingBlockNumber = Pervasives.min(cs.processingBlockNumber, forkBlock)
+    rolledBackAddresses
+  | Untouched => []
   }
 }

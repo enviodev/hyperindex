@@ -10,6 +10,11 @@ type t = {
       for SVM. Centralised here so adding a new ecosystem only requires a
       new ecosystem record, not another switch in `Main.res`. */
   onBlockMethodName: string,
+  /** What the ecosystem calls a contract and one of its events, for
+      registration errors that are shared across ecosystems — "contract" /
+      "event" on EVM and Fuel, "program" / "instruction" on SVM. */
+  contractNoun: string,
+  eventNoun: string,
   /** Schema that unwraps the ecosystem-specific outer wrapper around the
       user's `where`-returned filter (`block.number` on EVM, `block.height`
       on Fuel, `slot` on SVM) and surfaces the raw inner `{_gte?, _lte?,
@@ -23,8 +28,8 @@ type t = {
       `option<unknown>`. Separate from `onBlockFilterSchema` because event
       block filters support only `_gte` (→ per-event `startBlock`) — `_lte`
       and `_every` are rejected by the inner `eventBlockRangeSchema` in
-      `LogSelection.res`. SVM does not support event handlers, so its
-      schema always surfaces `None`. */
+      `LogSelection.res`. SVM parses its own `where` (including the
+      `block.slot` chunk), so its schema always surfaces `None`. */
   onEventBlockFilterSchema: S.t<option<unknown>>,
   /** Base logger injected at construction. Used to build per-item child
       loggers (see `getItemLogger`). */

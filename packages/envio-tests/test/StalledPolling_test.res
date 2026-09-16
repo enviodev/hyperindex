@@ -38,7 +38,6 @@ describe("Polling-stall loophole", () => {
     ~reducedPollingInterval=10,
     async (~t, ~indexer as _, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
 
       source.resolveGetHeightOrThrow(300)
       await Utils.delay(0)
@@ -58,9 +57,11 @@ describe("Polling-stall loophole", () => {
 
       let baseline = source.getHeightOrThrowCalls->Array.length
 
+      // Answer every poll the moment it arrives: the measurement is how often
+      // the loop asks, not how promptly the test replies.
+      source.setAutoHeight(300)
       let deadline = Date.now() +. 50.
       while Date.now() < deadline {
-        source.resolveGetHeightOrThrow(300)
         await Utils.delay(2)
       }
 

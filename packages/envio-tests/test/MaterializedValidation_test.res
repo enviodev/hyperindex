@@ -31,7 +31,7 @@ let expectError = (t, ~schema=?, yaml, message) => {
   t.expect(actual).toBe(message)
 }
 
-let prefix = "Config parse error: Failed compiling `tables`: in `tables.totals`: "
+let prefix = "Failed compiling `tables`: in `tables.totals`: "
 
 describe("tables: source and shape", () => {
   [
@@ -136,7 +136,7 @@ describe("tables: source and shape", () => {
     from: evm.events
     select:
       id: params.to`,
-      "Config parse error: Failed compiling `tables`: `totals` is defined twice: in `tables` and in schema.graphql. Remove one of them.",
+      "Failed compiling `tables`: `totals` is defined twice: in `tables` and in schema.graphql. Remove one of them.",
     ),
   ]->Array.forEach(((name, body, message)) => {
     it(name, t => {
@@ -580,7 +580,7 @@ describe("tables: names and storage", () => {
     from: evm.events
     select:
       id: params.to`,
-      "Config parse error: Table name `totals-2` is not a valid identifier. Use letters, digits and underscores, starting with a letter or an underscore.",
+      "Table name `totals-2` is not a valid identifier. Use letters, digits and underscores, starting with a letter or an underscore.",
     ),
     (
       "rejects a table name that leaves nothing to call it",
@@ -588,7 +588,7 @@ describe("tables: names and storage", () => {
     from: evm.events
     select:
       id: params.to`,
-      "Config parse error: Table name `_1` leaves the generated code nothing to call it: handlers and tests reach a table by its name capitalized and stripped of leading underscores. Start it with a letter.",
+      "Table name `_1` leaves the generated code nothing to call it: handlers and tests reach a table by its name capitalized and stripped of leading underscores. Start it with a letter.",
     ),
     (
       "rejects two table names the generated code can't tell apart",
@@ -600,7 +600,7 @@ describe("tables: names and storage", () => {
     from: evm.events
     select:
       id: params.to`,
-      "Config parse error: tables `totals` and `_Totals` are both `Totals` in the generated code, which can't tell them apart. Rename one of them.",
+      "tables `totals` and `_Totals` are both `Totals` in the generated code, which can't tell them apart. Rename one of them.",
     ),
     (
       "rejects an index on a field the table doesn't select",
@@ -627,7 +627,7 @@ describe("tables: names and storage", () => {
       eventName: Transfer
     select:
       id: params.to`,
-      "Config parse error: Schema validation failed:\n\nEntities using storages not enabled in config.yaml:\n  - `totals` uses `clickhouse`, but `clickhouse` is not enabled.\n\nFixes:\n  - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml.",
+      "Schema validation failed:\n\nEntities using storages not enabled in config.yaml:\n  - `totals` uses `clickhouse`, but `clickhouse` is not enabled.\n\nFixes:\n  - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml.",
     ),
   ]->Array.forEach(((name, body, message)) => {
     it(name, t => expectError(t, body->table, message))
@@ -665,7 +665,7 @@ ${tableStorage}    from: evm.events
 `
 
   let partialMessage = says =>
-    "Config parse error: Schema validation failed:\n\nBoth storage backends are enabled and neither is `default: true`, so leaving one out of a table's storage would turn it off silently:\n  - `totals` says " ++
+    "Schema validation failed:\n\nBoth storage backends are enabled and neither is `default: true`, so leaving one out of a table's storage would turn it off silently:\n  - `totals` says " ++
     says ++
     "\n\nFixes:\n  - Name both, under the table's `storage:` in config.yaml:\n      storage:\n        postgres: true\n        clickhouse: false\n  - Or set `default: true` on one backend under `storage:` in config.yaml, and leave the storage off the tables that should follow it."
 
@@ -766,7 +766,7 @@ tables:
     select:
       id: params.x
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: unknown field `tables` at line 2 column 1",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: unknown field `tables` at line 2 column 1",
     )
   )
 })
@@ -784,7 +784,7 @@ describe("tables: wildcard", () => {
       eventName: Transfer
     select:
       id: params.to`->table,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: tables.totals: unknown field `wildcard`, expected one of `cross_chain`, `storage`, `with`, `from`, `where`, `select` at line 18 column 5",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: tables.totals: unknown field `wildcard`, expected one of `cross_chain`, `storage`, `with`, `from`, `where`, `select` at line 18 column 5",
     )
   )
 })
@@ -813,7 +813,7 @@ tables:
     select:
       id: params.to
 `,
-      "Config parse error: `tables` needs `disable_default_cross_chain: true` at the top of config.yaml. Without it a table keeps one row per id shared by every chain, so the same id on two chains overwrites itself — for a token indexer that silently merges balances. Add:\n\n    disable_default_cross_chain: true\n\nand set `cross_chain: true` on any table that really is the same across chains.",
+      "`tables` needs `disable_default_cross_chain: true` at the top of config.yaml. Without it a table keeps one row per id shared by every chain, so the same id on two chains overwrites itself — for a token indexer that silently merges balances. Add:\n\n    disable_default_cross_chain: true\n\nand set `cross_chain: true` on any table that really is the same across chains.",
     )
   )
 })
@@ -830,7 +830,7 @@ describe("tables: code-name collisions", () => {
     from: evm.events
     select:
       id: params.to`->table,
-      "Config parse error: Failed compiling `tables`: `totals` and `Totals` in schema.graphql are both `Totals` in the generated code, which can't tell them apart. Rename one of them.",
+      "Failed compiling `tables`: `totals` and `Totals` in schema.graphql are both `Totals` in the generated code, which can't tell them apart. Rename one of them.",
     )
   )
 
@@ -862,7 +862,7 @@ describe("tables: _ref id types", () => {
     expectError(
       t,
       refTo("logIndex", "params.to"),
-      "Config parse error: Failed compiling `tables`: in `tables.holders`: in `select.target._ref.id`: `targets` has Int for an id: expected Int but the expression is String: cannot unify String with Int",
+      "Failed compiling `tables`: in `tables.holders`: in `select.target._ref.id`: `targets` has Int for an id: expected Int but the expression is String: cannot unify String with Int",
     )
   )
 

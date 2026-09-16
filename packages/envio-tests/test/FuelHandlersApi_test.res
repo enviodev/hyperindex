@@ -283,7 +283,7 @@ expectType<TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">>(true);
   // A Fuel registration takes its selection from the event config, so an inline
   // one would be dropped without a word. `onEvent` is shared with EVM, which is
   // how the option reaches here at all.
-  it("rejects the EVM-only fields option", t => {
+  it("rejects the fields option, which Fuel selects in config instead", t => {
     let config = InternalTestIndexer.fromUserApi(~files, ~configYaml).config
     let message = try {
       HandlerRegister.resetOnEventRegistrations()
@@ -292,7 +292,11 @@ expectType<TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">>(true);
         ~contractName="Greeter",
         ~eventName="NewGreeting",
         %raw(`() => Promise.resolve()`),
-        ~eventOptions=Some(({fields: {block: ["hash"]}}: Internal.eventOptions<JSON.t>)),
+        ~eventOptions=Some({
+          fields: ({block: ["hash"]}: Internal.evmFieldsSelection)->(
+            Utils.magic: Internal.evmFieldsSelection => unknown
+          ),
+        }),
       )
       "the registration to fail, but it succeeded"
     } catch {
@@ -300,6 +304,6 @@ expectType<TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">>(true);
     }
     t.expect(
       message,
-    ).toBe(`The fields option of the "NewGreeting" event registration on contract "Greeter" is only supported on EVM. Select the fields in your config instead.`)
+    ).toBe(`The fields option of the "NewGreeting" event registration on contract "Greeter" is not supported on Fuel. Select the fields in your config instead.`)
   })
 })

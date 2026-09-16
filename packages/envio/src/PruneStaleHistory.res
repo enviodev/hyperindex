@@ -12,9 +12,35 @@ let maxEntitiesPerWrite = 5
 let forcedIntervalMultiplier = 5.
 
 type targets = {
-  safeCheckpointId: Internal.checkpointId,
+  safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
   concurrent: array<Internal.entityConfig>,
   forced: array<Internal.entityConfig>,
+}
+
+// Where each chain's history may be pruned back to, or None while nowhere can.
+//
+// A rollback only ever deletes a chain's rows down to that chain's own floor,
+// which is set by its own reorg and so never reaches below its own safe
+// checkpoint. Each chain can therefore prune to its own, and a chain with
+// nothing safe yet holds only itself back.
+//
+// Unless the schema has a cross-chain entity: a reorg on any chain then rolls
+// every chain back to one checkpoint, which can sit below another chain's safe
+// point, so the lowest is the only bound every chain agrees on.
+let selectSafeCheckpoints = (state: IndexerState.t) => {
+  let sequence = (state->IndexerState.config).checkpointSequence
+  let byChain = state->IndexerState.getSafeCheckpointIdByChain
+  let safe =
+    byChain->Array.filterMap(((chainId, checkpointId)) =>
+      checkpointId->Option.map(checkpointId => (chainId, checkpointId))
+    )
+  // Under one shared sequence the bound is the lowest of them, which only
+  // exists once every chain has one.
+  let hasBound = switch sequence {
+  | PerChain => safe->Utils.Array.notEmpty
+  | SharedAcrossChains => safe->Array.length === byChain->Array.length
+  }
+  hasBound ? Some({CheckpointSequence.sequence, byChain: Frontier.fromEntries(safe)}) : None
 }
 
 let selectFrom = (
@@ -24,7 +50,7 @@ let selectFrom = (
   ~isRollback,
   ~nowMillis,
   ~intervalMillis,
-  ~safeCheckpointId,
+  ~safeCheckpoints,
 ) => {
   let byOldestPrune = ((a, _), (b, _)) => a -. b
   let toEntities = candidates => candidates->Array.map(((_, entityConfig)) => entityConfig)
@@ -60,7 +86,7 @@ let selectFrom = (
   }
 
   {
-    safeCheckpointId,
+    safeCheckpoints,
     concurrent: sortedConcurrent->Array.slice(~start=0, ~end=maxEntitiesPerWrite)->toEntities,
     forced: forcedCandidates
     ->Array.toSorted(byOldestPrune)
@@ -71,63 +97,64 @@ let selectFrom = (
 
 let select = (state: IndexerState.t, ~writtenEntityNames, ~isRollback) => {
   let config = state->IndexerState.config
-  if config->Config.shouldPruneHistory(~isInReorgThreshold=state->IndexerState.isInReorgThreshold) {
-    switch state->IndexerState.getSafeCheckpointId {
-    | None => None
-    | Some(safeCheckpointId) =>
-      Some(
-        selectFrom(
-          ~allEntities=(state->IndexerState.persistence).allEntities,
-          ~lastPrunedAtMillis=state->IndexerState.lastPrunedAtMillis,
-          ~writtenEntityNames,
-          ~isRollback,
-          ~nowMillis=Date.now(),
-          ~intervalMillis=Env.ThrottleWrites.pruneStaleDataIntervalMillis->Int.toFloat,
-          ~safeCheckpointId,
-        ),
+  if config->HistoryPolicy.mayPrune(~shouldSaveHistory=state->IndexerState.shouldSaveHistory) {
+    state
+    ->selectSafeCheckpoints
+    ->Option.map(safeCheckpoints =>
+      selectFrom(
+        ~allEntities=(state->IndexerState.persistence).allEntities,
+        ~lastPrunedAtMillis=state->IndexerState.lastPrunedAtMillis,
+        ~writtenEntityNames,
+        ~isRollback,
+        ~nowMillis=Date.now(),
+        ~intervalMillis=Env.ThrottleWrites.pruneStaleDataIntervalMillis->Int.toFloat,
+        ~safeCheckpoints,
       )
-    }
+    )
   } else {
     None
   }
 }
 
-let pruneEntities = async (state: IndexerState.t, ~entities, ~safeCheckpointId) => {
+let pruneEntity = async (
+  state: IndexerState.t,
+  ~entityConfig: Internal.entityConfig,
+  ~safeCheckpoints,
+) => {
   let persistence = state->IndexerState.persistence
-  for idx in 0 to entities->Array.length - 1 {
-    let entityConfig: Internal.entityConfig = entities->Array.getUnsafe(idx)
-    let timeRef = Performance.now()
-    // Recorded for failures too, so a failing prune retries on the same
-    // interval instead of on every write.
-    state->IndexerState.lastPrunedAtMillis->Dict.set(entityConfig.name, Date.now())
-    switch await persistence.storage.pruneStaleEntityHistory(
+  let timeRef = Performance.now()
+  // Recorded for failures too, so a failing prune retries on the same
+  // interval instead of on every write.
+  state->IndexerState.lastPrunedAtMillis->Dict.set(entityConfig.name, Date.now())
+  switch await persistence.storage.pruneStaleEntityHistory(
+    ~entityName=entityConfig.name,
+    ~entityIndex=entityConfig.index,
+    ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+    ~safeCheckpoints,
+  ) {
+  | () =>
+    state->IndexerState.recordHistoryPrune(
+      ~timeSeconds=Performance.secondsSince(timeRef),
       ~entityName=entityConfig.name,
-      ~entityIndex=entityConfig.index,
-      ~chainIdColumn=entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName),
-      ~safeCheckpointId,
-    ) {
-    | () =>
-      state->IndexerState.recordHistoryPrune(
-        ~timeSeconds=Performance.secondsSince(timeRef),
-        ~entityName=entityConfig.name,
-      )
-    | exception exn =>
-      // Pruning is cleanup; a failure must not fail the write loop.
-      Logging.createChild(
-        ~params={
-          "entityName": entityConfig.name,
-          "safeCheckpointId": safeCheckpointId,
-        },
-      )->Logging.childErrorWithExn(exn->Utils.prettifyExn, `Failed to prune stale entity history`)
-    }
+    )
+  | exception exn =>
+    // Pruning is cleanup; a failure must not fail the write loop.
+    Logging.createChild(
+      ~params={"entityName": entityConfig.name, "safeCheckpoints": safeCheckpoints},
+    )->Logging.childErrorWithExn(exn->Utils.prettifyExn, `Failed to prune stale entity history`)
   }
 }
 
-let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpointId) => {
-  switch await (state->IndexerState.persistence).storage.pruneStaleCheckpoints(~safeCheckpointId) {
+let pruneEntities = (state: IndexerState.t, ~entities, ~safeCheckpoints) =>
+  entities->Utils.Array.awaitEach(entityConfig =>
+    state->pruneEntity(~entityConfig, ~safeCheckpoints)
+  )
+
+let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpoints) => {
+  switch await (state->IndexerState.persistence).storage.pruneStaleCheckpoints(~safeCheckpoints) {
   | () => ()
   | exception exn =>
-    Logging.createChild(~params={"safeCheckpointId": safeCheckpointId})->Logging.childErrorWithExn(
+    Logging.createChild(~params={"safeCheckpoints": safeCheckpoints})->Logging.childErrorWithExn(
       exn->Utils.prettifyExn,
       `Failed to prune stale checkpoints`,
     )
@@ -136,22 +163,22 @@ let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpointId) => {
 
 let runConcurrent = async (state: IndexerState.t, ~targets) => {
   switch targets {
-  | Some({safeCheckpointId, concurrent}) if concurrent->Utils.Array.notEmpty =>
-    await pruneCheckpoints(state, ~safeCheckpointId)
-    await pruneEntities(state, ~entities=concurrent, ~safeCheckpointId)
+  | Some({safeCheckpoints, concurrent}) if concurrent->Utils.Array.notEmpty =>
+    await pruneCheckpoints(state, ~safeCheckpoints)
+    await pruneEntities(state, ~entities=concurrent, ~safeCheckpoints)
   | Some(_) | None => ()
   }
 }
 
 let runForced = async (state: IndexerState.t, ~targets) => {
   switch targets {
-  | Some({safeCheckpointId, concurrent, forced}) if forced->Utils.Array.notEmpty =>
+  | Some({safeCheckpoints, concurrent, forced}) if forced->Utils.Array.notEmpty =>
     // When nothing ran concurrently (eg a rollback write), checkpoint pruning
     // lands here, after the write, so it never overlaps a rollback transaction.
     if concurrent->Utils.Array.isEmpty {
-      await pruneCheckpoints(state, ~safeCheckpointId)
+      await pruneCheckpoints(state, ~safeCheckpoints)
     }
-    await pruneEntities(state, ~entities=forced, ~safeCheckpointId)
+    await pruneEntities(state, ~entities=forced, ~safeCheckpoints)
   | Some(_) | None => ()
   }
 }
