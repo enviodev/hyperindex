@@ -643,6 +643,16 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         self.cols[field].as_ref().map(|c| c.i64_cell(slot as usize))
     }
 
+    /// Highest key `< below` carrying `field`.
+    pub(crate) fn last_key_with_field(&self, below: K, field: usize) -> Option<K> {
+        let bit = 1u64 << field;
+        self.order
+            .range(..below)
+            .rev()
+            .find(|(_, &slot)| self.masks[slot as usize] & bit != 0)
+            .map(|(k, _)| k.clone())
+    }
+
     /// Lowest key `>= from` carrying `field` in both tables whose cells differ,
     /// with the two conflicting values.
     pub(crate) fn first_field_mismatch(

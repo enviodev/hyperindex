@@ -265,6 +265,7 @@ impl SvmHyperSyncClient {
             max_num_instructions: params
                 .max_num_instructions
                 .and_then(|v| usize::try_from(v).ok()),
+            include_all_blocks: params.include_all_blocks.unwrap_or(false),
             ..Default::default()
         };
 
@@ -366,6 +367,10 @@ pub struct EventItemsQuery {
     /// depend on addresses (client-side filtering). Absent or empty means every
     /// address-dependent program is filtered server-side.
     pub client_filtered_contracts: Option<Vec<String>>,
+    /// Return a block for every slot in the range, not only the ones an
+    /// instruction landed on. Absent means only the slots instructions came
+    /// from.
+    pub include_all_blocks: Option<bool>,
 }
 
 #[napi(object)]
