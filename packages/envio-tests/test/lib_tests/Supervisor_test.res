@@ -189,13 +189,14 @@ describe("Config.logContext", () => {
 })
 
 describe("Worker.detect", () => {
-  it("Counts as a worker only when forked with the argument and a channel", t => {
-    let forked = ["node", "envio", Worker.forkArg]
+  it("Counts as a worker only when forked with the variable and a channel", t => {
+    let forked = Dict.fromArray([(Worker.envVar, "true")])
     t.expect([
-      Worker.detect(~argv=forked, ~hasChannel=true),
-      // A user typing the argument, or a process manager forking with a channel.
-      Worker.detect(~argv=forked, ~hasChannel=false),
-      Worker.detect(~argv=["node", "envio", "start"], ~hasChannel=true),
+      Worker.detect(~env=forked, ~hasChannel=true),
+      // A copy of the variable left in a shell, or a process manager forking
+      // with a channel.
+      Worker.detect(~env=forked, ~hasChannel=false),
+      Worker.detect(~env=Dict.make(), ~hasChannel=true),
     ]).toStrictEqual([true, false, false])
   })
 })

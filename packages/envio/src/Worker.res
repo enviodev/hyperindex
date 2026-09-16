@@ -2,16 +2,17 @@
 // a subset of the chains. It has no server and no TUI of its own — it reports
 // through the IPC channel, and the supervisor is the one operational surface.
 
-// The argument a supervisor forks its workers with. It means nothing to the
-// CLI, and it counts only together with the fork's own channel, so a user who
-// types it starts nothing: an indexer they start themselves takes every path
-// it takes today.
-let forkArg = "--supervised-worker"
+// Set by a supervisor in the environment of the workers it forks. Internal:
+// it counts only together with the fork's own channel, so a copy left in a
+// shell starts nothing, and an indexer a user starts themselves takes every
+// path it takes today.
+let envVar = "ENVIO_INTERNAL_WORKER"
 
-let detect = (~argv: array<string>, ~hasChannel) => hasChannel && argv->Array.includes(forkArg)
+let detect = (~env: dict<string>, ~hasChannel) =>
+  hasChannel && env->Dict.get(envVar) === Some("true")
 
 let isEnabled = detect(
-  ~argv=NodeJs.Process.argv,
+  ~env=NodeJs.Process.process.env,
   ~hasChannel=NodeJs.Process.channel->Nullable.toOption->Option.isSome,
 )
 

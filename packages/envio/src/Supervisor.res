@@ -105,6 +105,7 @@ let fork = (
   ~entryPath=NodeJs.Process.argv->Array.getUnsafe(1),
 ) => {
   let env = NodeJs.Process.process.env->Dict.copy
+  env->Dict.set(Worker.envVar, "true")
   // The worker's slice of the budget. Read when the worker's own Env module
   // loads, which is why it rides in the spawn environment rather than a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
@@ -112,7 +113,7 @@ let fork = (
 
   let child = NodeJs.ChildProcess.fork(
     entryPath,
-    [Worker.forkArg],
+    [],
     {
       env,
       serialization: "advanced",
