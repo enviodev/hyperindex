@@ -298,9 +298,12 @@ describe("Reused chain-scoped statements stay pruned", () => {
       let {sql, pgSchema} = indexer.pg
       let entityConfig = lockScenario.config->IndexerRunner.entityConfigByName("Counter")
       let chainId = 137->ChainId.fromInt
-      // The shape `LoadLayer.scopeFilter` builds for a per-chain entity: the
-      // handler's own filter, narrowed to the chain the handler runs on.
-      let filter: EntityFilter.t = dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}, "chainId": dict{"_eq": chainId->(Utils.magic: ChainId.t => unknown)}}
+      // A per-chain entity's query: the handler's own filter, narrowed to the
+      // chain the handler runs on.
+      let filter =
+        dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}}
+        ->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table)
+        ->EntityFilter.scoped(~table=entityConfig.table, ~scope=Chain(chainId))
 
       // One transaction pins one connection, so a statement Postgres decides to
       // cache is reused across the runs and its locks accumulate where they can

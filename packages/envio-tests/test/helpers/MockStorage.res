@@ -18,7 +18,7 @@ type t = {
   resolveInitialize: Persistence.initialState => unit,
   resumeInitialStateCalls: array<bool>,
   resolveLoadInitialState: Persistence.initialState => unit,
-  loadOrThrowCalls: array<{"filter": EntityFilter.t, "tableName": string}>,
+  loadOrThrowCalls: array<{"filter": dict<dict<unknown>>, "tableName": string}>,
   dumpEffectCacheCalls: ref<int>,
   storage: Persistence.storage,
 }
@@ -115,7 +115,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
         implementBody(#loadOrThrow, () => {
           loadOrThrowCalls
           ->Array.push({
-            "filter": filter,
+            "filter": filter->EntityFilter.entries,
             "tableName": table.tableName,
           })
           ->ignore

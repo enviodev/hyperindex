@@ -124,7 +124,7 @@ type entityContextParams = {
 let entityScope = (params: entityContextParams) =>
   params.entityConfig->InMemoryStore.entityScope(~chainId=params.item->Internal.getItemChainId)
 
-let getWhereHandler = (params: entityContextParams, filter: EntityFilter.t) =>
+let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) =>
   LoadLayer.loadByFilter(
     ~loadManager=params.loadManager,
     ~persistence=params.persistence,

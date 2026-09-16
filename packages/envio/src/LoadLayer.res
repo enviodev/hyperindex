@@ -6,22 +6,6 @@ let scopeKeySuffix = (scope: Internal.chainScope) =>
   | Chain(chainId) => `.${chainId->ChainId.toString}`
   }
 
-// Narrows a query to the scope's chain. Cross-chain entities have no chain-id
-// column, so their filter is left untouched.
-let scopeFilter = (filter: EntityFilter.t, ~table: Table.table, ~scope: Internal.chainScope) =>
-  switch (scope, table->Table.getChainIdField) {
-  | (Chain(chainId), Some(field)) =>
-    // Copied, because the filter the handler passed in must not gain a column
-    // it never asked for.
-    let scoped = filter->Utils.Dict.shallowCopy
-    scoped->Dict.set(
-      field.fieldName,
-      dict{"_eq": chainId->(Utils.magic: ChainId.t => unknown)},
-    )
-    scoped
-  | _ => filter
-  }
-
 let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
@@ -47,12 +31,10 @@ let loadById = (
       (
         await storage.loadOrThrow(
           ~table=entityConfig.table,
-          ~filter=Dict.fromArray([
-            (
-              Table.idFieldName,
-              dict{"_in": idsToLoad->(Utils.magic: array<string> => unknown)},
-            ),
-          ])->scopeFilter(~table=entityConfig.table, ~scope),
+          ~filter=EntityFilter.byIds(idsToLoad)->EntityFilter.scoped(
+            ~table=entityConfig.table,
+            ~scope,
+          ),
         )
       )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
@@ -274,17 +256,9 @@ let loadEffect = (
       let {outputSchema} = effect.storageMeta
 
       let dbEntities = try {
-        (
-          await storage.loadOrThrow(
-            ~table,
-            ~filter=Dict.fromArray([
-              (
-                Table.idFieldName,
-                dict{"_in": idsToLoad->(Utils.magic: array<string> => unknown)},
-              ),
-            ]),
-          )
-        )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
+        (await storage.loadOrThrow(~table, ~filter=EntityFilter.byIds(idsToLoad)))->(
+          Utils.magic: array<unknown> => array<Internal.effectCacheItem>
+        )
       } catch {
       | exn =>
         Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childWarn({
@@ -358,7 +332,7 @@ let loadEffect = (
   )
 }
 
-let loadByFilter = (
+let loadByParsedFilter = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
@@ -404,7 +378,7 @@ let loadByFilter = (
           (
             await storage.loadOrThrow(
               ~table=entityConfig.table,
-              ~filter=filter->scopeFilter(~table=entityConfig.table, ~scope),
+              ~filter=filter->EntityFilter.scoped(~table=entityConfig.table, ~scope),
             )
           )->(Utils.magic: array<unknown> => array<Internal.entity>)
 
@@ -451,33 +425,54 @@ let loadByFilter = (
     )
   }
 
-  // Everything downstream — the key, the index, the matcher, the query — reads
-  // the filter without re-checking it, so it is checked once here, before any
-  // of them sees it. Rejecting rather than throwing keeps a bad filter failing
-  // only its own call, even when the caller batches several with Promise.all.
+  // Keying an _in walks every value, so it's computed once here and handed to
+  // the load manager rather than recomputed by the hasher.
+  let filterKey = filter->EntityFilter.toString(~table=entityConfig.table)
+
+  if !(inMemTable->InMemoryTable.Entity.hasIndex)(filterKey) {
+    inMemTable->InMemoryTable.Entity.tryIndexFromLoadedValues(~filter, ~table=entityConfig.table)
+  }
+
+  loadManager->LoadManager.call(
+    ~key,
+    ~load,
+    ~input=filter,
+    ~shouldGroup,
+    ~hasher=_ => filterKey,
+    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
+    ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
+  )
+}
+
+let loadByFilter = (
+  ~loadManager,
+  ~persistence,
+  ~entityConfig: Internal.entityConfig,
+  ~scope,
+  ~indexerState,
+  ~shouldGroup,
+  ~item,
+  ~ecosystem,
+  ~filter: dict<dict<unknown>>,
+) =>
+  // Rejecting rather than throwing keeps a bad filter failing only its own
+  // call, even when the caller batches several with Promise.all.
   switch try Ok(
-    filter->EntityFilter.validateOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table),
+    filter->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table),
   ) catch {
   | exn => Error(exn)
   } {
   | Error(exn) => Promise.reject(exn->Utils.prettifyExn)
-  | Ok() =>
-    // Keying an _in walks every value, so it's computed once here and handed to
-    // the load manager rather than recomputed by the hasher.
-    let filterKey = filter->EntityFilter.toString(~table=entityConfig.table)
-
-    if !(inMemTable->InMemoryTable.Entity.hasIndex)(filterKey) {
-      inMemTable->InMemoryTable.Entity.tryIndexFromLoadedValues(~filter, ~table=entityConfig.table)
-    }
-
-    loadManager->LoadManager.call(
-      ~key,
-      ~load,
-      ~input=filter,
+  | Ok(filter) =>
+    loadByParsedFilter(
+      ~loadManager,
+      ~persistence,
+      ~entityConfig,
+      ~scope,
+      ~indexerState,
       ~shouldGroup,
-      ~hasher=_ => filterKey,
-      ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
-      ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
+      ~item,
+      ~ecosystem,
+      ~filter,
     )
   }
-}

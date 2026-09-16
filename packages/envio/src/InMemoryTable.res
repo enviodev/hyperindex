@@ -263,8 +263,7 @@ module Entity = {
   let singleFieldValues = (filter: EntityFilter.t) =>
     switch filter->EntityFilter.asSingleOperator {
     | Some((fieldName, "_eq", fieldValue)) => Some((fieldName, [fieldValue]))
-    | Some((fieldName, "_in", fieldValue)) =>
-      Some((fieldName, fieldValue->(Utils.magic: unknown => array<unknown>)))
+    | Some((fieldName, "_in", fieldValue)) => Some((fieldName, fieldValue->EntityFilter.asArray))
     | Some(_) | None => None
     }
 

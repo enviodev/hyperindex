@@ -35,14 +35,20 @@ let isKeyable: unknown => bool = %raw(`function isKeyable(v) {
   try { JSON.stringify(v); return true } catch { return false }
 }`)
 
-// The filter as the handler wrote it: field -> operator -> value. Everything
-// downstream reads this shape, so what reaches storage is a flat map rather
-// than a recursive tree.
-type t = dict<dict<unknown>>
+// The filter as the handler wrote it: field -> operator -> value. Private, so
+// a value of this type is one parseOrThrow accepted or the indexer built
+// itself, and nothing downstream has to check the filter again.
+type t = private dict<dict<unknown>>
+
+external unsafeFromDict: dict<dict<unknown>> => t = "%identity"
+
+let entries = (filter: t) => (filter :> dict<dict<unknown>>)
 
 let valuesCount = (filter: t) => {
   let count = ref(0)
-  filter->Utils.Dict.forEachWithKey((operators, _) =>
+  filter
+  ->entries
+  ->Utils.Dict.forEachWithKey((operators, _) =>
     operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
       count := count.contents + (operator === "_in" ? fieldValue->asArray->Array.length : 1)
     )
@@ -100,10 +106,10 @@ let matchesFieldType = (value: unknown, ~field: Table.field) => {
     : value->matchesScalar
 }
 
-// Runs once per getWhere registration, before the filter reaches an index or a
-// query, so a bad field, operator or value is reported against the call the
-// handler made rather than surfacing later as a comparator or SQL failure.
-let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
+// The one way in for a handler's filter. A bad field, operator or value is
+// reported against the call the handler made rather than surfacing later as a
+// comparator or SQL failure.
+let parseOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Table.table): t => {
   let filterKeys = filter->Dict.keysToArray
 
   if filterKeys->Array.length === 0 {
@@ -244,12 +250,34 @@ let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
       }
     })
   })
+
+  filter->unsafeFromDict
 }
+
+let byIds = (ids: array<string>): t =>
+  Dict.fromArray([
+    (Table.idFieldName, dict{"_in": ids->(Utils.magic: array<string> => unknown)}),
+  ])->unsafeFromDict
+
+// Narrows a filter to the scope's chain. Cross-chain entities have no chain-id
+// column, so their filter is left untouched.
+let scoped = (filter: t, ~table: Table.table, ~scope: Internal.chainScope): t =>
+  switch (scope, table->Table.getChainIdField) {
+  | (Chain(chainId), Some(field)) =>
+    // Copied, because the filter the handler passed in must not gain a column
+    // it never asked for.
+    let scoped = filter->entries->Utils.Dict.shallowCopy
+    scoped->Dict.set(field.fieldName, dict{"_eq": chainId->(Utils.magic: ChainId.t => unknown)})
+    scoped->unsafeFromDict
+  | _ => filter
+  }
 
 // Values bound to the query's $N placeholders, in the order it binds them.
 let getParams = (filter: t) => {
   let params = []
-  filter->Utils.Dict.forEachWithKey((operators, _) =>
+  filter
+  ->entries
+  ->Utils.Dict.forEachWithKey((operators, _) =>
     operators->Utils.Dict.forEachWithKey((fieldValue, _) => params->Array.push(fieldValue)->ignore)
   )
   params
@@ -258,9 +286,9 @@ let getParams = (filter: t) => {
 // The one shape a value can key an index or a merged query by: a single field
 // under a single operator.
 let asSingleOperator = (filter: t) =>
-  switch filter->Dict.keysToArray {
+  switch filter->entries->Dict.keysToArray {
   | [fieldName] =>
-    let operators = filter->Dict.getUnsafe(fieldName)
+    let operators = filter->entries->Dict.getUnsafe(fieldName)
     switch operators->Dict.keysToArray {
     | [operator] => Some((fieldName, operator, operators->Dict.getUnsafe(operator)))
     | _ => None
@@ -301,7 +329,11 @@ let merge = (filters: array<t>) =>
         | _ => throwUnmergeable(filter)
         }
       )
-      [Dict.fromArray([(fieldName, dict{"_in": values->(Utils.magic: array<unknown> => unknown)})])]
+      [
+        Dict.fromArray([
+          (fieldName, dict{"_in": values->(Utils.magic: array<unknown> => unknown)}),
+        ])->unsafeFromDict,
+      ]
     | _ => filters
     }
   }
@@ -342,7 +374,7 @@ let native = {eq: nativeEq, gt: nativeGt, lt: nativeLt, key: identityKey}
 // A nullable column holds null where a row has no value, and a comparison that
 // calls a method on it would throw. Matching nothing is what SQL does, and
 // saying so once here keeps every comparison below a plain two-value compare.
-// The filter's own value needs no such guard — validation rejects a nullish one.
+// The filter's own value needs no such guard — parseOrThrow rejects a nullish one.
 let nullSafe = (compare: valueCompare): valueCompare => {
   eq: (a, b) => !(a->nullish) && compare.eq(a, b),
   gt: (a, b) => !(a->nullish) && compare.gt(a, b),
@@ -477,11 +509,11 @@ let comparesByField: Table.table => dict<
 
 let fieldCompare = (~table: Table.table, fieldName) =>
   switch table->comparesByField->Utils.Dict.dangerouslyGetNonOption(fieldName) {
-  // Filters are validated against the table before reaching here, so a
-  // missing or derived field is unexpected; compare structurally instead of
-  // crashing.
-  | None => json
   | Some(compare) => compare
+  | None =>
+    JsError.throwWithMessage(
+      `Internal error: no comparator for the field "${fieldName}" on the table "${table.tableName}". A filter is parsed against its table before it reaches the in-memory matcher.`,
+    )
   }
 
 // Projects a field's values onto Map keys, so an index can be found by value
@@ -498,7 +530,9 @@ let makeValueKey = (~table: Table.table, ~fieldName) => (fieldName->fieldCompare
 // the same as an empty list followed by field "tb".
 let toString = (filter: t, ~table: Table.table) => {
   let key = ref("")
-  filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
+  filter
+  ->entries
+  ->Utils.Dict.forEachWithKey((operators, fieldName) => {
     let keyOf = makeValueKey(~table, ~fieldName)
     operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
       key := key.contents ++ fieldName ++ operator
@@ -520,7 +554,9 @@ let toString = (filter: t, ~table: Table.table) => {
 let toOperationKey = (filter: t, ~entityName) => {
   let params = ref(0)
   let printed = ref("")
-  filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
+  filter
+  ->entries
+  ->Utils.Dict.forEachWithKey((operators, fieldName) => {
     let ops = ref("")
     // An _eq on its own is written without the operator, the way the user does.
     let loneEq = ref(false)
@@ -540,7 +576,9 @@ let toOperationKey = (filter: t, ~entityName) => {
 
 let makeMatcher = (filter: t, ~table: Table.table): matcher => {
   let checks = []
-  filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
+  filter
+  ->entries
+  ->Utils.Dict.forEachWithKey((operators, fieldName) => {
     let compare = fieldName->fieldCompare(~table)
     operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
       let check = switch operator {

@@ -3,20 +3,37 @@ open Vitest
 external toUnknown: 'a => unknown = "%identity"
 external asEntity: dict<unknown> => Internal.entity = "%identity"
 
+// A filter only exists once it has been parsed against its table, so every
+// case below goes through the same entry point a handler's getWhere does.
+let parse = (filter, ~table) => filter->EntityFilter.parseOrThrow(~entityName="User", ~table)
+
+// Three plain columns for the cases that are about the filter's shape rather
+// than its column types.
+let abcTable = Table.mkTable(
+  "users",
+  ~fields=[
+    Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+    Table.mkField("a", Int32, ~isIndex=true, ~fieldSchema=S.int),
+    Table.mkField("b", Int32, ~isIndex=true, ~fieldSchema=S.int),
+    Table.mkField("c", Int32, ~isIndex=true, ~fieldSchema=S.int),
+  ],
+)
+
 describe("EntityFilter.toOperationKey", () => {
   it("Replaces filter values with $N placeholders", t => {
     let v = 0->(Utils.magic: int => unknown)
+    let f = filter => filter->parse(~table=abcTable)
     t.expect(
       [
-        dict{"a": dict{"_eq": v}},
-        dict{"a": dict{"_gt": v}},
-        dict{"a": dict{"_lt": v}},
-        dict{"a": dict{"_in": v}},
-        dict{"a": dict{"_gt": v}, "b": dict{"_lt": v}},
+        f(dict{"a": dict{"_eq": v}}),
+        f(dict{"a": dict{"_gt": v}}),
+        f(dict{"a": dict{"_lt": v}}),
+        f(dict{"a": dict{"_in": [v]->toUnknown}}),
+        f(dict{"a": dict{"_gt": v}, "b": dict{"_lt": v}}),
         // Operators on one field stay under that field, rather than repeating
         // the key — the printed form is what the user sees in an error log.
-        dict{"a": dict{"_gt": v, "_lt": v}},
-        dict{"a": dict{"_gt": v, "_eq": v}},
+        f(dict{"a": dict{"_gt": v, "_lt": v}}),
+        f(dict{"a": dict{"_gt": v, "_eq": v}}),
       ]->Array.map(filter => filter->EntityFilter.toOperationKey(~entityName="User")),
     ).toEqual([
       "User.getWhere({a: $1})",
@@ -30,7 +47,7 @@ describe("EntityFilter.toOperationKey", () => {
   })
 })
 
-describe("EntityFilter.validateOrThrow", () => {
+describe("EntityFilter.parseOrThrow", () => {
   let table = Table.mkTable(
     "users",
     ~fields=[
@@ -45,17 +62,14 @@ describe("EntityFilter.validateOrThrow", () => {
   )
 
   // The filter comes from user-land JS, so test inputs are raw objects
-  let parse = (filter: 'a) =>
-    filter
-    ->(Utils.magic: 'a => EntityFilter.t)
-    ->EntityFilter.validateOrThrow(~entityName="User", ~table)
+  let parse = (filter: 'a) => filter->(Utils.magic: 'a => dict<dict<unknown>>)->parse(~table)
 
   it("Accepts every operator and every non-derived field", t => {
     let accepts = (filter: 'a) =>
       switch try Ok(parse(filter)) catch {
       | JsExn(e) => Error(e->JsExn.message->Option.getOr("(no message)"))
       } {
-      | Ok() => "ok"
+      | Ok(_) => "ok"
       | Error(message) => message
       }
 
@@ -81,8 +95,8 @@ describe("EntityFilter.validateOrThrow", () => {
   it("Throws a user friendly error for every invalid filter", t => {
     let getError = (filter: 'a) =>
       try {
-        parse(filter)
-        "Expected validateOrThrow to throw"
+        let _ = parse(filter)
+        "Expected parseOrThrow to throw"
       } catch {
       | JsExn(e) => e->JsExn.message->Option.getOr("(no message)")
       }
@@ -141,11 +155,12 @@ describe("EntityFilter.validateOrThrow", () => {
 describe("EntityFilter.getParams", () => {
   it("Reports one value per operator, in the order the query binds them", t => {
     let v = i => i->(Utils.magic: int => unknown)
+    let params = filter => filter->parse(~table=abcTable)->EntityFilter.getParams
     t.expect((
-      dict{"a": dict{"_eq": v(1)}}->EntityFilter.getParams,
-      dict{"a": dict{"_gt": v(1)}}->EntityFilter.getParams,
-      dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}}->EntityFilter.getParams,
-      dict{"a": dict{"_gt": v(1)}, "b": dict{"_lt": v(2)}, "c": dict{"_in": [v(3), v(4)]->(Utils.magic: array<unknown> => unknown)}}->EntityFilter.getParams,
+      dict{"a": dict{"_eq": v(1)}}->params,
+      dict{"a": dict{"_gt": v(1)}}->params,
+      dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}}->params,
+      dict{"a": dict{"_gt": v(1)}, "b": dict{"_lt": v(2)}, "c": dict{"_in": [v(3), v(4)]->(Utils.magic: array<unknown> => unknown)}}->params,
     )).toEqual((
       [v(1)],
       [v(1)],
@@ -158,21 +173,26 @@ describe("EntityFilter.getParams", () => {
 describe("EntityFilter.merge", () => {
   it("Merges Eq and In batches into a single In, keeps the rest as is", t => {
     let v = i => i->(Utils.magic: int => unknown)
+    let merge = filters =>
+      filters
+      ->Array.map(filter => filter->parse(~table=abcTable))
+      ->EntityFilter.merge
+      ->Array.map(EntityFilter.entries)
     t.expect((
       [
         dict{"a": dict{"_eq": v(1)}},
         dict{"a": dict{"_eq": v(2)}},
-      ]->EntityFilter.merge,
+      ]->merge,
       [
         dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}},
         dict{"a": dict{"_in": [v(3)]->(Utils.magic: array<unknown> => unknown)}},
-      ]->EntityFilter.merge,
+      ]->merge,
       [
         dict{"a": dict{"_gt": v(1)}},
         dict{"a": dict{"_gt": v(2)}},
-      ]->EntityFilter.merge,
-      [dict{"a": dict{"_eq": v(1)}}]->EntityFilter.merge,
-      []->EntityFilter.merge,
+      ]->merge,
+      [dict{"a": dict{"_eq": v(1)}}]->merge,
+      []->merge,
     )).toEqual((
       [
         dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}},
@@ -196,7 +216,9 @@ describe("EntityFilter.merge", () => {
         [
           dict{"a": dict{"_eq": v(1)}},
           dict{"a": dict{"_eq": v(2)}, "b": dict{"_eq": v(3)}},
-        ]->EntityFilter.merge,
+        ]
+        ->Array.map(filter => filter->parse(~table=abcTable))
+        ->EntityFilter.merge,
       "Unexpected composite filter in a merged batch. Filters batched into a single query must use the same operator and field.",
     )
   })
@@ -266,33 +288,35 @@ describe("EntityFilter.makeMatcher", () => {
     ),
   ]
 
+  let f = filter => filter->parse(~table)
+
   // Each case pairs a filter with its expected match per entity above.
   let cases: array<(EntityFilter.t, array<bool>)> = [
-    (dict{"score": dict{"_eq": u(5)}}, [true, false, false]),
-    (dict{"score": dict{"_gt": u(5)}}, [false, true, false]),
-    (dict{"score": dict{"_lt": u(5)}}, [false, false, true]),
-    (dict{"score": dict{"_gte": u(5)}}, [true, true, false]),
-    (dict{"score": dict{"_lte": u(5)}}, [true, false, true]),
-    (dict{"score": dict{"_in": u([5, 7])}}, [true, true, false]),
-    (dict{"balance": dict{"_eq": u(BigInt.fromInt(10))}}, [true, false, false]),
-    (dict{"balance": dict{"_gt": u(BigInt.fromInt(10))}}, [false, true, false]),
-    (dict{"active": dict{"_eq": u(true)}}, [true, false, true]),
-    (dict{"nickname": dict{"_eq": u("nick")}}, [true, false, false]),
+    (f(dict{"score": dict{"_eq": u(5)}}), [true, false, false]),
+    (f(dict{"score": dict{"_gt": u(5)}}), [false, true, false]),
+    (f(dict{"score": dict{"_lt": u(5)}}), [false, false, true]),
+    (f(dict{"score": dict{"_gte": u(5)}}), [true, true, false]),
+    (f(dict{"score": dict{"_lte": u(5)}}), [true, false, true]),
+    (f(dict{"score": dict{"_in": u([5, 7])}}), [true, true, false]),
+    (f(dict{"balance": dict{"_eq": u(BigInt.fromInt(10))}}), [true, false, false]),
+    (f(dict{"balance": dict{"_gt": u(BigInt.fromInt(10))}}), [false, true, false]),
+    (f(dict{"active": dict{"_eq": u(true)}}), [true, false, true]),
+    (f(dict{"nickname": dict{"_eq": u("nick")}}), [true, false, false]),
     // The undefined nullable column matches no comparison.
-    (dict{"nickname": dict{"_gt": u("a")}}, [true, true, false]),
-    (dict{"nickname": dict{"_in": u(["nick", "other"])}}, [true, false, false]),
-    (dict{"price": dict{"_eq": u(BigDecimal.fromInt(3))}}, [true, false, false]),
-    (dict{"price": dict{"_gt": u(BigDecimal.fromInt(3))}}, [false, true, false]),
-    (dict{"tags": dict{"_eq": u(["x", "y"])}}, [true, false, true]),
+    (f(dict{"nickname": dict{"_gt": u("a")}}), [true, true, false]),
+    (f(dict{"nickname": dict{"_in": u(["nick", "other"])}}), [true, false, false]),
+    (f(dict{"price": dict{"_eq": u(BigDecimal.fromInt(3))}}), [true, false, false]),
+    (f(dict{"price": dict{"_gt": u(BigDecimal.fromInt(3))}}), [false, true, false]),
+    (f(dict{"tags": dict{"_eq": u(["x", "y"])}}), [true, false, true]),
     // Lexicographic: ["x"] is a proper prefix of ["x","y"], so it sorts lower.
-    (dict{"tags": dict{"_lt": u(["x", "y"])}}, [false, true, false]),
-    (dict{"created": dict{"_eq": u(Date.fromTime(1000.))}}, [true, false, false]),
-    (dict{"created": dict{"_gt": u(Date.fromTime(1000.))}}, [false, true, false]),
+    (f(dict{"tags": dict{"_lt": u(["x", "y"])}}), [false, true, false]),
+    (f(dict{"created": dict{"_eq": u(Date.fromTime(1000.))}}), [true, false, false]),
+    (f(dict{"created": dict{"_gt": u(Date.fromTime(1000.))}}), [false, true, false]),
     // Every field in the filter must match, and a mismatch on the first one
     // skips the rest.
-    (dict{"score": dict{"_gt": u(3)}, "active": dict{"_eq": u(true)}}, [true, false, false]),
+    (f(dict{"score": dict{"_gt": u(3)}, "active": dict{"_eq": u(true)}}), [true, false, false]),
     // Two operators on one field are both applied.
-    (dict{"score": dict{"_gt": u(2), "_lt": u(7)}}, [true, false, false]),
+    (f(dict{"score": dict{"_gt": u(2), "_lt": u(7)}}), [true, false, false]),
   ]
 
   it("Specializes the comparison per field type for every operator", t => {
@@ -332,7 +356,10 @@ describe("EntityFilter.makeMatcher", () => {
     )
     let entity = Dict.make()
     entity->Dict.set("id", "x"->u)
-    let run = filter => (filter->EntityFilter.makeMatcher(~table=nullableTable))(entity->asEntity)
+    let run = filter =>
+      (filter->parse(~table=nullableTable)->EntityFilter.makeMatcher(~table=nullableTable))(
+        entity->asEntity,
+      )
     t.expect([
       run(dict{"price": dict{"_eq": u(BigDecimal.fromInt(1))}}),
       run(dict{"price": dict{"_gt": u(BigDecimal.fromInt(1))}}),
@@ -353,19 +380,16 @@ describe("EntityFilter.makeMatcher", () => {
     entity->Dict.set("id", "x"->u)
     entity->Dict.set("meta", {"a": 1, "b": [2, 3]}->u)
     let run = value =>
-      (dict{"meta": dict{"_eq": value->u}}->EntityFilter.makeMatcher(~table=jsonTable))(
-        entity->asEntity,
-      )
+      (
+        dict{"meta": dict{"_eq": value->u}}
+        ->parse(~table=jsonTable)
+        ->EntityFilter.makeMatcher(~table=jsonTable)
+      )(entity->asEntity)
     t.expect([
       // A distinct object with equal contents matches; a differing one does not.
       run({"a": 1, "b": [2, 3]}),
       run({"a": 1, "b": [2, 4]}),
     ]).toEqual([true, false])
-  })
-
-  it("Matches everything when the filter constrains no field", t => {
-    let matcher = Dict.make()->EntityFilter.makeMatcher(~table)
-    t.expect(matcher(Dict.make()->asEntity)).toEqual(true)
   })
 })
 
@@ -393,7 +417,7 @@ describe("EntityFilter.toString", () => {
       Table.mkField("ats", Date, ~isArray=true, ~isIndex=true, ~fieldSchema=S.string),
     ],
   )
-  let toKey = filter => filter->EntityFilter.toString(~table)
+  let toKey = filter => filter->parse(~table)->EntityFilter.toString(~table)
 
   // The key stands in for structural equality: two filters share an index if
   // and only if their keys match. Any pair colliding here would silently

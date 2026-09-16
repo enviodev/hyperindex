@@ -445,7 +445,9 @@ let makeFilterCondition = (~filter: EntityFilter.t, ~table: Table.table, ~params
   }
 
   let condition = ref("")
-  filter->Utils.Dict.forEachWithKey((operators, fieldName) => {
+  filter
+  ->EntityFilter.entries
+  ->Utils.Dict.forEachWithKey((operators, fieldName) => {
     let queryField = getQueryFieldOrThrow(fieldName)
     operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
       let column = `"${queryField.pgDbFieldName}"`
@@ -501,14 +503,6 @@ let makeFilterCondition = (~filter: EntityFilter.t, ~table: Table.table, ~params
     })
   })
 
-  if condition.contents === "" {
-    throw(
-      Persistence.StorageError({
-        message: `Failed loading "${table.tableName}" from storage. The filter must constrain at least one field.`,
-        reason: Utils.Error.make("Empty filter"),
-      }),
-    )
-  }
   condition.contents
 }
 
@@ -2041,7 +2035,9 @@ let make = (
     let columns = []
     let seen = Utils.Set.make()
     filters->Array.forEach(filter =>
-      filter->Utils.Dict.forEachWithKey((_, fieldName) =>
+      filter
+      ->EntityFilter.entries
+      ->Utils.Dict.forEachWithKey((_, fieldName) =>
         switch queryFields->Utils.Dict.dangerouslyGetNonOption(fieldName) {
         | Some({pgDbFieldName}) =>
           if !(seen->Utils.Set.has(pgDbFieldName)) {

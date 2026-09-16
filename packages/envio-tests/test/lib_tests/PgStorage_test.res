@@ -617,6 +617,9 @@ FROM "public"."envio_chains";`
       ],
     )
 
+    let parse = (filter, ~table: Table.table) =>
+      filter->EntityFilter.parseOrThrow(~entityName=table.tableName, ~table)
+
     Async.it(
       "Binds bytea values as bytes and bytea arrays as array literals",
       async t => {
@@ -626,7 +629,7 @@ FROM "public"."envio_chains";`
                     Utils.magic: array<Uint8Array.t> => unknown
                   )}, "chunks": dict{"_eq": [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown), "_in": [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
                     Utils.magic: array<array<Uint8Array.t>> => unknown
-                  )}},
+                  )}}->parse(~table=bytesTable),
           ~table=bytesTable,
           ~params,
         )
@@ -648,7 +651,7 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"id": dict{"_in": ["1", "2"]->(Utils.magic: array<string> => unknown)}},
+          ~filter=dict{"id": dict{"_in": ["1", "2"]->(Utils.magic: array<string> => unknown)}}->parse(~table),
           ~table,
           ~params,
         )
@@ -665,7 +668,7 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"score": dict{"_gt": 5->(Utils.magic: int => unknown)}},
+          ~filter=dict{"score": dict{"_gt": 5->(Utils.magic: int => unknown)}}->parse(~table),
           ~table,
           ~params,
         )
@@ -682,7 +685,7 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"score": dict{"_gte": 5->(Utils.magic: int => unknown)}, "id": dict{"_lte": "9"->(Utils.magic: string => unknown)}},
+          ~filter=dict{"score": dict{"_gte": 5->(Utils.magic: int => unknown)}, "id": dict{"_lte": "9"->(Utils.magic: string => unknown)}}->parse(~table),
           ~table,
           ~params,
         )
@@ -699,7 +702,7 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}, "score": dict{"_gt": 5->(Utils.magic: int => unknown), "_lt": 10->(Utils.magic: int => unknown)}},
+          ~filter=dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}, "score": dict{"_gt": 5->(Utils.magic: int => unknown), "_lt": 10->(Utils.magic: int => unknown)}}->parse(~table),
           ~table,
           ~params,
         )
@@ -715,21 +718,6 @@ FROM "public"."envio_chains";`
       },
     )
 
-    Async.it(
-      "Should throw a StorageError for a filter that constrains nothing",
-      async t => {
-        let result = try {
-          let _ = PgStorage.makeFilterCondition(~filter=Dict.make(), ~table, ~params=[])
-          None
-        } catch {
-        | Persistence.StorageError({message}) => Some(message)
-        }
-
-        t.expect(result).toEqual(
-          Some(`Failed loading "users" from storage. The filter must constrain at least one field.`),
-        )
-      },
-    )
   })
 
   describe("makeInsertUnnestSetQuery", () => {
