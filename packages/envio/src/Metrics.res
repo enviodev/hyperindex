@@ -1250,7 +1250,7 @@ let renderRuntime = (samples: array<(string, runtimeSample)>) => {
     }),
     ~value=() => 1.,
   )
-  b.out
+  b.out ++ "\n"
 }
 
 let collectRuntime = () => renderRuntime([("", sampleRuntime())])

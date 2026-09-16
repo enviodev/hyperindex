@@ -906,4 +906,12 @@ describe("Metrics.renderRuntime", () => {
       ],
     ))
   })
+
+  // A scrape whose last line has no line feed is a parse error to a strict
+  // consumer, which drops the whole body rather than its last sample.
+  it("Ends its body with a line feed, the way the text format requires", t => {
+    t.expect(
+      Metrics.renderRuntime([("", sample(~heapUsed=150., ~gc=[]))])->String.endsWith("\n"),
+    ).toBe(true)
+  })
 })

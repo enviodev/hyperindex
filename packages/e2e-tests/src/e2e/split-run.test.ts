@@ -39,6 +39,19 @@ if (!reachable && process.env.CI) {
 const exitCode = (child: ChildProcess) =>
   new Promise<number | null>((resolve) => child.on("close", resolve));
 
+/**
+ * Leaves no indexer behind when a test fails before its own shutdown: one that
+ * survived would hold the port and the schema against everything after it.
+ */
+const stopIfRunning = async (indexer: ChildProcess) => {
+  if (indexer.exitCode !== null || indexer.signalCode !== null) return;
+  const exited = exitCode(indexer);
+  indexer.kill("SIGINT");
+  const abandon = setTimeout(() => indexer.kill("SIGKILL"), 10_000);
+  await exited;
+  clearTimeout(abandon);
+};
+
 /** Polls an endpoint of the supervisor until its body satisfies `ready`. */
 const scrapeUntil = async (route: string, ready: (body: string) => boolean) => {
   const deadline = Date.now() + config.timeouts.indexerStartup;
@@ -75,56 +88,64 @@ describe.skipIf(!reachable)("E2E: a split run is one indexer", () => {
 
   it("Exits once every chain is done, with both chains' rows written", async () => {
     const indexer = start(["-r"]);
-    const exit = exitCode(indexer);
-    await waitForOutput(indexer, "Splitting 2 chains across 2 processes", config.timeouts.indexerStartup);
+    try {
+      const exit = exitCode(indexer);
+      await waitForOutput(indexer, "Splitting 2 chains across 2 processes", config.timeouts.indexerStartup);
 
-    expect({
-      exitCode: await exit,
-      rowsPerChain: await pgRows(
-        `SELECT "chain_id", COUNT(*) > 0 FROM "${PG_SCHEMA}"."Transfer" GROUP BY "chain_id" ORDER BY "chain_id"`
-      ),
-    }).toEqual({
-      exitCode: 0,
-      rowsPerChain: [
-        [1, true],
-        [8453, true],
-      ],
-    });
+      expect({
+        exitCode: await exit,
+        rowsPerChain: await pgRows(
+          `SELECT "chain_id", COUNT(*) > 0 FROM "${PG_SCHEMA}"."Transfer" GROUP BY "chain_id" ORDER BY "chain_id"`
+        ),
+      }).toEqual({
+        exitCode: 0,
+        rowsPerChain: [
+          [1, true],
+          [8453, true],
+        ],
+      });
+    } finally {
+      await stopIfRunning(indexer);
+    }
   });
 
   // The same chains with no end block: a run that nothing but a stop ends, so
   // there is time to read what it serves.
   it("Serves every process's metrics, and stops them all on one interrupt", async () => {
     const indexer = start(["-r", "--config", "config.head.yaml"]);
-    const exit = exitCode(indexer);
-    await waitForOutput(indexer, "Splitting 2 chains across 2 processes", config.timeouts.indexerStartup);
+    try {
+      const exit = exitCode(indexer);
+      await waitForOutput(indexer, "Splitting 2 chains across 2 processes", config.timeouts.indexerStartup);
 
-    const [runtime, metrics] = await Promise.all([
-      // Each worker's readings, told apart by label.
-      scrapeUntil("/metrics/runtime", (body) => body.includes('worker="8453"')),
-      // Both chains on one endpoint, whichever process drives each.
-      scrapeUntil(
-        "/metrics",
-        (body) => body.includes('chainId="1"') && body.includes('chainId="8453"')
-      ),
-    ]);
+      const [runtime, metrics] = await Promise.all([
+        // Each worker's readings, told apart by label.
+        scrapeUntil("/metrics/runtime", (body) => body.includes('worker="8453"')),
+        // Both chains on one endpoint, whichever process drives each.
+        scrapeUntil(
+          "/metrics",
+          (body) => body.includes('chainId="1"') && body.includes('chainId="8453"')
+        ),
+      ]);
 
-    // Only the supervisor is signalled, the way a process manager would.
-    indexer.kill("SIGINT");
+      // Only the supervisor is signalled, the way a process manager would.
+      indexer.kill("SIGINT");
 
-    expect({
-      exitCode: await exit,
-      // Workers are named by the chains they drive.
-      runtimeWorkers: ["1", "8453"].map((worker) =>
-        runtime.includes(`nodejs_heap_size_used_bytes{worker="${worker}"}`)
-      ),
-      metricsChains: [1, 8453].map((chainId) =>
-        metrics.includes(`envio_progress_block{chainId="${chainId}"}`)
-      ),
-    }).toEqual({
-      exitCode: 0,
-      runtimeWorkers: [true, true],
-      metricsChains: [true, true],
-    });
+      expect({
+        exitCode: await exit,
+        // Workers are named by the chains they drive.
+        runtimeWorkers: ["1", "8453"].map((worker) =>
+          runtime.includes(`nodejs_heap_size_used_bytes{worker="${worker}"}`)
+        ),
+        metricsChains: [1, 8453].map((chainId) =>
+          metrics.includes(`envio_progress_block{chainId="${chainId}"}`)
+        ),
+      }).toEqual({
+        exitCode: 0,
+        runtimeWorkers: [true, true],
+        metricsChains: [true, true],
+      });
+    } finally {
+      await stopIfRunning(indexer);
+    }
   });
 });
