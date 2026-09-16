@@ -470,7 +470,7 @@ let makeFilterCondition = (
       // ~10MB per connection for 40 entities across 30 chains — accepted, since
       // the alternative is a cached plan that can't prune.
       //
-      // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
+      // `EntityFilter.scoped` is what puts this filter here, and the value is
       // range-checked to a non-negative safe integer, so it can carry nothing
       // but digits.
       | "_eq" if queryField.isChainId =>
