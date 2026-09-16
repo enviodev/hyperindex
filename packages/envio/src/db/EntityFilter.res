@@ -2,6 +2,8 @@
 
 let nullish: unknown => bool = %raw(`v => v === undefined || v === null`)
 
+let asArray = (v: unknown) => v->(Utils.magic: unknown => array<unknown>)
+
 // Renders one already-projected value into a cache key: a type tag, then the
 // length, then the value. The tag keeps "5" apart from 5, and the length means
 // a delimiter inside a value can't imitate the delimiter, so no escaping pass
@@ -42,12 +44,7 @@ let valuesCount = (filter: t) => {
   let count = ref(0)
   filter->Utils.Dict.forEachWithKey((operators, _) =>
     operators->Utils.Dict.forEachWithKey((fieldValue, operator) =>
-      count :=
-        count.contents + (
-          operator === "_in"
-            ? fieldValue->(Utils.magic: unknown => array<unknown>)->Array.length
-            : 1
-        )
+      count := count.contents + (operator === "_in" ? fieldValue->asArray->Array.length : 1)
     )
   )
   count.contents
@@ -99,8 +96,7 @@ let matchesFieldType = (value: unknown, ~field: Table.field) => {
     | _ => true
     }
   field.isArray
-    ? value->Array.isArray &&
-        value->(Utils.magic: unknown => array<unknown>)->Array.every(matchesScalar)
+    ? value->Array.isArray && value->asArray->Array.every(matchesScalar)
     : value->matchesScalar
 }
 
@@ -206,7 +202,7 @@ let validateOrThrow = (filter: t, ~entityName, ~table: Table.table): unit => {
               `Invalid value passed to context.${entityName}.getWhere({ ${apiFieldName}: { _in: ... } }). The _in operator expects an array of values.`,
             )
           }
-          let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
+          let fieldValues = fieldValue->asArray
 
           fieldValues->Array.forEachWithIndex(
             (fieldValue, index) => {
@@ -298,20 +294,14 @@ let merge = (filters: array<t>) =>
         | Some((candidateField, candidateOperator, fieldValue))
           if candidateField === fieldName && candidateOperator === operator =>
           if operator === "_in" {
-            fieldValue
-            ->(Utils.magic: unknown => array<unknown>)
-            ->Array.forEach(value => values->Array.push(value)->ignore)
+            fieldValue->asArray->Array.forEach(value => values->Array.push(value)->ignore)
           } else {
             values->Array.push(fieldValue)->ignore
           }
         | _ => throwUnmergeable(filter)
         }
       )
-      [
-        Dict.fromArray([
-          (fieldName, dict{"_in": values->(Utils.magic: array<unknown> => unknown)}),
-        ]),
-      ]
+      [Dict.fromArray([(fieldName, dict{"_in": values->(Utils.magic: array<unknown> => unknown)})])]
     | _ => filters
     }
   }
@@ -414,8 +404,6 @@ let scalarCompare = (fieldType: Table.fieldType): valueCompare =>
   | Enum(_) => native
   }
 
-let asArray = (v: unknown) => v->(Utils.magic: unknown => array<unknown>)
-
 // Array-valued fields compare element-wise with the element type's comparator:
 // equality is length + pairwise eq, ordering is lexicographic where the first
 // differing element decides and a proper prefix is the smaller array. The key
@@ -516,10 +504,8 @@ let toString = (filter: t, ~table: Table.table) => {
       key := key.contents ++ fieldName ++ operator
       if operator === "_in" {
         fieldValue
-        ->(Utils.magic: unknown => array<unknown>)
-        ->Array.forEach(
-          value => key := key.contents ++ encodeValueKey(keyOf(value)),
-        )
+        ->asArray
+        ->Array.forEach(value => key := key.contents ++ encodeValueKey(keyOf(value)))
       } else {
         key := key.contents ++ encodeValueKey(keyOf(fieldValue))
       }
@@ -572,7 +558,7 @@ let makeMatcher = (filter: t, ~table: Table.table): matcher => {
           compare.eq(entityFieldValue, fieldValue) || compare.lt(entityFieldValue, fieldValue)
         }
       | "_in" =>
-        let fieldValues = fieldValue->(Utils.magic: unknown => array<unknown>)
+        let fieldValues = fieldValue->asArray
         if compare.eq === nativeEq {
           let set = fieldValues->Utils.Set.fromArray
           entity => set->Utils.Set.has(entity->getField(fieldName))
