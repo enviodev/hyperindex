@@ -54,3 +54,48 @@ describe("_description", () => {
     )
   })
 })
+
+// A quote or a newline in the description is user text going through the
+// generated SDL, which is parsed back: unescaped, either one ends the string
+// literal and the whole config fails on a schema it never wrote.
+// https://github.com/enviodev/hyperindex/pull/1540#discussion_r3758886054
+describe("_description with characters the SDL has to escape", () => {
+  it("Survives quotes, backslashes and newlines", t => {
+    let {config}: InternalTestIndexer.parsed = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: awkward-descriptions
+disable_default_cross_chain: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  accounts:
+    from: evm.events
+    select:
+      id: params.to
+      balance:
+        _sum: params.value
+        _description: "Line one\\nline \\"two\\" with a backslash \\\\ in it"
+`,
+    )
+    let entityConfig = config.entitiesByTableName->Dict.getUnsafe("accounts")
+    t.expect(
+      entityConfig.table->Hasura.makeColumnConfigs->(Utils.magic: dict<Hasura.columnConfig> => JSON.t),
+    ).toEqual(
+      {
+        "balance": {
+          "comment": `Line one
+line "two" with a backslash \\ in it`,
+        },
+      }->(Utils.magic: {..} => JSON.t),
+    )
+  })
+})
+

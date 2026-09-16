@@ -317,8 +317,15 @@ impl<'de> Deserialize<'de> for Index {
                 self,
                 seq: A,
             ) -> Result<Self::Value, A::Error> {
-                Vec::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))
-                    .map(Index::Composite)
+                let fields: Vec<IndexField> =
+                    Vec::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))?;
+                if fields.is_empty() {
+                    // `@index(fields: [])` parses, and then indexes nothing.
+                    return Err(serde::de::Error::custom(
+                        "an index needs at least one field",
+                    ));
+                }
+                Ok(Index::Composite(fields))
             }
 
             fn visit_map<A: serde::de::MapAccess<'de>>(
@@ -347,11 +354,34 @@ impl JsonSchema for Index {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct IndexField {
     pub field: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub direction: Option<IndexDirection>,
+}
+
+// Hand-written to match `Deserialize` below: an editor validating config.yaml
+// against this schema has to accept the bare-name shorthand too.
+impl JsonSchema for IndexField {
+    fn schema_name() -> Cow<'static, str> {
+        "IndexField".into()
+    }
+
+    fn json_schema(gen: &mut SchemaGenerator) -> JsonSchemaSchema {
+        let direction = IndexDirection::json_schema(gen);
+        json_schema!({
+            "anyOf": [
+                {"type": "string", "description": "The field to index, ascending."},
+                {
+                    "type": "object",
+                    "properties": {"field": {"type": "string"}, "direction": direction},
+                    "required": ["field"],
+                    "additionalProperties": false
+                }
+            ]
+        })
+    }
 }
 
 // A bare string is the ascending shorthand; the object form adds a direction.
@@ -905,6 +935,8 @@ impl Typed {
             Typing::Number { .. } if !target.is_list() => {
                 let text = match &expr {
                     CExpr::LitInt { value } => value.to_string(),
+                    // Wider than `i64`, so the digits are carried as text.
+                    CExpr::LitBigInt { value } => value.clone(),
                     // `Number` is only ever produced by an integer literal.
                     other => return Err(anyhow!("unexpected number literal expression {other:?}")),
                 };
@@ -917,10 +949,9 @@ impl Typed {
                     // A literal that never met a wider sibling becomes an Int
                     // column, so it has to fit one.
                     Scalar::Int => {
-                        let value: i64 = text.parse().expect("came from an i64 literal");
-                        if i32::try_from(value).is_err() {
+                        if text.parse::<i32>().is_err() {
                             return Err(anyhow!(
-                                "{value} is too big for an Int column. Select a BigInt value (a \
+                                "{text} is too big for an Int column. Select a BigInt value (a \
                                  uint256 param, say) into the same column so the column becomes \
                                  BigInt."
                             ));
@@ -1073,6 +1104,16 @@ pub struct Materialization {
     fields: Vec<FieldWrite>,
 }
 
+impl Materialization {
+    /// A `_sum` adds to what the row already holds, so writing it means reading
+    /// it back first.
+    pub fn reads_back(&self) -> bool {
+        self.fields
+            .iter()
+            .any(|field| matches!(field, FieldWrite::Sum { .. }))
+    }
+}
+
 /// What code calls an entity, and who writes its rows. Both answers come from
 /// the same place, so a name can't disagree with the access it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1161,7 +1202,13 @@ fn ty_from_type_ident(ident: &TypeIdent) -> Ty {
         TypeIdent::Json => Ty::new(Scalar::Json),
         TypeIdent::Timestamp => Ty::new(Scalar::Int),
         TypeIdent::Address => Ty::new(Scalar::Address),
-        // String / ID and anything opaque are strings at runtime.
+        // `accessList` and `authorizationList` reach the runtime as objects the
+        // generated types leave opaque, so a column holding one has to be Json.
+        TypeIdent::Unknown
+        | TypeIdent::Tuple(_)
+        | TypeIdent::Record(_)
+        | TypeIdent::TypeApplication { .. } => Ty::new(Scalar::Json),
+        // String, ID and Bytes are strings at runtime.
         _ => Ty::new(Scalar::String),
     }
 }
@@ -1206,12 +1253,29 @@ fn descend_abi<'a>(abi: &'a AbiType, segment: &str) -> Option<&'a AbiType> {
         AbiType::Tuple(fields) => fields
             .iter()
             .enumerate()
-            .find(|(index, field)| {
-                field.name.as_deref() == Some(segment) || index.to_string() == segment
+            .find(|(index, field)| match &field.name {
+                // A decoded tuple is keyed by component name, so the position
+                // is only a way in when the ABI gave the component no name.
+                Some(name) => name == segment,
+                None => index.to_string() == segment,
             })
             .map(|(_, field)| &field.kind),
         _ => None,
     }
+}
+
+/// Whether an indexed param arrives as its keccak topic hash instead of its
+/// declared shape. Solidity hashes the dynamic and composite types; the value
+/// types come through whole.
+fn is_hashed_when_indexed(abi: &AbiType) -> bool {
+    matches!(
+        abi,
+        AbiType::String
+            | AbiType::Bytes
+            | AbiType::Array(_)
+            | AbiType::FixedArray(_, _)
+            | AbiType::Tuple(_)
+    )
 }
 
 /// What one event's resolved paths cost in fetched data.
@@ -1307,6 +1371,20 @@ impl Shape<'_> {
                                     .join(", ")
                             )
                         })?;
+                        if param.indexed && is_hashed_when_indexed(&param.kind) {
+                            if let Some(segment) = nested.first() {
+                                return Err(anyhow!(
+                                    "`{}.{}` is indexed, so the log carries only its keccak hash \
+                                     — there is no `{}` to read. Make the parameter non-indexed \
+                                     to select inside it.",
+                                    head,
+                                    first,
+                                    segment
+                                ));
+                            }
+                            // The hash itself, which is what the log holds.
+                            return Ok(Ty::new(Scalar::String));
+                        }
                         let mut abi = &param.kind;
                         for segment in nested {
                             abi = descend_abi(abi, segment).ok_or_else(|| {
@@ -1591,13 +1669,25 @@ fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Type
                     expr: CExpr::LitInt { value },
                     typing: Typing::Number { nullable: false },
                 })
-            } else if let Some(value) = number.as_f64() {
+            } else if let Some(value) = number.as_u64() {
+                // Past `i64::MAX` the digits only survive as text, but the
+                // literal is still untyped: it widens with its siblings, or
+                // fails to fit the Int column it would otherwise settle on.
+                Ok(Typed {
+                    expr: CExpr::LitBigInt {
+                        value: value.to_string(),
+                    },
+                    typing: Typing::Number { nullable: false },
+                })
+            } else if let Some(value) = number.as_f64().filter(|value| value.is_finite()) {
                 Ok(Typed {
                     expr: CExpr::LitFloat { value },
                     typing: Typing::Known(Ty::new(Scalar::Float)),
                 })
             } else {
-                Err(anyhow!("`{number:?}` is not a supported number"))
+                Err(anyhow!(
+                    "`{number}` is not a number a column can hold. Use a finite number."
+                ))
             }
         }
         Yaml::Null => Ok(Typed {
@@ -1640,18 +1730,37 @@ fn compile_operator(
             let numeric_type = numeric_operand(&inner.typing, "_negate", "Negating")?;
             // Folded so a negated literal stays a literal and can still widen to
             // whatever numeric type its siblings settle on.
-            let expr = match inner.expr {
-                CExpr::LitInt { value } => CExpr::LitInt { value: -value },
-                CExpr::LitFloat { value } => CExpr::LitFloat { value: -value },
-                expr => CExpr::Negate {
-                    numeric_type,
-                    expr: Box::new(expr),
+            let (expr, typing) = match inner.expr {
+                // Negating `i64::MIN` overflows, and the result is only
+                // representable as a BigInt — which is what it becomes.
+                CExpr::LitInt { value } => match value.checked_neg() {
+                    Some(value) => (CExpr::LitInt { value }, inner.typing),
+                    None => (
+                        CExpr::LitBigInt {
+                            value: (-(value as i128)).to_string(),
+                        },
+                        inner.typing,
+                    ),
                 },
+                CExpr::LitBigInt { value } => (
+                    CExpr::LitBigInt {
+                        value: match value.strip_prefix('-') {
+                            Some(rest) => rest.to_string(),
+                            None => format!("-{value}"),
+                        },
+                    },
+                    inner.typing,
+                ),
+                CExpr::LitFloat { value } => (CExpr::LitFloat { value: -value }, inner.typing),
+                expr => (
+                    CExpr::Negate {
+                        numeric_type,
+                        expr: Box::new(expr),
+                    },
+                    inner.typing,
+                ),
             };
-            Ok(Typed {
-                typing: inner.typing,
-                expr,
-            })
+            Ok(Typed { typing, expr })
         }
         "_concat" => {
             let (separator, values) = match inner {
@@ -2054,6 +2163,7 @@ fn evaluate(
             let target = shape
                 .resolve(path, demand)
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
+            comparable(&target, path)?;
             let compiled = compile_comparand(value, &target, &ctx, demand)
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
             let value = compiled
@@ -2092,6 +2202,7 @@ fn evaluate(
             let target = shape
                 .resolve(path, demand)
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
+            comparable(&target, path)?;
             let compiled = values
                 .iter()
                 .map(|value| {
@@ -2107,6 +2218,24 @@ fn evaluate(
             }))
         }
     }
+}
+
+/// The runtime compares with JavaScript's own operators, which answer identity
+/// for a list or a decoded object — two equal values from two logs would come
+/// out unequal. Only the types those operators actually order or equate can be
+/// filtered on.
+fn comparable(target: &Ty, path: &[String]) -> Result<()> {
+    let what = if target.is_list() {
+        "a list"
+    } else if target.scalar == Scalar::Json {
+        "an object"
+    } else {
+        return Ok(());
+    };
+    Err(anyhow!(
+        "`{}` holds {what}, which a filter can't compare. Filter on a single value inside it.",
+        path.join(".")
+    ))
 }
 
 /// A comparison knows the type it expects, so an address needs no `_literal`:
@@ -2172,11 +2301,42 @@ struct SchemaField {
     description: Option<String>,
 }
 
+/// Checked here rather than after the SDL round-trip, where the error would
+/// talk about a directive the user never wrote.
+fn selected_column(field: &str, option: &str, declared: &[Column]) -> Result<()> {
+    if declared.iter().any(|shape| shape.name == field) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{option} names `{field}`, which this table doesn't select. Available: {}",
+        declared
+            .iter()
+            .map(|shape| shape.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
 /// A GraphQL string. `partition_by`, `ttl` and `_description` are user text
-/// that reaches the schema through here, so quotes and backslashes are escaped
-/// instead of breaking the parse.
+/// that reaches the schema through here, so everything the grammar can't hold
+/// raw is escaped instead of breaking the parse. A line terminator ends a
+/// single-quoted string just as an unescaped quote does.
 fn sdl_string(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 impl TableSchema {
@@ -2779,19 +2939,15 @@ fn compile_table(
     {
         for index in options.indexes.iter().flatten() {
             for field in index.fields() {
-                if !declared.iter().any(|shape| shape.name == field.field) {
-                    return Err(anyhow!(
-                        "`storage.postgres.indexes` names `{}`, which this table doesn't select. \
-                         Available: {}",
-                        field.field,
-                        declared
-                            .iter()
-                            .map(|shape| shape.name.clone())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
+                selected_column(&field.field, "`storage.postgres.indexes`", &declared)?;
             }
+        }
+    }
+    if let Some(ClickHouseStorage::Options(options)) =
+        table.storage.as_ref().and_then(|s| s.clickhouse.as_ref())
+    {
+        for field in options.order_by.iter().flatten() {
+            selected_column(field, "`storage.clickhouse.order_by`", &declared)?;
         }
     }
 
@@ -3094,4 +3250,55 @@ pub fn validate_table_names(tables: &Tables) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Editors validate config.yaml against the generated JSON schema, so every
+    /// form `Deserialize` accepts has to appear in it. The bare name and the
+    /// bare list were accepted by the parser and rejected by the schema.
+    #[test]
+    fn index_json_schema_covers_every_accepted_form() {
+        let mut gen = SchemaGenerator::default();
+        assert_eq!(
+            serde_json::to_value(Index::json_schema(&mut gen)).unwrap(),
+            serde_json::json!({
+                "anyOf": [
+                    {
+                        "anyOf": [
+                            {"type": "string", "description": "The field to index, ascending."},
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "field": {"type": "string"},
+                                    "direction": {"type": "string", "enum": ["asc", "desc"]}
+                                },
+                                "required": ["field"],
+                                "additionalProperties": false
+                            }
+                        ]
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {"type": "string", "description": "The field to index, ascending."},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "field": {"type": "string"},
+                                        "direction": {"type": "string", "enum": ["asc", "desc"]}
+                                    },
+                                    "required": ["field"],
+                                    "additionalProperties": false
+                                }
+                            ]
+                        }
+                    }
+                ]
+            })
+        );
+    }
 }

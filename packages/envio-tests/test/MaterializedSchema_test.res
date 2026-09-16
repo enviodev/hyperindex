@@ -207,6 +207,211 @@ tables:
   )
 })
 
+// `accessList` has no RPC parser, so a table selecting it is rejected on a
+// contract that syncs over RPC. The check used to fire for any config where
+// some chain had an RPC source, even one this contract isn't on.
+// https://github.com/enviodev/hyperindex/pull/1540#discussion_r3758883731
+describe("Fields an RPC source can't serve", () => {
+  let config = (~contractChains) => `
+name: rpc-scoped-demand
+disable_default_cross_chain: true
+contracts:
+  - name: Sync
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+  - name: Rpc
+    events:
+      - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Sync
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+${contractChains}
+tables:
+  txs:
+    from: evm.events
+    where:
+      contractName: Sync
+    select:
+      id: params.to
+      access_list: transaction.accessList
+`
+
+  it("Allows a table on a contract no RPC chain carries", t => {
+    let parsed = parse(
+      config(
+        ~contractChains=`  - id: 137
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Rpc
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"`,
+      ),
+    )
+    t.expect(parsed->describeColumns("txs")).toEqual([("id", "String!"), ("access_list", "[Json]")])
+  })
+
+  it("Rejects it once an RPC chain carries that contract", t => {
+    let actual = try {
+      parse(
+        config(
+          ~contractChains=`  - id: 137
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Sync
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"`,
+        ),
+      )->ignore
+      "the parse to fail, but it succeeded"
+    } catch {
+    | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
+    }
+    t.expect(actual).toBe(
+      "Failed selecting fields for `Sync.Transfer`: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
+    )
+  })
+})
+
+// The generated definitions join the schema before anything is validated, so a
+// field in schema.graphql can point at a table. The user schema used to be
+// validated on its own first, before the tables existed to be named.
+// https://github.com/enviodev/hyperindex/pull/1540#discussion_r3758883845
+describe("Relations between schema.graphql and the tables", () => {
+  it("Links a schema entity to a table", t => {
+    let config = parse(
+      ~schema=`
+type Note {
+  id: ID!
+  account: accounts!
+}
+`,
+      `
+name: crossing-relations
+disable_default_cross_chain: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  accounts:
+    from: evm.events
+    select:
+      id: params.to
+`,
+    )
+    t.expect({
+      "Note": config->describeColumns("Note"),
+      "accounts": config->describeColumns("accounts"),
+    }).toEqual({
+      "Note": [("id", "String!"), ("account", "String -> accounts!")],
+      "accounts": [("id", "String!")],
+    })
+  })
+})
+
+// The generated types leave these two opaque, and the runtime fills them with
+// objects. A column typed from the opaque ident used to come out `[String]`,
+// which every non-empty list then failed to validate against.
+// https://github.com/enviodev/hyperindex/pull/1540#discussion_r3765396118
+describe("Transaction fields with no declared shape", () => {
+  it("Types them as Json rather than strings", t => {
+    let config = parse(`
+name: opaque-fields
+disable_default_cross_chain: true
+field_selection:
+  transaction_fields: [accessList, authorizationList, blobVersionedHashes]
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  txs:
+    from: evm.events
+    select:
+      id: params.to
+      access_list: transaction.accessList
+      authorizations: transaction.authorizationList
+      blobs: transaction.blobVersionedHashes
+`)
+    t.expect(config->describeColumns("txs")).toEqual([
+      ("id", "String!"),
+      ("access_list", "[Json]"),
+      ("authorizations", "[Json]"),
+      // Declared as `Option<Array<String>>`: the list can be missing, its
+      // elements cannot.
+      ("blobs", "[String]"),
+    ])
+  })
+})
+
+// An integer literal the config can write but `i64` cannot hold. Both of these
+// used to reach `as_f64`, which rounds — the second one through `_negate`,
+// where negating `i64::MIN` also aborted the process.
+// https://github.com/enviodev/hyperindex/pull/1540#discussion_r3758889417
+describe("Integer literals wider than i64", () => {
+  let config = parse(`
+name: wide-literals
+disable_default_cross_chain: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  wide:
+    with:
+      moves:
+        - from: evm.events
+          select:
+            account: params.to
+            unsigned: 18446744073709551615
+            negated:
+              _negate: -9223372036854775808
+        - from: evm.events
+          select:
+            account: params.to
+            unsigned: params.value
+            negated: params.value
+    from: moves
+    select:
+      id: account
+      unsigned: unsigned
+      negated: negated
+`)
+
+  it("Keeps them exact once a sibling widens them to BigInt", t =>
+    t.expect(config->describeColumns("wide")).toEqual([
+      ("id", "String!"),
+      ("unsigned", "BigInt!"),
+      ("negated", "BigInt!"),
+    ])
+  )
+})
+
 // A table's `storage` says where it lands, overriding the config-wide default
 // the same way an entity's `@storage` does.
 describe("Per-table storage", () => {

@@ -135,6 +135,27 @@ let rec compileFilter = (filter: filter): predicate =>
     }
   }
 
+// A decoded struct or array reaches a Json column with its `uint256` fields as
+// JavaScript bigints, which `JSON.stringify` throws on — so the row would kill
+// the process on its way to the database. Numbers are written the way a BigInt
+// column stores them: as their decimal text.
+let jsonSafe: unknown => unknown = %raw(`function jsonSafe(value) {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    return value.map(jsonSafe);
+  }
+  if (value !== null && typeof value === "object") {
+    const out = {};
+    for (const key in value) {
+      out[key] = jsonSafe(value[key]);
+    }
+    return out;
+  }
+  return value;
+}`)
+
 type write = {
   table: string,
   filter: option<predicate>,
@@ -144,12 +165,17 @@ type write = {
   sumFields: array<(string, numeric, eval)>,
 }
 
-let compileWrite = (plan: MaterializationPlan.t): write => {
+let compileWrite = (plan: MaterializationPlan.t, ~jsonFields: array<string>): write => {
   let setFields = []
   let sumFields = []
   plan.fields->Array.forEach(field =>
     switch field {
-    | Set({name, expr}) => setFields->Array.push((name, expr->compileExpr))
+    | Set({name, expr}) =>
+      let eval = expr->compileExpr
+      setFields->Array.push((
+        name,
+        jsonFields->Array.includes(name) ? event => eval(event)->jsonSafe : eval,
+      ))
     | Sum({name, numeric, expr}) => sumFields->Array.push((name, numeric, expr->compileExpr))
     }
   )
@@ -231,7 +257,19 @@ let buildHandlers = (config: Config.t): array<registration> => {
     // registrations, or the wildcard's rows would be limited to the configured
     // addresses (or vice versa).
     let key = `${plan.contractName}.${plan.eventName}.${plan.wildcard ? "wildcard" : "addresses"}`
-    let write = plan->compileWrite
+    let jsonFields = switch config.entitiesByTableName->Utils.Dict.dangerouslyGetNonOption(
+      plan.table,
+    ) {
+    | Some(entityConfig) =>
+      entityConfig.table.fields->Array.filterMap(field =>
+        switch field {
+        | Table.Field({fieldName, fieldType: Json}) => Some(fieldName)
+        | Table.Field(_) | Table.DerivedFrom(_) => None
+        }
+      )
+    | None => []
+    }
+    let write = plan->compileWrite(~jsonFields)
     switch plansByEvent->Utils.Dict.dangerouslyGetNonOption(key) {
     | Some(plans) => plans.writes->Array.push(write)
     | None =>

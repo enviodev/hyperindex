@@ -942,57 +942,62 @@
     "Index": {
       "anyOf": [
         {
-          "type": "object",
-          "properties": {
-            "field": {
+          "anyOf": [
+            {
+              "description": "The field to index, ascending.",
               "type": "string"
             },
-            "direction": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/IndexDirection"
+            {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
                 },
-                {
-                  "type": "null"
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
                 }
-              ]
+              },
+              "required": [
+                "field"
+              ],
+              "additionalProperties": false
             }
-          },
-          "required": [
-            "field"
           ]
         },
         {
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "field": {
+            "anyOf": [
+              {
+                "description": "The field to index, ascending.",
                 "type": "string"
               },
-              "direction": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/IndexDirection"
+              {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
                   },
-                  {
-                    "type": "null"
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "asc",
+                      "desc"
+                    ]
                   }
-                ]
+                },
+                "required": [
+                  "field"
+                ],
+                "additionalProperties": false
               }
-            },
-            "required": [
-              "field"
             ]
           }
         }
-      ]
-    },
-    "IndexDirection": {
-      "type": "string",
-      "enum": [
-        "asc",
-        "desc"
       ]
     },
     "ClickHouseStorage": {

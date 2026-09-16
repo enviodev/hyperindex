@@ -279,6 +279,20 @@ describe("tables: select expressions", () => {
       "in `select.total`: 5000000000 is too big for an Int column. Select a BigInt value (a uint256 param, say) into the same column so the column becomes BigInt.",
     ),
     (
+      "rejects an integer wider than i64 in an Int column",
+      `      id: params.to
+      total: 18446744073709551615`,
+      "in `select.total`: 18446744073709551615 is too big for an Int column. Select a BigInt value (a uint256 param, say) into the same column so the column becomes BigInt.",
+    ),
+    (
+      // serde_yaml reads these as floats, and a non-finite one has no JSON
+      // representation — it used to reach the plan as `null`.
+      "rejects a float that isn't finite",
+      `      id: params.to
+      total: .nan`,
+      "in `select.total`: `.nan` is not a number a column can hold. Use a finite number.",
+    ),
+    (
       "rejects a column that is only ever null",
       `      id: params.to
       total: null`,
@@ -307,6 +321,46 @@ ${select}`->table,
           prefix ++ message,
         ),
     )
+  })
+
+  // An indexed struct reaches the log as its keccak topic hash, so the
+  // component the path names is never there to read. The positional form is
+  // the same failure from the other side: the decoder keys a named tuple by
+  // its component names.
+  // https://github.com/enviodev/hyperindex/pull/1540#discussion_r3765396142
+  let structs = path => `
+name: struct-params
+disable_default_cross_chain: true
+contracts:
+  - name: Book
+    events:
+      - event: "Order((uint256 x, address y) indexed key, (uint256 a, address b) plain)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Book
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  totals:
+    from: evm.events
+    select:
+      id: ${path}
+`
+
+  [
+    (
+      "rejects a path into an indexed struct param",
+      "params.key.y",
+      "`params.key` is indexed, so the log carries only its keccak hash — there is no `y` to read. Make the parameter non-indexed to select inside it.",
+    ),
+    (
+      "rejects a positional path into a named struct param",
+      "params.plain.1",
+      "`params.plain` has no field `1`",
+    ),
+  ]->Array.forEach(((name, path, message)) => {
+    it(name, t => expectError(t, structs(path), prefix ++ "in `select.id`: " ++ message))
   })
 
   // A query column takes its type from every branch at once, so a single
@@ -543,6 +597,17 @@ describe("tables: where conditions", () => {
           _in: [srcAddress, null]`,
       "in `where.params.from`: String is never null, so comparing it to null can never be true. Compare it to a value, or filter a field that can be missing.",
     ),
+    // The runtime filters with JavaScript's own operators, so two decoded
+    // lists or objects with the same contents come out unequal.
+    // https://github.com/enviodev/hyperindex/pull/1540#discussion_r3765396084
+    (
+      "rejects comparing a list",
+      `      eventName: Transfer
+      transaction:
+        accessList:
+          _eq: transaction.accessList`,
+      "`transaction.accessList` holds a list, which a filter can't compare. Filter on a single value inside it.",
+    ),
     // An address literal is normalized to the casing the decoder writes, so
     // one that isn't an address at all has no casing to be given.
     (
@@ -618,6 +683,39 @@ describe("tables: names and storage", () => {
       "`storage.postgres.indexes` names `received`, which this table doesn't select. Available: id",
     ),
     (
+      // A composite index of nothing reached the SDL as `@index(fields: [])`,
+      // which the directive parser drops — the config was accepted and no
+      // index was created.
+      "rejects a composite index with no fields",
+      `  totals:
+    storage:
+      postgres:
+        indexes:
+          - []
+    from: evm.events
+    where:
+      eventName: Transfer
+    select:
+      id: params.to`,
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: tables.totals.storage.postgres.indexes[0]: an index needs at least one field at line 20 column 13",
+    ),
+    (
+      "rejects a ClickHouse `order_by` on a field the table doesn't select",
+      `  totals:
+    storage:
+      postgres: false
+      clickhouse:
+        order_by:
+          - received
+    from: evm.events
+    where:
+      eventName: Transfer
+    select:
+      id: params.to`,
+      prefix ++
+      "`storage.clickhouse.order_by` names `received`, which this table doesn't select. Available: id",
+    ),
+    (
       "rejects a backend config.yaml never enabled",
       `  totals:
     storage:
@@ -660,8 +758,7 @@ tables:
 ${tableStorage}    from: evm.events
     select:
       id: params.to
-      received:
-        _sum: params.value
+      received: params.value
 `
 
   let partialMessage = says =>
@@ -791,6 +888,47 @@ describe("tables: wildcard", () => {
 
 // Without per-chain rows every table shares one row per id across all chains,
 // which for a token indexer silently merges two chains' balances.
+// `_sum` reads the row back before writing it, and ClickHouse is write-only
+// from a handler's side — so the combination used to throw on the first
+// matching event rather than at parse time.
+// https://github.com/enviodev/hyperindex/pull/1540#discussion_r3758879698
+describe("tables: a reducer on a table postgres doesn't hold", () => {
+  it("rejects `_sum` on a ClickHouse-only table", t =>
+    expectError(
+      t,
+      `
+name: clickhouse-only-sum
+disable_default_cross_chain: true
+storage:
+  postgres:
+    default: true
+  clickhouse: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  totals:
+    storage:
+      postgres: false
+      clickhouse: true
+    from: evm.events
+    select:
+      id: params.to
+      total:
+        _sum: params.value
+`,
+      "`tables.totals` adds up a value with `_sum`, which reads the row back before writing it, but the table isn't stored in postgres — and ClickHouse can't be read from. Add `postgres: true` to the table's `storage`, or select the value with `_value` instead of adding it up.",
+    )
+  )
+})
+
 describe("tables: cross-chain default", () => {
   it("requires disable_default_cross_chain", t =>
     expectError(

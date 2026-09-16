@@ -27,6 +27,7 @@ contracts:
   - name: ERC20
     events:
       - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+      - event: "Order(address indexed who, (uint256 amount, address token) detail)"
 chains:
   - id: 1337
     rpc:
@@ -76,6 +77,16 @@ tables:
             - params.value
       kind:
         _literal: sent
+  # A struct param has no column type of its own, so it lands in a Json column
+  # carrying the decoded uint256 as a JavaScript bigint.
+  # https://github.com/enviodev/hyperindex/pull/1540#discussion_r3765396066
+  orders:
+    from: evm.events
+    where:
+      eventName: Order
+    select:
+      id: params.who
+      detail: params.detail
 `,
 )
 
@@ -108,6 +119,24 @@ let transferItem = (~block, ~from, ~to, ~value, ~handler: Internal.handler): Moc
   },
 }
 
+let orderItem = (~block, ~who, ~amount, ~handler: Internal.handler): MockSource.itemMock => {
+  blockNumber: block,
+  logIndex: 0,
+  handler: args => {
+    let event = {
+      "contractName": "ERC20",
+      "eventName": "Order",
+      "chainId": 1337,
+      "params": {"who": who, "detail": {"amount": amount, "token": bob}},
+      "block": {"number": block},
+    }->(Utils.magic: {..} => Internal.event)
+    handler({
+      event,
+      context: args.context,
+    })
+  },
+}
+
 let rowsOf = (indexer: IndexerRunner.t, config: Config.t, table) =>
   indexer.queryRaw(config.entitiesByTableName->Dict.getUnsafe(table))
 
@@ -119,7 +148,6 @@ describe("Materialized writes", () => {
       let config = scenario.config
       let handler = materializerHandler(config)
       let sourceMock = source(1337)
-      await Utils.delay(0)
       sourceMock.resolveGetHeightOrThrow(1000)
       await MockSource.waitItemsQuery(sourceMock)
 
@@ -243,7 +271,6 @@ describe("Materialized filters", () => {
       let config = filters.config
       let handler = materializerHandler(config)
       let sourceMock = source(1337)
-      await Utils.delay(0)
       sourceMock.resolveGetHeightOrThrow(1000)
       await MockSource.waitItemsQuery(sourceMock)
 
@@ -272,3 +299,48 @@ describe("Materialized filters", () => {
     },
   )
 })
+
+// A decoded struct holds JavaScript bigints, and the storage serializes a Json
+// column with `JSON.stringify`, which throws on one. The row has to reach the
+// database with its numbers intact.
+// https://github.com/enviodev/hyperindex/pull/1540#discussion_r3765396066
+type order = {
+  id: string,
+  detail: JSON.t,
+  @as("chainId") chainId: int,
+}
+
+describe("Materialized writes into a Json column", () => {
+  scenario->Scenario.it(
+    "stores a struct param holding a uint256",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
+    async (~t, ~indexer, ~source) => {
+      let config = scenario.config
+      let handler = switch Materialization.buildHandlers(config)->Array.find(({eventName}) =>
+        eventName === "Order"
+      ) {
+      | Some({handler}) => handler
+      | None => JsError.throwWithMessage("No materialization handler was built for ERC20.Order")
+      }
+      let sourceMock = source(1337)
+      sourceMock.resolveGetHeightOrThrow(1000)
+      await MockSource.waitItemsQuery(sourceMock)
+
+      sourceMock.resolveGetItemsOrThrow(
+        [orderItem(~block=1, ~who=alice, ~amount=5n, ~handler)],
+        ~latestFetchedBlockNumber=1,
+      )
+      await indexer.getBatchWritePromise()
+
+      let orders: array<order> = await rowsOf(indexer, config, "orders")
+      t.expect(orders).toEqual([
+        {
+          id: alice,
+          detail: {"amount": "5", "token": bob}->(Utils.magic: {..} => JSON.t),
+          chainId: 1337,
+        },
+      ])
+    },
+  )
+})
+

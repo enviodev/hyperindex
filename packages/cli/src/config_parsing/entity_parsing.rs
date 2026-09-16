@@ -39,6 +39,15 @@ enum TypeDef<'a> {
     Enum,
 }
 
+/// When a schema's cross-references are checked. A config declaring `tables`
+/// merges the generated definitions in before anything is validated, so a
+/// relation on either side can name a type the other one declares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Validation {
+    Now,
+    Deferred,
+}
+
 impl Schema {
     pub fn empty() -> Self {
         Schema {
@@ -61,6 +70,14 @@ impl Schema {
         enums: Vec<GraphQLEnum>,
         bytes_type: BytesType,
     ) -> anyhow::Result<Self> {
+        Self::assembled(entities, enums, bytes_type)?.validate()
+    }
+
+    fn assembled(
+        entities: Vec<Entity>,
+        enums: Vec<GraphQLEnum>,
+        bytes_type: BytesType,
+    ) -> anyhow::Result<Self> {
         let entities = unique_hashmap::from_vec_no_duplicates(
             entities.into_iter().map(|e| (e.name.clone(), e)).collect(),
         )
@@ -70,22 +87,35 @@ impl Schema {
         )
         .context("Found enums with duplicate names")?;
 
-        Self {
+        Ok(Self {
             entities,
             enums,
             bytes_type,
-        }
-        .validate()
+        })
     }
 
+    #[cfg(test)]
     fn from_document(
         document: Document<String>,
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
         source: &str,
     ) -> anyhow::Result<Self> {
+        Self::from_document_with(document, default_scope, bytes_type, source, Validation::Now)
+    }
+
+    fn from_document_with(
+        document: Document<String>,
+        default_scope: DefaultChainScope,
+        bytes_type: BytesType,
+        source: &str,
+        validation: Validation,
+    ) -> anyhow::Result<Self> {
         let (entities, enums) = Self::definitions_from_document(document, default_scope, source)?;
-        Self::new(entities, enums, bytes_type)
+        match validation {
+            Validation::Now => Self::new(entities, enums, bytes_type),
+            Validation::Deferred => Self::assembled(entities, enums, bytes_type),
+        }
     }
 
     /// Parse `sdl` and validate it together with this schema, so a generated
@@ -98,7 +128,7 @@ impl Schema {
         bytes_type: BytesType,
     ) -> anyhow::Result<Self> {
         if sdl.trim().is_empty() {
-            return Ok(self.clone());
+            return self.clone().validate();
         }
         let document = graphql_parser::parse_schema::<String>(sdl)
             .context("Failed to parse the generated schema as a document")?;
@@ -154,6 +184,7 @@ impl Schema {
         maybe_custom_path: &Option<String>,
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
+        validation: Validation,
     ) -> anyhow::Result<Self> {
         let configured_path = schema_source_label(maybe_custom_path);
 
@@ -178,7 +209,13 @@ impl Schema {
             .map(|relative| relative.display().to_string())
             .unwrap_or(configured_path);
 
-        Self::from_string_at(&schema_string, default_scope, bytes_type, &source)
+        Self::from_string_at(
+            &schema_string,
+            default_scope,
+            bytes_type,
+            &source,
+            validation,
+        )
     }
 
     pub fn from_string(
@@ -191,6 +228,7 @@ impl Schema {
             default_scope,
             bytes_type,
             DEFAULT_SCHEMA_PATH,
+            Validation::Now,
         )
     }
 
@@ -199,6 +237,7 @@ impl Schema {
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
         source: &str,
+        validation: Validation,
     ) -> anyhow::Result<Self> {
         // graphql_parser counts a comment line's `\r` and its `\n` as two line
         // breaks, so a CRLF schema with comments reports positions past where
@@ -211,10 +250,10 @@ impl Schema {
         let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
             .context("Failed to parse schema as document")?;
 
-        Self::from_document(schema_doc, default_scope, bytes_type, source)
+        Self::from_document_with(schema_doc, default_scope, bytes_type, source, validation)
     }
 
-    fn validate(self) -> anyhow::Result<Self> {
+    pub fn validate(self) -> anyhow::Result<Self> {
         self.check_schema_for_reserved_words()?
             .check_duplicate_naming_between_enums_and_entities()?
             .check_capitalized_entity_name_collisions()?

@@ -2,7 +2,8 @@ use super::{
     chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{
         schema_source_label, ClickHouseEntityStorage, DefaultChainScope, Entity, EntityColumn,
-        GqlScalar, GraphQLEnum, Schema, MAX_PG_IDENTIFIER_LENGTH, RESERVED_CHAIN_ID_FIELD_NAMES,
+        GqlScalar, GraphQLEnum, Schema, Validation, MAX_PG_IDENTIFIER_LENGTH,
+        RESERVED_CHAIN_ID_FIELD_NAMES,
     },
     env_interpolation::interpolate_config_variables,
     human_config::{
@@ -157,6 +158,7 @@ impl ConfigSource for FilesystemConfigSource<'_> {
             configured_path,
             default_scope,
             bytes_type,
+            validation_for(declares_tables),
         )
         .context("Parsing schema file for config")
     }
@@ -234,7 +236,7 @@ impl ConfigSource for MemoryConfigSource<'_> {
     fn load_schema(
         &self,
         configured_path: &Option<String>,
-        _declares_tables: bool,
+        declares_tables: bool,
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
     ) -> Result<Schema> {
@@ -247,6 +249,7 @@ impl ConfigSource for MemoryConfigSource<'_> {
                 default_scope,
                 bytes_type,
                 &schema_source_label(configured_path),
+                validation_for(declares_tables),
             ),
             _ => Ok(Schema::empty()),
         }
@@ -254,6 +257,16 @@ impl ConfigSource for MemoryConfigSource<'_> {
 
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
         self.read_virtual_file(path)
+    }
+}
+
+/// The generated tables join the schema after it is parsed, so a config that
+/// declares any waits for them before checking what its relations point at.
+fn validation_for(declares_tables: bool) -> Validation {
+    if declares_tables {
+        Validation::Deferred
+    } else {
+        Validation::Now
     }
 }
 
@@ -540,6 +553,31 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
          config.yaml:\n{listed}\n\nFixes:\n  - Remove the unsupported storage from @storage on \
          these entities, or enable it under `storage:` in config.yaml."
     ))
+}
+
+/// A `_sum` adds to the row's current value, so it reads the row back before
+/// writing it. ClickHouse is write-only from a handler's point of view, so a
+/// table that lands only there would throw on its first matching event.
+fn validate_reducers_can_read_back(config: &SystemConfig) -> anyhow::Result<()> {
+    for materialization in &config.materializations {
+        if !materialization.reads_back() {
+            continue;
+        }
+        let Some(entity) = config.schema.entities.get(&materialization.table) else {
+            continue;
+        };
+        if is_stored_in_postgres(entity, &config.storage) {
+            continue;
+        }
+        return Err(anyhow!(
+            "`tables.{}` adds up a value with `_sum`, which reads the row back before writing it, \
+             but the table isn't stored in postgres — and ClickHouse can't be read from. Add \
+             `postgres: true` to the table's `storage`, or select the value with `_value` instead \
+             of adding it up.",
+            materialization.table
+        ));
+    }
+    Ok(())
 }
 
 /// Whether an entity ends up in Postgres, mirroring how `EntityJson.storage` is
@@ -1609,12 +1647,22 @@ impl SystemConfig {
             // Fetch demand lands on the events the tables actually read, so an
             // event no table touches keeps whatever selection it already had.
             let global_selection = config.field_selection.clone();
-            let has_rpc_src = match &config.human_config {
-                HumanConfig::Evm(evm_config) => evm_config.chains.iter().any(evm_chain_has_rpc_src),
-                _ => false,
-            };
             for (event_ref, demand) in compiled.field_demand.0 {
                 let (contract_name, event_name) = (event_ref.contract, event_ref.event);
+                // Whether the fields this event can ask for are limited to what
+                // RPC can serve depends on the chains this contract is on, not
+                // on some other contract's chain having an RPC source.
+                let has_rpc_src = match &config.human_config {
+                    HumanConfig::Evm(evm_config) => evm_config.chains.iter().any(|chain| {
+                        evm_chain_has_rpc_src(chain)
+                            && chain.contracts.as_ref().is_some_and(|contracts| {
+                                contracts
+                                    .iter()
+                                    .any(|contract| contract.name == contract_name)
+                            })
+                    }),
+                    _ => false,
+                };
                 let contract = config.contracts.get_mut(&contract_name).ok_or_else(|| {
                     anyhow!("Contract `{contract_name}` went missing while planning fetches")
                 })?;
@@ -1651,6 +1699,7 @@ impl SystemConfig {
         validate_cross_chain_relationships(&config.schema, default_scope)?;
         validate_internal_relationships(&config.schema)?;
         validate_clickhouse_nullable_arrays(&config.storage, &config.schema)?;
+        validate_reducers_can_read_back(&config)?;
 
         Ok(config)
     }
