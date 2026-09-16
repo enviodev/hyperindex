@@ -492,6 +492,7 @@ let startServer = (
   ~getMetrics: unit => option<Metrics.t>,
   ~envioVersion: string,
   ~onSyncCache: unit => promise<unit>,
+  ~collectRuntime: unit => string,
   ~isDevelopmentMode: bool,
 ) => {
   open Express
@@ -563,7 +564,7 @@ let startServer = (
 
   app->get("/metrics/runtime", (_req, res) => {
     res->set("Content-Type", Metrics.contentType)
-    let _ = res->endWithData(Metrics.collectRuntime())
+    let _ = res->endWithData(collectRuntime())
   })
 
   let server = app->listen(Env.serverPort)
@@ -724,6 +725,7 @@ let start = async (
   if !isTest && !Worker.isEnabled {
     startServer(
       ~onSyncCache=() => dumpEffectCache()->Promise.thenResolve(ignore),
+      ~collectRuntime=Metrics.collectRuntime,
       ~isDevelopmentMode,
       ~envioVersion,
       ~getMetrics,
@@ -753,8 +755,12 @@ let start = async (
       | Init(_) => ()
       }
     )
+    Metrics.startRuntimeCollectors()
     let _intervalId = setInterval(
-      () => Worker.send(Snapshot({metrics: state->IndexerState.toMetrics})),
+      () =>
+        Worker.send(
+          Snapshot({metrics: state->IndexerState.toMetrics, runtime: Metrics.sampleRuntime()}),
+        ),
       Worker.snapshotIntervalMillis,
     )
   }

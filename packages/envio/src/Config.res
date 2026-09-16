@@ -630,28 +630,19 @@ let getChain = (config, ~chainId) =>
 // be split across processes.
 let isPerChain = (config: t) => !(config.userEntities->Array.some(entity => entity.crossChain))
 
-// What every line this process logs is attributed to: the chains it drives,
-// when sibling processes drive the rest. A process driving every chain has
-// nothing to tell apart from, and its chain-scoped lines already name theirs.
+// What every line this process logs is attributed to. A process driving one
+// of the schema's chains while siblings drive the rest names it, on the lines
+// that had no chain in hand. One driving several has no single owner to name,
+// and its chain-scoped lines already carry theirs.
 let logContext = (config: t): option<JSON.t> =>
-  if config.isolated {
-    let chainIds = config.chainMap->ChainMap.keys
+  switch (config.isolated, config.chainMap->ChainMap.keys) {
+  | (true, [chainId]) =>
     Some(
-      switch chainIds {
-      | [chainId] =>
-        JSON.Object(
-          Dict.fromArray([("chainId", chainId->S.reverseConvertToJsonOrThrow(ChainId.schema))]),
-        )
-      | chainIds =>
-        JSON.Object(
-          Dict.fromArray([
-            ("chainIds", chainIds->S.reverseConvertToJsonOrThrow(S.array(ChainId.schema))),
-          ]),
-        )
-      },
+      JSON.Object(
+        Dict.fromArray([("chainId", chainId->S.reverseConvertToJsonOrThrow(ChainId.schema))]),
+      ),
     )
-  } else {
-    None
+  | _ => None
   }
 
 // Narrows a config to the chains one `envio start --chain` process drives.

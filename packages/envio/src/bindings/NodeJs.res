@@ -74,6 +74,8 @@ module Process = {
   @val @scope("process")
   external onceMessage: (@as("message") _, 'msg => unit) => unit = "once"
   @val @scope("process") external onSignal: (string, unit => unit) => unit = "on"
+  // Present only in a process forked with an IPC channel.
+  @val @scope("process") external channel: Nullable.t<unknown> = "channel"
   @val @scope("process")
   external onDisconnect: (@as("disconnect") _, unit => unit) => unit = "on"
   @val @scope("process") external argv: array<string> = "argv"

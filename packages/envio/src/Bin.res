@@ -52,7 +52,7 @@ let applyEnv = (env: dict<JSON.t>) =>
 let run = async args => {
   try {
     if Worker.isEnabled {
-      Worker.exitWithSupervisor()
+      Worker.bindToSupervisor()
       Worker.listen()
       // A worker is handed the config its supervisor already parsed, narrowed to
       // the chains it drives, so the two can't disagree about what is indexed.

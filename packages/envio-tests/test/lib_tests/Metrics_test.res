@@ -794,3 +794,116 @@ describe("Metrics.merge", () => {
     })
   })
 })
+
+describe("Metrics.renderRuntime", () => {
+  let sample = (~heapUsed, ~gc): Metrics.runtimeSample => {
+    cpuUserSeconds: 1.5,
+    cpuSystemSeconds: 0.5,
+    processStartTimeSeconds: 1700000000.,
+    residentMemoryBytes: 300.,
+    heapTotalBytes: 200.,
+    heapUsedBytes: heapUsed,
+    externalMemoryBytes: 10.,
+    eventLoopUtilization: 0.25,
+    eventLoopLagMeanSeconds: 0.001,
+    eventLoopLagMinSeconds: 0.,
+    eventLoopLagMaxSeconds: 0.002,
+    eventLoopLagStddevSeconds: 0.0005,
+    eventLoopLagP50Seconds: 0.001,
+    eventLoopLagP90Seconds: 0.0015,
+    eventLoopLagP99Seconds: 0.002,
+    heapSpaces: [{space: "new", size: 100., used: 40., available: 60.}],
+    activeResources: [("TCPSocketWrap", 2.)],
+    gc,
+    nodeVersion: "v24.1.2",
+  }
+
+  // Comment lines are the same in every layout, so only the samples are compared.
+  let samples = rendered =>
+    rendered
+    ->String.split("\n")
+    ->Array.filter(line => line !== "" && !(line->String.startsWith("#")))
+
+  it("Renders one process without labels, and a run's processes under a worker label", t => {
+    t.expect((
+      Metrics.renderRuntime([("", sample(~heapUsed=150., ~gc=[]))])->samples,
+      Metrics.renderRuntime([
+        (`worker="supervisor"`, sample(~heapUsed=50., ~gc=[])),
+        (`worker="0"`, sample(~heapUsed=150., ~gc=[{kind: "minor", count: 3., seconds: 0.03}])),
+      ])->samples,
+    )).toStrictEqual((
+      [
+        "process_cpu_user_seconds_total 1.5",
+        "process_cpu_system_seconds_total 0.5",
+        "process_cpu_seconds_total 2",
+        "process_start_time_seconds 1700000000",
+        "process_resident_memory_bytes 300",
+        "nodejs_heap_size_total_bytes 200",
+        "nodejs_heap_size_used_bytes 150",
+        "nodejs_external_memory_bytes 10",
+        "nodejs_eventloop_utilization 0.25",
+        "nodejs_eventloop_lag_mean_seconds 0.001",
+        "nodejs_eventloop_lag_min_seconds 0",
+        "nodejs_eventloop_lag_max_seconds 0.002",
+        "nodejs_eventloop_lag_stddev_seconds 0.001",
+        "nodejs_eventloop_lag_p50_seconds 0.001",
+        "nodejs_eventloop_lag_p90_seconds 0.002",
+        "nodejs_eventloop_lag_p99_seconds 0.002",
+        `nodejs_heap_space_size_total_bytes{space="new"} 100`,
+        `nodejs_heap_space_size_used_bytes{space="new"} 40`,
+        `nodejs_heap_space_size_available_bytes{space="new"} 60`,
+        `nodejs_active_resources{type="TCPSocketWrap"} 2`,
+        "nodejs_active_resources_total 2",
+        `nodejs_version_info{version="v24.1.2",major="24",minor="1",patch="2"} 1`,
+      ],
+      [
+        `process_cpu_user_seconds_total{worker="supervisor"} 1.5`,
+        `process_cpu_user_seconds_total{worker="0"} 1.5`,
+        `process_cpu_system_seconds_total{worker="supervisor"} 0.5`,
+        `process_cpu_system_seconds_total{worker="0"} 0.5`,
+        `process_cpu_seconds_total{worker="supervisor"} 2`,
+        `process_cpu_seconds_total{worker="0"} 2`,
+        `process_start_time_seconds{worker="supervisor"} 1700000000`,
+        `process_start_time_seconds{worker="0"} 1700000000`,
+        `process_resident_memory_bytes{worker="supervisor"} 300`,
+        `process_resident_memory_bytes{worker="0"} 300`,
+        `nodejs_heap_size_total_bytes{worker="supervisor"} 200`,
+        `nodejs_heap_size_total_bytes{worker="0"} 200`,
+        `nodejs_heap_size_used_bytes{worker="supervisor"} 50`,
+        `nodejs_heap_size_used_bytes{worker="0"} 150`,
+        `nodejs_external_memory_bytes{worker="supervisor"} 10`,
+        `nodejs_external_memory_bytes{worker="0"} 10`,
+        `nodejs_eventloop_utilization{worker="supervisor"} 0.25`,
+        `nodejs_eventloop_utilization{worker="0"} 0.25`,
+        `nodejs_eventloop_lag_mean_seconds{worker="supervisor"} 0.001`,
+        `nodejs_eventloop_lag_mean_seconds{worker="0"} 0.001`,
+        `nodejs_eventloop_lag_min_seconds{worker="supervisor"} 0`,
+        `nodejs_eventloop_lag_min_seconds{worker="0"} 0`,
+        `nodejs_eventloop_lag_max_seconds{worker="supervisor"} 0.002`,
+        `nodejs_eventloop_lag_max_seconds{worker="0"} 0.002`,
+        `nodejs_eventloop_lag_stddev_seconds{worker="supervisor"} 0.001`,
+        `nodejs_eventloop_lag_stddev_seconds{worker="0"} 0.001`,
+        `nodejs_eventloop_lag_p50_seconds{worker="supervisor"} 0.001`,
+        `nodejs_eventloop_lag_p50_seconds{worker="0"} 0.001`,
+        `nodejs_eventloop_lag_p90_seconds{worker="supervisor"} 0.002`,
+        `nodejs_eventloop_lag_p90_seconds{worker="0"} 0.002`,
+        `nodejs_eventloop_lag_p99_seconds{worker="supervisor"} 0.002`,
+        `nodejs_eventloop_lag_p99_seconds{worker="0"} 0.002`,
+        `nodejs_heap_space_size_total_bytes{worker="supervisor",space="new"} 100`,
+        `nodejs_heap_space_size_total_bytes{worker="0",space="new"} 100`,
+        `nodejs_heap_space_size_used_bytes{worker="supervisor",space="new"} 40`,
+        `nodejs_heap_space_size_used_bytes{worker="0",space="new"} 40`,
+        `nodejs_heap_space_size_available_bytes{worker="supervisor",space="new"} 60`,
+        `nodejs_heap_space_size_available_bytes{worker="0",space="new"} 60`,
+        `nodejs_active_resources{worker="supervisor",type="TCPSocketWrap"} 2`,
+        `nodejs_active_resources{worker="0",type="TCPSocketWrap"} 2`,
+        `nodejs_active_resources_total{worker="supervisor"} 2`,
+        `nodejs_active_resources_total{worker="0"} 2`,
+        `nodejs_gc_duration_seconds_sum{worker="0",kind="minor"} 0.03`,
+        `nodejs_gc_duration_seconds_count{worker="0",kind="minor"} 3`,
+        `nodejs_version_info{worker="supervisor",version="v24.1.2",major="24",minor="1",patch="2"} 1`,
+        `nodejs_version_info{worker="0",version="v24.1.2",major="24",minor="1",patch="2"} 1`,
+      ],
+    ))
+  })
+})

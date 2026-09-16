@@ -166,10 +166,11 @@ describe("Supervisor worker plumbing", () => {
 })
 
 describe("Config.logContext", () => {
-  it("Attributes an isolated run's logs to its chains, and any other run's to none", t => {
+  it("Names the one chain an isolated process drives, and nothing otherwise", t => {
     t.expect([
       // This process drives one of the schema's chains while siblings drive the rest.
       config(~schema=perChain, ~isolatedChains=[JSON.Number(137.)])->Config.logContext,
+      // Several chains have no single owner to name.
       config(
         ~schema=perChain,
         ~isolatedChains=[JSON.Number(1.), JSON.Number(137.)],
@@ -180,13 +181,21 @@ describe("Config.logContext", () => {
       config(~schema=crossChain)->Config.logContext,
     ]).toStrictEqual([
       Some(JSON.Object(Dict.fromArray([("chainId", JSON.Number(137.))]))),
-      Some(
-        JSON.Object(
-          Dict.fromArray([("chainIds", JSON.Array([JSON.Number(1.), JSON.Number(137.)]))]),
-        ),
-      ),
+      None,
       None,
       None,
     ])
+  })
+})
+
+describe("Worker.detect", () => {
+  it("Counts as a worker only when forked with the argument and a channel", t => {
+    let forked = ["node", "envio", Worker.forkArg]
+    t.expect([
+      Worker.detect(~argv=forked, ~hasChannel=true),
+      // A user typing the argument, or a process manager forking with a channel.
+      Worker.detect(~argv=forked, ~hasChannel=false),
+      Worker.detect(~argv=["node", "envio", "start"], ~hasChannel=true),
+    ]).toStrictEqual([true, false, false])
   })
 })

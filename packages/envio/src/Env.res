@@ -77,9 +77,6 @@ let hypersyncClientEnableQueryCaching =
 let hypersyncLogLevel =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_LOG_LEVEL", HyperSyncClient.logLevelSchema, ~fallback=#info)
 
-// Set by a supervisor on the processes it forks, and by nothing else.
-let isWorker = envSafe->EnvSafe.get("ENVIO_WORKER", S.option(S.bool))->Option.getOr(false)
-
 let logStrategy =
   envSafe->EnvSafe.get(
     "LOG_STRATEGY",

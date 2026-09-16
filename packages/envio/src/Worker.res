@@ -2,9 +2,18 @@
 // a subset of the chains. It has no server and no TUI of its own — it reports
 // through the IPC channel, and the supervisor is the one operational surface.
 
-// Set by the supervisor on the processes it forks. An indexer a user started
-// themselves never has it, and takes every path it takes today.
-let isEnabled = Env.isWorker
+// The argument a supervisor forks its workers with. It means nothing to the
+// CLI, and it counts only together with the fork's own channel, so a user who
+// types it starts nothing: an indexer they start themselves takes every path
+// it takes today.
+let forkArg = "--supervised-worker"
+
+let detect = (~argv: array<string>, ~hasChannel) => hasChannel && argv->Array.includes(forkArg)
+
+let isEnabled = detect(
+  ~argv=NodeJs.Process.argv,
+  ~hasChannel=NodeJs.Process.channel->Nullable.toOption->Option.isSome,
+)
 
 @tag("kind")
 type parentMessage =
@@ -16,7 +25,7 @@ type parentMessage =
 
 @tag("kind")
 type workerMessage =
-  | @as("snapshot") Snapshot({metrics: Metrics.t})
+  | @as("snapshot") Snapshot({metrics: Metrics.t, runtime: Metrics.runtimeSample})
   // Sent once the worker's effect cache is on disk, so the supervisor's
   // console can answer for a dump that has actually happened.
   | @as("cacheSynced") CacheSynced({})
@@ -25,14 +34,19 @@ type workerMessage =
 // display moves at the same rate an unsplit run's does.
 let snapshotIntervalMillis = 500
 
-// A worker with no supervisor has nobody reading its metrics and nobody to stop
-// it: the supervisor could have died before it ever got to tear the group down.
-// Losing the channel is that signal.
-let exitWithSupervisor = () =>
+// The supervisor is the one that stops a worker, and the one whose absence
+// ends it. A terminal's interrupt reaches the whole group at once, so the
+// worker leaves it to the supervisor, which stops every worker in turn; without
+// that, a worker gone on its own would read as a failure to the supervisor
+// still deciding what the interrupt meant. A supervisor that dies can't tear
+// the group down, so losing the channel is what ends the worker then.
+let bindToSupervisor = () => {
+  NodeJs.Process.onSignal("SIGINT", () => ())
   NodeJs.Process.onDisconnect(() => {
     Logging.error("The indexer supervisor is gone. Stopping this chain's process.")
     NodeJs.process->NodeJs.exitWithCode(Failure)
   })
+}
 
 let send = (message: workerMessage) =>
   if isEnabled {

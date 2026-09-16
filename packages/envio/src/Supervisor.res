@@ -55,6 +55,7 @@ type running = {
   worker: worker,
   child: NodeJs.ChildProcess.child,
   mutable snapshot: option<Metrics.t>,
+  mutable runtime: option<Metrics.runtimeSample>,
   // A spawn failure can raise `error` and `exit` both, and a worker counted
   // twice would end the run while its siblings are still indexing.
   mutable settled: bool,
@@ -104,7 +105,6 @@ let fork = (
   ~entryPath=NodeJs.Process.argv->Array.getUnsafe(1),
 ) => {
   let env = NodeJs.Process.process.env->Dict.copy
-  env->Dict.set("ENVIO_WORKER", "true")
   // The worker's slice of the budget. Read when the worker's own Env module
   // loads, which is why it rides in the spawn environment rather than a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
@@ -112,7 +112,7 @@ let fork = (
 
   let child = NodeJs.ChildProcess.fork(
     entryPath,
-    [],
+    [Worker.forkArg],
     {
       env,
       serialization: "advanced",
@@ -126,10 +126,20 @@ let fork = (
   ->NodeJs.ChildProcess.send(Worker.Init({config: configJson->configForWorker(~worker)}))
   ->ignore
 
-  let running = {worker, child, snapshot: None, settled: false, onCacheSynced: None}
+  let running = {
+    worker,
+    child,
+    snapshot: None,
+    runtime: None,
+    settled: false,
+    onCacheSynced: None,
+  }
   child->NodeJs.ChildProcess.onMessage(message =>
     switch message {
-    | Worker.Snapshot({metrics}) => running.snapshot = Some(metrics)
+    | Worker.Snapshot({metrics, runtime}) => {
+        running.snapshot = Some(metrics)
+        running.runtime = Some(runtime)
+      }
     | Worker.CacheSynced(_) =>
       switch running.onCacheSynced {
       | Some(resolve) =>
@@ -283,6 +293,16 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
       | snapshots => Some(snapshots->merge)
       },
     ~envioVersion=Utils.EnvioPackage.value.version,
+    // Every process of the run, the supervisor included, under a `worker`
+    // label: the memory and the event loop that matter are the workers' own.
+    ~collectRuntime=() =>
+      Metrics.renderRuntime(
+        [(`worker="supervisor"`, Metrics.sampleRuntime())]->Array.concat(
+          group.running->Array.filterMapWithIndex((r, workerIndex) =>
+            r.runtime->Option.map(runtime => (`worker="${workerIndex->Int.toString}"`, runtime))
+          ),
+        ),
+      ),
     ~isDevelopmentMode=config.isDev,
     ~onSyncCache=() => group->syncCache,
   )
@@ -292,8 +312,9 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
     let _rerender = Tui.start(~config, ~getMetrics=() => reported()->merge)
   }
 
-  // Only the supervisor is signalled when the run is asked to stop, so it
-  // passes that on. A terminal's own interrupt already reaches the whole group.
+  // Whichever signal asks the run to stop, the supervisor is the one that
+  // stops the workers: an interrupt from the terminal reaches them too, but
+  // they leave it to the supervisor.
   NodeJs.Process.onSignal("SIGTERM", () => group->stop)
   NodeJs.Process.onSignal("SIGINT", () => group->stop)
 
@@ -306,6 +327,10 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
   | Finished if !shouldUseTui =>
     Logging.info("Exiting with success")
     NodeJs.process->NodeJs.exitWithCode(Success)
-  | Finished => ()
+  | Finished =>
+    // With nothing left to stop, the stop signals end the display instead.
+    // Registering a handler above took over from Node's default exit.
+    NodeJs.Process.onSignal("SIGTERM", () => NodeJs.process->NodeJs.exitWithCode(Success))
+    NodeJs.Process.onSignal("SIGINT", () => NodeJs.process->NodeJs.exitWithCode(Success))
   }
 }
