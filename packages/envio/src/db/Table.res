@@ -354,6 +354,8 @@ let getFieldByApiName = (table, apiFieldName) =>
 // and caches operations on the schema instance, so building S.array(fieldSchema)
 // per query would recompile the serializer on every call.
 type queryField = {
+  fieldType: fieldType,
+  isArray: bool,
   fieldSchema: S.t<unknown>,
   // Serializes the values array of an "in" filter
   arrayFieldSchema: S.t<unknown>,
@@ -374,6 +376,8 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
       dict->Dict.set(
         field->getApiFieldName,
         {
+          fieldType: field.fieldType,
+          isArray: field.isArray,
           fieldSchema: field.fieldSchema,
           arrayFieldSchema: switch field.fieldType {
           | Bytea => Utils.Schema.bytesArray->S.toUnknown

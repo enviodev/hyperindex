@@ -631,6 +631,7 @@ FROM "public"."envio_chains";`
                     Utils.magic: array<array<Uint8Array.t>> => unknown
                   )}}->parse(~table=bytesTable),
           ~table=bytesTable,
+          ~pgSchema="test_schema",
           ~params,
         )
 
@@ -653,6 +654,7 @@ FROM "public"."envio_chains";`
         let condition = PgStorage.makeFilterCondition(
           ~filter=dict{"id": dict{"_in": ["1", "2"]->(Utils.magic: array<string> => unknown)}}->parse(~table),
           ~table,
+          ~pgSchema="test_schema",
           ~params,
         )
 
@@ -670,6 +672,7 @@ FROM "public"."envio_chains";`
         let condition = PgStorage.makeFilterCondition(
           ~filter=dict{"score": dict{"_gt": 5->(Utils.magic: int => unknown)}}->parse(~table),
           ~table,
+          ~pgSchema="test_schema",
           ~params,
         )
 
@@ -687,6 +690,7 @@ FROM "public"."envio_chains";`
         let condition = PgStorage.makeFilterCondition(
           ~filter=dict{"score": dict{"_gte": 5->(Utils.magic: int => unknown)}, "id": dict{"_lte": "9"->(Utils.magic: string => unknown)}}->parse(~table),
           ~table,
+          ~pgSchema="test_schema",
           ~params,
         )
 
@@ -704,6 +708,7 @@ FROM "public"."envio_chains";`
         let condition = PgStorage.makeFilterCondition(
           ~filter=dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}, "score": dict{"_gt": 5->(Utils.magic: int => unknown), "_lt": 10->(Utils.magic: int => unknown)}}->parse(~table),
           ~table,
+          ~pgSchema="test_schema",
           ~params,
         )
 
@@ -718,6 +723,39 @@ FROM "public"."envio_chains";`
       },
     )
 
+    // A bound array of strings is text[], and Postgres has no equality between
+    // text and an enum, so the parameter is cast the way the insert casts it.
+    Async.it(
+      "Casts an _in over an enum column to the enum's array type",
+      async t => {
+        let kind = Table.makeEnumConfig(~name="Kind", ~variants=["ZETA", "ALPHA"])
+        let enumTable = Table.mkTable(
+          "kinds",
+          ~fields=[
+            Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+            Table.mkField(
+              "kind",
+              Enum({config: kind->Table.fromGenericEnumConfig}),
+              ~fieldSchema=kind.schema,
+            ),
+          ],
+        )
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=dict{
+            "kind": dict{"_in": ["ALPHA"]->(Utils.magic: array<string> => unknown)},
+          }->parse(~table=enumTable),
+          ~table=enumTable,
+          ~pgSchema="test_schema",
+          ~params,
+        )
+
+        t.expect((condition, params)).toEqual((
+          `"kind" = ANY($1::TEXT[]::"test_schema".Kind[])`,
+          [["ALPHA"]->(Utils.magic: array<string> => unknown)],
+        ))
+      },
+    )
   })
 
   describe("makeInsertUnnestSetQuery", () => {

@@ -409,7 +409,12 @@ let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
 // Field names are spliced as quoted identifiers only after the queryFields
 // lookup proves they exist on the table (and they originate from
 // codegen-validated schemas), so the interpolation can't be abused.
-let makeFilterCondition = (~filter: EntityFilter.t, ~table: Table.table, ~params: array<unknown>) => {
+let makeFilterCondition = (
+  ~filter: EntityFilter.t,
+  ~table: Table.table,
+  ~pgSchema,
+  ~params: array<unknown>,
+) => {
   // Filters reference fields by API name, while the SQL references columns
   // by their possibly renamed db names.
   let getQueryFieldOrThrow = fieldName =>
@@ -471,12 +476,13 @@ let makeFilterCondition = (~filter: EntityFilter.t, ~table: Table.table, ~params
       | "_eq" if queryField.isChainId =>
         `${column} = ${fieldValue->ChainId.normalizeOrThrow->ChainId.toString}`
       | "_in" =>
-        `${column} = ANY(${serializeParamOrThrow(
-            ~queryField,
-            ~fieldName,
-            ~fieldValue,
-            ~isArray=true,
-          )})`
+        let param = serializeParamOrThrow(~queryField, ~fieldName, ~fieldValue, ~isArray=true)
+        switch queryField.fieldType {
+        // A bound array of strings is text[], which has no equality with an
+        // enum. The insert casts the same way.
+        | Enum({config}) => `${column} = ANY(${param}::TEXT[]::"${pgSchema}".${config.name}[])`
+        | _ => `${column} = ANY(${param})`
+        }
       | _ =>
         let sqlOperator = switch operator {
         | "_eq" => "="
@@ -2003,7 +2009,7 @@ let make = (
 
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
     let params = []
-    let condition = makeFilterCondition(~filter, ~table, ~params)
+    let condition = makeFilterCondition(~filter, ~table, ~pgSchema, ~params)
     switch await sql->Postgres.preparedUnsafe(
       makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
       params->Obj.magic,
