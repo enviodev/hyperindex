@@ -12,6 +12,7 @@ const HIDDEN_TIERS: &[&str] = &["INTERNAL", "HIDDEN", "EXPERIMENTAL"];
 // active_chains listing omits. Reporting them as drift would be a false
 // alarm.
 const UNLISTED_BUT_SERVED: &[u64] = &[
+    HypersyncChain::Arc as u64,
     HypersyncChain::Xdc as u64,
     HypersyncChain::XdcTestnet as u64,
 ];
