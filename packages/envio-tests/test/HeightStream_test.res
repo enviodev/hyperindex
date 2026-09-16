@@ -528,7 +528,7 @@ describe("HyperSyncSSE", () => {
   Async.it("Reports the HTTP status as the failure reason", async t => {
     let (server, url) = await listenHttp(
       (_request, response) => {
-        response->MockRpcServer.writeHead(401, Dict.fromArray([("Content-Type", "text/plain")]))
+        response->MockRpcServer.writeHead(401, dict{"Content-Type": "text/plain"})
         response->MockRpcServer.end_("unauthorized")
       },
     )
@@ -561,7 +561,7 @@ describe("HyperSyncSSE", () => {
       (_request, response) => {
         response->MockRpcServer.writeHead(
           200,
-          Dict.fromArray([("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache")]),
+          dict{"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
         )
         response->MockRpcServer.write("event: height\ndata: 123\n\n")
         // Ending the response drops the stream without an HTTP error, which is

@@ -331,18 +331,31 @@ let encodeIdsToJson = (table, ids: array<EntityId.t>): JSON.t =>
 
 // TODO: Test whether it should be passed via args and match the column type
 
-let getFieldByApiName = (table, apiFieldName) =>
-  table.fields->Array.find(field =>
-    switch field {
-    | Field(f) => f->getApiFieldName
-    | DerivedFrom({fieldName}) => fieldName
-    } === apiFieldName
+// Resolved once per table, because a getWhere looks up every field it filters
+// on and scanning the array made that cost grow with the entity's width.
+let fieldsByApiName: table => dict<fieldOrDerived> = Utils.WeakMap.memoize(table => {
+  let byApiName = Dict.make()
+  table.fields->Array.forEach(field =>
+    byApiName->Dict.set(
+      switch field {
+      | Field(f) => f->getApiFieldName
+      | DerivedFrom({fieldName}) => fieldName
+      },
+      field,
+    )
   )
+  byApiName
+})
+
+let getFieldByApiName = (table, apiFieldName) =>
+  table->fieldsByApiName->Utils.Dict.dangerouslyGetNonOption(apiFieldName)
 
 // Both schema instances are created once per field: rescript-schema compiles
 // and caches operations on the schema instance, so building S.array(fieldSchema)
 // per query would recompile the serializer on every call.
 type queryField = {
+  fieldType: fieldType,
+  isArray: bool,
   fieldSchema: S.t<unknown>,
   // Serializes the values array of an "in" filter
   arrayFieldSchema: S.t<unknown>,
@@ -363,6 +376,8 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
       dict->Dict.set(
         field->getApiFieldName,
         {
+          fieldType: field.fieldType,
+          isArray: field.isArray,
           fieldSchema: field.fieldSchema,
           arrayFieldSchema: switch field.fieldType {
           | Bytea => Utils.Schema.bytesArray->S.toUnknown

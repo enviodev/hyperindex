@@ -157,7 +157,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
       ~name="custom RPC headers",
       ~calls=[
         heightCall(
-          ~headers=Dict.fromArray([("authorization", "Bearer test-token")]),
+          ~headers=dict{"authorization": "Bearer test-token"},
           ~reply=RpcResult(JSON.String("0x1b4")),
         ),
       ],
@@ -166,7 +166,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
           ~url=mock.url,
           ~checksumAddresses=false,
           ~syncConfig,
-          ~headers=Dict.fromArray([("Authorization", "Bearer test-token")]),
+          ~headers=dict{"Authorization": "Bearer test-token"},
           ~addressStore=TestAddresses.makeStore(),
         )
         let height = await client.getHeight()
@@ -181,7 +181,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
         ~url="http://127.0.0.1:1",
         ~checksumAddresses=false,
         ~syncConfig,
-        ~headers=Dict.fromArray([("Authorization", "Bearer bad\nvalue")]),
+        ~headers=dict{"Authorization": "Bearer bad\nvalue"},
         ~addressStore=TestAddresses.makeStore(),
       )
       None
