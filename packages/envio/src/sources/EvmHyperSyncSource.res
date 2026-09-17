@@ -84,6 +84,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
+    ~includeAllBlocks,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -104,6 +105,7 @@ let make = (
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressSet,
       ~clientFilteredContracts=selection.clientFilteredContracts,
+      ~includeAllBlocks,
     ) catch {
     | HyperSync.GetLogs.Error(WrongInstance) =>
       throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))

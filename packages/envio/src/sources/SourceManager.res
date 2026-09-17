@@ -948,6 +948,7 @@ let executeQuery = async (
         ~fromBlock=query.fromBlock,
         ~toBlock,
         ~addressSet=query.addresses,
+        ~includeAllBlocks=isRealtime,
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),

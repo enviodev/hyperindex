@@ -59,6 +59,7 @@ let getItems = async (
 ) => {
   let source = SimulateSource.make(~items, ~endBlock=1000, ~chainId, ~addressStore=store)
   let response = await source.getItemsOrThrow(
+    ~includeAllBlocks=false,
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressSet,

@@ -136,6 +136,7 @@ let makeSource = (~url) =>
 
 let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
   source.getItemsOrThrow(
+    ~includeAllBlocks=false,
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressSet=addressStore()->AddressStore.makeSet(

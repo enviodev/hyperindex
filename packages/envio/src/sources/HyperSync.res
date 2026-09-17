@@ -137,6 +137,7 @@ module GetLogs = {
     ~registrationIndexes,
     ~addressSet,
     ~clientFilteredContracts,
+    ~includeAllBlocks,
   ): logsQueryPage => {
     let query: HyperSyncClient.EventItems.query = {
       fromBlock,
@@ -144,6 +145,9 @@ module GetLogs = {
       ?maxNumLogs,
       registrationIndexes,
       clientFilteredContracts,
+      // Absent rather than false, so a range that wants only the blocks its
+      // logs came from sends the query it always sent.
+      includeAllBlocks: ?(includeAllBlocks ? Some(true) : None),
     }
 
     let (res, transactionStore, blockStore) = switch await client.getEventItems(

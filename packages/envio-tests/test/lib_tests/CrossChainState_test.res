@@ -988,7 +988,7 @@ describe("ChainState density from the ready buffer", () => {
           progressBlockTime: None,
           sourceBlockNumber: 1_000_000,
           totalEventsProcessed: 5.,
-          fetchState: (cs->ChainState.toChainBeforeBatch).fetchState,
+          fetchState: (cs->ChainState.toChainBeforeBatch(~isRealtime=false)).fetchState,
           isProgressAtHeadWhenBatchCreated: false,
         }: Batch.chainAfterBatch
       ),

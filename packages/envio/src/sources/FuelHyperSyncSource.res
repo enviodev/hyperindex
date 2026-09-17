@@ -35,6 +35,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
     ~fromBlock,
     ~toBlock,
     ~addressSet,
+    ~includeAllBlocks as _,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
