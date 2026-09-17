@@ -8,7 +8,7 @@ open Vitest
 let sql = PgStorage.makeClient()
 let pgSchema = TestPgSchema.make()
 
-let columns = 140
+let columnCount = 140
 let rows = 501
 
 type column = {name: string, schema: S.t<unknown>, field: Table.fieldOrDerived}
@@ -19,9 +19,9 @@ let text = (name, ~isPrimaryKey=false) => {
   field: Table.mkField(name, Table.String, ~fieldSchema=S.string, ~isPrimaryKey),
 }
 
-let columnList =
+let columns =
   [text("id", ~isPrimaryKey=true)]
-  ->Array.concat(Array.fromInitializer(~length=columns - 2, index => text(`f${index->Int.toString}`)))
+  ->Array.concat(Array.fromInitializer(~length=columnCount - 2, index => text(`f${index->Int.toString}`)))
   // An array column is what sends the table down the per-cell path, the one
   // whose parameters are counted.
   ->Array.concat([
@@ -37,17 +37,17 @@ let columnList =
     },
   ])
 
-let table = Table.mkTable("wide", ~fields=columnList->Array.map(column => column.field))
+let table = Table.mkTable("wide", ~fields=columns->Array.map(column => column.field))
 
 let itemSchema = S.object(s => {
   let dict = Dict.make()
-  columnList->Array.forEach(column => dict->Dict.set(column.name, s.field(column.name, column.schema)))
+  columns->Array.forEach(column => dict->Dict.set(column.name, s.field(column.name, column.schema)))
   dict
 })->S.toUnknown
 
 let items = Array.fromInitializer(~length=rows, row => {
   let item = Dict.make()
-  columnList->Array.forEach(column =>
+  columns->Array.forEach(column =>
     item->Dict.set(
       column.name,
       switch column.name {

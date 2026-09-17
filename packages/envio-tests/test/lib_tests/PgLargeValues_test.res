@@ -86,14 +86,16 @@ let roundTrip = async (~table: Table.table, ~withTags) => {
     ->S.parseOrThrow(table->Table.pgRowsSchema)
     ->(Utils.magic: array<unknown> => array<row>)
 
+  let byte = (row: row, at) => row.blob->TypedArray.get(at)->Option.getOr(-1)
+
   switch rows {
   | [row] => (
       row.text === bigText,
       row.blob->TypedArray.length,
-      row.blob->TypedArray.get(699_999),
+      (row->byte(0), row->byte(349_999), row->byte(699_999)),
       row.tags,
     )
-  | _ => (false, -1, None, None)
+  | _ => (false, -1, (-1, -1, -1), None)
   }
 }
 
@@ -102,7 +104,8 @@ describe("A value of a size the fuzzer never reaches", () => {
     t.expect(await roundTrip(~table=staged, ~withTags=false)).toEqual((
       true,
       700_000,
-      Some(bigBytes->TypedArray.get(699_999)->Option.getOr(0)),
+      // `index * 7 + 11`, taken at both ends and in the middle.
+      (11, 84, 164),
       None,
     ))
   })
@@ -111,7 +114,7 @@ describe("A value of a size the fuzzer never reaches", () => {
     t.expect(await roundTrip(~table=perCell, ~withTags=true)).toEqual((
       true,
       700_000,
-      Some(bigBytes->TypedArray.get(699_999)->Option.getOr(0)),
+      (11, 84, 164),
       Some([bigText]),
     ))
   })
