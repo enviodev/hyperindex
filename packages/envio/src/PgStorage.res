@@ -770,7 +770,13 @@ let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table,
     | `invalid byte sequence for encoding "UTF8": 0x00`
     | `unsupported Unicode escape sequence` =>
       specificError.contents = Some(PgEncodingError({table: table}))
-    | _ => specificError.contents = Some(exn->Utils.prettifyExn)
+    // An encoding failure is the one the batch can be written again without,
+    // so it outranks whatever else the transaction refused afterwards.
+    | _ =>
+      switch specificError.contents {
+      | Some(PgEncodingError(_)) => ()
+      | _ => specificError.contents = Some(exn->Utils.prettifyExn)
+      }
     | exception _ => ()
     }
   | S.Raised(_) => throw(normalizedExn) // But rethrow this one, since it's not a PG error
@@ -1272,6 +1278,20 @@ let rec writeBatch = async (
       | _ => false
       }
 
+      // The ids the history statements bind come from the change log rather
+      // than from the entities, so stripping the entities alone leaves them
+      // carrying the NUL the write is being retried without — and the retry
+      // fails on exactly what it was meant to fix.
+      let escapeIds = (ids: array<EntityId.t>) =>
+        shouldRemoveInvalidUtf8
+          ? ids->Array.map(id =>
+              id
+              ->(Utils.magic: EntityId.t => unknown)
+              ->removeInvalidUtf8DeepInPlace
+              ->(Utils.magic: unknown => EntityId.t)
+            )
+          : ids
+
       async sql => {
         try {
           let promises = []
@@ -1285,7 +1305,7 @@ let rec writeBatch = async (
                 ~table=entityConfig.table,
                 ~entityIndex=entityConfig.index,
                 ~chainId=scopeChainId,
-                ~ids=backfillHistoryIds->Utils.Set.toArray,
+                ~ids=backfillHistoryIds->Utils.Set.toArray->escapeIds,
               )
             }
 
@@ -1295,7 +1315,7 @@ let rec writeBatch = async (
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema, ~chainId=scopeChainId),
                   ~params=[
                     entityConfig.table
-                    ->Table.encodeIdsToJson(batchDeleteEntityIds)
+                    ->Table.encodeIdsToJson(batchDeleteEntityIds->escapeIds)
                     ->(Utils.magic: JSON.t => unknown),
                     batchDeleteCheckpointIds
                     ->Utils.BigInt.arrayToStringArray
@@ -1352,23 +1372,31 @@ let rec writeBatch = async (
             promises->Array.push(
               sql->deleteByIdsOrThrow(
                 ~pgSchema,
-                ~ids=idsToDelete,
+                ~ids=idsToDelete->escapeIds,
                 ~table=entityConfig.table,
                 ~chainId=scopeChainId,
               ),
             )
           }
 
-          let _ = await promises->Promise.all
+          // Every rejection is classified, not just whichever lands first. The
+          // statements run together on one connection, so the one that says
+          // what is wrong with the batch — a NUL the encoding refuses, which
+          // the retry can strip — arrives beside the aborted-transaction
+          // cascade its own failure set off, as readily after it as before.
+          //
+          // Nothing is rethrown here: the transaction fails on its own, and a
+          // rejection let out of this loop would be unhandled.
+          let _ =
+            await promises
+            ->Array.map(promise =>
+              promise->Promise.catch(exn => {
+                classifyWriteError(~specificError, ~table=entityConfig.table, ~exn)
+                Promise.resolve()
+              })
+            )
+            ->Promise.all
         } catch {
-        // There's a race condition that the transaction
-        // might throw PG error, earlier, than the handled error
-        // from setOrThrow will be passed through.
-        // This is needed for the utf8 encoding fix.
-        //
-        // Important: Don't rethrow here, since it'll result in an unhandled
-        // rejected promise error. That's fine not to throw, since
-        // the transaction will fail anyways.
         | exn => classifyWriteError(~specificError, ~table=entityConfig.table, ~exn)
         }
       }
@@ -1546,6 +1574,17 @@ let rec writeBatch = async (
     let escapeTables = switch escapeTables {
     | Some(set) => set
     | None => Utils.Set.make()
+    }
+    // Already written again without the bytes Postgres refused, and refused
+    // again: a third attempt would strip the same nothing. Fail with what the
+    // server said rather than spin on it.
+    if escapeTables->Utils.Set.has(table) {
+      throw(
+        Persistence.StorageError({
+          message: `Failed to write table "${table.tableName}": Postgres refused the batch for an encoding it cannot store, and writing it again without those bytes did not help`,
+          reason: PgEncodingError({table: table}),
+        }),
+      )
     }
     let _ = escapeTables->Utils.Set.add(table)
     // Retry with specifying which tables to escape.
