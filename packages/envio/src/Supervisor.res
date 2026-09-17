@@ -233,7 +233,7 @@ let awaitExit = async (group): outcome => {
 // Runs the group: creates the schema for every chain, forks a worker per plan
 // entry, and serves the run's metrics, console and display from what they
 // report. Returns once every worker has exited; throws if any of them failed.
-let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
+let run = async (~workers: array<worker>, ~reset) => {
   let config = Config.load()
 
   // Every chain's state has to exist before a worker resumes it: an isolated
@@ -242,7 +242,7 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
   // same initialization an unsplit run does, and the supervisor hands the
   // connections it used to its workers.
   let persistence = PgStorage.makePersistenceFromConfig(~config)
-  await persistence->Main.initForRun(
+  await persistence->Persistence.initForRun(
     ~config,
     ~reset,
     ~isDevelopmentMode=config.isDev,
@@ -262,6 +262,8 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
       ->Int.toString} processes, from a budget of ${Env.Db.maxConnections->Int.toString} database connections.`,
   )
 
+  // The config as the CLI handed it over, narrowed per worker on the way out.
+  let configJson = Config.getPublicConfigJson()
   let group = {
     running: workers->Array.mapWithIndex((worker, workerIndex) =>
       worker->fork(~workerIndex, ~configJson)
@@ -278,7 +280,7 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
       ~elapsedSeconds=startTimeRef->Performance.secondsSince,
     )
 
-  Main.startServer(
+  Server.startServer(
     // Nothing to report until a worker has: the run reads as initializing
     // rather than as an indexer with no chains.
     ~getMetrics=() =>
@@ -299,7 +301,7 @@ let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
     ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config)),
   )
 
-  let shouldUseTui = Main.shouldUseTui()
+  let shouldUseTui = Tui.shouldUse()
   if shouldUseTui {
     let _rerender = Tui.start(~config, ~getMetrics=() => reported()->merge)
   }

@@ -1282,6 +1282,10 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
   cloned
 }
 
+// What the storage layer records as the config this schema was built from,
+// and checks a resuming run against.
+let envioInfo = () => getPublicConfigJson()->stripSensitiveData
+
 // Postgres jsonb doesn't preserve key order, so canonicalize with sorted
 // keys before string-comparing.
 let rec canonicalJson = (json: JSON.t): JSON.t =>

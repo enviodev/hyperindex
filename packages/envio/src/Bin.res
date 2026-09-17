@@ -69,10 +69,7 @@ let run = async args => {
           Config.prime(config)
           processChdir(cwd)
           applyEnv(env)
-          switch Supervisor.planForRun(~config=Config.load()) {
-          | Some(workers) => await Supervisor.run(~workers, ~configJson=config, ~reset)
-          | None => await Main.start(~reset)
-          }
+          await Main.start(~reset)
         | Migrate({reset, config}) =>
           Config.prime(config)
           await Main.migrate(~reset)
