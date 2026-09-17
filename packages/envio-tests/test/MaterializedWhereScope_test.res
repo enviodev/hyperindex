@@ -117,3 +117,62 @@ describe("the scope of a table's where", () => {
     }).toEqual({"transfer": ["gasPrice"], "approval": []})
   )
 })
+
+// `select` reads `params.to`, so a `where` on the same field reads the same
+// way. Nesting is still what groups several conditions under one prefix.
+let plansOf = configYaml =>
+  InternalTestIndexer.fromUserApi(
+    ~configYaml=`
+name: dotted-where
+disable_default_cross_chain: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  totals:
+    from: evm.events
+${configYaml}
+    select:
+      id: params.to
+`,
+  ).config.materializations->(Utils.magic: array<MaterializationPlan.t> => JSON.t)
+
+describe("a dotted where key", () => {
+  it("compiles to what the nested form compiles to", t =>
+    t.expect(
+      plansOf(`    where:
+      eventName: Transfer
+      params.from: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+      transaction.gasPrice:
+        _lte: 100`),
+    ).toEqual(
+      plansOf(`    where:
+      eventName: Transfer
+      params:
+        from: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+      transaction:
+        gasPrice:
+          _lte: 100`),
+    )
+  )
+
+  it("says what is wrong when only the first segment resolves", t => {
+    let actual = try {
+      plansOf(`    where:
+      params.owenr: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"`)->ignore
+      "the parse to fail, but it succeeded"
+    } catch {
+    | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
+    }
+    t.expect(actual).toBe(
+      "Failed compiling `tables`: in `tables.totals`: in `where`: in `where.params.owenr`: `ERC20.Transfer` has no parameter `owenr`. Available: from, to, value",
+    )
+  })
+})

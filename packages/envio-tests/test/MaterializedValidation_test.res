@@ -637,6 +637,49 @@ ${condition}
   })
 })
 
+// A column name reaches the generated SDL, where anything that isn't an
+// identifier fails the parse at a line and column of text the user never
+// wrote. Table names are checked up front; these were not.
+describe("tables: column names", () => {
+  [
+    (
+      "rejects a dot in a column name",
+      `  totals:
+    from: evm.events
+    select:
+      id: params.to
+      a.b: params.value`,
+      "`a.b` is not a valid column name. Use letters, digits and underscores, starting with a letter or an underscore.",
+    ),
+    (
+      "rejects a dash in a column name",
+      `  totals:
+    from: evm.events
+    select:
+      id: params.to
+      a-b: params.value`,
+      "`a-b` is not a valid column name. Use letters, digits and underscores, starting with a letter or an underscore.",
+    ),
+    (
+      // Never reaches the SDL unless the outer `select` reads it, so it used
+      // to fail only where it was read, as a path one level too deep.
+      "rejects a dot in a `with` query column name",
+      `  totals:
+    with:
+      moves:
+        - from: evm.events
+          select:
+            a.b: params.to
+    from: moves
+    select:
+      id: a.b`,
+      "in `with.moves`: `a.b` is not a valid column name. Use letters, digits and underscores, starting with a letter or an underscore.",
+    ),
+  ]->Array.forEach(((name, body, message)) => {
+    it(name, t => expectError(t, body->table, prefix ++ message))
+  })
+})
+
 describe("tables: names and storage", () => {
   [
     (

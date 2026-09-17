@@ -1453,6 +1453,29 @@ impl Shape<'_> {
 // ── Expression parsing ─────────────────────────────────────────────────────
 //
 
+/// The spelling every name in `tables` has to keep: a column reaches Postgres,
+/// GraphQL and the generated code under it, and a dot would make it a path.
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Checked before the `select` is compiled, so the error names the column
+/// rather than arriving from the generated SDL's parser with a position in
+/// text the user never wrote.
+fn validate_column_names<'a>(names: impl Iterator<Item = &'a String>) -> Result<()> {
+    for name in names {
+        if !is_identifier(name) {
+            return Err(anyhow!(
+                "`{name}` is not a valid column name. Use letters, digits and underscores, \
+                 starting with a letter or an underscore."
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn split_path(text: &str) -> Result<Vec<String>> {
     if text.is_empty() {
         return Err(anyhow!(
@@ -1955,7 +1978,10 @@ fn parse_filter(value: &Yaml) -> Result<Condition> {
                      `where`"
                 ))
             }
-            _ => parts.push(parse_field_filter(std::slice::from_ref(&key), item)?),
+            // `select` reads `params.to`, so a `where` on the same field
+            // reads the same way. Nesting still groups several conditions
+            // under one prefix.
+            _ => parts.push(parse_field_filter(&split_path(&key)?, item)?),
         }
     }
     if parts.is_empty() {
@@ -2001,7 +2027,7 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
             ));
         } else {
             let mut nested = path.to_vec();
-            nested.push(key);
+            nested.extend(split_path(&key)?);
             parts.push(parse_field_filter(&nested, item)?);
         }
     }
@@ -2653,6 +2679,7 @@ fn compile_table(
     } = table_ctx;
     let select = &table.select;
     let from = table.from.as_str();
+    validate_column_names(select.keys())?;
     if !select.contains_key("id") {
         return Err(anyhow!("every table must select an `id`"));
     }
@@ -3015,6 +3042,8 @@ fn compile_relation(
     let mut pending: Vec<(usize, IndexMap<String, Typed>)> = Vec::new();
 
     for (query_index, query) in queries.0.iter().enumerate() {
+        validate_column_names(query.select.keys())
+            .with_context(|| format!("in `with.{relation_name}`"))?;
         if query.from != EVM_EVENTS_SOURCE {
             return Err(anyhow!(
                 "`with.{relation_name}[{query_index}].from` must be `{EVM_EVENTS_SOURCE}`, but \
@@ -3243,10 +3272,7 @@ fn resolve_event_branches(
 pub fn validate_table_names(tables: &Tables) -> Result<()> {
     let mut by_code_name: BTreeMap<String, &String> = BTreeMap::new();
     for name in tables.0.keys() {
-        let mut chars = name.chars();
-        let valid = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
-            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
-        if !valid {
+        if !is_identifier(name) {
             return Err(anyhow!(
                 "Table name `{name}` is not a valid identifier. Use letters, digits and \
                  underscores, starting with a letter or an underscore."
