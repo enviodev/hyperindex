@@ -177,12 +177,26 @@ pub(crate) fn fill_effective_gas_price(tx: &mut Transaction, transaction: &Json)
         .map_err(ResponseError::Malformed)
 }
 
-/// Report the selected transaction fields the responses did not supply, judged
-/// by the same nullability rules the HyperSync path uses.
+/// A selected field the responses did not supply, by the HyperSync path's
+/// nullability rules with one exception: a JSON-RPC transaction carries no
+/// `accessList` unless it is typed, and no `authorizationList` unless it is
+/// EIP-7702, so their absence is the transaction's shape rather than a gap in
+/// the response. HyperSync serves both as columns and keeps flagging them.
+fn rpc_transaction_field_missing(
+    tx: &Transaction,
+    field: TransactionField,
+) -> Option<&'static str> {
+    match field {
+        TransactionField::AccessList | TransactionField::AuthorizationList => None,
+        _ => transaction_field_missing(tx, field),
+    }
+}
+
+/// Report the selected transaction fields the responses did not supply.
 pub(crate) fn check_transaction(tx: &Transaction, selection: &[TransactionField]) -> Result<()> {
     let missing: Vec<&str> = selection
         .iter()
-        .filter_map(|&requested| transaction_field_missing(tx, requested))
+        .filter_map(|&requested| rpc_transaction_field_missing(tx, requested))
         .collect();
     if missing.is_empty() {
         Ok(())

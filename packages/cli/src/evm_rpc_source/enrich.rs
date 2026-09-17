@@ -155,29 +155,27 @@ impl EnrichError {
     }
 }
 
-/// Collect a fan-out's results, keeping the most severe failure rather than
-/// whichever settled first. A page's reads are grouped by field selection in a
-/// `HashMap`, so "first" is not stable between runs — and the choice decides
-/// whether the source is disabled or merely backs off.
+/// The most severe of several failures, rather than whichever settled first. A
+/// page's reads are grouped by field selection in a `HashMap`, so "first" is
+/// not stable between runs — and the choice decides whether the source is
+/// disabled or merely backs off.
+fn worst_of(errors: impl IntoIterator<Item = EnrichError>) -> Option<EnrichError> {
+    errors.into_iter().max_by_key(EnrichError::severity)
+}
+
+/// Collect a fan-out's results, or its worst failure.
 fn collect_worst<T>(
     results: impl IntoIterator<Item = Result<T, EnrichError>>,
 ) -> Result<Vec<T>, EnrichError> {
     let mut values = Vec::new();
-    let mut worst: Option<EnrichError> = None;
+    let mut errors = Vec::new();
     for result in results {
         match result {
             Ok(value) => values.push(value),
-            Err(error) => {
-                if worst
-                    .as_ref()
-                    .is_none_or(|held| error.severity() > held.severity())
-                {
-                    worst = Some(error);
-                }
-            }
+            Err(error) => errors.push(error),
         }
     }
-    match worst {
+    match worst_of(errors) {
         Some(error) => Err(error),
         None => Ok(values),
     }
@@ -358,8 +356,9 @@ pub(crate) async fn page(
     // Both sides are awaited, then judged together. Taking whichever failed
     // first would make the verdict a race: an unservable selection on the block
     // side would be reported on the attempts where the transactions happened to
-    // answer and swallowed as a backoff on the ones where they did not. The
-    // page as a whole is still bounded by the caller's query timeout.
+    // answer and swallowed as a backoff on the ones where they did not. Waiting
+    // on the slower side costs at most one more request timeout, since every
+    // read is bounded by its own.
     let (blocks, transactions) = futures_util::future::join(
         fetch_blocks(client, fetches, stats, &block_plan),
         fetch_transactions(client, fetches, stats, &tx_plan),
@@ -368,11 +367,10 @@ pub(crate) async fn page(
     let (blocks, transactions) = match (blocks, transactions) {
         (Ok(blocks), Ok(transactions)) => (blocks, transactions),
         (blocks, transactions) => {
-            return Err([blocks.err(), transactions.err()]
-                .into_iter()
-                .flatten()
-                .max_by_key(EnrichError::severity)
-                .expect("one of the two sides failed"))
+            return Err(
+                worst_of([blocks.err(), transactions.err()].into_iter().flatten())
+                    .expect("one of the two sides failed"),
+            )
         }
     };
 
@@ -979,6 +977,101 @@ mod tests {
                     receipt: true
                 },
             )
+        );
+    }
+}
+
+#[cfg(test)]
+mod shared_read_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    /// A JSON-RPC server that answers every request with a block after
+    /// `delay`, counting what it served.
+    async fn rpc_server(delay: Duration, served: Arc<AtomicUsize>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let served = served.clone();
+                tokio::spawn(async move {
+                    let mut buffered = Vec::new();
+                    while let Ok(Some(_)) =
+                        crate::mock_http::read_request(&mut stream, &mut buffered).await
+                    {
+                        tokio::time::sleep(delay).await;
+                        served.fetch_add(1, Ordering::SeqCst);
+                        crate::mock_http::write_response(
+                            &mut stream,
+                            200,
+                            &[("Content-Type", "application/json")],
+                            br#"{"jsonrpc":"2.0","id":1,"result":{"number":"0x1"}}"#,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                });
+            }
+        });
+        url
+    }
+
+    fn client(url: String) -> Arc<JsonRpcClient> {
+        Arc::new(JsonRpcClient::new(url, 5_000, 10, None).unwrap())
+    }
+
+    #[tokio::test]
+    async fn callers_sharing_one_read_record_its_timing_once_between_them() {
+        // Two partitions at the head read the same block at once. One request
+        // goes out, and the source's metrics must count exactly one.
+        let served = Arc::new(AtomicUsize::new(0));
+        let client = client(rpc_server(Duration::from_millis(30), served.clone()).await);
+        let fetches = Fetches::default();
+        let (a, b) = (Stats::default(), Stats::default());
+        let (first, second) = tokio::join!(
+            require(&client, &fetches, &a, FetchKey::Block(1)),
+            require(&client, &fetches, &b, FetchKey::Block(1)),
+        );
+        assert_eq!(
+            (
+                first.is_ok(),
+                second.is_ok(),
+                served.load(Ordering::SeqCst),
+                a.take().len() + b.take().len(),
+            ),
+            (true, true, 1, 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_creator_leaves_the_timing_to_the_waiter_still_running() {
+        // The call that issued the request gives up; another that joined it
+        // drives it to the end. The timing must land in the collector that is
+        // still going to be drained, not the one already abandoned.
+        let served = Arc::new(AtomicUsize::new(0));
+        let client = client(rpc_server(Duration::from_millis(100), served.clone()).await);
+        let fetches = Fetches::default();
+        let (creator, waiter) = (Stats::default(), Stats::default());
+        let cancelled = tokio::time::timeout(
+            Duration::from_millis(30),
+            require(&client, &fetches, &creator, FetchKey::Block(1)),
+        );
+        let joined = async {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            require(&client, &fetches, &waiter, FetchKey::Block(1)).await
+        };
+        let (cancelled, joined) = tokio::join!(cancelled, joined);
+        assert_eq!(
+            (
+                cancelled.is_err(),
+                joined.is_ok(),
+                served.load(Ordering::SeqCst),
+                creator.take().len(),
+                waiter.take().len(),
+            ),
+            (true, true, 1, 0, 1)
         );
     }
 }

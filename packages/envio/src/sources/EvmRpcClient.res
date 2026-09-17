@@ -23,8 +23,14 @@ type nextPageParams = {
 // it; see `NextPageResult` in `evm_rpc_source/mod.rs` for which fields each
 // `kind` populates. A thrown error from `getNextPage` is a genuine bug, not an
 // outcome to recover from.
+type pageOutcome =
+  | @as("Ok") Ok
+  | @as("SuggestedToBlock") SuggestedToBlock
+  | @as("Backoff") Backoff
+  | @as("FieldSelection") FieldSelection
+
 type nextPageResult = {
-  kind: string,
+  kind: pageOutcome,
   requestStats: array<Source.requestStat>,
   toBlock: int,
   items: array<EvmEventItem.t>,

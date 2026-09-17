@@ -71,11 +71,7 @@ let make = (
 
     let startFetchingBatchTimeRef = Performance.now()
 
-    // Every way out of the fetch carries its timing: the request was made,
-    // and is billed, whether or not it answered.
-    let fetchStats = () => [
-      {Source.method: "getLogs", seconds: startFetchingBatchTimeRef->Performance.secondsSince},
-    ]
+    let fetchStats = () => RequestStat.single(~method="getLogs", ~sentAt=startFetchingBatchTimeRef)
 
     //fetch batch
     let pageUnsafe = try await HyperSync.GetLogs.query(
@@ -95,7 +91,6 @@ let make = (
         Source.GetItemsError(
           Source.FailedGettingItems({
             requestStats: fetchStats(),
-            exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: ImpossibleForTheQuery({
               message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(

@@ -1647,7 +1647,6 @@ describe("SourceManager.executeQuery", () => {
       Source.GetItemsError(
         FailedGettingItems({
           requestStats: [],
-          exn: %raw(`null`),
           attemptedToBlock: 100,
           retry: WithSuggestedToBlock({toBlock: 10}),
         }),
@@ -1724,7 +1723,6 @@ describe("SourceManager.executeQuery", () => {
         let withBackoff = Source.GetItemsError(
           FailedGettingItems({
             requestStats: [],
-            exn: %raw(`null`),
             attemptedToBlock: 100,
             retry: WithBackoff({
               message: "Failed getting data for the block range.",
@@ -1769,7 +1767,6 @@ describe("SourceManager.executeQuery", () => {
         Source.GetItemsError(
           FailedGettingItems({
             requestStats: [],
-            exn: %raw(`null`),
             attemptedToBlock: 100,
             retry: WithSuggestedToBlock({toBlock: 100}),
           }),
@@ -1819,7 +1816,6 @@ describe("SourceManager.executeQuery", () => {
       let withBackoff = Source.GetItemsError(
         FailedGettingItems({
           requestStats: [],
-          exn: %raw(`null`),
           attemptedToBlock: 100,
           retry: WithBackoff({message: "test", backoffMillis: 0}),
         }),
@@ -1992,7 +1988,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
               Source.GetItemsError(
                 FailedGettingItems({
                   requestStats: [],
-                  exn: %raw(`null`),
                   attemptedToBlock: 100,
                   retry: WithBackoff({message: "test fail", backoffMillis: 0}),
                 }),
@@ -2212,7 +2207,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
               Source.GetItemsError(
                 FailedGettingItems({
                   requestStats: [],
-                  exn: %raw(`null`),
                   attemptedToBlock: 100,
                   retry: WithBackoff({message: "test fail", backoffMillis: 0}),
                 }),
@@ -2276,7 +2270,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
               Source.GetItemsError(
                 FailedGettingItems({
                   requestStats: [],
-                  exn: %raw(`null`),
                   attemptedToBlock: 101,
                   retry: WithBackoff({message: "test fail", backoffMillis: 0}),
                 }),
@@ -2454,7 +2447,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           Source.GetItemsError(
             FailedGettingItems({
               requestStats: [],
-              exn: %raw(`null`),
               attemptedToBlock: 100,
               retry: ImpossibleForTheQuery({message: "test impossible"}),
             }),
@@ -2493,7 +2485,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           Source.GetItemsError(
             FailedGettingItems({
               requestStats: [],
-              exn: %raw(`null`),
               attemptedToBlock: 100,
               retry: ImpossibleForTheQuery({message: "test impossible on mock1"}),
             }),
@@ -2539,7 +2530,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           Source.GetItemsError(
             FailedGettingItems({
               requestStats: [],
-              exn: %raw(`null`),
               attemptedToBlock: 100,
               retry: ImpossibleForTheQuery({message: "impossible on mock0"}),
             }),
@@ -2556,7 +2546,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           Source.GetItemsError(
             FailedGettingItems({
               requestStats: [],
-              exn: %raw(`null`),
               attemptedToBlock: 100,
               retry: ImpossibleForTheQuery({message: "impossible on mock1"}),
             }),
@@ -2605,7 +2594,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       let withBackoff = Source.GetItemsError(
         FailedGettingItems({
           requestStats: [],
-          exn: %raw(`null`),
           attemptedToBlock: 100,
           retry: WithBackoff({message: "test backoff", backoffMillis: 0}),
         }),
@@ -2702,7 +2690,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         Source.GetItemsError(
           FailedGettingItems({
             requestStats: [],
-            exn: %raw(`null`),
             attemptedToBlock: 100,
             retry: ImpossibleForTheQuery({message: "impossible on mock0"}),
           }),
@@ -2719,7 +2706,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         Source.GetItemsError(
           FailedGettingItems({
             requestStats: [],
-            exn: %raw(`null`),
             attemptedToBlock: 100,
             retry: ImpossibleForTheQuery({message: "impossible on mock1"}),
           }),
@@ -2756,7 +2742,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     let withBackoff = Source.GetItemsError(
       FailedGettingItems({
         requestStats: [],
-        exn: %raw(`null`),
         attemptedToBlock: 100,
         retry: WithBackoff({message: "test backoff", backoffMillis: 0}),
       }),
@@ -2809,7 +2794,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           Source.GetItemsError(
             FailedGettingItems({
               requestStats: [],
-              exn: %raw(`null`),
               attemptedToBlock: 100,
               retry: ImpossibleForTheQuery({message: "impossible on mock0"}),
             }),
@@ -2843,7 +2827,6 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           Source.GetItemsError(
             FailedGettingItems({
               requestStats: [],
-              exn: %raw(`null`),
               attemptedToBlock: 100,
               retry: ImpossibleForTheQuery({message: "impossible on activeSource"}),
             }),

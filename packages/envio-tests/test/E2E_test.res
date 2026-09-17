@@ -710,7 +710,6 @@ describe("E2E tests", () => {
           Source.GetItemsError(
             FailedGettingItems({
               requestStats: [],
-              exn: %raw(`null`),
               attemptedToBlock: 100,
               retry: ImpossibleForTheQuery({
                 message: "Source returned invalid data with missing required fields: log.address",

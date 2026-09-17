@@ -707,7 +707,7 @@ let retryFailedPage = async (
   ~attemptedToBlock: int,
   ~backoffMillis: int,
   ~minBackoffMillis=0,
-  ~err: exn,
+  ~err: option<exn>,
   ~excludedSources=?,
 ) => {
   let (log, msg) = stalledLog(
@@ -721,7 +721,7 @@ let retryFailedPage = async (
     "toBlock": attemptedToBlock,
     "backOffMilliseconds": backoffMillis,
     "retry": retry,
-    "err": err->Utils.prettifyExn,
+    "err": err->Option.map(Utils.prettifyExn),
   })
   await sourceManager->backoffBeforeRetry(
     sourceState,
@@ -1061,10 +1061,10 @@ let executeQuery = async (
           if notAlreadyDisabled {
             switch error {
             | UnsupportedSelection({message}) => logger->Logging.childError(message)
-            | FailedGettingFieldSelection({exn, message, blockNumber}) =>
+            | FailedGettingFieldSelection({?exn, message, blockNumber}) =>
               logger->Logging.childError({
                 "msg": message,
-                "err": exn->Utils.prettifyExn,
+                "err": exn->Option.map(Utils.prettifyExn),
                 "blockNumber": blockNumber,
               })
             | _ => ()
@@ -1077,7 +1077,7 @@ let executeQuery = async (
       // failed. Retrying it unchanged and without a wait makes no progress and
       // never counts against the source, so pace it like any other failure and
       // let the schedule move on to one that can answer.
-      | FailedGettingItems({exn, attemptedToBlock, retry: WithSuggestedToBlock({toBlock})})
+      | FailedGettingItems({?exn, attemptedToBlock, retry: WithSuggestedToBlock({toBlock})})
         if toBlock >= attemptedToBlock =>
         await sourceManager->retryFailedPage(
           sourceState,
@@ -1103,7 +1103,7 @@ let executeQuery = async (
         // The next attempt asks a strictly smaller question, so it starts a
         // fresh schedule rather than continuing this one.
         retryRef := 0
-      | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
+      | FailedGettingItems({?exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
         // Don't set lastFailedAt - the source isn't broken, the query just can't work on it
         let excludedSources = switch excludedSourcesRef.contents {
         | Some(s) => s
@@ -1117,11 +1117,11 @@ let executeQuery = async (
         logger->Logging.childWarn({
           "msg": message ++ " - Attempting another source",
           "toBlock": attemptedToBlock,
-          "err": exn->Utils.prettifyExn,
+          "err": exn->Option.map(Utils.prettifyExn),
         })
         retryRef := 0
 
-      | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
+      | FailedGettingItems({?exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
         await sourceManager->retryFailedPage(
           sourceState,
           ~retry,

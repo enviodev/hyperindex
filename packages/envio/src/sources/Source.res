@@ -127,13 +127,15 @@ exception RateLimited(rateLimited)
 type getItemsError =
   | UnsupportedSelection({message: string})
   | FailedGettingFieldSelection({
-      exn: exn,
+      // The cause, where the source has one beyond `message`.
+      exn?: exn,
       blockNumber: int,
       message: string,
       requestStats: array<requestStat>,
     })
   | FailedGettingItems({
-      exn: exn,
+      // The cause, where the source has one beyond the retry's own message.
+      exn?: exn,
       attemptedToBlock: int,
       retry: getItemsRetry,
       requestStats: array<requestStat>,

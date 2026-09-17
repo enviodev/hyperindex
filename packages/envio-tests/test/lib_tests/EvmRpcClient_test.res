@@ -444,7 +444,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     )
 
     t.expect(outcome).toEqual((
-      "suggestedToBlock",
+      EvmRpcClient.SuggestedToBlock,
       Some("eth_getLogs is limited to a 1000 blocks range"),
       Some(999),
     ))
@@ -501,7 +501,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       },
     )
 
-    t.expect(outcome).toEqual(("ok", blockCount))
+    t.expect(outcome).toEqual((EvmRpcClient.Ok, blockCount))
   })
 
   Async.it("Backs off when one read outlasts the timeout on its own", async t => {
@@ -542,8 +542,84 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     )
 
     t.expect(outcome).toEqual((
-      "backoff",
+      EvmRpcClient.Backoff,
       Some(`eth_getBlockByNumber took longer than ${queryTimeoutMillis->Int.toString}ms`),
+    ))
+  })
+
+  Async.it("Leaves the block range alone when a read behind the logs fails", async t => {
+    // The logs came back, so the range was fine; what failed is one block read
+    // behind them, which no narrower range would have avoided. The page waits
+    // out the configured backoff and the next attempt asks the same range.
+    let queryTimeoutMillis = 300
+    let firstBlock = 100
+    let lastBlock = firstBlock + 9
+
+    let outcome = await MockRpcServer.withScenario(
+      ~name="block read failing behind the logs",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~reply=RpcResult(
+            JSON.parseOrThrow("[" ++ logsAcrossBlocks(~firstBlock, ~count=1) ++ "]"),
+          ),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~times=2,
+          ~reply=Dynamic(
+            request =>
+              requestedBlock(request) == "0x64"
+                ? Delayed({millis: 900, reply: RpcResult(blockResult(~number="0x64"))})
+                : RpcResult(blockResult(~number=requestedBlock(request))),
+          ),
+        ),
+        MockRpcServer.expectCall(
+          ~phase=1,
+          ~method="eth_getLogs",
+          ~reply=RpcResult(
+            JSON.parseOrThrow("[" ++ logsAcrossBlocks(~firstBlock, ~count=1) ++ "]"),
+          ),
+        ),
+        MockRpcServer.expectCall(
+          ~phase=1,
+          ~method="eth_getBlockByNumber",
+          ~times=2,
+          ~reply=Dynamic(request => RpcResult(blockResult(~number=requestedBlock(request)))),
+        ),
+      ],
+      async mock => {
+        let addressStore = makeAddressStore()
+        let client = makeClient(
+          ~url=mock.url,
+          ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+          ~addressStore,
+          ~queryTimeoutMillis,
+        )
+        let page = () =>
+          client->callNextPage(
+            ~fromBlock=firstBlock,
+            ~toBlockCeiling=lastBlock,
+            ~indexes=[3],
+            ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+          )
+
+        let (failed, _, _) = await page()
+        let (retried, _, _) = await page()
+        (
+          (failed.kind, failed.backoffMillis, failed.providerMessage),
+          (retried.kind, retried.toBlock),
+        )
+      },
+    )
+
+    t.expect(outcome).toEqual((
+      (
+        EvmRpcClient.Backoff,
+        Some(syncConfig.backoffMillis),
+        Some(`eth_getBlockByNumber took longer than ${queryTimeoutMillis->Int.toString}ms`),
+      ),
+      (EvmRpcClient.Ok, lastBlock),
     ))
   })
 
@@ -617,7 +693,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       },
     )
 
-    t.expect(peak).toEqual(("ok", blockCount, maxConcurrentRequests))
+    t.expect(peak).toEqual((EvmRpcClient.Ok, blockCount, maxConcurrentRequests))
     },
   )
 })

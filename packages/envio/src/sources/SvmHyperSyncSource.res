@@ -158,11 +158,7 @@ let make = (
     let totalTimeRef = Performance.now()
     let pageFetchRef = Performance.now()
 
-    // Every way out of the fetch carries its timing: the request was made,
-    // and is billed, whether or not it answered.
-    let fetchStats = () => [
-      {Source.method: "getInstructions", seconds: pageFetchRef->Performance.secondsSince},
-    ]
+    let fetchStats = () => RequestStat.single(~method="getInstructions", ~sentAt=pageFetchRef)
 
     let query: SvmHyperSyncClient.EventItems.query = {
       fromSlot: fromBlock,

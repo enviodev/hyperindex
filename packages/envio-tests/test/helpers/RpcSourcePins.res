@@ -139,14 +139,7 @@ let jsExnMessage = exn =>
   | _ => None
   }
 
-let isNullish: 'a => bool = %raw(`value => value == null`)
-
-let providerMessage = exn =>
-  if exn->isNullish {
-    None
-  } else {
-    exn->jsExnMessage
-  }
+let providerMessage = exn => exn->Option.flatMap(jsExnMessage)
 
 let normalizeRetry = retry =>
   switch retry {
@@ -158,18 +151,16 @@ let normalizeRetry = retry =>
 let normalizeError = error =>
   switch error {
   | Source.UnsupportedSelection({message}) => UnsupportedSelection(message)
-  | FailedGettingItems({exn, attemptedToBlock, retry}) =>
+  | FailedGettingItems({?exn, attemptedToBlock, retry}) =>
     FailedGettingItems({
       attemptedToBlock,
       providerMessage: exn->providerMessage,
       retry: retry->normalizeRetry,
     })
-  | FailedGettingFieldSelection({exn, blockNumber, message}) =>
+  | FailedGettingFieldSelection({?exn, blockNumber, message}) =>
     FailedGettingFieldSelection({
       blockNumber,
       message,
-      // A field-selection failure carries no provider error of its own, so the
-      // cause is null rather than a JS error.
       causeMessage: exn->providerMessage,
     })
   }

@@ -61,8 +61,8 @@ impl<K: Eq + Hash + Clone, V: Clone> Inflight<K, V> {
         };
 
         // A drop guard rather than cleanup after the await: cancellation is
-        // routine here — the whole page races a timeout, and one failed read
-        // drops its siblings — so the claim has to be released on every way out.
+        // routine here — a transaction's receipt read is dropped the moment its
+        // sibling fails — so the claim has to be released on every way out.
         let _retire = Retire {
             pending: &self.pending,
             key: &key,
@@ -220,8 +220,8 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_cancelled_request_is_retired_rather_than_left_to_be_joined() {
-        // Cancellation is routine here: the whole page races a timeout, and one
-        // failed read drops its siblings. An entry left behind would be joined
+        // Cancellation is routine here: one failed read drops its siblings. An
+        // entry left behind would be joined
         // by the next request for that key and answered with the cancelled
         // attempt's response — deduplication silently turned into a cache that
         // nothing invalidates, holding a view of the chain from before a reorg.
@@ -248,7 +248,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_cancelled_waiter_leaves_the_request_for_the_others_to_join() {
         // Partitions are address slices, so several of them read the same head
-        // block at once. One page timing out retires only its own claim: the
+        // block at once. One page giving up retires only its own claim: the
         // request is still being driven by the others, and a page arriving
         // afterwards must join it rather than ask the provider again.
         let inflight = TestInflight::default();

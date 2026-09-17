@@ -97,15 +97,14 @@ let make = (
     )
     let pageFetchTime = pageFetchTimeRef->Performance.secondsSince
 
+    // The cause travels as a real error so it reaches the logs the way every
+    // other source's does. Absent where the message is the whole story.
+    let exn = result.providerMessage->Option.map(message => JsError.make(message)->JsExn.anyToExnInternal)
+
     let failedGettingItems = (decision): exn => Source.GetItemsError(
       FailedGettingItems({
         requestStats: result.requestStats,
-        // The provider's own message travels as a real error so it still
-        // reaches the logs, and so callers have one place to read it from.
-        exn: switch result.providerMessage {
-        | Some(message) => JsError.make(message)->JsExn.anyToExnInternal
-        | None => %raw(`null`)
-        },
+        ?exn,
         attemptedToBlock: result.toBlock,
         retry: decision,
       }),
@@ -113,12 +112,12 @@ let make = (
 
     let missing = field =>
       JsError.throwWithMessage(
-        `The RPC client returned a "${result.kind}" outcome without a ${field}. Please, report to the Envio team.`,
+        `The RPC client returned a "${(result.kind :> string)}" outcome without a ${field}. Please, report to the Envio team.`,
       )
 
     switch result.kind {
-    | "ok" => ()
-    | "fieldSelection" =>
+    | Ok => ()
+    | FieldSelection =>
       throw(
         Source.GetItemsError(
           FailedGettingFieldSelection({
@@ -127,7 +126,7 @@ let make = (
             | Some(message) => message
             | None => missing("message")
             },
-            exn: %raw(`null`),
+            ?exn,
             blockNumber: switch result.blockNumber {
             | Some(blockNumber) => blockNumber
             | None => missing("blockNumber")
@@ -135,7 +134,7 @@ let make = (
           }),
         ),
       )
-    | "suggestedToBlock" =>
+    | SuggestedToBlock =>
       throw(
         failedGettingItems(
           WithSuggestedToBlock({
@@ -146,7 +145,7 @@ let make = (
           }),
         ),
       )
-    | "backoff" =>
+    | Backoff =>
       throw(
         failedGettingItems(
           WithBackoff({
@@ -160,12 +159,6 @@ let make = (
             },
           }),
         ),
-      )
-    // Anything else is the addon and this module disagreeing, which no retry
-    // recovers from.
-    | kind =>
-      JsError.throwWithMessage(
-        `The RPC client returned an unrecognised outcome "${kind}". Please, report to the Envio team.`,
       )
     }
 

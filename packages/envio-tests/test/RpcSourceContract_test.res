@@ -396,12 +396,12 @@ describe("RPC source public contract", () => {
     )
 
     // A null receipt is the load-balancing symptom, so the source asks for a
-    // retry and says which receipt was missing, on both the retry decision
-    // the source manager reads and the error the logs carry.
+    // retry and says which receipt was missing. The symptom is the whole
+    // story, so it is the retry's message and there is no separate cause.
     let notFoundMessage = `The RPC returned null for the receipt of transaction ${transactionHash}. The provider may be load-balanced between nodes that drift from the head independently; indexing continues correctly once the query is retried.`
     let expected = backoffMillis => RpcSourcePins.FailedGettingItems({
       attemptedToBlock: 100,
-      providerMessage: Some(notFoundMessage),
+      providerMessage: None,
       retry: Backoff({message: notFoundMessage, backoffMillis}),
     })
     t.expect(error).toEqual((expected(100), expected(1_000)))

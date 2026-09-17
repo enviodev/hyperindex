@@ -759,16 +759,14 @@ pub(crate) fn transaction_field_missing(
 ) -> Option<&'static str> {
     use TransactionField::*;
     match field {
-        // Absent by the shape of the transaction rather than by a gap in the
-        // response: a legacy transaction has no access list, and only an
-        // EIP-7702 one has an authorization list. Both source paths share this
-        // rule, so HyperSync stops flagging the two lists as well — telling
-        // "the transaction has none" from "the response dropped it" would need
-        // the transaction `type`, which a selection need not include.
         GasPrice | V | R | S | YParity | MaxPriorityFeePerGas | MaxFeePerGas | MaxFeePerBlobGas
         | BlobVersionedHashes | ContractAddress | Root | Status | L1Fee | L1GasPrice
-        | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type | AccessList
-        | AuthorizationList => None,
+        | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type => None,
+        AccessList => tx.access_list.is_none().then_some("accessList"),
+        AuthorizationList => tx
+            .authorization_list
+            .is_none()
+            .then_some("authorizationList"),
         BlockHash => tx.block_hash.is_none().then_some("blockHash"),
         BlockNumber => tx.block_number.is_none().then_some("blockNumber"),
         Gas => tx.gas.is_none().then_some("gas"),
@@ -1313,5 +1311,20 @@ mod tests {
         assert_eq!(parsed["kind"], "MissingFields");
         assert_eq!(parsed["fields"][0], "block.timestamp");
         assert_eq!(parsed["fields"][1], "transaction.hash");
+    }
+
+    #[test]
+    fn a_dropped_access_or_authorization_list_is_still_reported_missing() {
+        // HyperSync serves both lists as columns, an empty one for a
+        // transaction that has none, so a null here is the response dropping a
+        // selected field rather than the transaction's shape.
+        let tx = simple_types::Transaction::default();
+        assert_eq!(
+            (
+                transaction_field_missing(&tx, TransactionField::AccessList),
+                transaction_field_missing(&tx, TransactionField::AuthorizationList),
+            ),
+            (Some("accessList"), Some("authorizationList"))
+        );
     }
 }
