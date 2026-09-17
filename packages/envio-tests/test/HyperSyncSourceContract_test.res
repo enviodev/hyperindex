@@ -461,7 +461,7 @@ describe("HyperSync source responses", () => {
       let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
       server->MockHyperSyncServer.pushRawReply({
         status: 429,
-        headers: Dict.fromArray([("x-ratelimit-reset", "3"), ("x-ratelimit-remaining", "0")]),
+        headers: dict{"x-ratelimit-reset": "3", "x-ratelimit-remaining": "0"},
         body: "slow down",
       })
       await attempt(async () => {

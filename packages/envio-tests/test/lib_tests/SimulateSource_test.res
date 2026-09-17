@@ -204,13 +204,13 @@ describe("SimulateSource routing", () => {
         ~registration=regWildcard,
         ~blockNumber=10,
         ~srcAddress=addr(9),
-        ~params=Dict.fromArray([("to", addr(0))]),
+        ~params=dict{"to": addr(0)},
       ),
       item(
         ~registration=regWildcard,
         ~blockNumber=10,
         ~srcAddress=addr(9),
-        ~params=Dict.fromArray([("to", addr(1))]),
+        ~params=dict{"to": addr(1)},
       ),
     ]
 

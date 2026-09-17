@@ -409,9 +409,10 @@ let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
 // Field names are spliced as quoted identifiers only after the queryFields
 // lookup proves they exist on the table (and they originate from
 // codegen-validated schemas), so the interpolation can't be abused.
-let rec makeFilterCondition = (
+let makeFilterCondition = (
   ~filter: EntityFilter.t,
   ~table: Table.table,
+  ~pgSchema,
   ~params: array<unknown>,
 ) => {
   // Filters reference fields by API name, while the SQL references columns
@@ -447,60 +448,89 @@ let rec makeFilterCondition = (
     params->Array.push(param)->ignore
     `$${params->Array.length->Int.toString}`
   }
-  let scalarCondition = (~fieldName, ~fieldValue, ~op) => {
+
+  let condition = ref("")
+  filter
+  ->EntityFilter.entries
+  ->Utils.Dict.forEachWithKey((operators, fieldName) => {
     let queryField = getQueryFieldOrThrow(fieldName)
-    `"${queryField.pgDbFieldName}" ${op} ${serializeParamOrThrow(
-        ~queryField,
-        ~fieldName,
-        ~fieldValue,
-        ~isArray=false,
-      )}`
-  }
-  switch filter {
-  // A per-chain entity's table is partitioned by its chain-id column, and
-  // Postgres can only prune a plan it caches when that column is a constant in
-  // the SQL. Bound, the cached plan has to keep every partition, and the
-  // planner ends up throwing it away and re-planning on every execution
-  // instead — measured at 315us per load against 218us with the id written in,
-  // on 30 chains.
-  //
-  // The cost is that each chain gets its own query text, so Postgres caches a
-  // prepared statement per (entity, chain, filter shape) rather than per
-  // (entity, filter shape). Measured at ~8KB of plan cache each, which is ~10MB
-  // per connection for 40 entities across 30 chains — accepted, since the
-  // alternative is a cached plan that can't prune.
-  //
-  // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
-  // range-checked to a non-negative safe integer, so it can carry nothing but
-  // digits.
-  | Eq({fieldName, fieldValue}) if getQueryFieldOrThrow(fieldName).isChainId =>
-    `"${getQueryFieldOrThrow(fieldName).pgDbFieldName}" = ${fieldValue
-      ->ChainId.normalizeOrThrow
-      ->ChainId.toString}`
-  | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
-  | Gt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op=">")
-  | Lt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="<")
-  | In({fieldName, fieldValue}) => {
-      let queryField = getQueryFieldOrThrow(fieldName)
-      `"${queryField.pgDbFieldName}" = ANY(${serializeParamOrThrow(
-          ~queryField,
-          ~fieldName,
-          ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
-          ~isArray=true,
-        )})`
-    }
-  | And({filters: []}) =>
-    throw(
-      Persistence.StorageError({
-        message: `Failed loading "${table.tableName}" from storage. The "and" filter must contain at least one nested filter.`,
-        reason: Utils.Error.make(`Empty "and" filter`),
-      }),
-    )
-  | And({filters}) =>
-    `(${filters
-      ->Array.map(filter => makeFilterCondition(~filter, ~table, ~params))
-      ->Array.join(" AND ")})`
-  }
+    operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
+      let column = `"${queryField.pgDbFieldName}"`
+      let part = switch operator {
+      // A per-chain entity's table is partitioned by its chain-id column, and
+      // Postgres can only prune a plan it caches when that column is a constant
+      // in the SQL. Bound, the cached plan has to keep every partition, and the
+      // planner ends up throwing it away and re-planning on every execution
+      // instead — measured at 315us per load against 218us with the id written
+      // in, on 30 chains.
+      //
+      // The cost is that each chain gets its own query text, so Postgres caches
+      // a prepared statement per (entity, chain, filter shape) rather than per
+      // (entity, filter shape). Measured at ~8KB of plan cache each, which is
+      // ~10MB per connection for 40 entities across 30 chains — accepted, since
+      // the alternative is a cached plan that can't prune.
+      //
+      // `EntityFilter.scoped` is what puts this filter here, and the value is
+      // range-checked to a non-negative safe integer, so it can carry nothing
+      // but digits.
+      | "_eq" if queryField.isChainId =>
+        `${column} = ${fieldValue->ChainId.normalizeOrThrow->ChainId.toString}`
+      // Postgres arrays are rectangular, so candidates for a list column can't
+      // be bound as one array unless they all have the same length, and
+      // postgres.js can't bind a boolean array at all
+      // (https://github.com/porsager/postgres/issues/471). One equality per
+      // candidate has neither problem.
+      | "_in" if queryField.isArray || queryField.fieldType === Boolean =>
+        switch fieldValue->EntityFilter.asArray {
+        | [] => "FALSE"
+        | candidates =>
+          `(${candidates
+            ->Array.map(
+              candidate =>
+                `${column} = ${serializeParamOrThrow(
+                    ~queryField,
+                    ~fieldName,
+                    ~fieldValue=candidate,
+                    ~isArray=false,
+                  )}`,
+            )
+            ->Array.join(" OR ")})`
+        }
+      | "_in" =>
+        let param = serializeParamOrThrow(~queryField, ~fieldName, ~fieldValue, ~isArray=true)
+        switch queryField.fieldType {
+        // A bound array of strings is text[], which has no equality with an
+        // enum. The insert casts the same way.
+        | Enum({config}) => `${column} = ANY(${param}::TEXT[]::"${pgSchema}".${config.name}[])`
+        | _ => `${column} = ANY(${param})`
+        }
+      | _ =>
+        let sqlOperator = switch operator {
+        | "_eq" => "="
+        | "_gt" => ">"
+        | "_lt" => "<"
+        | "_gte" => ">="
+        | "_lte" => "<="
+        | _ =>
+          throw(
+            Persistence.StorageError({
+              message: `Failed loading "${table.tableName}" from storage. Unknown filter operator "${operator}".`,
+              reason: Utils.Error.make(`Unknown filter operator "${operator}"`),
+            }),
+          )
+        }
+        `${column} ${sqlOperator} ${serializeParamOrThrow(
+            ~queryField,
+            ~fieldName,
+            ~fieldValue,
+            ~isArray=false,
+          )}`
+      }
+      condition := (condition.contents === "" ? part : condition.contents ++ " AND " ++ part)
+    })
+  })
+
+  condition.contents
 }
 
 // The chain-id predicate a per-chain entity's row-level SQL needs, already
@@ -1449,6 +1479,7 @@ let rec writeBatch = async (
                 ): InternalTable.Chains.progressedChain => {
                   chainId: chainAfterBatch.fetchState.chainId,
                   progressBlockNumber: chainAfterBatch.progressBlockNumber,
+                  progressBlockTime: chainAfterBatch.progressBlockTime,
                   sourceBlockNumber: chainAfterBatch.sourceBlockNumber,
                   totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
                 }),
@@ -1708,7 +1739,7 @@ let make = (
   // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
   let containerName = "envio-postgres"
   let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
-    env: Dict.fromArray([("PGPASSWORD", pgPassword), ("PATH", %raw(`process.env.PATH`))]),
+    env: dict{"PGPASSWORD": pgPassword, "PATH": %raw(`process.env.PATH`)},
   }
 
   let cacheDirPath = NodeJs.Path.resolve([
@@ -1992,6 +2023,7 @@ let make = (
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
         addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf,
+        progressBlockTime: None,
         sourceBlockNumber: 0,
       }),
       checkpointFrontier: Frontier.empty(),
@@ -2000,7 +2032,7 @@ let make = (
 
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
     let params = []
-    let condition = makeFilterCondition(~filter, ~table, ~params)
+    let condition = makeFilterCondition(~filter, ~table, ~pgSchema, ~params)
     switch await sql->Postgres.preparedUnsafe(
       makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
       params->Obj.magic,
@@ -2031,9 +2063,10 @@ let make = (
     let queryFields = table->Table.queryFields
     let columns = []
     let seen = Utils.Set.make()
-    let rec collect = (filter: EntityFilter.t) =>
-      switch filter {
-      | Eq({fieldName}) | Gt({fieldName}) | Lt({fieldName}) | In({fieldName}) =>
+    filters->Array.forEach(filter =>
+      filter
+      ->EntityFilter.entries
+      ->Utils.Dict.forEachWithKey((_, fieldName) =>
         switch queryFields->Utils.Dict.dangerouslyGetNonOption(fieldName) {
         | Some({pgDbFieldName}) =>
           if !(seen->Utils.Set.has(pgDbFieldName)) {
@@ -2042,9 +2075,8 @@ let make = (
           }
         | None => ()
         }
-      | And({filters}) => filters->Array.forEach(collect)
-      }
-    filters->Array.forEach(collect)
+      )
+    )
     columns
   }
 
@@ -2427,6 +2459,7 @@ let make = (
             timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
             numEventsProcessed: rawInitialState.numEventsProcessed,
             progressBlockNumber: rawInitialState.progressBlockNumber,
+            progressBlockTime: rawInitialState.progressBlockTime->InternalTable.Chains.blockTimeFromDb,
             addressRows: rawInitialState.addressRows,
             sourceBlockNumber: rawInitialState.sourceBlockNumber,
           }),

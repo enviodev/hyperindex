@@ -51,6 +51,9 @@ pub enum Network {
     ArbitrumTestnet = 421611,
 
     #[subenum(HypersyncChain)]
+    Arc = 5042,
+
+    #[subenum(HypersyncChain)]
     ArcTestnet = 5042002,
 
     #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
@@ -595,6 +598,7 @@ impl Network {
             | Network::XdcTestnet
             | Network::Abstract
             | Network::Ab
+            | Network::Arc
             | Network::ArcTestnet
             | Network::Hyperliquid
             | Network::PharosDevnet
@@ -666,6 +670,17 @@ mod test {
         assert_eq!(
             networks_sorted, networks,
             "Networks should be defined in alphabetical order (sorry to be picky)"
+        );
+    }
+
+    #[test]
+    fn arc_mainnet_is_supported_by_hypersync() {
+        assert_eq!(
+            (
+                Network::from_network_id(5042).unwrap().to_string(),
+                HypersyncChain::from_repr(5042).is_some()
+            ),
+            ("arc".to_string(), true)
         );
     }
 

@@ -75,15 +75,10 @@ let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFi
   | None => []
   | Some(entityConfig) =>
     let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
-    let matched =
-      entityDict
-      ->Dict.valuesToArray
-      ->Array.filter(entity => {
-        // The store holds decoded entities and the filter carries decoded values,
-        // so compare directly (same approach as InMemoryTable) — no JSON round-trip.
-        let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
-        filter->EntityFilter.matches(~entity=entityAsDict)
-      })
+    // The store holds decoded entities and the filter carries decoded values,
+    // so compare directly (same approach as InMemoryTable) — no JSON round-trip.
+    let matcher = filter->EntityFilter.makeMatcher(~table=entityConfig.table)
+    let matched = entityDict->Dict.valuesToArray->Array.filter(matcher)
     // The chain is already fixed by the scope the load ran for, so the loaded
     // entity is handed back in the shape the handlers see.
     switch entityConfig.table->Table.getChainIdField {
@@ -266,6 +261,7 @@ let makeInitialState = (
       sourceBlockNumber: processChainConfig.endBlock->Option.getOr(0),
       maxReorgDepth: 0, // No reorg support in test indexer
       progressBlockNumber: -1,
+      progressBlockTime: None,
       numEventsProcessed: 0.,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
@@ -543,23 +539,12 @@ let makeEntityGetWhere = (~state: testIndexerState, ~entityConfig: Internal.enti
         `Cannot call ${entityConfig.name}.getWhere() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
       )
     }
-    let filters =
-      filter->EntityFilter.parseGetWhereOrThrow(
-        ~entityName=entityConfig.name,
-        ~table=entityConfig.table,
-      )
+    let matcher =
+      filter
+      ->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table)
+      ->EntityFilter.makeMatcher(~table=entityConfig.table)
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-    // parseGetWhereOrThrow expands an operator group into alternatives whose
-    // matches are disjoint, so the union needs no dedup.
-    Promise.resolve(
-      entityDict
-      ->Dict.valuesToArray
-      ->Array.filter(entity => {
-        let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
-        filters->Array.some(filter => filter->EntityFilter.matches(~entity=entityAsDict))
-      })
-      ->Array.map(copyEntity),
-    )
+    Promise.resolve(entityDict->Dict.valuesToArray->Array.filter(matcher)->Array.map(copyEntity))
   }
 }
 

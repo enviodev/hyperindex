@@ -345,7 +345,7 @@ describe("SvmHyperSyncSource height subscription", () => {
       let server = MockRpcServer.createServer((_req, res) => {
         res->MockRpcServer.writeHead(
           200,
-          Dict.fromArray([("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache")]),
+          dict{"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
         )
         res->MockRpcServer.write("event: height\ndata: 445073332\n\n")
         res->MockRpcServer.write("event: ping\ndata: \n\n")

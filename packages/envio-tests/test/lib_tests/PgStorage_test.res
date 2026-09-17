@@ -229,7 +229,7 @@ GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
 CREATE TYPE "test_schema".AccountType AS ENUM('ADMIN', 'USER');
 CREATE TYPE "test_schema".GravatarSize AS ENUM('SMALL', 'MEDIUM', 'LARGE');
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, "checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
@@ -256,6 +256,7 @@ SELECT
   "start_block" AS "startBlock", 
   "end_block" AS "endBlock",
   "progress_block" AS "progressBlock",
+  "progress_block_time" AS "progressBlockTime",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
   "events_processed"::float4 AS "eventsProcessed",
@@ -279,9 +280,9 @@ SELECT
   "start_block" AS "start_block",
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "test_schema"."envio_chains";
-INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
-VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false, 0),
-       (137, 'evm', 0, NULL, 200, 0, NULL, -1, -1, NULL, 0, false, 0);`
+INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
+VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, NULL, 0, false, 0),
+       (137, 'evm', 0, NULL, 200, 0, NULL, -1, -1, NULL, NULL, 0, false, 0);`
 
         t.expect(mainQuery, ~message="Main query should match expected SQL exactly").toBe(
           expectedMainQuery,
@@ -308,7 +309,7 @@ VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false, 0),
 CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, "checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
@@ -321,6 +322,7 @@ SELECT
   "start_block" AS "startBlock", 
   "end_block" AS "endBlock",
   "progress_block" AS "progressBlock",
+  "progress_block_time" AS "progressBlockTime",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
   "events_processed"::float4 AS "eventsProcessed",
@@ -375,7 +377,7 @@ FROM "test_schema"."envio_chains";`
 CREATE SCHEMA "public";
 GRANT ALL ON SCHEMA "public" TO "postgres";
 GRANT ALL ON SCHEMA "public" TO public;
-CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, "checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
@@ -394,6 +396,7 @@ SELECT
   "start_block" AS "startBlock", 
   "end_block" AS "endBlock",
   "progress_block" AS "progressBlock",
+  "progress_block_time" AS "progressBlockTime",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
   "events_processed"::float4 AS "eventsProcessed",
@@ -605,9 +608,7 @@ FROM "public"."envio_chains";`
     // A bytea column binds as the Uint8Array postgres.js serializes, and a
     // bytea[] one as the array literal Postgres parses itself — postgres.js
     // types an array parameter after its first element, so an array of
-    // Uint8Arrays would bind as a single bytea. An `in` over a list column
-    // nests one dimension deeper, and Postgres arrays are rectangular, so its
-    // candidates all have the same length.
+    // Uint8Arrays would bind as a single bytea.
     let bytesTable = Table.mkTable(
       "blobs",
       ~fields=[
@@ -617,48 +618,32 @@ FROM "public"."envio_chains";`
       ],
     )
 
+    let parse = (filter, ~table: Table.table) =>
+      filter->EntityFilter.parseOrThrow(~entityName=table.tableName, ~table)
+
     Async.it(
       "Binds bytea values as bytes and bytea arrays as array literals",
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=And({
-            filters: [
-              Eq({
-                fieldName: "tag",
-                fieldValue: Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
-              }),
-              In({
-                fieldName: "tag",
-                fieldValue: [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
-                  Utils.magic: array<Uint8Array.t> => array<unknown>
-                ),
-              }),
-              Eq({
-                fieldName: "chunks",
-                fieldValue: [Uint8Array.fromArray([3])]->(
-                  Utils.magic: array<Uint8Array.t> => unknown
-                ),
-              }),
-              In({
-                fieldName: "chunks",
-                fieldValue: [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
-                  Utils.magic: array<array<Uint8Array.t>> => array<unknown>
-                ),
-              }),
-            ],
-          }),
+          ~filter=dict{"tag": dict{"_eq": Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown), "_in": [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
+                    Utils.magic: array<Uint8Array.t> => unknown
+                  )}, "chunks": dict{"_eq": [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown), "_in": [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
+                    Utils.magic: array<array<Uint8Array.t>> => unknown
+                  )}}->parse(~table=bytesTable),
           ~table=bytesTable,
+          ~pgSchema="test_schema",
           ~params,
         )
 
         t.expect((condition, params)).toEqual((
-          `("tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4))`,
+          `"tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND ("chunks" = $4 OR "chunks" = $5)`,
           [
             Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
             `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
             `{"\\\\x03"}`->(Utils.magic: string => unknown),
-            `{{"\\\\x04"},{"\\\\x05"}}`->(Utils.magic: string => unknown),
+            `{"\\\\x04"}`->(Utils.magic: string => unknown),
+            `{"\\\\x05"}`->(Utils.magic: string => unknown),
           ],
         ))
       },
@@ -669,11 +654,9 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=In({
-            fieldName: "id",
-            fieldValue: ["1", "2"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          ~filter=dict{"id": dict{"_in": ["1", "2"]->(Utils.magic: array<string> => unknown)}}->parse(~table),
           ~table,
+          ~pgSchema="test_schema",
           ~params,
         )
 
@@ -689,8 +672,9 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=Gt({fieldName: "score", fieldValue: 5->(Utils.magic: int => unknown)}),
+          ~filter=dict{"score": dict{"_gt": 5->(Utils.magic: int => unknown)}}->parse(~table),
           ~table,
+          ~pgSchema="test_schema",
           ~params,
         )
 
@@ -698,28 +682,40 @@ FROM "public"."envio_chains";`
       },
     )
 
+    // These reach the query as themselves. Composing them from an equality and
+    // a strict comparison, as the filter IR used to, needed a separate query
+    // per operator and a cross product once a second field was filtered on.
     Async.it(
-      "Should number params across nested and filters",
+      "Should emit _gte and _lte as a single inclusive comparison",
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=And({
-            filters: [
-              Eq({fieldName: "id", fieldValue: "1"->(Utils.magic: string => unknown)}),
-              And({
-                filters: [
-                  Gt({fieldName: "score", fieldValue: 5->(Utils.magic: int => unknown)}),
-                  Lt({fieldName: "score", fieldValue: 10->(Utils.magic: int => unknown)}),
-                ],
-              }),
-            ],
-          }),
+          ~filter=dict{"score": dict{"_gte": 5->(Utils.magic: int => unknown)}, "id": dict{"_lte": "9"->(Utils.magic: string => unknown)}}->parse(~table),
           ~table,
+          ~pgSchema="test_schema",
           ~params,
         )
 
         t.expect((condition, params)).toEqual((
-          `("id" = $1 AND ("score" > $2 AND "score" < $3))`,
+          `"score" >= $1 AND "id" <= $2`,
+          [5->(Utils.magic: int => unknown), "9"->(Utils.magic: string => unknown)],
+        ))
+      },
+    )
+
+    Async.it(
+      "Should number params across every field and operator",
+      async t => {
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}, "score": dict{"_gt": 5->(Utils.magic: int => unknown), "_lt": 10->(Utils.magic: int => unknown)}}->parse(~table),
+          ~table,
+          ~pgSchema="test_schema",
+          ~params,
+        )
+
+        t.expect((condition, params)).toEqual((
+          `"id" = $1 AND "score" > $2 AND "score" < $3`,
           [
             "1"->(Utils.magic: string => unknown),
             5->(Utils.magic: int => unknown),
@@ -729,19 +725,83 @@ FROM "public"."envio_chains";`
       },
     )
 
+    // Candidates for a list column go out one equality each: Postgres arrays
+    // are rectangular, so a single bound array can't hold candidates of
+    // different lengths. A boolean column takes the same route, because
+    // postgres.js can't bind a boolean array. An empty list matches nothing.
     Async.it(
-      "Should throw a StorageError for an empty and filter",
+      "Expands an _in over a list or boolean column into one equality per candidate",
       async t => {
-        let result = try {
-          let _ = PgStorage.makeFilterCondition(~filter=And({filters: []}), ~table, ~params=[])
-          None
-        } catch {
-        | Persistence.StorageError({message}) => Some(message)
-        }
-
-        t.expect(result).toEqual(
-          Some(`Failed loading "users" from storage. The "and" filter must contain at least one nested filter.`),
+        let listTable = Table.mkTable(
+          "lists",
+          ~fields=[
+            Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+            Table.mkField("tags", String, ~isArray=true, ~fieldSchema=S.array(S.string)),
+            Table.mkField("flag", Boolean, ~fieldSchema=S.bool),
+          ],
         )
+        let condition = (filter: dict<dict<unknown>>) => {
+          let params = []
+          let condition = PgStorage.makeFilterCondition(
+            ~filter=filter->parse(~table=listTable),
+            ~table=listTable,
+            ~pgSchema="test_schema",
+            ~params,
+          )
+          (condition, params)
+        }
+        let tagsIn = candidates =>
+          dict{"tags": dict{"_in": candidates->(Utils.magic: array<array<string>> => unknown)}}
+
+        t.expect((
+          condition(tagsIn([["a"], ["a", "b"]])),
+          condition(tagsIn([])),
+          condition(dict{"flag": dict{"_in": [true, false]->(Utils.magic: array<bool> => unknown)}}),
+        )).toEqual((
+          (
+            `("tags" = $1 OR "tags" = $2)`,
+            [["a"]->(Utils.magic: array<string> => unknown), ["a", "b"]->(Utils.magic: array<string> => unknown)],
+          ),
+          ("FALSE", []),
+          (
+            `("flag" = $1 OR "flag" = $2)`,
+            [true->(Utils.magic: bool => unknown), false->(Utils.magic: bool => unknown)],
+          ),
+        ))
+      },
+    )
+
+    // A bound array of strings is text[], and Postgres has no equality between
+    // text and an enum, so the parameter is cast the way the insert casts it.
+    Async.it(
+      "Casts an _in over an enum column to the enum's array type",
+      async t => {
+        let kind = Table.makeEnumConfig(~name="Kind", ~variants=["ZETA", "ALPHA"])
+        let enumTable = Table.mkTable(
+          "kinds",
+          ~fields=[
+            Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+            Table.mkField(
+              "kind",
+              Enum({config: kind->Table.fromGenericEnumConfig}),
+              ~fieldSchema=kind.schema,
+            ),
+          ],
+        )
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=dict{
+            "kind": dict{"_in": ["ALPHA"]->(Utils.magic: array<string> => unknown)},
+          }->parse(~table=enumTable),
+          ~table=enumTable,
+          ~pgSchema="test_schema",
+          ~params,
+        )
+
+        t.expect((condition, params)).toEqual((
+          `"kind" = ANY($1::TEXT[]::"test_schema".Kind[])`,
+          [["ALPHA"]->(Utils.magic: array<string> => unknown)],
+        ))
       },
     )
   })
@@ -854,8 +914,9 @@ WHERE "id" = $1;`
 
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
 SET "progress_block" = $2,
-    "events_processed" = $3,
-    "source_block" = $4
+    "progress_block_time" = $3,
+    "events_processed" = $4,
+    "source_block" = $5
 WHERE "id" = $1;`
 
         t.expect(
@@ -936,8 +997,8 @@ ORDER BY cp."id";`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
-VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
+        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
+VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false, 0);`
 
         t.expect(query, ~message="Should generate correct INSERT VALUES SQL for single chain").toBe(
           Some(expectedQuery),
@@ -964,8 +1025,8 @@ VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
-VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
+        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
+VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, NULL, 0, false, 0);`
 
         t.expect(
           query,
@@ -1005,9 +1066,9 @@ VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           ~chainConfigs=[chainConfig1, chainConfig2],
         )
 
-        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
-VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0),
-       (42, 'evm', 500, NULL, 0, 0, NULL, -1, -1, NULL, 0, false, 0);`
+        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "progress_block_time", "ready_at", "events_processed", "_is_hyper_sync", "checkpoint_id")
+VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, NULL, 0, false, 0),
+       (42, 'evm', 500, NULL, 0, 0, NULL, -1, -1, NULL, NULL, 0, false, 0);`
 
         t.expect(
           query,
@@ -1031,6 +1092,7 @@ VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0),
 "ready_at" as "timestampCaughtUpToHeadOrEndblock",
 "events_processed"::float8 as "numEventsProcessed",
 "progress_block" as "progressBlockNumber",
+"progress_block_time" as "progressBlockTime",
 "source_block" as "sourceBlockNumber",
 "checkpoint_id"::TEXT as "checkpointId"
 FROM "test_schema"."envio_chains";`
