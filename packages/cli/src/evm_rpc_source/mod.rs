@@ -4,7 +4,6 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::{Semaphore, SemaphorePermit};
 
 mod classify;
@@ -23,7 +22,7 @@ use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput, ParamValue,
 };
 use crate::evm_hypersync_source::EventItem;
-use crate::request_stats::{RequestStat, Stats};
+use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
@@ -157,8 +156,8 @@ pub enum PageOutcome {
 #[napi(object)]
 pub struct NextPageResult {
     pub kind: PageOutcome,
-    /// The requests this call issued. A call that joined another's in-flight
-    /// request contributes nothing, so per-source totals stay exact.
+    /// The requests that finished since the source last reported any, so
+    /// per-source totals stay exact whichever call a shared read was issued by.
     pub request_stats: Vec<RequestStat>,
     /// The block this attempt targeted: the page's own `toBlock` when it
     /// succeeded, the block it got as far as otherwise.
@@ -395,26 +394,19 @@ impl EvmRpcClient {
         block_numbers: Vec<i64>,
     ) -> napi::Result<(BlockHashResult, BlockStore)> {
         let should_checksum = self.should_checksum;
-        let stats = Stats::default();
         let numbers: Vec<u64> = block_numbers
             .into_iter()
             .map(u64::try_from)
             .collect::<Result<_, _>>()
             .context("block number is negative")
             .map_err(map_err)?;
-        match enrich::fetch_block_hashes(
-            &self.inner,
-            &self.fetches,
-            &stats,
-            &numbers,
-            should_checksum,
-        )
-        .await
+        match enrich::fetch_block_hashes(&self.inner, &self.fetches, &numbers, should_checksum)
+            .await
         {
             Ok(blocks) => Ok((
                 BlockHashResult {
                     message: None,
-                    request_stats: stats.take(),
+                    request_stats: self.inner.take_stats(),
                 },
                 blocks,
             )),
@@ -423,23 +415,19 @@ impl EvmRpcClient {
             Err(err) => Ok((
                 BlockHashResult {
                     message: Some(err.to_string()),
-                    request_stats: stats.take(),
+                    request_stats: self.inner.take_stats(),
                 },
                 BlockStore::new_evm(should_checksum),
             )),
         }
     }
 
-    /// The chain's height, with the timing of the one request it took —
-    /// measured here, like every other method's, rather than around the call.
+    /// The chain's height, with the timing of the request it took.
     #[napi]
     pub async fn get_height(&self) -> napi::Result<(i64, Vec<RequestStat>)> {
-        let stats = Stats::default();
         let permit = self.inner.acquire().await;
-        let started = Instant::now();
         let result = self.inner.get_height(permit).await;
-        stats.record("eth_blockNumber", started.elapsed().as_secs_f64());
-        let request_stats = stats.take();
+        let request_stats = self.inner.take_stats();
         // A poll that failed still cost a request; carry its timing out with
         // the error so the source's metrics count it.
         let height = result.map_err(|err| {
@@ -520,8 +508,8 @@ impl EvmRpcClient {
             known_blocks,
             known_transactions,
         };
-        let stats = Stats::default();
-        let outcome = self.read_page(&query, &stats).await;
+        let outcome = self.read_page(&query).await;
+        let request_stats = self.inner.take_stats();
 
         // Only a page that was read has stores; every other outcome returns
         // empty ones, so the match decides the result and the stores follow.
@@ -543,7 +531,7 @@ impl EvmRpcClient {
                 (
                     NextPageResult {
                         items,
-                        ..NextPageResult::new(PageOutcome::Ok, to_block, stats.take())
+                        ..NextPageResult::new(PageOutcome::Ok, to_block, request_stats)
                     },
                     Some(page),
                 )
@@ -555,7 +543,7 @@ impl EvmRpcClient {
                 };
                 let message = provider_message.clone().unwrap_or_else(|| err.to_string());
                 (
-                    self.retry_result(&query, provider_message.as_deref(), message, stats.take()),
+                    self.retry_result(&query, provider_message.as_deref(), message, request_stats),
                     None,
                 )
             }
@@ -566,7 +554,7 @@ impl EvmRpcClient {
                 NextPageResult {
                     message: Some(format!("{error:#}")),
                     block_number: Some(block_number as i64),
-                    ..NextPageResult::new(PageOutcome::FieldSelection, to_block, stats.take())
+                    ..NextPageResult::new(PageOutcome::FieldSelection, to_block, request_stats)
                 },
                 None,
             ),
@@ -577,7 +565,7 @@ impl EvmRpcClient {
                     message,
                     transient_backoff_millis(params.retry),
                     to_block,
-                    stats.take(),
+                    request_stats,
                 ),
                 None,
             ),
@@ -593,7 +581,7 @@ impl EvmRpcClient {
                             .to_string(),
                         self.sync_config.backoff_millis as i64,
                         to_block,
-                        stats.take(),
+                        request_stats,
                     )
                 },
                 None,
@@ -614,12 +602,8 @@ impl EvmRpcClient {
     async fn read_page(
         &self,
         query: &PageQuery<'_>,
-        stats: &Stats,
     ) -> Result<(Vec<EventItem>, enrich::EnrichedPage), PageError> {
-        let decoded = self
-            .fetch_page(query, stats)
-            .await
-            .map_err(PageError::Logs)?;
+        let decoded = self.fetch_page(query).await.map_err(PageError::Logs)?;
 
         let mut refs = PageRefs::default();
         let mut items = Vec::with_capacity(decoded.len());
@@ -671,7 +655,6 @@ impl EvmRpcClient {
         let page = enrich::page(
             &self.inner,
             &self.fetches,
-            stats,
             EnrichRequest {
                 from_block: query.from_block,
                 to_block: query.to_block,
@@ -757,13 +740,9 @@ impl EvmRpcClient {
     }
 
     /// Fans out one `eth_getLogs` per selection concurrently. Every selection
-    /// is awaited even once one has failed, so each request's timing still
-    /// reaches `requestStats`; the first failure then decides the page.
-    async fn fetch_page(
-        &self,
-        query: &PageQuery<'_>,
-        stats: &Stats,
-    ) -> Result<Vec<DecodedItem>, RpcError> {
+    /// is awaited even once one has failed, so each request is made and
+    /// billed; the first failure then decides the page.
+    async fn fetch_page(&self, query: &PageQuery<'_>) -> Result<Vec<DecodedItem>, RpcError> {
         if query.selections.is_empty() {
             return Ok(Vec::new());
         }
@@ -771,19 +750,15 @@ impl EvmRpcClient {
         let results =
             futures_util::future::join_all(query.selections.iter().map(|selection| async {
                 let permit = self.inner.acquire().await;
-                let started = Instant::now();
-                let result = self
-                    .fetch_logs_raw(
-                        permit,
-                        query.from_block as i64,
-                        query.to_block as i64,
-                        selection,
-                        query.set_cache.clone(),
-                        query.decoder.clone(),
-                    )
-                    .await;
-                stats.record("eth_getLogs", started.elapsed().as_secs_f64());
-                result
+                self.fetch_logs_raw(
+                    permit,
+                    query.from_block as i64,
+                    query.to_block as i64,
+                    selection,
+                    query.set_cache.clone(),
+                    query.decoder.clone(),
+                )
+                .await
             }))
             .await;
 

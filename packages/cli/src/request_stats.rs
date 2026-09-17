@@ -62,13 +62,9 @@ pub(crate) fn error_with_request_stats(
     napi::Error::from_reason(format!("{NATIVE_FAILURE_PREFIX}{payload}"))
 }
 
-/// Collects the timings of the requests one source operation made. One request
-/// contributes exactly one entry, recorded by whichever call is first to
-/// observe the finished read — a call still running, so the timing always lands
-/// in a collector someone will drain. An operation that only joined requests
-/// others issued therefore reports none of its own.
-#[derive(Clone, Default)]
-pub(crate) struct Stats(std::sync::Arc<std::sync::Mutex<Vec<RequestStat>>>);
+/// Collects request timings until a source operation reports them.
+#[derive(Default)]
+pub(crate) struct Stats(std::sync::Mutex<Vec<RequestStat>>);
 
 impl Stats {
     pub(crate) fn record(&self, method: &str, seconds: f64) {

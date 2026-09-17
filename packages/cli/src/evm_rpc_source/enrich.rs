@@ -15,8 +15,7 @@
 //! earlier response's view of them.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::Arc;
 
 use futures_util::future::join_all;
 use hypersync_client::format::{self, Hex};
@@ -32,19 +31,12 @@ use super::inflight::Inflight;
 use super::responses::{self, ResponseError};
 use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::query::{BlockField, TransactionField};
-use crate::request_stats::Stats;
 use crate::transaction_store::{EvmTxField, TransactionStore};
 use strum::VariantArray;
 
-/// What a shared read hands to every waiter: the outcome, and its timing until
-/// a waiter takes it. Taking it hands the timing to exactly one waiter — one
-/// still running, unlike the call that happened to create the request. The
-/// failure rides inside the value so that it, too, is recorded as the request
-/// it was.
-type Fetched = (
-    std::result::Result<Arc<Json>, Arc<RpcError>>,
-    Arc<Mutex<Option<f64>>>,
-);
+/// What a shared read hands to every waiter. The failure rides inside the
+/// value so that every waiter receives it.
+type Fetched = std::result::Result<Arc<Json>, Arc<RpcError>>;
 
 pub(crate) type Fetches = Inflight<FetchKey, Fetched>;
 
@@ -262,30 +254,23 @@ pub(crate) struct EnrichedPage {
 async fn require(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
-    stats: &Stats,
     key: FetchKey,
 ) -> Result<Arc<Json>, EnrichError> {
-    let method = key.method();
-    let (result, timing) = fetches
+    let result = fetches
         .get(key, || {
             let client = client.clone();
             let params = key.params();
             async move {
                 let permit = client.acquire().await;
-                let started = Instant::now();
-                let result = client.request::<Json>(permit, method, params).await;
-                let seconds = started.elapsed().as_secs_f64();
-                (
-                    result.map(Arc::new).map_err(Arc::new),
-                    Arc::new(Mutex::new(Some(seconds))),
-                )
+                client
+                    .request::<Json>(permit, key.method(), params)
+                    .await
+                    .map(Arc::new)
+                    .map_err(Arc::new)
             }
         })
         .await;
 
-    if let Some(seconds) = timing.lock().unwrap().take() {
-        stats.record(method, seconds);
-    }
     let value = result.map_err(EnrichError::Rpc)?;
     if value.is_null() {
         return Err(EnrichError::Transient(format!(
@@ -338,7 +323,6 @@ impl TxReads {
 pub(crate) async fn page(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
-    stats: &Stats,
     request: EnrichRequest<'_>,
 ) -> Result<EnrichedPage, EnrichError> {
     let EnrichRequest {
@@ -360,8 +344,8 @@ pub(crate) async fn page(
     // on the slower side costs at most one more request timeout, since every
     // read is bounded by its own.
     let (blocks, transactions) = futures_util::future::join(
-        fetch_blocks(client, fetches, stats, &block_plan),
-        fetch_transactions(client, fetches, stats, &tx_plan),
+        fetch_blocks(client, fetches, &block_plan),
+        fetch_transactions(client, fetches, &tx_plan),
     )
     .await;
     let (blocks, transactions) = match (blocks, transactions) {
@@ -566,7 +550,6 @@ fn plan_transactions(refs: &PageRefs, known: &TransactionStore) -> Vec<TxGroup> 
 pub(crate) async fn fetch_block_hashes(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
-    stats: &Stats,
     block_numbers: &[u64],
     should_checksum: bool,
 ) -> Result<BlockStore, EnrichError> {
@@ -576,7 +559,7 @@ pub(crate) async fn fetch_block_hashes(
         selected: Vec::new(),
         numbers: block_numbers.to_vec(),
     }];
-    let blocks = fetch_blocks(client, fetches, stats, &groups).await?;
+    let blocks = fetch_blocks(client, fetches, &groups).await?;
 
     let page = BlockStore::new_evm(should_checksum);
     fill_block_page(&page, Vec::new(), blocks);
@@ -588,12 +571,11 @@ pub(crate) async fn fetch_block_hashes(
 async fn fetch_blocks(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
-    stats: &Stats,
     groups: &[BlockGroup],
 ) -> Result<Vec<(u64, Vec<Block>)>, EnrichError> {
     let fetches = groups.iter().map(|group| async move {
         let blocks = join_all(group.numbers.iter().map(|&number| async move {
-            let response = require(client, fetches, stats, FetchKey::Block(number)).await?;
+            let response = require(client, fetches, FetchKey::Block(number)).await?;
             responses::build_block(&response, number, &group.fields, &group.selected)
                 .map_err(|error| EnrichError::from_response(number, error))
         }))
@@ -607,7 +589,6 @@ async fn fetch_blocks(
 async fn fetch_transactions(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
-    stats: &Stats,
     groups: &[TxGroup],
 ) -> Result<Vec<(u64, Vec<Transaction>)>, EnrichError> {
     let fetches = groups.iter().map(|group| async move {
@@ -619,7 +600,6 @@ async fn fetch_transactions(
                         read_opt(
                             client,
                             fetches,
-                            stats,
                             group
                                 .reads
                                 .transaction
@@ -628,7 +608,6 @@ async fn fetch_transactions(
                         read_opt(
                             client,
                             fetches,
-                            stats,
                             group.reads.receipt.then_some(FetchKey::Receipt(key)),
                         ),
                     )
@@ -651,9 +630,7 @@ async fn fetch_transactions(
                         // pays for a request here.
                         let transaction = match transaction {
                             Some(transaction) => transaction,
-                            None => {
-                                require(client, fetches, stats, FetchKey::Transaction(key)).await?
-                            }
+                            None => require(client, fetches, FetchKey::Transaction(key)).await?,
                         };
                         responses::fill_effective_gas_price(&mut tx, &transaction)
                             .map_err(|error| EnrichError::from_response(*block_number, error))?;
@@ -676,12 +653,11 @@ async fn fetch_transactions(
 async fn read_opt(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
-    stats: &Stats,
     key: Option<FetchKey>,
 ) -> Result<Option<Arc<Json>>, EnrichError> {
     match key {
         None => Ok(None),
-        Some(key) => require(client, fetches, stats, key).await.map(Some),
+        Some(key) => require(client, fetches, key).await.map(Some),
     }
 }
 
@@ -1023,44 +999,42 @@ mod shared_read_tests {
     }
 
     #[tokio::test]
-    async fn callers_sharing_one_read_record_its_timing_once_between_them() {
+    async fn callers_sharing_one_read_bill_it_once() {
         // Two partitions at the head read the same block at once. One request
         // goes out, and the source's metrics must count exactly one.
         let served = Arc::new(AtomicUsize::new(0));
         let client = client(rpc_server(Duration::from_millis(30), served.clone()).await);
         let fetches = Fetches::default();
-        let (a, b) = (Stats::default(), Stats::default());
         let (first, second) = tokio::join!(
-            require(&client, &fetches, &a, FetchKey::Block(1)),
-            require(&client, &fetches, &b, FetchKey::Block(1)),
+            require(&client, &fetches, FetchKey::Block(1)),
+            require(&client, &fetches, FetchKey::Block(1)),
         );
         assert_eq!(
             (
                 first.is_ok(),
                 second.is_ok(),
                 served.load(Ordering::SeqCst),
-                a.take().len() + b.take().len(),
+                client.take_stats().len(),
             ),
             (true, true, 1, 1)
         );
     }
 
     #[tokio::test]
-    async fn a_cancelled_creator_leaves_the_timing_to_the_waiter_still_running() {
+    async fn a_read_whose_creator_gave_up_is_still_billed_once_it_answers() {
         // The call that issued the request gives up; another that joined it
-        // drives it to the end. The timing must land in the collector that is
-        // still going to be drained, not the one already abandoned.
+        // drives it to the end, and the request it cost still reaches the
+        // source's metrics.
         let served = Arc::new(AtomicUsize::new(0));
         let client = client(rpc_server(Duration::from_millis(100), served.clone()).await);
         let fetches = Fetches::default();
-        let (creator, waiter) = (Stats::default(), Stats::default());
         let cancelled = tokio::time::timeout(
             Duration::from_millis(30),
-            require(&client, &fetches, &creator, FetchKey::Block(1)),
+            require(&client, &fetches, FetchKey::Block(1)),
         );
         let joined = async {
             tokio::time::sleep(Duration::from_millis(1)).await;
-            require(&client, &fetches, &waiter, FetchKey::Block(1)).await
+            require(&client, &fetches, FetchKey::Block(1)).await
         };
         let (cancelled, joined) = tokio::join!(cancelled, joined);
         assert_eq!(
@@ -1068,10 +1042,9 @@ mod shared_read_tests {
                 cancelled.is_err(),
                 joined.is_ok(),
                 served.load(Ordering::SeqCst),
-                creator.take().len(),
-                waiter.take().len(),
+                client.take_stats().len(),
             ),
-            (true, true, 1, 0, 1)
+            (true, true, 1, 1)
         );
     }
 }

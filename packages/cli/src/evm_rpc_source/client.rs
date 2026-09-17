@@ -5,7 +5,10 @@ use serde::Deserialize;
 use serde_json::json;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
+use std::time::Instant;
 use tokio::sync::{Semaphore, SemaphorePermit};
+
+use crate::request_stats::{RequestStat, Stats};
 
 /// JSON-RPC level errors are kept separate from transport/parse failures:
 /// provider error messages carry block-range hints the caller inspects.
@@ -58,6 +61,11 @@ pub struct JsonRpcClient {
     /// its range holds, which no block interval can express: a single dense
     /// block plans thousands of reads.
     permits: Semaphore,
+    /// The timing of every request that finished and has not been reported
+    /// yet. Requests are billed per source rather than per call, so whichever
+    /// call reports next carries what finished since the last one did — a
+    /// read that several partitions shared counts once, whoever issued it.
+    stats: Stats,
 }
 
 impl JsonRpcClient {
@@ -68,7 +76,7 @@ impl JsonRpcClient {
     }
 
     /// Waits for this source's turn to call the provider. Queueing is not part
-    /// of how long a request took, so callers acquire before they start timing.
+    /// of how long a request took, so it happens before the request is timed.
     pub async fn acquire(&self) -> SemaphorePermit<'_> {
         self.permits
             .acquire()
@@ -101,12 +109,33 @@ impl JsonRpcClient {
             url,
             request_timeout_millis,
             permits: Semaphore::new(max_concurrent_requests),
+            stats: Stats::default(),
         })
+    }
+
+    /// The requests that finished since the last call, for the caller to
+    /// report.
+    pub fn take_stats(&self) -> Vec<RequestStat> {
+        self.stats.take()
+    }
+
+    /// Every request is timed here, whether or not it answered: it was made,
+    /// and is billed.
+    pub async fn request<T: DeserializeOwned>(
+        &self,
+        permit: SemaphorePermit<'_>,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<T, RpcError> {
+        let started = Instant::now();
+        let result = self.send(permit, method, params).await;
+        self.stats.record(method, started.elapsed().as_secs_f64());
+        result
     }
 
     /// The caller's turn lasts exactly as long as the provider is working on
     /// the request.
-    pub async fn request<T: DeserializeOwned>(
+    async fn send<T: DeserializeOwned>(
         &self,
         permit: SemaphorePermit<'_>,
         method: &str,
