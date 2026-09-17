@@ -8,7 +8,7 @@ use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use postgres_openssl::MakeTlsConnector;
 use tokio_postgres::config::SslMode;
 use tokio_postgres::types::{ToSql, Type};
-use tokio_postgres::{Config, NoTls, Row};
+use tokio_postgres::{Config, NoTls, Row, Statement};
 
 use super::param::Param;
 
@@ -88,6 +88,7 @@ pub struct PgClient {
 #[derive(Clone)]
 pub struct Transaction {
     connection: Arc<deadpool_postgres::Object>,
+    pool: Pool,
 }
 
 impl Transaction {
@@ -101,6 +102,7 @@ impl Transaction {
 
     pub async fn batch(&self, sql: &str) -> Result<()> {
         self.connection.batch_execute(sql).await?;
+        forget_prepared(&self.pool);
         Ok(())
     }
 
@@ -134,9 +136,47 @@ impl Transaction {
     }
 }
 
-async fn execute_on(client: &tokio_postgres::Client, sql: &str, params: &[Param]) -> Result<u64> {
+/// How many statement shapes a connection keeps prepared. The indexer has a
+/// handful that repeat forever and one that does not: an insert binding a cell
+/// at a time spells out a row per placeholder, so a batch whose last chunk is
+/// short is a statement of its own, and there are as many of those as there are
+/// chunk lengths. Past this the cache is dropped rather than grown without
+/// bound; the shapes that repeat are prepared again on their next use.
+const MAX_PREPARED_STATEMENTS: usize = 256;
+
+/// The statement, prepared once per connection rather than once per call.
+///
+/// A statement given as text is parsed, described and planned by the server
+/// every time it is sent — a round trip and a plan for a statement the
+/// connection has already run a thousand times.
+async fn prepared(client: &deadpool_postgres::Object, sql: &str) -> Result<Statement> {
+    if client.statement_cache.size() > MAX_PREPARED_STATEMENTS {
+        client.statement_cache.clear();
+    }
+    Ok(client.prepare_cached(sql).await?)
+}
+
+/// Drops every connection's prepared statements.
+///
+/// A prepared statement holds a plan describing the columns it returns. Change
+/// the table under it — a new column, a type that is now an enum with another
+/// variant — and the server refuses the next execution with "cached plan must
+/// not change result type". That error arrives mid-statement and aborts an
+/// enclosing transaction, so it is prevented rather than recovered from: every
+/// statement this codebase runs that can change a table's shape goes through
+/// `batch`, and after one no connection keeps a plan from before it.
+fn forget_prepared(pool: &Pool) {
+    pool.manager().statement_caches.clear();
+}
+
+async fn execute_on(
+    client: &deadpool_postgres::Object,
+    sql: &str,
+    params: &[Param],
+) -> Result<u64> {
+    let statement = prepared(client, sql).await?;
     let params = params.iter().map(|param| param as &(dyn ToSql + Sync));
-    Ok(client.execute_raw(sql, params).await?)
+    Ok(client.execute_raw(&statement, params).await?)
 }
 
 /// The rows, and what the statement says its columns are.
@@ -145,11 +185,11 @@ async fn execute_on(client: &tokio_postgres::Client, sql: &str, params: &[Param]
 /// result with no rows in it still describes its shape and the caller lays out
 /// the same columns either way.
 async fn query_on(
-    client: &tokio_postgres::Client,
+    client: &deadpool_postgres::Object,
     sql: &str,
     params: &[Param],
 ) -> Result<(Vec<Row>, Vec<Column>)> {
-    let statement = client.prepare(sql).await?;
+    let statement = prepared(client, sql).await?;
     let columns = statement
         .columns()
         .iter()
@@ -232,6 +272,7 @@ impl PgClient {
     /// statement in a single round trip.
     pub async fn batch(&self, sql: &str) -> Result<()> {
         self.client().await?.batch_execute(sql).await?;
+        forget_prepared(&self.pool);
         Ok(())
     }
 
@@ -256,6 +297,7 @@ impl PgClient {
         connection.batch_execute("BEGIN").await?;
         Ok(Transaction {
             connection: Arc::new(connection),
+            pool: self.pool.clone(),
         })
     }
 

@@ -640,3 +640,35 @@ async fn a_statement_that_returns_no_columns_is_an_empty_result() {
     assert_eq!((rows.len(), columns.len()), (0, 0));
     super::rows::into_arena(&rows, &[]).unwrap();
 }
+
+/// A prepared statement carries the plan the server made for it, and the plan
+/// describes the columns it returns. Change the table under it and executing it
+/// again is refused with "cached plan must not change result type" — which
+/// would arrive inside whatever transaction the caller was in and abort it.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_statement_survives_the_table_changing_shape_under_it() {
+    let client = client();
+    client
+        .batch(
+            "DROP TABLE IF EXISTS stale_plan; \
+             CREATE TABLE stale_plan (n int4)",
+        )
+        .await
+        .unwrap();
+    client.query("SELECT * FROM stale_plan", &[]).await.unwrap();
+
+    client
+        .batch("ALTER TABLE stale_plan ADD COLUMN extra text")
+        .await
+        .unwrap();
+
+    let (_, columns) = client
+        .query("SELECT * FROM stale_plan", &[])
+        .await
+        .expect("the plan from before the column was added must not be reused");
+    let names: Vec<&str> = columns.iter().map(|column| column.name.as_str()).collect();
+    client.batch("DROP TABLE stale_plan").await.unwrap();
+
+    assert_eq!(names, ["n", "extra"]);
+}
