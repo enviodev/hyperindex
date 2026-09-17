@@ -23,7 +23,27 @@ pub fn message_of(error: &anyhow::Error) -> String {
             return database.message().to_string();
         }
     }
-    format!("{error:#}")
+    chain_of(error)
+}
+
+/// Every cause, in order, with the ones that only repeat what is already there
+/// left out.
+///
+/// A connection failure arrives as several layers saying the same thing — the
+/// pool, the driver and OpenSSL each restate the handshake — and printing the
+/// chain as it comes gives the same sentence three times over the one detail
+/// that says what to fix.
+fn chain_of(error: &anyhow::Error) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for cause in error.chain() {
+        let text = cause.to_string();
+        if parts.iter().any(|part| part.contains(&text)) {
+            continue;
+        }
+        parts.retain(|part| !text.contains(part.as_str()));
+        parts.push(text);
+    }
+    parts.join(": ")
 }
 
 pub fn to_napi(error: anyhow::Error) -> napi::Error {
@@ -42,6 +62,20 @@ mod tests {
         assert_eq!(
             message_of(&error),
             "Failed taking a connection: the socket closed"
+        );
+    }
+
+    /// The layer that only restates the one below it is dropped, and the detail
+    /// underneath both is kept.
+    #[test]
+    fn a_cause_already_spelled_out_above_is_not_repeated() {
+        let error = anyhow::anyhow!("certificate verify failed")
+            .context("handshake failed: certificate verify failed")
+            .context("handshake failed")
+            .context("Failed taking a connection");
+        assert_eq!(
+            message_of(&error),
+            "Failed taking a connection: handshake failed: certificate verify failed"
         );
     }
 }

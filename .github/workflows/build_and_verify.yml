@@ -142,6 +142,50 @@ jobs:
       - name: Cargo Test
         run: cargo test
 
+  # The Postgres client's own tests against a real server: what the decoders
+  # make of every type, and what each SSL mode does on a handshake. `cargo
+  # test` has no database, so these are ignored by default and run only here.
+  postgres-live-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: authorize
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./.github/actions/cargo-cache
+
+      # Not a service container: the server has to be given a certificate, and
+      # a service takes no arguments and mounts no files. 999 is the postgres
+      # user inside the image, which has to be able to read its own key.
+      - name: Start Postgres with TLS
+        run: |
+          scripts/pg-tls.sh "$RUNNER_TEMP/pg-certs" 999:999
+          docker run -d --name pg-tls -p 5433:5432 \
+            -e POSTGRES_PASSWORD=testing \
+            -e POSTGRES_DB=envio-dev \
+            -e POSTGRES_USER=postgres \
+            -v "$RUNNER_TEMP/pg-certs:/certs" \
+            postgres:16 \
+            -c ssl=on \
+            -c ssl_cert_file=/certs/server.crt \
+            -c ssl_key_file=/certs/server.key
+          for _ in $(seq 1 60); do
+            if pg_isready -h localhost -p 5433 -U postgres -d envio-dev; then exit 0; fi
+            sleep 1
+          done
+          echo "Postgres did not become ready"
+          docker logs pg-tls
+          exit 1
+
+      - name: Live Postgres tests
+        run: cargo test --lib postgres::live -- --ignored
+
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:
     runs-on: ubuntu-latest

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use postgres_openssl::MakeTlsConnector;
@@ -244,10 +244,16 @@ impl PgClient {
     }
 
     async fn client(&self) -> Result<deadpool_postgres::Object> {
+        // Built from the error rather than its text: a connection that would
+        // not open says why in its source chain — a name that does not
+        // resolve, a certificate the trust store does not vouch for — and
+        // formatting it away leaves the caller with "error performing TLS
+        // handshake" and nothing to act on.
         self.pool
             .get()
             .await
-            .map_err(|error| anyhow!("Failed taking a Postgres connection from the pool: {error}"))
+            .map_err(anyhow::Error::new)
+            .context("Failed taking a Postgres connection from the pool")
     }
 
     /// Runs one or more statements with no parameters, discarding any rows.

@@ -17,8 +17,16 @@ use futures_util::future;
 use crate::columnar::{Arena, ColumnKind, ColumnSpec};
 
 fn client() -> PgClient {
+    client_with(SslSetting::Disable, &default_host())
+}
+
+fn default_host() -> String {
+    std::env::var("ENVIO_PG_HOST").unwrap_or_else(|_| "localhost".to_string())
+}
+
+fn client_with(ssl: SslSetting, host: &str) -> PgClient {
     PgClient::connect(PgConnectionOptions {
-        host: std::env::var("ENVIO_PG_HOST").unwrap_or_else(|_| "localhost".to_string()),
+        host: host.to_string(),
         port: std::env::var("ENVIO_PG_PORT")
             .ok()
             .and_then(|port| port.parse().ok())
@@ -26,7 +34,7 @@ fn client() -> PgClient {
         user: std::env::var("ENVIO_PG_USER").unwrap_or_else(|_| "postgres".to_string()),
         password: std::env::var("ENVIO_PG_PASSWORD").unwrap_or_else(|_| "testing".to_string()),
         database: std::env::var("ENVIO_PG_DATABASE").unwrap_or_else(|_| "envio-dev".to_string()),
-        ssl: SslSetting::Disable,
+        ssl,
         max_connections: 2,
         application_name: Some("envio-live-test".to_string()),
     })
@@ -685,5 +693,65 @@ async fn forgetting_what_was_prepared_survives_the_table_changing_shape() {
             "cached plan must not change result type".to_string(),
             "n,extra".to_string()
         )
+    );
+}
+
+/// Whether the server says the connection it is answering on is encrypted, or
+/// why there was no connection to ask.
+async fn encrypted(ssl: SslSetting, host: &str) -> String {
+    let client = client_with(ssl, host);
+    match client
+        .query(
+            "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
+            &[],
+        )
+        .await
+    {
+        Ok((rows, _)) => match rows.first().map(|row| row.get::<_, bool>(0)) {
+            Some(true) => "encrypted".to_string(),
+            Some(false) => "plaintext".to_string(),
+            None => "no row".to_string(),
+        },
+        Err(error) => format!("refused: {}", super::error::message_of(&error)),
+    }
+}
+
+/// Every mode against a server that offers TLS, including the one that has to
+/// check the certificate.
+///
+/// A hosted database is reached over TLS and nothing short of a handshake says
+/// whether the trust store the addon carries can be reached at all — the
+/// OpenSSL it links is vendored, and its idea of where the CAs live is
+/// compiled in. The certificate names `localhost` and nothing else, so the same
+/// server reached as 127.0.0.1 is what separates a mode that verifies from one
+/// that only encrypts.
+#[tokio::test]
+#[ignore = "needs a Postgres server with TLS and a trusted certificate"]
+async fn each_ssl_mode_connects_the_way_it_says() {
+    let host = default_host();
+    let refused = encrypted(SslSetting::Verify, "127.0.0.1").await;
+
+    assert_eq!(
+        (
+            encrypted(SslSetting::Verify, &host).await,
+            encrypted(SslSetting::NoVerify, &host).await,
+            encrypted(SslSetting::PreferNoVerify, &host).await,
+            encrypted(SslSetting::Disable, &host).await,
+            encrypted(SslSetting::NoVerify, "127.0.0.1").await,
+            // Refused, and saying enough for the refusal to be acted on.
+            (
+                refused.contains("certificate verify failed"),
+                refused.contains("IP address mismatch"),
+            ),
+        ),
+        (
+            "encrypted".to_string(),
+            "encrypted".to_string(),
+            "encrypted".to_string(),
+            "plaintext".to_string(),
+            "encrypted".to_string(),
+            (true, true),
+        ),
+        "{refused}"
     );
 }
