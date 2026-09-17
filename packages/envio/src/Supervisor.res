@@ -48,6 +48,11 @@ let planForRun = (~config: Config.t, ~maxConnections=Env.Db.maxConnections) =>
     plan(~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id), ~maxConnections)
   }
 
+// A console request waiting on one worker's cache dump. Settled by the worker's
+// acknowledgement, or given up on when the worker is gone before it could send
+// one.
+type cacheSync = {done: unit => unit, giveUp: exn => unit}
+
 // One forked worker: the process, the chains it drives, and the last snapshot
 // it reported. `None` until it reports, which is what makes a run that hasn't
 // heard from anyone yet render as initializing rather than as empty.
@@ -59,8 +64,11 @@ type running = {
   // A spawn failure can raise `error` and `exit` both, and a worker counted
   // twice would end the run while its siblings are still indexing.
   mutable settled: bool,
-  // Waiting for this worker's cache dump, when a console asked for one.
-  mutable onCacheSynced: option<unit => unit>,
+  // Whether the process is gone. Told apart from `settled`, which is the run's
+  // count of the workers it has accounted for.
+  mutable ended: bool,
+  // The console request waiting on this worker's cache dump, if one is.
+  mutable cacheSync: option<cacheSync>,
 }
 
 // A worker is named by the chains it drives, which is what an operator reading
@@ -68,6 +76,9 @@ type running = {
 let name = (worker: worker) => worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(";")
 
 let label = (worker: worker) => `[chain ${worker->name}]`
+
+let endedBeforeDump = worker =>
+  Utils.Error.make(`${worker->label} ended before it could dump its cache`)
 
 // Workers append to files of their own. Pino writes a line per call, and
 // several processes appending to one file can still tear a long line apart.
@@ -136,23 +147,34 @@ let fork = (
     snapshot: None,
     runtime: None,
     settled: false,
-    onCacheSynced: None,
+    ended: false,
+    cacheSync: None,
   }
+  let settleCacheSync = settle =>
+    switch running.cacheSync {
+    | Some(cacheSync) => {
+        running.cacheSync = None
+        settle(cacheSync)
+      }
+    | None => ()
+    }
   child->NodeJs.ChildProcess.onMessage(message =>
     switch message {
     | Worker.Snapshot({metrics, runtime}) => {
         running.snapshot = Some(metrics)
         running.runtime = Some(runtime)
       }
-    | Worker.CacheSynced(_) =>
-      switch running.onCacheSynced {
-      | Some(resolve) =>
-        running.onCacheSynced = None
-        resolve()
-      | None => ()
-      }
+    | Worker.CacheSynced(_) => settleCacheSync(cacheSync => cacheSync.done())
     }
   )
+  // A worker that ends mid-dump answers nothing ever again, and a request left
+  // waiting on it would hang for as long as the supervisor lives.
+  let end = () => {
+    running.ended = true
+    settleCacheSync(cacheSync => cacheSync.giveUp(worker->endedBeforeDump))
+  }
+  child->NodeJs.ChildProcess.onExit((_code, _signal) => end())
+  child->NodeJs.ChildProcess.onChildError(_ => end())
   running
 }
 
@@ -181,15 +203,23 @@ let syncCache = group =>
   | None =>
     let inFlight =
       group.running
-      ->Array.filter(r => !r.settled)
       ->Array.map(r =>
-        Promise.make((resolve, _) => {
-          r.onCacheSynced = Some(() => resolve())
-          r.child->NodeJs.ChildProcess.send(Worker.SyncCache({}))->ignore
-        })
+        Promise.make((resolve, reject) =>
+          // A worker already gone has no dump left to ask for, and the request
+          // is answered by the same give-up as one that dies mid-dump.
+          if r.ended {
+            reject(r.worker->endedBeforeDump)
+          } else {
+            r.cacheSync = Some({done: () => resolve(), giveUp: reject})
+            r.child->NodeJs.ChildProcess.send(Worker.SyncCache({}))->ignore
+          }
+        )
       )
       ->Promise.all
-      ->Promise.thenResolve(_ => group.syncing = None)
+      ->Promise.thenResolve(ignore)
+      // However it ended, the next request asks for a dump of its own rather
+      // than joining one that is over.
+      ->Promise.finally(() => group.syncing = None)
     group.syncing = Some(inFlight)
     inFlight
   }

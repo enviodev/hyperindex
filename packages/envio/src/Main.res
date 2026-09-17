@@ -549,6 +549,14 @@ let startServer = (
     if isDevelopmentMode {
       onSyncCache()
       ->Promise.thenResolve(() => res->json(Boolean(true)))
+      // A dump that couldn't be made, or couldn't be confirmed, answers the
+      // same `false` a disabled console does. Leaving it unanswered would hold
+      // the request open for as long as the indexer runs.
+      ->Promise.catch(exn => {
+        Logging.errorWithExn(exn, "Failed to sync the effect cache")
+        res->json(Boolean(false))
+        Promise.resolve()
+      })
       ->Promise.ignore
     } else {
       res->json(Boolean(false))

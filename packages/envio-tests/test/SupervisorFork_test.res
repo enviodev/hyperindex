@@ -89,6 +89,35 @@ describe("Supervisor.syncCache", () => {
 
     t.expect(outcomes).toStrictEqual(("answered", "answered"))
   })
+
+  Async.it("Gives up on a worker that is gone before it could dump", async t => {
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "mute")
+    let running = forkFixture(~chainIds=[1])
+    let group: Supervisor.group = {running: [running], stopping: false, syncing: None}
+
+    let settled = async request =>
+      switch await request {
+      | () => "answered"
+      | exception _ => "gave up"
+      }
+    // Raced, so a request that never settles reads as the hang it is rather
+    // than as the suite timing out.
+    let answered = request =>
+      Promise.race([
+        request->settled,
+        Utils.delay(2000)->Promise.thenResolve(() => "still waiting"),
+      ])
+
+    let duringDump = group->Supervisor.syncCache
+    running.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore
+    let outcomes = (
+      await duringDump->answered,
+      // And a request that arrives once it is already gone.
+      await group->Supervisor.syncCache->answered,
+    )
+
+    t.expect(outcomes).toStrictEqual(("gave up", "gave up"))
+  })
 })
 
 describe("Supervisor.awaitExit", () => {
