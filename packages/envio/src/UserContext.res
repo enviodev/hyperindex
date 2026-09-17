@@ -95,6 +95,7 @@ let initEffect = (params: contextParams) => {
         input,
         context: effectContext,
         cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+        chainId: handlerChainId,
         checkpointId: params.checkpointId,
       }
       LoadLayer.loadEffect(
@@ -121,39 +122,20 @@ type entityContextParams = {
 // The handler context is always chain-scoped, so a per-chain entity resolves to
 // the chain the handler runs on and a cross-chain one to the shared partition.
 let entityScope = (params: entityContextParams) =>
-  params.entityConfig->InMemoryStore.entityScope(
-    ~chainId=params.item->Internal.getItemChainId,
+  params.entityConfig->InMemoryStore.entityScope(~chainId=params.item->Internal.getItemChainId)
+
+let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) =>
+  LoadLayer.loadByFilter(
+    ~loadManager=params.loadManager,
+    ~persistence=params.persistence,
+    ~entityConfig=params.entityConfig,
+    ~scope=params->entityScope,
+    ~indexerState=params.indexerState,
+    ~shouldGroup=params.isPreload,
+    ~item=params.item,
+    ~ecosystem=params.config.ecosystem,
+    ~filter,
   )
-
-let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
-  let entityConfig = params.entityConfig
-
-  @inline
-  let loadWithFilter = filter =>
-    LoadLayer.loadByFilter(
-      ~loadManager=params.loadManager,
-      ~persistence=params.persistence,
-      ~entityConfig,
-      ~scope=params->entityScope,
-      ~indexerState=params.indexerState,
-      ~shouldGroup=params.isPreload,
-      ~item=params.item,
-      ~ecosystem=params.config.ecosystem,
-      ~filter,
-    )
-
-  switch filter->EntityFilter.parseGetWhereOrThrow(
-    ~entityName=entityConfig.name,
-    ~table=entityConfig.table,
-  ) {
-  | [single] => loadWithFilter(single)
-  | filters =>
-    filters
-    ->Array.map(filter => loadWithFilter(filter))
-    ->Promise.all
-    ->Promise.thenResolve(results => results->Array.flat)
-  }
-}
 
 let noopSet = (_entity: Internal.entity) => ()
 let noopDeleteUnsafe = (_entityId: EntityId.t) => ()
@@ -171,14 +153,16 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     let prop = prop->(Utils.magic: unknown => string)
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
+    let scope = params->entityScope
+    let committedCheckpointId = params.indexerState->IndexerState.committedCheckpointIdFor(~scope)
 
     let set = params.isPreload
       ? noopSet
       : (entity: Internal.entity) => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
+            ~committedCheckpointId,
             Set({
               entityId: entity.id->EntityId.unsafeOfString,
               checkpointId: params.checkpointId,
@@ -288,9 +272,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       } else {
         entityId => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
+            ~committedCheckpointId,
             Delete({
               entityId,
               checkpointId: params.checkpointId,

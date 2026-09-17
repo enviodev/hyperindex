@@ -16,11 +16,12 @@ let emptyBatch = (~checkpointId): Batch.t => {
   totalBatchSize: 0,
   items: [],
   progressedChainsById: Dict.make(),
-  isInReorgThreshold: false,
+  history: dict{"1": false},
   checkpointIds: [checkpointId],
   checkpointChainIds: [1->ChainId.fromInt],
   checkpointBlockNumbers: [checkpointId->BigInt.toInt],
   checkpointBlockHashes: [`0x${checkpointId->BigInt.toString}`->Null.make],
+  checkpointItemsCount: [0],
   checkpointEventsProcessed: [0],
   registeredAddresses: [],
 }
@@ -39,7 +40,6 @@ let makeStore = () => {
     writeBatch: (
       ~batch as _,
       ~rollback as _,
-      ~isInReorgThreshold as _,
       ~config as _,
       ~allEntities as _,
       ~updatedEffectsCache as _,
@@ -61,13 +61,13 @@ describe("InMemoryStore chain metadata", () => {
     let (store, setChainMetaCalls, writeBatchChainMetaCalls) = makeStore()
     let meta = metaFields(~buffer=10)
 
-    store->Writing.setChainMeta(Dict.fromArray([("1", meta)]))
+    store->Writing.setChainMeta(dict{"1": meta})
     store->Writing.commitBatch(~batch=emptyBatch(~checkpointId=1n))
     await store->Writing.flush
 
     t.expect((setChainMetaCalls, writeBatchChainMetaCalls)).toEqual((
       [],
-      [Some(Dict.fromArray([("1", meta)]))],
+      [Some(dict{"1": meta})],
     ))
   })
 
@@ -75,11 +75,11 @@ describe("InMemoryStore chain metadata", () => {
     let (store, setChainMetaCalls, writeBatchChainMetaCalls) = makeStore()
     let meta = metaFields(~buffer=10, ~firstEvent=3, ~isHyperSync=true)
 
-    store->Writing.setChainMeta(Dict.fromArray([("1", meta)]))
+    store->Writing.setChainMeta(dict{"1": meta})
     await store->Writing.flush
 
     t.expect((setChainMetaCalls, writeBatchChainMetaCalls)).toEqual((
-      [Dict.fromArray([("1", meta)])],
+      [dict{"1": meta}],
       [],
     ))
   })
@@ -88,13 +88,13 @@ describe("InMemoryStore chain metadata", () => {
     let (store, setChainMetaCalls, _) = makeStore()
     let meta = metaFields(~buffer=10)
 
-    store->Writing.setChainMeta(Dict.fromArray([("1", meta)]))
+    store->Writing.setChainMeta(dict{"1": meta})
     await store->Writing.flush
     // Identical value restaged, so no further write.
-    store->Writing.setChainMeta(Dict.fromArray([("1", metaFields(~buffer=10))]))
+    store->Writing.setChainMeta(dict{"1": metaFields(~buffer=10)})
     await store->Writing.flush
 
-    t.expect(setChainMetaCalls).toEqual([Dict.fromArray([("1", meta)])])
+    t.expect(setChainMetaCalls).toEqual([dict{"1": meta}])
   })
 
   Async.it("Writes the full snapshot whenever any chain changed", async t => {
@@ -102,16 +102,16 @@ describe("InMemoryStore chain metadata", () => {
     let chain1 = metaFields(~buffer=10)
     let chain2 = metaFields(~buffer=20)
 
-    store->Writing.setChainMeta(Dict.fromArray([("1", chain1), ("2", chain2)]))
+    store->Writing.setChainMeta(dict{"1": chain1, "2": chain2})
     await store->Writing.flush
     // Only chain 2 advances, but the write carries the whole snapshot (one upsert).
     let chain2Next = metaFields(~buffer=25)
-    store->Writing.setChainMeta(Dict.fromArray([("1", metaFields(~buffer=10)), ("2", chain2Next)]))
+    store->Writing.setChainMeta(dict{"1": metaFields(~buffer=10), "2": chain2Next})
     await store->Writing.flush
 
     t.expect(setChainMetaCalls).toEqual([
-      Dict.fromArray([("1", chain1), ("2", chain2)]),
-      Dict.fromArray([("1", chain1), ("2", chain2Next)]),
+      dict{"1": chain1, "2": chain2},
+      dict{"1": chain1, "2": chain2Next},
     ])
   })
 })

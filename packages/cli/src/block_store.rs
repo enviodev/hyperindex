@@ -719,6 +719,41 @@ impl BlockStore {
             .map(|b| self.hash_display(b))
     }
 
+    /// Unix timestamp of a stored block, if the store still holds it with a
+    /// time. Exactly that block, except for an SVM slot that produced none:
+    /// with `allow_skipped_slot` the last real slot below it answers instead,
+    /// which is what chain time is at a skipped slot. Only the caller knows
+    /// whether that reading is available - a slot with no block was skipped
+    /// only where the query covered every slot in its range, and otherwise may
+    /// simply never have been asked about.
+    #[napi]
+    pub fn get_timestamp(&self, block_number: i64, allow_skipped_slot: bool) -> Option<i64> {
+        let key = u64::try_from(block_number).ok()?;
+        let field = self.timestamp_field();
+        let inner = self.inner.lock().unwrap();
+        match self.ecosystem {
+            // Stored as a big-endian quantity rather than an i64 cell.
+            Ecosystem::Evm { .. } => inner
+                .table
+                .field_bytes(&key, field)
+                .and_then(|b| map_i64(&Some(b)).ok().flatten()),
+            Ecosystem::Fuel => inner.table.field_i64(&key, field),
+            Ecosystem::Svm => {
+                if let Some(time) = inner.table.field_i64(&key, field) {
+                    return Some(time);
+                }
+                // A slot the store holds a row for produced a block, whether or
+                // not that row carries a time, so no earlier slot's time is its
+                // own. Only a slot with no row at all was skipped.
+                if !allow_skipped_slot || inner.table.contains_key(&key) {
+                    return None;
+                }
+                let slot = inner.table.last_key_with_field(key, field)?;
+                inner.table.field_i64(&slot, field)
+            }
+        }
+    }
+
     /// Every stored hash in `[from_block, below_block)`, ascending, as two
     /// aligned columns. One call per batch, where reading the same rows through
     /// `get_hash` would cross the napi boundary once per block.
@@ -892,8 +927,15 @@ impl BlockStore {
         }
     }
 
-    /// A stored hash cell in the shape JS knows it by: hex for the byte-backed
-    /// EVM/Fuel hashes, the raw base58 string for SVM.
+    /// The ecosystem's block-time field code.
+    fn timestamp_field(&self) -> usize {
+        match self.ecosystem {
+            Ecosystem::Evm { .. } => EvmBlockField::Timestamp as usize,
+            Ecosystem::Svm => SvmBlockField::Time as usize,
+            Ecosystem::Fuel => FuelBlockField::Time as usize,
+        }
+    }
+
     /// The lowest block at or above `from` that both tables carry a hash for,
     /// where they disagree.
     fn first_cross_mismatch(
@@ -910,6 +952,8 @@ impl BlockStore {
         })
     }
 
+    /// A stored hash cell in the shape JS knows it by: hex for the byte-backed
+    /// EVM/Fuel hashes, the raw base58 string for SVM.
     fn hash_display(&self, bytes: &[u8]) -> String {
         match self.ecosystem {
             Ecosystem::Svm => String::from_utf8_lossy(bytes).into_owned(),
@@ -1352,6 +1396,121 @@ mod tests {
                 vec![Some(777)],
                 false
             )
+        );
+    }
+
+    #[test]
+    fn get_timestamp_reads_the_exact_block() {
+        let store = BlockStore::new_evm(false);
+        store.insert_evm_blocks(vec![
+            simple_types::Block {
+                timestamp: Some(Quantity::from(100u64)),
+                ..raw_evm_block(10)
+            },
+            // Returned without a timestamp, as a hash-only reorg observation is.
+            raw_evm_block(20),
+            simple_types::Block {
+                timestamp: Some(Quantity::from(300u64)),
+                ..raw_evm_block(30)
+            },
+        ]);
+
+        assert_eq!(
+            (
+                store.get_timestamp(10, false),
+                store.get_timestamp(20, false),
+                store.get_timestamp(15, false),
+                store.get_timestamp(30, false),
+            ),
+            (Some(100), None, None, Some(300))
+        );
+    }
+
+    #[test]
+    fn get_timestamp_falls_back_to_the_last_real_svm_slot_when_allowed() {
+        let store = BlockStore::new_svm();
+        store.insert_svm_blocks(vec![
+            solana_simple::Block {
+                block_time: Some(100),
+                ..raw_svm_block(10)
+            },
+            solana_simple::Block {
+                block_time: Some(120),
+                ..raw_svm_block(12)
+            },
+        ]);
+
+        assert_eq!(
+            (
+                // Slot 11 produced no block. Where the query covered every slot
+                // in its range, that means it was skipped, and chain time there
+                // is the last real slot's.
+                store.get_timestamp(11, true),
+                store.get_timestamp(12, true),
+                store.get_timestamp(9, true),
+            ),
+            (Some(100), Some(120), None)
+        );
+    }
+
+    #[test]
+    fn get_timestamp_does_not_treat_a_timeless_svm_block_as_skipped() {
+        let store = BlockStore::new_svm();
+        store.insert_svm_blocks(vec![
+            solana_simple::Block {
+                block_time: Some(100),
+                ..raw_svm_block(10)
+            },
+            // The slot produced a block; the response just carried no time for
+            // it. That is not a skipped slot, so slot 10's time is not its own.
+            solana_simple::Block {
+                block_time: None,
+                ..raw_svm_block(11)
+            },
+        ]);
+
+        assert_eq!(store.get_timestamp(11, true), None);
+    }
+
+    #[test]
+    fn get_timestamp_does_not_let_an_older_svm_slot_answer() {
+        let store = BlockStore::new_svm();
+        store.insert_svm_blocks(vec![
+            solana_simple::Block {
+                block_time: Some(100),
+                ..raw_svm_block(10)
+            },
+            solana_simple::Block {
+                block_time: Some(120),
+                ..raw_svm_block(12)
+            },
+        ]);
+
+        assert_eq!(
+            (
+                store.get_timestamp(12, false),
+                // Without full slot coverage, slot 11 having no block may mean
+                // it was skipped or merely never asked about - so slot 10's
+                // time can't stand in for it.
+                store.get_timestamp(11, false),
+                store.get_timestamp(9, false),
+            ),
+            (Some(120), None, None)
+        );
+    }
+
+    #[test]
+    fn get_timestamp_reads_a_fuel_block_time() {
+        let store = BlockStore::new_fuel();
+        store.insert_fuel_block_rows(vec![FuelBlockRow {
+            height: 5,
+            id: Some([0xee_u8; 32].to_vec()),
+            time: Some(123),
+        }]);
+
+        assert_eq!(
+            (store.get_timestamp(5, false), store.get_timestamp(4, false)),
+            (Some(123), None)
         );
     }
 

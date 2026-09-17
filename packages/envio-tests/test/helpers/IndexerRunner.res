@@ -56,7 +56,9 @@ type rec t = {
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.
   stop: unit => promise<unit>,
-  restart: unit => promise<t>,
+  // `~chains` resumes the same schema driving only those chains, the way
+  // `envio start --chain` does. The chains left out keep their stored state.
+  restart: (~chains: array<ChainId.t>=?, unit) => promise<t>,
 }
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
@@ -98,15 +100,16 @@ let run = async (
 
   // The builder is only reachable here and from `restart`, so it takes just
   // the flag that differs between them and reads the rest off this call.
-  let rec make = async (~reset) => {
+  let rec make = async (~reset, ~chains=?) => {
+    let config = switch chains {
+    | Some(chainIds) => config->Config.isolate(~chainIds)
+    | None => config
+    }
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
     switch Env.userLogLevel {
     | None => Logging.setLogLevel(#silent)
     | Some(_) => ()
     }
-
-    let registrationsByChainId = await resolveRegistrations()
-    MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     switch clickHouseDatabase {
     | Some(database) => TestClickHouse.use(~database)
@@ -119,6 +122,10 @@ let run = async (
       PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+    // `Main.start` does this before handler modules load, so the exported
+    // indexer can expose persisted state. Without it every `indexer.chains[N]`
+    // getter silently falls back to static config.
+    Main.setGlobalPersistence(persistence)
     let pg = {sql, pgSchema}
 
     let onError = switch onError {
@@ -137,7 +144,15 @@ let run = async (
       ~resetCommand="envio dev -r",
       ~runCommand=Some("envio dev"),
       ~reset,
+      ~lowercaseAddresses=config.lowercaseAddresses,
+      ~requireInitialized=config.isolated,
     )
+
+    // Same order as `Main.start`: storage is initialized - which is where a
+    // `start_block: latest` chain reads its head - before handler modules load,
+    // so a registration-time `chain.startBlock` sees the resolved block.
+    let registrationsByChainId = await resolveRegistrations()
+    MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let state = IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
@@ -260,7 +275,7 @@ let run = async (
             let isIdle =
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
+              Frontier.equals(state->IndexerState.committedFrontier, state->IndexerState.processedFrontier)
 
             // Catching up hands off to the FinalizingIndexes phase, which is
             // where readiness is decided — so a batch isn't settled until that
@@ -306,7 +321,7 @@ let run = async (
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
               !(state->IndexerState.isFinalizingIndexes) &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
+              Frontier.equals(state->IndexerState.committedFrontier, state->IndexerState.processedFrontier)
             ) {
               settled.contents + 1
             } else {
@@ -438,12 +453,12 @@ let run = async (
       },
       pg,
       stop,
-      restart: async () => {
+      restart: async (~chains=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        await make(~reset=false)
+        await make(~reset=false, ~chains?)
       },
     }
   }

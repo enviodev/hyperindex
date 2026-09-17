@@ -55,6 +55,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
+    ~includeAllBlocks as _,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,

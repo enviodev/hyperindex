@@ -8,9 +8,10 @@ type blockRangeFetchStats = {
 }
 
 // A single backend request a source method actually made (cache/dedup hits
-// aren't requests), with the time it took. SourceManager aggregates these
-// per (source, method) into the envio_source_request_* metrics.
-type requestStat = RequestStat.t = {method: string, seconds: float}
+// aren't requests), with the time it took and how much it brought back.
+// SourceManager aggregates these per (source, method) into the
+// envio_source_request_* and envio_source_response_* metrics.
+type requestStat = RequestStat.t = {method: string, seconds: float, responseBlocks?: int}
 
 // Native clients wrap a failure of a multi-request operation in a structured
 // payload, so the source can still return timings when SourceManager retries
@@ -215,6 +216,13 @@ type t = {
     // straight to its Rust client, which builds the query's address filter from
     // it and gates every returned item against the chain-wide store.
     ~addressSet: AddressSet.t,
+    // Return a header for every block in the range, not only the ones an item
+    // landed on. The progress block's timestamp is what measures how far behind
+    // chain time the indexer is, and at the head that block often carries no
+    // item of its own. Only set once the chain is at the head, where the range
+    // is a handful of blocks; over a backfill range it would be a header per
+    // block for no gain.
+    ~includeAllBlocks: bool,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,

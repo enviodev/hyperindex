@@ -23,9 +23,11 @@ let make: (
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
+  ~committedProgressBlockTime: option<int>=?,
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
   ~shouldRollbackOnReorg: bool,
   ~maxReorgDepth: int,
+  ~isInReorgThreshold: bool=?,
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
@@ -68,6 +70,7 @@ let getLatestValidScannedBlock: (
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
+let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
 let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
@@ -117,7 +120,7 @@ let dispatch: (
 // Views.
 let toMetrics: t => Metrics.chainMetrics
 let toChainMetadata: t => InternalTable.Chains.metaFields
-let toChainBeforeBatch: t => Batch.chainBeforeBatch
+let toChainBeforeBatch: (t, ~isRealtime: bool) => Batch.chainBeforeBatch
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
@@ -158,6 +161,8 @@ let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
+let isInReorgThreshold: t => bool
+let shouldSaveHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit

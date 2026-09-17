@@ -209,8 +209,8 @@ describe("E2E tests", () => {
         await indexer.metric("envio_progress_ready"),
         ~message="No chain is ready while chain 1337 is still syncing",
       ).toEqual([
-        {value: "0", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "0", labels: dict{"chainId": "100"}},
+        {value: "0", labels: dict{"chainId": "1337"}},
       ])
       t.expect(
         await indexer.metric("hyperindex_synced_to_head"),
@@ -226,8 +226,8 @@ describe("E2E tests", () => {
         await indexer.metric("envio_progress_ready"),
         ~message="Both chains should be ready",
       ).toEqual([
-        {value: "1", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "1", labels: dict{"chainId": "100"}},
+        {value: "1", labels: dict{"chainId": "1337"}},
       ])
       t.expect(
         await indexer.metric("hyperindex_synced_to_head"),
@@ -377,11 +377,11 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "1",
-        labels: Dict.fromArray([("effect", "testEffect"), ("scope", "crossChain")]),
+        labels: dict{"effect": "testEffect", "scope": "crossChain"},
       },
       {
         value: "2",
-        labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
+        labels: dict{"effect": "testEffectWithCache", "scope": "crossChain"},
       },
     ])
     t.expect(
@@ -390,7 +390,7 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "2",
-        labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
+        labels: dict{"effect": "testEffectWithCache", "scope": "crossChain"},
       },
     ])
     t.expect(
@@ -418,7 +418,7 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "2",
-        labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
+        labels: dict{"effect": "testEffectWithCache", "scope": "crossChain"},
       },
     ])
 
@@ -477,28 +477,19 @@ describe("E2E tests", () => {
       [
         {
           value: "2",
-          labels: Dict.fromArray([
-            ("operation", "testEffectWithCache.effect"),
-            ("storage", "postgres"),
-          ]),
+          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
         },
       ],
       [
         {
           value: "2",
-          labels: Dict.fromArray([
-            ("operation", "testEffectWithCache.effect"),
-            ("storage", "postgres"),
-          ]),
+          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
         },
       ],
       [
         {
           value: "1",
-          labels: Dict.fromArray([
-            ("operation", "testEffectWithCache.effect"),
-            ("storage", "postgres"),
-          ]),
+          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
         },
       ],
     ))
@@ -512,13 +503,13 @@ describe("E2E tests", () => {
       [
         {
           value: "1",
-          labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
+          labels: dict{"effect": "testEffectWithCache", "scope": "crossChain"},
         },
       ],
       [
         {
           value: "2",
-          labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
+          labels: dict{"effect": "testEffectWithCache", "scope": "crossChain"},
         },
       ],
     ))
@@ -687,7 +678,7 @@ describe("E2E tests", () => {
         [
           {
             value: "1",
-            labels: Dict.fromArray([("effect", "chainScopedE2E"), ("scope", "1337")]),
+            labels: dict{"effect": "chainScopedE2E", "scope": "1337"},
           },
         ],
       ))
@@ -831,7 +822,7 @@ describe("E2E tests", () => {
       ).toEqual([
         {
           value: "6",
-          labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")]),
+          labels: dict{"effect": "testEffectMultiWindow", "scope": "crossChain"},
         },
       ])
 
@@ -843,7 +834,7 @@ describe("E2E tests", () => {
       ).toEqual([
         {
           value: "4",
-          labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")]),
+          labels: dict{"effect": "testEffectMultiWindow", "scope": "crossChain"},
         },
       ])
       t.expect(
@@ -852,7 +843,7 @@ describe("E2E tests", () => {
       ).toEqual([
         {
           value: "2",
-          labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")]),
+          labels: dict{"effect": "testEffectMultiWindow", "scope": "crossChain"},
         },
       ])
 
@@ -863,7 +854,7 @@ describe("E2E tests", () => {
       ).toEqual([
         {
           value: "0",
-          labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")]),
+          labels: dict{"effect": "testEffectMultiWindow", "scope": "crossChain"},
         },
       ])
     },
@@ -945,7 +936,7 @@ describe("E2E tests", () => {
       ).toEqual([
         {
           value: "4",
-          labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")]),
+          labels: dict{"effect": "testEffectNested", "scope": "crossChain"},
         },
       ])
 
@@ -957,7 +948,7 @@ describe("E2E tests", () => {
       ).toEqual([
         {
           value: "3",
-          labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")]),
+          labels: dict{"effect": "testEffectNested", "scope": "crossChain"},
         },
       ])
       t.expect(
@@ -966,7 +957,7 @@ describe("E2E tests", () => {
       ).toEqual([
         {
           value: "1",
-          labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")]),
+          labels: dict{"effect": "testEffectNested", "scope": "crossChain"},
         },
       ])
 
@@ -987,7 +978,7 @@ describe("E2E tests", () => {
       ).toEqual([
         {
           value: "0",
-          labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")]),
+          labels: dict{"effect": "testEffectNested", "scope": "crossChain"},
         },
       ])
     },
@@ -1617,8 +1608,8 @@ describe("E2E tests", () => {
         await indexer.metric("envio_progress_ready"),
         ~message="No chain is ready while chain 100 is still syncing",
       ).toEqual([
-        {value: "0", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "0", labels: dict{"chainId": "100"}},
+        {value: "0", labels: dict{"chainId": "1337"}},
       ])
       t.expect(
         await indexer.metric("hyperindex_synced_to_head"),
@@ -1637,8 +1628,8 @@ describe("E2E tests", () => {
         await indexer.metric("envio_progress_ready"),
         ~message="Both chains should be ready",
       ).toEqual([
-        {value: "1", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "1", labels: dict{"chainId": "100"}},
+        {value: "1", labels: dict{"chainId": "1337"}},
       ])
       t.expect(
         await indexer.metric("hyperindex_synced_to_head"),

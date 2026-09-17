@@ -49,12 +49,9 @@ let item = Internal.Event({
   blockNumber: 1,
   logIndex: 11,
   transactionIndex: 0,
-  onEventRegistration: (
-    EventRegistration.evmOnEventRegistration() :> Internal.onEventRegistration
-  ),
+  onEventRegistration: (EventRegistration.evmOnEventRegistration() :> Internal.onEventRegistration),
   payload: {"id": "1001"}->(Utils.magic: {..} => Internal.eventPayload),
 })
-
 
 describe("LoadLayer", () => {
   Async.it("Trys to load non existing entity from db", async t => {
@@ -70,7 +67,7 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
-        ~item=item,
+        ~item,
         ~ecosystem=config.ecosystem,
         ~shouldGroup=true,
       )
@@ -80,7 +77,7 @@ describe("LoadLayer", () => {
     t.expect(user).toEqual(None)
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.In({fieldName: "id", fieldValue: ["123"]->(Utils.magic: array<string> => array<unknown>)}),
+        "filter": dict{"id": dict{"_in": ["123"]->(Utils.magic: array<string> => unknown)}},
         "tableName": "User",
       },
     ])
@@ -99,7 +96,7 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
-        ~item=item,
+        ~item,
         ~ecosystem=config.ecosystem,
         ~shouldGroup=true,
       )
@@ -111,11 +108,11 @@ describe("LoadLayer", () => {
     t.expect(user2).toEqual(None)
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.In({fieldName: "id", fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>)}),
+        "filter": dict{"id": dict{"_in": ["1"]->(Utils.magic: array<string> => unknown)}},
         "tableName": "User",
       },
       {
-        "filter": EntityFilter.In({fieldName: "id", fieldValue: ["2"]->(Utils.magic: array<string> => array<unknown>)}),
+        "filter": dict{"id": dict{"_in": ["2"]->(Utils.magic: array<string> => unknown)}},
         "tableName": "User",
       },
     ])
@@ -132,10 +129,10 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~entityConfig=userEntityConfig,
-        ~scope=Internal.CrossChain,
+          ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
-          ~item=item,
+          ~item,
           ~ecosystem=config.ecosystem,
           ~shouldGroup=true,
         )
@@ -147,7 +144,7 @@ describe("LoadLayer", () => {
       t.expect(user2).toEqual(None)
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "filter": EntityFilter.In({fieldName: "id", fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>)}),
+          "filter": dict{"id": dict{"_in": ["1"]->(Utils.magic: array<string> => unknown)}},
           "tableName": "User",
         },
       ])
@@ -166,7 +163,7 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
-        ~item=item,
+        ~item,
         ~ecosystem=config.ecosystem,
         ~shouldGroup=true,
       )
@@ -190,11 +187,11 @@ describe("LoadLayer", () => {
     t.expect(user2).toEqual(None)
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.In({fieldName: "id", fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>)}),
+        "filter": dict{"id": dict{"_in": ["1"]->(Utils.magic: array<string> => unknown)}},
         "tableName": "User",
       },
       {
-        "filter": EntityFilter.In({fieldName: "id", fieldValue: ["2"]->(Utils.magic: array<string> => array<unknown>)}),
+        "filter": dict{"id": dict{"_in": ["2"]->(Utils.magic: array<string> => unknown)}},
         "tableName": "User",
       },
     ])
@@ -212,7 +209,7 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
-        ~item=item,
+        ~item,
         ~ecosystem=config.ecosystem,
         ~shouldGroup=true,
       )
@@ -222,7 +219,7 @@ describe("LoadLayer", () => {
     t.expect(users).toEqual([None, None])
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.In({fieldName: "id", fieldValue: ["1", "2"]->(Utils.magic: array<string> => array<unknown>)}),
+        "filter": dict{"id": dict{"_in": ["1", "2"]->(Utils.magic: array<string> => unknown)}},
         "tableName": "User",
       },
     ])
@@ -244,32 +241,26 @@ describe("LoadLayer", () => {
         }: user
       )
 
-      let indexerState = TestIndexerState.make(
-        ~config,
-        ~entities=[(userEntityConfig, [user1])],
-      )
+      let indexerState = TestIndexerState.make(~config, ~entities=[(userEntityConfig, [user1])])
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~entityConfig=userEntityConfig,
-        ~scope=Internal.CrossChain,
+          ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
-          ~item=item,
+          ~item,
           ~ecosystem=config.ecosystem,
           ~shouldGroup=true,
         )
 
       let users = await Promise.all([getUser("1"), getUser("2")])
 
-      t.expect(users).toEqual([
-        Some(user1->(Utils.magic: user => Internal.entity)),
-        None,
-      ])
+      t.expect(users).toEqual([Some(user1->(Utils.magic: user => Internal.entity)), None])
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "filter": EntityFilter.In({fieldName: "id", fieldValue: ["2"]->(Utils.magic: array<string> => array<unknown>)}),
+          "filter": dict{"id": dict{"_in": ["2"]->(Utils.magic: array<string> => unknown)}},
           "tableName": "User",
         },
       ])
@@ -298,10 +289,10 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~entityConfig=userEntityConfig,
-        ~scope=Internal.CrossChain,
+          ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
-          ~item=item,
+          ~item,
           ~ecosystem=config.ecosystem,
           ~shouldGroup=true,
         )
@@ -325,7 +316,7 @@ describe("LoadLayer", () => {
       t.expect(user).toEqual(Some(user1->(Utils.magic: user => Internal.entity)))
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "filter": EntityFilter.In({fieldName: "id", fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>)}),
+          "filter": dict{"id": dict{"_in": ["1"]->(Utils.magic: array<string> => unknown)}},
           "tableName": "User",
         },
       ])
@@ -348,20 +339,17 @@ describe("LoadLayer", () => {
         }: user
       )
 
-      let indexerState = TestIndexerState.make(
-        ~config,
-        ~entities=[(userEntityConfig, [user1])],
-      )
+      let indexerState = TestIndexerState.make(~config, ~entities=[(userEntityConfig, [user1])])
 
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~entityConfig=userEntityConfig,
-        ~scope=Internal.CrossChain,
+          ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
-          ~item=item,
+          ~item,
           ~ecosystem=config.ecosystem,
           ~shouldGroup=true,
         )
@@ -381,11 +369,11 @@ describe("LoadLayer", () => {
       // but we are not sure that it'll bring some benefits
       t.expect(storageMock.loadOrThrowCalls).toEqual([
         {
-          "filter": EntityFilter.In({fieldName: "id", fieldValue: ["2"]->(Utils.magic: array<string> => array<unknown>)}),
+          "filter": dict{"id": dict{"_in": ["2"]->(Utils.magic: array<string> => unknown)}},
           "tableName": "User",
         },
         {
-          "filter": EntityFilter.In({fieldName: "id", fieldValue: ["3"]->(Utils.magic: array<string> => array<unknown>)}),
+          "filter": dict{"id": dict{"_in": ["3"]->(Utils.magic: array<string> => unknown)}},
           "tableName": "User",
         },
       ])
@@ -407,10 +395,7 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~item,
         ~ecosystem=config.ecosystem,
-        ~filter=EntityFilter.Eq({
-          fieldName: "id",
-          fieldValue: fieldValue->(Utils.magic: string => unknown),
-        }),
+        ~filter=dict{"id": dict{"_eq": fieldValue->(Utils.magic: string => unknown)}},
         ~shouldGroup=true,
       )
     let getUsersWithUpdates = fieldValue =>
@@ -422,10 +407,9 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~item,
         ~ecosystem=config.ecosystem,
-        ~filter=EntityFilter.Gt({
-          fieldName: "updatesCountOnUserForTesting",
-          fieldValue: fieldValue->(Utils.magic: int => unknown),
-        }),
+        ~filter=dict{
+          "updatesCountOnUserForTesting": dict{"_gt": fieldValue->(Utils.magic: int => unknown)},
+        },
         ~shouldGroup=true,
       )
 
@@ -436,11 +420,11 @@ describe("LoadLayer", () => {
     t.expect(users2).toEqual([])
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.Eq({fieldName: "id", fieldValue: "123"->(Utils.magic: string => unknown)}),
+        "filter": dict{"id": dict{"_eq": "123"->(Utils.magic: string => unknown)}},
         "tableName": "User",
       },
       {
-        "filter": EntityFilter.Gt({fieldName: "updatesCountOnUserForTesting", fieldValue: 0->(Utils.magic: int => unknown)}),
+        "filter": dict{"updatesCountOnUserForTesting": dict{"_gt": 0->(Utils.magic: int => unknown)}},
         "tableName": "User",
       },
     ])
@@ -455,10 +439,9 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~item,
         ~ecosystem=config.ecosystem,
-        ~filter=EntityFilter.Lt({
-          fieldName: "updatesCountOnUserForTesting",
-          fieldValue: fieldValue->(Utils.magic: int => unknown),
-        }),
+        ~filter=dict{
+          "updatesCountOnUserForTesting": dict{"_lt": fieldValue->(Utils.magic: int => unknown)},
+        },
         ~shouldGroup=true,
       )
 
@@ -470,7 +453,7 @@ describe("LoadLayer", () => {
     ).toEqual(3)
     t.expect(storageMock.loadOrThrowCalls->Array.get(2)).toEqual(
       Some({
-        "filter": EntityFilter.Lt({fieldName: "updatesCountOnUserForTesting", fieldValue: 5->(Utils.magic: int => unknown)}),
+        "filter": dict{"updatesCountOnUserForTesting": dict{"_lt": 5->(Utils.magic: int => unknown)}},
         "tableName": "User",
       }),
     )
@@ -488,10 +471,7 @@ describe("LoadLayer", () => {
       updatesCountOnUserForTesting: 0,
     }
 
-    let indexerState = TestIndexerState.make(
-      ~config,
-      ~entities=[(userEntityConfig, [user1])],
-    )
+    let indexerState = TestIndexerState.make(~config, ~entities=[(userEntityConfig, [user1])])
 
     let item = item
     let getUsersWithAddress = fieldValue =>
@@ -503,10 +483,7 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~item,
         ~ecosystem=config.ecosystem,
-        ~filter=EntityFilter.Eq({
-          fieldName: "address",
-          fieldValue: fieldValue->(Utils.magic: string => unknown),
-        }),
+        ~filter=dict{"address": dict{"_eq": fieldValue->(Utils.magic: string => unknown)}},
         ~shouldGroup=true,
       )
 
@@ -516,72 +493,60 @@ describe("LoadLayer", () => {
       [[user1->(Utils.magic: user => Internal.entity)], []],
       [
         {
-          "filter": EntityFilter.In({
-            fieldName: "address",
-            fieldValue: ["0x1", "0x2"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          "filter": dict{"address": dict{"_in": ["0x1", "0x2"]->(Utils.magic: array<string> => unknown)}},
           "tableName": "User",
         },
       ],
     ))
   })
 
-  Async.it(
-    "Distributes db rows of the merged query to the matching filter indexes",
-    async t => {
-      let user = (id, address): user => {
-        id,
-        accountType: "USER",
-        address,
-        gravatar_id: None,
-        updatesCountOnUserForTesting: 0,
-      }
-      let user1 = user("1", "0x1")
-      let user2 = user("2", "0x2")
+  Async.it("Distributes db rows of the merged query to the matching filter indexes", async t => {
+    let user = (id, address): user => {
+      id,
+      accountType: "USER",
+      address,
+      gravatar_id: None,
+      updatesCountOnUserForTesting: 0,
+    }
+    let user1 = user("1", "0x1")
+    let user2 = user("2", "0x2")
 
-      let storageMock = MockStorage.make(
-        [#loadOrThrow],
-        ~dbEntities=[(userEntityConfig, [user1, user2, user("3", "0x3")])],
-      )
-      let loadManager = LoadManager.make()
-      let indexerState = TestIndexerState.make(~config)
+    let storageMock = MockStorage.make(
+      [#loadOrThrow],
+      ~dbEntities=[(userEntityConfig, [user1, user2, user("3", "0x3")])],
+    )
+    let loadManager = LoadManager.make()
+    let indexerState = TestIndexerState.make(~config)
 
-      let item = item
-      let getUsersWithAddress = fieldValue =>
-        LoadLayer.loadByFilter(
-          ~loadManager,
-          ~persistence=storageMock->MockStorage.toPersistence(~config),
-          ~entityConfig=userEntityConfig,
+    let item = item
+    let getUsersWithAddress = fieldValue =>
+      LoadLayer.loadByFilter(
+        ~loadManager,
+        ~persistence=storageMock->MockStorage.toPersistence(~config),
+        ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
-          ~indexerState,
-          ~item,
-          ~ecosystem=config.ecosystem,
-          ~filter=EntityFilter.Eq({
-            fieldName: "address",
-            fieldValue: fieldValue->(Utils.magic: string => unknown),
-          }),
-          ~shouldGroup=true,
-        )
+        ~indexerState,
+        ~item,
+        ~ecosystem=config.ecosystem,
+        ~filter=dict{"address": dict{"_eq": fieldValue->(Utils.magic: string => unknown)}},
+        ~shouldGroup=true,
+      )
 
-      let users = await Promise.all([getUsersWithAddress("0x1"), getUsersWithAddress("0x2")])
+    let users = await Promise.all([getUsersWithAddress("0x1"), getUsersWithAddress("0x2")])
 
-      t.expect((users, storageMock.loadOrThrowCalls)).toEqual((
-        [
-          [user1->(Utils.magic: user => Internal.entity)],
-          [user2->(Utils.magic: user => Internal.entity)],
-        ],
-        [
-          {
-            "filter": EntityFilter.In({
-              fieldName: "address",
-              fieldValue: ["0x1", "0x2"]->(Utils.magic: array<string> => array<unknown>),
-            }),
-            "tableName": "User",
-          },
-        ],
-      ))
-    },
-  )
+    t.expect((users, storageMock.loadOrThrowCalls)).toEqual((
+      [
+        [user1->(Utils.magic: user => Internal.entity)],
+        [user2->(Utils.magic: user => Internal.entity)],
+      ],
+      [
+        {
+          "filter": dict{"address": dict{"_in": ["0x1", "0x2"]->(Utils.magic: array<string> => unknown)}},
+          "tableName": "User",
+        },
+      ],
+    ))
+  })
 
   Async.it("Merges concurrent In filters on the same field into a single In query", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
@@ -598,10 +563,7 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~item,
         ~ecosystem=config.ecosystem,
-        ~filter=EntityFilter.In({
-          fieldName: "address",
-          fieldValue: fieldValues->(Utils.magic: array<string> => array<unknown>),
-        }),
+        ~filter=dict{"address": dict{"_in": fieldValues->(Utils.magic: array<string> => unknown)}},
         ~shouldGroup=true,
       )
 
@@ -614,10 +576,7 @@ describe("LoadLayer", () => {
       [[], []],
       [
         {
-          "filter": EntityFilter.In({
-            fieldName: "address",
-            fieldValue: ["0x1", "0x2", "0x3"]->(Utils.magic: array<string> => array<unknown>),
-          }),
+          "filter": dict{"address": dict{"_in": ["0x1", "0x2", "0x3"]->(Utils.magic: array<string> => unknown)}},
           "tableName": "User",
         },
       ],
@@ -639,10 +598,9 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~item,
         ~ecosystem=config.ecosystem,
-        ~filter=EntityFilter.Gt({
-          fieldName: "updatesCountOnUserForTesting",
-          fieldValue: fieldValue->(Utils.magic: int => unknown),
-        }),
+        ~filter=dict{
+          "updatesCountOnUserForTesting": dict{"_gt": fieldValue->(Utils.magic: int => unknown)},
+        },
         ~shouldGroup=true,
       )
 
@@ -652,17 +610,11 @@ describe("LoadLayer", () => {
       [[], []],
       [
         {
-          "filter": EntityFilter.Gt({
-            fieldName: "updatesCountOnUserForTesting",
-            fieldValue: 0->(Utils.magic: int => unknown),
-          }),
+          "filter": dict{"updatesCountOnUserForTesting": dict{"_gt": 0->(Utils.magic: int => unknown)}},
           "tableName": "User",
         },
         {
-          "filter": EntityFilter.Gt({
-            fieldName: "updatesCountOnUserForTesting",
-            fieldValue: 5->(Utils.magic: int => unknown),
-          }),
+          "filter": dict{"updatesCountOnUserForTesting": dict{"_gt": 5->(Utils.magic: int => unknown)}},
           "tableName": "User",
         },
       ],
@@ -703,10 +655,7 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~item,
         ~ecosystem=config.ecosystem,
-        ~filter=EntityFilter.Eq({
-          fieldName: "id",
-          fieldValue: fieldValue->(Utils.magic: string => unknown),
-        }),
+        ~filter=dict{"id": dict{"_eq": fieldValue->(Utils.magic: string => unknown)}},
         ~shouldGroup=true,
       )
 
@@ -719,37 +668,30 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~item,
         ~ecosystem=config.ecosystem,
-        ~filter=EntityFilter.Gt({
-          fieldName: "updatesCountOnUserForTesting",
-          fieldValue: fieldValue->(Utils.magic: int => unknown),
-        }),
+        ~filter=dict{
+          "updatesCountOnUserForTesting": dict{"_gt": fieldValue->(Utils.magic: int => unknown)},
+        },
         ~shouldGroup=true,
       )
 
-    t.expect(await getUsersWithId("1")).toEqual([
-      user1->(Utils.magic: user => Internal.entity),
-    ])
+    t.expect(await getUsersWithId("1")).toEqual([user1->(Utils.magic: user => Internal.entity)])
     t.expect(await getUsersWithUpdates(0), ~message="Should have loaded user2").toEqual([
       user2->(Utils.magic: user => Internal.entity),
     ])
     t.expect(storageMock.loadOrThrowCalls).toEqual([
       {
-        "filter": EntityFilter.Eq({fieldName: "id", fieldValue: "1"->(Utils.magic: string => unknown)}),
+        "filter": dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}},
         "tableName": "User",
       },
       {
-        "filter": EntityFilter.Gt({fieldName: "updatesCountOnUserForTesting", fieldValue: 0->(Utils.magic: int => unknown)}),
+        "filter": dict{"updatesCountOnUserForTesting": dict{"_gt": 0->(Utils.magic: int => unknown)}},
         "tableName": "User",
       },
     ])
 
     // The second time gets from inMemoryStore
-    t.expect(await getUsersWithId("1")).toEqual([
-      user1->(Utils.magic: user => Internal.entity),
-    ])
-    t.expect(await getUsersWithUpdates(0)).toEqual([
-      user2->(Utils.magic: user => Internal.entity),
-    ])
+    t.expect(await getUsersWithId("1")).toEqual([user1->(Utils.magic: user => Internal.entity)])
+    t.expect(await getUsersWithUpdates(0)).toEqual([user2->(Utils.magic: user => Internal.entity)])
     t.expect(
       storageMock.loadOrThrowCalls->Array.length,
       ~message=`Shouldn't add more calls to the db`,
@@ -757,7 +699,7 @@ describe("LoadLayer", () => {
 
     indexerState->TestIndexerState.setEntity(
       ~entityConfig=userEntityConfig,
-        ~scope=Internal.CrossChain,
+      ~scope=Internal.CrossChain,
       {...user2, updatesCountOnUserForTesting: 0},
     )
 
@@ -794,14 +736,11 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~entityConfig=userEntityConfig,
-        ~scope=Internal.CrossChain,
+          ~scope=Internal.CrossChain,
           ~indexerState,
           ~item,
           ~ecosystem=config.ecosystem,
-          ~filter=EntityFilter.Eq({
-            fieldName: "id",
-            fieldValue: fieldValue->(Utils.magic: string => unknown),
-          }),
+          ~filter=dict{"id": dict{"_eq": fieldValue->(Utils.magic: string => unknown)}},
           ~shouldGroup=true,
         )
 
@@ -809,7 +748,7 @@ describe("LoadLayer", () => {
 
       let loadEntitiesByFieldSingleDbCall = [
         {
-          "filter": EntityFilter.Eq({fieldName: "id", fieldValue: "1"->(Utils.magic: string => unknown)}),
+          "filter": dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}},
           "tableName": "User",
         },
       ]
@@ -845,20 +784,19 @@ describe("LoadLayer effect cache", () => {
       let indexerState = TestIndexerState.make(~config)
 
       let callCount = ref(0)
-      let effect =
-        Envio.createEffect(
-          {
-            name: "optionalOutputEffect",
-            input: S.string,
-            output: S.null(S.bigint),
-            rateLimit: Disable,
-            cache: false,
-          },
-          async _ => {
-            callCount := callCount.contents + 1
-            None
-          },
-        )->(Utils.magic: Envio.effect<string, option<bigint>> => Internal.effect)
+      let effect = Envio.createEffect(
+        {
+          name: "optionalOutputEffect",
+          input: S.string,
+          output: S.null(S.bigint),
+          rateLimit: Disable,
+          cache: false,
+        },
+        async _ => {
+          callCount := callCount.contents + 1
+          None
+        },
+      )->(Utils.magic: Envio.effect<string, option<bigint>> => Internal.effect)
 
       let callEffect = () =>
         LoadLayer.loadEffect(
@@ -869,12 +807,13 @@ describe("LoadLayer effect cache", () => {
             input: "test"->(Utils.magic: string => Internal.effectInput),
             context: {"cache": false}->(Utils.magic: {..} => Internal.effectContext),
             cacheKey: "test",
+            chainId: 1337->ChainId.fromInt,
             checkpointId: 0n,
           },
           ~scope=Internal.CrossChain,
           ~indexerState,
           ~shouldGroup=true,
-          ~item=item,
+          ~item,
           ~ecosystem=config.ecosystem,
         )->(Utils.magic: promise<Internal.effectOutput> => promise<option<bigint>>)
 
@@ -889,70 +828,71 @@ describe("LoadLayer effect cache", () => {
 })
 
 describe("LoadLayer effect scope isolation", () => {
-  let makeCaller = (~effect, ~loadManager, ~persistence, ~indexerState) => (~scope, ~input) =>
-    LoadLayer.loadEffect(
-      ~loadManager,
-      ~persistence,
-      ~effect,
-      ~effectArgs={
-        input: input->(Utils.magic: string => Internal.effectInput),
-        context: {"cache": false}->(Utils.magic: {..} => Internal.effectContext),
-        cacheKey: input,
-        checkpointId: 0n,
-      },
-      ~scope,
-      ~indexerState,
-      ~shouldGroup=true,
-      ~item=item,
-      ~ecosystem=config.ecosystem,
-    )->(Utils.magic: promise<Internal.effectOutput> => promise<string>)
-
-  Async.it(
-    "Deduplicates the same input within a chain but re-runs it across chains",
-    async t => {
-      let storageMock = MockStorage.make([#loadOrThrow])
-      let loadManager = LoadManager.make()
-      let indexerState = TestIndexerState.make(~config)
-
-      let callCount = ref(0)
-      let effect =
-        Envio.createEffect(
-          {
-            name: "chainScopedDedup",
-            input: S.string,
-            output: S.string,
-            rateLimit: Disable,
-            crossChain: false,
-            cache: false,
-          },
-          async ({input}) => {
-            callCount := callCount.contents + 1
-            input ++ "-out"
-          },
-        )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
-
-      let call = makeCaller(
-        ~effect,
+  let makeCaller = (~effect, ~loadManager, ~persistence, ~indexerState) =>
+    (~scope, ~input) =>
+      LoadLayer.loadEffect(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
+        ~persistence,
+        ~effect,
+        ~effectArgs={
+          input: input->(Utils.magic: string => Internal.effectInput),
+          context: {"cache": false}->(Utils.magic: {..} => Internal.effectContext),
+          cacheKey: input,
+          chainId: 1337->ChainId.fromInt,
+          checkpointId: 0n,
+        },
+        ~scope,
         ~indexerState,
-      )
+        ~shouldGroup=true,
+        ~item,
+        ~ecosystem=config.ecosystem,
+      )->(Utils.magic: promise<Internal.effectOutput> => promise<string>)
 
-      // Two concurrent calls, same input, same chain -> handler runs once.
-      let chain1 = await Promise.all([call(~scope=Chain(1->ChainId.fromInt), ~input="a"), call(~scope=Chain(1->ChainId.fromInt), ~input="a")])
-      // Same input on a different chain -> handler runs again (isolated cache).
-      let chain2 = await call(~scope=Chain(2->ChainId.fromInt), ~input="a")
-      // Repeat on chain 1 -> served from the warm in-memory cache, no new run.
-      let chain1Again = await call(~scope=Chain(1->ChainId.fromInt), ~input="a")
+  Async.it("Deduplicates the same input within a chain but re-runs it across chains", async t => {
+    let storageMock = MockStorage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let indexerState = TestIndexerState.make(~config)
 
-      t.expect((callCount.contents, chain1, chain2, chain1Again)).toEqual((
-        2,
-        ["a-out", "a-out"],
-        "a-out",
-        "a-out",
-      ))
-    },
-  )
+    let callCount = ref(0)
+    let effect = Envio.createEffect(
+      {
+        name: "chainScopedDedup",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+        crossChain: false,
+        cache: false,
+      },
+      async ({input}) => {
+        callCount := callCount.contents + 1
+        input ++ "-out"
+      },
+    )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+
+    let call = makeCaller(
+      ~effect,
+      ~loadManager,
+      ~persistence=storageMock->MockStorage.toPersistence(~config),
+      ~indexerState,
+    )
+
+    // Two concurrent calls, same input, same chain -> handler runs once.
+    let chain1 = await Promise.all([
+      call(~scope=Chain(1->ChainId.fromInt), ~input="a"),
+      call(~scope=Chain(1->ChainId.fromInt), ~input="a"),
+    ])
+    // Same input on a different chain -> handler runs again (isolated cache).
+    let chain2 = await call(~scope=Chain(2->ChainId.fromInt), ~input="a")
+    // Repeat on chain 1 -> served from the warm in-memory cache, no new run.
+    let chain1Again = await call(~scope=Chain(1->ChainId.fromInt), ~input="a")
+
+    t.expect((callCount.contents, chain1, chain2, chain1Again)).toEqual((
+      2,
+      ["a-out", "a-out"],
+      "a-out",
+      "a-out",
+    ))
+  })
 
   Async.it("Shares one cache across chains for a cross-chain effect", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
@@ -960,20 +900,19 @@ describe("LoadLayer effect scope isolation", () => {
     let indexerState = TestIndexerState.make(~config)
 
     let callCount = ref(0)
-    let effect =
-      Envio.createEffect(
-        {
-          name: "crossChainShared",
-          input: S.string,
-          output: S.string,
-          rateLimit: Disable,
-          cache: false,
-        },
-        async ({input}) => {
-          callCount := callCount.contents + 1
-          input ++ "-out"
-        },
-      )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+    let effect = Envio.createEffect(
+      {
+        name: "crossChainShared",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+        cache: false,
+      },
+      async ({input}) => {
+        callCount := callCount.contents + 1
+        input ++ "-out"
+      },
+    )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
 
     let call = makeCaller(
       ~effect,
@@ -984,7 +923,10 @@ describe("LoadLayer effect scope isolation", () => {
 
     // A cross-chain effect always resolves to the CrossChain scope, so calls
     // from any chain hit the same cache and the handler runs once.
-    let first = await Promise.all([call(~scope=CrossChain, ~input="a"), call(~scope=CrossChain, ~input="a")])
+    let first = await Promise.all([
+      call(~scope=CrossChain, ~input="a"),
+      call(~scope=CrossChain, ~input="a"),
+    ])
     let again = await call(~scope=CrossChain, ~input="a")
 
     t.expect((callCount.contents, first, again)).toEqual((1, ["a-out", "a-out"], "a-out"))
@@ -996,21 +938,20 @@ describe("LoadLayer effect scope isolation", () => {
     let indexerState = TestIndexerState.make(~config)
 
     let callCount = ref(0)
-    let effect =
-      Envio.createEffect(
-        {
-          name: "chainScopedRateLimit",
-          input: S.string,
-          output: S.string,
-          rateLimit: Enable({calls: 1, per: Milliseconds(50)}),
-          crossChain: false,
-          cache: false,
-        },
-        async ({input}) => {
-          callCount := callCount.contents + 1
-          input ++ "-out"
-        },
-      )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+    let effect = Envio.createEffect(
+      {
+        name: "chainScopedRateLimit",
+        input: S.string,
+        output: S.string,
+        rateLimit: Enable({calls: 1, per: Milliseconds(50)}),
+        crossChain: false,
+        cache: false,
+      },
+      async ({input}) => {
+        callCount := callCount.contents + 1
+        input ++ "-out"
+      },
+    )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
 
     let call = makeCaller(
       ~effect,
@@ -1021,10 +962,12 @@ describe("LoadLayer effect scope isolation", () => {
 
     let order = []
     let track = (p, label) =>
-      p->Promise.thenResolve(v => {
-        order->Array.push(label)->ignore
-        v
-      })
+      p->Promise.thenResolve(
+        v => {
+          order->Array.push(label)->ignore
+          v
+        },
+      )
 
     // chain 1 exhausts its single-call window with "a", queuing "b" until the
     // window resets. chain 2 has its own independent window, so "a" resolves
@@ -1039,10 +982,86 @@ describe("LoadLayer effect scope isolation", () => {
     // its window wasn't consumed by chain 1; all three handlers ultimately ran.
     let chain2Index = order->Array.indexOf("chain2-a")
     let queuedChain1Index = order->Array.indexOf("chain1-b")
-    t.expect((
-      callCount.contents,
-      chain2Index >= 0 && chain2Index < queuedChain1Index,
-    )).toEqual((3, true))
+    t.expect((callCount.contents, chain2Index >= 0 && chain2Index < queuedChain1Index)).toEqual((
+      3,
+      true,
+    ))
+  })
+
+  // A cross-chain effect's entries come from every chain's handlers. Where each
+  // chain counts its own checkpoints, an entry's id only compares against its
+  // own chain's committed one: a sibling still far behind must not keep it warm.
+  Async.it("Frees a cross-chain effect's entries once their own chain commits them", async t => {
+    let config = TestConfig.fromUserApi(
+      ~schema=`
+type Counter {
+  id: ID!
+}
+`,
+      `
+name: load-layer-per-chain
+disable_default_cross_chain: true
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+  - id: 1337
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+`,
+    )
+    let storageMock = MockStorage.make([#loadOrThrow])
+    let indexerState = TestIndexerState.make(~config)
+    let effect = Envio.createEffect(
+      {
+        name: "crossChainPerChainSequence",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+        crossChain: true,
+        cache: false,
+      },
+      async ({input}) => input ++ "-out",
+    )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+
+    let _ = await LoadLayer.loadEffect(
+      ~loadManager=LoadManager.make(),
+      ~persistence=storageMock->MockStorage.toPersistence(~config),
+      ~effect,
+      ~effectArgs={
+        input: "a"->(Utils.magic: string => Internal.effectInput),
+        context: {"cache": false}->(Utils.magic: {..} => Internal.effectContext),
+        cacheKey: "a",
+        chainId: 1337->ChainId.fromInt,
+        checkpointId: 5n,
+      },
+      ~scope=CrossChain,
+      ~indexerState,
+      ~shouldGroup=true,
+      ~item,
+      ~ecosystem=config.ecosystem,
+    )
+    let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope=CrossChain)
+    let before = inMemTable.changesCount
+
+    // Chain 1337 committed the entry's checkpoint; chain 1 is only at its second.
+    indexerState->IndexerState.markCommitted(
+      ~writtenFrontier=Frontier.fromEntries([
+        (1->ChainId.fromInt, 2n),
+        (1337->ChainId.fromInt, 5n),
+      ]),
+    )
+    indexerState->Writing.dropCommitted(~keepLoadedFromDb=false)
+
+    t.expect((config.checkpointSequence, before, inMemTable.changesCount)).toEqual((
+      PerChain,
+      1.,
+      0.,
+    ))
   })
 
   Async.it("Keeps the rate-limit budget across a rollback reset", async t => {
@@ -1051,21 +1070,20 @@ describe("LoadLayer effect scope isolation", () => {
     let indexerState = TestIndexerState.make(~config)
 
     let callCount = ref(0)
-    let effect =
-      Envio.createEffect(
-        {
-          name: "rollbackRateLimit",
-          input: S.string,
-          output: S.string,
-          rateLimit: Enable({calls: 1, per: Milliseconds(50)}),
-          crossChain: false,
-          cache: false,
-        },
-        async ({input}) => {
-          callCount := callCount.contents + 1
-          input ++ "-out"
-        },
-      )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+    let effect = Envio.createEffect(
+      {
+        name: "rollbackRateLimit",
+        input: S.string,
+        output: S.string,
+        rateLimit: Enable({calls: 1, per: Milliseconds(50)}),
+        crossChain: false,
+        cache: false,
+      },
+      async ({input}) => {
+        callCount := callCount.contents + 1
+        input ++ "-out"
+      },
+    )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
 
     let call = makeCaller(
       ~effect,
@@ -1078,16 +1096,18 @@ describe("LoadLayer effect scope isolation", () => {
     let _ = await call(~scope=Chain(1->ChainId.fromInt), ~input="a")
 
     // A reorg wipes the effect in-mem tables (IndexerState.beginRollbackDiff).
-    indexerState->IndexerState.beginRollbackDiff(
-      ~diffCheckpointId=0n,
-      ~floors=RollbackFloors.global(
-        ~floorCheckpointId=0n,
-        ~reorgChainId=1->ChainId.fromInt,
-        ~forkBlockNumber=0,
-      ),
-      ~progressedChains=[],
-      ~rolledBackAddresses=[],
-    )
+    let _ =
+      indexerState->IndexerState.beginRollbackDiff(
+        ~floors=RollbackFloors.make(
+          ~sequence=SharedAcrossChains,
+          ~chainIds=[],
+          ~floorCheckpointId=0n,
+          ~reorgChainId=1->ChainId.fromInt,
+          ~forkBlockNumber=0,
+        ),
+        ~progressedChains=[],
+        ~rolledBackAddresses=[],
+      )
 
     // The window hasn't elapsed, so the budget must still be spent: the next
     // call is queued (not run) rather than getting a fresh budget from the reset.
@@ -1098,5 +1118,77 @@ describe("LoadLayer effect scope isolation", () => {
     let _ = await pending
 
     t.expect((countWhileQueued, callCount.contents)).toEqual((1, 2))
+  })
+})
+
+describe("LoadLayer getWhere index reuse", () => {
+  // Values a completed query already loaded are known to be in the table, so a
+  // later getWhere naming any of them is answered from memory. Without this an
+  // _eq is a distinct index from the _in that loaded the same value, and pays
+  // a second round trip for rows already sitting in memory.
+  Async.it("Serves a filter whose values an earlier query already loaded", async t => {
+    let storageMock = MockStorage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let indexerState = TestIndexerState.make(~config)
+
+    let getUsers = filter =>
+      LoadLayer.loadByFilter(
+        ~loadManager,
+        ~persistence=storageMock->MockStorage.toPersistence(~config),
+        ~entityConfig=userEntityConfig,
+        ~scope=Internal.CrossChain,
+        ~indexerState,
+        ~item,
+        ~ecosystem=config.ecosystem,
+        ~filter,
+        ~shouldGroup=true,
+      )
+    let inFilter = values =>
+      dict{"address": dict{"_in": values->(Utils.magic: array<string> => unknown)}}
+    let eqFilter = value => dict{"address": dict{"_eq": value->(Utils.magic: string => unknown)}}
+
+    let _ = await getUsers(inFilter(["0x1", "0x2"]))
+    // Both covered by the query above.
+    let _ = await getUsers(eqFilter("0x1"))
+    let _ = await getUsers(inFilter(["0x1", "0x2"]))
+    let _ = await getUsers(inFilter(["0x2"]))
+    // 0x3 was never loaded, so this one still goes to the db.
+    let _ = await getUsers(eqFilter("0x3"))
+    // And now that it has, an _in over both is covered.
+    let _ = await getUsers(inFilter(["0x1", "0x3"]))
+
+    t.expect(storageMock.loadOrThrowCalls->Array.map(call => call["filter"])).toEqual([
+      inFilter(["0x1", "0x2"]),
+      eqFilter("0x3"),
+    ])
+  })
+
+  // A range can't be covered by the values a previous query named.
+  Async.it("Still queries for an operator no loaded value can cover", async t => {
+    let storageMock = MockStorage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let indexerState = TestIndexerState.make(~config)
+
+    let getUsers = filter =>
+      LoadLayer.loadByFilter(
+        ~loadManager,
+        ~persistence=storageMock->MockStorage.toPersistence(~config),
+        ~entityConfig=userEntityConfig,
+        ~scope=Internal.CrossChain,
+        ~indexerState,
+        ~item,
+        ~ecosystem=config.ecosystem,
+        ~filter,
+        ~shouldGroup=true,
+      )
+
+    let _ = await getUsers(
+      dict{"updatesCountOnUserForTesting": dict{"_in": [1, 2]->(Utils.magic: array<int> => unknown)}},
+    )
+    let _ = await getUsers(
+      dict{"updatesCountOnUserForTesting": dict{"_gt": 1->(Utils.magic: int => unknown)}},
+    )
+
+    t.expect(storageMock.loadOrThrowCalls->Array.length).toEqual(2)
   })
 })

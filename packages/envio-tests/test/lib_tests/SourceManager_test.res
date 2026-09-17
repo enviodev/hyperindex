@@ -1563,6 +1563,44 @@ describe("SourceManager.executeQuery", () => {
     ).toEqual([("getLogs", 1, 0.5)])
   })
 
+  Async.it("Sums the blocks a source returned and counts its empty responses", async t => {
+    let sourceMock = MockSource.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let query = (~fromBlock) =>
+      sourceManager->SourceManager.executeQuery(
+        ~query={...mockQuery(), fromBlock},
+        ~isRealtime=false,
+        ~knownHeight=100,
+      )
+
+    let first = query(~fromBlock=10)
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).resolve(
+      [],
+      ~requestStats=[{Source.method: "getLogs", seconds: 0.5, responseBlocks: 3}],
+    )
+    let _ = await first
+
+    // A range the source scanned and found nothing in: it still costs a
+    // request, and under a per-block price it is the one that costs nothing.
+    let second = query(~fromBlock=20)
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.lastUnsafe).resolve(
+      [],
+      ~requestStats=[{Source.method: "getLogs", seconds: 0.25, responseBlocks: 0}],
+    )
+    let _ = await second
+
+    t.expect(
+      sourceManager
+      ->SourceManager.getRequestStatSamples
+      ->Array.map(({method, count, responseBlocks, emptyResponseCount}) => (
+        method,
+        count,
+        responseBlocks,
+        emptyResponseCount,
+      )),
+    ).toEqual([("getLogs", 2, Some(3), 1)])
+  })
+
   Async.it("Rethrows unknown errors", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])

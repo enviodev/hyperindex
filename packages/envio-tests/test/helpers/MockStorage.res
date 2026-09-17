@@ -18,13 +18,7 @@ type t = {
   resolveInitialize: Persistence.initialState => unit,
   resumeInitialStateCalls: array<bool>,
   resolveLoadInitialState: Persistence.initialState => unit,
-  loadOrThrowCalls: array<{"filter": EntityFilter.t, "tableName": string}>,
-  ensureQueryIndexesCalls: array<{"tableName": string, "filters": array<EntityFilter.t>}>,
-  finalizeBackfillCalls: array<{
-    "entityNames": array<string>,
-    "chainIds": array<ChainId.t>,
-    "readyAt": Date.t,
-  }>,
+  loadOrThrowCalls: array<{"filter": dict<dict<unknown>>, "tableName": string}>,
   dumpEffectCacheCalls: ref<int>,
   storage: Persistence.storage,
 }
@@ -51,8 +45,6 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
   let isInitializedResolveFns = []
   let initializeResolveFns = []
   let loadOrThrowCalls = []
-  let ensureQueryIndexesCalls = []
-  let finalizeBackfillCalls = []
   let dumpEffectCacheCalls = ref(0)
   let resumeInitialStateCalls = []
   let resumeInitialStateResolveFns = []
@@ -61,8 +53,6 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
     isInitializedCalls,
     initializeCalls,
     loadOrThrowCalls,
-    ensureQueryIndexesCalls,
-    finalizeBackfillCalls,
     dumpEffectCacheCalls,
     resumeInitialStateCalls,
     resolveLoadInitialState: (initialState: Persistence.initialState) => {
@@ -101,7 +91,11 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
           initializeResolveFns->Array.push(resolve)->ignore
         })
       }),
-      resumeInitialState: implement(#resumeInitialState, (~entities as _, ~throwIfIncompatible) => {
+      resumeInitialState: implement(#resumeInitialState, (
+        ~entities as _,
+        ~chainIds as _,
+        ~throwIfIncompatible,
+      ) => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
           resumeInitialStateResolveFns->Array.push(resolve)->ignore
@@ -121,7 +115,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
         implementBody(#loadOrThrow, () => {
           loadOrThrowCalls
           ->Array.push({
-            "filter": filter,
+            "filter": filter->EntityFilter.entries,
             "tableName": table.tableName,
           })
           ->ignore
@@ -129,36 +123,16 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
             entityConfig.table.tableName === table.tableName
           ) {
           | Some((_, rows)) =>
-            rows->Array.filter(row =>
-              filter->EntityFilter.matches(
-                ~entity=row->(Utils.magic: 'entity => dict<EntityFilter.FieldValue.t>),
-              )
-            )
+            let matcher = filter->EntityFilter.makeMatcher(~table)
+            rows->Array.filter(row => matcher(row->(Utils.magic: 'entity => Internal.entity)))
           | None => []
           }
           Promise.resolve(rows->(Utils.magic: array<'entity> => array<unknown>))
         })
       },
-      ensureQueryIndexes: (~table: Table.table, ~filters) => {
-        ensureQueryIndexesCalls
-        ->Array.push({
-          "tableName": table.tableName,
-          "filters": filters,
-        })
-        ->ignore
-        Promise.resolve()
-      },
-      ensureSchemaIndexes: (~entities as _) => Promise.resolve(),
-      finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
-        finalizeBackfillCalls
-        ->Array.push({
-          "entityNames": entities->Array.map((e: Internal.entityConfig) => e.name),
-          "chainIds": chainIds,
-          "readyAt": readyAt,
-        })
-        ->ignore
-        Promise.resolve()
-      },
+      ensureQueryIndexes: (~entityConfig as _, ~scope as _, ~filters as _) => Promise.resolve(),
+      ensureSchemaIndexes: (~entities as _, ~chainIds as _) => Promise.resolve(),
+      finalizeBackfill: (~entities as _, ~chainIds as _, ~readyAt as _) => Promise.resolve(),
       reset: () => JsError.throwWithMessage("Not implemented"),
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
       pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
@@ -170,14 +144,12 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
       ) => (),
       getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
         JsError.throwWithMessage("Not implemented"),
-      getRollbackProgressDiff: (~floors as _) =>
-        JsError.throwWithMessage("Not implemented"),
+      getRollbackProgressDiff: (~floors as _) => JsError.throwWithMessage("Not implemented"),
       getRollbackData: (~entityConfig as _, ~floors as _) =>
         JsError.throwWithMessage("Not implemented"),
       writeBatch: (
         ~batch as _,
         ~rollback as _,
-        ~isInReorgThreshold as _,
         ~config as _,
         ~allEntities as _,
         ~updatedEffectsCache as _,
@@ -201,7 +173,7 @@ let toPersistence = (storageMock: t, ~config: Config.t) => {
       cache: Dict.make(),
       chains: [],
       reorgCheckpoints: [],
-      checkpointId: 0n,
+      checkpointFrontier: Frontier.empty(),
     }),
   }
 }

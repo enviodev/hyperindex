@@ -102,6 +102,7 @@ let invoke = (
   ~retry=0,
 ) => {
   source.getItemsOrThrow(
+    ~includeAllBlocks=false,
     ~fromBlock=100,
     ~toBlock=Some(100),
     ~addressSet=addressStore->AddressStore.makeSet(
@@ -499,6 +500,7 @@ describe("RPC source public contract", () => {
           RpcSourcePins.capture(
             () =>
               source.getItemsOrThrow(
+                ~includeAllBlocks=false,
                 ~fromBlock=0,
                 ~toBlock=Some(1_000_000),
                 ~addressSet=addressStore->AddressStore.makeSet(
@@ -633,6 +635,7 @@ describe("RPC source public contract", () => {
         switch await RpcSourcePins.capture(
           () =>
             source.getItemsOrThrow(
+              ~includeAllBlocks=false,
               ~fromBlock=0,
               ~toBlock=Some(100),
               ~addressSet=addressStore->AddressStore.emptySet,
@@ -758,6 +761,7 @@ describe("RPC source public contract", () => {
         switch await RpcSourcePins.capture(
           () =>
             source.getItemsOrThrow(
+              ~includeAllBlocks=false,
               ~fromBlock=100,
               ~toBlock=Some(100),
               ~addressSet=addressStore

@@ -25,6 +25,11 @@ type sourceMock = {
   // Feed this chain's items through a wildcard registration rather than an
   // address-dependent one, so its partition takes the wildcard path.
   isWildcard?: bool,
+  // Pre-configures the standing height answer before the indexer starts -
+  // needed to answer a height call made during startup itself (e.g.
+  // resolving a `latest` start block), which a test body can't reach in time
+  // via `setAutoHeight` since it only runs once startup has already awaited.
+  autoHeight?: int,
 }
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
@@ -169,7 +174,14 @@ let run = async (
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
-    sources->Array.map(({chain, ?methods, ?sourceFor, ?pollingInterval, ?isWildcard}) => (
+    sources->Array.map(({
+      chain,
+      ?methods,
+      ?sourceFor,
+      ?pollingInterval,
+      ?isWildcard,
+      ?autoHeight,
+    }) => (
       chain,
       MockSource.make(
         methods->Option.getOr(defaultMethods),
@@ -177,6 +189,7 @@ let run = async (
         ~sourceFor?,
         ~pollingInterval?,
         ~isWildcard?,
+        ~autoHeight?,
       ),
     ))
 

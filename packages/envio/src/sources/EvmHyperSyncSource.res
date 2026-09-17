@@ -1,11 +1,5 @@
 open Source
 
-// Surfaced by the HyperSync client (Rust) when HyperSync rejects the API
-// token. The corrupted-token test feeds the real server error (from the query
-// endpoint; the edge no longer 401s malformed tokens on /height) through this
-// check so it can't silently drift away from what getHeightOrThrow guards on.
-let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
-
 type options = {
   chainId: ChainId.t,
   endpointUrl: string,
@@ -37,13 +31,11 @@ let make = (
 ): t => {
   let name = "HyperSync"
 
-  let apiToken = switch apiToken {
-  | Some(token) => token
-  | None =>
-    JsError.throwWithMessage(`An Envio API token is required for using HyperSync as a data-source.
-Set the ENVIO_API_TOKEN environment variable in your .env file.
-Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
-  }
+  // Per source, so one rejected token is reported once rather than on every
+  // height retry for the life of the process.
+  let unauthorizedWarned = ref(false)
+
+  let apiToken = apiToken->HyperSync.requireApiToken
 
   let client = switch HyperSyncClient.make(
     ~url=endpointUrl,
@@ -67,6 +59,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~fromBlock,
     ~toBlock,
     ~addressSet,
+    ~includeAllBlocks,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -93,6 +86,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressSet,
       ~clientFilteredContracts=selection.clientFilteredContracts,
+      ~includeAllBlocks,
     ) catch {
     | HyperSync.GetLogs.Error(WrongInstance) =>
       throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
@@ -132,7 +126,9 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
-    let requestStats = fetchStats()
+    let requestStats = [
+      {Source.method: "getLogs", seconds: pageFetchTime, responseBlocks: pageUnsafe.responseBlocks},
+    ]
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -188,15 +184,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       let height = try {
         await client.getHeight()
       } catch {
-      | JsExn(e) =>
-        switch e->JsExn.message {
-        | Some(message) if message->isUnauthorizedError =>
-          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
-          // Retrying an unauthorized request can never succeed, so block forever
-          let _ = await Promise.make((_, _) => ())
-          0
-        | _ => throw(JsExn(e))
-        }
+      | exn =>
+        exn->HyperSync.rethrowLoggingUnauthorized(
+          ~warned=unauthorizedWarned,
+          ~product="HyperSync",
+        )
       }
       let seconds = timerRef->Performance.secondsSince
       {height, requestStats: [{method: "getHeight", seconds}]}

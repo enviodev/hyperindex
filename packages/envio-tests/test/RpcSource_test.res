@@ -171,6 +171,7 @@ describe("RpcSource - field selection end to end", () => {
       ~stores=(blockStore, transactionStore),
     )
     let response = await source.getItemsOrThrow(
+      ~includeAllBlocks=false,
       ~fromBlock=100,
       ~toBlock=Some(100),
       ~addressSet=addressStore->AddressStore.makeSet(
@@ -623,6 +624,7 @@ describe("RpcSource - empty selection", () => {
 
     let caught = try {
       let _ = await source.getItemsOrThrow(
+        ~includeAllBlocks=false,
         ~fromBlock=0,
         ~toBlock=Some(1),
         ~addressSet=TestAddresses.makeStore()->AddressStore.emptySet,
@@ -708,6 +710,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       let call = async () =>
         try {
           let _ = await source.getItemsOrThrow(
+            ~includeAllBlocks=false,
             ~fromBlock=0,
             ~toBlock=Some(1_000_000),
             ~addressSet=addressStore->AddressStore.makeSet(
@@ -833,6 +836,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
     let retry = try {
       let result = try {
         let _ = await source.getItemsOrThrow(
+          ~includeAllBlocks=false,
           ~fromBlock=0,
           ~toBlock=Some(1_000_000),
           ~addressSet=addressStore->AddressStore.makeSet(
@@ -953,6 +957,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
 
     let (page, filters) = try {
       let page = await source.getItemsOrThrow(
+        ~includeAllBlocks=false,
         ~fromBlock=0,
         ~toBlock=Some(100),
         ~addressSet=addressStore->AddressStore.makeSet(

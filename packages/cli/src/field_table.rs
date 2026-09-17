@@ -472,6 +472,14 @@ impl StoreCol {
         }
     }
 
+    /// Signed counterpart of `u64_cell`. Panics on a non-`I64` column.
+    fn i64_cell(&self, slot: usize) -> i64 {
+        match self {
+            StoreCol::I64(v) => v[slot],
+            _ => panic!("expected an i64 column"),
+        }
+    }
+
     /// Boolean cell, for the account-activity table's direct-by-slot reads.
     /// Panics on a non-`Bool` column.
     fn bool_cell(&self, slot: usize) -> bool {
@@ -685,6 +693,31 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         self.cols[field]
             .as_ref()
             .and_then(|c| c.cell_bytes(slot as usize))
+    }
+
+    /// Value of `field`'s `I64` cell for `key`, if the row exists and carries
+    /// the field.
+    pub(crate) fn field_i64(&self, key: &K, field: usize) -> Option<i64> {
+        let &slot = self.by_key.get(key)?;
+        if self.present[slot as usize] & (1u64 << field) == 0 {
+            return None;
+        }
+        self.cols[field].as_ref().map(|c| c.i64_cell(slot as usize))
+    }
+
+    /// Whether the table holds a row for `key`, whatever fields it carries.
+    pub(crate) fn contains_key(&self, key: &K) -> bool {
+        self.by_key.contains_key(key)
+    }
+
+    /// Highest key `< below` carrying `field`.
+    pub(crate) fn last_key_with_field(&self, below: K, field: usize) -> Option<K> {
+        let bit = 1u64 << field;
+        self.order
+            .range(..below)
+            .rev()
+            .find(|(_, &slot)| self.present[slot as usize] & bit != 0)
+            .map(|(k, _)| k.clone())
     }
 
     /// Lowest key `>= from` carrying `field` in both tables whose cells differ,

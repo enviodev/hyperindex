@@ -122,6 +122,7 @@ describe("ChainState reorg threshold", () => {
         {
           batchSize: 0,
           progressBlockNumber: 500,
+          progressBlockTime: None,
           sourceBlockNumber: 500,
           totalEventsProcessed: 0.,
           fetchState,
@@ -133,11 +134,12 @@ describe("ChainState reorg threshold", () => {
       totalBatchSize: 0,
       items: [],
       progressedChainsById,
-      isInReorgThreshold: true,
+      history: Dict.make(),
       checkpointIds: [],
       checkpointChainIds: [],
       checkpointBlockNumbers: [],
       checkpointBlockHashes: [],
+      checkpointItemsCount: [],
       checkpointEventsProcessed: [],
       registeredAddresses: [],
     }

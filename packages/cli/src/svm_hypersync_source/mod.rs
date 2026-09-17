@@ -265,6 +265,7 @@ impl SvmHyperSyncClient {
             max_num_instructions: params
                 .max_num_instructions
                 .and_then(|v| usize::try_from(v).ok()),
+            include_all_blocks: params.include_all_blocks.unwrap_or(false),
             ..Default::default()
         };
 
@@ -366,6 +367,10 @@ pub struct EventItemsQuery {
     /// depend on addresses (client-side filtering). Absent or empty means every
     /// address-dependent program is filtered server-side.
     pub client_filtered_contracts: Option<Vec<String>>,
+    /// Return a block for every slot in the range, not only the ones an
+    /// instruction landed on. Absent means only the slots instructions came
+    /// from.
+    pub include_all_blocks: Option<bool>,
 }
 
 #[napi(object)]
@@ -578,13 +583,17 @@ fn take_blocks(
         .collect::<Result<Vec<_>>>()
         .context("mapping solana block headers")?;
     if let Some(slots) = slots {
-        // Slots whose instructions were all dropped by client-side routing keep
-        // a slot+hash row so every returned header still backs reorg detection.
+        // Slots whose instructions were all dropped by client-side routing, and
+        // slots `include_all_blocks` returned that carried no instruction at
+        // all, keep slot, hash and time: the hash backs reorg detection, and
+        // the time is what tells a slot that produced a block apart from one
+        // the chain skipped.
         for b in raw_blocks.iter_mut() {
             if !b.slot.is_some_and(|slot| slots.contains(&slot)) {
                 *b = simple::Block {
                     slot: b.slot,
                     blockhash: b.blockhash.take(),
+                    block_time: b.block_time,
                     ..Default::default()
                 };
             }
@@ -607,6 +616,44 @@ mod tests {
     use query::{InstructionSelection, SvmQuery};
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+
+    /// A real 32-byte base58 hash; the client's newtype rejects anything else.
+    const BLOCK_HASH: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
+
+    /// A slot no routed instruction referenced still has to reach the store
+    /// with its time: that is how a slot that produced a block is told apart
+    /// from one the chain skipped, which has no time of its own.
+    #[test]
+    fn take_blocks_keeps_the_time_of_an_unreferenced_slot() {
+        let mut resp = simple::SolanaResponse {
+            blocks: vec![
+                simple::Block {
+                    slot: Some(42),
+                    blockhash: Some(BLOCK_HASH.parse().expect("hash")),
+                    block_time: Some(4200),
+                    ..Default::default()
+                },
+                simple::Block {
+                    slot: Some(43),
+                    blockhash: Some(BLOCK_HASH.parse().expect("hash")),
+                    block_time: Some(4300),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let referenced: HashSet<u64> = [42].into_iter().collect();
+
+        let (_, store) = take_blocks(&mut resp, Some(&referenced)).expect("take blocks");
+
+        assert_eq!(
+            (
+                store.get_timestamp(42, false),
+                store.get_timestamp(43, false)
+            ),
+            (Some(4200), Some(4300))
+        );
+    }
 
     /// Live test against `solana.hypersync.xyz`. Run with:
     ///     cargo test -p envio --lib svm_hypersync_source::tests -- --ignored --nocapture
@@ -1127,6 +1174,58 @@ mod tests {
                     )]))
                 ),
             ]
+        );
+    }
+
+    // An empty layout is the assertion that the instruction takes no
+    // arguments, which is what separates the bare form of a call from the one
+    // carrying a payload under the same prefix. Declaring no layout takes both.
+    #[test]
+    fn an_empty_layout_takes_only_the_calls_that_carry_no_payload() {
+        let (store, set) = fixture(&["TokenMetadata"]);
+        let built = build(
+            &store,
+            &[program(
+                "TokenMetadata",
+                vec![
+                    instruction(
+                        "Bare",
+                        Some("0x09"),
+                        Some("[]"),
+                        vec![registration(0, false)],
+                    ),
+                    instruction(
+                        "WithAmount",
+                        Some("0x09"),
+                        Some(AMOUNT),
+                        vec![reads_args(registration(1, false))],
+                    ),
+                    instruction("Every", Some("0x09"), None, vec![registration(2, false)]),
+                ],
+            )],
+            &[0, 1, 2],
+        );
+        let mut with_amount = vec![0x09];
+        with_amount.extend_from_slice(&7u64.to_le_bytes());
+        let mut payload_call = committed_instruction(&with_amount);
+        payload_call.transaction_index = Some(8);
+        let items = route(
+            &store,
+            &set,
+            &[committed_instruction(&[0x09]), payload_call],
+            vec![],
+            &built,
+        )
+        .unwrap();
+
+        // The bare call reaches `Bare` and `Every`; the payload call reaches
+        // `WithAmount` and `Every`, never `Bare`.
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| (item.transaction_index, item.on_event_registration_index))
+                .collect::<Vec<_>>(),
+            vec![(7, 0), (7, 2), (8, 1), (8, 2)]
         );
     }
 

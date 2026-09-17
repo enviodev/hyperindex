@@ -153,11 +153,12 @@ let emptyBatch: Batch.t = {
   totalBatchSize: 0,
   items: [],
   progressedChainsById: Dict.make(),
-  isInReorgThreshold: false,
+  history: Dict.make(),
   checkpointIds: [],
   checkpointChainIds: [],
   checkpointBlockNumbers: [],
   checkpointBlockHashes: [],
+  checkpointItemsCount: [],
   checkpointEventsProcessed: [],
   registeredAddresses: [],
 }
@@ -167,7 +168,7 @@ let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSiz
   chainStatesList->Array.forEach(cs =>
     chainStates->ChainId.Dict.set((cs->ChainState.chainConfig).id, cs)
   )
-  CrossChainState.make(~chainStates, ~isInReorgThreshold=false, ~isRealtime, ~targetBufferSize)
+  CrossChainState.make(~chainStates, ~isRealtime, ~targetBufferSize)
 }
 
 let makeRegistration = (~contractName, ~index): Internal.onEventRegistration =>
@@ -556,7 +557,7 @@ describe("CrossChainState fetch control", () => {
       t.expect(
         actionsByChain,
         ~message="Chain 1 waits for its first block; cold chain 2 gets one admission unit without being constrained by chain 1",
-      ).toEqual(Dict.fromArray([("1", "waitingForNewBlock"), ("2", "ready:300")]))
+      ).toEqual(dict{"1": "waitingForNewBlock", "2": "ready:300"})
     },
   )
 
@@ -600,8 +601,8 @@ describe("CrossChainState fetch control", () => {
 
       t.expect(
         estimatesByChain,
-        ~message="The follower fetches up to the anchor's 50% line (+10% margin = block 600), not to nothing",
-      ).toEqual(Dict.fromArray([("1", 500), ("2", 80)]))
+        ~message="The follower fetches up to the anchor's 50% line (+20% margin = block 700), not to nothing",
+      ).toEqual(dict{"1": 500, "2": 180})
     },
   )
 
@@ -753,7 +754,7 @@ describe("ChainState cold start", () => {
     t.expect(
       dispatchedItemsByChain,
       ~message="Cold chain 1 gets its bounded probe; chain 2 (already past the line anchored at chain 1's 0% frontier) waits",
-    ).toEqual(Dict.fromArray([("1", 1000.), ("2", 0.)]))
+    ).toEqual(dict{"1": 1000., "2": 0.})
   })
 
   Async.it("most-behind chain anchors the alignment line even when it emits no query", async t => {
@@ -983,9 +984,10 @@ describe("ChainState density from the ready buffer", () => {
         {
           batchSize: 5,
           progressBlockNumber: 100,
+          progressBlockTime: None,
           sourceBlockNumber: 1_000_000,
           totalEventsProcessed: 5.,
-          fetchState: (cs->ChainState.toChainBeforeBatch).fetchState,
+          fetchState: (cs->ChainState.toChainBeforeBatch(~isRealtime=false)).fetchState,
           isProgressAtHeadWhenBatchCreated: false,
         }: Batch.chainAfterBatch
       ),

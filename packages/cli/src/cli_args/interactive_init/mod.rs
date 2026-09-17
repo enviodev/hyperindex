@@ -15,7 +15,7 @@ use crate::{
     init_config::{evm, fuel, Ecosystem},
 };
 use anyhow::{Context, Result};
-use inquire::{Select, Text};
+use inquire::{Password, PasswordDisplayMode, Select, Text};
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
     contains_no_whitespace_validator, is_directory_new_validator, is_valid_folder_name,
@@ -179,7 +179,7 @@ fn get_svm_ecosystem(init_flow: Option<clap_definitions::svm::InitFlow>) -> Resu
         },
         None => Ecosystem::Svm {
             init_flow: crate::init_config::svm::InitFlow::Template(
-                crate::init_config::svm::Template::FeatureBlockHandler,
+                crate::init_config::svm::Template::UsdcTransfers,
             ),
         },
     })
@@ -340,7 +340,9 @@ pub async fn prompt_missing_init_args(
             .prompt()
             .context("Prompting for add API token")?;
 
-            let token_prompt = Text::new("Add your API token: ")
+            let token_prompt = Password::new("Add your API token: ")
+                .with_display_mode(PasswordDisplayMode::Masked)
+                .without_confirmation()
                 .with_help_message("See tokens at: https://envio.dev/app/api-tokens");
 
             match select {

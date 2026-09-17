@@ -166,6 +166,15 @@ module Dict = {
 
   let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
 
+  // Keeps every key either dict has; `pick` decides a key both have.
+  let mergeWith: (dict<'a>, dict<'a>, ('a, 'a) => 'a) => dict<'a> = %raw(`(a, b, pick) => {
+    var merged = {...a}, i;
+    for (i in b) {
+      merged[i] = i in merged ? pick(merged[i], b[i]) : b[i];
+    }
+    return merged;
+  }`)
+
   @val
   external mergeInPlace: (dict<'a>, dict<'a>) => dict<'a> = "Object.assign"
 
@@ -264,7 +273,7 @@ module Dict = {
 }
 
 module Math = {
-  let minOptInt = (a, b) =>
+  let minOptInt = (a: option<int>, b: option<int>) =>
     switch (a, b) {
     | (Some(a), Some(b)) => Some(a < b ? a : b)
     | (Some(a), None) => Some(a)
@@ -365,9 +374,6 @@ module Array = {
   /**
 Helper to check if a value exists in an array
 */
-  let includes = (arr: array<'a>, val: 'a) =>
-    arr->Array.find(item => item == val)->Stdlib.Option.isSome
-
   let isEmpty = (arr: array<_>) =>
     switch arr {
     | [] => true

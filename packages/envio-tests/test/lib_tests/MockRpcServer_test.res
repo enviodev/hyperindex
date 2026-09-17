@@ -14,12 +14,12 @@ let post: (string, string, dict<string>) => promise<httpResponse> = %raw(`async 
 let requestBody = (~method, ~params, ~id=1) =>
   JSON.stringify(
     JSON.Object(
-      Dict.fromArray([
-        ("method", JSON.String(method)),
-        ("params", params),
-        ("id", JSON.Number(id->Int.toFloat)),
-        ("jsonrpc", JSON.String("2.0")),
-      ]),
+      dict{
+        "method": JSON.String(method),
+        "params": params,
+        "id": JSON.Number(id->Int.toFloat),
+        "jsonrpc": JSON.String("2.0"),
+      },
     ),
   )
 
@@ -116,7 +116,7 @@ describe("MockRpcServer scripted scenarios", () => {
         MockRpcServer.expectCall(
           ~method="eth_blockNumber",
           ~params=JSON.Array([]),
-          ~headers=Dict.fromArray([("authorization", "Bearer pin")]),
+          ~headers=dict{"authorization": "Bearer pin"},
           ~reply=Delayed({millis: 5, reply: RpcResult(JSON.String("0x3"))}),
         ),
       ],
@@ -124,7 +124,7 @@ describe("MockRpcServer scripted scenarios", () => {
         await post(
           mock.url,
           requestBody(~method="eth_blockNumber", ~params=JSON.Array([])),
-          Dict.fromArray([("Authorization", "Bearer pin"), ("X-Ignored", "extra")]),
+          dict{"Authorization": "Bearer pin", "X-Ignored": "extra"},
         ),
     )
 

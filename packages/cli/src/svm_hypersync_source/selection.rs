@@ -107,8 +107,10 @@ pub struct SvmInstructionInput {
     /// Hex-encoded instruction-data prefix of any length. Absent or empty
     /// matches every instruction of the program.
     pub discriminator: Option<String>,
-    /// Borsh args layout as `Vec<ArgDef>` JSON. Absent means the instruction
-    /// declares no args, so none of its registrations may select them.
+    /// Borsh args layout as `Vec<ArgDef>` JSON. Absent means no layout is
+    /// attached, so nothing is decoded and no registration may select `args`.
+    /// `"[]"` is a layout: it decodes to `{}` and rejects any call carrying a
+    /// payload past the discriminator.
     pub args_json: Option<String>,
     pub registrations: Vec<SvmOnEventRegistrationInput>,
 }
@@ -951,7 +953,13 @@ mod tests {
         );
         assert_eq!(
             built.transaction_columns,
-            vec!["slot", "transaction_index", "account_keys"]
+            vec![
+                "slot",
+                "transaction_index",
+                "account_keys",
+                "loaded_addresses_writable",
+                "loaded_addresses_readonly"
+            ]
         );
         assert!(built.account_activity_columns.is_empty());
     }

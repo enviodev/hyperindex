@@ -157,8 +157,8 @@ describe("ClickHouse checkpoints columns", () => {
     t.expect(
       ClickHouse.checkpointColumnSpecs->Array.map(({name, fieldType}) => (name, fieldType)),
     ).toEqual([
-      ("id", "UInt64"),
       ("chain_id", "ChainId"),
+      ("id", "UInt64"),
       ("block_number", "Int32"),
       ("block_hash", "String"),
       // Wider than the Int32 Postgres keeps the count in.
