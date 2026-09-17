@@ -169,7 +169,7 @@ mod tests {
             "INSERT INTO \"test_schema\".\"A\" (\"id\", \"flag\", \"kind\", \"at\")\n\
              SELECT * FROM unnest($1::TEXT[],$2::INTEGER[]::BOOLEAN[],\
              $3::TEXT[]::\"test_schema\".AccountType[],\
-             $4::TIMESTAMP WITH TIME ZONE NULL[])\
+             $4::TIMESTAMP WITH TIME ZONE[])\
              ON CONFLICT(\"id\") DO UPDATE SET \"flag\" = EXCLUDED.\"flag\",\
              \"kind\" = EXCLUDED.\"kind\",\"at\" = EXCLUDED.\"at\";"
         );

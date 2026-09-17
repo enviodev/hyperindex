@@ -113,7 +113,11 @@ pub fn pg_field_type(
         FieldType::Serial => "SERIAL".to_string(),
         FieldType::BigSerial => "BIGSERIAL".to_string(),
         FieldType::Json => "JSONB".to_string(),
-        FieldType::Date => if is_nullable {
+        // The `NULL` says the column takes one, which a column already does
+        // unless told otherwise — but it is what the schemas in the wild were
+        // created with, so it stays. Not on an array: there the type names the
+        // element, and `TIMESTAMP WITH TIME ZONE NULL[]` is not a type at all.
+        FieldType::Date => if is_nullable && !is_array {
             "TIMESTAMP WITH TIME ZONE NULL"
         } else {
             "TIMESTAMP WITH TIME ZONE"
@@ -248,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn a_nullable_date_carries_null_in_its_type() {
+    fn a_nullable_date_carries_null_in_its_type_but_an_array_of_them_does_not() {
         assert_eq!(
             (
                 render(&FieldType::Date, false, false),
@@ -258,7 +262,7 @@ mod tests {
             (
                 "TIMESTAMP WITH TIME ZONE".to_string(),
                 "TIMESTAMP WITH TIME ZONE NULL".to_string(),
-                "TIMESTAMP WITH TIME ZONE NULL[]".to_string(),
+                "TIMESTAMP WITH TIME ZONE[]".to_string(),
             )
         );
     }

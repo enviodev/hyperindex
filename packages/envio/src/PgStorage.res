@@ -571,6 +571,49 @@ type batchSet = {
   binding: binding,
 }
 
+// A json column holds a document, which is as readily a string or a boolean as
+// an object. By the time a parameter is rendered there is only the value to go
+// on, and there a string is text and a boolean is `t` — neither of which the
+// server will read back as the document it was. So the document becomes its own
+// text here, where the column it belongs to is still known.
+//
+// An absent value stays absent: a column that takes NULL has to keep it apart
+// from the document `null`, and only one of the two can survive this.
+%%private(
+  let renderDocuments = (columns: array<array<unknown>>, ~at: array<int>) => {
+    at->Array.forEach(index => {
+      let values = columns->Array.getUnsafe(index)
+      for row in 0 to values->Array.length - 1 {
+        let value = values->Array.getUnsafe(row)
+        if value->(Utils.magic: unknown => Nullable.t<unknown>)->Nullable.toOption->Option.isSome {
+          values->Array.setUnsafe(
+            row,
+            value
+            ->(Utils.magic: unknown => JSON.t)
+            ->JSON.stringify
+            ->(Utils.magic: string => unknown),
+          )
+        }
+      }
+    })
+    columns
+  }
+)
+
+// Where the schema's fields land among the columns, for the ones whose values
+// have to be rendered before they are bound. A schema whose fields aren't the
+// table's own — the history tables carry a transformation — names none.
+%%private(
+  let documentColumns = (table: Table.table, ~schema) =>
+    switch table->Table.schemaOrderedFields(~schema) {
+    | fields =>
+      fields->Array.filterMapWithIndex((field: Table.field, index) =>
+        field.fieldType === Table.Json && !field.isArray ? Some(index) : None
+      )
+    | exception _ => []
+    }
+)
+
 let makeTableBatchSetQuery = (
   ~pgSchema,
   ~table: Table.table,
@@ -616,10 +659,20 @@ let makeTableBatchSetQuery = (
     None
   }
 
+  let documents = table->documentColumns(~schema=itemSchema->S.toUnknown)
+
   switch staged {
   | Some(columns) => {
       query: makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents, ~chainIdMode),
-      convertOrThrow: compile(S.unnest(dbSchema)),
+      convertOrThrow: compile(
+        S.unnest(dbSchema)->S.preprocess(_ => {
+          serializer: columns =>
+            columns
+            ->(Utils.magic: unknown => array<array<unknown>>)
+            ->renderDocuments(~at=documents)
+            ->(Utils.magic: array<array<unknown>> => unknown),
+        }),
+      ),
       binding: Staged({columns, writeTable: None}),
     }
   | None => {
@@ -632,9 +685,12 @@ let makeTableBatchSetQuery = (
       ),
       convertOrThrow: compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
-          serializer: Utils.Array.flatten->(
-            Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown
-          ),
+          serializer: columns =>
+            columns
+            ->(Utils.magic: unknown => array<array<unknown>>)
+            ->renderDocuments(~at=documents)
+            ->Utils.Array.flatten
+            ->(Utils.magic: array<unknown> => unknown),
         }),
       ),
       binding: PerCell,
