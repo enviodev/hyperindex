@@ -92,6 +92,8 @@ let arena = (client): Staging.arena => {
   abortStage: (~handle, ~buffers) => client->abortStage(~handle, ~buffers),
 }
 
+@send external forgetPrepared: t => unit = "forgetPrepared"
+
 @send external close: t => promise<unit> = "close"
 
 let make = options => Core.getAddon().pgClient->classCreate(options)

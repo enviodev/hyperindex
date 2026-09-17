@@ -2446,6 +2446,9 @@ let make = (
 
   let reset = async () => {
     await sql->Sql.batch(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+    // The schema's types are gone with it, and a statement prepared against
+    // them cannot be executed again.
+    sql.client->PgClient.forgetPrepared
   }
 
   let setChainMeta = chainsData =>

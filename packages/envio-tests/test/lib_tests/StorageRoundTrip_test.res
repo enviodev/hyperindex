@@ -344,6 +344,10 @@ type outcome = Matched({staged: bool}) | Differed({expected: string, actual: str
     await sql->Sql.batch(
       PgStorage.makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
     )
+    // Every case gives the same name a different table, which is the one thing
+    // a connection's prepared statements cannot survive. A reset says this for
+    // itself; here the schema is rebuilt behind the client's back.
+    sql.client->PgClient.forgetPrepared
 
     let batchSet = PgStorage.makeTableBatchSetQuery(~pgSchema, ~table, ~itemSchema)
     let staged = switch batchSet.binding {

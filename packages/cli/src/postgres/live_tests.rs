@@ -647,7 +647,7 @@ async fn a_statement_that_returns_no_columns_is_an_empty_result() {
 /// would arrive inside whatever transaction the caller was in and abort it.
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
-async fn a_statement_survives_the_table_changing_shape_under_it() {
+async fn forgetting_what_was_prepared_survives_the_table_changing_shape() {
     let client = client();
     client
         .batch(
@@ -662,13 +662,28 @@ async fn a_statement_survives_the_table_changing_shape_under_it() {
         .batch("ALTER TABLE stale_plan ADD COLUMN extra text")
         .await
         .unwrap();
+    // Either the columns the statement describes, or why it would not run.
+    async fn outcome(client: &PgClient) -> String {
+        match client.query("SELECT * FROM stale_plan", &[]).await {
+            Ok((_, columns)) => columns
+                .iter()
+                .map(|column| column.name.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            Err(error) => super::error::message_of(&error),
+        }
+    }
 
-    let (_, columns) = client
-        .query("SELECT * FROM stale_plan", &[])
-        .await
-        .expect("the plan from before the column was added must not be reused");
-    let names: Vec<&str> = columns.iter().map(|column| column.name.as_str()).collect();
+    let kept = outcome(&client).await;
+    client.forget_prepared();
+    let forgotten = outcome(&client).await;
     client.batch("DROP TABLE stale_plan").await.unwrap();
 
-    assert_eq!(names, ["n", "extra"]);
+    assert_eq!(
+        (kept, forgotten),
+        (
+            "cached plan must not change result type".to_string(),
+            "n,extra".to_string()
+        )
+    );
 }

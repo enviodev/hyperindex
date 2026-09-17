@@ -88,7 +88,6 @@ pub struct PgClient {
 #[derive(Clone)]
 pub struct Transaction {
     connection: Arc<deadpool_postgres::Object>,
-    pool: Pool,
 }
 
 impl Transaction {
@@ -102,7 +101,6 @@ impl Transaction {
 
     pub async fn batch(&self, sql: &str) -> Result<()> {
         self.connection.batch_execute(sql).await?;
-        forget_prepared(&self.pool);
         Ok(())
     }
 
@@ -154,19 +152,6 @@ async fn prepared(client: &deadpool_postgres::Object, sql: &str) -> Result<State
         client.statement_cache.clear();
     }
     Ok(client.prepare_cached(sql).await?)
-}
-
-/// Drops every connection's prepared statements.
-///
-/// A prepared statement holds a plan describing the columns it returns. Change
-/// the table under it — a new column, a type that is now an enum with another
-/// variant — and the server refuses the next execution with "cached plan must
-/// not change result type". That error arrives mid-statement and aborts an
-/// enclosing transaction, so it is prevented rather than recovered from: every
-/// statement this codebase runs that can change a table's shape goes through
-/// `batch`, and after one no connection keeps a plan from before it.
-fn forget_prepared(pool: &Pool) {
-    pool.manager().statement_caches.clear();
 }
 
 async fn execute_on(
@@ -272,7 +257,6 @@ impl PgClient {
     /// statement in a single round trip.
     pub async fn batch(&self, sql: &str) -> Result<()> {
         self.client().await?.batch_execute(sql).await?;
-        forget_prepared(&self.pool);
         Ok(())
     }
 
@@ -297,8 +281,18 @@ impl PgClient {
         connection.batch_execute("BEGIN").await?;
         Ok(Transaction {
             connection: Arc::new(connection),
-            pool: self.pool.clone(),
         })
+    }
+
+    /// Drops every connection's prepared statements.
+    ///
+    /// A prepared statement holds the plan's idea of the types it returns, and
+    /// a reset gives the schema's enums new ones. Executing a statement
+    /// prepared before it is then refused with "cached plan must not change
+    /// result type", mid-statement, aborting whatever transaction the caller
+    /// was in — so the caches are dropped rather than recovered from.
+    pub fn forget_prepared(&self) {
+        self.pool.manager().statement_caches.clear();
     }
 
     pub async fn close(&self) {

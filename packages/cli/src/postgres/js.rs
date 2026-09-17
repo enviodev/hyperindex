@@ -315,6 +315,13 @@ impl PgClient {
         self.inner.batch(&sql).await.map_err(to_napi)
     }
 
+    /// Forgets what the connections have prepared, which the schema being
+    /// dropped and built again makes necessary.
+    #[napi]
+    pub fn forget_prepared(&self) {
+        self.inner.forget_prepared();
+    }
+
     #[napi]
     pub async fn execute(&self, sql: String, params: Vec<Option<String>>) -> napi::Result<u32> {
         let params = to_params(params);
