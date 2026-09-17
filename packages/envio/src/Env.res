@@ -127,6 +127,8 @@ module Db = {
     //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
     ~devFallback=Bool(false),
   )
+  // The budget for the whole run, not for one process: a run that splits across
+  // workers divides it among them, and each caps its own pool to its share.
   let maxConnections = envSafe->EnvSafe.get("ENVIO_PG_MAX_CONNECTIONS", S.int, ~fallback=2)
 }
 

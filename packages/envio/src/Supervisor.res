@@ -73,10 +73,10 @@ let label = (worker: worker) => `[chain ${worker->name}]`
 // several processes appending to one file can still tear a long line apart.
 let logFilePath = (~workerIndex, ~path=Env.logFilePath) => {
   let suffix = `.worker-${workerIndex->Int.toString}`
-  // A dot in a directory name isn't an extension: `./logs/envio` keeps its
-  // whole path and takes the suffix at the end.
+  // A dot in a directory name isn't an extension, and a path with no dot at
+  // all has none either: `./logs/envio` takes the suffix at the end.
   let dot = path->String.lastIndexOf(".")
-  if dot > path->String.lastIndexOf("/") && dot !== -1 {
+  if dot > path->String.lastIndexOf("/") {
     `${path->String.slice(~start=0, ~end=dot)}${suffix}${path->String.slice(
         ~start=dot,
         ~end=path->String.length,

@@ -42,15 +42,15 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
     level: defaultFileLogLevel,
   }
 
-  // Empty base disables pid and hostname in logs
-  let base: JSON.t = %raw("{}")
-
   let makeMultiStreamLogger = MultiStreamLogger.make(
     ~userLogLevel,
     ~defaultFileLogLevel,
     ~customLevels=logLevels,
     ...
   )
+
+  // Empty base disables pid and hostname in logs
+  let base: JSON.t = %raw("{}")
 
   switch logStrategy {
   | EcsFile =>
@@ -155,6 +155,7 @@ let childFatal = (logger, params: 'a) => {
 let createChild = (~params: 'a) => {
   getLogger()->child(params->createChildParams)
 }
+
 // Fields every line this process logs from here on carries. What belongs on
 // them is the run's to decide; the logger only carries what it is handed.
 let setContext = (params: 'a) =>

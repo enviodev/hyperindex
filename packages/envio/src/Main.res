@@ -555,8 +555,6 @@ let startServer = (
     }
   })
 
-  Metrics.startRuntimeCollectors()
-
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", Metrics.contentType)
     let _ = res->endWithData(Metrics.collect(~metrics=getMetrics()))
@@ -723,6 +721,7 @@ let start = async (
   // A worker reports through its supervisor, which owns the one server and the
   // one display the run has.
   if !isTest && !Worker.isEnabled {
+    Metrics.startRuntimeCollectors()
     startServer(
       ~onSyncCache=() => dumpEffectCache()->Promise.thenResolve(ignore),
       ~collectRuntime=Metrics.collectRuntime,
