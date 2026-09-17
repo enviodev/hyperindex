@@ -344,3 +344,90 @@ describe("Materialized writes into a Json column", () => {
   )
 })
 
+// The column widened to BigInt because the chain id no longer fits an Int, so
+// the value has to arrive as a bigint — it is a JS number everywhere else.
+// https://github.com/enviodev/hyperindex/pull/1540#discussion_r3758883779
+type seen = {
+  id: string,
+  chain: bigint,
+  // A chain id is a JS number, and this one is past what ReScript's `int` holds.
+  @as("chainId") chainId: float,
+}
+
+// 0xffffffff: past `i32::MAX`, so the config resolves to the Int64 chain-id mode.
+let wideChainId = 4294967295.
+
+let wideChain = Scenario.make(
+  ~configYaml=`
+name: wide-chain-id
+disable_default_cross_chain: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 4294967295
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    contracts:
+      - name: ERC20
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+tables:
+  seen:
+    from: evm.events
+    select:
+      id: params.to
+      chain: chainId
+`,
+)
+
+describe("Materialized writes on a chain id too wide for an Int", () => {
+  wideChain->Scenario.it(
+    "writes the chain id into the BigInt column it widened to",
+    ~sources=[
+      {
+        chain: wideChainId->(Utils.magic: float => int),
+        methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      },
+    ],
+    async (~t, ~indexer, ~source) => {
+      let config = wideChain.config
+      let handler = switch Materialization.buildHandlers(config)->Array.find(({eventName}) =>
+        eventName === "Transfer"
+      ) {
+      | Some({handler}) => handler
+      | None => JsError.throwWithMessage("No materialization handler was built for ERC20.Transfer")
+      }
+      let sourceMock = source(wideChainId->(Utils.magic: float => int))
+      sourceMock.resolveGetHeightOrThrow(1000)
+      await MockSource.waitItemsQuery(sourceMock)
+
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 1,
+            logIndex: 0,
+            handler: args => {
+              let event = {
+                "contractName": "ERC20",
+                "eventName": "Transfer",
+                "chainId": wideChainId,
+                "params": {"from": alice, "to": bob, "value": 5n},
+                "block": {"number": 1},
+              }->(Utils.magic: {..} => Internal.event)
+              handler({event, context: args.context})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=1,
+      )
+      await indexer.getBatchWritePromise()
+
+      let rows: array<seen> = await rowsOf(indexer, config, "seen")
+      t.expect(rows).toEqual([{id: bob, chain: 4294967295n, chainId: wideChainId}])
+    },
+  )
+})
+

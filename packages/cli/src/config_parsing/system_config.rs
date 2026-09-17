@@ -1635,6 +1635,7 @@ impl SystemConfig {
                 } else {
                     materialization::AddressCase::Checksum
                 },
+                config.chain_id_mode,
             )
             .context("Failed compiling `tables`")?;
             config.schema = config

@@ -207,6 +207,50 @@ tables:
   )
 })
 
+// A chain id is a JS number whatever the mode, but past `i32::MAX` an Int
+// column can't hold it — so the column widens with the mode the config's
+// chains resolve to, the same way envio's own appended chainId column does.
+// https://github.com/enviodev/hyperindex/pull/1540#discussion_r3758883779
+describe("A selected chainId", () => {
+  let config = (~chainId) => `
+name: chain-id-width
+disable_default_cross_chain: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: ${chainId}
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  seen:
+    from: evm.events
+    select:
+      id: params.to
+      chain: chainId
+`
+
+  it("Is an Int while every chain id fits one", t =>
+    t.expect(parse(config(~chainId="1"))->describeColumns("seen")).toEqual([
+      ("id", "String!"),
+      ("chain", "Int!"),
+    ])
+  )
+
+  it("Widens to BigInt once a chain id doesn't", t =>
+    t.expect(parse(config(~chainId="4294967295"))->describeColumns("seen")).toEqual([
+      ("id", "String!"),
+      ("chain", "BigInt!"),
+    ])
+  )
+})
+
 // `accessList` has no RPC parser, so a table selecting it is rejected on a
 // contract that syncs over RPC. The check used to fire for any config where
 // some chain had an RPC source, even one this contract isn't on.

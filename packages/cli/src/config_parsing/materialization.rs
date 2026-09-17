@@ -22,7 +22,7 @@
 use super::{
     abi_compat::AbiType,
     entity_parsing::{GqlScalar, Schema, UserDefinedFieldType},
-    system_config::{Contract, Event, EventKind, FieldSelection, SelectedField},
+    system_config::{ChainIdMode, Contract, Event, EventKind, FieldSelection, SelectedField},
 };
 use crate::{type_schema::TypeIdent, utils::text};
 use alloy_dyn_abi::DynSolType;
@@ -1180,6 +1180,9 @@ enum Shape<'a> {
         event: &'a Event,
         block_fields: &'a BTreeMap<String, Ty>,
         transaction_fields: &'a BTreeMap<String, Ty>,
+        /// Int32 or Int64, whichever the config's widest chain id needs. The
+        /// runtime value is a JS number either way; only the column differs.
+        chain_id: &'a Ty,
     },
     /// A `with` query: plain column names, nothing nested.
     Relation {
@@ -1337,13 +1340,15 @@ impl Shape<'_> {
                 event,
                 block_fields,
                 transaction_fields,
+                chain_id,
             } => {
                 let head = path[0].as_str();
                 let rest = &path[1..];
                 match head {
                     "srcAddress" if rest.is_empty() => Ok(Ty::new(Scalar::Address)),
                     "contractName" | "eventName" if rest.is_empty() => Ok(Ty::new(Scalar::String)),
-                    "chainId" | "logIndex" if rest.is_empty() => Ok(Ty::new(Scalar::Int)),
+                    "chainId" if rest.is_empty() => Ok((*chain_id).clone()),
+                    "logIndex" if rest.is_empty() => Ok(Ty::new(Scalar::Int)),
                     "params" => {
                         let params = match &event.kind {
                             EventKind::Params(params) => params,
@@ -2459,6 +2464,7 @@ struct TableCtx<'a> {
     contracts: &'a BTreeMap<String, &'a Contract>,
     block_field_types: &'a BTreeMap<String, Ty>,
     transaction_field_types: &'a BTreeMap<String, Ty>,
+    chain_id_ty: &'a Ty,
     pass: Pass<'a>,
     addresses: AddressCase,
 }
@@ -2521,6 +2527,7 @@ pub fn compile(
     contracts: &BTreeMap<String, &Contract>,
     schema: &Schema,
     addresses: AddressCase,
+    chain_id_mode: ChainIdMode,
 ) -> Result<Compiled> {
     let table_names: Vec<String> = tables.0.keys().cloned().collect();
     for name in &table_names {
@@ -2559,12 +2566,19 @@ pub fn compile(
     let all_evm = FieldSelection::all_evm();
     let block_field_types = field_type_table(&all_evm.block_fields, true);
     let transaction_field_types = field_type_table(&all_evm.transaction_fields, false);
+    // A chain id is a JS number at runtime whatever the mode, but past
+    // `i32::MAX` an Int column can't hold it.
+    let chain_id_ty = match chain_id_mode {
+        ChainIdMode::Int32 => Ty::new(Scalar::Int),
+        ChainIdMode::Int64 => Ty::new(Scalar::BigInt),
+    };
 
     let mut ctx = TableCtx {
         table_names: &table_names,
         contracts,
         block_field_types: &block_field_types,
         transaction_field_types: &transaction_field_types,
+        chain_id_ty: &chain_id_ty,
         pass: Pass::CollectIds,
         addresses,
     };
@@ -2633,6 +2647,7 @@ fn compile_table(
         contracts,
         block_field_types,
         transaction_field_types,
+        chain_id_ty,
         pass,
         addresses,
     } = table_ctx;
@@ -2728,6 +2743,7 @@ fn compile_table(
                     event,
                     block_fields: block_field_types,
                     transaction_fields: transaction_field_types,
+                    chain_id: chain_id_ty,
                 }
             }
         };
@@ -2985,6 +3001,7 @@ fn compile_relation(
         contracts,
         block_field_types,
         transaction_field_types,
+        chain_id_ty,
         addresses,
         ..
     } = table_ctx;
@@ -3039,6 +3056,7 @@ fn compile_relation(
                 event,
                 block_fields: block_field_types,
                 transaction_fields: transaction_field_types,
+                chain_id: chain_id_ty,
             };
             let ctx = ExprCtx {
                 shape: &shape,
@@ -3141,6 +3159,7 @@ fn resolve_event_branches(
         contracts,
         block_field_types,
         transaction_field_types,
+        chain_id_ty,
         ..
     } = table_ctx;
     let mut named = (BTreeSet::new(), BTreeSet::new());
@@ -3186,6 +3205,7 @@ fn resolve_event_branches(
                         event,
                         block_fields: block_field_types,
                         transaction_fields: transaction_field_types,
+                        chain_id: chain_id_ty,
                     };
                     // Only a surviving branch's fields need fetching, so they are
                     // collected aside and merged once the branch is kept.
