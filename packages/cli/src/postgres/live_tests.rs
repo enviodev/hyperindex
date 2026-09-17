@@ -8,7 +8,7 @@
 //! Ignored by default — CI's `cargo test` job has no database. Run against a
 //! local one with `cargo test --lib postgres::live -- --ignored`.
 
-use super::client::{PgClient, PgConnectionOptions, SslSetting};
+use super::client::{PgClient, PgConnectionOptions, SslSetting, MAX_PREPARED_STATEMENTS};
 use super::param::Param;
 use super::rows::Cell;
 use super::rows::ReadKind;
@@ -987,4 +987,40 @@ async fn a_statement_the_server_cancels_says_so_and_leaves_the_connection() {
             true
         )
     );
+}
+
+/// A schema with many entities sends more statement shapes than a connection
+/// keeps prepared, so the cache is dropped and refilled while the indexer is
+/// running. Every statement still answers across that, including the one
+/// prepared before the drop — a statement the server no longer knows about
+/// would be the failure this is here for.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn more_statements_than_the_cache_holds_all_answer() {
+    let client = pinned_client();
+    let shapes = MAX_PREPARED_STATEMENTS + 100;
+    let first = "SELECT 0::int4 AS n";
+
+    let mut answers = vec![one_int(&client, first).await];
+    for shape in 1..shapes {
+        answers.push(one_int(&client, &format!("SELECT {shape}::int4 AS n")).await);
+    }
+    // The shape the connection prepared before its cache was dropped.
+    answers.push(one_int(&client, first).await);
+
+    assert_eq!(
+        (
+            answers.iter().take(shapes).copied().eq(0..shapes as i32),
+            answers.last().copied()
+        ),
+        (true, Some(0))
+    );
+}
+
+async fn one_int(client: &PgClient, sql: &str) -> i32 {
+    let (rows, _) = client
+        .query(sql, &[])
+        .await
+        .unwrap_or_else(|error| panic!("`{sql}` failed: {error:#}"));
+    rows.first().expect("one row").get::<_, i32>(0)
 }

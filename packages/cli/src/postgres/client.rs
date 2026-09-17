@@ -140,7 +140,7 @@ impl Transaction {
 /// short is a statement of its own, and there are as many of those as there are
 /// chunk lengths. Past this the cache is dropped rather than grown without
 /// bound; the shapes that repeat are prepared again on their next use.
-const MAX_PREPARED_STATEMENTS: usize = 256;
+pub(super) const MAX_PREPARED_STATEMENTS: usize = 256;
 
 /// The statement, prepared once per connection rather than once per call.
 ///
