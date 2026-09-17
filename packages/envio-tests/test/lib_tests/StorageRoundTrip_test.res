@@ -45,6 +45,29 @@ type generator = {
   values: array<unknown>,
 }
 
+// The enum types the generated tables draw on. A schema declares them once and
+// the columns that use them refer to them by name.
+let enums =
+  [("Status", ["pending", "settled", "void"]), ("Side", ["buy", "sell"])]->Array.map(((
+    name,
+    variants,
+  )) =>
+    Table.makeEnumConfig(
+      ~name,
+      ~variants=variants->(Utils.magic: array<string> => array<Table.enum>),
+    )
+  )
+
+let enumTypeDeclarations = pgSchema =>
+  enums
+  ->Array.map(config =>
+    `CREATE TYPE "${pgSchema}".${config.name} AS ENUM(${config.variants
+      ->(Utils.magic: array<Table.enum> => array<string>)
+      ->Array.map(variant => `'${variant}'`)
+      ->Array.join(", ")});`
+  )
+  ->Array.join("\n")
+
 let unknown = (value: 'a): unknown => value->(Utils.magic: 'a => unknown)
 
 let longText = String.repeat("long", 200)
@@ -143,6 +166,24 @@ let generators = [
     ],
   },
   {
+    name: "sized_big",
+    // `BigInt @config(precision: 20)`, which is a NUMERIC that counts digits.
+    fieldType: Table.BigInt({precision: 20}),
+    schema: Utils.BigInt.schema->S.toUnknown,
+    arraySchema: Some(S.array(Utils.BigInt.schema)->S.toUnknown),
+    values: [0n->unknown, 1n->unknown, -1n->unknown, 99999999999999999999n->unknown],
+  },
+  {
+    name: "scaled_dec",
+    // `BigDecimal @config(precision: 12, scale: 4)`.
+    fieldType: Table.BigDecimal({config: (12, 4)}),
+    schema: BigDecimal.schema->S.toUnknown,
+    arraySchema: Some(S.array(BigDecimal.schema)->S.toUnknown),
+    values: ["0", "1.5", "-2.25", "12345678.9999"]->Array.map(text =>
+      BigDecimal.fromStringUnsafe(text)->unknown
+    ),
+  },
+  {
     name: "doc",
     fieldType: Table.Json,
     schema: S.json(~validate=false)->S.toUnknown,
@@ -158,24 +199,44 @@ let generators = [
       JSON.Encode.object(Dict.fromArray([("k", JSON.Encode.string("v"))]))->unknown,
     ],
   },
-]
+]->Array.concat(
+  enums->Array.map(config => {
+    name: `enum_${config.name}`,
+    fieldType: Table.Enum({config: config->Table.fromGenericEnumConfig}),
+    schema: config.schema->S.toUnknown,
+    arraySchema: Some(S.array(config.schema)->S.toUnknown),
+    values: config.variants->(Utils.magic: array<Table.enum> => array<unknown>),
+  }),
+)
 
+// `name` is what the entity record is keyed by: a relation field spells it with
+// an `_id` suffix, and a renamed column keeps it while the column itself differs.
 type column = {
   generator: generator,
   name: string,
   field: Table.fieldOrDerived,
+  schema: S.t<unknown>,
   isArray: bool,
   isNullable: bool,
 }
 
 let idField = Table.mkField("id", Table.String, ~fieldSchema=S.string, ~isPrimaryKey=true)
 
+// A field the schema resolves from the other side of a relation. It belongs to
+// the table and to nothing else: no column holds it, and the record never
+// carries it.
+let derivedField = Table.mkDerivedFromField(
+  "children",
+  ~derivedFromEntity="Other",
+  ~derivedFromField="parent",
+)
+
 %%private(
   let makeColumn = (random, index) => {
     let generator = random->pick(generators)
     let isArray = generator.arraySchema->Option.isSome && random->chance(25)
     let isNullable = random->chance(35)
-    let name = `${generator.name}_${index->Int.toString}`
+    let fieldName = `${generator.name}_${index->Int.toString}`
     let schema = switch (isArray, generator.arraySchema) {
     | (true, Some(arraySchema)) => arraySchema
     | _ => generator.schema
@@ -183,12 +244,28 @@ let idField = Table.mkField("id", Table.String, ~fieldSchema=S.string, ~isPrimar
     // What the config builds for an optional field — not `S.null`, whose
     // serializer hands a genuine `null` to the value serializer.
     let schema = isNullable ? Utils.Schema.nullTolerant(schema)->S.toUnknown : schema
+    // A field pointing at another entity stores that entity's id, and the
+    // record spells it with an `_id` suffix.
+    let linkedEntity =
+      generator.fieldType === Table.String && !isArray && random->chance(15) ? Some("Other") : None
+    // What `column_name_format: snake_case` does to a column.
+    let postgresDbName = random->chance(15) ? Some(`col_${index->Int.toString}`) : None
+    let field = Table.mkField(
+      fieldName,
+      generator.fieldType,
+      ~fieldSchema=schema,
+      ~isArray,
+      ~isNullable,
+      ~linkedEntity?,
+      ~postgresDbName?,
+    )
     {
       generator,
-      name,
+      name: linkedEntity->Option.isSome ? fieldName ++ "_id" : fieldName,
+      schema,
       isArray,
       isNullable,
-      field: Table.mkField(name, generator.fieldType, ~fieldSchema=schema, ~isArray, ~isNullable),
+      field,
     }
   }
 )
@@ -244,17 +321,21 @@ type outcome = Matched({staged: bool}) | Differed({expected: string, actual: str
 // Writes the rows, reads them back, and says whether what came back is what
 // went in. The table is made and dropped per case so nothing carries over.
 %%private(
-  let attempt = async (sql, ~pgSchema, ~columns, ~rows) => {
+  let attempt = async (sql, ~pgSchema, ~columns, ~rows, ~derived) => {
     let table = Table.mkTable(
       "fuzzed",
-      ~fields=[idField]->Array.concat(columns->Array.map(column => column.field)),
+      ~fields=[idField]
+      ->Array.concat(columns->Array.map(column => column.field))
+      ->Array.concat(derived ? [derivedField] : []),
     )
+    // Keyed by the names the entity record uses, which is how the table looks
+    // its fields up: a relation field spells its `_id`, a renamed column does
+    // not, and a derived field has no place here at all.
     let itemSchema = S.object(s => {
       let dict = Dict.make()
-      table
-      ->Table.getFields
-      ->Array.forEach(field =>
-        dict->Dict.set(field.fieldName, s.field(field.fieldName, field.fieldSchema))
+      dict->Dict.set("id", s.field("id", S.string->S.toUnknown))
+      columns->Array.forEach(column =>
+        dict->Dict.set(column.name, s.field(column.name, column.schema))
       )
       dict
     })->S.toUnknown
@@ -303,11 +384,11 @@ type outcome = Matched({staged: bool}) | Differed({expected: string, actual: str
 // The smallest table and batch that still fails: columns dropped one at a time,
 // then rows, keeping whatever still differs.
 %%private(
-  let shrink = async (sql, ~pgSchema, ~columns, ~rows) => {
+  let shrink = async (sql, ~pgSchema, ~columns, ~rows, ~derived) => {
     let columns = ref(columns)
     let rows = ref(rows)
     let stillFails = async (~columns, ~rows) =>
-      switch await attempt(sql, ~pgSchema, ~columns, ~rows) {
+      switch await attempt(sql, ~pgSchema, ~columns, ~rows, ~derived) {
       | Differed(_) => true
       | Matched(_) => false
       | exception _ => true
@@ -341,6 +422,9 @@ type outcome = Matched({staged: bool}) | Differed({expected: string, actual: str
   }
 )
 
+// What the statement that binds a cell at a time splits a batch at.
+let maxItemsPerChunk = 500
+
 let cases = casesEnv->Option.flatMap(text => Int.fromString(text))->Option.getOr(120)
 let rootSeed = seedEnv->Option.flatMap(text => Int.fromString(text))->Option.getOr(20260917)
 
@@ -351,7 +435,13 @@ describe("Rows written and read back", () => {
       let sql = PgStorage.makeClient()
       let pgSchema = TestPgSchema.make()
       await sql->Sql.batch(`CREATE SCHEMA "${pgSchema}";`)
+      await sql->Sql.batch(enumTypeDeclarations(pgSchema))
 
+      // A generator can quietly stop producing a shape and the run would still
+      // pass, proving less than it looks like it proves. Each of these has to
+      // have been reached.
+      let seen = Dict.make()
+      let saw = what => seen->Dict.set(what, seen->Dict.get(what)->Option.getOr(0) + 1)
       let stagedCases = ref(0)
       let perCellCases = ref(0)
       let failure = ref(None)
@@ -365,19 +455,46 @@ describe("Rows written and read back", () => {
         )
         // Mostly small batches, and now and then one past the point where the
         // statement that binds a cell at a time splits into chunks.
-        let rowCount = random->chance(8) ? 500 + random->below(60) : random->below(12)
+        let rowCount = random->chance(8) ? maxItemsPerChunk + random->below(60) : random->below(12)
+        let derived = random->chance(20)
         let rows = Array.fromInitializer(~length=rowCount, index =>
           random->makeRow(columns, ~index)
         )
 
-        switch await attempt(sql, ~pgSchema, ~columns, ~rows) {
+        if derived {
+          saw("a derived field")
+        }
+        if rowCount > maxItemsPerChunk {
+          saw("a batch past one chunk")
+        }
+        columns->Array.forEach(column => {
+          saw(column.generator.name)
+          if column.isArray {
+            saw("an array column")
+          }
+          if column.isNullable {
+            saw("an optional column")
+          }
+          switch column.field {
+          | Field(field) =>
+            if field.linkedEntity->Option.isSome {
+              saw("a relation column")
+            }
+            if field.postgresDbName->Option.isSome {
+              saw("a renamed column")
+            }
+          | DerivedFrom(_) => ()
+          }
+        })
+
+        switch await attempt(sql, ~pgSchema, ~columns, ~rows, ~derived) {
         | Matched({staged}) =>
           staged
             ? stagedCases := stagedCases.contents + 1
             : perCellCases := perCellCases.contents + 1
         | Differed(_) =>
-          let (columns, rows) = await shrink(sql, ~pgSchema, ~columns, ~rows)
-          let detail = switch await attempt(sql, ~pgSchema, ~columns, ~rows) {
+          let (columns, rows) = await shrink(sql, ~pgSchema, ~columns, ~rows, ~derived)
+          let detail = switch await attempt(sql, ~pgSchema, ~columns, ~rows, ~derived) {
           | Differed({expected, actual}) => `\nwrote ${expected}\nread  ${actual}`
           | _ => ""
           }
@@ -390,7 +507,7 @@ describe("Rows written and read back", () => {
                 ->Array.join(", ")} over ${rows->Array.length->Int.toString} row(s)${detail}`,
             )
         | exception exn =>
-          let (columns, rows) = await shrink(sql, ~pgSchema, ~columns, ~rows)
+          let (columns, rows) = await shrink(sql, ~pgSchema, ~columns, ~rows, ~derived)
           failure :=
             Some(
               `seed ${seed->Int.toString} threw ${because(exn)}: ${columns
@@ -406,13 +523,27 @@ describe("Rows written and read back", () => {
       await sql->TestPgSchema.drop(~pgSchema)
       await sql->Sql.close
 
-      // Both statements have to have been exercised, or the run proves half of
-      // what it looks like it proves.
+      // Both statements, every scalar a schema can declare, and every shape a
+      // field can take.
+      let missing =
+        generators
+        ->Array.map(generator => generator.name)
+        ->Array.concat([
+          "an array column",
+          "an optional column",
+          "a relation column",
+          "a renamed column",
+          "a derived field",
+          "a batch past one chunk",
+        ])
+        ->Array.filter(what => seen->Dict.get(what)->Option.getOr(0) === 0)
+
       t.expect((
         failure.contents,
+        missing,
         stagedCases.contents > 0,
         perCellCases.contents > 0,
-      )).toStrictEqual((None, true, true))
+      )).toStrictEqual((None, [], true, true))
     },
     ~timeout=300_000,
   )
