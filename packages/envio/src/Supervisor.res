@@ -171,7 +171,10 @@ let syncCache = {
 }
 
 // The supervisor handed its connections to the workers, so a dump opens one of
-// its own for as long as it takes.
+// its own for as long as it takes. That puts the run one connection over its
+// budget, deliberately: the console that asks for a dump is `envio dev` only,
+// one connection is a cheaper price than pausing the indexing to free one, and
+// the pool is capped at that one.
 let dumpCache = (~config) => {
   let storage = PgStorage.makeStorageFromEnv(~config, ~sql=PgStorage.makeClient(~maxConnections=1))
   storage.dumpEffectCache()->Promise.finally(() => storage.close()->Promise.ignore)
