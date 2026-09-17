@@ -29,7 +29,7 @@ type workerMessage =
 
 // How often a worker reports. Matches the TUI's own refresh, so the supervised
 // display moves at the same rate an unsplit run's does.
-let snapshotIntervalMillis = 500
+%%private(let snapshotIntervalMillis = 500)
 
 // The supervisor is the one that stops a worker, and the one whose absence
 // ends it. A terminal's interrupt reaches the whole group at once, so the
@@ -45,9 +45,18 @@ let bindToSupervisor = () => {
   })
 }
 
-let send = (message: workerMessage) =>
+%%private(let send = (message: workerMessage) => NodeJs.Process.sendToParent(message)->ignore)
+
+// Reports this process's chains and its own runtime for as long as it runs, so
+// the supervisor can merge every worker's into the one snapshot the run serves.
+// Does nothing in a process nobody forked.
+let startReporting = (~getMetrics: unit => Metrics.t) =>
   if isEnabled {
-    NodeJs.Process.sendToParent(message)->ignore
+    Metrics.startRuntimeCollectors()
+    let _intervalId = setInterval(
+      () => send(Snapshot({metrics: getMetrics(), runtime: Metrics.sampleRuntime()})),
+      snapshotIntervalMillis,
+    )
   }
 
 // Resolves with the init payload, the one message a supervisor sends its worker.

@@ -233,9 +233,7 @@ let awaitExit = async (group): outcome => {
 // Runs the group: creates the schema for every chain, forks a worker per plan
 // entry, and serves the run's metrics, console and display from what they
 // report. Returns once every worker has exited; throws if any of them failed.
-let run = async (~workers: array<worker>, ~reset) => {
-  let config = Config.load()
-
+let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // Every chain's state has to exist before a worker resumes it: an isolated
   // run refuses to initialize, precisely so it can't create rows for its own
   // chains and leave the chains it skipped with nothing to resume. It is the

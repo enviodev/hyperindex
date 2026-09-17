@@ -539,16 +539,7 @@ exception FatalError(exn)
     if shouldUseTui {
       let _rerender = Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
     }
-    if Worker.isEnabled {
-      Metrics.startRuntimeCollectors()
-      let _intervalId = setInterval(
-        () =>
-          Worker.send(
-            Snapshot({metrics: state->IndexerState.toMetrics, runtime: Metrics.sampleRuntime()}),
-          ),
-        Worker.snapshotIntervalMillis,
-      )
-    }
+    Worker.startReporting(~getMetrics=() => state->IndexerState.toMetrics)
     setIndexerState(state)
     state->IndexerLoop.start
     await runUntilFatalError
@@ -568,7 +559,7 @@ let start = async (
 ) => {
   let config = Config.load()
   switch isTest ? None : Supervisor.planForRun(~config) {
-  | Some(workers) => await Supervisor.run(~workers, ~reset)
+  | Some(workers) => await Supervisor.run(~config, ~workers, ~reset)
   | None =>
     await startIndexer(
       ~config,
