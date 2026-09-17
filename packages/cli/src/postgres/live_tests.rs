@@ -842,6 +842,18 @@ async fn a_statement_cut_off_mid_flight_reports_what_ended_it() {
     );
 }
 
+/// Whether a failure says the connection is gone.
+///
+/// Which of the two wordings comes back depends on whether the driver had read
+/// the server's parting message before the statement went out, which is not
+/// something the caller can arrange.
+fn says_the_connection_went(message: &Option<String>) -> bool {
+    matches!(
+        message.as_deref(),
+        Some("connection closed") | Some("terminating connection due to administrator command")
+    )
+}
+
 /// A transaction holds its connection until it ends, so one that ends by having
 /// the connection taken away has to give the slot back all the same. With a
 /// pool of one, a slot that never comes back is an indexer that never writes
@@ -871,12 +883,13 @@ async fn a_transaction_whose_connection_dies_gives_its_slot_back() {
     let after = pid_once_the_pool_notices(&client).await;
 
     assert_eq!(
-        (inside, ending, after != pid),
         (
-            Some("terminating connection due to administrator command".to_string()),
-            Some("connection closed".to_string()),
-            true
-        )
+            says_the_connection_went(&inside),
+            says_the_connection_went(&ending),
+            after != pid
+        ),
+        (true, true, true),
+        "{inside:?} then {ending:?}"
     );
 }
 
@@ -905,5 +918,46 @@ async fn a_statement_waits_for_the_transaction_holding_the_only_connection() {
             started.elapsed() >= held
         ),
         (true, true, true)
+    );
+}
+
+/// A timestamp is the same instant whatever the server has been told about
+/// where it is and how it writes dates down.
+///
+/// The driver this replaced read timestamps from the text the server rendered,
+/// which both of these settings change. This one reads the binary, which is
+/// always microseconds from 2000 in UTC — so the column moves with neither,
+/// while the text beside it moves with both.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_timestamp_is_the_same_instant_in_any_session_the_server_keeps() {
+    let client = client();
+    let transaction = client.begin().await.unwrap();
+    transaction
+        .batch("SET LOCAL TIME ZONE 'Asia/Kathmandu'; SET LOCAL DateStyle = 'German, DMY'")
+        .await
+        .unwrap();
+
+    let (rows, _) = transaction
+        .query(
+            "SELECT '2009-02-13T23:31:30.123Z'::timestamptz AS value, \
+             ('2009-02-13T23:31:30.123Z'::timestamptz)::text AS rendered",
+            &[],
+        )
+        .await
+        .unwrap();
+    let row = rows.first().expect("one row");
+    let outcome = (
+        row.get::<_, Cell>(0).into_owned(),
+        row.get::<_, Cell>(1).into_owned(),
+    );
+    transaction.rollback().await.unwrap();
+
+    assert_eq!(
+        outcome,
+        (
+            Cell::Timestamp(1_234_567_890_123.0),
+            Cell::Str("14.02.2009 05:16:30.123 +0545".into())
+        )
     );
 }

@@ -183,8 +183,10 @@ jobs:
           docker logs pg-tls
           exit 1
 
+      # Serially: some of these terminate a backend by pid, and a pid the
+      # server has just freed is one it can hand to another test's connection.
       - name: Live Postgres tests
-        run: cargo test --lib postgres::live -- --ignored
+        run: cargo test --lib postgres::live -- --ignored --test-threads=1
 
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:
