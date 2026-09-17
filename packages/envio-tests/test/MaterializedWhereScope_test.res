@@ -118,8 +118,9 @@ describe("the scope of a table's where", () => {
   )
 })
 
-// `select` reads `params.to`, so a `where` on the same field reads the same
-// way. Nesting is still what groups several conditions under one prefix.
+// A `select` value is a path, a `where` key is one field. Saying so beats
+// letting the name reach the resolver, which reported it as a field of the
+// event and suggested `_literal` — sending the reader the wrong way.
 let plansOf = configYaml =>
   InternalTestIndexer.fromUserApi(
     ~configYaml=`
@@ -142,37 +143,19 @@ ${configYaml}
     select:
       id: params.to
 `,
-  ).config.materializations->(Utils.magic: array<MaterializationPlan.t> => JSON.t)
+  ).config.materializations
 
 describe("a dotted where key", () => {
-  it("compiles to what the nested form compiles to", t =>
-    t.expect(
-      plansOf(`    where:
-      eventName: Transfer
-      params.from: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
-      transaction.gasPrice:
-        _lte: 100`),
-    ).toEqual(
-      plansOf(`    where:
-      eventName: Transfer
-      params:
-        from: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
-      transaction:
-        gasPrice:
-          _lte: 100`),
-    )
-  )
-
-  it("says what is wrong when only the first segment resolves", t => {
+  it("is refused with the nested form to write instead", t => {
     let actual = try {
       plansOf(`    where:
-      params.owenr: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"`)->ignore
+      params.from: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"`)->ignore
       "the parse to fail, but it succeeded"
     } catch {
     | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
     }
     t.expect(actual).toBe(
-      "Failed compiling `tables`: in `tables.totals`: in `where`: in `where.params.owenr`: `ERC20.Transfer` has no parameter `owenr`. Available: from, to, value",
+      "Failed compiling `tables`: in `tables.totals`: in `where`: `params.from` is not a `where` key. A key names one field, so nest them:\n\n    params:\n      from: ...",
     )
   })
 })

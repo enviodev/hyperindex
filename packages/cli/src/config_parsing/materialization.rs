@@ -1978,16 +1978,29 @@ fn parse_filter(value: &Yaml) -> Result<Condition> {
                      `where`"
                 ))
             }
-            // `select` reads `params.to`, so a `where` on the same field
-            // reads the same way. Nesting still groups several conditions
-            // under one prefix.
-            _ => parts.push(parse_field_filter(&split_path(&key)?, item)?),
+            _ => {
+                where_key(&key)?;
+                parts.push(parse_field_filter(std::slice::from_ref(&key), item)?)
+            }
         }
     }
     if parts.is_empty() {
         return Err(anyhow!("`where` must not be empty"));
     }
     Ok(Condition::And(parts))
+}
+
+/// A `where` key names one field, unlike a `select` value, which is a path.
+/// Saying so beats letting the name fall through to the resolver, which would
+/// report it as a field of the event and suggest `_literal`.
+fn where_key(key: &str) -> Result<()> {
+    let Some((head, rest)) = key.split_once('.') else {
+        return Ok(());
+    };
+    Err(anyhow!(
+        "`{key}` is not a `where` key. A key names one field, so nest them:\n\n    \
+         {head}:\n      {rest}: ..."
+    ))
 }
 
 fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
@@ -2026,8 +2039,9 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
                 Comparison::keys()
             ));
         } else {
+            where_key(&key)?;
             let mut nested = path.to_vec();
-            nested.extend(split_path(&key)?);
+            nested.push(key);
             parts.push(parse_field_filter(&nested, item)?);
         }
     }
