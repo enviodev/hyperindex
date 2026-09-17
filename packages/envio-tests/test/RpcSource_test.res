@@ -931,12 +931,12 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
       let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x2710")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-        ]),
+        dict{
+          "number": JSON.String("0x2710"),
+          "timestamp": JSON.String("0x64"),
+          "hash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          "parentHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+        },
       )
 
       // eth_getLogs always trips the 50k-log cap; blocks resolve normally.
@@ -958,11 +958,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             200,
             JSON.stringify(
               JSON.Object(
-                Dict.fromArray([
-                  ("jsonrpc", JSON.String("2.0")),
-                  ("id", JSON.Number(1.)),
-                  ("result", blockJson),
-                ]),
+                dict{"jsonrpc": JSON.String("2.0"), "id": JSON.Number(1.), "result": blockJson},
               ),
             ),
           )
@@ -1059,12 +1055,12 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
       let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x2710")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-        ]),
+        dict{
+          "number": JSON.String("0x2710"),
+          "timestamp": JSON.String("0x64"),
+          "hash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          "parentHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+        },
       )
 
       // Only the first eth_getLogs is too dense; the rest fit, so the interval
@@ -1092,11 +1088,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             200,
             JSON.stringify(
               JSON.Object(
-                Dict.fromArray([
-                  ("jsonrpc", JSON.String("2.0")),
-                  ("id", JSON.Number(1.)),
-                  ("result", blockJson),
-                ]),
+                dict{"jsonrpc": JSON.String("2.0"), "id": JSON.Number(1.), "result": blockJson},
               ),
             ),
           )
@@ -1181,34 +1173,31 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
   let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
   let blockJson = JSON.Object(
-    Dict.fromArray([
-      ("number", JSON.String("0x2710")),
-      ("timestamp", JSON.String("0x64")),
-      ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-      ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-    ]),
+    dict{
+      "number": JSON.String("0x2710"),
+      "timestamp": JSON.String("0x64"),
+      "hash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+      "parentHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+    },
   )
 
   let jsonRpcError = message =>
     JSON.stringify(
       JSON.Object(
-        Dict.fromArray([
-          ("jsonrpc", JSON.String("2.0")),
-          ("id", JSON.Number(1.)),
-          (
-            "error",
-            JSON.Object(
-              Dict.fromArray([("code", JSON.Number(-32000.)), ("message", JSON.String(message))]),
+        dict{
+          "jsonrpc": JSON.String("2.0"),
+          "id": JSON.Number(1.),
+          "error": JSON.Object(
+              dict{"code": JSON.Number(-32000.), "message": JSON.String(message)},
             ),
-          ),
-        ]),
+        },
       ),
     )
 
   let jsonRpcResult = result =>
     JSON.stringify(
       JSON.Object(
-        Dict.fromArray([("jsonrpc", JSON.String("2.0")), ("id", JSON.Number(1.)), ("result", result)]),
+        dict{"jsonrpc": JSON.String("2.0"), "id": JSON.Number(1.), "result": result},
       ),
     )
 
@@ -1326,25 +1315,25 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
       }
 
       let logJson = JSON.Object(
-        Dict.fromArray([
-          ("address", JSON.String(mockAddress->Address.toString)),
-          ("topics", JSON.Array([JSON.String(sighash)])),
-          ("data", JSON.String("0x")),
-          ("blockNumber", JSON.String("0x64")),
-          ("transactionHash", JSON.String(transactionHash)),
-          ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("logIndex", JSON.String("0x2")),
-          ("removed", JSON.Boolean(false)),
-        ]),
+        dict{
+          "address": JSON.String(mockAddress->Address.toString),
+          "topics": JSON.Array([JSON.String(sighash)]),
+          "data": JSON.String("0x"),
+          "blockNumber": JSON.String("0x64"),
+          "transactionHash": JSON.String(transactionHash),
+          "transactionIndex": JSON.String("0x1"),
+          "blockHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          "logIndex": JSON.String("0x2"),
+          "removed": JSON.Boolean(false),
+        },
       )
       let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x64")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-        ]),
+        dict{
+          "number": JSON.String("0x64"),
+          "timestamp": JSON.String("0x64"),
+          "hash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          "parentHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+        },
       )
 
       let mock = await MockRpcServer.make(~getResult=method =>
@@ -1475,35 +1464,29 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
       // provider returns it for either server-side filter; routing re-checks
       // the registration's topic filters against these values.
       let logJson = JSON.Object(
-        Dict.fromArray([
-          ("address", JSON.String(mockAddress->Address.toString)),
-          (
-            "topics",
-            JSON.Array([
+        dict{
+          "address": JSON.String(mockAddress->Address.toString),
+          "topics": JSON.Array([
               JSON.String(sighash),
               JSON.String("0x0000000000000000000000000000000000000000000000000000000000000001"),
               JSON.String("0x0000000000000000000000000000000000000000000000000000000000000002"),
             ]),
-          ),
-          ("data", JSON.String("0x")),
-          ("blockNumber", JSON.String("0x64")),
-          (
-            "transactionHash",
-            JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
-          ),
-          ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("logIndex", JSON.String("0x2")),
-          ("removed", JSON.Boolean(false)),
-        ]),
+          "data": JSON.String("0x"),
+          "blockNumber": JSON.String("0x64"),
+          "transactionHash": JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
+          "transactionIndex": JSON.String("0x1"),
+          "blockHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          "logIndex": JSON.String("0x2"),
+          "removed": JSON.Boolean(false),
+        },
       )
       let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x64")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-        ]),
+        dict{
+          "number": JSON.String("0x64"),
+          "timestamp": JSON.String("0x64"),
+          "hash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          "parentHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+        },
       )
 
       let mock = await MockRpcServer.make(~getResult=method =>
@@ -1630,12 +1613,12 @@ describe("RpcSource - builds partition log selections end to end", () => {
       let selectedRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress]
 
       let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x64")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-        ]),
+        dict{
+          "number": JSON.String("0x64"),
+          "timestamp": JSON.String("0x64"),
+          "hash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          "parentHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+        },
       )
       let mock = await MockRpcServer.make(~getResult=method =>
         switch method {
@@ -1736,12 +1719,12 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
           | _ => "0x0"
           }
           JSON.Object(
-            Dict.fromArray([
-              ("number", JSON.String(requestedBlockHex)),
-              ("timestamp", JSON.String("0x64")),
-              ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-              ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-            ]),
+            dict{
+              "number": JSON.String(requestedBlockHex),
+              "timestamp": JSON.String("0x64"),
+              "hash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+              "parentHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+            },
           )
         | _ => JSON.Null
         }
@@ -1846,28 +1829,25 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
       // NOT match ContractA's topic1 filter). ContractA's own query would never
       // return it; only ContractB's unfiltered query can.
       let leakedLog = JSON.Object(
-        Dict.fromArray([
-          ("address", JSON.String(addrA->Address.toString)),
-          ("topics", JSON.Array([JSON.String(sighash)])),
-          ("data", JSON.String("0x")),
-          ("blockNumber", JSON.String("0x64")),
-          (
-            "transactionHash",
-            JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
-          ),
-          ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("logIndex", JSON.String("0x2")),
-          ("removed", JSON.Boolean(false)),
-        ]),
+        dict{
+          "address": JSON.String(addrA->Address.toString),
+          "topics": JSON.Array([JSON.String(sighash)]),
+          "data": JSON.String("0x"),
+          "blockNumber": JSON.String("0x64"),
+          "transactionHash": JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
+          "transactionIndex": JSON.String("0x1"),
+          "blockHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          "logIndex": JSON.String("0x2"),
+          "removed": JSON.Boolean(false),
+        },
       )
       let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x64")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-        ]),
+        dict{
+          "number": JSON.String("0x64"),
+          "timestamp": JSON.String("0x64"),
+          "hash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          "parentHash": JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+        },
       )
 
       // Honor the query's `address` and `topics` like a real eth_getLogs, so a

@@ -4037,10 +4037,7 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
       eventDensity: None,
       latestSourceRangeCapacityUpdateBlock: 0,
     }
-    let byId = Dict.fromArray([
-      ("overshoot", overshootPartition),
-      ("unknown", unknownPartition),
-    ])
+    let byId = dict{"overshoot": overshootPartition, "unknown": unknownPartition}
     let partitions = order->Array.map(id => byId->Dict.getUnsafe(id))
     {
       optimizedPartitions: FetchState.OptimizedPartitions.make(
@@ -4089,8 +4086,8 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
       (resultA, resultB),
       ~message="Same totals whichever partition the round processes first",
     ).toEqual((
-      Dict.fromArray([("overshoot", 1800), ("unknown", 1000)]),
-      Dict.fromArray([("overshoot", 1800), ("unknown", 1000)]),
+      dict{"overshoot": 1800, "unknown": 1000},
+      dict{"overshoot": 1800, "unknown": 1000},
     ))
   })
 })
@@ -4159,10 +4156,7 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
     }
 
     t.expect(byPartition).toEqual(
-      Dict.fromArray([
-        ("deep", [(1, 180), (19, 180), (37, 90)]),
-        ("capped", [(1, 180)]),
-      ]),
+      dict{"deep": [(1, 180), (19, 180), (37, 90)], "capped": [(1, 180)]},
     )
   })
 })
@@ -4253,7 +4247,7 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
     // sits above it). Partition "0": 2 chunks fit the 500 budget + 1 forced
     // chunk for the 140-item leftover — the only overshoot is the
     // min-one-chunk quantization, not the reservation-inflated mean.
-    t.expect(byPartition).toEqual(Dict.fromArray([("0", [(1, 180), (19, 180), (37, 180)])]))
+    t.expect(byPartition).toEqual(dict{"0": [(1, 180), (19, 180), (37, 180)]})
   })
 
   it(
