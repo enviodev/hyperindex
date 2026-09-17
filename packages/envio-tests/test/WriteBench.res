@@ -153,3 +153,65 @@ let run = async () => {
 
   await BenchAdapter.close(sql)
 }
+
+// Where a write's CPU goes before the statement is sent, which is what a second
+// storage backend would repeat for the same batch. `lend` is the part of the
+// staging that is the arena itself — asking Rust for the buffers and handing
+// them back — as against the cells copied into them.
+//
+// Run by `node bench.mjs splits`. Nothing reaches the server: every batch is
+// staged and then abandoned.
+let splits = async () => {
+  let pgSchema = "bench"
+  let sql = PgStorage.makeClient()
+  let itemSchema = schemaOf(unnested)
+  let data = PgStorage.makeTableBatchSetQuery(~pgSchema, ~table=unnested, ~itemSchema)
+  let columns = switch data.binding {
+  | Staged({columns}) => columns
+  | PerCell => JsError.throwWithMessage("the bench table stages")
+  }
+  let writeTable =
+    sql.client->PgClient.registerWriteTable(
+      columns->Array.map(column => column.name),
+      columns->Array.map(column => (column.kind :> int)),
+    )
+  let items =
+    batch(~offset=0, ~rows=rowsPerBatch, ~withDate=false)->(Utils.magic: array<'a> => array<unknown>)
+
+  // Warm, so that none of the measured runs pays for the converter's own first
+  // pass through the shapes it sees.
+  let converted = ref(data.convertOrThrow(items))
+  for _ in 0 to 9 {
+    converted := data.convertOrThrow(items)
+  }
+
+  await measure(`convert rows=${(batches * rowsPerBatch)->Int.toString}`, ~work=async () => {
+    for _ in 0 to batches - 1 {
+      converted := data.convertOrThrow(items)
+    }
+  })
+
+  await measure(`lend    rows=${(batches * rowsPerBatch)->Int.toString}`, ~work=async () => {
+    for _ in 0 to batches - 1 {
+      let arena = sql.client->PgClient.arena
+      let stage = arena->Staging.begin(~table=writeTable, ~rows=rowsPerBatch, ~columns)
+      stage->Staging.abort
+    }
+  })
+
+  await measure(`stage   rows=${(batches * rowsPerBatch)->Int.toString}`, ~work=async () => {
+    for _ in 0 to batches - 1 {
+      let arena = sql.client->PgClient.arena
+      let stage = arena->Staging.begin(~table=writeTable, ~rows=rowsPerBatch, ~columns)
+      for column in 0 to columns->Array.length - 1 {
+        let values = converted.contents->Array.getUnsafe(column)
+        for row in 0 to rowsPerBatch - 1 {
+          stage->Staging.writeValue(~column, ~row, values->Array.getUnsafe(row))
+        }
+      }
+      stage->Staging.abort
+    }
+  })
+
+  await BenchAdapter.close(sql)
+}

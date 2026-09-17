@@ -20,5 +20,8 @@
 // `process.cpuUsage()` counts every thread of the process, so the work the
 // addon does on its own runtime is counted too — the point is the indexer's
 // total cost, not which thread paid it.
-import { run } from "./test/WriteBench.res.mjs";
-await run();
+// `node bench.mjs splits` measures the write's own CPU instead, split into the
+// conversion, the arena, and the cells copied into it.
+import { run, splits } from "./test/WriteBench.res.mjs";
+const [what] = process.argv.slice(2);
+await (what === "splits" ? splits() : run());
