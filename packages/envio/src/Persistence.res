@@ -324,7 +324,10 @@ let init = {
           | _ => false
           }
         ) {
-          Logging.info(`Found existing indexer storage. Resuming indexing state...`)
+          // An isolated process resumes state its supervisor already announced
+          // for the whole run, so it says so only to its own log file.
+          let logResume = requireInitialized ? Logging.debug : Logging.info
+          logResume(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState(
             ~entities=persistence.allEntities,
             ~chainIds=chainConfigs->Array.map(chain => chain.id),
@@ -343,7 +346,7 @@ let init = {
           initialState.chains->Array.forEach(c => {
             progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
           })
-          Logging.info({
+          logResume({
             "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
             "progress": progress,
           })
