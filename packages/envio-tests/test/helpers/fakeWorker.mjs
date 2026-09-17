@@ -19,17 +19,7 @@ process.on("message", (message) => {
     if (mode === "succeed") process.exit(0);
     if (mode === "fail") process.exit(1);
   }
-  // A "mute" worker takes the request and never answers, the way one that dies
-  // mid-dump leaves it.
-  if (message.kind === "syncCache" && mode !== "mute") {
-    // Reports the dump through a snapshot before acknowledging it, so a
-    // supervisor that answers early can be caught having answered before it.
-    setTimeout(() => {
-      process.send({ kind: "snapshot", metrics: { synced: true } });
-      process.send({ kind: "cacheSynced" });
-    }, 50);
-  }
 });
 
-// Nothing else keeps these alive; they wait to be stopped.
-if (mode === "linger" || mode === "mute") setInterval(() => {}, 1000);
+// Nothing else keeps a "linger" worker alive; it waits to be stopped.
+if (mode === "linger") setInterval(() => {}, 1000);

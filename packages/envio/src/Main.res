@@ -753,15 +753,6 @@ let start = async (
     let _rerender = Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
   }
   if Worker.isEnabled {
-    Worker.onParentMessage(message =>
-      switch message {
-      | SyncCache(_) =>
-        dumpEffectCache()
-        ->Promise.thenResolve(() => Worker.send(CacheSynced({})))
-        ->Promise.ignore
-      | Init(_) => ()
-      }
-    )
     Metrics.startRuntimeCollectors()
     let _intervalId = setInterval(
       () =>

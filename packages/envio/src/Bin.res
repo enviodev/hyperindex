@@ -53,7 +53,6 @@ let run = async args => {
   try {
     if Worker.isEnabled {
       Worker.bindToSupervisor()
-      Worker.listen()
       // A worker is handed the config its supervisor already parsed, narrowed to
       // the chains it drives, so the two can't disagree about what is indexed.
       // Its working directory and environment came with the fork.

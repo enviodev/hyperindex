@@ -9,9 +9,6 @@ type fixtureReport = {
   startTime: Date.t,
 }
 
-// What it reports once its dump is done.
-type fixtureDump = {synced: bool}
-
 let fixturePath = `${NodeJs.Process.cwd()}/test/helpers/fakeWorker.mjs`
 
 let forkFixture = (~chainIds, ~maxConnections=2, ~workerIndex=0) =>
@@ -33,7 +30,6 @@ describe("Supervisor.fork", () => {
             switch message {
             | Worker.Snapshot({metrics}) =>
               resolve(metrics->(Utils.magic: Metrics.t => fixtureReport))
-            | Worker.CacheSynced(_) => ()
             },
         ),
     )
@@ -50,76 +46,6 @@ describe("Supervisor.fork", () => {
   })
 })
 
-describe("Supervisor.syncCache", () => {
-  Async.it("Answers only once every worker has dumped its cache", async t => {
-    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "linger")
-    let group: Supervisor.group = {
-      running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
-      stopping: false,
-      syncing: None,
-    }
-
-    await group->Supervisor.syncCache
-    let dumped =
-      group.running->Array.map(r =>
-        r.snapshot->Option.map(metrics => (metrics->(Utils.magic: Metrics.t => fixtureDump)).synced)
-      )
-    group->Supervisor.stop
-
-    t.expect(dumped).toStrictEqual([Some(true), Some(true)])
-  })
-
-  Async.it("Answers requests that overlap rather than leaving the first hanging", async t => {
-    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "linger")
-    let group: Supervisor.group = {
-      running: [forkFixture(~chainIds=[1])],
-      stopping: false,
-      syncing: None,
-    }
-
-    let answered = async request =>
-      await Promise.race([
-        request->Promise.thenResolve(() => "answered"),
-        Utils.delay(2000)->Promise.thenResolve(() => "still waiting"),
-      ])
-    let first = group->Supervisor.syncCache
-    let second = group->Supervisor.syncCache
-    let outcomes = (await first->answered, await second->answered)
-    group->Supervisor.stop
-
-    t.expect(outcomes).toStrictEqual(("answered", "answered"))
-  })
-
-  Async.it("Gives up on a worker that is gone before it could dump", async t => {
-    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "mute")
-    let running = forkFixture(~chainIds=[1])
-    let group: Supervisor.group = {running: [running], stopping: false, syncing: None}
-
-    let settled = async request =>
-      switch await request {
-      | () => "answered"
-      | exception _ => "gave up"
-      }
-    // Raced, so a request that never settles reads as the hang it is rather
-    // than as the suite timing out.
-    let answered = request =>
-      Promise.race([
-        request->settled,
-        Utils.delay(2000)->Promise.thenResolve(() => "still waiting"),
-      ])
-
-    let duringDump = group->Supervisor.syncCache
-    running.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore
-    let outcomes = (
-      await duringDump->answered,
-      // And a request that arrives once it is already gone.
-      await group->Supervisor.syncCache->answered,
-    )
-
-    t.expect(outcomes).toStrictEqual(("gave up", "gave up"))
-  })
-})
-
 describe("Supervisor.awaitExit", () => {
   let outcome = async group =>
     switch await group->Supervisor.awaitExit {
@@ -132,7 +58,6 @@ describe("Supervisor.awaitExit", () => {
     let group: Supervisor.group = {
       running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
       stopping: false,
-      syncing: None,
     }
 
     t.expect(await outcome(group)).toStrictEqual(Ok(Supervisor.Finished))
@@ -145,7 +70,6 @@ describe("Supervisor.awaitExit", () => {
       let group: Supervisor.group = {
         running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
         stopping: false,
-        syncing: None,
       }
       group->Supervisor.stop
 
@@ -158,7 +82,7 @@ describe("Supervisor.awaitExit", () => {
     let failing = forkFixture(~chainIds=[1])
     NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "linger")
     let lingering = forkFixture(~chainIds=[137])
-    let group: Supervisor.group = {running: [failing, lingering], stopping: false, syncing: None}
+    let group: Supervisor.group = {running: [failing, lingering], stopping: false}
 
     // The survivor was taken down rather than left indexing half a schema.
     t.expect((await outcome(group), group.stopping, lingering.settled)).toStrictEqual((

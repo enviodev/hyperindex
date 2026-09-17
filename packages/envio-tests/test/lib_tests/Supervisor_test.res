@@ -200,3 +200,21 @@ describe("Worker.detect", () => {
     ]).toStrictEqual([true, false, false])
   })
 })
+
+describe("Supervisor.syncCache", () => {
+  Async.it("Dumps once for requests that overlap, and again for a later one", async t => {
+    let dumps = ref(0)
+    let dump = () => {
+      dumps := dumps.contents + 1
+      Utils.delay(20)
+    }
+
+    let first = Supervisor.syncCache(~dump)
+    let second = Supervisor.syncCache(~dump)
+    await first
+    await second
+    await Supervisor.syncCache(~dump)
+
+    t.expect(dumps.contents).toBe(2)
+  })
+})

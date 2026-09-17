@@ -1,4 +1,4 @@
-let makeClient = () => {
+let makeClient = (~maxConnections=Env.Db.maxConnections) => {
   Postgres.makeSql(
     ~config={
       host: Env.Db.host,
@@ -14,7 +14,7 @@ let makeClient = () => {
           : Some(_str => ())
       ),
       transform: {undefined: Null},
-      max: Env.Db.maxConnections,
+      max: maxConnections,
       // debug: (~connection, ~query, ~params as _, ~types as _) => Js.log2(connection, query),
     },
   )

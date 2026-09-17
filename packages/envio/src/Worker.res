@@ -22,14 +22,10 @@ type parentMessage =
   // instead of re-derived so a worker and its supervisor can never disagree
   // about what is being indexed.
   | @as("init") Init({config: JSON.t})
-  | @as("syncCache") SyncCache({})
 
 @tag("kind")
 type workerMessage =
   | @as("snapshot") Snapshot({metrics: Metrics.t, runtime: Metrics.runtimeSample})
-  // Sent once the worker's effect cache is on disk, so the supervisor's
-  // console can answer for a dump that has actually happened.
-  | @as("cacheSynced") CacheSynced({})
 
 // How often a worker reports. Matches the TUI's own refresh, so the supervised
 // display moves at the same rate an unsplit run's does.
@@ -54,35 +50,12 @@ let send = (message: workerMessage) =>
     NodeJs.Process.sendToParent(message)->ignore
   }
 
-%%private(let pending: ref<array<parentMessage>> = ref([]))
-%%private(let handler: ref<option<parentMessage => unit>> = ref(None))
-
-// Installed before the indexer starts. A request can reach a worker while it is
-// still coming up, and a dropped one leaves the supervisor waiting for an answer
-// that will never be sent, so it waits for its handler instead.
-let listen = () =>
-  NodeJs.Process.onMessage((message: parentMessage) =>
-    switch handler.contents {
-    | Some(handle) => handle(message)
-    | None => pending := pending.contents->Array.concat([message])
-    }
-  )
-
-let onParentMessage = (handle: parentMessage => unit) => {
-  handler := Some(handle)
-  let held = pending.contents
-  pending := []
-  held->Array.forEach(handle)
-}
-
-// Resolves with the init payload. The supervisor sends it right after the
-// fork, before anything else, so the first message is the only one to read.
+// Resolves with the init payload, the one message a supervisor sends its worker.
 let awaitInit = (): promise<JSON.t> =>
-  Promise.make((resolve, reject) =>
+  Promise.make((resolve, _) =>
     NodeJs.Process.onceMessage((message: parentMessage) =>
       switch message {
       | Init({config}) => resolve(config)
-      | SyncCache(_) => reject(Utils.Error.make("Expected the supervisor's init message first"))
       }
     )
   )
