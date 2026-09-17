@@ -600,17 +600,23 @@ type mainArgs = Yargs.parsedArgs<args>
 // `envio_info` (on initialize) and validates against (on resume).
 let getEnvioInfo = () => Config.getPublicConfigJson()->Config.stripSensitiveData
 
-let migrate = async (
-  ~reset,
-  // A supervisor creating the schema for a run it is about to start names that
-  // run's commands, not the migration's, in what a config change prints.
-  ~resetCommand="envio local db-migrate setup",
-  ~runCommand=None,
-  // A migration command runs once and exits, with nobody watching it recover:
-  // an unreachable chain should say so now rather than hold the command open.
-  // A run that is about to start wants the opposite.
-  ~startBlockRetry=StartBlockResolver.Once,
-) => {
+// Brings the schema up to date for a run that is about to start, as opposed to
+// a migration command: what a config change prints names the command the
+// operator ran, and an unreachable chain is waited on rather than reported,
+// since somebody is watching the run come up.
+let initForRun = (persistence, ~config: Config.t, ~reset, ~isDevelopmentMode, ~requireInitialized) =>
+  persistence->Persistence.init(
+    ~reset,
+    ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping=config.contractMapping,
+    ~envioInfo=getEnvioInfo(),
+    ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
+    ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
+    ~lowercaseAddresses=config.lowercaseAddresses,
+    ~requireInitialized,
+  )
+
+let migrate = async (~reset) => {
   let config = Config.load()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   await persistence->Persistence.init(
@@ -618,10 +624,12 @@ let migrate = async (
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
     ~envioInfo=getEnvioInfo(),
-    ~resetCommand,
-    ~runCommand,
+    ~resetCommand="envio local db-migrate setup",
+    ~runCommand=None,
     ~lowercaseAddresses=config.lowercaseAddresses,
-    ~startBlockRetry,
+    // A migration command runs once and exits, with nobody watching it recover:
+    // an unreachable chain should say so now rather than hold the command open.
+    ~startBlockRetry=StartBlockResolver.Once,
   )
   await persistence.storage.close()
 }
@@ -678,14 +686,10 @@ let start = async (
   | None => PgStorage.makePersistenceFromConfig(~config)
   }
   setGlobalPersistence(persistence)
-  await persistence->Persistence.init(
+  await persistence->initForRun(
+    ~config,
     ~reset,
-    ~chainConfigs=config.chainMap->ChainMap.values,
-    ~contractMapping=config.contractMapping,
-    ~envioInfo=getEnvioInfo(),
-    ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
-    ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
-    ~lowercaseAddresses=config.lowercaseAddresses,
+    ~isDevelopmentMode,
     ~requireInitialized=config.isolated,
   )
 

@@ -180,7 +180,7 @@ describe("Config.logContext", () => {
       config(~schema=perChain)->Config.logContext,
       config(~schema=crossChain)->Config.logContext,
     ]).toStrictEqual([
-      Some(JSON.Object(Dict.fromArray([("chainId", JSON.Number(137.))]))),
+      Some(Dict.fromArray([("chainId", JSON.Number(137.))])),
       None,
       None,
       None,

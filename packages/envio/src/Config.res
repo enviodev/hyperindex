@@ -634,14 +634,10 @@ let isPerChain = (config: t) => !(config.userEntities->Array.some(entity => enti
 // of the schema's chains while siblings drive the rest names it, on the lines
 // that had no chain in hand. One driving several has no single owner to name,
 // and its chain-scoped lines already carry theirs.
-let logContext = (config: t): option<JSON.t> =>
+let logContext = (config: t): option<dict<JSON.t>> =>
   switch (config.isolated, config.chainMap->ChainMap.keys) {
   | (true, [chainId]) =>
-    Some(
-      JSON.Object(
-        Dict.fromArray([("chainId", chainId->S.reverseConvertToJsonOrThrow(ChainId.schema))]),
-      ),
-    )
+    Some(Dict.fromArray([("chainId", chainId->S.reverseConvertToJsonOrThrow(ChainId.schema))]))
   | _ => None
   }
 

@@ -25,9 +25,30 @@ let logLevels = [
 ]->Dict.fromArray
 
 %%private(let logger = ref(None))
-// The logger as configured, before any context a run added to it. Kept so
-// setting context twice in one process replaces it rather than stacking it.
-%%private(let rootLogger = ref(None))
+
+// Fields every line this process logs carries. Merged into each line rather
+// than bound to a child logger: pino writes a child's bindings and the line's
+// own fields side by side, so a line that names the same key would carry it
+// twice. A fresh object per line, since pino merges the line's fields into
+// whatever this returns.
+%%private(let context: ref<dict<JSON.t>> = ref(Dict.make()))
+%%private(let mixin = () => JSON.Object(context.contents->Dict.copy))
+
+// A child logger that binds a field the process already carries would have pino
+// write it twice: a child's bindings and the context are concatenated into the
+// line, not merged. The context is the one place a line names it, which it can
+// be because a process only takes one when its every line is about that chain.
+%%private(
+  let withoutContext = (params: 'a) =>
+    switch context.contents->Dict.keysToArray {
+    | [] => params
+    | keys => {
+        let narrowed = params->(Utils.magic: 'a => dict<JSON.t>)->Dict.copy
+        keys->Array.forEach(key => narrowed->Dict.delete(key))
+        narrowed->(Utils.magic: dict<JSON.t> => 'a)
+      }
+    }
+)
 
 let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel) => {
   // Currently unused - useful if using multiple transports.
@@ -59,17 +80,19 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
         ...Pino.ECS.make(),
         customLevels: logLevels,
         base,
+        mixin,
       },
       Transport.make(pinoFile),
     )
   | EcsConsoleMultistream =>
-    makeMultiStreamLogger(~logFile=None, ~options=Some({...Pino.ECS.make(), base}))
+    makeMultiStreamLogger(~logFile=None, ~options=Some({...Pino.ECS.make(), base, mixin}))
   | EcsConsole =>
     make({
       ...Pino.ECS.make(),
       level: userLogLevel,
       customLevels: logLevels,
       base,
+      mixin,
     })
   | FileOnly =>
     makeWithOptionsAndTransport(
@@ -77,17 +100,17 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
         customLevels: logLevels,
         level: defaultFileLogLevel,
         base,
+        mixin,
       },
       Transport.make(pinoFile),
     )
-  | ConsoleRaw => makeMultiStreamLogger(~logFile=None, ~options=Some({base: base}))
-  | ConsolePretty => makeMultiStreamLogger(~logFile=None, ~options=Some({base: base}))
-  | Both => makeMultiStreamLogger(~logFile=Some(logFilePath), ~options=Some({base: base}))
+  | ConsoleRaw => makeMultiStreamLogger(~logFile=None, ~options=Some({base, mixin}))
+  | ConsolePretty => makeMultiStreamLogger(~logFile=None, ~options=Some({base, mixin}))
+  | Both => makeMultiStreamLogger(~logFile=Some(logFilePath), ~options=Some({base, mixin}))
   }
 }
 
 let setLogger = l => {
-  rootLogger := Some(l)
   logger := Some(l)
 }
 
@@ -153,19 +176,15 @@ let childFatal = (logger, params: 'a) => {
 }
 
 let createChild = (~params: 'a) => {
-  getLogger()->child(params->createChildParams)
+  getLogger()->child(params->withoutContext->createChildParams)
 }
 
-// Fields every line this process logs from here on carries. What belongs on
-// them is the run's to decide; the logger only carries what it is handed.
-let setContext = (params: 'a) =>
-  switch rootLogger.contents {
-  | Some(root) => logger := Some(root->child(params->createChildParams))
-  | None => ()
-  }
+// What belongs on every line is the run's to decide; the logger only carries
+// what it is handed. A line that names one of these fields itself wins.
+let setContext = (fields: dict<JSON.t>) => context := fields
 
 let createChildFrom = (~logger: t, ~params: 'a) => {
-  logger->child(params->createChildParams)
+  logger->child(params->withoutContext->createChildParams)
 }
 
 @inline

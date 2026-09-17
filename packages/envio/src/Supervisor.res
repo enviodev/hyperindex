@@ -234,17 +234,22 @@ let awaitExit = async (group): outcome => {
 // entry, and serves the run's metrics, console and display from what they
 // report. Returns once every worker has exited; throws if any of them failed.
 let run = async (~workers: array<worker>, ~configJson: JSON.t, ~reset) => {
+  let config = Config.load()
+
   // Every chain's state has to exist before a worker resumes it: an isolated
   // run refuses to initialize, precisely so it can't create rows for its own
-  // chains and leave the chains it skipped with nothing to resume.
-  await Main.migrate(
+  // chains and leave the chains it skipped with nothing to resume. It is the
+  // same initialization an unsplit run does, and the supervisor hands the
+  // connections it used to its workers.
+  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  await persistence->Main.initForRun(
+    ~config,
     ~reset,
-    ~resetCommand="envio start -r",
-    ~runCommand=Some("envio start"),
-    ~startBlockRetry=StartBlockResolver.UntilItAnswers,
+    ~isDevelopmentMode=config.isDev,
+    ~requireInitialized=false,
   )
+  await persistence.storage.close()
 
-  let config = Config.load()
   let startTime = Date.make()
   let startTimeRef = Performance.now()
 
