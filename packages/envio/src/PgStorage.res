@@ -552,6 +552,15 @@ let makeInsertValuesSetQuery = (
 // Constants for chunking
 let maxItemsPerQuery = 500
 
+// The wire protocol counts a statement's parameters in a signed 16-bit field.
+let maxParamsPerQuery = 65535
+
+// How many rows the statement that binds a parameter per cell can take at once.
+// A wide enough table runs out of parameters before it runs out of rows, and
+// the server rejects the whole batch when it does.
+let itemsPerQuery = (~columns) =>
+  Pervasives.max(1, Pervasives.min(maxItemsPerQuery, maxParamsPerQuery / columns))
+
 // How a table's batch reaches its statement.
 type binding =
   // One array per column, laid into the arena and rendered by Rust. `writeTable`
@@ -559,7 +568,7 @@ type binding =
   | Staged({columns: array<Staging.column>, mutable writeTable: option<int>})
   // A parameter per cell, rendered here. What a table with an array column
   // takes, and the history tables whose schema doesn't survive the conversion.
-  | PerCell
+  | PerCell({itemsPerQuery: int})
 
 // What a table's batch write needs, built once and cached per table.
 type batchSet = {
@@ -652,8 +661,8 @@ let makeTableBatchSetQuery = (
   // rules out one of arrays: the arena carries a value per row, and an array is
   // a value a row holds rather than a run of them. Deciding it here is what lets
   // the caller stage without asking again.
+  let fields = table->Table.schemaOrderedFields(~schema=itemSchema->S.toUnknown)
   let staged = if (isRawEvents || !hasArrayField) && !isHistoryUpdate {
-    let fields = table->Table.schemaOrderedFields(~schema=itemSchema->S.toUnknown)
     PgWriting.canStage(fields) ? Some(PgWriting.columns(fields)) : None
   } else {
     None
@@ -675,12 +684,14 @@ let makeTableBatchSetQuery = (
       ),
       binding: Staged({columns, writeTable: None}),
     }
-  | None => {
+  | None =>
+    let itemsPerQuery = itemsPerQuery(~columns=fields->Array.length)
+    {
       query: makeInsertValuesSetQuery(
         ~pgSchema,
         ~table,
         ~itemSchema,
-        ~itemsCount=maxItemsPerQuery,
+        ~itemsCount=itemsPerQuery,
         ~chainIdMode,
       ),
       convertOrThrow: compile(
@@ -693,7 +704,7 @@ let makeTableBatchSetQuery = (
             ->(Utils.magic: array<unknown> => unknown),
         }),
       ),
-      binding: PerCell,
+      binding: PerCell({itemsPerQuery: itemsPerQuery}),
     }
   }
 }
@@ -827,9 +838,9 @@ let setOrThrow = async (
             ~rows=items->Array.length,
           ),
         )
-      | PerCell =>
+      | PerCell({itemsPerQuery}) =>
         let responses = []
-        chunkArray(items, ~chunkSize=maxItemsPerQuery)->Array.forEach(chunk => {
+        chunkArray(items, ~chunkSize=itemsPerQuery)->Array.forEach(chunk => {
           let chunkSize = chunk->Array.length
 
           // Every cell is bound on its own, so this comes back as one run of
@@ -844,7 +855,7 @@ let setOrThrow = async (
           responses
           ->Array.push(
             sql->Sql.exec(
-              chunkSize === maxItemsPerQuery
+              chunkSize === itemsPerQuery
                 ? data.query
                 : makeInsertValuesSetQuery(
                     ~pgSchema,

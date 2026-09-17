@@ -168,7 +168,7 @@ let splits = async () => {
   let data = PgStorage.makeTableBatchSetQuery(~pgSchema, ~table=unnested, ~itemSchema)
   let columns = switch data.binding {
   | Staged({columns}) => columns
-  | PerCell => JsError.throwWithMessage("the bench table stages")
+  | PerCell(_) => JsError.throwWithMessage("the bench table stages")
   }
   let writeTable =
     sql.client->PgClient.registerWriteTable(

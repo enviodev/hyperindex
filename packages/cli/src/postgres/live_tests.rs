@@ -17,14 +17,19 @@ use futures_util::future;
 use crate::columnar::{Arena, ColumnKind, ColumnSpec};
 
 fn client() -> PgClient {
-    client_with(SslSetting::Disable, &default_host())
+    client_with(SslSetting::Disable, &default_host(), 2)
+}
+
+/// One connection, so that what happens to it is what the next statement finds.
+fn pinned_client() -> PgClient {
+    client_with(SslSetting::Disable, &default_host(), 1)
 }
 
 fn default_host() -> String {
     std::env::var("ENVIO_PG_HOST").unwrap_or_else(|_| "localhost".to_string())
 }
 
-fn client_with(ssl: SslSetting, host: &str) -> PgClient {
+fn client_with(ssl: SslSetting, host: &str, max_connections: usize) -> PgClient {
     PgClient::connect(PgConnectionOptions {
         host: host.to_string(),
         port: std::env::var("ENVIO_PG_PORT")
@@ -35,7 +40,7 @@ fn client_with(ssl: SslSetting, host: &str) -> PgClient {
         password: std::env::var("ENVIO_PG_PASSWORD").unwrap_or_else(|_| "testing".to_string()),
         database: std::env::var("ENVIO_PG_DATABASE").unwrap_or_else(|_| "envio-dev".to_string()),
         ssl,
-        max_connections: 2,
+        max_connections,
         application_name: Some("envio-live-test".to_string()),
     })
     .expect("the pool is built from a static configuration")
@@ -699,7 +704,7 @@ async fn forgetting_what_was_prepared_survives_the_table_changing_shape() {
 /// Whether the server says the connection it is answering on is encrypted, or
 /// why there was no connection to ask.
 async fn encrypted(ssl: SslSetting, host: &str) -> String {
-    let client = client_with(ssl, host);
+    let client = client_with(ssl, host, 2);
     match client
         .query(
             "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
@@ -753,5 +758,152 @@ async fn each_ssl_mode_connects_the_way_it_says() {
             (true, true),
         ),
         "{refused}"
+    );
+}
+
+/// The pid the server is answering this client on.
+async fn backend_pid(client: &PgClient) -> i32 {
+    let (rows, _) = client.query("SELECT pg_backend_pid()", &[]).await.unwrap();
+    rows.first().expect("one row").get::<_, i32>(0)
+}
+
+/// The pid of a connection the pool is willing to hand out again.
+///
+/// A terminated connection is not known to be gone until the driver reads the
+/// end of its socket, which happens a moment after the server closes it; until
+/// then the pool has nothing to go on and a statement taken out on it fails.
+async fn pid_once_the_pool_notices(client: &PgClient) -> i32 {
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    backend_pid(client).await
+}
+
+/// Terminates a backend from a connection of its own.
+async fn terminate(pid: i32) {
+    let killer = client();
+    killer
+        .execute(
+            "SELECT pg_terminate_backend($1::int4)",
+            &[Param::Text(pid.to_string())],
+        )
+        .await
+        .unwrap();
+}
+
+/// A failover, an idle timeout or a DBA all end the same way: the connection is
+/// gone and the pool is still holding it. The next statement must not be
+/// answered on it.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_connection_the_server_dropped_is_not_handed_out_again() {
+    let client = pinned_client();
+    let before = backend_pid(&client).await;
+    terminate(before).await;
+
+    let after = pid_once_the_pool_notices(&client).await;
+    let outcome = client.query("SELECT 1", &[]).await;
+
+    assert_eq!(
+        (
+            outcome.err().map(|error| super::error::message_of(&error)),
+            after != before
+        ),
+        (None, true)
+    );
+}
+
+/// The statement that was in flight when the connection went is the one failure
+/// there is no hiding: it may have reached the server or not, so it is reported
+/// rather than repeated. The driver this replaced failed it too, as `read
+/// ECONNRESET`, which says nothing about what happened; here the server's own
+/// parting message is what comes back.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_statement_cut_off_mid_flight_reports_what_ended_it() {
+    let client = pinned_client();
+    let pid = backend_pid(&client).await;
+
+    let cut_off = {
+        let waiting = client.query("SELECT pg_sleep(5)", &[]);
+        let killing = async {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            terminate(pid).await;
+        };
+        let (outcome, ()) = futures_util::future::join(waiting, killing).await;
+        outcome.err().map(|error| super::error::message_of(&error))
+    };
+    let after = pid_once_the_pool_notices(&client).await;
+
+    assert_eq!(
+        (cut_off, after != pid),
+        (
+            Some("terminating connection due to administrator command".to_string()),
+            true
+        )
+    );
+}
+
+/// A transaction holds its connection until it ends, so one that ends by having
+/// the connection taken away has to give the slot back all the same. With a
+/// pool of one, a slot that never comes back is an indexer that never writes
+/// again.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_transaction_whose_connection_dies_gives_its_slot_back() {
+    let client = pinned_client();
+    let transaction = client.begin().await.unwrap();
+    let (rows, _) = transaction
+        .query("SELECT pg_backend_pid()", &[])
+        .await
+        .unwrap();
+    let pid = rows.first().expect("one row").get::<_, i32>(0);
+
+    terminate(pid).await;
+    let inside = transaction
+        .execute("SELECT 1", &[])
+        .await
+        .err()
+        .map(|error| super::error::message_of(&error));
+    let ending = transaction
+        .rollback()
+        .await
+        .err()
+        .map(|error| super::error::message_of(&error));
+    let after = pid_once_the_pool_notices(&client).await;
+
+    assert_eq!(
+        (inside, ending, after != pid),
+        (
+            Some("terminating connection due to administrator command".to_string()),
+            Some("connection closed".to_string()),
+            true
+        )
+    );
+}
+
+/// A transaction keeps its connection to itself, so with a pool of one every
+/// other statement waits for it rather than joining it or failing. What the
+/// indexer relies on is the waiting: `ENVIO_PG_MAX_CONNECTIONS` set low is a
+/// slower indexer, not a stuck one.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_statement_waits_for_the_transaction_holding_the_only_connection() {
+    let client = pinned_client();
+    let transaction = client.begin().await.unwrap();
+    let started = std::time::Instant::now();
+
+    let held = std::time::Duration::from_millis(300);
+    let (answered, committed) = futures_util::future::join(client.query("SELECT 1", &[]), async {
+        tokio::time::sleep(held).await;
+        transaction.commit().await
+    })
+    .await;
+
+    assert_eq!(
+        (
+            answered.is_ok(),
+            committed.is_ok(),
+            started.elapsed() >= held
+        ),
+        (true, true, true)
     );
 }

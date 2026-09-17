@@ -352,7 +352,7 @@ type outcome = Matched({staged: bool}) | Differed({expected: string, actual: str
     let batchSet = PgStorage.makeTableBatchSetQuery(~pgSchema, ~table, ~itemSchema)
     let staged = switch batchSet.binding {
     | Staged(_) => true
-    | PerCell => false
+    | PerCell(_) => false
     }
 
     await sql->PgStorage.setOrThrow(
