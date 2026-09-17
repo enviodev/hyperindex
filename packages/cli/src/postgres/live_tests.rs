@@ -800,14 +800,10 @@ async fn a_connection_the_server_dropped_is_not_handed_out_again() {
     terminate(before).await;
 
     let after = pid_once_the_pool_notices(&client).await;
-    let outcome = client.query("SELECT 1", &[]).await;
 
-    assert_eq!(
-        (
-            outcome.err().map(|error| super::error::message_of(&error)),
-            after != before
-        ),
-        (None, true)
+    assert_ne!(
+        after, before,
+        "the pool is still answering on the dropped one"
     );
 }
 
@@ -958,6 +954,37 @@ async fn a_timestamp_is_the_same_instant_in_any_session_the_server_keeps() {
         (
             Cell::Timestamp(1_234_567_890_123.0),
             Cell::Str("14.02.2009 05:16:30.123 +0545".into())
+        )
+    );
+}
+
+/// A hosted database usually sets `statement_timeout`, and a batch write is
+/// exactly the statement it cuts short. The cancellation is the server's, so it
+/// arrives as the server's message and not as a connection that merely stopped
+/// answering — and the connection is still good afterwards.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_statement_the_server_cancels_says_so_and_leaves_the_connection() {
+    let client = pinned_client();
+    let transaction = client.begin().await.unwrap();
+    transaction
+        .batch("SET LOCAL statement_timeout = '50ms'")
+        .await
+        .unwrap();
+
+    let cancelled = transaction
+        .query("SELECT pg_sleep(5)", &[])
+        .await
+        .err()
+        .map(|error| super::error::message_of(&error));
+    transaction.rollback().await.unwrap();
+    let after = client.query("SELECT 1", &[]).await.is_ok();
+
+    assert_eq!(
+        (cancelled, after),
+        (
+            Some("canceling statement due to statement timeout".to_string()),
+            true
         )
     );
 }
