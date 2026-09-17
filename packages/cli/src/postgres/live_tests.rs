@@ -243,7 +243,7 @@ async fn an_array_parameter_survives_its_own_punctuation() {
         "",
         "NULL",
     ];
-    let literal = super::param::array_literal(elements.map(Some));
+    let literal = text_literal(&elements.map(Some));
     let (rows, _) = client
         .query(
             "SELECT unnest($1::text[]) AS value",
@@ -262,13 +262,30 @@ async fn an_array_parameter_survives_its_own_punctuation() {
     );
 }
 
+/// A column of text as the literal the write path renders for it, so what goes
+/// to the server here is what an insert would send.
+fn text_literal(values: &[Option<&str>]) -> String {
+    let mut arena = Arena::new_filled(values.len(), &[ColumnSpec::Scalar(ColumnKind::Text)]);
+    for (row, value) in values.iter().enumerate() {
+        match value {
+            Some(value) => arena.set_bytes(0, row, value.as_bytes()),
+            None => arena.mark_null(0, row),
+        }
+    }
+    arena.seal(&["value".to_string()]).unwrap();
+    match super::write::unnest_params(&arena).unwrap().remove(0) {
+        Param::Text(literal) => literal,
+        Param::Null => unreachable!("a column renders as a literal"),
+    }
+}
+
 /// The one an array literal cannot quote: quoted, it would be the four-letter
 /// word rather than the absence of a value.
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
 async fn an_array_keeps_null_apart_from_the_word() {
     let client = client();
-    let literal = super::param::array_literal([None, Some("NULL")]);
+    let literal = text_literal(&[None, Some("NULL")]);
     let (rows, _) = client
         .query(
             "SELECT unnest($1::text[]) AS value",
