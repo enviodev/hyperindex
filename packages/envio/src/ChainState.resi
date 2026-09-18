@@ -88,7 +88,6 @@ let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
 
 // Fetch-frontier reads.
 let knownHeight: t => int
-let hasFetchableHead: t => bool
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
 let drainAddressesForWrite: (
   t,

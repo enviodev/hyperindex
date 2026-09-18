@@ -1926,14 +1926,6 @@ type nextQuery =
   | NothingToQuery
   | Ready(array<query>)
 
-// The last block this chain could fetch right now: the head the lag leaves
-// reachable. At or below zero the chain has no head to work with - either no
-// height observed yet, or one the lag holds back entirely - and all it can do is
-// keep asking for the height.
-let fetchableHead = ({knownHeight, blockLag}: t) => knownHeight - blockLag
-
-let hasFetchableHead = (fetchState: t) => fetchState->fetchableHead > 0
-
 let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) => {
   for qIdx in 0 to queries->Array.length - 1 {
     let q = queries->Array.getUnsafe(qIdx)
@@ -2413,11 +2405,11 @@ let acceptCandidates = (
 // rangeTargetDensity × (chainTargetBlock − fromBlock + 1) / inRangeCount — so
 // unknown-density partitions probe in parallel within one budget.
 let getNextQuery = (
-  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, endBlock} as fetchState: t,
+  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
 ) => {
-  let headBlockNumber = fetchState->fetchableHead
+  let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
     WaitingForNewBlock
   } else {
