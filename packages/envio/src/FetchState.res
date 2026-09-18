@@ -50,6 +50,19 @@ let makeSelection = (~onEventRegistrations, ~dependsOnAddresses, ~clientFiltered
   startBlock: ?deriveSelectionStartBlock(onEventRegistrations),
 }
 
+// A new partition's frontier starts no lower than the block before its selection
+// can first match: the blocks below hold nothing for it, so they count as
+// fetched the same way the blocks before an address's start block do. Left at
+// the chain start instead, the partition would pin the chain's buffer frontier
+// there while its cursor skips ahead — every event the other partitions fetch
+// sits above that frontier as unprocessable, and the chain reads as cold with a
+// target range none of its cursors can fall within, so it stops querying.
+let floorAtSelectionStart = (latestFetchedBlock, ~selection) =>
+  switch selection.startBlock {
+  | Some(startBlock) => Pervasives.max(latestFetchedBlock, startBlock - 1)
+  | None => latestFetchedBlock
+  }
+
 type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
@@ -1595,7 +1608,10 @@ OptimizedPartitions.t => {
           }
         }
 
-        let latestFetchedBlock = Pervasives.max(startBlock - 1, progressBlockNumber)
+        let latestFetchedBlock =
+          Pervasives.max(startBlock - 1, progressBlockNumber)->floorAtSelectionStart(
+            ~selection=normalSelection,
+          )
         let remainingRef = ref(countRef.contents)
         let chunkOffsetRef = ref(offsetRef.contents)
         while remainingRef.contents > 0 {
@@ -2658,13 +2674,14 @@ let make = (
   let partitions = []
 
   if notDependingOnAddresses->Array.length > 0 {
+    let selection = makeSelection(
+      ~dependsOnAddresses=false,
+      ~onEventRegistrations=notDependingOnAddresses,
+    )
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
-      latestFetchedBlock,
-      selection: makeSelection(
-        ~dependsOnAddresses=false,
-        ~onEventRegistrations=notDependingOnAddresses,
-      ),
+      latestFetchedBlock: latestFetchedBlock->floorAtSelectionStart(~selection),
+      selection,
       addresses: addressStore->AddressStore.emptySet,
       mergeBlock: None,
       dynamicContract: None,
@@ -2780,7 +2797,14 @@ let make = (
   // fetching, so without seeding the buffer here getNextQuery would return
   // NothingToQuery and the indexer would get stuck.
   let buffer = []
-  let latestOnBlockBlockNumber = if knownHeight > 0 && onBlockRegistrations->Utils.Array.notEmpty {
+  let latestOnBlockBlockNumber = switch onBlockRegistrations {
+  // As in updateInternal: with nothing to generate per block, the pointer must
+  // not hold the buffer frontier below the partitions' own. A partition that
+  // starts past the chain start would otherwise sit behind a frontier only a
+  // response can move, while the chain sizes its queries off that frontier and
+  // never asks for one.
+  | [] => Pervasives.max(progressBlockNumber, knownHeight)
+  | onBlockRegistrations if knownHeight > 0 =>
     let maxBlockNumber = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
     | None => knownHeight
     | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock
@@ -2793,8 +2817,7 @@ let make = (
       ~maxBlockNumber,
       ~maxOnBlockBufferSize,
     )
-  } else {
-    progressBlockNumber
+  | _ => progressBlockNumber
   }
 
   let fetchState = {
