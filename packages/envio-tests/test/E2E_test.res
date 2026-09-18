@@ -709,7 +709,7 @@ describe("E2E tests", () => {
         call.reject(
           Source.GetItemsError(
             FailedGettingItems({
-              exn: %raw(`null`),
+              requestStats: [],
               attemptedToBlock: 100,
               retry: ImpossibleForTheQuery({
                 message: "Source returned invalid data with missing required fields: log.address",

@@ -13,7 +13,7 @@ let decodeLogs = async (
   // Contract that owns `mockAddress`, if any. Without one the emitter is
   // unregistered and only wildcard registrations route.
   ~ownedBy: option<string>=?,
-): array<EvmRpcClient.rpcEventItem> => {
+): array<EvmEventItem.t> => {
   // logIndex must be unique per log within the block — the client dedups a
   // page's items by (blockNumber, logIndex).
   let logJsons =
@@ -23,9 +23,9 @@ let decodeLogs = async (
         ("topics", JSON.Array(topics->Array.map(t => JSON.String(t)))),
         ("data", JSON.String(data)),
         ("blockNumber", JSON.String("0x1")),
-        ("transactionHash", JSON.String("0xabc")),
+        ("transactionHash", JSON.String("0xabababababababababababababababababababababababababababababababab")),
         ("transactionIndex", JSON.String("0x0")),
-        ("blockHash", JSON.String("0xb01")),
+        ("blockHash", JSON.String("0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0")),
         ("logIndex", JSON.String(`0x${i->Int.toString(~radix=16)}`)),
         ("removed", JSON.Boolean(false)),
       ]),
@@ -34,6 +34,21 @@ let decodeLogs = async (
     ~name="native decoder logs",
     ~calls=[
       MockRpcServer.expectCall(~method="eth_getLogs", ~reply=RpcResult(JSON.Array(logJsons))),
+      // The client reads the range's last block for its reorg observation,
+      // whatever the field selection is.
+      MockRpcServer.expectCall(
+        ~method="eth_getBlockByNumber",
+        ~reply=RpcResult(
+          JSON.Object(
+            Dict.fromArray([
+              ("number", JSON.String("0x0")),
+              ("timestamp", JSON.String("0x0")),
+              ("hash", JSON.String("0x" ++ "b0"->String.repeat(32))),
+              ("parentHash", JSON.String("0x" ++ "00"->String.repeat(32))),
+            ]),
+          ),
+        ),
+      ),
     ],
     async mock => {
       // One entry per contract, not per registration: two events on one
@@ -70,17 +85,20 @@ let decodeLogs = async (
         ~eventRegistrations,
         ~addressStore,
       )
-      let {items} = await client.getNextPage(
+      let (result, _, _) = await client.getNextPage(
         {
           fromBlock: 0,
           toBlockCeiling: 0,
           partitionId: "0",
           registrationIndexes: eventRegistrations->Array.map(reg => reg.index),
           clientFilteredContracts: None,
+          retry: 0,
         },
         addressSet,
+        BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+        TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
       )
-      items
+      result.items
     },
   )
 }

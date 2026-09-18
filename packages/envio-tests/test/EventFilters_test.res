@@ -544,6 +544,16 @@ describe("Test eventFilters", () => {
         ->Array.filter(log => rpcFilterMatchesLog(~params, log))
         ->Array.map(log => log.json)
         ->JSON.Array
+      // The client reads the range's last block for its reorg observation.
+      | "eth_getBlockByNumber" =>
+        JSON.Object(
+          Dict.fromArray([
+            ("number", JSON.String("0x1")),
+            ("timestamp", JSON.String("0x1")),
+            ("hash", JSON.String("0x" ++ "b1"->String.repeat(32))),
+            ("parentHash", JSON.String("0x" ++ "b0"->String.repeat(32))),
+          ]),
+        )
       | _ => JSON.Null
       }
     )
@@ -555,15 +565,18 @@ describe("Test eventFilters", () => {
       ~addressStore,
     )
 
-    let page = try await client.getNextPage(
+    let (page, _, _) = try await client.getNextPage(
       {
         fromBlock: 1,
         toBlockCeiling: 1,
         partitionId: "topic-filter-e2e",
         registrationIndexes: nativeRegistrations->Array.map(reg => reg.index),
         clientFilteredContracts: None,
+        retry: 0,
       },
       addressStore->AddressStore.makeSet(~contractName="TestEvents"),
+      BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=true),
+      TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=true),
     ) catch {
     | exn =>
       mock.close()

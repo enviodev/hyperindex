@@ -19,7 +19,20 @@ let makeProbeSources = (chainConfig: Config.chain, ~lowercaseAddresses): array<S
     ~shouldChecksum=!lowercaseAddresses,
     ~contracts=[],
   )
-  ChainSources.make(~chainConfig, ~onEventRegistrations=[], ~addressStore, ~lowercaseAddresses)
+  ChainSources.make(
+    ~chainConfig,
+    ~onEventRegistrations=[],
+    ~addressStore,
+    ~lowercaseAddresses,
+    ~blockStore=BlockStore.make(
+      ~ecosystem=chainConfig.ecosystem,
+      ~shouldChecksum=!lowercaseAddresses,
+    ),
+    ~transactionStore=TransactionStore.make(
+      ~ecosystem=chainConfig.ecosystem,
+      ~shouldChecksum=!lowercaseAddresses,
+    ),
+  )
 }
 
 // How long to keep asking a chain that won't answer.

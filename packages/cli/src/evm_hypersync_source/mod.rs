@@ -13,7 +13,7 @@ use crate::transaction_store::TransactionStore;
 
 mod config;
 pub(crate) mod decode;
-mod query;
+pub(crate) mod query;
 pub(crate) mod selection;
 pub(crate) mod types;
 
@@ -710,7 +710,7 @@ fn convert_error_to_napi(err: ConvertError) -> napi::Error {
 
 /// Returns `Some(camelCaseFieldName)` if the user requested this field but the
 /// server's response omits it AND the field isn't inherently nullable per-row.
-fn block_field_missing(
+pub(crate) fn block_field_missing(
     block: &hypersync_client::simple_types::Block,
     field: BlockField,
 ) -> Option<&'static str> {
@@ -753,7 +753,7 @@ fn block_field_missing(
     }
 }
 
-fn transaction_field_missing(
+pub(crate) fn transaction_field_missing(
     tx: &hypersync_client::simple_types::Transaction,
     field: TransactionField,
 ) -> Option<&'static str> {
@@ -762,6 +762,11 @@ fn transaction_field_missing(
         GasPrice | V | R | S | YParity | MaxPriorityFeePerGas | MaxFeePerGas | MaxFeePerBlobGas
         | BlobVersionedHashes | ContractAddress | Root | Status | L1Fee | L1GasPrice
         | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type => None,
+        AccessList => tx.access_list.is_none().then_some("accessList"),
+        AuthorizationList => tx
+            .authorization_list
+            .is_none()
+            .then_some("authorizationList"),
         BlockHash => tx.block_hash.is_none().then_some("blockHash"),
         BlockNumber => tx.block_number.is_none().then_some("blockNumber"),
         Gas => tx.gas.is_none().then_some("gas"),
@@ -771,11 +776,6 @@ fn transaction_field_missing(
         TransactionIndex => tx.transaction_index.is_none().then_some("transactionIndex"),
         Value => tx.value.is_none().then_some("value"),
         ChainId => tx.chain_id.is_none().then_some("chainId"),
-        AccessList => tx.access_list.is_none().then_some("accessList"),
-        AuthorizationList => tx
-            .authorization_list
-            .is_none()
-            .then_some("authorizationList"),
         CumulativeGasUsed => tx
             .cumulative_gas_used
             .is_none()
@@ -1311,5 +1311,20 @@ mod tests {
         assert_eq!(parsed["kind"], "MissingFields");
         assert_eq!(parsed["fields"][0], "block.timestamp");
         assert_eq!(parsed["fields"][1], "transaction.hash");
+    }
+
+    #[test]
+    fn a_dropped_access_or_authorization_list_is_still_reported_missing() {
+        // HyperSync serves both lists as columns, an empty one for a
+        // transaction that has none, so a null here is the response dropping a
+        // selected field rather than the transaction's shape.
+        let tx = simple_types::Transaction::default();
+        assert_eq!(
+            (
+                transaction_field_missing(&tx, TransactionField::AccessList),
+                transaction_field_missing(&tx, TransactionField::AuthorizationList),
+            ),
+            (Some("accessList"), Some("authorizationList"))
+        );
     }
 }
