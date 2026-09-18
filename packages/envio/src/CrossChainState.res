@@ -53,6 +53,17 @@ let releaseRealtime = (crossChainState: t) => crossChainState.holdRealtime = fal
 
 let isHoldingRealtime = (crossChainState: t) => crossChainState.holdRealtime
 
+// Whether this process has got as far as it can without the run's leave: its
+// chains have caught up, or it resumed already realtime. What a supervisor
+// reads to decide that a split run may go realtime as one.
+//
+// The process's own conclusion rather than a reading a supervisor reassembles:
+// a chain committed at what was the head and resumed once the head had moved on
+// has arrived, and no live reading of it can say so — which is the same reason
+// `markCaughtUpOnResume` decides before any source request.
+let hasArrivedAtHead = (crossChainState: t) =>
+  crossChainState.isCaughtUp || crossChainState.isRealtime
+
 // Resolve a chain's state by id. The id always comes from `chainIds`, which is
 // derived from `chainStates`, so the entry is guaranteed present.
 let getChainState = (crossChainState: t, chainId) =>
@@ -177,10 +188,7 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
   }
 
   crossChainState.isCaughtUp =
-    crossChainState.isCaughtUp ||
-      (!crossChainState.holdRealtime &&
-      crossChainState->nextItemIsNone &&
-      everyChainCaughtUp.contents)
+    crossChainState.isCaughtUp || (crossChainState->nextItemIsNone && everyChainCaughtUp.contents)
 }
 
 // Every chain has buffered up to its head (or endblock) with nothing
@@ -205,7 +213,7 @@ let isSettledAtHead = (crossChainState: t) => {
 
 // Enter the FinalizingIndexes phase without a batch, for the resume above.
 let markCaughtUpIfSettled = (crossChainState: t) =>
-  if !crossChainState.holdRealtime && crossChainState->isSettledAtHead {
+  if crossChainState->isSettledAtHead {
     crossChainState.isCaughtUp = true
   }
 
@@ -226,12 +234,7 @@ let markCaughtUpOnResume = (crossChainState: t) => {
     }
   }
 
-  if (
-    !crossChainState.holdRealtime &&
-    everyChainCaughtUp.contents &&
-    !crossChainState.isRealtime &&
-    crossChainState->nextItemIsNone
-  ) {
+  if everyChainCaughtUp.contents && !crossChainState.isRealtime && crossChainState->nextItemIsNone {
     crossChainState.isCaughtUp = true
   }
 }

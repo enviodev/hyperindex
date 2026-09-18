@@ -32,6 +32,7 @@ let getSafeCheckpointIdByChain: (
 // Cross-chain transitions.
 let releaseRealtime: t => unit
 let isHoldingRealtime: t => bool
+let hasArrivedAtHead: t => bool
 let isReadyToEnterReorgThreshold: (t, ~batch: Batch.t) => bool
 let createBatch: (t, ~config: Config.t, ~frontier: Frontier.t, ~batchSizeTarget: int) => Batch.t
 let enterReorgThreshold: t => unit

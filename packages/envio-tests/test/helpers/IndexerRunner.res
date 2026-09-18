@@ -175,6 +175,7 @@ let run = async (
     )
     state->IndexerLoop.start
 
+
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run
     // lands on the database afterwards.
@@ -289,7 +290,7 @@ let run = async (
             // phase is over. The idle fallback below still bounds the wait.
             if (
               before < state->IndexerState.processedBatchesCount &&
-                !(state->IndexerState.isFinalizingIndexes)
+                !(state->IndexerState.shouldFinalizeIndexes)
             ) {
               ()
             } else if isIdle && idleChecks.contents >= 5 {
@@ -327,7 +328,7 @@ let run = async (
           settled := if (
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
-              !(state->IndexerState.isFinalizingIndexes) &&
+              !(state->IndexerState.shouldFinalizeIndexes) &&
               Frontier.equals(state->IndexerState.committedFrontier, state->IndexerState.processedFrontier)
             ) {
               settled.contents + 1

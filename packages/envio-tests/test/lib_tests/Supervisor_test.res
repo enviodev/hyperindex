@@ -250,33 +250,24 @@ describe("Supervisor.syncCache", () => {
 })
 
 describe("Supervisor.isRunAtHead", () => {
-  let chain = (~isReadyForReorgThreshold=false, ~isReady=false, ~endBlock=None, ~progressBlockNumber=50) => {
-    ...TestChainMetrics.make(~progressBlockNumber, ~firstEventBlockNumber=None, ~endBlock),
-    Metrics.isReadyForReorgThreshold,
-    isReady,
+  let snapshot = (~hasArrivedAtHead): Metrics.t => {
+    ...TestChainMetrics.emptySnapshot,
+    hasArrivedAtHead,
   }
-  let snapshot = (chains): Metrics.t => {...TestChainMetrics.emptySnapshot, chains}
 
-  it("Holds the run until every chain of every worker has arrived", t => {
+  it("Holds the run until every worker has arrived", t => {
     t.expect([
       // A worker that hasn't reported yet drives chains nobody can see. Reading
       // the run as arrived here would release it on a partial view.
-      [snapshot([chain(~isReadyForReorgThreshold=true)])]->Supervisor.isRunAtHead(~workerCount=2),
+      [snapshot(~hasArrivedAtHead=true)]->Supervisor.isRunAtHead(~workerCount=2),
       [
-        snapshot([chain(~isReadyForReorgThreshold=true)]),
-        snapshot([chain(~isReadyForReorgThreshold=true), chain()]),
+        snapshot(~hasArrivedAtHead=true),
+        snapshot(~hasArrivedAtHead=false),
       ]->Supervisor.isRunAtHead(~workerCount=2),
       [
-        snapshot([chain(~isReadyForReorgThreshold=true)]),
-        snapshot([chain(~isReadyForReorgThreshold=true)]),
+        snapshot(~hasArrivedAtHead=true),
+        snapshot(~hasArrivedAtHead=true),
       ]->Supervisor.isRunAtHead(~workerCount=2),
-      // A chain resumed already realtime never reaches the head again, and one
-      // that processed to its end block never will: both have arrived as far as
-      // the run is concerned, and waiting on either would never end.
-      [snapshot([chain(~isReady=true)])]->Supervisor.isRunAtHead(~workerCount=1),
-      [
-        snapshot([chain(~endBlock=Some(200), ~progressBlockNumber=200)]),
-      ]->Supervisor.isRunAtHead(~workerCount=1),
-    ]).toStrictEqual([false, false, true, true, true])
+    ]).toStrictEqual([false, false, true])
   })
 })

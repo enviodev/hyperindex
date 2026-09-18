@@ -72,6 +72,7 @@ let emptySnapshot: Metrics.t = {
   elapsedSeconds: 0.,
   targetBufferSize: 0,
   isInReorgThreshold: false,
+  hasArrivedAtHead: false,
   rollbackEnabled: false,
   maxBatchSize: 0,
   preloadSeconds: 0.,

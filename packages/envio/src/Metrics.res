@@ -15,10 +15,6 @@ type chainMetrics = {
   // Per-contract registration counts, in the chain's contract-id order.
   addressesByContract: array<(string, int)>,
   isReady: bool,
-  // The chain has buffered to the (lagged) head or its end block with nothing
-  // processable left — what a supervisor reads to decide that every chain in a
-  // split run has arrived and the run may go realtime as one.
-  isReadyForReorgThreshold: bool,
   // Raw source height, unlike knownHeight which is clamped to endBlock.
   sourceBlockNumber: int,
   // Raw committed progress (may be -1), unlike the optional latestProcessedBlock.
@@ -133,6 +129,9 @@ type t = {
   elapsedSeconds: float,
   targetBufferSize: int,
   isInReorgThreshold: bool,
+  // This process has got as far as it can without the run's leave. What a
+  // supervisor reads to decide that a split run may go realtime as one.
+  hasArrivedAtHead: bool,
   rollbackEnabled: bool,
   maxBatchSize: int,
   preloadSeconds: float,
@@ -187,6 +186,10 @@ let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds) => {
     elapsedSeconds,
     targetBufferSize: sumInt(s => s.targetBufferSize),
     isInReorgThreshold: snapshots->Array.some(s => s.isInReorgThreshold),
+    // The run has arrived only once every process has: one still backfilling
+    // speaks for the whole indexer.
+    hasArrivedAtHead: snapshots->Utils.Array.notEmpty &&
+      snapshots->Array.every(s => s.hasArrivedAtHead),
     rollbackEnabled: snapshots->Array.some(s => s.rollbackEnabled),
     maxBatchSize: snapshots->Array.reduce(0, (acc, s) => Pervasives.max(acc, s.maxBatchSize)),
     preloadSeconds: sumFloat(s => s.preloadSeconds),

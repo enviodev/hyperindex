@@ -274,17 +274,12 @@ let awaitExit = async (group): outcome => {
 %%private(let releaseCheckIntervalMillis = 500)
 
 // Whether a run holding its workers back may let them go: every worker has
-// reported, and every chain any of them drives has reached the head. A chain
-// resumed already realtime, or one that processed to its end block, has arrived
-// as far as the run is concerned — waiting on either would never end.
+// reported, and every one of them has got as far as it can on its own. What
+// counts as arrived is the worker's own conclusion — the supervisor only asks
+// each of them the question an unsplit run asks itself.
 let isRunAtHead = (snapshots: array<Metrics.t>, ~workerCount) =>
-  snapshots->Array.length === workerCount &&
-    snapshots->Array.every(snapshot =>
-      snapshot.chains->Utils.Array.notEmpty &&
-        snapshot.chains->Array.every(
-          chain =>
-            chain.isReadyForReorgThreshold || chain.isReady || chain->Metrics.hasProcessedToEndblock,
-        )
+  snapshots->Array.length === workerCount && snapshots->Array.every(snapshot =>
+      snapshot.hasArrivedAtHead
     )
 
 // Runs the group: creates the schema for every chain, forks a worker per plan

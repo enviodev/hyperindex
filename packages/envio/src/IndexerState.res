@@ -515,6 +515,11 @@ let isFinalizingIndexes = (state: t) =>
   state.crossChainState->CrossChainState.isCaughtUp &&
     !(state.crossChainState->CrossChainState.isRealtime)
 
+// The FinalizingIndexes phase is the transition a held process waits on: it
+// ends with `ready_at` committed and the indexer realtime.
+let shouldFinalizeIndexes = (state: t) =>
+  state->isFinalizingIndexes && !(state.crossChainState->CrossChainState.isHoldingRealtime)
+
 let markCaughtUpIfSettled = (state: t) =>
   state.crossChainState->CrossChainState.markCaughtUpIfSettled
 
@@ -527,6 +532,8 @@ let bindScheduleProcessing = (state: t, scheduleProcessing) =>
 // A process still waiting on its supervisor owes the schema the indexes its
 // chains deferred, so reaching every end block doesn't make it done.
 let isHoldingRealtime = (state: t) => state.crossChainState->CrossChainState.isHoldingRealtime
+
+let hasArrivedAtHead = (state: t) => state.crossChainState->CrossChainState.hasArrivedAtHead
 
 let releaseRealtime = (state: t) => {
   state.crossChainState->CrossChainState.releaseRealtime
@@ -604,6 +611,7 @@ let toMetrics = (state: t): Metrics.t => {
     elapsedSeconds: state.indexerStartTimeRef->Performance.secondsSince,
     targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
     isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
+    hasArrivedAtHead: state.crossChainState->CrossChainState.hasArrivedAtHead,
     rollbackEnabled: state.config.shouldRollbackOnReorg,
     maxBatchSize: state.config.batchSize,
     preloadSeconds: state.preloadSeconds,
