@@ -50,13 +50,14 @@ let makeSelection = (~onEventRegistrations, ~dependsOnAddresses, ~clientFiltered
   startBlock: ?deriveSelectionStartBlock(onEventRegistrations),
 }
 
-// A new partition's frontier starts no lower than the block before its selection
-// can first match: the blocks below hold nothing for it, so they count as
-// fetched the same way the blocks before an address's start block do. Left at
-// the chain start instead, the partition would pin the chain's buffer frontier
-// there while its cursor skips ahead — every event the other partitions fetch
-// sits above that frontier as unprocessable, and the chain reads as cold with a
-// target range none of its cursors can fall within, so it stops querying.
+// A partition's frontier never sits below the block before its selection can
+// first match: the blocks below hold nothing for it, so they count as fetched
+// the same way the blocks before an address's start block do. Enforced where
+// partition sets are built rather than at each site that creates one, because
+// the chain's buffer frontier is its lowest partition frontier. A frontier left
+// at the chain start would hold that back — every event the other partitions
+// fetch sits above it as unprocessable, and the chain's query target, sized
+// from the frontier, never reaches a cursor past it.
 let floorAtSelectionStart = (latestFetchedBlock, ~selection) =>
   switch selection.startBlock {
   | Some(startBlock) => Pervasives.max(latestFetchedBlock, startBlock - 1)
@@ -411,6 +412,10 @@ module OptimizedPartitions = {
     ~dynamicContracts: Utils.Set.t<string>,
     ~clientFilteredContracts: Utils.Set.t<string>,
   ) => {
+    let partitions = partitions->Array.map(p => {
+      let floored = p.latestFetchedBlock->floorAtSelectionStart(~selection=p.selection)
+      floored === p.latestFetchedBlock ? p : {...p, latestFetchedBlock: floored}
+    })
     let newPartitions = []
     let mergingPartitions = Dict.make()
     let nextPartitionIndexRef = ref(nextPartitionIndex)
@@ -860,28 +865,18 @@ type t = {
   clientFilterAddressThreshold: option<int>,
 }
 
+// The latest block whose items are all in the buffer: the lowest partition
+// frontier, held back by the onBlock pointer only when there are onBlock
+// registrations for it to generate items behind.
 @inline
-let bufferBlockNumber = ({latestOnBlockBlockNumber, optimizedPartitions}: t) => {
-  switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
-  | None => latestOnBlockBlockNumber
-  | Some(latestFullyFetchedBlock) =>
-    latestOnBlockBlockNumber < latestFullyFetchedBlock
-      ? latestOnBlockBlockNumber
-      : latestFullyFetchedBlock
-  }
-}
-
-/**
-* Returns the latest block which is ready to be consumed
-*/
-@inline
-let bufferBlock = ({optimizedPartitions, latestOnBlockBlockNumber}: t) => {
-  switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
-  | None => latestOnBlockBlockNumber
-  | Some(latestFullyFetchedBlock) =>
-    latestOnBlockBlockNumber < latestFullyFetchedBlock
-      ? latestOnBlockBlockNumber
-      : latestFullyFetchedBlock
+let bufferBlockNumber = (
+  {latestOnBlockBlockNumber, optimizedPartitions, onBlockRegistrations}: t,
+) => {
+  switch (optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock, onBlockRegistrations) {
+  | (None, _) => latestOnBlockBlockNumber
+  | (Some(latestFullyFetchedBlock), []) => latestFullyFetchedBlock
+  | (Some(latestFullyFetchedBlock), _) =>
+    Pervasives.min(latestOnBlockBlockNumber, latestFullyFetchedBlock)
   }
 }
 
@@ -1608,10 +1603,7 @@ OptimizedPartitions.t => {
           }
         }
 
-        let latestFetchedBlock =
-          Pervasives.max(startBlock - 1, progressBlockNumber)->floorAtSelectionStart(
-            ~selection=normalSelection,
-          )
+        let latestFetchedBlock = Pervasives.max(startBlock - 1, progressBlockNumber)
         let remainingRef = ref(countRef.contents)
         let chunkOffsetRef = ref(offsetRef.contents)
         while remainingRef.contents > 0 {
@@ -2181,27 +2173,11 @@ let walkPartitionPending = (
     pqIdx := pqIdx.contents + 1
   }
 
-  // Nothing in this partition's selection can match below its earliest start
-  // block, so forward work skips straight to it instead of scanning up to it and
-  // discarding whole pages. Only the cursor moves — `latestFetchedBlock` still
-  // advances solely on a response, so no block is ever reported fetched that
-  // wasn't. Bounded by the head and the query end block: past either, the
-  // partition would offer no candidate at all, so it queries as before rather
-  // than going quiet until the chain reaches its start block.
-  let cursor = switch p.selection.startBlock {
-  | Some(startBlock) if startBlock > cursor.contents =>
-    switch Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock) {
-    | Some(reachable) if startBlock <= reachable => startBlock
-    | _ => cursor.contents
-    }
-  | _ => cursor.contents
-  }
-
   canContinue.contents
     ? Some({
         partitionId,
         p,
-        cursor,
+        cursor: cursor.contents,
         chunksUsedThisCall: chunksUsedThisCall.contents,
         inFlightCount,
         queryEndBlock,
@@ -2421,7 +2397,14 @@ let acceptCandidates = (
 // rangeTargetDensity × (chainTargetBlock − fromBlock + 1) / inRangeCount — so
 // unknown-density partitions probe in parallel within one budget.
 let getNextQuery = (
-  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
+  {
+    optimizedPartitions,
+    blockLag,
+    latestOnBlockBlockNumber,
+    onBlockRegistrations,
+    knownHeight,
+    endBlock,
+  }: t,
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
 ) => {
@@ -2429,7 +2412,10 @@ let getNextQuery = (
   if headBlockNumber <= 0 {
     WaitingForNewBlock
   } else {
-    let isOnBlockBehindTheHead = latestOnBlockBlockNumber < headBlockNumber
+    // The pointer only means something with registrations to generate items
+    // for; without them it is not behind anything.
+    let isOnBlockBehindTheHead =
+      onBlockRegistrations->Utils.Array.notEmpty && latestOnBlockBlockNumber < headBlockNumber
     let shouldWaitForNewBlock = ref(
       switch endBlock {
       | Some(endBlock) => headBlockNumber < endBlock
@@ -2674,14 +2660,13 @@ let make = (
   let partitions = []
 
   if notDependingOnAddresses->Array.length > 0 {
-    let selection = makeSelection(
-      ~dependsOnAddresses=false,
-      ~onEventRegistrations=notDependingOnAddresses,
-    )
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
-      latestFetchedBlock: latestFetchedBlock->floorAtSelectionStart(~selection),
-      selection,
+      latestFetchedBlock,
+      selection: makeSelection(
+        ~dependsOnAddresses=false,
+        ~onEventRegistrations=notDependingOnAddresses,
+      ),
       addresses: addressStore->AddressStore.emptySet,
       mergeBlock: None,
       dynamicContract: None,
@@ -2797,14 +2782,7 @@ let make = (
   // fetching, so without seeding the buffer here getNextQuery would return
   // NothingToQuery and the indexer would get stuck.
   let buffer = []
-  let latestOnBlockBlockNumber = switch onBlockRegistrations {
-  // As in updateInternal: with nothing to generate per block, the pointer must
-  // not hold the buffer frontier below the partitions' own. A partition that
-  // starts past the chain start would otherwise sit behind a frontier only a
-  // response can move, while the chain sizes its queries off that frontier and
-  // never asks for one.
-  | [] => Pervasives.max(progressBlockNumber, knownHeight)
-  | onBlockRegistrations if knownHeight > 0 =>
+  let latestOnBlockBlockNumber = if knownHeight > 0 && onBlockRegistrations->Utils.Array.notEmpty {
     let maxBlockNumber = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
     | None => knownHeight
     | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock
@@ -2817,7 +2795,8 @@ let make = (
       ~maxBlockNumber,
       ~maxOnBlockBufferSize,
     )
-  | _ => progressBlockNumber
+  } else {
+    progressBlockNumber
   }
 
   let fetchState = {

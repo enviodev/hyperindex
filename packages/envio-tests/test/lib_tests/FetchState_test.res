@@ -34,7 +34,7 @@ let getEarliestEvent = (fetchState: FetchState.t) => {
     Item(fetchState.buffer->Array.getUnsafe(0))
   } else {
     NoItem({
-      latestFetchedBlock: fetchState->FetchState.bufferBlock,
+      latestFetchedBlock: fetchState->FetchState.bufferBlockNumber,
     })
   }
 }
@@ -2208,7 +2208,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     t.expect(
       (
-        fetchStateWithResponse1->FetchState.bufferBlock,
+        fetchStateWithResponse1->FetchState.bufferBlockNumber,
         fetchStateWithResponse1.optimizedPartitions.idsInAscOrder,
         fetchStateWithResponse1.buffer->Array.length,
       ),
@@ -2265,7 +2265,7 @@ describe("FetchState.getNextQuery & integration", () => {
     })->TestAddresses.fetchState)
   })
 
-  it("Skips the blocks below a partition's earliest registration start block", t => {
+  it("Starts a partition at its earliest registration start block", t => {
     let makeWildcard = (~id, ~startBlock=?) =>
       (EventRegistration.evmOnEventRegistration(
         ~id,
@@ -2274,9 +2274,12 @@ describe("FetchState.getNextQuery & integration", () => {
         ~startBlock?,
       ) :> Internal.onEventRegistration)
 
-    // The address-free partition is the only one here, so its query is the
-    // whole story.
-    let fromBlockOf = (~knownHeight, ~endBlock=None, onEventRegistrations) => {
+    // The address-free partition is the only one here, so its frontier is the
+    // chain's and its query is the whole story. The target is deliberately
+    // kept short of the head: a chain that has fetched nothing yet sizes its
+    // queries off its frontier, so a partition that only skipped its cursor
+    // ahead would fall outside the target and never query at all.
+    let nextQueryOf = (~knownHeight, ~endBlock=None, onEventRegistrations) => {
       let (fetchState, _) = makeFs(
         ~onEventRegistrations,
         ~addresses=[],
@@ -2287,46 +2290,48 @@ describe("FetchState.getNextQuery & integration", () => {
         ~chainId,
         ~knownHeight,
       )
-      switch fetchState->FetchState.getNextQuery(
-        ~chainTargetBlock=knownHeight,
+      let query = switch fetchState->FetchState.getNextQuery(
+        ~chainTargetBlock=fetchState->FetchState.bufferBlockNumber + 100,
         ~chainTargetItems=10_000.,
       ) {
       | Ready(queries) => queries->Array.map(q => q.fromBlock)
       | WaitingForNewBlock => ["WaitingForNewBlock"]->Obj.magic
       | NothingToQuery => ["NothingToQuery"]->Obj.magic
       }
+      (fetchState->FetchState.bufferBlockNumber, query)
     }
 
     t.expect({
-      // Nothing below 500 can match, and the head is past it, so the scan
-      // starts there instead of at the chain start.
-      "restricted": fromBlockOf(~knownHeight=1000, [makeWildcard(~id="a", ~startBlock=500)]),
-      // The earliest of several still bounds the skip.
-      "twoRestricted": fromBlockOf(
+      // Nothing below 500 can match, so the frontier starts there and the scan
+      // starts above it instead of at the chain start.
+      "restricted": nextQueryOf(~knownHeight=1000, [makeWildcard(~id="a", ~startBlock=500)]),
+      // The earliest of several still bounds the frontier.
+      "twoRestricted": nextQueryOf(
         ~knownHeight=1000,
         [makeWildcard(~id="a", ~startBlock=900), makeWildcard(~id="b", ~startBlock=500)],
       ),
       // An unrestricted sibling can fire from the chain start, so nothing is
       // skipped.
-      "mixed": fromBlockOf(
+      "mixed": nextQueryOf(
         ~knownHeight=1000,
         [makeWildcard(~id="a", ~startBlock=500), makeWildcard(~id="b")],
       ),
-      // Start block past the head: skipping there would leave the partition
-      // with no query at all, so it fetches as before until the chain catches
-      // up. Same when the chain's endBlock is below it.
-      "beyondHead": fromBlockOf(~knownHeight=100, [makeWildcard(~id="a", ~startBlock=500)]),
-      "beyondEndBlock": fromBlockOf(
+      // Start block past the head: the partition sits at its start block with
+      // nothing to ask for until the chain gets there.
+      "beyondHead": nextQueryOf(~knownHeight=100, [makeWildcard(~id="a", ~startBlock=500)]),
+      // Start block past the chain's endBlock: the partition is done before it
+      // ever queries.
+      "beyondEndBlock": nextQueryOf(
         ~knownHeight=1000,
         ~endBlock=Some(200),
         [makeWildcard(~id="a", ~startBlock=500)],
       ),
     }).toEqual({
-      "restricted": [500],
-      "twoRestricted": [500],
-      "mixed": [0],
-      "beyondHead": [0],
-      "beyondEndBlock": [0],
+      "restricted": (499, [500]),
+      "twoRestricted": (499, [500]),
+      "mixed": (-1, [0]),
+      "beyondHead": (499, ["WaitingForNewBlock"]->Obj.magic),
+      "beyondEndBlock": (499, ["NothingToQuery"]->Obj.magic),
     })
   })
 

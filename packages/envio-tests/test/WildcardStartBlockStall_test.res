@@ -12,6 +12,7 @@ open Vitest
 //
 // Reported on 3.9.0 as a single-chain indexer with three partitions that
 // queried partition "1" once, never queried the others and never processed.
+// https://github.com/enviodev/hyperindex/issues/1650
 let scenario = Scenario.make(
   ~configYaml=`
 name: wildcard-start-block-stall

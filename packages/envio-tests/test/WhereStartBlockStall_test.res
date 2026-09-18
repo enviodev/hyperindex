@@ -3,6 +3,7 @@
 // selection's start block far above the address's own, so the partition's
 // cursor skips ahead while its frontier stays at the chain start, out of the
 // cold target range, and the chain never queries.
+// https://github.com/enviodev/hyperindex/issues/1650
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: where-start-block-stall
