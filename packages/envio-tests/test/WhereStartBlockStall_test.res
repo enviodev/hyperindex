@@ -1,8 +1,7 @@
-// The frontier pin of WildcardStartBlockStall_test, through an address partition:
-// a `where` block filter on the contract's only registration lifts the
-// selection's start block far above the address's own, so the partition's
-// cursor skips ahead while its frontier stays at the chain start, out of the
-// cold target range, and the chain never queries.
+// The start-block placement of WildcardStartBlockStall_test through an address
+// partition: a `where` block filter on the contract's only registration puts
+// the selection's start block far above the address's own. The chain must
+// fetch from there rather than sit behind a frontier at the chain start.
 // https://github.com/enviodev/hyperindex/issues/1650
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`

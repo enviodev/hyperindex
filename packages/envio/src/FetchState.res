@@ -52,12 +52,13 @@ let makeSelection = (~onEventRegistrations, ~dependsOnAddresses, ~clientFiltered
 
 // A partition's frontier never sits below the block before its selection can
 // first match: the blocks below hold nothing for it, so they count as fetched
-// the same way the blocks before an address's start block do. Enforced where
-// partition sets are built rather than at each site that creates one, because
-// the chain's buffer frontier is its lowest partition frontier. A frontier left
-// at the chain start would hold that back — every event the other partitions
-// fetch sits above it as unprocessable, and the chain's query target, sized
-// from the frontier, never reaches a cursor past it.
+// the same way the blocks before an address's start block do. The chain's
+// buffer frontier is its lowest partition frontier, so a partition left at the
+// chain start would hold every other partition's events back as unprocessable
+// and keep the chain's query target — sized from that frontier — short of
+// anything worth asking for. Not capped at the head: a start block the chain
+// has not reached yet leaves the partition waiting there, like an address
+// partition does, rather than scanning empty ranges up to it.
 let floorAtSelectionStart = (latestFetchedBlock, ~selection) =>
   switch selection.startBlock {
   | Some(startBlock) => Pervasives.max(latestFetchedBlock, startBlock - 1)

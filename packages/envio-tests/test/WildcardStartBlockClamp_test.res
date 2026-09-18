@@ -1,10 +1,10 @@
 open Vitest
 
-// The chain-level effect of WildcardStartBlockStall_test on a multichain
-// indexer: the cross-chain waterfall clamps every chain to within a margin of
-// the furthest-behind chain's fetch frontier. A chain whose frontier is pinned
-// at its start reads 0% forever, so every other chain fetches its first margin
-// and then stops too — the whole indexer stalls on one wildcard's start block.
+// WildcardStartBlockStall_test's shape on one chain of a multichain indexer.
+// The cross-chain waterfall clamps every chain to within a margin of the
+// furthest-behind chain's fetch frontier, so a chain held at its start would
+// read 0% forever and hold every other chain at its first margin: the wildcard's
+// start block must not set the frontier the others are aligned to.
 //
 // https://github.com/enviodev/hyperindex/issues/1650
 let scenario = Scenario.make(

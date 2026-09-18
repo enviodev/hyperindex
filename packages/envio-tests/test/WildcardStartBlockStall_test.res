@@ -1,17 +1,13 @@
 open Vitest
 
-// A wildcard contract with a `start_block` far past the chain's start pins the
-// buffer frontier: its partition's cursor skips ahead to that start block, but
-// `latestFetchedBlock` only moves on a response, and the partition never gets
-// one because the skipped cursor sits past the cold chain's target range
-// (frontier + 20,000). The frontier is the earliest partition's fetched block,
-// so it stays at the chain start, every fetched event sits above it as
-// unprocessable, the chain reads as cold forever and its target never reaches
-// the address partition's cursor either. The chain parks in WaitingForNewBlock
-// having queried once.
+// A wildcard contract with a `start_block` far past the chain's start, next to
+// contracts that start at the chain start. The wildcard has nothing to fetch
+// until its start block, and that must not hold the chain back: the chain-start
+// partition keeps fetching once its responses outrun the cold target range,
+// its events get processed, and the later partitions start at their start
+// block. Reported on 3.9.0 as a single-chain indexer with three partitions that
+// queried one of them once, then never queried again nor processed anything.
 //
-// Reported on 3.9.0 as a single-chain indexer with three partitions that
-// queried partition "1" once, never queried the others and never processed.
 // https://github.com/enviodev/hyperindex/issues/1650
 let scenario = Scenario.make(
   ~configYaml=`
@@ -109,6 +105,55 @@ describe("Wildcard contract with a far-ahead start block", () => {
         "ledger-5",
         "ledger-10",
       ])
+    },
+  )
+
+  scenario->Scenario.it(
+    "waits at a start block the chain has not reached instead of scanning up to it",
+    ~sources=[{chain: 1337}],
+    ~targetBufferSize=100,
+    async (~t, ~indexer as _, ~source) => {
+      let sourceMock = source(1337)
+      let queries = () =>
+        sourceMock.getItemsOrThrowCalls
+        ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
+        ->Array.toSorted(((pA, _, _), (pB, _, _)) => String.compare(pA, pB))
+
+      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=30_000)
+
+      // Only the chain-start partition has anything below the head.
+      t.expect(
+        queries(),
+        ~message="the partitions starting past the head do not query",
+      ).toEqual([("1", 1, Some(29_800))])
+
+      // The response also carries a head past the later start blocks.
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=29_800,
+        ~knownHeight=100_000,
+      )
+
+      // Still cold: nothing fetched yet gives the chain a density, so its target
+      // stays within the cold range of the frontier and only the chain-start
+      // partition is in range.
+      await MockSource.waitItemsQuery(sourceMock)
+      t.expect(
+        queries(),
+        ~message="the chain-start partition continues up to where the later ones start",
+      ).toEqual([("1", 29_801, Some(49_999))])
+
+      sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=49_999)
+
+      await Scenario.waitUntil(
+        () => sourceMock.getItemsOrThrowCalls->Array.length === 2,
+        ~message="the later partitions to query once the frontier reaches their start block",
+        ~timeoutMs=2000.,
+      )
+      t.expect(
+        queries(),
+        ~message="the later partitions start at their start block, not at the chain start",
+      ).toEqual([("0", 50_000, Some(99_800)), ("2", 50_000, Some(99_800))])
     },
   )
 })
