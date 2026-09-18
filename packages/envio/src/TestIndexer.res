@@ -632,70 +632,6 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   close: async () => (),
 }
 
-// A simulated chain never grows past its end block, so a chain below its head
-// with no query in flight, while nothing is being processed or written, has
-// nothing left that could ever move it: the scheduler found nothing to query
-// and nothing to process, and no response or batch is coming to schedule
-// another look. Left alone it would run out the test's own timeout with no clue
-// why, so it is reported as a stall once the quiet has plainly outlasted the
-// zero-latency source and the gaps between batches. A chain still waiting for
-// its first height is skipped: that wait is answered on the next poll.
-let stallTicks = 20
-let stallTickMs = 5
-
-let rec watchForStall = (
-  indexerState: IndexerState.t,
-  ~isSettled: unit => bool,
-  ~onStall: exn => unit,
-  ~stalledFor=0,
-) =>
-  if !isSettled() {
-    Utils.delay(stallTickMs)
-    ->Promise.thenResolve(() =>
-      if !isSettled() {
-        let stalled = if (
-          indexerState->IndexerState.isProcessing ||
-            (indexerState->IndexerState.writeFiber)->Option.isSome
-        ) {
-          []
-        } else {
-          (indexerState->IndexerState.config).chainMap
-          ->ChainMap.keys
-          ->Array.map(chainId => indexerState->IndexerState.getChainState(~chainId))
-          ->Array.filter(cs =>
-            cs->ChainState.knownHeight > 0 &&
-            !(cs->ChainState.isFetchingAtHead) &&
-            cs->ChainState.sourceManager->SourceManager.inFlightCount === 0
-          )
-        }
-        switch stalled {
-        | [] => watchForStall(indexerState, ~isSettled, ~onStall)
-        | _ if stalledFor + 1 < stallTicks =>
-          watchForStall(indexerState, ~isSettled, ~onStall, ~stalledFor=stalledFor + 1)
-        | stalled =>
-          let details = stalled->Array.map(cs => {
-            let chainConfig = cs->ChainState.chainConfig
-            `chain ${chainConfig.id->ChainId.toString} is below its head of ${cs
-              ->ChainState.knownHeight
-              ->Int.toString} with no query in flight and ${cs
-              ->ChainState.bufferSize
-              ->Int.toString} buffered items, ${cs
-              ->ChainState.bufferReadyCount
-              ->Int.toString} of them processable`
-          })
-          onStall(
-            JsError.make(
-              `The indexer stalled: ${details->Array.join(
-                  "; ",
-                )}. The simulated chain ends at its end block, so nothing is coming that would make the fetch scheduler look again.`,
-            )->(Utils.magic: JsError.t => exn),
-          )
-        }
-      }
-    )
-    ->ignore
-  }
-
 // Copy the per-chain registration arrays so a process() run's simulate-source
 // additions (SimulateItems.patchConfig pushes onEventRegistrations) never
 // mutate the shared base registration — lets independent createTestIndexer runs
@@ -1004,12 +940,6 @@ let createTestIndexer = (): t<'processConfig> => {
           }
           try {
             await Promise.make((resolve, reject) => {
-              let settled = ref(false)
-              let settle = (settleWith, value) =>
-                if !settled.contents {
-                  settled := true
-                  settleWith(value)
-                }
               let indexerState = IndexerState.makeFromDbState(
                 ~config=runConfig,
                 ~persistence,
@@ -1018,16 +948,13 @@ let createTestIndexer = (): t<'processConfig> => {
                 ~exitAfterFirstEventBlock,
                 ~onError=errHandler => {
                   errHandler->ErrorHandling.log
-                  settle(reject, errHandler.exn->Utils.prettifyExn)
+                  reject(errHandler.exn->Utils.prettifyExn)
                 },
                 // Caught up: resolve the run instead of exiting the process.
-                ~onExit=() => settle(resolve, ()),
+                ~onExit=() => resolve(),
               )
               indexerStateRef := Some(indexerState)
               indexerState->IndexerLoop.start
-              watchForStall(indexerState, ~isSettled=() => settled.contents, ~onStall=exn =>
-                settle(reject, exn)
-              )
             })
             await cleanup()
           } catch {
