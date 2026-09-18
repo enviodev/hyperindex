@@ -208,12 +208,8 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
     let sql = PgStorage.makeClient()
     let storage = PgStorage.make(
       ~sql,
-      ~pgHost=Env.Db.host,
       ~pgSchema,
-      ~pgPort=Env.Db.port,
       ~pgUser=Env.Db.user,
-      ~pgDatabase=Env.Db.database,
-      ~pgPassword=Env.Db.password,
       ~isHasuraEnabled=false,
       ~ecosystem=Evm,
     )

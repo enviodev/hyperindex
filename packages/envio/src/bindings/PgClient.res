@@ -94,6 +94,10 @@ let arena = (client): Staging.arena => {
 
 @send external forgetPrepared: t => unit = "forgetPrepared"
 
+@send external copyOut: (t, string, string) => promise<unit> = "copyOut"
+
+@send external copyIn: (t, string, string) => promise<int> = "copyIn"
+
 @send external close: t => promise<unit> = "close"
 
 let make = options => Core.getAddon().pgClient->classCreate(options)

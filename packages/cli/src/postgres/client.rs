@@ -3,9 +3,12 @@
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
+use bytes::Bytes;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
+use futures_util::{pin_mut, SinkExt, StreamExt};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use postgres_openssl::MakeTlsConnector;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_postgres::config::SslMode;
 use tokio_postgres::types::{ToSql, Type};
 use tokio_postgres::{Config, NoTls, Row, Statement};
@@ -288,6 +291,44 @@ impl PgClient {
         Ok(Transaction {
             connection: Arc::new(connection),
         })
+    }
+
+    /// Runs a `COPY ... TO STDOUT` and writes what it produces to `path`.
+    ///
+    /// The rows never pass through JavaScript: the server streams them and this
+    /// writes them out as they arrive, so a cache of any size costs one buffer
+    /// rather than its own length in memory.
+    pub async fn copy_out(&self, sql: &str, path: &str) -> Result<()> {
+        let client = self.client().await?;
+        let mut file = tokio::fs::File::create(path)
+            .await
+            .with_context(|| format!("Failed creating {path}"))?;
+        let stream = client.copy_out(sql).await?;
+        pin_mut!(stream);
+        while let Some(chunk) = stream.next().await {
+            file.write_all(&chunk?).await?;
+        }
+        file.flush().await?;
+        Ok(())
+    }
+
+    /// Feeds `path` to a `COPY ... FROM STDIN`, returning the rows it took.
+    pub async fn copy_in(&self, sql: &str, path: &str) -> Result<u64> {
+        let client = self.client().await?;
+        let mut file = tokio::fs::File::open(path)
+            .await
+            .with_context(|| format!("Failed opening {path}"))?;
+        let sink = client.copy_in(sql).await?;
+        pin_mut!(sink);
+        let mut buffer = vec![0u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            sink.send(Bytes::copy_from_slice(&buffer[..read])).await?;
+        }
+        Ok(sink.finish().await?)
     }
 
     /// Drops every connection's prepared statements.

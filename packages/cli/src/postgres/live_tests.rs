@@ -1024,3 +1024,84 @@ async fn one_int(client: &PgClient, sql: &str) -> i32 {
         .unwrap_or_else(|error| panic!("`{sql}` failed: {error:#}"));
     rows.first().expect("one row").get::<_, i32>(0)
 }
+
+/// The effect cache leaves the database as text and comes back the same way.
+/// It used to travel by `psql`, spawned as a child process; this is the same
+/// COPY over the connection the rest of the work already uses.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_table_copies_out_to_a_file_and_back_in() {
+    let client = client();
+    let path = std::env::temp_dir().join("envio-copy-round-trip.tsv");
+    let path = path.to_str().expect("a printable path");
+
+    // A tab and a newline are what the format uses for its own structure, so a
+    // value carrying them is what says whether the copy escapes them.
+    client
+        .batch(
+            r#"DROP TABLE IF EXISTS copy_round_trip;
+               CREATE TABLE copy_round_trip (id text primary key, note text, output jsonb);
+               INSERT INTO copy_round_trip VALUES
+                 ('usdc', E'a\tb\nc', '{"price": "1.00"}'),
+                 ('weth', NULL, '{"note": "plain"}')"#,
+        )
+        .await
+        .unwrap();
+
+    client
+        .copy_out(
+            "COPY copy_round_trip TO STDOUT WITH (FORMAT text, HEADER)",
+            path,
+        )
+        .await
+        .unwrap();
+    let written = std::fs::read_to_string(path).unwrap();
+
+    client.batch("TRUNCATE copy_round_trip").await.unwrap();
+    let taken = client
+        .copy_in(
+            "COPY copy_round_trip FROM STDIN WITH (FORMAT text, HEADER)",
+            path,
+        )
+        .await
+        .unwrap();
+
+    let (rows, _) = client
+        .query(
+            "SELECT id, coalesce(note, '<null>'), output::text FROM copy_round_trip ORDER BY id",
+            &[],
+        )
+        .await
+        .unwrap();
+    let back: Vec<(String, String, String)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.get::<_, String>(0),
+                row.get::<_, String>(1),
+                row.get::<_, String>(2),
+            )
+        })
+        .collect();
+    client.batch("DROP TABLE copy_round_trip").await.unwrap();
+
+    assert_eq!(
+        (written.lines().next(), taken, back),
+        (
+            Some("id\tnote\toutput"),
+            2,
+            vec![
+                (
+                    "usdc".to_string(),
+                    "a\tb\nc".to_string(),
+                    "{\"price\": \"1.00\"}".to_string()
+                ),
+                (
+                    "weth".to_string(),
+                    "<null>".to_string(),
+                    "{\"note\": \"plain\"}".to_string()
+                ),
+            ]
+        )
+    );
+}

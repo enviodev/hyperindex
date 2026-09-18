@@ -315,6 +315,20 @@ impl PgClient {
         self.inner.batch(&sql).await.map_err(to_napi)
     }
 
+    /// Writes what a `COPY ... TO STDOUT` produces into a file, and reads a
+    /// file back into a `COPY ... FROM STDIN`. The effect cache travels this
+    /// way, and the rows never cross this boundary.
+    #[napi]
+    pub async fn copy_out(&self, sql: String, path: String) -> napi::Result<()> {
+        self.inner.copy_out(&sql, &path).await.map_err(to_napi)
+    }
+
+    #[napi]
+    pub async fn copy_in(&self, sql: String, path: String) -> napi::Result<u32> {
+        let rows = self.inner.copy_in(&sql, &path).await.map_err(to_napi)?;
+        Ok(rows as u32)
+    }
+
     /// Forgets what the connections have prepared, which the schema being
     /// dropped and built again makes necessary.
     #[napi]

@@ -111,6 +111,13 @@ let exec = ({client, transaction}, sql, ~params as values: array<unknown>=[]) =>
   }->Utils.Promise.ignoreValue
 }
 
+// A table's rows as the text the server writes them out as, straight into a
+// file, and the same text read back into a table. Nothing passes through
+// JavaScript on the way.
+let copyOut = ({client}, sql, ~path) => client->PgClient.copyOut(sql, path)
+
+let copyIn = ({client}, sql, ~path) => client->PgClient.copyIn(sql, path)
+
 // Statements that take no parameters and return nothing worth reading. More
 // than one may be given at once, which the schema initialization relies on.
 let batch = ({client, transaction}, sql) =>

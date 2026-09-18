@@ -253,6 +253,10 @@ module Fs = {
     @module("fs") @scope("promises")
     external readdir: Path.t => promise<array<string>> = "readdir"
 
+    type rmOptions = {recursive?: bool, force?: bool}
+    @module("fs") @scope("promises")
+    external rm: (Path.t, ~options: rmOptions=?) => promise<unit> = "rm"
+
     type stats
     @module("fs") @scope("promises")
     external stat: Path.t => promise<stats> = "stat"

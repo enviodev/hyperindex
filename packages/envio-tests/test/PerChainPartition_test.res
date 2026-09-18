@@ -314,11 +314,7 @@ describe("Reused chain-scoped statements stay pruned", () => {
         let storage = PgStorage.make(
           ~sql,
           ~pgSchema,
-          ~pgHost="",
           ~pgUser="",
-          ~pgPort=0,
-          ~pgDatabase="",
-          ~pgPassword="",
           ~isHasuraEnabled=false,
           ~ecosystem=Evm,
         )

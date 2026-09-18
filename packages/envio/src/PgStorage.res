@@ -944,70 +944,6 @@ let makeCacheRowCountQuery = (~pgSchema, ~tableName) => {
   `SELECT COUNT(*)::int AS count FROM ${quoteIdent(pgSchema)}.${quoteIdent(tableName)};`
 }
 
-type psqlExecState =
-  Unknown | Pending(promise<result<string, string>>) | Resolved(result<string, string>)
-
-let getConnectedPsqlExec = {
-  // Should use the default port, since we're executing the command
-  // from the postgres container's network.
-  let pgDockerServicePort = 5432
-
-  // For development: We run the indexer process locally,
-  //   and there might not be psql installed on the user's machine.
-  //   So we use docker exec to run psql inside the postgres container.
-  // For production: We expect indexer to be running in a container,
-  //   with psql installed. So we can call it directly.
-  let psqlExecState = ref(Unknown)
-  async (~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) => {
-    switch psqlExecState.contents {
-    | Unknown => {
-        let promise = Promise.make((resolve, _reject) => {
-          let binary = "psql"
-          NodeJs.ChildProcess.exec(`${binary} --version`, (~error, ~stdout as _, ~stderr as _) => {
-            switch error {
-            | Value(_) => {
-                let binary = `docker exec -i -u ${pgUser} ${containerName} psql`
-                NodeJs.ChildProcess.exec(
-                  `${binary} --version`,
-                  (~error, ~stdout as _, ~stderr as _) => {
-                    switch error {
-                    | Value(_) =>
-                      resolve(
-                        Error(
-                          `Please check if "psql" binary is installed or Docker container "${containerName}" is running.`,
-                        ),
-                      )
-                    | Null =>
-                      resolve(
-                        Ok(
-                          `${binary} -h ${pgHost} -p ${pgDockerServicePort->Int.toString} -U ${pgUser} -d ${pgDatabase}`,
-                        ),
-                      )
-                    }
-                  },
-                )
-              }
-            | Null =>
-              resolve(
-                Ok(
-                  `${binary} -h ${pgHost} -p ${pgPort->Int.toString} -U ${pgUser} -d ${pgDatabase}`,
-                ),
-              )
-            }
-          })
-        })
-
-        psqlExecState := Pending(promise)
-        let result = await promise
-        psqlExecState := Resolved(result)
-        result
-      }
-    | Pending(promise) => await promise
-    | Resolved(result) => result
-    }
-  }
-}
-
 let deleteByIdsOrThrow = async (
   sql,
   ~pgSchema,
@@ -1690,12 +1626,10 @@ let rollbackRemovedIdSchema: Table.table => S.t<EntityId.t> = Utils.WeakMap.memo
 
 let make = (
   ~sql: Sql.t,
-  ~pgHost,
   ~pgSchema,
-  ~pgPort,
+  // Only for the GRANT the schema is created with; every statement this
+  // storage runs goes through `sql`, which already holds the connection.
   ~pgUser,
-  ~pgDatabase,
-  ~pgPassword,
   ~isHasuraEnabled,
   ~chainIdMode: ChainId.mode=Int32,
   // Decides how wide an address key is, both when the config's addresses are
@@ -1708,12 +1642,6 @@ let make = (
   ~isolated=false,
   ~onInitialize=?,
 ): Persistence.storage => {
-  // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
-  let containerName = "envio-postgres"
-  let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
-    env: Dict.fromArray([("PGPASSWORD", pgPassword), ("PATH", %raw(`process.env.PATH`))]),
-  }
-
   let cacheDirPath = NodeJs.Path.resolve([
     // Right at the project root
     ".envio",
@@ -1831,35 +1759,23 @@ let make = (
       switch await scanCacheDir() {
       | [] => Logging.info("No cache found to upload.")
       | entries =>
-        switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) {
-        | Ok(psqlExec) =>
+        try {
           let _ = await entries
-          ->Array.map(((table, inputFile)) => {
-            sql
-            ->Sql.batch(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
-            ->Promise.then(() => {
-              let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
-
-              Promise.make(
-                (resolve, reject) => {
-                  NodeJs.ChildProcess.execWithOptions(
-                    command,
-                    psqlExecOptions,
-                    (~error, ~stdout, ~stderr as _) => {
-                      switch error {
-                      | Value(error) => reject(error)
-                      | Null => resolve(stdout)
-                      }
-                    },
-                  )
-                },
-              )
-            })
+          ->Array.map(async ((table, inputFile)) => {
+            await sql->Sql.batch(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
+            await sql->Sql.copyIn(
+              `COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER)`,
+              ~path=inputFile,
+            )
           })
           ->Promise.all
           Logging.info("Successfully uploaded cache.")
-        | Error(message) =>
-          Logging.error(`Failed to upload cache, continuing without it. ${message}`)
+        } catch {
+        | exn =>
+          Logging.errorWithExn(
+            exn->Utils.prettifyExn,
+            "Failed to upload cache, continuing without it.",
+          )
         }
       }
     }
@@ -2341,57 +2257,35 @@ let make = (
           await NodeJs.Fs.Promises.mkdir(~path=cacheDirPath, ~options={recursive: true})
         }
 
-        // Command for testing. Run from project root:
-        // docker exec -i -u postgres envio-{indexerName}-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT text, HEADER);' > ../.envio/cache/getTokenMetadata.tsv
+        Logging.info(
+          `Dumping cache: ${cacheTableInfo
+            ->Array.map(({tableName, count}) => tableName ++ " (" ++ count->Int.toString ++ " rows)")
+            ->Array.joinUnsafe(", ")}`,
+        )
 
-        switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) {
-        | Ok(psqlExec) => {
-            Logging.info(
-              `Dumping cache: ${cacheTableInfo
-                ->Array.map(({tableName, count}) =>
-                  tableName ++ " (" ++ count->Int.toString ++ " rows)"
-                )
-                ->Array.joinUnsafe(", ")}`,
+        let _ = await cacheTableInfo
+        ->Array.map(async ({tableName}) => {
+          switch Internal.EffectCache.fromTableName(tableName) {
+          | Some((effectName, scope)) =>
+            // Reverse mapping: chain-scoped caches dump into a per-chain
+            // subdirectory, created here if needed.
+            let outputPath = NodeJs.Path.join(
+              cacheDirPath,
+              Internal.EffectCache.toCachePath(~effectName, ~scope),
             )
-
-            let promises = cacheTableInfo->Array.map(async ({tableName}) => {
-              switch Internal.EffectCache.fromTableName(tableName) {
-              | Some((effectName, scope)) =>
-                // Reverse mapping: chain-scoped caches dump into a per-chain
-                // subdirectory, created here if needed.
-                let outputPath = NodeJs.Path.join(
-                  cacheDirPath,
-                  Internal.EffectCache.toCachePath(~effectName, ~scope),
-                )
-                let _ = await NodeJs.Fs.Promises.mkdir(
-                  ~path=NodeJs.Path.dirname(outputPath->NodeJs.Path.toString),
-                  ~options={recursive: true},
-                )
-                let outputFile = outputPath->NodeJs.Path.toString
-
-                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
-
-                await Promise.make((resolve, reject) => {
-                  NodeJs.ChildProcess.execWithOptions(
-                    command,
-                    psqlExecOptions,
-                    (~error, ~stdout, ~stderr as _) => {
-                      switch error {
-                      | Value(error) => reject(error)
-                      | Null => resolve(stdout)
-                      }
-                    },
-                  )
-                })
-              | None => ""
-              }
-            })
-
-            let _ = await promises->Promise.all
-            Logging.info(`Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`)
+            await NodeJs.Fs.Promises.mkdir(
+              ~path=NodeJs.Path.dirname(outputPath->NodeJs.Path.toString),
+              ~options={recursive: true},
+            )
+            await sql->Sql.copyOut(
+              `COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER)`,
+              ~path=outputPath->NodeJs.Path.toString,
+            )
+          | None => ()
           }
-        | Error(message) => Logging.error(`Failed to dump cache. ${message}`)
-        }
+        })
+        ->Promise.all
+        Logging.info(`Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`)
       }
     } catch {
     | exn => Logging.errorWithExn(exn->Utils.prettifyExn, `Failed to dump cache.`)
@@ -2666,11 +2560,7 @@ let makeStorageFromEnv = (
   make(
     ~sql,
     ~pgSchema,
-    ~pgHost=Env.Db.host,
     ~pgUser=Env.Db.user,
-    ~pgPort=Env.Db.port,
-    ~pgDatabase=Env.Db.database,
-    ~pgPassword=Env.Db.password,
     ~chainIdMode=config.chainIdMode,
     ~ecosystem=config.ecosystem.name,
     ~isolated=config.isolated,

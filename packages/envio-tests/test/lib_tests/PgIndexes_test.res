@@ -65,12 +65,8 @@ let makeFlakySql = (sql: Sql.t, log, shouldFail): Sql.t => {
 let makeStorage = (~sql=sql, pgSchema) =>
   PgStorage.make(
     ~sql,
-    ~pgHost=Env.Db.host,
     ~pgSchema,
-    ~pgPort=Env.Db.port,
     ~pgUser=Env.Db.user,
-    ~pgDatabase=Env.Db.database,
-    ~pgPassword=Env.Db.password,
     ~isHasuraEnabled=false,
     ~ecosystem=Evm,
   )

@@ -42,12 +42,8 @@ let setup = async () => {
   createdSchemas->Array.push(pgSchema)->ignore
   let storage = PgStorage.make(
     ~sql,
-    ~pgHost=Env.Db.host,
     ~pgSchema,
-    ~pgPort=Env.Db.port,
     ~pgUser=Env.Db.user,
-    ~pgDatabase=Env.Db.database,
-    ~pgPassword=Env.Db.password,
     ~isHasuraEnabled=false,
     ~ecosystem=Evm,
   )
