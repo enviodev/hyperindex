@@ -1980,6 +1980,19 @@ let make = (
     prepared->IndexManager.verifyOrThrow(~rows, ~pgSchema)
   }
 
+  // Another process in the same schema builds the same indexes, and when two
+  // creates meet only one of them wins. Both of these say the index is there,
+  // which is what was wanted: the first when the creates overlapped, the second
+  // when one merely followed the other.
+  let builtByAnother = exn => {
+    let message =
+      (exn->Utils.prettifyExn->(Utils.magic: exn => {"message": Nullable.t<string>}))["message"]
+      ->Nullable.toOption
+      ->Option.getOr("")
+    message->String.includes(`duplicate key value violates unique constraint "pg_class_relname_nsp_index"`) ||
+      message->String.includes("already exists")
+  }
+
   // A build outside a transaction can commit its DDL and still fail — the
   // read-back is a second round trip. Re-reading the index puts the catalog
   // back in step, so the next attempt plans against what the database holds
@@ -2053,11 +2066,13 @@ let make = (
       // A failed build records nothing, so the next getWhere retries. Meanwhile
       // the query still runs — just without the index.
       ->Promise.catch(async exn => {
-        Logging.warn({
-          "storage": storageName,
-          "msg": `Failed to create an index on "${tableName}"("${column}") for a getWhere query. The query runs without it.`,
-          "err": exn->Utils.prettifyExn,
-        })
+        if !(exn->builtByAnother) {
+          Logging.warn({
+            "storage": storageName,
+            "msg": `Failed to create an index on "${tableName}"("${column}") for a getWhere query. The query runs without it.`,
+            "err": exn->Utils.prettifyExn,
+          })
+        }
         await resyncIndex(definition->IndexDefinition.name)
       })
     })
@@ -2097,11 +2112,13 @@ let make = (
         }
       })
       ->Promise.catch(async exn => {
-        Logging.warn({
-          "storage": storageName,
-          "msg": `Failed to restore the schema index "${definition->IndexDefinition.name}". Queries relying on it run unindexed until the next restart.`,
-          "err": exn->Utils.prettifyExn,
-        })
+        if !(exn->builtByAnother) {
+          Logging.warn({
+            "storage": storageName,
+            "msg": `Failed to restore the schema index "${definition->IndexDefinition.name}". Queries relying on it run unindexed until the next restart.`,
+            "err": exn->Utils.prettifyExn,
+          })
+        }
         await resyncIndex(definition->IndexDefinition.name)
       })
     )
@@ -2181,7 +2198,18 @@ let make = (
         // Re-reading it means the retry plans against the database rather than
         // replaying a create that can only raise "already exists".
         await resyncIndex(prepared.name)
-        throw(exn)
+        // Whether the re-read left anything to do is what says if this is a
+        // failure at all: a sibling process building the same index leaves
+        // none, and stopping the backfill over it would stop an indexer for
+        // having been beaten to its own work.
+        switch indexManager->IndexManager.prepare(
+          ~definition=prepared.definition,
+          ~coverage=Exact,
+          ~pgSchema,
+        ) {
+        | None => ()
+        | Some(_) => throw(exn)
+        }
       }
     }
 
