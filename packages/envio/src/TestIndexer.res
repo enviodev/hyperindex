@@ -220,11 +220,16 @@ let handleWriteBatch = (
         if deleted->Array.length > 0 {
           entityObj->Dict.set("deleted", deleted->(Utils.magic: array<EntityId.t> => unknown))
         }
-        // Match the capitalized entity accessor the generated change types expose.
-        change->Dict.set(
-          entityName->Utils.String.capitalize,
-          entityObj->(Utils.magic: dict<unknown> => unknown),
-        )
+        // Match the capitalized entity accessor the generated change types
+        // expose. A table has no accessor, so its writes aren't reported.
+        switch state.entityConfigs->Utils.Dict.dangerouslyGetNonOption(entityName) {
+        | Some({written: Handlers}) =>
+          change->Dict.set(
+            entityName->Utils.String.capitalize,
+            entityObj->(Utils.magic: dict<unknown> => unknown),
+          )
+        | _ => ()
+        }
       })
     | None => ()
     }
@@ -710,19 +715,24 @@ let createTestIndexer = (): t<'processConfig> => {
   | Some(_) => ()
   }
 
-  // Build entity operations for each user entity
+  // A table config.yaml writes isn't an entity: the indexer maintains it, and
+  // nothing addresses it from user code — here no more than in a handler.
   let entityOpsDict: dict<entityOperations> = Dict.make()
   allEntities->Array.forEach(entityConfig => {
-    entityOpsDict->Dict.set(
-      entityConfig.name,
-      {
-        get: makeEntityGet(~state, ~entityConfig),
-        getAll: makeEntityGetAll(~state, ~entityConfig),
-        getWhere: makeEntityGetWhere(~state, ~entityConfig),
-        getOrThrow: makeEntityGetOrThrow(~state, ~entityConfig),
-        set: makeEntitySet(~state, ~entityConfig),
-      },
-    )
+    switch entityConfig.written {
+    | Handlers =>
+      entityOpsDict->Dict.set(
+        entityConfig.codeName,
+        {
+          get: makeEntityGet(~state, ~entityConfig),
+          getAll: makeEntityGetAll(~state, ~entityConfig),
+          getWhere: makeEntityGetWhere(~state, ~entityConfig),
+          getOrThrow: makeEntityGetOrThrow(~state, ~entityConfig),
+          set: makeEntitySet(~state, ~entityConfig),
+        },
+      )
+    | Materialized => ()
+    }
   })
 
   // Build chain info from config (similar to Main.getGlobalIndexer but static)
@@ -798,9 +808,11 @@ let createTestIndexer = (): t<'processConfig> => {
   entityOpsDict
   ->Dict.toArray
   ->Array.forEach(((name, ops)) => {
-    // Expose the capitalized accessor (indexer.Pool_snapshots) the generated
-    // types declare, matching the handler-context keys.
-    result->Dict.set(name->Utils.String.capitalize, ops->(Utils.magic: entityOperations => unknown))
+    // Expose the code-facing accessor (indexer.Pool_snapshots, or an
+    // `as_entity` name) the generated types declare. Unlike the handler
+    // context this includes tables hidden from handlers — materialized output
+    // still has to be assertable from a test.
+    result->Dict.set(name, ops->(Utils.magic: entityOperations => unknown))
   })
 
   result->Dict.set(

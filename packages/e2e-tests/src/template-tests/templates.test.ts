@@ -38,6 +38,12 @@ const TEMPLATES: TemplateConfig[] = [
     hasTests: true,
   },
   {
+    // Nothing to run: the tables are the whole indexer, and a table isn't an
+    // entity, so the test framework has no accessor to read one back through.
+    name: "evm-no-code",
+    initArgs: ["template", "-t", "no-code", "-l", "typescript"],
+  },
+  {
     name: "evm-factory",
     initArgs: ["template", "-t", "feature-factory", "-l", "typescript"],
     hasTests: true,

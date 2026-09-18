@@ -141,8 +141,13 @@ type t = {
   // chains own — their partitions' indexes, their `ready_at`, their resume.
   isolated: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
+  // Every table by its schema name, including ones hidden from handlers.
+  entitiesByTableName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
+  // Write plans compiled by the CLI from `tables`. `Materialization` turns
+  // them into handlers.
+  materializations: array<MaterializationPlan.t>,
   // Whether checkpoint ids come from one counter or one per chain. Decided by
   // the schema alone: a cross-chain entity has rows any chain's reorg can
   // reach, so its checkpoints have to be comparable across chains.
@@ -365,6 +370,8 @@ let entityStorageSchema = S.schema(s =>
 let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
+    "codeName": s.matches(S.string),
+    "written": s.matches(S.option(S.string)),
     "crossChain": s.matches(S.option(S.bool)),
     "storage": s.matches(S.option(entityStorageSchema)),
     "internal": s.matches(S.option(S.bool)),
@@ -567,6 +574,15 @@ let parseEntitiesFromJson = (
 
     {
       Internal.name: entityName,
+      codeName: entityJson["codeName"],
+      written: switch entityJson["written"] {
+      | None => Handlers
+      | Some("materialized") => Materialized
+      | Some(other) =>
+        JsError.throwWithMessage(
+          `Invalid indexer config: entity \`${entityName}\` says it is written by \`${other}\`, which this envio version doesn't know. Run \`envio codegen\` again.`,
+        )
+      },
       index,
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
       table,
@@ -607,6 +623,7 @@ let publicConfigSchema = S.schema(s =>
     "svm": s.matches(S.option(publicConfigEcosystemSchema)),
     "enums": s.matches(S.option(S.dict(S.array(S.string)))),
     "entities": s.matches(S.option(S.array(entityJsonSchema))),
+    "materializations": s.matches(S.option(S.json(~validate=false))),
   }
 )
 
@@ -1080,17 +1097,30 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ->Option.getOr([])
     ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage, ~defaultCrossChain)
 
-  // Keyed by the capitalized entity name to match the handler-context
-  // accessor (`context.Pool_snapshots`) the generated types expose, while
-  // entityConfig.name stays the original schema name used for the physical
-  // Postgres/ClickHouse tables.
+  // Keyed by the code-facing name the generated handler context exposes
+  // (`context.Pool_snapshots`), while entityConfig.name stays the schema name
+  // the physical Postgres/ClickHouse tables use. A table config.yaml writes is
+  // absent: handlers can't reach it.
   let userEntitiesByName =
     userEntities
-    ->Array.map(entityConfig => {
-      (entityConfig.name->Utils.String.capitalize, entityConfig)
-    })
+    ->Array.filter(entityConfig =>
+      switch entityConfig.written {
+      | Materialized => false
+      | Handlers => true
+      }
+    )
+    ->Array.map(entityConfig => (entityConfig.codeName, entityConfig))
     ->Dict.fromArray
 
+  // Keyed by the schema name, so the materializer can reach a table the handler
+  // context deliberately hides.
+  let entitiesByTableName =
+    userEntities->Array.map(entityConfig => (entityConfig.name, entityConfig))->Dict.fromArray
+
+  let materializations = switch publicConfig["materializations"] {
+  | Some(json) => json->MaterializationPlan.parseAllOrThrow
+  | None => []
+  }
   // Extract contract handlers from the public config
   let contractHandlers = switch publicContractsConfig {
   | Some(contractsDict) =>
@@ -1128,8 +1158,10 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     isDev: publicConfig["isDev"]->Option.getOr(false),
     isolated: false,
     userEntitiesByName,
+    entitiesByTableName,
     userEntities,
     allEnums,
+    materializations,
     checkpointSequence: CheckpointSequence.fromEntities(userEntities),
   }
 
@@ -1460,4 +1492,11 @@ let load = () =>
     }
   }
 
-let getPgUserEntities = (config: t) => config.userEntities->Array.filter(e => e.storage.postgres)
+let getPgUserEntities = (config: t) =>
+  config.userEntities->Array.filter(e =>
+    e.storage.postgres &&
+      switch e.written {
+      | Handlers => true
+      | Materialized => false
+      }
+  )
