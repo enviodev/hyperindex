@@ -449,6 +449,7 @@ let setRollbackTargetBlock = (cs: t, ~blockNumber) => cs.rollbackTargetBlock = S
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
+let hasFetchableHead = (cs: t) => cs.fetchState->FetchState.hasFetchableHead
 let contractAddresses = (cs: t, ~contractName) =>
   cs.addressStore->AddressStore.contractAddresses(contractName)
 
