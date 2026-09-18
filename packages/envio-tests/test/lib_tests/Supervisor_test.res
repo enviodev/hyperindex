@@ -37,6 +37,14 @@ describe("Supervisor.plan", () => {
   })
 })
 
+describe("Supervisor.plan on the default budget", () => {
+  // Splitting a run costs connections the operator didn't ask to spend, so the
+  // budget they didn't set is the one a single process has always used.
+  it("Keeps a run in one process until the budget is raised", t => {
+    t.expect(Supervisor.plan(~chainIds=chains(4), ~maxConnections=Env.Db.maxConnections)).toBe(None)
+  })
+})
+
 describe("Supervisor.plan dealing order", () => {
   let assignment = (~chainIds, ~maxConnections) =>
     Supervisor.plan(~chainIds=chainIds->Array.map(ChainId.fromInt), ~maxConnections)
