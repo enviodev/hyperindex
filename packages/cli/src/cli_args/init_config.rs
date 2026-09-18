@@ -30,6 +30,8 @@ pub mod evm {
     pub enum Template {
         Greeter,
         Erc20,
+        #[strum(serialize = "No-code")]
+        NoCode,
         #[strum(serialize = "Feature: External Calls")]
         FeatureExternalCalls,
         #[strum(serialize = "Feature: Factory Contract")]
