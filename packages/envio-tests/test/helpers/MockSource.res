@@ -191,6 +191,9 @@ type itemsQuery = {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": 
 
 type getItemsOrThrowCall = {
   payload: itemsQuery,
+  // Whether the query asked for every block in its range, which the chain only
+  // does once it is at the head.
+  includeAllBlocks: bool,
   resolve: (
     array<itemMock>,
     ~latestFetchedBlockNumber: int=?,
@@ -562,6 +565,7 @@ let make = (
           ~fromBlock,
           ~toBlock,
           ~addressSet,
+          ~includeAllBlocks,
           ~knownHeight,
           ~partitionId,
           ~selection as _,
@@ -584,6 +588,7 @@ let make = (
             payload->defineAddresses(addressSet->AddressSet.addresses)
             {
               payload,
+              includeAllBlocks,
               resolve: (
                 items,
                 ~latestFetchedBlockNumber=?,

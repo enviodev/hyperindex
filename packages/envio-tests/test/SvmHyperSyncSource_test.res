@@ -174,6 +174,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     let source = makeSource(~onEventRegistrations=[reg])
 
     let response = await source.getItemsOrThrow(
+      ~includeAllBlocks=false,
       ~fromBlock=slot - 10,
       ~toBlock=Some(slot + 10),
       ~addressSet=programSet,
@@ -336,6 +337,37 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "argsJson": Some(`[{"name":"amount","type":"u64"}]`),
       "definedTypesJson": None,
     })
+  })
+})
+
+describe("SvmHyperSyncSource include_all_blocks", () => {
+  // A slot the source returns no block for is either skipped or simply never
+  // asked about. Asking for every slot in the range is what makes the first
+  // reading the only one left, which is what lets a skipped slot fall back to
+  // the last real one's time.
+  Async.it("asks for every slot in the range once the chain is at the head", async t => {
+    let source = makeSource()
+    capturedQueries->Utils.Array.clearInPlace
+
+    let _ = await source.getItemsOrThrow(
+      ~includeAllBlocks=true,
+      ~fromBlock=slot,
+      ~toBlock=Some(slot + 1),
+      ~addressSet=programSet,
+      ~knownHeight=slot + 1,
+      ~partitionId="0",
+      ~itemsTarget=None,
+      ~selection={
+        onEventRegistrations: [(makeReg() :> Internal.onEventRegistration)],
+        dependsOnAddresses: true,
+      },
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
+
+    t.expect(
+      capturedQueries->Array.map(query => query.includeAllBlocks),
+    ).toEqual([Some(true)])
   })
 })
 

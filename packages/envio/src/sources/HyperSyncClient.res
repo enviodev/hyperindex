@@ -262,6 +262,9 @@ module EventItems = {
     // depend on addresses (client-side filtering). None/empty means
     // every address-dependent contract is filtered server-side.
     clientFilteredContracts: option<array<string>>,
+    // Return a header for every block in the range, not only the ones a log
+    // landed on. Absent means only the blocks logs came from.
+    includeAllBlocks?: bool,
   }
 
   type item = {

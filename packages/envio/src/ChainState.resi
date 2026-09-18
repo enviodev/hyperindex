@@ -119,7 +119,7 @@ let dispatch: (
 // Views.
 let toMetrics: t => Metrics.chainMetrics
 let toChainMetadata: t => InternalTable.Chains.metaFields
-let toChainBeforeBatch: t => Batch.chainBeforeBatch
+let toChainBeforeBatch: (t, ~isRealtime: bool) => Batch.chainBeforeBatch
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).

@@ -1024,7 +1024,7 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
 // in-threshold block hashes are copied up front because the build reuses the
 // whole set; the block time comes as a lookup instead, since the key it needs -
 // the batch's own progress block - isn't known until the build computes it.
-let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
+let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
   let {blockNumbers, hashes} =
     cs.blockStore->BlockStore.getHashes(
       ~fromBlock=Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0),
@@ -1040,8 +1040,13 @@ let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
     totalEventsProcessed: cs.numEventsProcessed,
     sourceBlockNumber: cs.fetchState.knownHeight,
     scannedHashes: {blockNumbers, hashByBlockNumber},
+    // A slot that produced no block only counts as skipped where the query
+    // covered every slot in its range, which is what a chain at the head asks
+    // for.
     blockTimeAt: blockNumber =>
-      cs.blockStore->BlockStore.getTimestamp(blockNumber)->Null.toOption,
+      cs.blockStore
+      ->BlockStore.getTimestamp(blockNumber, ~allowSkippedSlot=isRealtime)
+      ->Null.toOption,
     shouldRollbackOnReorg: cs.shouldRollbackOnReorg,
     chainConfig: cs.chainConfig,
   }
@@ -1197,8 +1202,12 @@ let markReady = (cs: t, ~readyAt) =>
 let rollbackCommittedProgress = (cs: t, blockNumber) =>
   if blockNumber !== cs.committedProgressBlockNumber {
     cs.committedProgressBlockNumber = blockNumber
+    // Exact block only: the rolled-back region is about to be refetched, and
+    // the next batch re-establishes the time either way.
     cs.committedProgressBlockTime =
-      cs.blockStore->BlockStore.getTimestamp(blockNumber)->Null.toOption
+      cs.blockStore
+      ->BlockStore.getTimestamp(blockNumber, ~allowSkippedSlot=false)
+      ->Null.toOption
   }
 
 type progressDiff = {blockNumber: int, eventsProcessed: float}

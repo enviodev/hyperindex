@@ -142,8 +142,13 @@ external materialize: (
 // Hash of a stored block, if the store still holds it.
 @send external getHash: (t, int) => Null.t<string> = "getHash"
 
-// Unix timestamp of a stored block - exactly that block, on every ecosystem.
-@send external getTimestamp: (t, int) => Null.t<int> = "getTimestamp"
+// Unix timestamp of a stored block - exactly that block, except for an SVM slot
+// that produced none: with `allowSkippedSlot` the last real slot below it
+// answers instead, which is what chain time is at a skipped slot. Only set it
+// where the query covered every slot in its range, or a slot that was never
+// asked about reads as one the chain skipped.
+@send
+external getTimestamp: (t, int, ~allowSkippedSlot: bool) => Null.t<int> = "getTimestamp"
 
 // Block numbers in `[fromBlock, belowBlock)` with a stored hash, ascending.
 @send

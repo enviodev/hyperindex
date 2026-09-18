@@ -147,6 +147,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
+    ~includeAllBlocks,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -163,6 +164,8 @@ let make = (
       maxNumInstructions: ?itemsTarget,
       registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
       clientFilteredContracts: selection.clientFilteredContracts,
+      // Absent rather than false, so a backfill query is the one it always was.
+      includeAllBlocks: ?(includeAllBlocks ? Some(true) : None),
     }
 
     let (resp, transactionStore, blockStore) = try await client.getEventItems(
