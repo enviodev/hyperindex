@@ -169,6 +169,7 @@ let run = async (
   ~clientFilterAddressThreshold=?,
   ~reorgThresholdReadyTolerance=?,
   ~holdRealtime=?,
+  ~superviseRun=?,
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
@@ -239,6 +240,7 @@ let run = async (
     ~reducedPollingInterval?,
     ~targetBufferSize?,
     ~holdRealtime?,
+    ~superviseRun?,
     ~onError?,
     ~onExit?,
     ~mapStorage?,
@@ -270,6 +272,12 @@ let it = (
   ~clientFilterAddressThreshold=?,
   ~reorgThresholdReadyTolerance=?,
   ~holdRealtime=?,
+  // Runs a multichain scenario a second time behind the barrier a supervised
+  // worker runs behind, so the scenario covers the held path as well as the
+  // plain one. Off until the suite's own shared counters are made independent
+  // of how many times a body runs — a ref a describe block owns is incremented
+  // by both passes, which is what most of them assert on.
+  ~supervised=false,
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
@@ -288,7 +296,7 @@ let it = (
       async _ => (),
     )
   | None =>
-    let runBody = async (t: Vitest.testContext) =>
+    let runBody = (~superviseRun) => async (t: Vitest.testContext) =>
       await scenario->run(
         ~sources,
         ~reducedPollingInterval?,
@@ -297,14 +305,24 @@ let it = (
         ~clientFilterAddressThreshold?,
         ~reorgThresholdReadyTolerance?,
         ~holdRealtime?,
+        ~superviseRun,
         ~onError?,
         ~onExit?,
         ~mapStorage?,
         (~indexer, ~source) => body(~t, ~indexer, ~source),
       )
-    switch retry {
-    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, ?timeout}, runBody)
-    | None => Vitest.Async.it(name, runBody, ~timeout?)
+    let register = (name, ~superviseRun) =>
+      switch retry {
+      | Some(retry) =>
+        Vitest.Async.itWithOptions(name, {retry, ?timeout}, runBody(~superviseRun))
+      | None => Vitest.Async.it(name, runBody(~superviseRun), ~timeout?)
+      }
+
+    register(name, ~superviseRun=false)
+    // One chain is a run whose every chain is its own process's already, so the
+    // barrier has nothing to hold: only a multichain scenario says anything new.
+    if supervised && scenario.config.chainMap->ChainMap.keys->Array.length > 1 {
+      register(`${name} [supervised]`, ~superviseRun=true)
     }
   }
 }

@@ -80,6 +80,7 @@ let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
 describe("envio start --chain", () => {
   scenario->Scenario.it(
     "Indexes and stamps each chain as it catches up, with the other chain never started",
+    ~supervised=true,
     ~sources=[{chain: 1}, {chain: 137}],
     async (~t, ~indexer, ~source) => {
       let first = await indexer.restart(~chains=[ChainId.fromInt(1)], ())
