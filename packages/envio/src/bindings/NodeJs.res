@@ -176,6 +176,14 @@ module ChildProcess = {
   external onExit: (child, @as("exit") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
   @send external onChildError: (child, @as("error") _, exn => unit) => unit = "on"
   @send external kill: (child, string) => bool = "kill"
+
+  // Present only for a stdio slot the parent asked to pipe.
+  type stdioStream
+  @get external stdout: child => Null.t<stdioStream> = "stdout"
+  @get external stderr: child => Null.t<stdioStream> = "stderr"
+  @send external setEncoding: (stdioStream, string) => unit = "setEncoding"
+  @send external onData: (stdioStream, @as("data") _, string => unit) => unit = "on"
+  @send external onEnd: (stdioStream, @as("end") _, unit => unit) => unit = "on"
 }
 
 module Url = {

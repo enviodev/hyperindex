@@ -11,12 +11,14 @@ type fixtureReport = {
 
 let fixturePath = `${NodeJs.Process.cwd()}/test/helpers/fakeWorker.mjs`
 
-let forkFixture = (~chainIds, ~maxConnections=2, ~workerIndex=0) =>
+let forkFixture = (~chainIds, ~maxConnections=2, ~workerIndex=0, ~pipeOutput=false, ~onOutput=?) =>
   Supervisor.fork(
     {chainIds: chainIds->Array.map(ChainId.fromInt), maxConnections},
     ~workerIndex,
     ~configJson=JSON.Object(Dict.fromArray([("name", JSON.String("indexer"))])),
     ~entryPath=fixturePath,
+    ~pipeOutput,
+    ~onOutput?,
   )
 
 describe("Supervisor.fork", () => {
@@ -90,5 +92,50 @@ describe("Supervisor.awaitExit", () => {
       true,
       true,
     ))
+  })
+})
+
+describe("Supervisor.readLines", () => {
+  it("Holds a half line until the chunk that finishes it, or the stream ends", t => {
+    let lines = []
+    let (read, flush) = Supervisor.readLines(~onLine=line => lines->Array.push(line)->ignore)
+    ["a line\nand ", "half of ", "another\nlast\n", "no newline here"]->Array.forEach(read)
+    flush()
+    // Nothing is left to flush twice.
+    flush()
+
+    t.expect(lines).toStrictEqual([
+      "a line",
+      "and half of another",
+      "last",
+      "no newline here",
+    ])
+  })
+})
+
+describe("Supervisor.fork output", () => {
+  // A worker writing straight to the terminal tears the frame its supervisor
+  // draws: ink only knows about the lines its own process logs. Sorted, since
+  // stdout and stderr are two pipes and neither waits for the other.
+  Async.it("Hands the supervisor every line a worker writes, whole", async t => {
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "print")
+    let lines = []
+    let group: Supervisor.group = {
+      running: [
+        forkFixture(
+          ~chainIds=[1],
+          ~pipeOutput=true,
+          ~onOutput=line => lines->Array.push(line)->ignore,
+        ),
+      ],
+      stopping: false,
+    }
+    let _ = await group->Supervisor.awaitExit
+
+    t.expect(lines->Array.toSorted(String.compare)).toStrictEqual([
+      "first line",
+      "from stderr",
+      "second line",
+    ])
   })
 })

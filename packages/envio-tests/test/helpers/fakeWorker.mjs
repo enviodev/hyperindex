@@ -21,5 +21,14 @@ process.on("message", (message) => {
   }
 });
 
+// Writes across chunk boundaries the way a real process does: a pipe hands the
+// supervisor whatever has been flushed, not whole lines.
+if (mode === "print") {
+  process.stdout.write("first line\nsecond ");
+  process.stderr.write("from stderr\n");
+  process.stdout.write("line\n");
+  setTimeout(() => process.exit(0), 50);
+}
+
 // Nothing else keeps a "linger" worker alive; it waits to be stopped.
 if (mode === "linger") setInterval(() => {}, 1000);

@@ -97,6 +97,33 @@ let configForWorker = (configJson: JSON.t, ~worker) =>
   | None => JsError.throwWithMessage("Invalid indexer config: not an object")
   }
 
+// A pipe hands over whatever has been flushed, so a chunk boundary falls
+// wherever the OS put it: the tail of a chunk is a line only once the chunk
+// that ends it arrives. Reading pairs with a flush, since a process that dies
+// mid-line still wrote what it managed to — which is when it matters most.
+let readLines = (~onLine) => {
+  let pending = ref("")
+  let read = chunk => {
+    let parts = (pending.contents ++ chunk)->String.split("\n")
+    pending := parts->Array.pop->Option.getOr("")
+    parts->Array.forEach(onLine)
+  }
+  let flush = () =>
+    switch pending.contents {
+    | "" => ()
+    | line => {
+        pending := ""
+        onLine(line)
+      }
+    }
+  (read, flush)
+}
+
+// Whether this process's own output is a terminal. `pino-pretty` colorizes on
+// that test, and a piped worker would fail it for a run the operator is
+// watching in colour.
+@val external stdoutIsTty: Nullable.t<bool> = "process.stdout.isTTY"
+
 let fork = (
   worker: worker,
   ~workerIndex,
@@ -104,6 +131,10 @@ let fork = (
   // The entry this process was itself started from, so a worker is the same
   // program as its supervisor however the package was installed.
   ~entryPath=NodeJs.Process.argv->Array.getUnsafe(1),
+  // A run that draws a display reads its workers' output instead of letting
+  // them write to the terminal behind the frame's back.
+  ~pipeOutput=false,
+  ~onOutput=Console.log,
 ) => {
   let env = NodeJs.Process.process.env->Dict.copy
   env->Dict.set(Worker.envVar, "true")
@@ -111,6 +142,9 @@ let fork = (
   // loads, which is why it rides in the spawn environment rather than a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
   env->Dict.set("LOG_FILE", logFilePath(~workerIndex))
+  if pipeOutput && stdoutIsTty->Nullable.toOption->Option.getOr(false) {
+    env->Dict.set("FORCE_COLOR", "1")
+  }
 
   let child = NodeJs.ChildProcess.fork(
     entryPath,
@@ -118,12 +152,26 @@ let fork = (
     {
       env,
       serialization: "advanced",
-      // Workers write straight to the run's own output. Their lines already say
-      // which chain they came from, so there is nothing for the supervisor to
-      // add by reading them first.
-      stdio: ["inherit", "inherit", "inherit", "ipc"],
+      stdio: pipeOutput
+        ? ["inherit", "pipe", "pipe", "ipc"]
+        : ["inherit", "inherit", "inherit", "ipc"],
     },
   )
+  if pipeOutput {
+    // Both streams become one stream of lines: the supervisor logs them the way
+    // it logs its own, which is the only way ink can keep them out of its frame.
+    [child->NodeJs.ChildProcess.stdout, child->NodeJs.ChildProcess.stderr]->Array.forEach(stream =>
+      switch stream->Null.toOption {
+      | Some(stream) => {
+          let (read, flush) = readLines(~onLine=onOutput)
+          stream->NodeJs.ChildProcess.setEncoding("utf8")
+          stream->NodeJs.ChildProcess.onData(read)
+          stream->NodeJs.ChildProcess.onEnd(flush)
+        }
+      | None => ()
+      }
+    )
+  }
   child
   ->NodeJs.ChildProcess.send(Worker.Init({config: configJson->configForWorker(~worker)}))
   ->ignore
@@ -262,9 +310,12 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
 
   // The config as the CLI handed it over, narrowed per worker on the way out.
   let configJson = Config.getPublicConfigJson()
+  // Decided before the first fork: it is what makes a worker's output the
+  // supervisor's to print.
+  let shouldUseTui = Tui.shouldUse()
   let group = {
     running: workers->Array.mapWithIndex((worker, workerIndex) =>
-      worker->fork(~workerIndex, ~configJson)
+      worker->fork(~workerIndex, ~configJson, ~pipeOutput=shouldUseTui)
     ),
     stopping: false,
   }
@@ -299,7 +350,6 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config)),
   )
 
-  let shouldUseTui = Tui.shouldUse()
   if shouldUseTui {
     let _rerender = Tui.start(~config, ~getMetrics=() => reported()->merge)
   }
