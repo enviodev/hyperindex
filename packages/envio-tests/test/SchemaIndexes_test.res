@@ -38,7 +38,7 @@ contracts:
       - event: "TestEvent()"
 `
 
-let scenario = Scenario.make(
+let scenario = Scenario.make(~supervised=false, 
   ~configYaml=`
 name: schema-indexes${contractsYaml}chains:${chainYaml(
       1337,
@@ -50,7 +50,7 @@ name: schema-indexes${contractsYaml}chains:${chainYaml(
 // An `end_block` the chain never reaches: the indexer still counts itself caught
 // up once progress sits at the head, so the deferred indexes are owed then, not
 // at the unreachable end block.
-let unreachableEndBlockScenario = Scenario.make(
+let unreachableEndBlockScenario = Scenario.make(~supervised=false, 
   ~configYaml=`
 name: schema-indexes-unreachable-end${contractsYaml}chains:
   - id: 1337
@@ -68,7 +68,7 @@ name: schema-indexes-unreachable-end${contractsYaml}chains:
 
 // A `start_block` past the head: the chain is at its head from the first moment
 // and never has a batch to process, so nothing ever writes its progress row.
-let aheadOfHeadScenario = Scenario.make(
+let aheadOfHeadScenario = Scenario.make(~supervised=false, 
   ~configYaml=`
 name: schema-indexes-ahead-of-head${contractsYaml}chains:
   - id: 1337
@@ -83,7 +83,7 @@ name: schema-indexes-ahead-of-head${contractsYaml}chains:
   ~schema,
 )
 
-let multichainScenario = Scenario.make(
+let multichainScenario = Scenario.make(~supervised=false, 
   ~configYaml=`
 name: schema-indexes-multichain${contractsYaml}chains:${chainYaml(
       100,
@@ -394,7 +394,10 @@ describe("Deferred schema indexes", () => {
       },
     },
     async (~t, ~indexer, ~source) => {
-      let finalizeCalls = multichainFinalizeCalls
+      // Counted from where this pass began: a multichain scenario runs a second
+      // time behind the barrier, over the same counter.
+      let before = multichainFinalizeCalls.contents
+      let finalizeCalls = () => multichainFinalizeCalls.contents - before
       let chainA = source(100)
       let chainB = source(1337)
       let {sql, pgSchema} = indexer.pg
@@ -409,7 +412,7 @@ describe("Deferred schema indexes", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (finalizeCalls.contents, await readyAtByChainId(~sql, ~pgSchema)),
+        (finalizeCalls(), await readyAtByChainId(~sql, ~pgSchema)),
         ~message="Chain A is at its head, but chain B is still backfilling",
       ).toEqual((0, [(ChainId.fromInt(100), false), (ChainId.fromInt(1337), false)]))
 
@@ -421,7 +424,7 @@ describe("Deferred schema indexes", () => {
       let times = readyAtTimes->Array.map(((_, readyAt)) => readyAt)
       t.expect(
         (
-          finalizeCalls.contents,
+          finalizeCalls(),
           readyAtTimes->Array.map(((id, _)) => id),
           times->Array.every(Option.isSome),
           times->Array.get(0) == times->Array.get(1),

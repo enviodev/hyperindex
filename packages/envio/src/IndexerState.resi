@@ -16,6 +16,7 @@ let make: (
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
+  ~holdRealtime: bool=?,
   ~committedFrontier: Frontier.t=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
@@ -34,6 +35,7 @@ let makeFromDbState: (
   ~exitAfterFirstEventBlock: bool=?,
   ~reducedPollingInterval: int=?,
   ~targetBufferSize: int=?,
+  ~holdRealtime: bool=?,
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
 ) => t
@@ -93,6 +95,14 @@ let shouldSaveHistory: t => dict<bool>
 let isRealtime: t => bool
 let isFinalizingIndexes: t => bool
 let markCaughtUpIfSettled: t => unit
+let isReadyToEnterReorgThreshold: (t, ~batch: Batch.t) => bool
+let shouldFinalizeIndexes: t => bool
+// Wires the loop's way back in. IndexerLoop calls this as it starts.
+let bindScheduleProcessing: (t, unit => unit) => unit
+let isHoldingRealtime: t => bool
+let hasArrivedAtHead: t => bool
+// The supervisor's go-ahead for a process driving part of a split run.
+let releaseRealtime: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit
 let rollbackState: t => rollbackState
 let indexerStartTime: t => Date.t

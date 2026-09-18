@@ -35,7 +35,7 @@ let chainYaml = chainId =>
 
 // One cross-chain entity is what makes the checkpoint sequence shared, and what
 // makes a reorg on either chain roll both of them back.
-let scenario = Scenario.make(
+let scenario = Scenario.make(~supervised=false, 
   ~schema=`
 type Counter {
   id: ID!

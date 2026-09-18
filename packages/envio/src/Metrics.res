@@ -129,6 +129,9 @@ type t = {
   elapsedSeconds: float,
   targetBufferSize: int,
   isInReorgThreshold: bool,
+  // This process has got as far as it can without the run's leave. What a
+  // supervisor reads to decide that a split run may go realtime as one.
+  hasArrivedAtHead: bool,
   rollbackEnabled: bool,
   maxBatchSize: int,
   preloadSeconds: float,
@@ -147,6 +150,110 @@ type t = {
   sourceRequests: array<sourceRequestMetrics>,
   sourceHeights: array<sourceHeightMetrics>,
   sourceHeightStreams: array<sourceHeightStreamMetrics>,
+}
+
+// Folds items that share a key into one, keeping first-seen order so the
+// rendered series doesn't reshuffle between scrapes.
+let sumByKey = (items: array<'item>, ~key: 'item => string, ~add: ('item, 'item) => 'item) => {
+  let byKey = Dict.make()
+  let order = []
+  items->Array.forEach(item => {
+    let k = item->key
+    switch byKey->Utils.Dict.dangerouslyGetNonOption(k) {
+    | Some(existing) => byKey->Dict.set(k, add(existing, item))
+    | None => {
+        byKey->Dict.set(k, item)
+        order->Array.push(k)
+      }
+    }
+  })
+  order->Array.map(k => byKey->Dict.getUnsafe(k))
+}
+
+// Combines the snapshots a supervised run's workers reported into the one an
+// unsplit run would have produced. Series keyed by chain concatenate, since a
+// chain belongs to exactly one worker; series keyed by name are summed, since
+// every worker runs the same handlers and effects over its own chains. The
+// clock is the caller's: it belongs to the group, not to any worker.
+let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds) => {
+  let concat = select => snapshots->Array.flatMap(select)
+  let sumInt = select => snapshots->Array.reduce(0, (acc, snapshot) => acc + snapshot->select)
+  let sumFloat = select => snapshots->Array.reduce(0., (acc, snapshot) => acc +. snapshot->select)
+
+  {
+    startTime,
+    metricTime,
+    elapsedSeconds,
+    targetBufferSize: sumInt(s => s.targetBufferSize),
+    isInReorgThreshold: snapshots->Array.some(s => s.isInReorgThreshold),
+    // The run has arrived only once every process has: one still backfilling
+    // speaks for the whole indexer.
+    hasArrivedAtHead: snapshots->Utils.Array.notEmpty &&
+      snapshots->Array.every(s => s.hasArrivedAtHead),
+    rollbackEnabled: snapshots->Array.some(s => s.rollbackEnabled),
+    maxBatchSize: snapshots->Array.reduce(0, (acc, s) => Pervasives.max(acc, s.maxBatchSize)),
+    preloadSeconds: sumFloat(s => s.preloadSeconds),
+    processingSeconds: sumFloat(s => s.processingSeconds),
+    processingStalledOnFetchSeconds: sumFloat(s => s.processingStalledOnFetchSeconds),
+    processingStalledOnStorageWriteSeconds: sumFloat(s => s.processingStalledOnStorageWriteSeconds),
+    rollbackSeconds: sumFloat(s => s.rollbackSeconds),
+    rollbackCount: sumInt(s => s.rollbackCount),
+    rollbackEventsCount: sumFloat(s => s.rollbackEventsCount),
+    chains: concat(s => s.chains),
+    sourceRequests: concat(s => s.sourceRequests),
+    sourceHeights: concat(s => s.sourceHeights),
+    sourceHeightStreams: concat(s => s.sourceHeightStreams),
+    handlers: concat(s => s.handlers)->sumByKey(
+      ~key=h => `${h.contract}.${h.event}`,
+      ~add=(a, b) => {
+        ...a,
+        processingSeconds: a.processingSeconds +. b.processingSeconds,
+        processingCount: a.processingCount +. b.processingCount,
+        preloadSeconds: a.preloadSeconds +. b.preloadSeconds,
+        preloadCount: a.preloadCount +. b.preloadCount,
+        preloadSecondsTotal: a.preloadSecondsTotal +. b.preloadSecondsTotal,
+      },
+    ),
+    effects: concat(s => s.effects)->sumByKey(
+      ~key=e => `${e.effect}.${e.scope}`,
+      ~add=(a, b) => {
+        ...a,
+        callSeconds: a.callSeconds +. b.callSeconds,
+        callSecondsTotal: a.callSecondsTotal +. b.callSecondsTotal,
+        callCount: a.callCount +. b.callCount,
+        activeCallsCount: a.activeCallsCount + b.activeCallsCount,
+        queueCount: a.queueCount + b.queueCount,
+        queueWaitSeconds: a.queueWaitSeconds +. b.queueWaitSeconds,
+        invalidationsCount: a.invalidationsCount +. b.invalidationsCount,
+        // An effect's cache rows are per chain, so worker counts are disjoint.
+        // Absent unless some worker persists the cache at all.
+        cacheCount: switch (a.cacheCount, b.cacheCount) {
+        | (Some(x), Some(y)) => Some(x + y)
+        | (Some(x), None) => Some(x)
+        | (None, y) => y
+        },
+      },
+    ),
+    storageLoads: concat(s => s.storageLoads)->sumByKey(
+      ~key=l => `${l.storage}.${l.operation}`,
+      ~add=(a, b) => {
+        ...a,
+        seconds: a.seconds +. b.seconds,
+        secondsTotal: a.secondsTotal +. b.secondsTotal,
+        count: a.count +. b.count,
+        whereSize: a.whereSize +. b.whereSize,
+        size: a.size +. b.size,
+      },
+    ),
+    storageWrites: concat(s => s.storageWrites)->sumByKey(
+      ~key=w => w.storage,
+      ~add=(a, b) => {...a, seconds: a.seconds +. b.seconds, count: a.count + b.count},
+    ),
+    historyPrunes: concat(s => s.historyPrunes)->sumByKey(
+      ~key=p => p.entity,
+      ~add=(a, b) => {...a, seconds: a.seconds +. b.seconds, count: a.count + b.count},
+    ),
+  }
 }
 
 // Prometheus floats keep at most 3 decimals; integral values render without a
@@ -912,199 +1019,253 @@ let getRuntimeCollectors = () =>
 // from the beginning of the run, not from the first scrape.
 let startRuntimeCollectors = () => getRuntimeCollectors()->ignore
 
-let collectRuntime = () => {
-  let b = {out: ""}
+type runtimeGc = {kind: string, count: float, seconds: float}
+type runtimeHeapSpace = {space: string, size: float, used: float, available: float}
+
+// One process's runtime readings at one moment. Plain numbers, so a worker can
+// hand its sample to the supervisor over the fork's channel and the supervisor
+// can render every process's under one label set.
+type runtimeSample = {
+  cpuUserSeconds: float,
+  cpuSystemSeconds: float,
+  processStartTimeSeconds: float,
+  residentMemoryBytes: float,
+  heapTotalBytes: float,
+  heapUsedBytes: float,
+  externalMemoryBytes: float,
+  eventLoopUtilization: float,
+  eventLoopLagMeanSeconds: float,
+  eventLoopLagMinSeconds: float,
+  eventLoopLagMaxSeconds: float,
+  eventLoopLagStddevSeconds: float,
+  eventLoopLagP50Seconds: float,
+  eventLoopLagP90Seconds: float,
+  eventLoopLagP99Seconds: float,
+  heapSpaces: array<runtimeHeapSpace>,
+  activeResources: array<(string, float)>,
+  gc: array<runtimeGc>,
+  nodeVersion: string,
+}
+
+let sampleRuntime = (): runtimeSample => {
   let memory = NodeJs.Process.memoryUsage()
   let cpu = NodeJs.Process.cpuUsage()
   let elu = NodeJs.PerfHooks.performance->NodeJs.PerfHooks.eventLoopUtilization
   let {eventLoopDelay, gcStats, processStartTimeSeconds} = getRuntimeCollectors()
-  b->single(
-    ~name="process_cpu_user_seconds_total",
-    ~help="Total user CPU time spent in seconds.",
-    ~kind="counter",
-    ~value=cpu.user /. 1_000_000.,
-  )
-  b->single(
-    ~name="process_cpu_system_seconds_total",
-    ~help="Total system CPU time spent in seconds.",
-    ~kind="counter",
-    ~value=cpu.system /. 1_000_000.,
-  )
-  b->single(
-    ~name="process_cpu_seconds_total",
-    ~help="Total user and system CPU time spent in seconds.",
-    ~kind="counter",
-    ~value=(cpu.user +. cpu.system) /. 1_000_000.,
-  )
-  b->single(
-    ~name="process_start_time_seconds",
-    ~help="Start time of the process since unix epoch in seconds.",
-    ~kind="gauge",
-    ~value=processStartTimeSeconds,
-  )
-  b->single(
-    ~name="process_resident_memory_bytes",
-    ~help="Resident memory size in bytes.",
-    ~kind="gauge",
-    ~value=memory.rss,
-  )
-  b->single(
-    ~name="nodejs_heap_size_total_bytes",
-    ~help="Process heap size from Node.js in bytes.",
-    ~kind="gauge",
-    ~value=memory.heapTotal,
-  )
-  b->single(
-    ~name="nodejs_heap_size_used_bytes",
-    ~help="Process heap size used from Node.js in bytes.",
-    ~kind="gauge",
-    ~value=memory.heapUsed,
-  )
-  b->single(
-    ~name="nodejs_external_memory_bytes",
-    ~help="Node.js external memory size in bytes.",
-    ~kind="gauge",
-    ~value=memory.external_,
-  )
-  b->single(
-    ~name="nodejs_eventloop_utilization",
-    ~help="Ratio of time the event loop is active, since process start.",
-    ~kind="gauge",
-    ~value=elu.utilization,
-  )
-  // Nanoseconds in the histogram; reset after rendering so each scrape reports
+  // Nanoseconds in the histogram; reset after sampling so each scrape reports
   // the delay distribution since the previous one, matching prom-client. With
   // no samples yet (e.g. the first scrape, which starts the sampler) the
-  // histogram reports NaN means and a sentinel min — render 0 instead.
+  // histogram reports NaN means and a sentinel min — report 0 instead.
   let hasLagSamples = eventLoopDelay.max > 0.
   let nsToSeconds = ns => hasLagSamples && !(ns->Float.isNaN) ? ns /. 1_000_000_000. : 0.
-  b->single(
+  let sample = {
+    cpuUserSeconds: cpu.user /. 1_000_000.,
+    cpuSystemSeconds: cpu.system /. 1_000_000.,
+    processStartTimeSeconds,
+    residentMemoryBytes: memory.rss,
+    heapTotalBytes: memory.heapTotal,
+    heapUsedBytes: memory.heapUsed,
+    externalMemoryBytes: memory.external_,
+    eventLoopUtilization: elu.utilization,
+    eventLoopLagMeanSeconds: eventLoopDelay.mean->nsToSeconds,
+    eventLoopLagMinSeconds: eventLoopDelay.min->nsToSeconds,
+    eventLoopLagMaxSeconds: eventLoopDelay.max->nsToSeconds,
+    eventLoopLagStddevSeconds: eventLoopDelay.stddev->nsToSeconds,
+    eventLoopLagP50Seconds: eventLoopDelay->NodeJs.PerfHooks.percentile(50)->nsToSeconds,
+    eventLoopLagP90Seconds: eventLoopDelay->NodeJs.PerfHooks.percentile(90)->nsToSeconds,
+    eventLoopLagP99Seconds: eventLoopDelay->NodeJs.PerfHooks.percentile(99)->nsToSeconds,
+    heapSpaces: NodeJs.V8.getHeapSpaceStatistics()->Array.map(s => {
+      space: s.spaceName->String.replace("_space", ""),
+      size: s.spaceSize,
+      used: s.spaceUsedSize,
+      available: s.spaceAvailableSize,
+    }),
+    activeResources: {
+      let byType = Dict.make()
+      NodeJs.Process.getActiveResourcesInfo()->Array.forEach(resource =>
+        byType->Dict.set(
+          resource,
+          byType->Utils.Dict.dangerouslyGetNonOption(resource)->Option.getOr(0.) +. 1.,
+        )
+      )
+      byType->Dict.toArray
+    },
+    gc: gcStats
+    ->Dict.toArray
+    ->Array.map(((kind, stat)) => {kind, count: stat.count, seconds: stat.seconds}),
+    nodeVersion: NodeJs.Process.version,
+  }
+  eventLoopDelay->NodeJs.PerfHooks.reset
+  sample
+}
+
+// Renders every sample under `scope`, the labels telling one process's readings
+// from another's (`worker="0"`), or "" for a run that is one process.
+let renderRuntime = (samples: array<(string, runtimeSample)>) => {
+  let b = {out: ""}
+  let labels = (scope, own) =>
+    switch (scope, own) {
+    | ("", "") => ""
+    | ("", own) | (own, "") => `{${own}}`
+    | (scope, own) => `{${scope},${own}}`
+    }
+  let scoped = samples->Array.map(((scope, sample)) => (labels(scope, ""), sample))
+  let each = select =>
+    samples->Array.flatMap(((scope, sample)) =>
+      select(sample)->Array.map(((own, value)) => (labels(scope, own), value))
+    )
+  let gauge = (~name, ~help, ~value) =>
+    b->series(~name, ~help, ~kind="gauge", ~entries=scoped, ~value)
+  let counter = (~name, ~help, ~value) =>
+    b->series(~name, ~help, ~kind="counter", ~entries=scoped, ~value)
+
+  counter(
+    ~name="process_cpu_user_seconds_total",
+    ~help="Total user CPU time spent in seconds.",
+    ~value=s => s.cpuUserSeconds,
+  )
+  counter(
+    ~name="process_cpu_system_seconds_total",
+    ~help="Total system CPU time spent in seconds.",
+    ~value=s => s.cpuSystemSeconds,
+  )
+  counter(
+    ~name="process_cpu_seconds_total",
+    ~help="Total user and system CPU time spent in seconds.",
+    ~value=s => s.cpuUserSeconds +. s.cpuSystemSeconds,
+  )
+  gauge(
+    ~name="process_start_time_seconds",
+    ~help="Start time of the process since unix epoch in seconds.",
+    ~value=s => s.processStartTimeSeconds,
+  )
+  gauge(~name="process_resident_memory_bytes", ~help="Resident memory size in bytes.", ~value=s =>
+    s.residentMemoryBytes
+  )
+  gauge(
+    ~name="nodejs_heap_size_total_bytes",
+    ~help="Process heap size from Node.js in bytes.",
+    ~value=s => s.heapTotalBytes,
+  )
+  gauge(
+    ~name="nodejs_heap_size_used_bytes",
+    ~help="Process heap size used from Node.js in bytes.",
+    ~value=s => s.heapUsedBytes,
+  )
+  gauge(
+    ~name="nodejs_external_memory_bytes",
+    ~help="Node.js external memory size in bytes.",
+    ~value=s => s.externalMemoryBytes,
+  )
+  gauge(
+    ~name="nodejs_eventloop_utilization",
+    ~help="Ratio of time the event loop is active, since process start.",
+    ~value=s => s.eventLoopUtilization,
+  )
+  gauge(
     ~name="nodejs_eventloop_lag_mean_seconds",
     ~help="The mean of the recorded event loop delays.",
-    ~kind="gauge",
-    ~value=eventLoopDelay.mean->nsToSeconds,
+    ~value=s => s.eventLoopLagMeanSeconds,
   )
-  b->single(
+  gauge(
     ~name="nodejs_eventloop_lag_min_seconds",
     ~help="The minimum recorded event loop delay.",
-    ~kind="gauge",
-    ~value=eventLoopDelay.min->nsToSeconds,
+    ~value=s => s.eventLoopLagMinSeconds,
   )
-  b->single(
+  gauge(
     ~name="nodejs_eventloop_lag_max_seconds",
     ~help="The maximum recorded event loop delay.",
-    ~kind="gauge",
-    ~value=eventLoopDelay.max->nsToSeconds,
+    ~value=s => s.eventLoopLagMaxSeconds,
   )
-  b->single(
+  gauge(
     ~name="nodejs_eventloop_lag_stddev_seconds",
     ~help="The standard deviation of the recorded event loop delays.",
-    ~kind="gauge",
-    ~value=eventLoopDelay.stddev->nsToSeconds,
+    ~value=s => s.eventLoopLagStddevSeconds,
   )
-  b->single(
+  gauge(
     ~name="nodejs_eventloop_lag_p50_seconds",
     ~help="The 50th percentile of the recorded event loop delays.",
-    ~kind="gauge",
-    ~value=eventLoopDelay->NodeJs.PerfHooks.percentile(50)->nsToSeconds,
+    ~value=s => s.eventLoopLagP50Seconds,
   )
-  b->single(
+  gauge(
     ~name="nodejs_eventloop_lag_p90_seconds",
     ~help="The 90th percentile of the recorded event loop delays.",
-    ~kind="gauge",
-    ~value=eventLoopDelay->NodeJs.PerfHooks.percentile(90)->nsToSeconds,
+    ~value=s => s.eventLoopLagP90Seconds,
   )
-  b->single(
+  gauge(
     ~name="nodejs_eventloop_lag_p99_seconds",
     ~help="The 99th percentile of the recorded event loop delays.",
-    ~kind="gauge",
-    ~value=eventLoopDelay->NodeJs.PerfHooks.percentile(99)->nsToSeconds,
+    ~value=s => s.eventLoopLagP99Seconds,
   )
-  eventLoopDelay->NodeJs.PerfHooks.reset
-  let heapSpaces =
-    NodeJs.V8.getHeapSpaceStatistics()->Array.map(s => (
-      `{space="${s.spaceName->String.replace("_space", "")}"}`,
-      s,
-    ))
+
+  let heapSpaces = each(s => s.heapSpaces->Array.map(h => (`space="${h.space}"`, h)))
   b->series(
     ~name="nodejs_heap_space_size_total_bytes",
     ~help="Process heap space size total from Node.js in bytes.",
     ~kind="gauge",
     ~entries=heapSpaces,
-    ~value=s => s.spaceSize,
+    ~value=h => h.size,
   )
   b->series(
     ~name="nodejs_heap_space_size_used_bytes",
     ~help="Process heap space size used from Node.js in bytes.",
     ~kind="gauge",
     ~entries=heapSpaces,
-    ~value=s => s.spaceUsedSize,
+    ~value=h => h.used,
   )
   b->series(
     ~name="nodejs_heap_space_size_available_bytes",
     ~help="Process heap space size available from Node.js in bytes.",
     ~kind="gauge",
     ~entries=heapSpaces,
-    ~value=s => s.spaceAvailableSize,
+    ~value=h => h.available,
   )
-  let activeResources = {
-    let byType = Dict.make()
-    NodeJs.Process.getActiveResourcesInfo()->Array.forEach(resource => {
-      let label = `{type="${resource->escapeLabelValue}"}`
-      byType->Dict.set(
-        label,
-        byType->Utils.Dict.dangerouslyGetNonOption(label)->Option.getOr(0.) +. 1.,
-      )
-    })
-    byType->Dict.toArray
-  }
+
   b->series(
     ~name="nodejs_active_resources",
     ~help="Number of active resources that are currently keeping the event loop alive, grouped by async resource type.",
     ~kind="gauge",
-    ~entries=activeResources,
+    ~entries=each(s =>
+      s.activeResources->Array.map(
+        ((resource, count)) => (`type="${resource->escapeLabelValue}"`, count),
+      )
+    ),
     ~value=count => count,
   )
-  b->single(
+  gauge(
     ~name="nodejs_active_resources_total",
     ~help="Total number of active resources.",
-    ~kind="gauge",
-    ~value=activeResources->Array.reduce(0., (acc, (_, count)) => acc +. count),
+    ~value=s => s.activeResources->Array.reduce(0., (acc, (_, count)) => acc +. count),
   )
-  let gcEntries = []
-  gcStats->Utils.Dict.forEachWithKey((stat, kind) =>
-    gcEntries->Array.push((`{kind="${kind}"}`, stat))
-  )
+
+  let gc = each(s => s.gc->Array.map(g => (`kind="${g.kind}"`, g)))
   b->series(
     ~name="nodejs_gc_duration_seconds_sum",
     ~help="Cumulative garbage collection pause time by kind, one of major, minor, incremental or weakcb.",
     ~kind="counter",
-    ~entries=gcEntries,
-    ~value=s => s.seconds,
+    ~entries=gc,
+    ~value=g => g.seconds,
   )
   b->series(
     ~name="nodejs_gc_duration_seconds_count",
     ~help="Number of garbage collection pauses by kind, one of major, minor, incremental or weakcb.",
     ~kind="counter",
-    ~entries=gcEntries,
-    ~value=s => s.count,
+    ~entries=gc,
+    ~value=g => g.count,
   )
-  let version = NodeJs.Process.version
-  let versionParts = version->String.replace("v", "")->String.split(".")
-  let versionPart = i => versionParts->Array.get(i)->Option.getOr("0")
+
   b->series(
     ~name="nodejs_version_info",
     ~help="Node.js version info.",
     ~kind="gauge",
-    ~entries=[
-      (
-        `{version="${version}",major="${versionPart(0)}",minor="${versionPart(
-            1,
-          )}",patch="${versionPart(2)}"}`,
-        (),
-      ),
-    ],
+    ~entries=each(s => {
+      let parts = s.nodeVersion->String.replace("v", "")->String.split(".")
+      let part = i => parts->Array.get(i)->Option.getOr("0")
+      [(`version="${s.nodeVersion}",major="${part(0)}",minor="${part(1)}",patch="${part(2)}"`, ())]
+    }),
     ~value=() => 1.,
   )
   b.out ++ "\n"
 }
+
+let collectRuntime = () => renderRuntime([("", sampleRuntime())])

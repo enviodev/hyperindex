@@ -262,7 +262,6 @@ and applyQueryResponse = (
   ~transactionStore,
 ) => {
   let chainState = state->IndexerState.getChainState(~chainId)
-  let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
 
   chainState->ChainState.handleQueryResult(
     ~query,
@@ -280,15 +279,30 @@ and applyQueryResponse = (
     )
   }
 
-  // Log the backfill→head transition once: this response brought the fetch
-  // frontier to the head. Gated on !isReady so realtime re-catch-ups (a new
-  // block arrives, gets fetched) don't spam the log after the chain is synced.
-  if (
-    !wasFetchingAtHead &&
-    !(chainState->ChainState.isReady) &&
-    chainState->ChainState.isFetchingAtHead
-  ) {
-    chainState->ChainState.logger->Logging.childInfo("All events have been fetched")
+  // Report the milestone this response brought the fetch frontier to, once.
+  // The chain reaches it again every time the head moves and it catches up, so
+  // what keeps the line off the log is the chain having already reported it,
+  // not the transition — which re-arms on every advance.
+  switch chainState->ChainState.isFetchingAtHead
+    ? chainState->ChainState.takeFetchedTo
+    : None {
+  | None => ()
+  | Some((target, block)) =>
+    // What the chain is waiting on, which is not itself. A held process is
+    // waiting on chains it doesn't drive, so it says so even when it drives
+    // only one — how the run is split is not the reader's problem.
+    let waitingOn = if (
+      state->IndexerState.isHoldingRealtime ||
+        state->IndexerState.chainStates->Dict.keysToArray->Array.length > 1
+    ) {
+      " Waiting for other chains."
+    } else {
+      ""
+    }
+    chainState->ChainState.logger->Logging.childInfo({
+      "msg": `Fetched to ${target}.${waitingOn}`,
+      "block": block,
+    })
   }
 }
 

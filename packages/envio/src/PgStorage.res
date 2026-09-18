@@ -1,4 +1,4 @@
-let makeClient = () => {
+let makeClient = (~maxConnections=Env.Db.maxConnections) => {
   Postgres.makeSql(
     ~config={
       host: Env.Db.host,
@@ -14,7 +14,7 @@ let makeClient = () => {
           : Some(_str => ())
       ),
       transform: {undefined: Null},
-      max: Env.Db.maxConnections,
+      max: maxConnections,
       // debug: (~connection, ~query, ~params as _, ~types as _) => Js.log2(connection, query),
     },
   )
@@ -2264,13 +2264,17 @@ let make = (
     }
 
     switch missing {
-    | [] =>
+    // A schema that declares no indexes has nothing to say about them, and one
+    // whose indexes are all in place says it once. Either way the line that
+    // matters is the indexer reporting itself ready, which finalization logs.
+    | [] if schemaIndexes->Utils.Array.notEmpty =>
       Logging.info({
         "storage": storageName,
         "msg": `All ${schemaIndexes
           ->Array.length
           ->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
       })
+    | [] => ()
     | _ =>
       Logging.info({
         "storage": storageName,
@@ -2318,12 +2322,16 @@ let make = (
       }
     })
 
-    Logging.info({
-      "storage": storageName,
-      "msg": `Committed ${missing
-        ->Array.length
-        ->Int.toString} schema indexes and the ready timestamp in ${timeRef->formatSeconds}s.`,
-    })
+    // Only when something was built: the wait this closes is the index build,
+    // and the stamp on its own is not one anybody waited through.
+    if missing->Utils.Array.notEmpty {
+      Logging.info({
+        "storage": storageName,
+        "msg": `Committed ${missing
+          ->Array.length
+          ->Int.toString} schema indexes and the ready timestamp in ${timeRef->formatSeconds}s.`,
+      })
+    }
   }
 
   let setOrThrow = (

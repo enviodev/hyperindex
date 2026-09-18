@@ -50,7 +50,7 @@ indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async () => {});
 `
 
 let makeScenario = (~name, ~chains, ~extra="") =>
-  Scenario.make(
+  Scenario.make(~supervised=false, 
     ~configYaml=`
 name: ${name}
 rollback_on_reorg: true${extra}${contractsYaml}chains:${chains}`,

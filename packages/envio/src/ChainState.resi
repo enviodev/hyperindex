@@ -120,9 +120,11 @@ let dispatch: (
 let toMetrics: t => Metrics.chainMetrics
 let toChainMetadata: t => InternalTable.Chains.metaFields
 let toChainBeforeBatch: (t, ~isRealtime: bool) => Batch.chainBeforeBatch
+let isReadyToEnterReorgThreshold: t => bool
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
+let takeFetchedTo: t => option<(string, int)>
 let hasProcessedToEndblock: t => bool
 let isDurablyCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int

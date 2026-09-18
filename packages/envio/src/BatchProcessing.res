@@ -76,11 +76,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
   let isBelowReorgThreshold =
     !isInReorgThresholdBeforeUpdate && (state->IndexerState.config).shouldRollbackOnReorg
   let shouldEnterReorgThreshold =
-    isBelowReorgThreshold &&
-    state
-    ->IndexerState.chainStates
-    ->Dict.valuesToArray
-    ->Array.every(cs => cs->ChainState.isReadyToEnterReorgThresholdAfterBatch(~batch))
+    isBelowReorgThreshold && state->IndexerState.isReadyToEnterReorgThreshold(~batch)
 
   if shouldEnterReorgThreshold {
     IndexerState.enterReorgThreshold(state)
@@ -95,7 +91,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     // finalizing resumes exactly here: it still owes the schema its deferred
     // indexes, and no batch will ever come along to notice.
     state->IndexerState.markCaughtUpIfSettled
-    if state->IndexerState.isFinalizingIndexes {
+    if state->IndexerState.shouldFinalizeIndexes {
       await FinalizeBackfill.run(state)
     }
 
@@ -111,7 +107,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     // When resuming from persisted state, all events may already be processed.
     if EventProcessing.allChainsEventsProcessedToEndblock(state->IndexerState.chainStates) {
       Logging.info("All chains are caught up to end blocks.")
-      if !(state->IndexerState.keepProcessAlive) {
+      if !(state->IndexerState.keepProcessAlive) && !(state->IndexerState.isHoldingRealtime) {
         await ExitOnCaughtUp.run(state)
       }
     }
@@ -166,7 +162,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         // Backfilling → FinalizingIndexes → Ready. Awaiting here holds the
         // processing loop for the whole finalize, which is what pauses
         // processing while the indexes are built.
-        if state->IndexerState.isFinalizingIndexes {
+        if state->IndexerState.shouldFinalizeIndexes {
           await FinalizeBackfill.run(state)
         }
 
@@ -186,7 +182,11 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
           Logging.info("All chains are caught up to end blocks.")
         }
 
-        if allCaughtUp && !(state->IndexerState.keepProcessAlive) {
+        if (
+          allCaughtUp &&
+          !(state->IndexerState.keepProcessAlive) &&
+          !(state->IndexerState.isHoldingRealtime)
+        ) {
           await ExitOnCaughtUp.run(state)
         } else if (
           // In auto-exit mode, error if all chains reached head with no events found

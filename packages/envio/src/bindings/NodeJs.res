@@ -64,6 +64,21 @@ module Process = {
   @module("process") external version: string = "version"
   @module("process")
   external getActiveResourcesInfo: unit => array<string> = "getActiveResourcesInfo"
+
+  // Only a process forked with an IPC channel has these. Called through
+  // `process` rather than off a namespace import, which would drop the
+  // receiver Node's own implementations read.
+  @val @scope("process") external sendToParent: 'msg => bool = "send"
+  @val @scope("process")
+  external onMessage: (@as("message") _, 'msg => unit) => unit = "on"
+  @val @scope("process") external onSignal: (string, unit => unit) => unit = "on"
+  // Present only in a process forked with an IPC channel.
+  @val @scope("process") external channel: Nullable.t<unknown> = "channel"
+  @val @scope("process")
+  external onDisconnect: (@as("disconnect") _, unit => unit) => unit = "on"
+  @val @scope("process") external argv: array<string> = "argv"
+  @val @scope("process")
+  external emitMessage: (@as("message") _, 'msg) => bool = "emit"
 }
 
 module Buffer = {
@@ -141,6 +156,32 @@ module ChildProcess = {
 
   @module("child_process")
   external execWithOptions: (string, execOptions, callback) => unit = "exec"
+
+  type child
+  type forkOptions = {
+    cwd?: string,
+    env?: dict<string>,
+    // "advanced" uses the structured clone algorithm, so a message keeps the
+    // Date values a metrics snapshot carries instead of stringifying them.
+    serialization?: string,
+    stdio?: array<string>,
+  }
+  @module("child_process")
+  external fork: (string, array<string>, forkOptions) => child = "fork"
+  @send external send: (child, 'msg) => bool = "send"
+  @send external onMessage: (child, @as("message") _, 'msg => unit) => unit = "on"
+  @send
+  external onExit: (child, @as("exit") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
+  @send external onChildError: (child, @as("error") _, exn => unit) => unit = "on"
+  @send external kill: (child, string) => bool = "kill"
+
+  // Present only for a stdio slot the parent asked to pipe.
+  type stdioStream
+  @get external stdout: child => Null.t<stdioStream> = "stdout"
+  @get external stderr: child => Null.t<stdioStream> = "stderr"
+  @send external setEncoding: (stdioStream, string) => unit = "setEncoding"
+  @send external onData: (stdioStream, @as("data") _, string => unit) => unit = "on"
+  @send external onEnd: (stdioStream, @as("end") _, unit => unit) => unit = "on"
 }
 
 module Url = {

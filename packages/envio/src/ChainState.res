@@ -58,6 +58,9 @@ type t = {
   mutable blockRangeFetchCount: float,
   mutable blockRangeFetchedEvents: float,
   mutable blockRangeFetchedBlocks: float,
+  // What this chain last reported reaching. The head moves, so a chain reaches
+  // it again on every catch-up; only a new milestone is worth a line.
+  mutable reportedFetchedTo: option<string>,
   mutable reorgCount: int,
   mutable reorgDetectedBlock: option<int>,
   mutable rollbackTargetBlock: option<int>,
@@ -171,6 +174,7 @@ let make = (
     blockRangeFetchCount: 0.,
     blockRangeFetchedEvents: 0.,
     blockRangeFetchedBlocks: 0.,
+    reportedFetchedTo: None,
     reorgCount: 0,
     reorgDetectedBlock: None,
     rollbackTargetBlock: None,
@@ -642,6 +646,37 @@ let dispatch = (
 
 // --- Derived (pure). ---
 
+%%private(
+  // Where the fetch frontier has just landed. Below the reorg threshold a chain
+  // can only fetch the finalized range, so reaching the end of it is not
+  // reaching the head — the rest opens up once the indexer enters the threshold.
+  let fetchedTo = (cs: t) =>
+  switch cs.fetchState.endBlock {
+  | Some(endBlock) if endBlock <= cs.fetchState.knownHeight - cs.fetchState.blockLag => (
+      "the end block",
+      endBlock,
+    )
+  | _ =>
+    cs.isInReorgThreshold
+      ? ("the chain head", cs.fetchState.knownHeight)
+      : ("the safe block", cs.fetchState.knownHeight - cs.fetchState.blockLag)
+  }
+)
+
+// What this chain has just reached, the first time it reaches it. `None` once
+// it has been reported: a chain catches up to a moving head over and over, and
+// the milestone is the same one every time. A new one — the head past the
+// threshold, an end block — is a line of its own.
+let takeFetchedTo = (cs: t) => {
+  let (target, block) = cs->fetchedTo
+  if cs.reportedFetchedTo == Some(target) {
+    None
+  } else {
+    cs.reportedFetchedTo = Some(target)
+    Some((target, block))
+  }
+}
+
 let hasProcessedToEndblock = (cs: t) => {
   let {committedProgressBlockNumber, fetchState} = cs
   switch fetchState.endBlock {
@@ -1051,6 +1086,14 @@ let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
 
 // Whether the chain's post-batch fetch frontier is ready to cross into the reorg
 // threshold, using the batch's progressed frontier when this chain advanced.
+// The same question asked of where the chain stands now rather than of where a
+// batch would leave it. Entering the threshold is what lifts the pre-threshold
+// lag, so a chain waiting to enter it has fetched as far as it can.
+let isReadyToEnterReorgThreshold = (cs: t) =>
+  cs.fetchState->FetchState.isReadyToEnterReorgThreshold(
+    ~tolerance=cs.reorgThresholdReadyTolerance,
+  )
+
 let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
   let fetchState = switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(
     cs.fetchState.chainId,

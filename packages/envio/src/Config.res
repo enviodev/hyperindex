@@ -625,6 +625,22 @@ let getChain = (config, ~chainId) =>
         "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
       )
 
+// Whether every entity belongs to exactly one chain. Only then is a unit of
+// this indexer's work attributable to a chain at all, which is what lets a run
+// be split across processes.
+let isPerChain = (config: t) => !(config.userEntities->Array.some(entity => entity.crossChain))
+
+// What every line this process logs is attributed to. A process driving one
+// of the schema's chains while siblings drive the rest names it, on the lines
+// that had no chain in hand. One driving several has no single owner to name,
+// and its chain-scoped lines already carry theirs.
+let logContext = (config: t): option<dict<JSON.t>> =>
+  switch (config.isolated, config.chainMap->ChainMap.keys) {
+  | (true, [chainId]) =>
+    Some(Dict.fromArray([("chainId", chainId->S.reverseConvertToJsonOrThrow(ChainId.schema))]))
+  | _ => None
+  }
+
 // Narrows a config to the chains one `envio start --chain` process drives.
 // `contractMapping` is deliberately left whole: its ids are what the migration
 // that created the schema stored, and one rebuilt from a subset would hand the
@@ -1221,6 +1237,21 @@ let prime = (json: JSON.t): unit => {
   cached := None
 }
 
+// Narrows a public config to the chains one process drives. The supervisor
+// plans the split; each worker applies the plan to the config it parsed itself.
+let withIsolatedChains = (json: JSON.t, ~chainIds) =>
+  switch json->JSON.Decode.object {
+  | Some(fields) => {
+      let narrowed = fields->Dict.copy
+      narrowed->Dict.set(
+        "isolatedChains",
+        chainIds->S.reverseConvertToJsonOrThrow(S.array(ChainId.schema)),
+      )
+      JSON.Object(narrowed)
+    }
+  | None => JsError.throwWithMessage("Invalid indexer config: not an object")
+  }
+
 let getPublicConfigJson = () =>
   switch primedJson.contents {
   | Some(json) => json
@@ -1265,6 +1296,10 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
   }
   cloned
 }
+
+// What the storage layer records as the config this schema was built from,
+// and checks a resuming run against.
+let envioInfo = () => getPublicConfigJson()->stripSensitiveData
 
 // Postgres jsonb doesn't preserve key order, so canonicalize with sorted
 // keys before string-comparing.
