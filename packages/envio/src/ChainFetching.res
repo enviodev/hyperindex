@@ -303,7 +303,6 @@ and applyQueryResponse = (
     chainState->ChainState.logger->Logging.childInfo({
       "msg": `Fetched to ${target}.${waitingOn}`,
       "block": block,
-      "eventsToProcess": chainState->ChainState.bufferReadyCount,
     })
   }
 }
