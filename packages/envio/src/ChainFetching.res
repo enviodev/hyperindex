@@ -288,7 +288,22 @@ and applyQueryResponse = (
     !(chainState->ChainState.isReady) &&
     chainState->ChainState.isFetchingAtHead
   ) {
-    chainState->ChainState.logger->Logging.childInfo("All events have been fetched")
+    let (target, block) = chainState->ChainState.fetchedTo
+    // What the chain is waiting on, which is not itself. A supervised worker's
+    // siblings are other processes, so nothing it can report says how they are
+    // doing; one process driving several chains at least names its own.
+    let waitingOn = if state->IndexerState.isHoldingRealtime {
+      " Waiting for the chains the run's other processes drive."
+    } else if state->IndexerState.chainStates->Dict.keysToArray->Array.length > 1 {
+      " Waiting for the other chains."
+    } else {
+      ""
+    }
+    chainState->ChainState.logger->Logging.childInfo({
+      "msg": `Fetched to ${target}.${waitingOn}`,
+      "block": block,
+      "eventsToProcess": chainState->ChainState.bufferReadyCount,
+    })
   }
 }
 

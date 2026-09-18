@@ -34,13 +34,14 @@ let registrationsByChainId: HandlerRegister.registrationsByChainId = {
 
 let caughtUpAt = Date.fromTime(1700000000000.)
 
-let make = (
+let makeChainState = (
   ~endBlock=None,
   ~progressBlockNumber,
   ~firstEventBlockNumber,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~sourceBlockNumber=1000,
-): Metrics.chainMetrics =>
+  ~isInReorgThreshold=false,
+): ChainState.t =>
   ChainState.makeFromDbState(
     chainConfig,
     ~resumedChainState={
@@ -57,11 +58,26 @@ let make = (
       sourceBlockNumber,
     },
     ~reorgCheckpoints=[],
-    ~isInReorgThreshold=false,
+    ~isInReorgThreshold,
     ~isRealtime=false,
     ~config=TestConfig.default,
     ~contractMapping=TestConfig.default.contractMapping,
     ~registrationsByChainId,
+  )
+
+let make = (
+  ~endBlock=None,
+  ~progressBlockNumber,
+  ~firstEventBlockNumber,
+  ~timestampCaughtUpToHeadOrEndblock=None,
+  ~sourceBlockNumber=1000,
+): Metrics.chainMetrics =>
+  makeChainState(
+    ~endBlock,
+    ~progressBlockNumber,
+    ~firstEventBlockNumber,
+    ~timestampCaughtUpToHeadOrEndblock,
+    ~sourceBlockNumber,
   )->ChainState.toMetrics
 
 // The snapshot a run reports when nothing has happened yet. Tests spread this

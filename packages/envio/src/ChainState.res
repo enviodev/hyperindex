@@ -642,6 +642,22 @@ let dispatch = (
 
 // --- Derived (pure). ---
 
+// Where the fetch frontier has just landed, for the line that reports it. Below
+// the reorg threshold a chain can only fetch the finalized range, so reaching
+// the end of it is not reaching the head — the rest opens up once the indexer
+// enters the threshold.
+let fetchedTo = (cs: t) =>
+  switch cs.fetchState.endBlock {
+  | Some(endBlock) if endBlock <= cs.fetchState.knownHeight - cs.fetchState.blockLag => (
+      "the end block",
+      endBlock,
+    )
+  | _ =>
+    cs.isInReorgThreshold
+      ? ("the chain head", cs.fetchState.knownHeight)
+      : ("the safe block", cs.fetchState.knownHeight - cs.fetchState.blockLag)
+  }
+
 let hasProcessedToEndblock = (cs: t) => {
   let {committedProgressBlockNumber, fetchState} = cs
   switch fetchState.endBlock {
