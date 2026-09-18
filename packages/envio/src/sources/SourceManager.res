@@ -695,6 +695,11 @@ cancelling the rest.
 let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
+  // Reduced polling is for a chain idling at a head it knows. With no known
+  // height there is no head to idle at: this is the first height discovery, and
+  // it polls at the source's own cadence and earns the normal stall window.
+  let reducedPolling = reducedPolling && knownHeight > 0
+
   let logger = Logging.createChild(
     ~params={
       "chainId": sourceManager.activeSource.chainId,
@@ -705,7 +710,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
     logger->Logging.childTrace(
       reducedPolling
         ? `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval / 1000)
-              ->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`
+              ->Int.toString}s) until the indexer enters realtime mode.`
         : "Initiating check for new blocks.",
     )
     sourceManager.waitingLogged = true
@@ -717,8 +722,8 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
   // cadence the sources poll at and the level the closing line is logged at.
   let stalled = ref(false)
 
-  // Use a much longer stall timeout when reduced polling is active
-  // to avoid spurious stall warnings while waiting for other chains to backfill
+  // Use a much longer stall timeout when reduced polling is active, so a chain
+  // deliberately asking rarely doesn't report itself stalled between polls.
   let stallTimeout = if reducedPolling {
     sourceManager.reducedPollingInterval * 2
   } else if isRealtime {
