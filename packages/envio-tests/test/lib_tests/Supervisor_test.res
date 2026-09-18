@@ -210,6 +210,15 @@ describe("Worker.detect", () => {
     ])
   })
 
+  // Thrown as the module loads, before anything that could say where a bare
+  // schema error came from.
+  it("Names the variable when its value isn't a worker config", t => {
+    t->Vitest.toThrowErrorEqual(
+      () => Worker.detect(~env=Dict.fromArray([(Worker.envVar, "137")]), ~hasChannel=true),
+      `Invalid ENVIO_INTERNAL_WORKER: Failed parsing at root. Reason: Expected { chainIds: array<number>; holdRealtime: boolean | undefined; }, received 137. It is set by an indexer supervisor for the processes it forks, and isn't meant to be set by hand.`,
+    )
+  })
+
   // The supervisor decides whether a run waits; a worker forked before that
   // decision existed reads as one that doesn't.
   it("Takes a config without the hold as one that doesn't wait", t => {

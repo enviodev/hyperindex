@@ -24,9 +24,18 @@ let configSchema = S.object((s): config => {
   holdRealtime: s.fieldOr("holdRealtime", S.bool, false),
 })
 
+// Read as this module loads, which is before anything that could catch a bare
+// schema error and say where it came from.
 let detect = (~env: dict<string>, ~hasChannel) =>
   switch (hasChannel, env->Dict.get(envVar)) {
-  | (true, Some(json)) => Some(json->S.parseJsonStringOrThrow(configSchema))
+  | (true, Some(json)) =>
+    switch json->S.parseJsonStringOrThrow(configSchema) {
+    | config => Some(config)
+    | exception S.Raised(error) =>
+      JsError.throwWithMessage(
+        `Invalid ${envVar}: ${error->S.Error.message}. It is set by an indexer supervisor for the processes it forks, and isn't meant to be set by hand.`,
+      )
+    }
   | _ => None
   }
 
