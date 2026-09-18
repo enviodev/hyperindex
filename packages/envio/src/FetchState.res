@@ -1148,15 +1148,19 @@ let updateInternal = (
     // (sorted, so this is the highest-block item within the buffer cap).
     // All this needed to prevent OOM when adding too many block items to the queue
     // Never past the head: a partition can sit there, on a start block the
-    // chain hasn't reached.
-    let maxBlockNumber = switch base->Array.get(fetchState.maxOnBlockBufferSize - 1) {
-    | Some(item) => item->Internal.getItemBlockNumber
-    | None =>
-      switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
-      | None => knownHeight
-      | Some(latestFullyFetchedBlock) => Pervasives.min(latestFullyFetchedBlock, knownHeight)
-      }
-    }
+    // chain hasn't reached, and a response is applied before the height it
+    // reported, so its events can run past the height still known here.
+    let maxBlockNumber = Pervasives.min(
+      switch base->Array.get(fetchState.maxOnBlockBufferSize - 1) {
+      | Some(item) => item->Internal.getItemBlockNumber
+      | None =>
+        switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+        | None => knownHeight
+        | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock
+        }
+      },
+      knownHeight,
+    )
     appendOnBlockItems(
       ~mutItems=blockItems,
       ~onBlockRegistrations,
