@@ -71,8 +71,6 @@ module Process = {
   @val @scope("process") external sendToParent: 'msg => bool = "send"
   @val @scope("process")
   external onMessage: (@as("message") _, 'msg => unit) => unit = "on"
-  @val @scope("process")
-  external onceMessage: (@as("message") _, 'msg => unit) => unit = "once"
   @val @scope("process") external onSignal: (string, unit => unit) => unit = "on"
   // Present only in a process forked with an IPC channel.
   @val @scope("process") external channel: Nullable.t<unknown> = "channel"

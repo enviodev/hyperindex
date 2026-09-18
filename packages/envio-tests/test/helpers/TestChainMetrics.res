@@ -63,3 +63,31 @@ let make = (
     ~contractMapping=TestConfig.default.contractMapping,
     ~registrationsByChainId,
   )->ChainState.toMetrics
+
+// The snapshot a run reports when nothing has happened yet. Tests spread this
+// and name only the chains they assert on.
+let emptySnapshot: Metrics.t = {
+  startTime: Date.fromTime(0.),
+  metricTime: Date.fromTime(0.),
+  elapsedSeconds: 0.,
+  targetBufferSize: 0,
+  isInReorgThreshold: false,
+  rollbackEnabled: false,
+  maxBatchSize: 0,
+  preloadSeconds: 0.,
+  processingSeconds: 0.,
+  processingStalledOnFetchSeconds: 0.,
+  processingStalledOnStorageWriteSeconds: 0.,
+  rollbackSeconds: 0.,
+  rollbackCount: 0,
+  rollbackEventsCount: 0.,
+  chains: [],
+  handlers: [],
+  effects: [],
+  storageLoads: [],
+  storageWrites: [],
+  historyPrunes: [],
+  sourceRequests: [],
+  sourceHeights: [],
+  sourceHeightStreams: [],
+}

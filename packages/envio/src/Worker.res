@@ -8,20 +8,40 @@
 // path it takes today.
 let envVar = "ENVIO_INTERNAL_WORKER"
 
-let detect = (~env: dict<string>, ~hasChannel) =>
-  hasChannel && env->Dict.get(envVar) === Some("true")
+// What the supervisor decided about this worker, handed over in the spawn
+// environment rather than over the channel: it is settled before the process
+// starts, and the worker needs it before it can load its own config.
+type config = {
+  chainIds: array<ChainId.t>,
+  // The chains this worker drives may reach the head while chains in another
+  // process are still backfilling, and an indexer goes realtime as a whole or
+  // not at all. Cleared by the supervisor's `ReleaseRealtime`.
+  holdRealtime: bool,
+}
 
-let isEnabled = detect(
+let configSchema = S.object((s): config => {
+  chainIds: s.field("chainIds", S.array(ChainId.schema)),
+  holdRealtime: s.fieldOr("holdRealtime", S.bool, false),
+})
+
+let detect = (~env: dict<string>, ~hasChannel) =>
+  switch (hasChannel, env->Dict.get(envVar)) {
+  | (true, Some(json)) => Some(json->S.parseJsonStringOrThrow(configSchema))
+  | _ => None
+  }
+
+let config = detect(
   ~env=NodeJs.Process.process.env,
   ~hasChannel=NodeJs.Process.channel->Nullable.toOption->Option.isSome,
 )
 
+let isEnabled = config->Option.isSome
+
 @tag("kind")
 type parentMessage =
-  // The config the supervisor parsed, narrowed to this worker's chains. Sent
-  // instead of re-derived so a worker and its supervisor can never disagree
-  // about what is being indexed.
-  | @as("init") Init({config: JSON.t})
+  // Every chain in the run has reached the head, so this worker may enter the
+  // reorg threshold and switch to realtime with the rest of them.
+  | @as("release-realtime") ReleaseRealtime
 
 @tag("kind")
 type workerMessage =
@@ -48,23 +68,19 @@ let bindToSupervisor = () => {
 %%private(let send = (message: workerMessage) => NodeJs.Process.sendToParent(message)->ignore)
 
 // Reports this process's chains and its own runtime for as long as it runs, so
-// the supervisor can merge every worker's into the one snapshot the run serves.
+// the supervisor can merge every worker's into the one snapshot the run serves,
+// and listens for the one decision the supervisor makes on the run's behalf.
 // Does nothing in a process nobody forked.
-let startReporting = (~getMetrics: unit => Metrics.t) =>
+let bindRun = (~getMetrics: unit => Metrics.t, ~onReleaseRealtime: unit => unit) =>
   if isEnabled {
     Metrics.startRuntimeCollectors()
     let _intervalId = setInterval(
       () => send(Snapshot({metrics: getMetrics(), runtime: Metrics.sampleRuntime()})),
       snapshotIntervalMillis,
     )
-  }
-
-// Resolves with the init payload, the one message a supervisor sends its worker.
-let awaitInit = (): promise<JSON.t> =>
-  Promise.make((resolve, _) =>
-    NodeJs.Process.onceMessage((message: parentMessage) =>
+    NodeJs.Process.onMessage((message: parentMessage) =>
       switch message {
-      | Init({config}) => resolve(config)
+      | ReleaseRealtime => onReleaseRealtime()
       }
     )
-  )
+  }

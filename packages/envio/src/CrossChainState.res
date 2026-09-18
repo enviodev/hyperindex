@@ -17,6 +17,11 @@ type t = {
   mutable isCaughtUp: bool,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
+  // Set on a process driving part of a split run: the chains it drives may be
+  // at the head while chains in another process are still backfilling, and an
+  // indexer switches to realtime as a whole or not at all. Cleared by the
+  // supervisor once every chain in the run has arrived.
+  mutable holdRealtime: bool,
 }
 
 // The whole-indexer fetch buffer pool, independent of chain count.
@@ -26,15 +31,27 @@ let calculateTargetBufferSize = () =>
   | None => 100_000
   }
 
-let make = (~chainStates, ~isRealtime, ~targetBufferSize=calculateTargetBufferSize()): t => {
+let make = (
+  ~chainStates,
+  ~isRealtime,
+  ~targetBufferSize=calculateTargetBufferSize(),
+  ~holdRealtime=false,
+): t => {
   {
     chainStates,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isCaughtUp: isRealtime,
     targetBufferSize,
+    holdRealtime,
   }
 }
+
+// The supervisor's go-ahead: every chain in the run has reached the head, so
+// this process may make the transitions it has been holding back.
+let releaseRealtime = (crossChainState: t) => crossChainState.holdRealtime = false
+
+let isHoldingRealtime = (crossChainState: t) => crossChainState.holdRealtime
 
 // Resolve a chain's state by id. The id always comes from `chainIds`, which is
 // derived from `chainStates`, so the entry is guaranteed present.
@@ -122,6 +139,16 @@ let createBatch = (
 
 // Enter the reorg threshold: shrink each chain's buffer by its configured
 // blockLag and flip the flag.
+// Whether every chain this process drives has buffered close enough to the head
+// to enter the threshold together — and, in a split run, whether the rest of the
+// run has too. Chains enter it as one indexer, so one chain still backfilling
+// holds the others back whatever process it runs in.
+let isReadyToEnterReorgThreshold = (crossChainState: t, ~batch) =>
+  !crossChainState.holdRealtime &&
+    crossChainState.chainStates
+    ->Dict.valuesToArray
+    ->Array.every(cs => cs->ChainState.isReadyToEnterReorgThresholdAfterBatch(~batch))
+
 let enterReorgThreshold = (crossChainState: t) => {
   Logging.info("Reorg threshold reached")
 
@@ -150,7 +177,10 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
   }
 
   crossChainState.isCaughtUp =
-    crossChainState.isCaughtUp || (crossChainState->nextItemIsNone && everyChainCaughtUp.contents)
+    crossChainState.isCaughtUp ||
+      (!crossChainState.holdRealtime &&
+      crossChainState->nextItemIsNone &&
+      everyChainCaughtUp.contents)
 }
 
 // Every chain has buffered up to its head (or endblock) with nothing
@@ -175,7 +205,7 @@ let isSettledAtHead = (crossChainState: t) => {
 
 // Enter the FinalizingIndexes phase without a batch, for the resume above.
 let markCaughtUpIfSettled = (crossChainState: t) =>
-  if crossChainState->isSettledAtHead {
+  if !crossChainState.holdRealtime && crossChainState->isSettledAtHead {
     crossChainState.isCaughtUp = true
   }
 
@@ -196,7 +226,12 @@ let markCaughtUpOnResume = (crossChainState: t) => {
     }
   }
 
-  if everyChainCaughtUp.contents && !crossChainState.isRealtime && crossChainState->nextItemIsNone {
+  if (
+    !crossChainState.holdRealtime &&
+    everyChainCaughtUp.contents &&
+    !crossChainState.isRealtime &&
+    crossChainState->nextItemIsNone
+  ) {
     crossChainState.isCaughtUp = true
   }
 }

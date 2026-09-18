@@ -84,19 +84,6 @@ let logFilePath = (~workerIndex, ~path=Env.logFilePath) => {
   }
 }
 
-let configForWorker = (configJson: JSON.t, ~worker) =>
-  switch configJson->JSON.Decode.object {
-  | Some(fields) => {
-      let narrowed = fields->Dict.copy
-      narrowed->Dict.set(
-        "isolatedChains",
-        worker.chainIds->S.reverseConvertToJsonOrThrow(S.array(ChainId.schema)),
-      )
-      JSON.Object(narrowed)
-    }
-  | None => JsError.throwWithMessage("Invalid indexer config: not an object")
-  }
-
 // A pipe hands over whatever has been flushed, so a chunk boundary falls
 // wherever the OS put it: the tail of a chunk is a line only once the chunk
 // that ends it arrives. Reading pairs with a flush, since a process that dies
@@ -127,7 +114,10 @@ let readLines = (~onLine) => {
 let fork = (
   worker: worker,
   ~workerIndex,
-  ~configJson,
+  // Whether this worker waits for the run before going realtime. False when
+  // every chain resumed already caught up: there is nothing left to wait for,
+  // and a barrier nobody can open would hold the run forever.
+  ~holdRealtime,
   // The entry this process was itself started from, so a worker is the same
   // program as its supervisor however the package was installed.
   ~entryPath=NodeJs.Process.argv->Array.getUnsafe(1),
@@ -137,7 +127,12 @@ let fork = (
   ~onOutput=Console.log,
 ) => {
   let env = NodeJs.Process.process.env->Dict.copy
-  env->Dict.set(Worker.envVar, "true")
+  env->Dict.set(
+    Worker.envVar,
+    {Worker.chainIds: worker.chainIds, holdRealtime}->S.reverseConvertToJsonStringOrThrow(
+      Worker.configSchema,
+    ),
+  )
   // The worker's slice of the budget. Read when the worker's own Env module
   // loads, which is why it rides in the spawn environment rather than a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
@@ -172,10 +167,6 @@ let fork = (
       }
     )
   }
-  child
-  ->NodeJs.ChildProcess.send(Worker.Init({config: configJson->configForWorker(~worker)}))
-  ->ignore
-
   let running = {worker, child, snapshot: None, runtime: None, settled: false}
   child->NodeJs.ChildProcess.onMessage(message =>
     switch message {
@@ -278,6 +269,24 @@ let awaitExit = async (group): outcome => {
   group.stopping ? Stopped : Finished
 }
 
+// How often the supervisor asks whether the run may go realtime. Matches the
+// rate its workers report at: nothing changes in between.
+%%private(let releaseCheckIntervalMillis = 500)
+
+// Whether a run holding its workers back may let them go: every worker has
+// reported, and every chain any of them drives has reached the head. A chain
+// resumed already realtime, or one that processed to its end block, has arrived
+// as far as the run is concerned — waiting on either would never end.
+let isRunAtHead = (snapshots: array<Metrics.t>, ~workerCount) =>
+  snapshots->Array.length === workerCount &&
+    snapshots->Array.every(snapshot =>
+      snapshot.chains->Utils.Array.notEmpty &&
+        snapshot.chains->Array.every(
+          chain =>
+            chain.isReadyForReorgThreshold || chain.isReady || chain->Metrics.hasProcessedToEndblock,
+        )
+    )
+
 // Runs the group: creates the schema for every chain, forks a worker per plan
 // entry, and serves the run's metrics, console and display from what they
 // report. Returns once every worker has exited; throws if any of them failed.
@@ -308,14 +317,18 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
       ->Int.toString} processes, from a budget of ${Env.Db.maxConnections->Int.toString} database connections.`,
   )
 
-  // The config as the CLI handed it over, narrowed per worker on the way out.
-  let configJson = Config.getPublicConfigJson()
   // Decided before the first fork: it is what makes a worker's output the
   // supervisor's to print.
   let shouldUseTui = Tui.shouldUse()
+  // A run that resumed with every chain already caught up owes nobody a wait:
+  // its workers start realtime and there is no barrier to open.
+  let holdRealtime =
+    (persistence->Persistence.getInitializedState).chains->Array.some(chain =>
+      chain.timestampCaughtUpToHeadOrEndblock->Option.isNone
+    )
   let group = {
     running: workers->Array.mapWithIndex((worker, workerIndex) =>
-      worker->fork(~workerIndex, ~configJson, ~pipeOutput=shouldUseTui)
+      worker->fork(~workerIndex, ~holdRealtime, ~pipeOutput=shouldUseTui)
     ),
     stopping: false,
   }
@@ -350,6 +363,30 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config)),
   )
 
+  // Chains enter the reorg threshold and go realtime as one indexer, which in a
+  // split run only the supervisor can see. Every worker is held until the last
+  // one arrives, then released together, so the run switches over exactly as an
+  // unsplit one does.
+  let releaseCheck = ref(None)
+  let stopReleaseCheck = () => {
+    releaseCheck.contents->Option.forEach(clearInterval)
+    releaseCheck := None
+  }
+  if holdRealtime {
+    releaseCheck :=
+      Some(
+        setInterval(() =>
+          if reported()->isRunAtHead(~workerCount=group.running->Array.length) {
+            stopReleaseCheck()
+            group.running->Array.forEach(r =>
+              r.child->NodeJs.ChildProcess.send(Worker.ReleaseRealtime)->ignore
+            )
+            Logging.info("Every chain has reached the head. Switching the run to realtime.")
+          }
+        , releaseCheckIntervalMillis),
+      )
+  }
+
   if shouldUseTui {
     let _rerender = Tui.start(~config, ~getMetrics=() => reported()->merge)
   }
@@ -364,7 +401,12 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // last worker is gone, so the group's end has to end the process. A display
   // is the exception, as it is for a single process: it keeps the final state
   // on screen until the terminal closes it.
-  switch await group->awaitExit {
+  let outcome = await group->awaitExit
+  // Nothing left to release, and a display keeps this process alive long enough
+  // for the check to reach children that are gone.
+  stopReleaseCheck()
+
+  switch outcome {
   | Stopped => NodeJs.process->NodeJs.exitWithCode(Success)
   | Finished if !shouldUseTui =>
     Logging.info("Exiting with success")

@@ -62,31 +62,7 @@ envio_source_request_seconds_total{method="getLogs"} 1.5`)
 
 // The state a Metrics.t carries when a test says nothing about it. Each test
 // below spreads this and names only the fields it asserts on.
-let baseMetrics: Metrics.t = {
-  startTime: Date.fromTime(0.),
-  metricTime: Date.fromTime(0.),
-  elapsedSeconds: 0.,
-  targetBufferSize: 0,
-  isInReorgThreshold: false,
-  rollbackEnabled: false,
-  maxBatchSize: 0,
-  preloadSeconds: 0.,
-  processingSeconds: 0.,
-  processingStalledOnFetchSeconds: 0.,
-  processingStalledOnStorageWriteSeconds: 0.,
-  rollbackSeconds: 0.,
-  rollbackCount: 0,
-  rollbackEventsCount: 0.,
-  chains: [],
-  handlers: [],
-  effects: [],
-  storageLoads: [],
-  storageWrites: [],
-  historyPrunes: [],
-  sourceRequests: [],
-  sourceHeights: [],
-  sourceHeightStreams: [],
-}
+let baseMetrics = TestChainMetrics.emptySnapshot
 
 describe("Metrics.collect", () => {
   it("Renders only the indexer info when there is no state", t => {
@@ -266,6 +242,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           numAddresses: 7,
           addressesByContract: [("Gravatar", 5), ("NftFactory", 2)],
           isReady: true,
+          isReadyForReorgThreshold: true,
           sourceBlockNumber: 305,
           progressBlockNumber: 200,
           progressLatencyMs: Some(1500),

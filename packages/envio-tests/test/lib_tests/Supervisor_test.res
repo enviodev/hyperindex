@@ -138,15 +138,13 @@ describe("Supervisor.planForRun", () => {
 })
 
 describe("Supervisor worker plumbing", () => {
-  it("Narrows the config it hands a worker to that worker's chains", t => {
+  it("Narrows a config it parsed itself to the chains it was given", t => {
     let configJson = JSON.Object(
       Dict.fromArray([("name", JSON.String("indexer")), ("isolatedChains", JSON.Null)]),
     )
 
     t.expect(
-      configJson->Supervisor.configForWorker(
-        ~worker={chainIds: [1, 137]->Array.map(ChainId.fromInt), maxConnections: 2},
-      ),
+      configJson->Config.withIsolatedChains(~chainIds=[1, 137]->Array.map(ChainId.fromInt)),
     ).toStrictEqual(
       JSON.Object(
         Dict.fromArray([
@@ -198,14 +196,29 @@ describe("Config.logContext", () => {
 
 describe("Worker.detect", () => {
   it("Counts as a worker only when forked with the variable and a channel", t => {
-    let forked = Dict.fromArray([(Worker.envVar, "true")])
+    let forked = Dict.fromArray([(Worker.envVar, `{"chainIds":[137],"holdRealtime":true}`)])
     t.expect([
       Worker.detect(~env=forked, ~hasChannel=true),
       // A copy of the variable left in a shell, or a process manager forking
       // with a channel.
       Worker.detect(~env=forked, ~hasChannel=false),
       Worker.detect(~env=Dict.make(), ~hasChannel=true),
-    ]).toStrictEqual([true, false, false])
+    ]).toStrictEqual([
+      Some({Worker.chainIds: [137->ChainId.fromInt], holdRealtime: true}),
+      None,
+      None,
+    ])
+  })
+
+  // The supervisor decides whether a run waits; a worker forked before that
+  // decision existed reads as one that doesn't.
+  it("Takes a config without the hold as one that doesn't wait", t => {
+    t.expect(
+      Worker.detect(
+        ~env=Dict.fromArray([(Worker.envVar, `{"chainIds":[1]}`)]),
+        ~hasChannel=true,
+      ),
+    ).toStrictEqual(Some({Worker.chainIds: [1->ChainId.fromInt], holdRealtime: false}))
   })
 })
 
@@ -224,5 +237,37 @@ describe("Supervisor.syncCache", () => {
     await Supervisor.syncCache(~dump)
 
     t.expect(dumps.contents).toBe(2)
+  })
+})
+
+describe("Supervisor.isRunAtHead", () => {
+  let chain = (~isReadyForReorgThreshold=false, ~isReady=false, ~endBlock=None, ~progressBlockNumber=50) => {
+    ...TestChainMetrics.make(~progressBlockNumber, ~firstEventBlockNumber=None, ~endBlock),
+    Metrics.isReadyForReorgThreshold,
+    isReady,
+  }
+  let snapshot = (chains): Metrics.t => {...TestChainMetrics.emptySnapshot, chains}
+
+  it("Holds the run until every chain of every worker has arrived", t => {
+    t.expect([
+      // A worker that hasn't reported yet drives chains nobody can see. Reading
+      // the run as arrived here would release it on a partial view.
+      [snapshot([chain(~isReadyForReorgThreshold=true)])]->Supervisor.isRunAtHead(~workerCount=2),
+      [
+        snapshot([chain(~isReadyForReorgThreshold=true)]),
+        snapshot([chain(~isReadyForReorgThreshold=true), chain()]),
+      ]->Supervisor.isRunAtHead(~workerCount=2),
+      [
+        snapshot([chain(~isReadyForReorgThreshold=true)]),
+        snapshot([chain(~isReadyForReorgThreshold=true)]),
+      ]->Supervisor.isRunAtHead(~workerCount=2),
+      // A chain resumed already realtime never reaches the head again, and one
+      // that processed to its end block never will: both have arrived as far as
+      // the run is concerned, and waiting on either would never end.
+      [snapshot([chain(~isReady=true)])]->Supervisor.isRunAtHead(~workerCount=1),
+      [
+        snapshot([chain(~endBlock=Some(200), ~progressBlockNumber=200)]),
+      ]->Supervisor.isRunAtHead(~workerCount=1),
+    ]).toStrictEqual([false, false, true, true, true])
   })
 })

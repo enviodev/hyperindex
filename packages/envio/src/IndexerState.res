@@ -115,6 +115,10 @@ type t = {
   // waitForNewBlock waiter is bound to the old, pre-realtime source). A fetch
   // response or waiter carrying an older epoch than this is discarded.
   mutable epoch: int,
+  // The loop's one door in from outside it: IndexerLoop owns scheduling and
+  // wires this when it starts, so an event the loop can't see for itself can
+  // still make it re-evaluate. A no-op before then.
+  mutable scheduleProcessing: unit => unit,
   // None off the simulate path.
   simulateDeadInputTracker: option<SimulateDeadInputTracker.t>,
   // --- Metric counters, rendered by Metrics at scrape time. ---
@@ -141,6 +145,7 @@ let make = (
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
+  ~holdRealtime=false,
   ~committedFrontier=Frontier.empty(),
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
@@ -180,11 +185,17 @@ let make = (
     chainMetaDirty: false,
     chainMetaThrottler,
     isProcessing: false,
-    crossChainState: CrossChainState.make(~chainStates, ~isRealtime, ~targetBufferSize),
+    crossChainState: CrossChainState.make(
+      ~chainStates,
+      ~isRealtime,
+      ~targetBufferSize,
+      ~holdRealtime,
+    ),
     indexerStartTime: Date.make(),
     indexerStartTimeRef: Performance.now(),
     rollbackState: NoRollback,
     lastPrunedAtMillis: Dict.make(),
+    scheduleProcessing: () => (),
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
@@ -227,6 +238,9 @@ let makeFromDbState = (
   ~exitAfterFirstEventBlock=false,
   ~reducedPollingInterval=?,
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
+  // A process driving part of a split run waits for its supervisor before
+  // entering the reorg threshold or switching to realtime.
+  ~holdRealtime=false,
   ~onError,
   ~onExit=?,
 ) => {
@@ -274,6 +288,7 @@ let makeFromDbState = (
     ~chainStates,
     ~isRealtime,
     ~targetBufferSize,
+    ~holdRealtime,
     ~committedFrontier=initialState.checkpointFrontier,
     ~isDevelopmentMode,
     ~shouldUseTui,
@@ -502,6 +517,23 @@ let isFinalizingIndexes = (state: t) =>
 
 let markCaughtUpIfSettled = (state: t) =>
   state.crossChainState->CrossChainState.markCaughtUpIfSettled
+
+let isReadyToEnterReorgThreshold = (state: t, ~batch) =>
+  state.crossChainState->CrossChainState.isReadyToEnterReorgThreshold(~batch)
+
+let bindScheduleProcessing = (state: t, scheduleProcessing) =>
+  state.scheduleProcessing = scheduleProcessing
+
+// A process still waiting on its supervisor owes the schema the indexes its
+// chains deferred, so reaching every end block doesn't make it done.
+let isHoldingRealtime = (state: t) => state.crossChainState->CrossChainState.isHoldingRealtime
+
+let releaseRealtime = (state: t) => {
+  state.crossChainState->CrossChainState.releaseRealtime
+  // Every chain is parked at the head with no batch coming, so nothing would
+  // notice the hold is gone without a pass through processing.
+  state.scheduleProcessing()
+}
 
 let markReady = (state: t, ~readyAt) => state.crossChainState->CrossChainState.markReady(~readyAt)
 

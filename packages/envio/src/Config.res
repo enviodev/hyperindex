@@ -1237,6 +1237,21 @@ let prime = (json: JSON.t): unit => {
   cached := None
 }
 
+// Narrows a public config to the chains one process drives. The supervisor
+// plans the split; each worker applies the plan to the config it parsed itself.
+let withIsolatedChains = (json: JSON.t, ~chainIds) =>
+  switch json->JSON.Decode.object {
+  | Some(fields) => {
+      let narrowed = fields->Dict.copy
+      narrowed->Dict.set(
+        "isolatedChains",
+        chainIds->S.reverseConvertToJsonOrThrow(S.array(ChainId.schema)),
+      )
+      JSON.Object(narrowed)
+    }
+  | None => JsError.throwWithMessage("Invalid indexer config: not an object")
+  }
+
 let getPublicConfigJson = () =>
   switch primedJson.contents {
   | Some(json) => json

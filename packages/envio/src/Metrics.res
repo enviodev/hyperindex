@@ -15,6 +15,10 @@ type chainMetrics = {
   // Per-contract registration counts, in the chain's contract-id order.
   addressesByContract: array<(string, int)>,
   isReady: bool,
+  // The chain has buffered to the (lagged) head or its end block with nothing
+  // processable left — what a supervisor reads to decide that every chain in a
+  // split run has arrived and the run may go realtime as one.
+  isReadyForReorgThreshold: bool,
   // Raw source height, unlike knownHeight which is clamped to endBlock.
   sourceBlockNumber: int,
   // Raw committed progress (may be -1), unlike the optional latestProcessedBlock.

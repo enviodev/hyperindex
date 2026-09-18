@@ -534,12 +534,16 @@ exception FatalError(exn)
       ~isDevelopmentMode,
       ~shouldUseTui,
       ~exitAfterFirstEventBlock,
+      ~holdRealtime=Worker.config->Option.mapOr(false, worker => worker.holdRealtime),
       ~onError,
     )
     if shouldUseTui {
       let _rerender = Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
     }
-    Worker.startReporting(~getMetrics=() => state->IndexerState.toMetrics)
+    Worker.bindRun(
+      ~getMetrics=() => state->IndexerState.toMetrics,
+      ~onReleaseRealtime=() => state->IndexerState.releaseRealtime,
+    )
     setIndexerState(state)
     state->IndexerLoop.start
     await runUntilFatalError
@@ -557,6 +561,13 @@ let start = async (
   ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrationsByChainId) => Config.t>=?,
 ) => {
+  // A worker parses the same config its supervisor did and narrows it to the
+  // chains it was handed, rather than being told what to index: the storage it
+  // resumes refuses a config that disagrees with the one the run was created
+  // from, which is a stronger guarantee than a handover could give.
+  Worker.config->Option.forEach(({chainIds}) =>
+    Config.prime(Config.getPublicConfigJson()->Config.withIsolatedChains(~chainIds))
+  )
   let config = Config.load()
   switch isTest ? None : Supervisor.planForRun(~config) {
   | Some(workers) => await Supervisor.run(~config, ~workers, ~reset)

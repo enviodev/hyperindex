@@ -1,9 +1,10 @@
 open Vitest
 
 // What the fixture worker reports back in place of a metrics snapshot: the
-// narrowing and the environment its supervisor handed it.
+// environment its supervisor handed it, which is the whole of what a worker is
+// told before it starts.
 type fixtureReport = {
-  isolatedChains: array<float>,
+  workerConfig: string,
   maxConnections: string,
   logFile: string,
   startTime: Date.t,
@@ -11,11 +12,18 @@ type fixtureReport = {
 
 let fixturePath = `${NodeJs.Process.cwd()}/test/helpers/fakeWorker.mjs`
 
-let forkFixture = (~chainIds, ~maxConnections=2, ~workerIndex=0, ~pipeOutput=false, ~onOutput=?) =>
+let forkFixture = (
+  ~chainIds,
+  ~maxConnections=2,
+  ~workerIndex=0,
+  ~holdRealtime=false,
+  ~pipeOutput=false,
+  ~onOutput=?,
+) =>
   Supervisor.fork(
     {chainIds: chainIds->Array.map(ChainId.fromInt), maxConnections},
     ~workerIndex,
-    ~configJson=JSON.Object(Dict.fromArray([("name", JSON.String("indexer"))])),
+    ~holdRealtime,
     ~entryPath=fixturePath,
     ~pipeOutput,
     ~onOutput?,
@@ -23,7 +31,12 @@ let forkFixture = (~chainIds, ~maxConnections=2, ~workerIndex=0, ~pipeOutput=fal
 
 describe("Supervisor.fork", () => {
   Async.it("Hands a worker its chains, its budget share, and its own log file", async t => {
-    let running = forkFixture(~chainIds=[1, 137], ~maxConnections=3, ~workerIndex=1)
+    let running = forkFixture(
+      ~chainIds=[1, 137],
+      ~maxConnections=3,
+      ~workerIndex=1,
+      ~holdRealtime=true,
+    )
 
     let report = await Promise.make(
       (resolve, _) =>
@@ -38,7 +51,9 @@ describe("Supervisor.fork", () => {
     running.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore
 
     t.expect(report).toStrictEqual({
-      isolatedChains: [1., 137.],
+      // Everything the supervisor decided, in the environment: a worker needs it
+      // before it can load its own config, so it can't arrive as a message.
+      workerConfig: `{"chainIds":[1,137],"holdRealtime":true}`,
       maxConnections: "3",
       logFile: Supervisor.logFilePath(~workerIndex=1),
       // Proof the channel clones rather than stringifies: a JSON round trip

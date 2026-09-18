@@ -59,6 +59,9 @@ type rec t = {
   // `~chains` resumes the same schema driving only those chains, the way
   // `envio start --chain` does. The chains left out keep their stored state.
   restart: (~chains: array<ChainId.t>=?, unit) => promise<t>,
+  // Stands in for the supervisor's go-ahead in a run started with
+  // `~holdRealtime`.
+  releaseRealtime: unit => unit,
 }
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
@@ -77,6 +80,9 @@ let run = async (
   ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
   ~targetBufferSize=?,
+  // Runs the indexer the way a supervised worker runs: it waits to be released
+  // before entering the reorg threshold or switching to realtime.
+  ~holdRealtime=false,
   ~onError=?,
   ~onExit=?,
   ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
@@ -163,6 +169,7 @@ let run = async (
       ~targetBufferSize?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
+      ~holdRealtime,
       ~onError,
       ~onExit?,
     )
@@ -333,6 +340,7 @@ let run = async (
           JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
         }
       },
+      releaseRealtime: () => state->IndexerState.releaseRealtime,
       waitUntilReady: async () => {
         let isReady = () =>
           state

@@ -53,10 +53,8 @@ let run = async args => {
   try {
     if Worker.isEnabled {
       Worker.bindToSupervisor()
-      // A worker is handed the config its supervisor already parsed, narrowed to
-      // the chains it drives, so the two can't disagree about what is indexed.
-      // Its working directory and environment came with the fork.
-      Config.prime(await Worker.awaitInit())
+      // Its working directory, its environment and the chains it drives all came
+      // with the fork, so a worker starts the same way every other process does.
       await Main.start()
     } else {
       switch (await Core.runCli(args))->Null.toOption {

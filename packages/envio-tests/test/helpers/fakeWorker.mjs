@@ -3,23 +3,22 @@
 // with real processes.
 const mode = process.env.FAKE_WORKER ?? "report";
 
-process.on("message", (message) => {
-  if (message.kind === "init") {
-    process.send({
-      kind: "snapshot",
-      metrics: {
-        isolatedChains: message.config.isolatedChains,
-        maxConnections: process.env.ENVIO_PG_MAX_CONNECTIONS,
-        logFile: process.env.LOG_FILE,
-        // A Date survives only under structured-clone serialization, which is
-        // what a metrics snapshot's timestamps need.
-        startTime: new Date(1700000000000),
-      },
-    });
-    if (mode === "succeed") process.exit(0);
-    if (mode === "fail") process.exit(1);
-  }
+// A real worker reports on a timer; the fixture reports once, as soon as it is
+// started, since nothing tells it when its supervisor is listening.
+process.send({
+  kind: "snapshot",
+  metrics: {
+    workerConfig: process.env.ENVIO_INTERNAL_WORKER,
+    maxConnections: process.env.ENVIO_PG_MAX_CONNECTIONS,
+    logFile: process.env.LOG_FILE,
+    // A Date survives only under structured-clone serialization, which is
+    // what a metrics snapshot's timestamps need.
+    startTime: new Date(1700000000000),
+  },
 });
+
+if (mode === "succeed") process.exit(0);
+if (mode === "fail") process.exit(1);
 
 // Writes across chunk boundaries the way a real process does: a pipe hands the
 // supervisor whatever has been flushed, not whole lines.

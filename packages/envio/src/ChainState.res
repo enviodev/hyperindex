@@ -994,6 +994,9 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   ->AddressStore.contractCounts
   ->Array.map(({contractName, count}) => (contractName, count)),
   isReady: cs->isReady,
+  isReadyForReorgThreshold: cs.fetchState->FetchState.isReadyToEnterReorgThreshold(
+    ~tolerance=cs.reorgThresholdReadyTolerance,
+  ),
   sourceBlockNumber: cs.fetchState.knownHeight,
   progressBlockNumber: cs.committedProgressBlockNumber,
   progressLatencyMs: cs.progressLatencyMs,
