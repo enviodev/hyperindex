@@ -695,11 +695,6 @@ cancelling the rest.
 let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
-  // Reduced polling is for a chain idling at a head it knows. With no known
-  // height there is no head to idle at: this is the first height discovery, and
-  // it polls at the source's own cadence and earns the normal stall window.
-  let reducedPolling = reducedPolling && knownHeight > 0
-
   let logger = Logging.createChild(
     ~params={
       "chainId": sourceManager.activeSource.chainId,
