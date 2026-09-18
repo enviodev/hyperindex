@@ -43,6 +43,9 @@ let refusesSubscribe = (id, ~subscribed) =>
   | Some(id) => id === subscribeRequestIdText
   }
 
+external number: string => int = "Number"
+let hexIntSchema: S.schema<int> = S.string->S.transform(_ => {parser: str => str->number})
+
 let wsMessageSchema = S.union([
   S.object(s => {
     let _ = s.field("method", S.literal("eth_subscription"))
@@ -54,7 +57,7 @@ let wsMessageSchema = S.union([
             "result",
             S.object(
               s => {
-                s.field("number", Rpc.hexIntSchema)
+                s.field("number", hexIntSchema)
               },
             ),
           )

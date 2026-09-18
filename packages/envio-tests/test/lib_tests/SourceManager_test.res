@@ -1964,7 +1964,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     async t => {
       let syncMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow])
       let fallbackMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
-      let recoveryTimeout = 5.0
+      let recoveryTimeout = 200.0
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~recoveryTimeout,
@@ -2184,7 +2184,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     async t => {
       let syncMock = MockSource.make([#getItemsOrThrow])
       let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
-      let recoveryTimeout = 5.0
+      let recoveryTimeout = 200.0
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~recoveryTimeout,

@@ -417,7 +417,7 @@ impl EvmRpcClient {
                     message: Some(err.to_string()),
                     request_stats: self.inner.take_stats(),
                 },
-                BlockStore::new_evm(should_checksum),
+                self.empty_stores().0,
             )),
         }
     }
@@ -473,7 +473,6 @@ impl EvmRpcClient {
                 "to_block_ceiling ({to_block_ceiling}) must be >= from_block ({from_block})",
             )));
         }
-        let should_checksum = self.should_checksum;
 
         let (suggested_interval, source_max) = self
             .intervals
@@ -590,12 +589,16 @@ impl EvmRpcClient {
 
         let (blocks, transactions) = match page {
             Some(page) => (page.blocks, page.transactions),
-            None => (
-                BlockStore::new_evm(should_checksum),
-                TransactionStore::new_evm(should_checksum),
-            ),
+            None => self.empty_stores(),
         };
         Ok((result, blocks, transactions))
+    }
+
+    fn empty_stores(&self) -> (BlockStore, TransactionStore) {
+        (
+            BlockStore::new_evm(self.should_checksum),
+            TransactionStore::new_evm(self.should_checksum),
+        )
     }
 
     /// Reads the logs, then everything the routed items need to be materialised.
