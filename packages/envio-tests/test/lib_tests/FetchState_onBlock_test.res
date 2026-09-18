@@ -62,7 +62,9 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockRegistrations) => {
     ~maxOnBlockBufferSize=5000,
     ~chainId,
     ~onBlockRegistrations?,
-    ~knownHeight=0,
+    // A height the responses below stay under: onBlock items are only generated
+    // up to the head, and no query is issued before one is known.
+    ~knownHeight=100,
   )
 }
 

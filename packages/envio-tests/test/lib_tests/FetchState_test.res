@@ -3793,6 +3793,42 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
     handler: Utils.magic("mock handler"),
   }
 
+  // A partition can sit past the head, on a start block the chain hasn't reached
+  // yet. onBlock items are generated up to the lowest partition frontier, so
+  // without a cap they would be generated for blocks the chain doesn't have and
+  // handled as if it did.
+  it("Generates onBlock items no further than the head past a later start block", t => {
+    let (fetchState, _) = makeFs(
+      ~onEventRegistrations=[
+        (EventRegistration.evmOnEventRegistration(
+          ~id="a",
+          ~contractName="Gravatar",
+          ~isWildcard=true,
+          ~startBlock=500,
+        ) :> Internal.onEventRegistration),
+      ],
+      ~addresses=[],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~maxOnBlockBufferSize=1000,
+      ~chainId,
+      ~knownHeight=100,
+      ~onBlockRegistrations=[makeOnBlockRegistration(~interval=1, ~startBlock=Some(0))],
+    )
+    let lastBufferedBlock = fs =>
+      fs.FetchState.buffer->Array.last->Option.map(Internal.getItemBlockNumber)
+
+    let updated = fetchState->FetchState.updateKnownHeight(~knownHeight=150)
+    t.expect({
+      "made": (fetchState.latestOnBlockBlockNumber, fetchState->FetchState.bufferBlockNumber, fetchState->lastBufferedBlock),
+      "updated": (updated.latestOnBlockBlockNumber, updated->FetchState.bufferBlockNumber, updated->lastBufferedBlock),
+    }).toEqual({
+      "made": (100, 100, Some(100)),
+      "updated": (150, 150, Some(150)),
+    })
+  })
+
   it(
     "Creates FetchState with no event configs, triggers WaitingForNewBlock, then fills buffer on updateKnownHeight",
     t => {
