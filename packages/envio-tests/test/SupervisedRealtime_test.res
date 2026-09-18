@@ -184,37 +184,36 @@ describe("A supervised worker on a chain with a reorg depth", () => {
   // run held until its chains reach the head would be waiting on progress that
   // only the transition itself makes reachable.
   rollbackScenario->Scenario.it(
-    "Arrives at the safe block, which is as far as it can fetch before the threshold",
+    "Holds the transition that would let it fetch past the safe block",
     ~sources=[{chain: 1}, {chain: 137}],
     ~holdRealtime=true,
     async (~t, ~indexer, ~source) => {
       let {sql, pgSchema} = indexer.pg
-      let head = 300
-      // A response short of the head by the reorg depth: the whole finalized
-      // range, and all this chain may fetch until it enters the threshold.
+      // Each chain fetches the whole finalized range, which is all it may fetch
+      // until the indexer enters the reorg threshold.
       let catchUpToSafeBlock = (~source: MockSource.t) => {
-        source.resolveGetHeightOrThrow(head)
-        source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=head - 200)
+        source.resolveGetHeightOrThrow(300)
+        source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       }
       catchUpToSafeBlock(~source=source(1))
       catchUpToSafeBlock(~source=source(137))
       await indexer.waitUntilIdle()
 
       t.expect(
-        await readyAtByChainId(~sql, ~pgSchema),
+        (
+          await indexer.metric("envio_reorg_threshold"),
+          await readyAtByChainId(~sql, ~pgSchema),
+        ),
         ~message="Both chains are as far as they can fetch, and the run has not said so",
-      ).toEqual([("1", None), ("137", None)])
+      ).toEqual(([{value: "0", labels: Dict.make()}], [("1", None), ("137", None)]))
 
       indexer.releaseRealtime()
-      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
 
       t.expect(
-        (await readyAtByChainId(~sql, ~pgSchema))->Array.map(((chainId, readyAt)) => (
-          chainId,
-          readyAt->Option.isSome,
-        )),
-        ~message="Released, the run enters the threshold and stamps its chains",
-      ).toEqual([("1", true), ("137", true)])
+        await indexer.metric("envio_reorg_threshold"),
+        ~message="Released, the run enters the threshold and the rest opens up",
+      ).toEqual([{value: "1", labels: Dict.make()}])
     },
   )
 })
