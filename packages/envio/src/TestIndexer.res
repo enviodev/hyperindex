@@ -225,11 +225,16 @@ let handleWriteBatch = (
         if deleted->Array.length > 0 {
           entityObj->Dict.set("deleted", deleted->(Utils.magic: array<EntityId.t> => unknown))
         }
-        // Match the capitalized entity accessor the generated change types expose.
-        change->Dict.set(
-          entityName->Utils.String.capitalize,
-          entityObj->(Utils.magic: dict<unknown> => unknown),
-        )
+        // Match the capitalized entity accessor the generated change types
+        // expose. A table has no accessor, so its writes aren't reported.
+        switch state.entityConfigs->Utils.Dict.dangerouslyGetNonOption(entityName) {
+        | Some({written: Handlers}) =>
+          change->Dict.set(
+            entityName->Utils.String.capitalize,
+            entityObj->(Utils.magic: dict<unknown> => unknown),
+          )
+        | _ => ()
+        }
       })
     | None => ()
     }
