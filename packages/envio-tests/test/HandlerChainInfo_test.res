@@ -4,7 +4,7 @@ open Vitest
 // item came from, not whichever chain the batch happens to start on, and
 // `isRealtime` only flips once every chain in the indexer is at its head.
 
-let scenario = Scenario.make(
+let scenario = Scenario.make(~supervised=false, 
   ~configYaml=`
 name: handler-chain-info
 contracts:

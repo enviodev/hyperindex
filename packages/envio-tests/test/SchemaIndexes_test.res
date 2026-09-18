@@ -38,7 +38,7 @@ contracts:
       - event: "TestEvent()"
 `
 
-let scenario = Scenario.make(
+let scenario = Scenario.make(~supervised=false, 
   ~configYaml=`
 name: schema-indexes${contractsYaml}chains:${chainYaml(
       1337,
@@ -50,7 +50,7 @@ name: schema-indexes${contractsYaml}chains:${chainYaml(
 // An `end_block` the chain never reaches: the indexer still counts itself caught
 // up once progress sits at the head, so the deferred indexes are owed then, not
 // at the unreachable end block.
-let unreachableEndBlockScenario = Scenario.make(
+let unreachableEndBlockScenario = Scenario.make(~supervised=false, 
   ~configYaml=`
 name: schema-indexes-unreachable-end${contractsYaml}chains:
   - id: 1337
@@ -68,7 +68,7 @@ name: schema-indexes-unreachable-end${contractsYaml}chains:
 
 // A `start_block` past the head: the chain is at its head from the first moment
 // and never has a batch to process, so nothing ever writes its progress row.
-let aheadOfHeadScenario = Scenario.make(
+let aheadOfHeadScenario = Scenario.make(~supervised=false, 
   ~configYaml=`
 name: schema-indexes-ahead-of-head${contractsYaml}chains:
   - id: 1337
@@ -83,7 +83,7 @@ name: schema-indexes-ahead-of-head${contractsYaml}chains:
   ~schema,
 )
 
-let multichainScenario = Scenario.make(
+let multichainScenario = Scenario.make(~supervised=false, 
   ~configYaml=`
 name: schema-indexes-multichain${contractsYaml}chains:${chainYaml(
       100,

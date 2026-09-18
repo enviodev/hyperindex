@@ -1,6 +1,6 @@
 open Vitest
 
-let scenario = Scenario.make(
+let scenario = Scenario.make(~supervised=false, 
   ~configYaml=`
 name: below-head-polling
 contracts:

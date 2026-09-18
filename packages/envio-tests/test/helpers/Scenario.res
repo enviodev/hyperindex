@@ -15,6 +15,11 @@ type t = {
   handlers: option<string>,
   unsupported: array<unsupported>,
   site: string,
+  // Whether a multichain scenario also runs behind the barrier. Off for a
+  // scenario that stages its chains at different heights and drives the
+  // reorg-threshold transition itself: the hold deferring that transition is
+  // the premise such a body sets up being taken away.
+  supervised: bool,
 }
 
 type sourceMock = {
@@ -46,7 +51,15 @@ let withClickHouseStorage = configYaml =>
     configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
   }
 
-let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=[]): t => {
+let make = (
+  ~configYaml,
+  ~schema=?,
+  ~env=?,
+  ~files=?,
+  ~handlers=?,
+  ~unsupported=[],
+  ~supervised=true,
+): t => {
   let isUnsupported =
     unsupported->Array.some(({backend}) => backend === IndexerRunner.selectedBackend)
 
@@ -90,6 +103,7 @@ let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=
     handlers,
     unsupported,
     site,
+    supervised,
   }
 }
 
@@ -274,10 +288,8 @@ let it = (
   ~holdRealtime=?,
   // Runs a multichain scenario a second time behind the barrier a supervised
   // worker runs behind, so the scenario covers the held path as well as the
-  // plain one. Off until the suite's own shared counters are made independent
-  // of how many times a body runs — a ref a describe block owns is incremented
-  // by both passes, which is what most of them assert on.
-  ~supervised=false,
+  // plain one. `Scenario.make(~supervised=false)` opts a whole scenario out.
+  ~supervised=true,
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
@@ -321,7 +333,9 @@ let it = (
     register(name, ~superviseRun=false)
     // One chain is a run whose every chain is its own process's already, so the
     // barrier has nothing to hold: only a multichain scenario says anything new.
-    if supervised && scenario.config.chainMap->ChainMap.keys->Array.length > 1 {
+    if (
+      supervised && scenario.supervised && scenario.config.chainMap->ChainMap.keys->Array.length > 1
+    ) {
       register(`${name} [supervised]`, ~superviseRun=true)
     }
   }
