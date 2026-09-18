@@ -891,10 +891,12 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
       async t => {
         let query = InternalTable.Chains.makeMetaFieldsUpdateQuery(~pgSchema="test_schema")
 
+        // `ready_at` keeps what is committed: a write staged before the
+        // finalization stamped it must not clear it on its way to the database.
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
 SET "buffer_block" = $2,
     "first_event_block" = $3,
-    "ready_at" = $4,
+    "ready_at" = COALESCE($4, "ready_at"),
     "_is_hyper_sync" = $5
 WHERE "id" = $1;`
 
