@@ -6,23 +6,6 @@ let scopeKeySuffix = (scope: Internal.chainScope) =>
   | Chain(chainId) => `.${chainId->ChainId.toString}`
   }
 
-// Narrows a query to the scope's chain. Cross-chain entities have no chain-id
-// column, so their filter is left untouched.
-let scopeFilter = (filter: EntityFilter.t, ~table: Table.table, ~scope: Internal.chainScope) =>
-  switch (scope, table->Table.getChainIdField) {
-  | (Chain(chainId), Some(field)) =>
-    EntityFilter.And({
-      filters: [
-        filter,
-        Eq({
-          fieldName: field.fieldName,
-          fieldValue: chainId->(Utils.magic: ChainId.t => unknown),
-        }),
-      ],
-    })
-  | _ => filter
-  }
-
 let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
@@ -48,10 +31,10 @@ let loadById = (
       (
         await storage.loadOrThrow(
           ~table=entityConfig.table,
-          ~filter=EntityFilter.In({
-            fieldName: Table.idFieldName,
-            fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
-          })->scopeFilter(~table=entityConfig.table, ~scope),
+          ~filter=EntityFilter.byIds(idsToLoad)->EntityFilter.scoped(
+            ~table=entityConfig.table,
+            ~scope,
+          ),
         )
       )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
@@ -273,15 +256,9 @@ let loadEffect = (
       let {outputSchema} = effect.storageMeta
 
       let dbEntities = try {
-        (
-          await storage.loadOrThrow(
-            ~table,
-            ~filter=EntityFilter.In({
-              fieldName: Table.idFieldName,
-              fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
-            }),
-          )
-        )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
+        (await storage.loadOrThrow(~table, ~filter=EntityFilter.byIds(idsToLoad)))->(
+          Utils.magic: array<unknown> => array<Internal.effectCacheItem>
+        )
       } catch {
       | exn =>
         Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childWarn({
@@ -355,7 +332,7 @@ let loadEffect = (
   )
 }
 
-let loadByFilter = (
+let loadByParsedFilter = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
@@ -378,7 +355,9 @@ let loadByFilter = (
 
     let size = ref(0)
 
-    filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
+    filters->Array.forEach(filter =>
+      inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter, ~table=entityConfig.table)
+    )
 
     // Any non-derived field can be filtered on, so the columns this query reads
     // are indexed on demand before it runs rather than promised by the schema.
@@ -399,7 +378,7 @@ let loadByFilter = (
           (
             await storage.loadOrThrow(
               ~table=entityConfig.table,
-              ~filter=filter->scopeFilter(~table=entityConfig.table, ~scope),
+              ~filter=filter->EntityFilter.scoped(~table=entityConfig.table, ~scope),
             )
           )->(Utils.magic: array<unknown> => array<Internal.entity>)
 
@@ -411,6 +390,10 @@ let loadByFilter = (
             ~entity=Some(entity),
           )
         })
+
+        // Every row this filter's values could match is now in the table, so a
+        // later getWhere naming any of them needs no round trip of its own.
+        inMemTable->InMemoryTable.Entity.recordLoadedValues(~filter, ~table=entityConfig.table)
 
         size := size.contents + entities->Array.length
       } catch {
@@ -442,13 +425,53 @@ let loadByFilter = (
     )
   }
 
+  // Keying an _in walks every value, so it's computed once here and handed to
+  // the load manager rather than recomputed by the hasher.
+  let filterKey = filter->EntityFilter.toString(~table=entityConfig.table)
+
+  if !(inMemTable->InMemoryTable.Entity.hasIndex)(filterKey) {
+    inMemTable->InMemoryTable.Entity.tryIndexFromLoadedValues(~filter, ~table=entityConfig.table)
+  }
+
   loadManager->LoadManager.call(
     ~key,
     ~load,
     ~input=filter,
     ~shouldGroup,
-    ~hasher=EntityFilter.toString,
+    ~hasher=_ => filterKey,
     ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
     ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
   )
 }
+
+let loadByFilter = (
+  ~loadManager,
+  ~persistence,
+  ~entityConfig: Internal.entityConfig,
+  ~scope,
+  ~indexerState,
+  ~shouldGroup,
+  ~item,
+  ~ecosystem,
+  ~filter: dict<dict<unknown>>,
+) =>
+  // Rejecting rather than throwing keeps a bad filter failing only its own
+  // call, even when the caller batches several with Promise.all.
+  try {
+    loadByParsedFilter(
+      ~loadManager,
+      ~persistence,
+      ~entityConfig,
+      ~scope,
+      ~indexerState,
+      ~shouldGroup,
+      ~item,
+      ~ecosystem,
+      ~filter=filter->EntityFilter.parseOrThrow(
+        ~entityName=entityConfig.name,
+        ~table=entityConfig.table,
+      ),
+    )
+  } catch {
+  | exn => Promise.reject(exn->Utils.prettifyExn)
+  }

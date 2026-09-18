@@ -95,6 +95,7 @@ let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration
 
 let invoke = (source: Source.t, ~registration: Internal.evmOnEventRegistration, ~retry=0) => {
   source.getItemsOrThrow(
+    ~includeAllBlocks=false,
     ~fromBlock=100,
     ~toBlock=Some(100),
     ~addressSet=makeAddressStore(~registration)->AddressStore.makeSet(
@@ -306,12 +307,12 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           {ReorgDetection.blockNumber: 99, blockHash: MockSource.evmBlockHash("0x0000000000000000000000000000000000000000000000000000000000000b63")},
           {ReorgDetection.blockNumber: 100, blockHash: MockSource.evmBlockHash("0x0000000000000000000000000000000000000000000000000000000000000b64")},
         ],
-        "requestCounts": Dict.fromArray([
-          ("eth_getLogs", 1),
-          ("eth_getBlockByNumber", 1),
-          ("eth_getTransactionByHash", 1),
-          ("eth_getTransactionReceipt", 1),
-        ]),
+        "requestCounts": dict{
+          "eth_getLogs": 1,
+          "eth_getBlockByNumber": 1,
+          "eth_getTransactionByHash": 1,
+          "eth_getTransactionReceipt": 1,
+        },
       })
     })
 
@@ -337,12 +338,12 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         },
       )
 
-      t.expect(requestCounts).toEqual(Dict.fromArray([
-        ("eth_getLogs", 2),
-        ("eth_getBlockByNumber", 2),
-        ("eth_getTransactionByHash", 2),
-        ("eth_getTransactionReceipt", 2),
-      ]))
+      t.expect(requestCounts).toEqual(dict{
+        "eth_getLogs": 2,
+        "eth_getBlockByNumber": 2,
+        "eth_getTransactionByHash": 2,
+        "eth_getTransactionReceipt": 2,
+      })
     })
 
     Async.it("pins missing receipt data as a retryable source error", async t => {
@@ -425,6 +426,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let call = () =>
             RpcSourcePins.capture(() =>
               source.getItemsOrThrow(
+                ~includeAllBlocks=false,
                 ~fromBlock=0,
                 ~toBlock=Some(1_000_000),
                 ~addressSet=addressStore->AddressStore.makeSet(
@@ -535,10 +537,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         "requestCounts": page.requestCounts,
       }).toEqual({
         "eventLogIndexes": [2],
-        "requestCounts": Dict.fromArray([
-          ("eth_getLogs", 2),
-          ("eth_getBlockByNumber", 1),
-        ]),
+        "requestCounts": dict{"eth_getLogs": 2, "eth_getBlockByNumber": 1},
       })
     })
 
@@ -557,6 +556,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let source = makeSource(~factory, ~url=mock.url, ~registration)
           switch await RpcSourcePins.capture(() =>
             source.getItemsOrThrow(
+              ~includeAllBlocks=false,
               ~fromBlock=100,
               ~toBlock=Some(100),
               ~addressSet=makeAddressStore(~registration)->AddressStore.emptySet,
@@ -584,7 +584,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
       }).toEqual({
         "events": 0,
         "latestFetchedBlockNumber": 100,
-        "requestCounts": Dict.fromArray([("eth_getBlockByNumber", 1)]),
+        "requestCounts": dict{"eth_getBlockByNumber": 1},
       })
     })
 
@@ -676,6 +676,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let source = factory(options)
           switch await RpcSourcePins.capture(() =>
             source.getItemsOrThrow(
+              ~includeAllBlocks=false,
               ~fromBlock=100,
               ~toBlock=Some(100),
               ~addressSet=addressStore

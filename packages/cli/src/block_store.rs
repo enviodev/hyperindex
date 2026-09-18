@@ -720,11 +720,14 @@ impl BlockStore {
     }
 
     /// Unix timestamp of a stored block, if the store still holds it with a
-    /// time. Exactly that block: an SVM slot that produced no block has no time
-    /// of its own, and until a query covers every slot in its range the store
-    /// cannot tell such a slot from one whose header was simply never fetched.
+    /// time. Exactly that block, except for an SVM slot that produced none:
+    /// with `allow_skipped_slot` the last real slot below it answers instead,
+    /// which is what chain time is at a skipped slot. Only the caller knows
+    /// whether that reading is available - a slot with no block was skipped
+    /// only where the query covered every slot in its range, and otherwise may
+    /// simply never have been asked about.
     #[napi]
-    pub fn get_timestamp(&self, block_number: i64) -> Option<i64> {
+    pub fn get_timestamp(&self, block_number: i64, allow_skipped_slot: bool) -> Option<i64> {
         let key = u64::try_from(block_number).ok()?;
         let field = self.timestamp_field();
         let inner = self.inner.lock().unwrap();
@@ -734,7 +737,20 @@ impl BlockStore {
                 .table
                 .field_bytes(&key, field)
                 .and_then(|b| map_i64(&Some(b)).ok().flatten()),
-            Ecosystem::Svm | Ecosystem::Fuel => inner.table.field_i64(&key, field),
+            Ecosystem::Fuel => inner.table.field_i64(&key, field),
+            Ecosystem::Svm => {
+                if let Some(time) = inner.table.field_i64(&key, field) {
+                    return Some(time);
+                }
+                // A slot the store holds a row for produced a block, whether or
+                // not that row carries a time, so no earlier slot's time is its
+                // own. Only a slot with no row at all was skipped.
+                if !allow_skipped_slot || inner.table.contains_key(&key) {
+                    return None;
+                }
+                let slot = inner.table.last_key_with_field(key, field)?;
+                inner.table.field_i64(&slot, field)
+            }
         }
     }
 
@@ -1382,13 +1398,59 @@ mod tests {
 
         assert_eq!(
             (
-                store.get_timestamp(10),
-                store.get_timestamp(20),
-                store.get_timestamp(15),
-                store.get_timestamp(30),
+                store.get_timestamp(10, false),
+                store.get_timestamp(20, false),
+                store.get_timestamp(15, false),
+                store.get_timestamp(30, false),
             ),
             (Some(100), None, None, Some(300))
         );
+    }
+
+    #[test]
+    fn get_timestamp_falls_back_to_the_last_real_svm_slot_when_allowed() {
+        let store = BlockStore::new_svm();
+        store.insert_svm_blocks(vec![
+            solana_simple::Block {
+                block_time: Some(100),
+                ..raw_svm_block(10)
+            },
+            solana_simple::Block {
+                block_time: Some(120),
+                ..raw_svm_block(12)
+            },
+        ]);
+
+        assert_eq!(
+            (
+                // Slot 11 produced no block. Where the query covered every slot
+                // in its range, that means it was skipped, and chain time there
+                // is the last real slot's.
+                store.get_timestamp(11, true),
+                store.get_timestamp(12, true),
+                store.get_timestamp(9, true),
+            ),
+            (Some(100), Some(120), None)
+        );
+    }
+
+    #[test]
+    fn get_timestamp_does_not_treat_a_timeless_svm_block_as_skipped() {
+        let store = BlockStore::new_svm();
+        store.insert_svm_blocks(vec![
+            solana_simple::Block {
+                block_time: Some(100),
+                ..raw_svm_block(10)
+            },
+            // The slot produced a block; the response just carried no time for
+            // it. That is not a skipped slot, so slot 10's time is not its own.
+            solana_simple::Block {
+                block_time: None,
+                ..raw_svm_block(11)
+            },
+        ]);
+
+        assert_eq!(store.get_timestamp(11, true), None);
     }
 
     #[test]
@@ -1407,12 +1469,12 @@ mod tests {
 
         assert_eq!(
             (
-                store.get_timestamp(12),
-                // Slot 11 has no block. It may have been skipped, or its header
-                // may just not have been fetched - indistinguishable here, so
-                // slot 10's time can't stand in for it.
-                store.get_timestamp(11),
-                store.get_timestamp(9),
+                store.get_timestamp(12, false),
+                // Without full slot coverage, slot 11 having no block may mean
+                // it was skipped or merely never asked about - so slot 10's
+                // time can't stand in for it.
+                store.get_timestamp(11, false),
+                store.get_timestamp(9, false),
             ),
             (Some(120), None, None)
         );
@@ -1428,7 +1490,7 @@ mod tests {
         }]);
 
         assert_eq!(
-            (store.get_timestamp(5), store.get_timestamp(4)),
+            (store.get_timestamp(5, false), store.get_timestamp(4, false)),
             (Some(123), None)
         );
     }

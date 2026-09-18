@@ -17,6 +17,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
   Async.it("should handle broken transaction response", async _t => {
     let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
     let page = await HyperSync.GetLogs.query(
+      ~includeAllBlocks=false,
       ~client=HyperSyncClient.make(
         ~url="https://645749.hypersync.xyz",
         ~apiToken=testApiToken,

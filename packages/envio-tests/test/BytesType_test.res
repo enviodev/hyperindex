@@ -20,7 +20,7 @@ chains:
           - event: Transfer(address indexed from, address indexed to, uint256 value)
 `
 
-let fuelFiles = Dict.fromArray([("abis/greeter-abi.json", FuelAbiFixtures.greeter)])
+let fuelFiles = dict{"abis/greeter-abi.json": FuelAbiFixtures.greeter}
 let fuelChains = `
 ecosystem: fuel
 chains:

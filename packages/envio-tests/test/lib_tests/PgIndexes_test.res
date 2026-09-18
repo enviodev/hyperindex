@@ -141,10 +141,10 @@ let describeIndex = (entry: IndexCatalog.entry) => (
   entry.method,
 )
 
-let eq = (~fieldName): EntityFilter.t => Eq({
-  fieldName,
-  fieldValue: "1"->(Utils.magic: string => unknown),
-})
+let eq = (~fieldName): EntityFilter.t =>
+  Dict.fromArray([
+    (fieldName, dict{"_eq": "1"->(Utils.magic: string => unknown)}),
+  ])->EntityFilter.parseOrThrow(~entityName=entityA.name, ~table=entityA.table)
 
 let aBId = IndexDefinition.single(~tableName="A", ~column="b_id")
 let aBIdName = aBId->IndexDefinition.name

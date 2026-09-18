@@ -114,7 +114,7 @@ let createBatch = (
     ~history=config->HistoryPolicy.decide(~shouldSaveHistory=crossChainState->shouldSaveHistory),
     ~frontier,
     ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues(
-      ChainState.toChainBeforeBatch,
+      ChainState.toChainBeforeBatch(~isRealtime=crossChainState.isRealtime, ...),
     ),
     ~batchSizeTarget,
   )
