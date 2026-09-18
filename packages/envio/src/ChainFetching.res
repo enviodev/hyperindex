@@ -289,12 +289,13 @@ and applyQueryResponse = (
     chainState->ChainState.isFetchingAtHead
   ) {
     let (target, block) = chainState->ChainState.fetchedTo
-    // What the chain is waiting on, which is not itself. A supervised worker
-    // says where the rest of the run is, since its siblings are processes of
-    // their own and this one can report nothing about how they are doing.
-    let waitingOn = if state->IndexerState.isHoldingRealtime {
-      " Waiting for the other chains, indexed by other processes."
-    } else if state->IndexerState.chainStates->Dict.keysToArray->Array.length > 1 {
+    // What the chain is waiting on, which is not itself. A held process is
+    // waiting on chains it doesn't drive, so it says so even when it drives
+    // only one — how the run is split is not the reader's problem.
+    let waitingOn = if (
+      state->IndexerState.isHoldingRealtime ||
+        state->IndexerState.chainStates->Dict.keysToArray->Array.length > 1
+    ) {
       " Waiting for the other chains."
     } else {
       ""
