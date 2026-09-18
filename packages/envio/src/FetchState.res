@@ -13,8 +13,11 @@ type selection = {
   // partition's set. Absent for normal partitions.
   clientFilteredContracts?: array<string>,
   // The earliest block any of these registrations can produce an item at.
-  // Derived once here, by `makeSelection`, because `getNextQuery` reads it for
-  // every partition on every tick and a chain can hold hundreds of them.
+  // A partition's `latestFetchedBlock` never sits below `startBlock - 1`: it's
+  // seeded there and kept there through rollback (`selectionFloor`), so the
+  // blocks nothing in the selection can match are never scanned. Address-bound
+  // partitions get the same floor through the address store, which folds a
+  // registration's start block into its contract's effective start block.
   //
   // Absent when a registration is unrestricted and so can fire from the chain
   // start — which is also the only case where nothing can be skipped, so absent
@@ -49,6 +52,19 @@ let makeSelection = (~onEventRegistrations, ~dependsOnAddresses, ~clientFiltered
   ?clientFilteredContracts,
   startBlock: ?deriveSelectionStartBlock(onEventRegistrations),
 }
+
+// The lowest `latestFetchedBlock` a partition with this selection may hold.
+// Moving the frontier itself, rather than only the next query's cursor, is what
+// keeps the chain's own frontier — the lowest partition's `latestFetchedBlock`,
+// which anchors its per-tick target block — from being pinned below a start
+// block the partition would never query under that target. A cursor skipped
+// past the target while the frontier stays behind is a partition that never
+// queries, never moves the frontier, and so never comes back in range.
+let selectionFloor = (selection: selection, ~latestFetchedBlock) =>
+  switch selection.startBlock {
+  | Some(startBlock) => Pervasives.max(startBlock - 1, latestFetchedBlock)
+  | None => latestFetchedBlock
+  }
 
 type pendingQuery = {
   fromBlock: int,
@@ -137,9 +153,10 @@ let withAddresses = (p: partition, addresses: AddressSet.t) => {...p, addresses}
 //
 // Returns the selection as-is when nothing is dropped (the common case), and
 // for an open-ended query, which may reach any block and so can exclude nothing.
-// Also when every registration would be dropped: `selectionStartBlock` keeps a
-// partition's cursor at or above its earliest start block, so a query below all
-// of them shouldn't exist — and an empty selection is one no source can build.
+// Also when every registration would be dropped: `selectionFloor` keeps a
+// partition's frontier at or above its earliest start block, so a query below
+// all of them shouldn't exist — and an empty selection is one no source can
+// build.
 let narrowSelectionToRange = (selection: selection, ~toBlock) =>
   switch toBlock {
   | None => selection
@@ -2165,27 +2182,11 @@ let walkPartitionPending = (
     pqIdx := pqIdx.contents + 1
   }
 
-  // Nothing in this partition's selection can match below its earliest start
-  // block, so forward work skips straight to it instead of scanning up to it and
-  // discarding whole pages. Only the cursor moves — `latestFetchedBlock` still
-  // advances solely on a response, so no block is ever reported fetched that
-  // wasn't. Bounded by the head and the query end block: past either, the
-  // partition would offer no candidate at all, so it queries as before rather
-  // than going quiet until the chain reaches its start block.
-  let cursor = switch p.selection.startBlock {
-  | Some(startBlock) if startBlock > cursor.contents =>
-    switch Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock) {
-    | Some(reachable) if startBlock <= reachable => startBlock
-    | _ => cursor.contents
-    }
-  | _ => cursor.contents
-  }
-
   canContinue.contents
     ? Some({
         partitionId,
         p,
-        cursor,
+        cursor: cursor.contents,
         chunksUsedThisCall: chunksUsedThisCall.contents,
         inFlightCount,
         queryEndBlock,
@@ -2658,13 +2659,14 @@ let make = (
   let partitions = []
 
   if notDependingOnAddresses->Array.length > 0 {
+    let selection = makeSelection(
+      ~dependsOnAddresses=false,
+      ~onEventRegistrations=notDependingOnAddresses,
+    )
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
-      latestFetchedBlock,
-      selection: makeSelection(
-        ~dependsOnAddresses=false,
-        ~onEventRegistrations=notDependingOnAddresses,
-      ),
+      latestFetchedBlock: selection->selectionFloor(~latestFetchedBlock),
+      selection,
       addresses: addressStore->AddressStore.emptySet,
       mergeBlock: None,
       dynamicContract: None,
@@ -2895,9 +2897,9 @@ let rollback = (
       ->Array.push({
         ...p,
         id,
-        latestFetchedBlock: p.latestFetchedBlock > targetBlockNumber
-          ? targetBlockNumber
-          : p.latestFetchedBlock,
+        latestFetchedBlock: p.selection->selectionFloor(
+          ~latestFetchedBlock=Pervasives.min(p.latestFetchedBlock, targetBlockNumber),
+        ),
         // Everything above the target is refetched by whichever partition this
         // one was catching up to, so there is nothing left to catch up on past
         // it. createPartitions drops the partition outright when the capped
