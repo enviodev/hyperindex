@@ -97,11 +97,21 @@ describe.skipIf(!reachable)("E2E: a split run is one indexer", () => {
         rowsPerChain: await pgRows(
           `SELECT "chain_id", COUNT(*) > 0 FROM "${PG_SCHEMA}"."Transfer" GROUP BY "chain_id" ORDER BY "chain_id"`
         ),
+        // Reaching an end block doesn't make a worker done: it owes the schema
+        // the indexes its chains deferred, and until the run goes realtime it
+        // has no leave to commit them.
+        readyPerChain: await pgRows(
+          `SELECT "id"::text, "ready_at" IS NOT NULL FROM "${PG_SCHEMA}"."envio_chains" ORDER BY "id"`
+        ),
       }).toEqual({
         exitCode: 0,
         rowsPerChain: [
           [1, true],
           [8453, true],
+        ],
+        readyPerChain: [
+          ["1", true],
+          ["8453", true],
         ],
       });
     } finally {
