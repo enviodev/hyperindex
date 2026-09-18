@@ -2317,7 +2317,8 @@ describe("FetchState.getNextQuery & integration", () => {
         [makeWildcard(~id="a", ~startBlock=500), makeWildcard(~id="b")],
       ),
       // Start block past the head: the partition sits at its start block with
-      // nothing to ask for until the chain gets there.
+      // nothing to ask for until the chain gets there, and the chain's frontier
+      // is capped at the head meanwhile.
       "beyondHead": nextQueryOf(~knownHeight=100, [makeWildcard(~id="a", ~startBlock=500)]),
       // Start block past the chain's endBlock: the partition is done before it
       // ever queries.
@@ -2330,7 +2331,7 @@ describe("FetchState.getNextQuery & integration", () => {
       "restricted": (499, [500]),
       "twoRestricted": (499, [500]),
       "mixed": (-1, [0]),
-      "beyondHead": (499, ["WaitingForNewBlock"]->Obj.magic),
+      "beyondHead": (100, ["WaitingForNewBlock"]->Obj.magic),
       "beyondEndBlock": (499, ["NothingToQuery"]->Obj.magic),
     })
   })

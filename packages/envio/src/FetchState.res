@@ -56,9 +56,10 @@ let makeSelection = (~onEventRegistrations, ~dependsOnAddresses, ~clientFiltered
 // buffer frontier is its lowest partition frontier, so a partition left at the
 // chain start would hold every other partition's events back as unprocessable
 // and keep the chain's query target — sized from that frontier — short of
-// anything worth asking for. Not capped at the head: a start block the chain
-// has not reached yet leaves the partition waiting there, like an address
-// partition does, rather than scanning empty ranges up to it.
+// anything worth asking for. A start block the chain has not reached yet leaves
+// the partition waiting there, like an address partition does, rather than
+// scanning empty ranges up to it; bufferBlockNumber caps the chain's frontier at
+// the head meanwhile.
 let floorAtSelectionStart = (latestFetchedBlock, ~selection) =>
   switch selection.startBlock {
   | Some(startBlock) => Pervasives.max(latestFetchedBlock, startBlock - 1)
@@ -867,16 +868,15 @@ type t = {
 }
 
 // The latest block whose items are all in the buffer: the lowest partition
-// frontier, held back by the onBlock pointer only when there are onBlock
-// registrations for it to generate items behind.
+// frontier, held back by the onBlock pointer. Without onBlock registrations the
+// pointer tracks the known height, so this also caps the frontier at the head: a
+// partition can sit past it, on a response that reported a block the chain
+// hadn't heard of yet or on a start block the chain hasn't reached.
 @inline
-let bufferBlockNumber = (
-  {latestOnBlockBlockNumber, optimizedPartitions, onBlockRegistrations}: t,
-) => {
-  switch (optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock, onBlockRegistrations) {
-  | (None, _) => latestOnBlockBlockNumber
-  | (Some(latestFullyFetchedBlock), []) => latestFullyFetchedBlock
-  | (Some(latestFullyFetchedBlock), _) =>
+let bufferBlockNumber = ({latestOnBlockBlockNumber, optimizedPartitions}: t) => {
+  switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+  | None => latestOnBlockBlockNumber
+  | Some(latestFullyFetchedBlock) =>
     Pervasives.min(latestOnBlockBlockNumber, latestFullyFetchedBlock)
   }
 }
@@ -2398,14 +2398,7 @@ let acceptCandidates = (
 // rangeTargetDensity × (chainTargetBlock − fromBlock + 1) / inRangeCount — so
 // unknown-density partitions probe in parallel within one budget.
 let getNextQuery = (
-  {
-    optimizedPartitions,
-    blockLag,
-    latestOnBlockBlockNumber,
-    onBlockRegistrations,
-    knownHeight,
-    endBlock,
-  }: t,
+  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
 ) => {
@@ -2413,10 +2406,7 @@ let getNextQuery = (
   if headBlockNumber <= 0 {
     WaitingForNewBlock
   } else {
-    // The pointer only means something with registrations to generate items
-    // for; without them it is not behind anything.
-    let isOnBlockBehindTheHead =
-      onBlockRegistrations->Utils.Array.notEmpty && latestOnBlockBlockNumber < headBlockNumber
+    let isOnBlockBehindTheHead = latestOnBlockBlockNumber < headBlockNumber
     let shouldWaitForNewBlock = ref(
       switch endBlock {
       | Some(endBlock) => headBlockNumber < endBlock
@@ -2783,7 +2773,14 @@ let make = (
   // fetching, so without seeding the buffer here getNextQuery would return
   // NothingToQuery and the indexer would get stuck.
   let buffer = []
-  let latestOnBlockBlockNumber = if knownHeight > 0 && onBlockRegistrations->Utils.Array.notEmpty {
+  let latestOnBlockBlockNumber = switch onBlockRegistrations {
+  // As updateInternal keeps it: with nothing to generate per block the pointer
+  // is the head cap on the buffer frontier, and left at the progress block it
+  // would hold the frontier there until the first height update — below a
+  // partition that starts later, whose queries the chain sizes off that
+  // frontier and so never reaches.
+  | [] if knownHeight > 0 => knownHeight
+  | onBlockRegistrations if knownHeight > 0 =>
     let maxBlockNumber = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
     | None => knownHeight
     | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock
@@ -2796,8 +2793,7 @@ let make = (
       ~maxBlockNumber,
       ~maxOnBlockBufferSize,
     )
-  } else {
-    progressBlockNumber
+  | _ => progressBlockNumber
   }
 
   let fetchState = {
