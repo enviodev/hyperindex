@@ -1612,7 +1612,13 @@ OptimizedPartitions.t => {
           }
         }
 
-        let latestFetchedBlock = Pervasives.max(startBlock - 1, progressBlockNumber)
+        // The store already folds a registration's start block into each
+        // address's effective start block, so the floor is stated here for the
+        // invariant's sake rather than to change the value.
+        let latestFetchedBlock =
+          normalSelection->selectionFloor(
+            ~latestFetchedBlock=Pervasives.max(startBlock - 1, progressBlockNumber),
+          )
         let remainingRef = ref(countRef.contents)
         let chunkOffsetRef = ref(offsetRef.contents)
         while remainingRef.contents > 0 {

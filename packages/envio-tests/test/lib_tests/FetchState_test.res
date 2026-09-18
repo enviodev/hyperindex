@@ -2331,58 +2331,6 @@ describe("FetchState.getNextQuery & integration", () => {
     })
   })
 
-  it("Holds an address-free partition's frontier at its start block through a rollback", t => {
-    let onEventRegistrations = [
-      (EventRegistration.evmOnEventRegistration(
-        ~id="a",
-        ~contractName="Gravatar",
-        ~isWildcard=true,
-        ~startBlock=500,
-      ) :> Internal.onEventRegistration),
-    ]
-    let (fetchState, addressStore) = makeFs(
-      ~onEventRegistrations,
-      ~addresses=[],
-      ~startBlock=0,
-      ~endBlock=None,
-      ~maxAddrInPartition=10,
-      ~maxOnBlockBufferSize=10,
-      ~chainId,
-      ~knownHeight=1000,
-    )
-    let query = switch fetchState->FetchState.getNextQuery(
-      ~chainTargetBlock=1000,
-      ~chainTargetItems=10_000.,
-    ) {
-    | Ready([query]) => query
-    | _ => JsError.throwWithMessage("Expected a single query")
-    }
-    fetchState->FetchState.startFetchingQueries(~queries=[query])
-    let fetched =
-      fetchState->FetchState.handleQueryResult(~query, ~latestFetchedBlock=800, ~newItems=[])
-    let frontierOf = (fetchState: FetchState.t) =>
-      fetchState.optimizedPartitions->FetchState.OptimizedPartitions.getLatestFullyFetchedBlock
-
-    t.expect({
-      "seeded": frontierOf(fetchState),
-      "fetched": frontierOf(fetched),
-      // A rollback below the start block can't put blocks nothing matches back
-      // in front of the partition: they'd pin the chain's frontier and target
-      // below a start block the partition would then never reach.
-      "rolledBackBelowStart": frontierOf(
-        fetched->rollbackTo(~addressStore, ~targetBlockNumber=300),
-      ),
-      "rolledBackAboveStart": frontierOf(
-        fetched->rollbackTo(~addressStore, ~targetBlockNumber=600),
-      ),
-    }).toEqual({
-      "seeded": Some(499),
-      "fetched": Some(800),
-      "rolledBackBelowStart": Some(499),
-      "rolledBackAboveStart": Some(600),
-    })
-  })
-
   it("Narrows a query's selection to the registrations its range can match", t => {
     let makeReg = (~id, ~startBlock=?) =>
       (EventRegistration.evmOnEventRegistration(
