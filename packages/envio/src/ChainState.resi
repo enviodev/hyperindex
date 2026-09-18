@@ -123,7 +123,7 @@ let toChainBeforeBatch: (t, ~isRealtime: bool) => Batch.chainBeforeBatch
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
-let fetchedTo: t => (string, int)
+let takeFetchedTo: t => option<(string, int)>
 let hasProcessedToEndblock: t => bool
 let isDurablyCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
