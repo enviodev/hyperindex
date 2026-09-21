@@ -657,7 +657,7 @@ let parse = (
   | Svm => {
       items,
       transactionStore: Some(TransactionStore.fromSvmJs(svmTxs, svmActivities)),
-      blockStore: Some(BlockStore.fromJs(svmBlocks, ~ecosystem=Svm, ~shouldChecksum=false)),
+      blockStore: Some(BlockStore.fromJs(svmBlocks, ~ecosystem=Svm)),
     }
   | _ => {
       items,

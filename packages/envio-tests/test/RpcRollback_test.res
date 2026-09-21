@@ -179,7 +179,7 @@ let makeChainState = (~source: Source.t, ~knownHeight) => {
     ~shouldRollbackOnReorg=true,
     ~maxReorgDepth=200,
     ~committedProgressBlockNumber=-1,
-    ~blockStore=BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false),
+    ~blockStore=BlockStore.make(~ecosystem=Evm),
     ~logger=Logging.getLogger(),
   )
 }

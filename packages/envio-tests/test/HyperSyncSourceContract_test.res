@@ -275,6 +275,7 @@ describe("HyperSync source contract", () => {
         ~items=page.parsedQueueItems,
         ~transactionStore=page.transactionStore,
         ~blockStore=page.blockStore,
+        ~shouldChecksum=false,
       )
       page.parsedQueueItems
     })
@@ -620,6 +621,7 @@ describe("HyperSync source responses", () => {
         ~items=response.parsedQueueItems,
         ~transactionStore=response.transactionStore,
         ~blockStore=response.blockStore,
+        ~shouldChecksum=true,
       )
       let summary = response.parsedQueueItems->Array.map(eventSummary)->Array.getUnsafe(0)
       {

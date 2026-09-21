@@ -25,7 +25,7 @@ fn decode_hex_address(s: &str, len: usize) -> Option<Key> {
 /// with a warning, not take the indexer down.
 fn address_key(ecosystem: Ecosystem, address: &str) -> Option<Key> {
     match ecosystem {
-        Ecosystem::Evm { .. } => decode_hex_address(address, 20),
+        Ecosystem::Evm => decode_hex_address(address, 20),
         Ecosystem::Fuel => decode_hex_address(address, 32),
         Ecosystem::Svm => {
             (!address.is_empty()).then(|| address.as_bytes().to_vec().into_boxed_slice())
@@ -36,9 +36,9 @@ fn address_key(ecosystem: Ecosystem, address: &str) -> Option<Key> {
 /// Render a key back to the canonical string the JS side uses. EVM follows the
 /// chain's `lowercaseAddresses` setting, the same way every address the sources
 /// hand back is encoded.
-fn address_string(ecosystem: Ecosystem, key: &[u8]) -> String {
+fn address_string(ecosystem: Ecosystem, should_checksum: bool, key: &[u8]) -> String {
     match ecosystem {
-        Ecosystem::Evm { should_checksum } => {
+        Ecosystem::Evm => {
             let mut bytes = [0u8; 20];
             bytes.copy_from_slice(key);
             if should_checksum {
@@ -64,15 +64,15 @@ fn address_topic(key: &[u8]) -> String {
 /// are the address text itself and vary in length.
 fn key_width(ecosystem: Ecosystem) -> Option<usize> {
     match ecosystem {
-        Ecosystem::Evm { .. } => Some(20),
+        Ecosystem::Evm => Some(20),
         Ecosystem::Fuel => Some(32),
         Ecosystem::Svm => None,
     }
 }
 
-fn ecosystem_by_name(name: &str, should_checksum: bool) -> napi::Result<Ecosystem> {
+fn ecosystem_by_name(name: &str) -> napi::Result<Ecosystem> {
     match name {
-        "evm" => Ok(Ecosystem::Evm { should_checksum }),
+        "evm" => Ok(Ecosystem::Evm),
         "fuel" => Ok(Ecosystem::Fuel),
         "svm" => Ok(Ecosystem::Svm),
         _ => Err(napi::Error::from_reason(format!(
@@ -86,7 +86,7 @@ fn ecosystem_by_name(name: &str, should_checksum: bool) -> napi::Result<Ecosyste
 /// holds and the bytes a store keys on can't fork.
 #[napi]
 pub fn encode_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<Vec<Buffer>> {
-    let ecosystem = ecosystem_by_name(&ecosystem, false)?;
+    let ecosystem = ecosystem_by_name(&ecosystem)?;
     addresses
         .iter()
         .map(|address| {
@@ -152,10 +152,10 @@ pub fn render_addresses(
     bytes: Buffer,
     lengths: Vec<u32>,
 ) -> napi::Result<Vec<String>> {
-    let ecosystem = ecosystem_by_name(&ecosystem, should_checksum)?;
+    let ecosystem = ecosystem_by_name(&ecosystem)?;
     Ok(key_slices(ecosystem, &bytes, &lengths)?
         .into_iter()
-        .map(|key| address_string(ecosystem, key))
+        .map(|key| address_string(ecosystem, should_checksum, key))
         .collect())
 }
 
@@ -171,7 +171,7 @@ pub fn render_contract_addresses(
     contract_ids: Vec<u32>,
     contract_id: u32,
 ) -> napi::Result<Vec<String>> {
-    let ecosystem = ecosystem_by_name(&ecosystem, should_checksum)?;
+    let ecosystem = ecosystem_by_name(&ecosystem)?;
     let keys = key_slices(ecosystem, &bytes, &lengths)?;
     if keys.len() != contract_ids.len() {
         return Err(napi::Error::from_reason(format!(
@@ -184,7 +184,7 @@ pub fn render_contract_addresses(
         .into_iter()
         .zip(contract_ids)
         .filter(|&(_, id)| id == contract_id)
-        .map(|(key, _)| address_string(ecosystem, key))
+        .map(|(key, _)| address_string(ecosystem, should_checksum, key))
         .collect())
 }
 
@@ -222,6 +222,9 @@ struct Entry {
 
 pub struct StoreInner {
     ecosystem: Ecosystem,
+    /// This chain's `lowercaseAddresses` setting, inverted: how an EVM key is
+    /// spelled when it is rendered back out.
+    should_checksum: bool,
     contract_names: Vec<String>,
     contract_start_blocks: Vec<i64>,
     contract_depends_on_addresses: Vec<bool>,
@@ -437,17 +440,17 @@ impl AddressStore {
         should_checksum: bool,
         contracts: Vec<AddressStoreContract>,
     ) -> napi::Result<Self> {
-        Self::with_ecosystem(Ecosystem::Evm { should_checksum }, contracts)
+        Self::with_ecosystem(Ecosystem::Evm, should_checksum, contracts)
     }
 
     #[napi(factory)]
     pub fn new_svm(contracts: Vec<AddressStoreContract>) -> napi::Result<Self> {
-        Self::with_ecosystem(Ecosystem::Svm, contracts)
+        Self::with_ecosystem(Ecosystem::Svm, false, contracts)
     }
 
     #[napi(factory)]
     pub fn new_fuel(contracts: Vec<AddressStoreContract>) -> napi::Result<Self> {
-        Self::with_ecosystem(Ecosystem::Fuel, contracts)
+        Self::with_ecosystem(Ecosystem::Fuel, false, contracts)
     }
 
     /// The id the next added address will get. Captured before a batch, it
@@ -555,7 +558,7 @@ impl AddressStore {
                 return Err(napi::Error::from_reason(format!(
                     "Registered address {} at block {} has no checkpoint in the batch that writes \
                      it.",
-                    address_string(store.ecosystem, &entry.key),
+                    address_string(store.ecosystem, store.should_checksum, &entry.key),
                     entry.registration_block
                 )));
             };
@@ -587,7 +590,7 @@ impl AddressStore {
             .map(|&id| {
                 let entry = store.entry(id);
                 AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
+                    address: address_string(store.ecosystem, store.should_checksum, &entry.key),
                     contract_name: store.contract_name(entry.contract_idx).to_string(),
                     registration_block: entry.registration_block,
                     effective_start_block: entry.effective_start_block,
@@ -743,7 +746,7 @@ impl AddressStore {
             .map(|id| {
                 let entry = store.entry(id);
                 AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
+                    address: address_string(store.ecosystem, store.should_checksum, &entry.key),
                     contract_name: store.contract_name(entry.contract_idx).to_string(),
                     registration_block: entry.registration_block,
                     effective_start_block: entry.effective_start_block,
@@ -781,7 +784,9 @@ impl AddressStore {
             Some(contract_idx) => store
                 .sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
                 .into_iter()
-                .map(|id| address_string(store.ecosystem, &store.entry(id).key))
+                .map(|id| {
+                    address_string(store.ecosystem, store.should_checksum, &store.entry(id).key)
+                })
                 .collect(),
         }
     }
@@ -790,6 +795,7 @@ impl AddressStore {
 impl AddressStore {
     fn with_ecosystem(
         ecosystem: Ecosystem,
+        should_checksum: bool,
         contracts: Vec<AddressStoreContract>,
     ) -> napi::Result<Self> {
         let mut contract_names = Vec::with_capacity(contracts.len());
@@ -812,6 +818,7 @@ impl AddressStore {
         Ok(Self {
             inner: Arc::new(RwLock::new(StoreInner {
                 ecosystem,
+                should_checksum,
                 contract_names,
                 contract_start_blocks,
                 contract_depends_on_addresses,
@@ -922,7 +929,7 @@ impl StoreInner {
             derive_effective_start_block(registration_block, contract_start_block);
         if let Some(id) = self.live_id_for(&key, contract_idx) {
             return Some(RejectedRow {
-                address: address_string(self.ecosystem, &key),
+                address: address_string(self.ecosystem, self.should_checksum, &key),
                 contract_name: self.contract_name(contract_idx).to_string(),
                 effective_start_block,
                 existing_effective_start_block: self.entry(id).effective_start_block,
@@ -1257,7 +1264,7 @@ impl AddressSet {
         let store = self.store.read().unwrap();
         self.ids
             .iter()
-            .map(|&id| address_string(store.ecosystem, &store.entry(id).key))
+            .map(|&id| address_string(store.ecosystem, store.should_checksum, &store.entry(id).key))
             .collect()
     }
 
@@ -1269,7 +1276,7 @@ impl AddressSet {
             .map(|&id| {
                 let entry = store.entry(id);
                 AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
+                    address: address_string(store.ecosystem, store.should_checksum, &entry.key),
                     contract_name: store.contract_name(entry.contract_idx).to_string(),
                     registration_block: entry.registration_block,
                     effective_start_block: entry.effective_start_block,
@@ -1308,10 +1315,12 @@ impl AddressSet {
                         });
                         contracts.len() - 1
                     });
-                contracts[slot]
-                    .addresses
-                    .push(address_string(store.ecosystem, &entry.key));
-                if matches!(store.ecosystem, Ecosystem::Evm { .. }) {
+                contracts[slot].addresses.push(address_string(
+                    store.ecosystem,
+                    store.should_checksum,
+                    &entry.key,
+                ));
+                if matches!(store.ecosystem, Ecosystem::Evm) {
                     contracts[slot].topics.push(address_topic(&entry.key));
                 }
                 match owners_by_key.entry(entry.key.clone()) {
@@ -1362,6 +1371,7 @@ pub(crate) mod test_support {
     fn store_of(ecosystem: Ecosystem, entries: &[(&str, &[&str])]) -> AddressStore {
         let store = AddressStore::with_ecosystem(
             ecosystem,
+            false,
             entries
                 .iter()
                 .map(|(name, _)| AddressStoreContract {
@@ -1393,12 +1403,7 @@ pub(crate) mod test_support {
     /// A store over `entries`' contracts, with each contract's addresses
     /// registered as config addresses.
     pub(crate) fn evm_store(entries: &[(&str, &[&str])]) -> AddressStore {
-        store_of(
-            Ecosystem::Evm {
-                should_checksum: false,
-            },
-            entries,
-        )
+        store_of(Ecosystem::Evm, entries)
     }
 
     pub(crate) fn fuel_store(entries: &[(&str, &[&str])]) -> AddressStore {
@@ -1731,13 +1736,11 @@ mod tests {
 
     /// The registrations a rollback hands over for deletion, rendered.
     fn rolled_back(store: &AddressStore, target_block: i64) -> Vec<(String, u32)> {
-        let ecosystem = Ecosystem::Evm {
-            should_checksum: false,
-        };
+        let ecosystem = Ecosystem::Evm;
         store
             .rollback(target_block)
             .into_iter()
-            .map(|r| (address_string(ecosystem, &r.address), r.contract_id))
+            .map(|r| (address_string(ecosystem, false, &r.address), r.contract_id))
             .collect()
     }
 
@@ -1746,16 +1749,14 @@ mod tests {
         to_block: i64,
         checkpoints: &[i64],
     ) -> Vec<(String, i64, u32)> {
-        let ecosystem = Ecosystem::Evm {
-            should_checksum: false,
-        };
+        let ecosystem = Ecosystem::Evm;
         store
             .drain_for_write(to_block, checkpoints.to_vec())
             .unwrap()
             .into_iter()
             .map(|e| {
                 (
-                    address_string(ecosystem, &e.address),
+                    address_string(ecosystem, false, &e.address),
                     e.registration_block,
                     e.checkpoint_idx,
                 )
@@ -2163,7 +2164,7 @@ mod tests {
     #[test]
     fn seeding_reads_svm_keys_at_the_widths_they_carry() {
         let store =
-            AddressStore::with_ecosystem(Ecosystem::Svm, contracts(&[("C", None)])).unwrap();
+            AddressStore::with_ecosystem(Ecosystem::Svm, false, contracts(&[("C", None)])).unwrap();
         let short = "So11111111111111111111111111111111111111112";
         let long = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
         let packed =
@@ -2258,15 +2259,7 @@ mod tests {
             .make_set("C".to_string(), None)
             .merge(&store.make_set("D".to_string(), None));
         let cache = set.cache();
-        let key_of = |address| {
-            address_key(
-                Ecosystem::Evm {
-                    should_checksum: false,
-                },
-                address,
-            )
-            .unwrap()
-        };
+        let key_of = |address| address_key(Ecosystem::Evm, address).unwrap();
         let a_key = key_of(A);
         assert_eq!(
             (

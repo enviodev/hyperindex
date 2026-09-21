@@ -503,11 +503,11 @@ pub struct BlockStore {
 
 #[napi]
 impl BlockStore {
-    /// EVM store, carrying that chain's address-checksumming setting. Used for
-    /// both fetch-response pages and the persistent per-chain store.
+    /// EVM store. Used for both fetch-response pages and the persistent
+    /// per-chain store.
     #[napi(factory)]
-    pub fn new_evm(should_checksum: bool) -> Self {
-        Self::with_ecosystem(Ecosystem::Evm { should_checksum })
+    pub fn new_evm() -> Self {
+        Self::with_ecosystem(Ecosystem::Evm)
     }
 
     /// SVM store. Used for both fetch-response pages and the persistent store.
@@ -526,8 +526,8 @@ impl BlockStore {
     /// blocks in JS (RPC, simulate) and for seeding stored reorg checkpoints on
     /// resume.
     #[napi(factory)]
-    pub fn from_js_evm(blocks: Vec<EvmBlockInput>, should_checksum: bool) -> napi::Result<Self> {
-        let store = Self::with_ecosystem(Ecosystem::Evm { should_checksum });
+    pub fn from_js_evm(blocks: Vec<EvmBlockInput>) -> napi::Result<Self> {
+        let store = Self::with_ecosystem(Ecosystem::Evm);
         let simple = blocks
             .into_iter()
             .map(evm_input_to_simple)
@@ -589,7 +589,7 @@ impl BlockStore {
         // comparing a page from another ecosystem would read one column's bytes
         // as another's. This is a programming error, but `merge` is public over
         // N-API, so reject it in every build before touching either table.
-        if std::mem::discriminant(&self.ecosystem) != std::mem::discriminant(&page.ecosystem) {
+        if self.ecosystem != page.ecosystem {
             return Err(napi::Error::from_reason(
                 "BlockStore.merge: cannot merge a page from a different ecosystem",
             ));
@@ -621,10 +621,7 @@ impl BlockStore {
         if std::ptr::eq(self, page) {
             return;
         }
-        debug_assert_eq!(
-            std::mem::discriminant(&self.ecosystem),
-            std::mem::discriminant(&page.ecosystem)
-        );
+        debug_assert_eq!(self.ecosystem, page.ecosystem);
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
         // `record_conflict` already keeps the lowest block number, so the page's
@@ -733,7 +730,7 @@ impl BlockStore {
         let inner = self.inner.lock().unwrap();
         match self.ecosystem {
             // Stored as a big-endian quantity rather than an i64 cell.
-            Ecosystem::Evm { .. } => inner
+            Ecosystem::Evm => inner
                 .table
                 .field_bytes(&key, field)
                 .and_then(|b| map_i64(&Some(b)).ok().flatten()),
@@ -805,12 +802,14 @@ impl BlockStore {
     /// over field codes. The lock is held only to gather the requested cells;
     /// decoding runs after it is released, off the JS thread via
     /// `block_in_place`. Missing keys yield an empty object. Result is aligned
-    /// with input.
+    /// with input. `should_checksum` is the caller's: rows are stored as raw
+    /// bytes, so the only place an address spelling is decided is here.
     #[napi(ts_return_type = "Promise<object[]>")]
     pub async fn materialize(
         &self,
         block_numbers: Vec<i64>,
         masks: Vec<f64>,
+        should_checksum: bool,
     ) -> napi::Result<Columns> {
         // The two columns are zipped row-wise; a length mismatch would silently
         // truncate and misalign the result with the caller's items.
@@ -824,7 +823,7 @@ impl BlockStore {
         let masks: Vec<u64> = masks.iter().map(|&m| m as u64).collect();
 
         match self.ecosystem {
-            Ecosystem::Evm { should_checksum } => {
+            Ecosystem::Evm => {
                 let scratch = self.gather(&block_numbers, &masks);
                 tokio::task::block_in_place(|| {
                     decode_evm_block_columns(&scratch, &block_numbers, &masks, should_checksum)
@@ -904,7 +903,7 @@ impl BlockStore {
 
     fn with_ecosystem(ecosystem: Ecosystem) -> Self {
         let n_fields = match ecosystem {
-            Ecosystem::Evm { .. } => EvmBlockField::VARIANTS.len(),
+            Ecosystem::Evm => EvmBlockField::VARIANTS.len(),
             Ecosystem::Svm => SvmBlockField::VARIANTS.len(),
             Ecosystem::Fuel => FuelBlockField::VARIANTS.len(),
         };
@@ -921,7 +920,7 @@ impl BlockStore {
     /// compares and the threshold prune retains.
     fn hash_field(&self) -> usize {
         match self.ecosystem {
-            Ecosystem::Evm { .. } => EvmBlockField::Hash as usize,
+            Ecosystem::Evm => EvmBlockField::Hash as usize,
             Ecosystem::Svm => SvmBlockField::Hash as usize,
             Ecosystem::Fuel => FuelBlockField::Id as usize,
         }
@@ -930,7 +929,7 @@ impl BlockStore {
     /// The ecosystem's block-time field code.
     fn timestamp_field(&self) -> usize {
         match self.ecosystem {
-            Ecosystem::Evm { .. } => EvmBlockField::Timestamp as usize,
+            Ecosystem::Evm => EvmBlockField::Timestamp as usize,
             Ecosystem::Svm => SvmBlockField::Time as usize,
             Ecosystem::Fuel => FuelBlockField::Time as usize,
         }
@@ -1158,7 +1157,7 @@ pub fn fuel_block_field_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hypersync_client::format::{Hash, Quantity};
+    use hypersync_client::format::{Address, Hash, Quantity};
 
     fn raw_evm_block(number: u64) -> simple_types::Block {
         simple_types::Block {
@@ -1194,14 +1193,14 @@ mod tests {
     // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn materialize_decodes_only_masked_fields() {
-        let store = BlockStore::new_evm(false);
+        let store = BlockStore::new_evm();
         let mut block = raw_evm_block(1);
         block.gas_used = Some(Quantity::from(99u64));
         store.insert_evm_blocks(vec![block]);
 
         let mask = bit(EvmBlockField::GasUsed) as f64;
         let cols = store
-            .materialize(vec![1], vec![mask])
+            .materialize(vec![1], vec![mask], false)
             .await
             .expect("materialize");
 
@@ -1219,12 +1218,12 @@ mod tests {
     async fn number_comes_from_key_even_on_miss() {
         // A missing row still materialises the requested key as `number`, so it
         // never depends on a fetched block row.
-        let store = BlockStore::new_evm(false);
+        let store = BlockStore::new_evm();
         store.insert_evm_blocks(vec![raw_evm_block(3)]);
 
         let mask = bit(EvmBlockField::Number) as f64;
         let cols = store
-            .materialize(vec![7, 3], vec![mask, mask])
+            .materialize(vec![7, 3], vec![mask, mask], false)
             .await
             .expect("materialize");
         match column(&cols, "number") {
@@ -1240,7 +1239,7 @@ mod tests {
     async fn decode_applies_each_rows_own_mask() {
         // Both rows have a stored gasUsed, but only row 0 selects it — proving
         // the per-row mask, not the stored data, gates materialisation.
-        let store = BlockStore::new_evm(false);
+        let store = BlockStore::new_evm();
         let mut block1 = raw_evm_block(1);
         block1.gas_used = Some(Quantity::from(100u64));
         let mut block2 = raw_evm_block(2);
@@ -1249,7 +1248,7 @@ mod tests {
 
         let mask = bit(EvmBlockField::GasUsed) as f64;
         let cols = store
-            .materialize(vec![1, 2], vec![mask, 0.])
+            .materialize(vec![1, 2], vec![mask, 0.], false)
             .await
             .expect("materialize");
         match column(&cols, "gasUsed") {
@@ -1260,7 +1259,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn materialize_returns_stored_extra_fields_via_store() {
-        let store = BlockStore::new_evm(false);
+        let store = BlockStore::new_evm();
         let mut block = raw_evm_block(10);
         block.timestamp = Some(Quantity::from(999u64));
         block.hash = Some(Hash::from([0xabu8; 32]));
@@ -1274,7 +1273,7 @@ mod tests {
             | bit(EvmBlockField::Hash)
             | bit(EvmBlockField::GasUsed)) as f64;
         let cols = store
-            .materialize(vec![10], vec![mask])
+            .materialize(vec![10], vec![mask], false)
             .await
             .expect("materialize");
         let summary = (
@@ -1308,7 +1307,7 @@ mod tests {
         // The same block arrives twice with different populated fields (e.g. a
         // hash-only observation later enriched by a full fetch): reads union
         // them.
-        let store = BlockStore::new_evm(false);
+        let store = BlockStore::new_evm();
         let mut with_hash = raw_evm_block(20);
         with_hash.hash = Some(Hash::from([0x11u8; 32]));
         store.insert_evm_blocks(vec![with_hash]);
@@ -1318,7 +1317,7 @@ mod tests {
 
         let mask = (bit(EvmBlockField::Hash) | bit(EvmBlockField::GasUsed)) as f64;
         let cols = store
-            .materialize(vec![20], vec![mask])
+            .materialize(vec![20], vec![mask], false)
             .await
             .expect("materialize");
         let summary = (
@@ -1346,7 +1345,7 @@ mod tests {
             | (1u64 << (SvmBlockField::Time as u32))
             | (1u64 << (SvmBlockField::Height as u32))) as f64;
         let cols = store
-            .materialize(vec![9], vec![mask])
+            .materialize(vec![9], vec![mask], false)
             .await
             .expect("materialize");
         let summary = (
@@ -1382,7 +1381,7 @@ mod tests {
 
     #[test]
     fn get_timestamp_reads_the_exact_block() {
-        let store = BlockStore::new_evm(false);
+        let store = BlockStore::new_evm();
         store.insert_evm_blocks(vec![
             simple_types::Block {
                 timestamp: Some(Quantity::from(100u64)),
@@ -1497,7 +1496,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn prune_and_rollback_drop_by_block() {
-        let store = BlockStore::new_evm(false);
+        let store = BlockStore::new_evm();
         let blocks = [10u64, 20, 30]
             .into_iter()
             .map(|n| {
@@ -1511,12 +1510,12 @@ mod tests {
         let mask = bit(EvmBlockField::Timestamp) as f64;
         store.prune(10, 11);
         let after_prune = store
-            .materialize(vec![10, 20, 30], vec![mask, mask, mask])
+            .materialize(vec![10, 20, 30], vec![mask, mask, mask], false)
             .await
             .expect("materialize");
         store.rollback(20);
         let after_rollback = store
-            .materialize(vec![10, 20, 30], vec![mask, mask, mask])
+            .materialize(vec![10, 20, 30], vec![mask, mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1530,21 +1529,70 @@ mod tests {
         );
     }
 
+    /// EIP-55 spelling of `[0xab; 20]`, the address every checksum case below
+    /// stores as `miner`.
+    const CHECKSUMMED_MINER: &str = "0xABaBaBaBABabABabAbAbABAbABabababaBaBABaB";
+    const LOWERCASE_MINER: &str = "0xabababababababababababababababababababab";
+
+    fn miner_block(number: u64) -> simple_types::Block {
+        let mut block = raw_evm_block(number);
+        block.miner = Some(Address::from([0xabu8; 20]));
+        block
+    }
+
+    async fn materialized_miner(store: &BlockStore, should_checksum: bool) -> Option<String> {
+        let cols = store
+            .materialize(
+                vec![1],
+                vec![bit(EvmBlockField::Miner) as f64],
+                should_checksum,
+            )
+            .await
+            .expect("materialize");
+        match column(&cols, "miner") {
+            Some(Column::Str(v)) => v[0].clone(),
+            other => panic!("expected miner column, got present={}", other.is_some()),
+        }
+    }
+
+    // A page and the store it merges into may disagree on checksumming: `merge`
+    // compares ecosystems by discriminant, so neither flag guards the other.
+    // The setting belongs to the caller of `materialize`, which is the only
+    // place it is read.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn materialize_honours_the_callers_checksum_setting() {
+        let page = BlockStore::new_evm();
+        page.insert_evm_blocks(vec![miner_block(1)]);
+        let store = BlockStore::new_evm();
+        store.merge(&page, 0, false).unwrap();
+
+        assert_eq!(
+            (
+                materialized_miner(&store, true).await,
+                materialized_miner(&store, false).await,
+            ),
+            (
+                Some(CHECKSUMMED_MINER.to_string()),
+                Some(LOWERCASE_MINER.to_string()),
+            )
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn merge_resolves_re_fetched_block_to_newest() {
         // A rolled-back block re-fetched with different content must resolve to
         // the fresh copy — the sequence a chain reorg drives through
         // `ChainState`: merge a page, then merge a later page for the same
         // (re-fetched) block number.
-        let persistent = BlockStore::new_evm(false);
+        let persistent = BlockStore::new_evm();
 
-        let page1 = BlockStore::new_evm(false);
+        let page1 = BlockStore::new_evm();
         let mut first = raw_evm_block(20);
         first.timestamp = Some(Quantity::from(100u64));
         page1.insert_evm_blocks(vec![first]);
         persistent.merge(&page1, 0, false).unwrap();
 
-        let page2 = BlockStore::new_evm(false);
+        let page2 = BlockStore::new_evm();
         let mut second = raw_evm_block(20);
         second.timestamp = Some(Quantity::from(200u64));
         page2.insert_evm_blocks(vec![second]);
@@ -1552,7 +1600,7 @@ mod tests {
 
         let mask = bit(EvmBlockField::Timestamp) as f64;
         let cols = persistent
-            .materialize(vec![20], vec![mask])
+            .materialize(vec![20], vec![mask], false)
             .await
             .expect("materialize");
         match column(&cols, "timestamp") {
@@ -1633,7 +1681,7 @@ mod tests {
     }
 
     fn evm_page(blocks: Vec<simple_types::Block>) -> BlockStore {
-        let page = BlockStore::new_evm(false);
+        let page = BlockStore::new_evm();
         page.insert_evm_blocks(blocks);
         page
     }
@@ -1768,7 +1816,7 @@ mod tests {
         // The kept rows are hash-only: timestamp no longer materialises.
         let mask = (bit(EvmBlockField::Timestamp) | bit(EvmBlockField::Hash)) as f64;
         let cols = store
-            .materialize(vec![20], vec![mask])
+            .materialize(vec![20], vec![mask], false)
             .await
             .expect("materialize");
         assert_eq!(
@@ -1791,14 +1839,11 @@ mod tests {
 
     #[test]
     fn from_js_evm_rejects_a_truncated_hash() {
-        let reason = match BlockStore::from_js_evm(
-            vec![EvmBlockInput {
-                number: 10,
-                hash: Some("0x0b64".to_string()),
-                timestamp: None,
-            }],
-            false,
-        ) {
+        let reason = match BlockStore::from_js_evm(vec![EvmBlockInput {
+            number: 10,
+            hash: Some("0x0b64".to_string()),
+            timestamp: None,
+        }]) {
             Ok(_) => panic!("a short hash is not a block hash"),
             Err(err) => err.reason.clone(),
         };
@@ -1858,7 +1903,7 @@ mod tests {
         // The same block observed twice with different hashes inside one page
         // (e.g. a rollback guard disagreeing with a returned block) invalidates
         // the response even though the page dedupes on insert.
-        let page = BlockStore::new_evm(false);
+        let page = BlockStore::new_evm();
         page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
         page.insert_evm_blocks(vec![hashed_evm_block(11, 0xbb)]);
 
@@ -1877,12 +1922,12 @@ mod tests {
         );
 
         // The aggregate retains conflicts across backend pages too.
-        let aggregate = BlockStore::new_evm(false);
+        let aggregate = BlockStore::new_evm();
         aggregate.append_page(&page);
         assert!(aggregate.response_conflict().is_some());
 
         // The same duplicate with an identical hash is fine.
-        let page = BlockStore::new_evm(false);
+        let page = BlockStore::new_evm();
         page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
         page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
         assert!(page.response_conflict().is_none());
@@ -1991,7 +2036,7 @@ mod tests {
             | (1u64 << (FuelBlockField::Time as u32))
             | (1u64 << (FuelBlockField::Id as u32))) as f64;
         let cols = persistent
-            .materialize(vec![5], vec![mask])
+            .materialize(vec![5], vec![mask], false)
             .await
             .expect("materialize");
         let summary = (
@@ -2042,29 +2087,26 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn from_js_evm_round_trips_sparse_blocks() {
-        let store = BlockStore::from_js_evm(
-            vec![
-                EvmBlockInput {
-                    number: 7,
-                    timestamp: Some(999),
-                    hash: Some(format!("0x{}", "ab".repeat(32))),
-                },
-                // A hash-only guard row (no timestamp).
-                EvmBlockInput {
-                    number: 8,
-                    timestamp: None,
-                    hash: Some(format!("0x{}", "cd".repeat(32))),
-                },
-            ],
-            false,
-        )
+        let store = BlockStore::from_js_evm(vec![
+            EvmBlockInput {
+                number: 7,
+                timestamp: Some(999),
+                hash: Some(format!("0x{}", "ab".repeat(32))),
+            },
+            // A hash-only guard row (no timestamp).
+            EvmBlockInput {
+                number: 8,
+                timestamp: None,
+                hash: Some(format!("0x{}", "cd".repeat(32))),
+            },
+        ])
         .expect("fromJs");
 
         let mask = (bit(EvmBlockField::Number)
             | bit(EvmBlockField::Timestamp)
             | bit(EvmBlockField::Hash)) as f64;
         let cols = store
-            .materialize(vec![7], vec![mask])
+            .materialize(vec![7], vec![mask], false)
             .await
             .expect("materialize");
         let summary = (
@@ -2090,7 +2132,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn rollback_guard_blocks_keep_the_head_timestamp() {
-        let page = BlockStore::new_evm(false);
+        let page = BlockStore::new_evm();
         page.insert_rollback_guard_blocks(&crate::evm_hypersync_source::types::RollbackGuard {
             block_number: 20,
             timestamp: 1_700_000_000,
@@ -2104,7 +2146,7 @@ mod tests {
         // the range carries only the parent hash the guard reports.
         let mask = (bit(EvmBlockField::Timestamp) | bit(EvmBlockField::Hash)) as f64;
         let cols = page
-            .materialize(vec![20, 10], vec![mask, mask])
+            .materialize(vec![20, 10], vec![mask, mask], false)
             .await
             .expect("materialize");
         assert_eq!(

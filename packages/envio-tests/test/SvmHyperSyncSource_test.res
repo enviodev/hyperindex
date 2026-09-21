@@ -105,8 +105,8 @@ let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
     // tests).
     Promise.resolve((
       response,
-      TransactionStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
-      BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+      TransactionStore.make(~ecosystem=Ecosystem.Svm),
+      BlockStore.make(~ecosystem=Ecosystem.Svm),
     ))
   },
 }
