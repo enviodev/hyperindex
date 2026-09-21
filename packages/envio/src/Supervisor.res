@@ -372,6 +372,23 @@ let isRunAtHead = (running: array<running>) =>
       r.snapshot->Option.mapOr(false, snapshot => snapshot.hasArrivedAtHead)
     )
 
+// Holds every worker at the head until the last of them arrives, then releases
+// them together. Chains enter the reorg threshold and go realtime as one
+// indexer, and in a split run only the supervisor can see when that is, so the
+// run switches over exactly as an unsplit one does.
+let startReleaseCheck = group =>
+  group.releaseCheck = Some(
+    setInterval(() =>
+      if group.running->isRunAtHead {
+        group->stopReleaseCheck
+        group.running->Array.forEach(r =>
+          r.child->NodeJs.ChildProcess.send(Worker.ReleaseRealtime)->ignore
+        )
+        Logging.info("Every chain has reached the head. Switching the run to realtime.")
+      }
+    , releaseCheckIntervalMillis),
+  )
+
 // Runs the group: creates the schema for every chain, forks a worker per plan
 // entry, and serves the run's metrics, console and display from what they
 // report. Returns once every worker has exited; throws if any of them failed.
@@ -459,22 +476,8 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config)),
   )
 
-  // Chains enter the reorg threshold and go realtime as one indexer, which in a
-  // split run only the supervisor can see. Every worker is held until the last
-  // one arrives, then released together, so the run switches over exactly as an
-  // unsplit one does.
   if holdRealtime {
-    group.releaseCheck = Some(
-      setInterval(() =>
-        if group.running->isRunAtHead {
-          group->stopReleaseCheck
-          group.running->Array.forEach(r =>
-            r.child->NodeJs.ChildProcess.send(Worker.ReleaseRealtime)->ignore
-          )
-          Logging.info("Every chain has reached the head. Switching the run to realtime.")
-        }
-      , releaseCheckIntervalMillis),
-    )
+    group->startReleaseCheck
   }
 
   if shouldUseTui {
