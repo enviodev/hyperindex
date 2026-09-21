@@ -6,6 +6,8 @@ open Vitest
 type fixtureReport = {
   workerConfig: string,
   maxConnections: string,
+  bufferSize: string,
+  objectsTarget: string,
   logFile: string,
   startTime: Date.t,
   hasArrivedAtHead: bool,
@@ -17,6 +19,7 @@ let forkFixture = (
   ~chainIds,
   ~maxConnections=2,
   ~workerIndex=0,
+  ~workerCount=2,
   ~holdRealtime=false,
   ~isDev=false,
   ~pipeOutput=false,
@@ -26,6 +29,7 @@ let forkFixture = (
   Supervisor.fork(
     {chainIds: chainIds->Array.map(ChainId.fromInt), maxConnections},
     ~workerIndex,
+    ~workerCount,
     ~holdRealtime,
     ~isDev,
     ~entryPath=fixturePath,
@@ -40,6 +44,7 @@ describe("Supervisor.fork", () => {
       ~chainIds=[1, 137],
       ~maxConnections=3,
       ~workerIndex=1,
+      ~workerCount=4,
       ~holdRealtime=true,
       ~isDev=true,
     )
@@ -63,6 +68,10 @@ describe("Supervisor.fork", () => {
       // is why `isDev` is among them.
       workerConfig: `{"chainIds":[1,137],"holdRealtime":true,"isDev":true}`,
       maxConnections: "3",
+      // The run's memory budgets are the whole indexer's, so a worker gets a
+      // share rather than the whole of each.
+      bufferSize: (CrossChainState.calculateTargetBufferSize() / 4)->Int.toString,
+      objectsTarget: (Env.inMemoryObjectsTarget->Float.toInt / 4)->Int.toString,
       logFile: Supervisor.logFilePath(~workerIndex=1),
       // Proof the channel clones rather than stringifies: a JSON round trip
       // would have turned this into a string.

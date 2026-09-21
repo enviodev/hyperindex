@@ -106,6 +106,25 @@ let readLines = (~onLine) => {
   (read, flush)
 }
 
+// The run's memory budgets, and each worker's share of them. Both are the whole
+// indexer's rather than one chain's or one process's: the fetch buffer pool is
+// deliberately independent of how many chains a run has, and an indexer split
+// across processes that took each budget whole in every one of them would hold
+// as many times the memory as it happened to have workers.
+//
+// Read here and handed over in the spawn environment for the same reason the
+// connection share is: a worker's `Env` reads them as it loads.
+let memoryBudgets = (~workerCount) =>
+  [
+    ("ENVIO_INDEXING_MAX_BUFFER_SIZE", CrossChainState.calculateTargetBufferSize()),
+    ("ENVIO_IN_MEMORY_OBJECTS_TARGET", Env.inMemoryObjectsTarget->Float.toInt),
+  ]->Array.map(((name, budget)) => (
+    name,
+    // A budget smaller than the run has workers still leaves each one something
+    // to hold, rather than a pool it can never put anything in.
+    Pervasives.max(1, budget / workerCount)->Int.toString,
+  ))
+
 // Whether this process's own output is a terminal. `pino-pretty` colorizes on
 // that test, and a piped worker would fail it for a run the operator is
 // watching in colour.
@@ -114,6 +133,8 @@ let readLines = (~onLine) => {
 let fork = (
   worker: worker,
   ~workerIndex,
+  // How many processes the run's budgets are being split between.
+  ~workerCount,
   // Whether this worker waits for the run before going realtime. False when
   // every chain resumed already caught up: there is nothing left to wait for,
   // and a barrier nobody can open would hold the run forever.
@@ -139,9 +160,10 @@ let fork = (
       isDev,
     }->S.reverseConvertToJsonStringOrThrow(Worker.configSchema),
   )
-  // The worker's slice of the budget. Read when the worker's own Env module
-  // loads, which is why it rides in the spawn environment rather than a message.
+  // The worker's slice of the budgets. Read when the worker's own Env module
+  // loads, which is why they ride in the spawn environment rather than a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
+  memoryBudgets(~workerCount)->Array.forEach(((name, share)) => env->Dict.set(name, share))
   env->Dict.set("LOG_FILE", logFilePath(~workerIndex))
   if pipeOutput && stdoutIsTty->Nullable.toOption->Option.getOr(false) {
     env->Dict.set("FORCE_COLOR", "1")
@@ -391,7 +413,13 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     )
   let group = {
     running: workers->Array.mapWithIndex((worker, workerIndex) =>
-      worker->fork(~workerIndex, ~holdRealtime, ~isDev=config.isDev, ~pipeOutput=shouldUseTui)
+      worker->fork(
+        ~workerIndex,
+        ~workerCount=workers->Array.length,
+        ~holdRealtime,
+        ~isDev=config.isDev,
+        ~pipeOutput=shouldUseTui,
+      )
     ),
     stopping: false,
     releaseCheck: None,
@@ -404,9 +432,9 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
       ~startTime,
       ~metricTime=Date.make(),
       ~elapsedSeconds=startTimeRef->Performance.secondsSince,
-      // Every worker reads the same buffer target this process does, and each
-      // holds a pool of that size. What the run was asked for is the one number
-      // that means anything across them.
+      // The run's pool, which its workers hold a share of each. Reporting the
+      // shares added back up would say the same thing less directly, and say
+      // nothing at all before every worker has reported.
       ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
     )
 

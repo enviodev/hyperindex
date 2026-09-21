@@ -10,6 +10,8 @@ process.send({
   metrics: {
     workerConfig: process.env.ENVIO_INTERNAL_WORKER,
     maxConnections: process.env.ENVIO_PG_MAX_CONNECTIONS,
+    bufferSize: process.env.ENVIO_INDEXING_MAX_BUFFER_SIZE,
+    objectsTarget: process.env.ENVIO_IN_MEMORY_OBJECTS_TARGET,
     logFile: process.env.LOG_FILE,
     // A Date survives only under structured-clone serialization, which is
     // what a metrics snapshot's timestamps need.
