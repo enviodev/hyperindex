@@ -625,10 +625,16 @@ let getChain = (config, ~chainId) =>
         "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
       )
 
-// Whether every entity belongs to exactly one chain. Only then is a unit of
-// this indexer's work attributable to a chain at all, which is what lets a run
-// be split across processes.
-let isPerChain = (config: t) => !(config.userEntities->Array.some(entity => entity.crossChain))
+// Whether every entity belongs to exactly one chain. Read off the checkpoint
+// sequence rather than the entities again, because that is the same fact and
+// the one that makes splitting safe: a chain only gets a counter of its own
+// when no other chain can reach its rows, and a counter of its own is what lets
+// a process advance one chain without saying anything about the others.
+let isPerChain = (config: t) =>
+  switch config.checkpointSequence {
+  | PerChain => true
+  | SharedAcrossChains => false
+  }
 
 // Narrows a config to the chains one `envio start --chain` process drives.
 // `contractMapping` is deliberately left whole: its ids are what the migration
