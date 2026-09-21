@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::{Semaphore, SemaphorePermit};
+use tokio::sync::Semaphore;
 
 mod classify;
 mod client;
@@ -26,7 +26,7 @@ use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
-use enrich::{EnrichError, EnrichRequest, Fetches, ItemFields, PageRefs};
+use enrich::{EnrichError, EnrichRequest, Fetches, SelectedFields, PageRefs};
 use hypersync_client::format::{self, Hex};
 use interval::{IntervalState, SyncConfig};
 
@@ -268,7 +268,7 @@ pub struct EvmRpcClient {
     /// The fields each registration selected, as store masks. An item's block
     /// and transaction are fetched for the union of the masks of the items that
     /// reference them, so an event selecting nothing costs no request.
-    registration_fields: HashMap<i64, ItemFields>,
+    registration_fields: HashMap<i64, SelectedFields>,
     should_checksum: bool,
 }
 
@@ -355,7 +355,7 @@ impl EvmRpcClient {
             .map(|reg| {
                 (
                     reg.index,
-                    ItemFields {
+                    SelectedFields {
                         block_mask: fields::block_mask(&reg.block_fields),
                         tx_mask: fields::tx_mask(&reg.transaction_fields),
                     },
@@ -425,8 +425,7 @@ impl EvmRpcClient {
     /// The chain's height, with the timing of the request it took.
     #[napi]
     pub async fn get_height(&self) -> napi::Result<(i64, Vec<RequestStat>)> {
-        let permit = self.inner.acquire().await;
-        let result = self.inner.get_height(permit).await;
+        let result = self.inner.get_height().await;
         let request_stats = self.inner.take_stats();
         // A poll that failed still cost a request; carry its timing out with
         // the error so the source's metrics count it.
@@ -752,9 +751,7 @@ impl EvmRpcClient {
 
         let results =
             futures_util::future::join_all(query.selections.iter().map(|selection| async {
-                let permit = self.inner.acquire().await;
                 self.fetch_logs_raw(
-                    permit,
                     query.from_block as i64,
                     query.to_block as i64,
                     selection,
@@ -785,7 +782,6 @@ impl EvmRpcClient {
 
     async fn fetch_logs_raw(
         &self,
-        permit: SemaphorePermit<'_>,
         from_block: i64,
         to_block: i64,
         selection: &BuiltLogSelection,
@@ -819,7 +815,7 @@ impl EvmRpcClient {
 
         let raw_logs: Vec<RawLog> = self
             .inner
-            .request(permit, "eth_getLogs", json!([filter]))
+            .request("eth_getLogs", json!([filter]))
             .await?;
 
         // Decoding is CPU-bound ABI work; keep it off the libuv async thread.

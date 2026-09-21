@@ -1,18 +1,15 @@
 //! Fills a page's block and transaction stores for the logs a query returned.
 //! `plan_blocks` and `plan_transactions` decide what that costs in requests.
 //!
-//! Serving a field from the store rather than refetching it is safe wherever
-//! reorgs are handled at all: every log's own `blockHash` enters the page as an
-//! observation, so a stored row belonging to a dead fork disagrees with this
-//! response and the merge reports a reorg before any event is materialised.
-//! Where the merge proceeds regardless — detect-only mode, or a fork deeper
-//! than the configured reorg window — the hash is corrected but the row's other
-//! fields keep the dead fork's values until the row is pruned. Both are already
-//! "reorgs not handled"; this is one more way that shows.
+//! Serving a field from the store rather than refetching it is safe because
+//! every log carries its own `blockHash` into the page: a stored row from a
+//! dead fork disagrees with the response, and the merge reports a reorg before
+//! anything is materialised. Where a reorg is not handled at all — detect-only
+//! mode, or a fork deeper than the configured window — such a row keeps the
+//! dead fork's values until it is pruned.
 //!
-//! What the store must never answer is the range's own boundary blocks — they
-//! are the observations that comparison rests on, and the store holds only an
-//! earlier response's view of them.
+//! The range's own boundary blocks are the exception. The comparison rests on
+//! them, so they are never answered from the store.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -174,13 +171,15 @@ fn collect_worst<T>(
 }
 
 /// What one item wants from the block and transaction it belongs to.
+/// The block and transaction fields one routed log's item asked for, as masks.
+/// Unioned per referenced key, they are what the plans below read.
 #[derive(Clone, Copy)]
-pub(crate) struct ItemFields {
+pub(crate) struct SelectedFields {
     pub block_mask: u64,
     pub tx_mask: u64,
 }
 
-struct BlockRef {
+struct ReferencedBlock {
     mask: u64,
     /// Every distinct hash the logs of this block reported. Each enters the
     /// page as its own observation, so two selections whose `eth_getLogs`
@@ -189,7 +188,7 @@ struct BlockRef {
     log_hashes: Vec<format::Hash>,
 }
 
-struct TxRef {
+struct ReferencedTransaction {
     mask: u64,
     /// The hash the first log of this transaction reported. Two logs sharing a
     /// (block, index) but naming different transactions could only come from
@@ -202,8 +201,8 @@ struct TxRef {
 /// their items selected unioned per key.
 #[derive(Default)]
 pub(crate) struct PageRefs {
-    blocks: HashMap<u64, BlockRef>,
-    transactions: HashMap<TxKey, TxRef>,
+    blocks: HashMap<u64, ReferencedBlock>,
+    transactions: HashMap<TxKey, ReferencedTransaction>,
 }
 
 impl PageRefs {
@@ -213,9 +212,9 @@ impl PageRefs {
         transaction_index: u32,
         block_hash: &format::Hash,
         transaction_hash: &format::Hash,
-        fields: ItemFields,
+        fields: SelectedFields,
     ) {
-        let block = self.blocks.entry(block_number).or_insert_with(|| BlockRef {
+        let block = self.blocks.entry(block_number).or_insert_with(|| ReferencedBlock {
             mask: 0,
             log_hashes: Vec::new(),
         });
@@ -226,7 +225,7 @@ impl PageRefs {
         let transaction = self
             .transactions
             .entry((block_number, transaction_index))
-            .or_insert_with(|| TxRef {
+            .or_insert_with(|| ReferencedTransaction {
                 mask: 0,
                 hash: transaction_hash.clone(),
             });
@@ -261,9 +260,8 @@ async fn require(
             let client = client.clone();
             let params = key.params();
             async move {
-                let permit = client.acquire().await;
                 client
-                    .request::<Json>(permit, key.method(), params)
+                    .request::<Json>(key.method(), params)
                     .await
                     .map(Arc::new)
                     .map_err(Arc::new)
@@ -287,12 +285,12 @@ async fn require(
 /// both come from the transaction unless only the receipt is being read
 /// anyway, so a selection never pays for two requests where one would do.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct TxReads {
+struct ResponsesToRead {
     transaction: bool,
     receipt: bool,
 }
 
-impl TxReads {
+impl ResponsesToRead {
     fn for_mask(mask: u64) -> Self {
         let mut transaction = false;
         let mut receipt = false;
@@ -308,7 +306,7 @@ impl TxReads {
                 Carrier::Either => either = true,
             }
         }
-        TxReads {
+        ResponsesToRead {
             // A selection of only shared fields is served by the transaction.
             transaction: transaction || (either && !receipt),
             receipt,
@@ -449,7 +447,7 @@ fn boundary_blocks(from_block: u64, to_block: u64) -> Vec<u64> {
 /// always want the same fields, so resolving the selection per group rather
 /// than per row does it once, and lets the group's results merge into the store
 /// in a single batch instead of one locked insert per row.
-struct BlockGroup {
+struct BlockReadPlan {
     covering: u64,
     fields: Vec<BlockField>,
     /// The subset of `fields` the items actually selected. The rest are read
@@ -459,10 +457,10 @@ struct BlockGroup {
     numbers: Vec<u64>,
 }
 
-struct TxGroup {
+struct TxReadPlan {
     covering: u64,
     fields: Vec<TransactionField>,
-    reads: TxReads,
+    reads: ResponsesToRead,
     entries: Vec<(TxKey, format::Hash)>,
 }
 
@@ -474,7 +472,7 @@ fn plan_blocks(
     from_block: u64,
     to_block: u64,
     known: &BlockStore,
-) -> Vec<BlockGroup> {
+) -> Vec<BlockReadPlan> {
     let boundary = boundary_blocks(from_block, to_block);
     let mut by_covering: HashMap<u64, Vec<u64>> = HashMap::new();
     for (&number, block_ref) in &refs.blocks {
@@ -500,7 +498,7 @@ fn plan_blocks(
     }
     by_covering
         .into_iter()
-        .map(|(covering, numbers)| BlockGroup {
+        .map(|(covering, numbers)| BlockReadPlan {
             covering,
             fields: block_fields_in(covering),
             selected: block_fields_in(covering & !BLOCK_OBSERVATION_MASK),
@@ -512,7 +510,7 @@ fn plan_blocks(
 /// Which transactions to read, and for which fields. A transaction whose
 /// selected fields all come off the log, or which the store already covers,
 /// needs no request at all.
-fn plan_transactions(refs: &PageRefs, known: &TransactionStore) -> Vec<TxGroup> {
+fn plan_transactions(refs: &PageRefs, known: &TransactionStore) -> Vec<TxReadPlan> {
     let mut by_covering: HashMap<u64, Vec<(TxKey, format::Hash)>> = HashMap::new();
     for (&key, tx_ref) in &refs.transactions {
         let wanted = tx_ref.mask & !TX_LOG_MASK;
@@ -527,12 +525,12 @@ fn plan_transactions(refs: &PageRefs, known: &TransactionStore) -> Vec<TxGroup> 
     by_covering
         .into_iter()
         .filter_map(|(covering, entries)| {
-            let reads = TxReads::for_mask(covering);
+            let reads = ResponsesToRead::for_mask(covering);
             // Nothing to ask a provider for: every selected field is on the log.
             if reads.is_empty() {
                 return None;
             }
-            Some(TxGroup {
+            Some(TxReadPlan {
                 covering,
                 fields: tx_fields_in(covering),
                 reads,
@@ -553,7 +551,7 @@ pub(crate) async fn fetch_block_hashes(
     block_numbers: &[u64],
     should_checksum: bool,
 ) -> Result<BlockStore, EnrichError> {
-    let groups = [BlockGroup {
+    let groups = [BlockReadPlan {
         covering: BLOCK_OBSERVATION_MASK,
         fields: block_fields_in(BLOCK_OBSERVATION_MASK),
         selected: Vec::new(),
@@ -571,7 +569,7 @@ pub(crate) async fn fetch_block_hashes(
 async fn fetch_blocks(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
-    groups: &[BlockGroup],
+    groups: &[BlockReadPlan],
 ) -> Result<Vec<(u64, Vec<Block>)>, EnrichError> {
     let fetches = groups.iter().map(|group| async move {
         let blocks = join_all(group.numbers.iter().map(|&number| async move {
@@ -589,7 +587,7 @@ async fn fetch_blocks(
 async fn fetch_transactions(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
-    groups: &[TxGroup],
+    groups: &[TxReadPlan],
 ) -> Result<Vec<(u64, Vec<Transaction>)>, EnrichError> {
     let fetches = groups.iter().map(|group| async move {
         let txs = join_all(group.entries.iter().map(
@@ -688,7 +686,7 @@ mod tests {
             0,
             &hash(0xbb),
             &hash(0xcc),
-            ItemFields {
+            SelectedFields {
                 block_mask,
                 tx_mask,
             },
@@ -696,7 +694,7 @@ mod tests {
         refs
     }
 
-    fn planned_numbers(groups: &[BlockGroup]) -> Vec<u64> {
+    fn planned_numbers(groups: &[BlockReadPlan]) -> Vec<u64> {
         let mut numbers: Vec<u64> = groups
             .iter()
             .flat_map(|group| group.numbers.iter().copied())
@@ -705,7 +703,7 @@ mod tests {
         numbers
     }
 
-    fn planned_keys(groups: &[TxGroup]) -> Vec<TxKey> {
+    fn planned_keys(groups: &[TxReadPlan]) -> Vec<TxKey> {
         let mut keys: Vec<TxKey> = groups
             .iter()
             .flat_map(|group| group.entries.iter().map(|(key, _)| *key))
@@ -847,7 +845,7 @@ mod tests {
             0,
             &hash(0xbb),
             &hash(0xcc),
-            ItemFields {
+            SelectedFields {
                 block_mask: 0,
                 tx_mask: 0,
             },
@@ -857,7 +855,7 @@ mod tests {
             1,
             &hash(0xbb),
             &hash(0xdd),
-            ItemFields {
+            SelectedFields {
                 block_mask: 0,
                 tx_mask: tx_bit(EvmTxField::Gas),
             },
@@ -879,7 +877,7 @@ mod tests {
                 index,
                 &block_hash,
                 &hash(0xcc),
-                ItemFields {
+                SelectedFields {
                     block_mask: 0,
                     tx_mask: 0,
                 },
@@ -901,7 +899,7 @@ mod tests {
                 index,
                 &hash(0xbb),
                 &hash(0xc0 + index as u8),
-                ItemFields {
+                SelectedFields {
                     block_mask: 0,
                     tx_mask: mask,
                 },
@@ -919,36 +917,36 @@ mod tests {
     fn the_carrier_of_the_selected_fields_decides_which_responses_are_read() {
         let plans = (
             // Transaction-only.
-            TxReads::for_mask(tx_bit(EvmTxField::Input)),
+            ResponsesToRead::for_mask(tx_bit(EvmTxField::Input)),
             // Receipt-only.
-            TxReads::for_mask(tx_bit(EvmTxField::GasUsed)),
+            ResponsesToRead::for_mask(tx_bit(EvmTxField::GasUsed)),
             // One of each.
-            TxReads::for_mask(tx_bit(EvmTxField::Input) | tx_bit(EvmTxField::GasUsed)),
+            ResponsesToRead::for_mask(tx_bit(EvmTxField::Input) | tx_bit(EvmTxField::GasUsed)),
             // Carried by both, so the transaction alone answers it.
-            TxReads::for_mask(tx_bit(EvmTxField::From)),
+            ResponsesToRead::for_mask(tx_bit(EvmTxField::From)),
             // Carried by both, alongside a receipt-only field: no second request.
-            TxReads::for_mask(tx_bit(EvmTxField::From) | tx_bit(EvmTxField::GasUsed)),
+            ResponsesToRead::for_mask(tx_bit(EvmTxField::From) | tx_bit(EvmTxField::GasUsed)),
         );
         assert_eq!(
             plans,
             (
-                TxReads {
+                ResponsesToRead {
                     transaction: true,
                     receipt: false
                 },
-                TxReads {
+                ResponsesToRead {
                     transaction: false,
                     receipt: true
                 },
-                TxReads {
+                ResponsesToRead {
                     transaction: true,
                     receipt: true
                 },
-                TxReads {
+                ResponsesToRead {
                     transaction: true,
                     receipt: false
                 },
-                TxReads {
+                ResponsesToRead {
                     transaction: false,
                     receipt: true
                 },

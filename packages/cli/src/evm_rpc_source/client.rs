@@ -72,12 +72,11 @@ impl JsonRpcClient {
     /// High enough to keep a healthy provider's pipe full, low enough that the
     /// burst above stays a queue rather than a stampede.
     pub const fn default_max_concurrent_requests() -> usize {
-        50
+        100
     }
 
-    /// Waits for this source's turn to call the provider. Queueing is not part
-    /// of how long a request took, so it happens before the request is timed.
-    pub async fn acquire(&self) -> SemaphorePermit<'_> {
+    /// Waits for this source's turn to call the provider.
+    async fn acquire(&self) -> SemaphorePermit<'_> {
         self.permits
             .acquire()
             .await
@@ -123,10 +122,12 @@ impl JsonRpcClient {
     /// and is billed.
     pub async fn request<T: DeserializeOwned>(
         &self,
-        permit: SemaphorePermit<'_>,
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, RpcError> {
+        // Queueing is not part of how long a request took, so the turn is taken
+        // before the clock starts.
+        let permit = self.acquire().await;
         let started = Instant::now();
         let result = self.send(permit, method, params).await;
         self.stats.record(method, started.elapsed().as_secs_f64());
@@ -203,8 +204,8 @@ impl JsonRpcClient {
         }
     }
 
-    pub async fn get_height(&self, permit: SemaphorePermit<'_>) -> Result<u64, RpcError> {
-        let result: String = self.request(permit, "eth_blockNumber", json!([])).await?;
+    pub async fn get_height(&self) -> Result<u64, RpcError> {
+        let result: String = self.request("eth_blockNumber", json!([])).await?;
         parse_hex_u64(&result).map_err(RpcError::Other)
     }
 }
