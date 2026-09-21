@@ -42,7 +42,7 @@ let makeOnBlockRegistration = (
   handler: Utils.magic("mock handler"),
 }
 
-let makeInitialWithOnBlock = (~startBlock=0, ~onBlockRegistrations) => {
+let makeInitialWithOnBlock = (~startBlock=0, ~maxOnBlockBufferSize=5000, ~onBlockRegistrations) => {
   let onEventRegistrations = [baseEventConfig]
   let addresses = [
     {
@@ -59,10 +59,12 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockRegistrations) => {
     ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition=3,
-    ~maxOnBlockBufferSize=5000,
+    ~maxOnBlockBufferSize,
     ~chainId,
     ~onBlockRegistrations?,
-    ~knownHeight=0,
+    // A height the responses below stay under: onBlock items are only generated
+    // up to the head, and no query is issued before one is known.
+    ~knownHeight=100,
   )
 }
 
@@ -92,6 +94,45 @@ let itemCoordinate = (item: Internal.item) =>
   }
 
 describe("FetchState onBlock functionality", () => {
+  // A response is applied before the height it reported, so it can run past the
+  // height the chain still knows. onBlock items are generated up to the last
+  // event a full buffer holds, which must not take them past that height.
+  it("should generate block items no further than the known height when the buffer is full", t => {
+    let fetchState = makeInitialWithOnBlock(
+      ~maxOnBlockBufferSize=200,
+      ~onBlockRegistrations=Some([makeOnBlockRegistration(~interval=1, ~startBlock=Some(0))]),
+    )
+    let query: FetchState.query = {
+      partitionId: "0",
+      itemsTarget: Some(0),
+      itemsEst: 0,
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addresses: TestAddresses.setOf([mockAddress0]),
+      fromBlock: 0,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
+    let updatedFetchState =
+      fetchState->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock=300,
+        ~newItems=Array.fromInitializer(~length=200, i => mockEvent(~blockNumber=101 + i)),
+      )
+
+    let lastBlockItem =
+      updatedFetchState.buffer
+      ->Array.filter(item =>
+        switch item {
+        | Block(_) => true
+        | Event(_) => false
+        }
+      )
+      ->Array.last
+      ->Option.map(Internal.getItemBlockNumber)
+    t.expect((updatedFetchState.latestOnBlockBlockNumber, lastBlockItem)).toEqual((100, Some(100)))
+  })
+
   it("should add block items to queue when processing first batch with onBlock config", t => {
     // Create a fetch state with onBlock config
     let onBlockRegistration = makeOnBlockRegistration(~interval=2, ~startBlock=Some(0))
