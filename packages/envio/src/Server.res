@@ -77,9 +77,6 @@ let stateSchema = S.union([
   })),
 ])
 
-// Runtime state lives in the process-wide `EnvioGlobal` record (shared
-// across duplicate envio module instances); the slots are opaque there, so
-// cast them to the real types here.
 let startServer = (
   ~getMetrics: unit => option<Metrics.t>,
   ~envioVersion: string,
