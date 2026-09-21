@@ -686,11 +686,14 @@ describe("Metrics.merge", () => {
       effects: [effect(~cacheCount=Some(7))],
     }
 
-    t.expect(Metrics.merge([only], ~startTime, ~metricTime, ~elapsedSeconds=9.)).toStrictEqual({
+    t.expect(
+      Metrics.merge([only], ~startTime, ~metricTime, ~elapsedSeconds=9., ~targetBufferSize=100),
+    ).toStrictEqual({
       ...only,
       startTime,
       metricTime,
       elapsedSeconds: 9.,
+      targetBufferSize: 100,
     })
   })
 
@@ -730,16 +733,25 @@ describe("Metrics.merge", () => {
     }
 
     t.expect(
-      Metrics.merge([first, second], ~startTime, ~metricTime, ~elapsedSeconds=9.),
+      Metrics.merge(
+        [first, second],
+        ~startTime,
+        ~metricTime,
+        ~elapsedSeconds=9.,
+        ~targetBufferSize=100,
+      ),
     ).toStrictEqual({
       ...baseMetrics,
       startTime,
       metricTime,
       elapsedSeconds: 9.,
-      targetBufferSize: 150,
+      // Every worker holds a pool of the run's target, so the targets are one
+      // number the run was configured with, not a total to add up.
+      targetBufferSize: 100,
       maxBatchSize: 5000,
-      isInReorgThreshold: true,
-      // One worker still backfilling speaks for the whole indexer.
+      // Chains cross into the threshold as one indexer, so one worker still
+      // below it speaks for the whole run, exactly as for arriving at the head.
+      isInReorgThreshold: false,
       hasArrivedAtHead: false,
       rollbackEnabled: true,
       processingSeconds: 2.,
@@ -772,10 +784,13 @@ describe("Metrics.merge", () => {
   })
 
   it("Renders an empty group as an indexer that has reported nothing yet", t => {
-    t.expect(Metrics.merge([], ~startTime, ~metricTime, ~elapsedSeconds=0.)).toStrictEqual({
+    t.expect(
+      Metrics.merge([], ~startTime, ~metricTime, ~elapsedSeconds=0., ~targetBufferSize=100),
+    ).toStrictEqual({
       ...baseMetrics,
       startTime,
       metricTime,
+      targetBufferSize: 100,
     })
   })
 })

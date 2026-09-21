@@ -367,6 +367,10 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
       ~startTime,
       ~metricTime=Date.make(),
       ~elapsedSeconds=startTimeRef->Performance.secondsSince,
+      // Every worker reads the same buffer target this process does, and each
+      // holds a pool of that size. What the run was asked for is the one number
+      // that means anything across them.
+      ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
     )
 
   Server.startServer(

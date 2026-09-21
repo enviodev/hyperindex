@@ -174,8 +174,10 @@ let sumByKey = (items: array<'item>, ~key: 'item => string, ~add: ('item, 'item)
 // unsplit run would have produced. Series keyed by chain concatenate, since a
 // chain belongs to exactly one worker; series keyed by name are summed, since
 // every worker runs the same handlers and effects over its own chains. The
-// clock is the caller's: it belongs to the group, not to any worker.
-let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds) => {
+// clock and the buffer target are the caller's: both belong to the group, and
+// the target is what the run was configured with rather than anything a worker
+// could add up to.
+let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds, ~targetBufferSize) => {
   let concat = select => snapshots->Array.flatMap(select)
   let sumInt = select => snapshots->Array.reduce(0, (acc, snapshot) => acc + snapshot->select)
   let sumFloat = select => snapshots->Array.reduce(0., (acc, snapshot) => acc +. snapshot->select)
@@ -184,8 +186,11 @@ let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds) => {
     startTime,
     metricTime,
     elapsedSeconds,
-    targetBufferSize: sumInt(s => s.targetBufferSize),
-    isInReorgThreshold: snapshots->Array.some(s => s.isInReorgThreshold),
+    targetBufferSize,
+    // Chains cross into the threshold as one indexer, so a run is in it once
+    // every process is, the same reading as the arrival below.
+    isInReorgThreshold: snapshots->Utils.Array.notEmpty &&
+      snapshots->Array.every(s => s.isInReorgThreshold),
     // The run has arrived only once every process has: one still backfilling
     // speaks for the whole indexer.
     hasArrivedAtHead: snapshots->Utils.Array.notEmpty &&
