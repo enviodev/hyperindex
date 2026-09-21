@@ -26,7 +26,7 @@ let makePersistence = () =>
     ),
   )
 
-let initRun = (~requireInitialized) =>
+let initRun = (~requireInitialized, ~announceResume=true) =>
   makePersistence()->Persistence.init(
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
@@ -35,6 +35,7 @@ let initRun = (~requireInitialized) =>
     ~runCommand=Some("envio dev"),
     ~lowercaseAddresses=config.lowercaseAddresses,
     ~requireInitialized,
+    ~announceResume,
   )
 
 let logLines = async path =>
@@ -52,33 +53,51 @@ let logLines = async path =>
   | exception _ => []
   }
 
-describe("Resuming an isolated worker", () => {
-  // The supervisor announces the run's storage once, for every chain. A worker
-  // resuming the state it was handed has nothing to add to that.
-  Async.it("Stays quiet about storage the supervisor already announced", async t => {
+let resumeLines = async (~announceResume) => {
+  let path = `${NodeJs.Process.cwd()}/lib/envio-worker-resume-${Date.now()->Float.toString}-${announceResume
+      ? "announced"
+      : "quiet"}.log`
+  Logging.setLogger(
+    Logging.makeLogger(
+      ~logStrategy=FileOnly,
+      ~logFilePath=path,
+      ~defaultFileLogLevel=#info,
+      ~userLogLevel=#info,
+    ),
+  )
+
+  await initRun(~requireInitialized=true, ~announceResume)
+  Logging.info("done")
+
+  let rec until = async deadline =>
+    switch await logLines(path) {
+    | lines if lines->Array.includes("done") || Date.now() > deadline => lines
+    | _ =>
+      await Utils.delay(50)
+      await until(deadline)
+    }
+  await until(Date.now() +. 3000.)
+}
+
+describe("Announcing a resume", () => {
+  // The supervisor says it once for the whole run, so a worker it forked has
+  // nothing to add. Every other process resuming a subset of the chains is
+  // somebody's only window onto it, `envio start --chain` included, and both
+  // of them need the schema to exist already — so what a process requires of
+  // the storage can't be what decides whether it speaks.
+  Async.it("Quiet for a forked worker, and not for anyone else", async t => {
     await initRun(~requireInitialized=false)
 
-    let path = `${NodeJs.Process.cwd()}/lib/envio-worker-resume-${Date.now()->Float.toString}.log`
-    Logging.setLogger(
-      Logging.makeLogger(
-        ~logStrategy=FileOnly,
-        ~logFilePath=path,
-        ~defaultFileLogLevel=#info,
-        ~userLogLevel=#info,
-      ),
-    )
+    let quiet = await resumeLines(~announceResume=false)
+    let announced = await resumeLines(~announceResume=true)
 
-    await initRun(~requireInitialized=true)
-    Logging.info("done")
-
-    let rec until = async deadline =>
-      switch await logLines(path) {
-      | lines if lines->Array.includes("done") || Date.now() > deadline => lines
-      | _ =>
-        await Utils.delay(50)
-        await until(deadline)
-      }
-
-    t.expect(await until(Date.now() +. 3000.)).toStrictEqual(["done"])
+    t.expect((quiet, announced)).toStrictEqual((
+      ["done"],
+      [
+        "Found existing indexer storage. Resuming indexing state...",
+        "Successfully resumed indexing state! Continuing from the last checkpoint.",
+        "done",
+      ],
+    ))
   })
 })

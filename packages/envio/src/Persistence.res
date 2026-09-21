@@ -275,6 +275,10 @@ let init = {
     // would create rows for this process's chains only, leaving the ones it
     // skipped with no state for their own processes to resume.
     ~requireInitialized=false,
+    // Whether this process is the one that tells the operator the run resumed.
+    // A supervisor says it once for the whole run, so the workers it forked
+    // keep it to their own log files.
+    ~announceResume=true,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
   ) => {
     try {
@@ -324,9 +328,7 @@ let init = {
           | _ => false
           }
         ) {
-          // An isolated process resumes state its supervisor already announced
-          // for the whole run, so it says so only to its own log file.
-          let logResume = requireInitialized ? Logging.debug : Logging.info
+          let logResume = announceResume ? Logging.info : Logging.debug
           logResume(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState(
             ~entities=persistence.allEntities,
@@ -371,6 +373,7 @@ let initForRun = (
   ~requireInitialized,
 ) =>
   persistence->init(
+    ~announceResume=!Worker.isEnabled,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
