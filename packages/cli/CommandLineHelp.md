@@ -371,14 +371,18 @@ Setup database by dropping schema and then running migrations
 
 ## `envio start`
 
-Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
+Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`.
+
+A schema whose entities are all per-chain is indexed across several processes, as many as `ENVIO_PG_MAX_CONNECTIONS` affords. List the busiest chains first in `config.yaml` to balance them.
 
 **Usage:** `envio start [OPTIONS]`
 
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
-* `--chain <CHAIN_ID>` — Index only this chain, leaving the others to their own `envio start --chain` processes. Only needed to place the chains yourself: a plain `envio start` already splits them across processes, and manages those processes for you, whenever the schema's entities are all per-chain. `ENVIO_PG_MAX_CONNECTIONS` is the budget for the whole run and buys one process per two connections, so raising it from its default of 2 is what splits a run. A schema with an entity shared across chains, or a budget under 4, runs in one process as it always has. Repeat the flag for several chains. Requires a schema whose entities are all per-chain, created for every chain by `envio local db-migrate up` before any process starts. Assign each configured chain to exactly one process, and give each its own `ENVIO_INDEXER_PORT`. Each process builds the indexes for its own chains and reports them ready as they catch up, independently of the others
+* `--chain <CHAIN_ID>` — Index only this chain, leaving the others to their own `envio start --chain` processes. Repeat the flag for several chains.
+
+   Only needed to place the chains yourself, across machines or under your own process manager. A plain `envio start` already splits a per-chain schema across processes and manages them for you. Requires a schema whose entities are all per-chain, created for every chain by `envio local db-migrate up` before any process starts. Assign each configured chain to exactly one process, and give each its own `ENVIO_INDEXER_PORT`. Each process reports its own chains ready as they catch up, independently of the others.
 
 
 
