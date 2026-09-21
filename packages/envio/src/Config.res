@@ -1237,9 +1237,12 @@ let prime = (json: JSON.t): unit => {
   cached := None
 }
 
-// Narrows a public config to the chains one process drives. The supervisor
-// plans the split; each worker applies the plan to the config it parsed itself.
-let withIsolatedChains = (json: JSON.t, ~chainIds) =>
+// The fields `envio start` and `envio dev` set on a public config from the
+// command they were given rather than from the project's files: which chains
+// the process drives, and whether the run is a dev run. A worker parses the
+// same files its supervisor did, so these are the only two it cannot arrive at
+// on its own, and re-applying them is what makes its config the supervisor's.
+let withCommandFields = (json: JSON.t, ~chainIds, ~isDev) =>
   switch json->JSON.Decode.object {
   | Some(fields) => {
       let narrowed = fields->Dict.copy
@@ -1247,6 +1250,7 @@ let withIsolatedChains = (json: JSON.t, ~chainIds) =>
         "isolatedChains",
         chainIds->S.reverseConvertToJsonOrThrow(S.array(ChainId.schema)),
       )
+      narrowed->Dict.set("isDev", JSON.Encode.bool(isDev))
       JSON.Object(narrowed)
     }
   | None => JsError.throwWithMessage("Invalid indexer config: not an object")

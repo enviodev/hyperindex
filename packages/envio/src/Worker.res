@@ -17,11 +17,17 @@ type config = {
   // process are still backfilling, and an indexer goes realtime as a whole or
   // not at all. Cleared by the supervisor's `ReleaseRealtime`.
   holdRealtime: bool,
+  // Which command the run was started by. A worker re-parses the project's
+  // files, which say nothing about that, so it can only be told — and a worker
+  // that took a dev run for a plain one would exit at its end block and leave
+  // the console it was still serving with a chain missing.
+  isDev: bool,
 }
 
 let configSchema = S.object((s): config => {
   chainIds: s.field("chainIds", S.array(ChainId.schema)),
   holdRealtime: s.fieldOr("holdRealtime", S.bool, false),
+  isDev: s.field("isDev", S.bool),
 })
 
 // Read as this module loads, which is before anything that could catch a bare

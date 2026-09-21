@@ -561,12 +561,12 @@ let start = async (
   ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrationsByChainId) => Config.t>=?,
 ) => {
-  // A worker parses the same config its supervisor did and narrows it to the
-  // chains it was handed, rather than being told what to index: the storage it
-  // resumes refuses a config that disagrees with the one the run was created
-  // from, which is a stronger guarantee than a handover could give.
-  Worker.config->Option.forEach(({chainIds}) =>
-    Config.prime(Config.getPublicConfigJson()->Config.withIsolatedChains(~chainIds))
+  // A worker parses the project's files itself rather than being handed the
+  // config: a public config carries every contract's ABI, which is far more
+  // than a spawn environment should. What the command decided rides along
+  // instead, and re-applying it is what makes the two configs the same one.
+  Worker.config->Option.forEach(({chainIds, isDev}) =>
+    Config.prime(Config.getPublicConfigJson()->Config.withCommandFields(~chainIds, ~isDev))
   )
   let config = Config.load()
   switch isTest ? None : Supervisor.planForRun(~config) {

@@ -118,6 +118,9 @@ let fork = (
   // every chain resumed already caught up: there is nothing left to wait for,
   // and a barrier nobody can open would hold the run forever.
   ~holdRealtime,
+  // Which command the run was started by, which a worker's own parse of the
+  // project's files can't tell it.
+  ~isDev,
   // The entry this process was itself started from, so a worker is the same
   // program as its supervisor however the package was installed.
   ~entryPath=NodeJs.Process.argv->Array.getUnsafe(1),
@@ -129,9 +132,11 @@ let fork = (
   let env = NodeJs.Process.process.env->Dict.copy
   env->Dict.set(
     Worker.envVar,
-    {Worker.chainIds: worker.chainIds, holdRealtime}->S.reverseConvertToJsonStringOrThrow(
-      Worker.configSchema,
-    ),
+    {
+      Worker.chainIds: worker.chainIds,
+      holdRealtime,
+      isDev,
+    }->S.reverseConvertToJsonStringOrThrow(Worker.configSchema),
   )
   // The worker's slice of the budget. Read when the worker's own Env module
   // loads, which is why it rides in the spawn environment rather than a message.
@@ -323,7 +328,7 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     )
   let group = {
     running: workers->Array.mapWithIndex((worker, workerIndex) =>
-      worker->fork(~workerIndex, ~holdRealtime, ~pipeOutput=shouldUseTui)
+      worker->fork(~workerIndex, ~holdRealtime, ~isDev=config.isDev, ~pipeOutput=shouldUseTui)
     ),
     stopping: false,
   }

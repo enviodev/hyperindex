@@ -17,6 +17,7 @@ let forkFixture = (
   ~maxConnections=2,
   ~workerIndex=0,
   ~holdRealtime=false,
+  ~isDev=false,
   ~pipeOutput=false,
   ~onOutput=?,
 ) =>
@@ -24,6 +25,7 @@ let forkFixture = (
     {chainIds: chainIds->Array.map(ChainId.fromInt), maxConnections},
     ~workerIndex,
     ~holdRealtime,
+    ~isDev,
     ~entryPath=fixturePath,
     ~pipeOutput,
     ~onOutput?,
@@ -36,6 +38,7 @@ describe("Supervisor.fork", () => {
       ~maxConnections=3,
       ~workerIndex=1,
       ~holdRealtime=true,
+      ~isDev=true,
     )
 
     let report = await Promise.make(
@@ -52,8 +55,10 @@ describe("Supervisor.fork", () => {
 
     t.expect(report).toStrictEqual({
       // Everything the supervisor decided, in the environment: a worker needs it
-      // before it can load its own config, so it can't arrive as a message.
-      workerConfig: `{"chainIds":[1,137],"holdRealtime":true}`,
+      // before it can load its own config, so it can't arrive as a message. The
+      // project's files say nothing about which command started the run, which
+      // is why `isDev` is among them.
+      workerConfig: `{"chainIds":[1,137],"holdRealtime":true,"isDev":true}`,
       maxConnections: "3",
       logFile: Supervisor.logFilePath(~workerIndex=1),
       // Proof the channel clones rather than stringifies: a JSON round trip

@@ -138,21 +138,48 @@ describe("Supervisor.planForRun", () => {
 })
 
 describe("Supervisor worker plumbing", () => {
-  it("Narrows a config it parsed itself to the chains it was given", t => {
-    let configJson = JSON.Object(
-      Dict.fromArray([("name", JSON.String("indexer")), ("isolatedChains", JSON.Null)]),
+  // A worker's own parse of the project's files is what `envio start` would
+  // produce: no chain selection, and no dev run. Both are the command's to say.
+  it("Restores what the command decided onto a config it parsed itself", t => {
+    let parsedItself = JSON.Object(
+      Dict.fromArray([
+        ("name", JSON.String("indexer")),
+        ("isolatedChains", JSON.Null),
+        ("isDev", JSON.Boolean(false)),
+      ]),
     )
 
     t.expect(
-      configJson->Config.withIsolatedChains(~chainIds=[1, 137]->Array.map(ChainId.fromInt)),
+      parsedItself->Config.withCommandFields(
+        ~chainIds=[1, 137]->Array.map(ChainId.fromInt),
+        ~isDev=true,
+      ),
     ).toStrictEqual(
       JSON.Object(
         Dict.fromArray([
           ("name", JSON.String("indexer")),
           ("isolatedChains", JSON.Array([JSON.Number(1.), JSON.Number(137.)])),
+          ("isDev", JSON.Boolean(true)),
         ]),
       ),
     )
+  })
+
+  // `envio dev` keeps the run up once every chain has reached its end block, so
+  // the console it serves stays whole. A worker that read the run as a plain
+  // `envio start` would exit there and take its chains out of that console.
+  it("Keeps a dev run a dev run in the process that drives part of it", t => {
+    let devRun = Core.fromUserApi(~schema=perChain, configYaml).config->JSON.parseOrThrow
+    let workerConfig =
+      devRun
+      ->Config.withCommandFields(~chainIds=[1->ChainId.fromInt], ~isDev=true)
+      ->Config.fromPublic
+
+    t.expect((
+      workerConfig.isDev,
+      workerConfig.isolated,
+      workerConfig.chainMap->ChainMap.keys,
+    )).toStrictEqual((true, true, [1->ChainId.fromInt]))
   })
 
   it("Gives every worker a log file of its own", t => {
@@ -196,7 +223,9 @@ describe("Config.logContext", () => {
 
 describe("Worker.detect", () => {
   it("Counts as a worker only when forked with the variable and a channel", t => {
-    let forked = Dict.fromArray([(Worker.envVar, `{"chainIds":[137],"holdRealtime":true}`)])
+    let forked = Dict.fromArray([
+      (Worker.envVar, `{"chainIds":[137],"holdRealtime":true,"isDev":true}`),
+    ])
     t.expect([
       Worker.detect(~env=forked, ~hasChannel=true),
       // A copy of the variable left in a shell, or a process manager forking
@@ -204,7 +233,7 @@ describe("Worker.detect", () => {
       Worker.detect(~env=forked, ~hasChannel=false),
       Worker.detect(~env=Dict.make(), ~hasChannel=true),
     ]).toStrictEqual([
-      Some({Worker.chainIds: [137->ChainId.fromInt], holdRealtime: true}),
+      Some({Worker.chainIds: [137->ChainId.fromInt], holdRealtime: true, isDev: true}),
       None,
       None,
     ])
@@ -215,7 +244,7 @@ describe("Worker.detect", () => {
   it("Names the variable when its value isn't a worker config", t => {
     t->Vitest.toThrowErrorEqual(
       () => Worker.detect(~env=Dict.fromArray([(Worker.envVar, "137")]), ~hasChannel=true),
-      `Invalid ENVIO_INTERNAL_WORKER: Failed parsing at root. Reason: Expected { chainIds: array<number>; holdRealtime: boolean | undefined; }, received 137. It is set by an indexer supervisor for the processes it forks, and isn't meant to be set by hand.`,
+      `Invalid ENVIO_INTERNAL_WORKER: Failed parsing at root. Reason: Expected { chainIds: array<number>; holdRealtime: boolean | undefined; isDev: boolean; }, received 137. It is set by an indexer supervisor for the processes it forks, and isn't meant to be set by hand.`,
     )
   })
 
@@ -224,10 +253,12 @@ describe("Worker.detect", () => {
   it("Takes a config without the hold as one that doesn't wait", t => {
     t.expect(
       Worker.detect(
-        ~env=Dict.fromArray([(Worker.envVar, `{"chainIds":[1]}`)]),
+        ~env=Dict.fromArray([(Worker.envVar, `{"chainIds":[1],"isDev":false}`)]),
         ~hasChannel=true,
       ),
-    ).toStrictEqual(Some({Worker.chainIds: [1->ChainId.fromInt], holdRealtime: false}))
+    ).toStrictEqual(
+      Some({Worker.chainIds: [1->ChainId.fromInt], holdRealtime: false, isDev: false}),
+    )
   })
 })
 
