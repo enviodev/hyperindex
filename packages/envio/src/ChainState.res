@@ -234,7 +234,6 @@ let makeInternal = (
   // chain's addresses into it, and every source client holds the same handle.
   let addressStore = AddressStore.make(
     ~ecosystem=config.ecosystem.name,
-    ~shouldChecksum=!lowercaseAddresses,
     ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
   )
 
@@ -451,7 +450,7 @@ let setRollbackTargetBlock = (cs: t, ~blockNumber) => cs.rollbackTargetBlock = S
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
 let contractAddresses = (cs: t, ~contractName) =>
-  cs.addressStore->AddressStore.contractAddresses(contractName)
+  cs.addressStore->AddressStore.contractAddresses(contractName, ~shouldChecksum=cs.shouldChecksum)
 
 // Hands over the dynamically registered addresses the database hasn't seen yet,
 // up to the block the caller is about to commit, each paired with the checkpoint

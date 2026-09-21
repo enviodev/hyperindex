@@ -232,21 +232,17 @@ describe("EvmRpcClient - getNextPage via napi", () => {
 
   // The chain's address index, holding the one ERC20 address these logs are
   // emitted from. Non-wildcard registrations only route emitters it holds.
-  let makeAddressStore = () => {
-    let store = AddressStore.make(
-      ~ecosystem=Ecosystem.Evm,
-      ~shouldChecksum=false,
+  let makeAddressStore = () =>
+    TestAddresses.storeOf(
       ~contracts=[{name: "ERC20", startBlock: None, dependsOnAddresses: true}],
+      ~addresses=[
+        {
+          address: contractAddress->Address.unsafeFromString,
+          contractName: "ERC20",
+          registrationBlock: -1,
+        },
+      ],
     )
-    let _ = store->AddressStore.seedBatch([
-      {
-        address: contractAddress->Address.unsafeFromString,
-        contractName: "ERC20",
-        registrationBlock: -1,
-      },
-    ])
-    store
-  }
 
   Async.it("Decodes event params and parses hex log fields", async t => {
     let result = await MockRpcServer.withScenario(

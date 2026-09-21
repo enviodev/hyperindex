@@ -39,14 +39,22 @@ let getEarliestEvent = (fetchState: FetchState.t) => {
   }
 }
 
-let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
-let mockAddress1 = Envio.TestHelpers.Addresses.mockAddresses[1]->Option.getOrThrow
-let mockAddress2 = Envio.TestHelpers.Addresses.mockAddresses[2]->Option.getOrThrow
-let mockAddress3 = Envio.TestHelpers.Addresses.mockAddresses[3]->Option.getOrThrow
-let mockAddress4 = Envio.TestHelpers.Addresses.mockAddresses[4]->Option.getOrThrow
-let mockAddress5 = Envio.TestHelpers.Addresses.mockAddresses[5]->Option.getOrThrow
-let mockAddress6 = Envio.TestHelpers.Addresses.mockAddresses[6]->Option.getOrThrow
-let mockFactoryAddress = Envio.TestHelpers.Addresses.mockAddresses[7]->Option.getOrThrow
+// The store keys on an address, not on a spelling, and hands one back
+// canonically - which is what the fetch state and every assertion below
+// see. These are the mock addresses in that spelling.
+let mockAddress = i =>
+  Envio.TestHelpers.Addresses.mockAddresses[i]
+  ->Option.getOrThrow
+  ->Address.Evm.fromAddressLowercaseOrThrow
+
+let mockAddress0 = mockAddress(0)
+let mockAddress1 = mockAddress(1)
+let mockAddress2 = mockAddress(2)
+let mockAddress3 = mockAddress(3)
+let mockAddress4 = mockAddress(4)
+let mockAddress5 = mockAddress(5)
+let mockAddress6 = mockAddress(6)
+let mockFactoryAddress = mockAddress(7)
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 let getBlockData = (~blockNumber): int => blockNumber

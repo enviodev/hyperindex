@@ -22,6 +22,4 @@ type startBlockGroup = {startBlock: int, count: int}
 
 @send external addresses: t => array<Address.t> = "addresses"
 
-@send external entries: t => array<Internal.indexingContract> = "entries"
-
 let isEmpty = (set: t) => set->size === 0

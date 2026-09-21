@@ -88,10 +88,16 @@ let capturedPrograms: array<array<SvmHyperSyncClient.Registration.program>> = []
 
 // The chain's address index; created outside the mock-addon window below so it
 // loads the real native addon.
-let addressStore = AddressStore.make(
-  ~ecosystem=Ecosystem.Svm,
-  ~shouldChecksum=false,
+let addressStore = TestAddresses.storeOf(
   ~contracts=[{name: "TokenMetadata", startBlock: None, dependsOnAddresses: true}],
+  ~addresses=[
+    {
+      address: metaplexProgramId->Address.unsafeFromString,
+      contractName: "TokenMetadata",
+      registrationBlock: -1,
+    },
+  ],
+  ~ecosystem=Svm,
 )
 
 let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
@@ -155,18 +161,8 @@ let makeSource = (
   source
 }
 
-// The chain's address index, with the Metaplex program registered for the
-// TokenMetadata program name.
-let programSet = {
-  let _ = addressStore->AddressStore.seedBatch([
-    {
-      address: metaplexProgramId->Address.unsafeFromString,
-      contractName: "TokenMetadata",
-      registrationBlock: -1,
-    },
-  ])
-  addressStore->AddressStore.makeSet(~contractName="TokenMetadata")
-}
+// The Metaplex program, registered under the TokenMetadata program name.
+let programSet = addressStore->AddressStore.makeSet(~contractName="TokenMetadata")
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it("passes the selection to the client and builds items by registration index", async t => {

@@ -82,18 +82,16 @@ let onEventRegistrations = () => {
 }
 
 let makeSource = (~url, ~lowercaseAddresses=true) => {
-  let addressStore = AddressStore.make(
-    ~ecosystem=Ecosystem.Evm,
-    ~shouldChecksum=!lowercaseAddresses,
+  let addressStore = TestAddresses.storeOf(
     ~contracts=[{name: "Token", startBlock: None, dependsOnAddresses: true}],
+    ~addresses=[
+      {
+        address: tokenAddress->Address.unsafeFromString,
+        contractName: "Token",
+        registrationBlock: -1,
+      },
+    ],
   )
-  let _ = addressStore->AddressStore.seedBatch([
-    {
-      address: tokenAddress->Address.unsafeFromString,
-      contractName: "Token",
-      registrationBlock: -1,
-    },
-  ])
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,

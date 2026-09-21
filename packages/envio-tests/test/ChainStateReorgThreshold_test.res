@@ -7,7 +7,7 @@ describe("ChainState reorg threshold", () => {
   let baseChainConfig = TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
   let makeChainState = (~knownHeight, ~maxReorgDepth, ~scannedHashes) => {
-    let addressStore = AddressStore.make(~ecosystem=Evm, ~shouldChecksum=false, ~contracts=[])
+    let addressStore = AddressStore.make(~ecosystem=Evm, ~contracts=[])
     let base = FetchState.make(
       ~onEventRegistrations=[],
       ~addressStore,

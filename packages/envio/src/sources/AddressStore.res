@@ -45,15 +45,14 @@ type makeSetOptions = {
   limit?: int,
 }
 
-@send
-external newEvm: (Core.addressStoreCtor, bool, array<contract>) => t = "newEvm"
+@send external newEvm: (Core.addressStoreCtor, array<contract>) => t = "newEvm"
 @send external newSvm: (Core.addressStoreCtor, array<contract>) => t = "newSvm"
 @send external newFuel: (Core.addressStoreCtor, array<contract>) => t = "newFuel"
 
-let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool, ~contracts: array<contract>): t => {
+let make = (~ecosystem: Ecosystem.name, ~contracts: array<contract>): t => {
   let ctor = Core.getAddon().addressStore
   switch ecosystem {
-  | Evm => ctor->newEvm(shouldChecksum, contracts)
+  | Evm => ctor->newEvm(contracts)
   | Svm => ctor->newSvm(contracts)
   | Fuel => ctor->newFuel(contracts)
   }
@@ -105,7 +104,6 @@ let contractsOf = (
 
 @send
 external registerBatchRaw: (t, array<registration>) => array<rawVerdict> = "registerBatch"
-@send external seedBatchRaw: (t, array<registration>) => array<rawVerdict> = "seedBatch"
 
 @send
 external seedRowsRaw: (
@@ -149,7 +147,11 @@ type rolledBackAddress = {address: NodeJs.Buffer.t, contractId: int}
 
 @send external dynamicContractNames: t => array<string> = "dynamicContractNames"
 
-@send external contractAddresses: (t, string) => array<Address.t> = "contractAddresses"
+// The one place the store spells an address the way the chain shows it: the
+// setting comes from the caller, since the store keeps keys, not spellings.
+@send
+external contractAddresses: (t, string, ~shouldChecksum: bool) => array<Address.t> =
+  "contractAddresses"
 
 let toVerdict = (raw: rawVerdict): verdict =>
   switch raw.kind {
@@ -166,9 +168,6 @@ let toVerdict = (raw: rawVerdict): verdict =>
 // An unknown contract name throws with none of the batch applied.
 let registerBatch = (store: t, registrations: array<registration>): array<verdict> =>
   store->registerBatchRaw(registrations)->Array.map(toVerdict)
-
-let seedBatch = (store: t, registrations: array<registration>): array<verdict> =>
-  store->seedBatchRaw(registrations)->Array.map(toVerdict)
 
 let makeSet = (store: t, ~contractName, ~options={}: makeSetOptions) =>
   store->makeSetRaw(contractName, options)

@@ -59,7 +59,6 @@ let makeSource = (~url) => {
   let contractMapping = parsed.config.contractMapping
   let addressStore = AddressStore.make(
     ~ecosystem=Ecosystem.Evm,
-    ~shouldChecksum=false,
     ~contracts=AddressStore.contractsOf(
       ~onEventRegistrations=onEventRegistrations(),
       ~contractMapping,

@@ -839,14 +839,13 @@ mod tests {
         // blocks, so a query for the whole partition over-fetches logs from
         // before an address was registered. The temporal half of the gate
         // drops them.
-        let address_store = crate::address_store::AddressStore::new_evm(
-            false,
-            vec![crate::address_store::AddressStoreContract {
+        let address_store = crate::address_store::AddressStore::new_evm(vec![
+            crate::address_store::AddressStoreContract {
                 name: "Owned".to_string(),
                 start_block: None,
                 depends_on_addresses: true,
-            }],
-        )
+            },
+        ])
         .unwrap();
         address_store.register_seed(vec![crate::address_store::AddressRegistration {
             address: EMITTER.to_string(),
@@ -1052,14 +1051,13 @@ mod tests {
         // The temporal half of the param gate: a wildcard query over-fetches
         // logs whose address param was only registered later, and the marker
         // drops them at the log's own block rather than downstream.
-        let address_store = crate::address_store::AddressStore::new_evm(
-            false,
-            vec![crate::address_store::AddressStoreContract {
+        let address_store = crate::address_store::AddressStore::new_evm(vec![
+            crate::address_store::AddressStoreContract {
                 name: "C".to_string(),
                 start_block: None,
                 depends_on_addresses: true,
-            }],
-        )
+            },
+        ])
         .unwrap();
         address_store.register_seed(vec![crate::address_store::AddressRegistration {
             address: EMITTER.to_string(),

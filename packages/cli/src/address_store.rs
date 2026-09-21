@@ -15,51 +15,6 @@ use crate::field_columns::Ecosystem;
 /// raw `programId` string is what the source hands us.
 type Key = Box<[u8]>;
 
-fn decode_hex_address(s: &str, len: usize) -> Option<Key> {
-    crate::hex::decode_fixed(s, len).map(|bytes| bytes.into_boxed_slice())
-}
-
-/// The binary key for an address string, or `None` when it isn't a well-formed
-/// address for the ecosystem. Callers surface that as an `invalid` verdict
-/// rather than throwing: a malformed dynamic registration should be skipped
-/// with a warning, not take the indexer down.
-fn address_key(ecosystem: Ecosystem, address: &str) -> Option<Key> {
-    match ecosystem {
-        Ecosystem::Evm => decode_hex_address(address, 20),
-        Ecosystem::Fuel => decode_hex_address(address, 32),
-        Ecosystem::Svm => {
-            (!address.is_empty()).then(|| address.as_bytes().to_vec().into_boxed_slice())
-        }
-    }
-}
-
-/// Render a key back to the canonical string the JS side uses. EVM follows the
-/// chain's `lowercaseAddresses` setting, the same way every address the sources
-/// hand back is encoded.
-fn address_string(ecosystem: Ecosystem, should_checksum: bool, key: &[u8]) -> String {
-    match ecosystem {
-        Ecosystem::Evm => {
-            let mut bytes = [0u8; 20];
-            bytes.copy_from_slice(key);
-            if should_checksum {
-                alloy_primitives::Address::from(bytes).to_checksum(None)
-            } else {
-                format!("0x{}", faster_hex::hex_string(&bytes))
-            }
-        }
-        Ecosystem::Fuel => format!("0x{}", faster_hex::hex_string(key)),
-        // The key is the base58 text itself.
-        Ecosystem::Svm => String::from_utf8_lossy(key).into_owned(),
-    }
-}
-
-/// Left-pad an EVM address to its 32-byte indexed-topic form, as lowercase hex.
-fn address_topic(key: &[u8]) -> String {
-    let mut topic = [0u8; 32];
-    topic[32 - key.len()..].copy_from_slice(key);
-    format!("0x{}", faster_hex::hex_string(&topic))
-}
-
 /// The fixed key width of an ecosystem, or `None` for SVM — whose base58 keys
 /// are the address text itself and vary in length.
 fn key_width(ecosystem: Ecosystem) -> Option<usize> {
@@ -68,6 +23,49 @@ fn key_width(ecosystem: Ecosystem) -> Option<usize> {
         Ecosystem::Fuel => Some(32),
         Ecosystem::Svm => None,
     }
+}
+
+/// The binary key for an address string, or `None` when it isn't a well-formed
+/// address for the ecosystem. Callers surface that as an `invalid` verdict
+/// rather than throwing: a malformed dynamic registration should be skipped
+/// with a warning, not take the indexer down.
+fn address_key(ecosystem: Ecosystem, address: &str) -> Option<Key> {
+    match key_width(ecosystem) {
+        Some(width) => crate::hex::decode_fixed(address, width).map(|b| b.into_boxed_slice()),
+        None => (!address.is_empty()).then(|| address.as_bytes().to_vec().into_boxed_slice()),
+    }
+}
+
+/// Render a key back to its canonical string: lowercase hex for the hex
+/// ecosystems, the base58 text itself for SVM. Everything the store hands back
+/// is spelled this way — a query's address filter, a log line, a rejected row —
+/// except at the one user-facing boundary below.
+fn address_string(ecosystem: Ecosystem, key: &[u8]) -> String {
+    match ecosystem {
+        Ecosystem::Evm | Ecosystem::Fuel => format!("0x{}", faster_hex::hex_string(key)),
+        Ecosystem::Svm => String::from_utf8_lossy(key).into_owned(),
+    }
+}
+
+/// Render a key the way the indexer shows addresses to the user, following the
+/// chain's `lowercaseAddresses` setting — the spelling `chain.<Contract>.addresses`
+/// answers with, and the one every address the sources hand back is encoded in.
+/// The caller supplies the setting, because the store holds keys, not spellings.
+fn shown_address_string(ecosystem: Ecosystem, should_checksum: bool, key: &[u8]) -> String {
+    match ecosystem {
+        Ecosystem::Evm if should_checksum => {
+            let bytes = <[u8; 20]>::try_from(key).expect("EVM key width");
+            alloy_primitives::Address::from(bytes).to_checksum(None)
+        }
+        _ => address_string(ecosystem, key),
+    }
+}
+
+/// Left-pad an EVM address to its 32-byte indexed-topic form, as lowercase hex.
+fn address_topic(key: &[u8]) -> String {
+    let mut topic = [0u8; 32];
+    topic[32 - key.len()..].copy_from_slice(key);
+    format!("0x{}", faster_hex::hex_string(&topic))
 }
 
 fn ecosystem_by_name(name: &str) -> napi::Result<Ecosystem> {
@@ -155,7 +153,7 @@ pub fn render_addresses(
     let ecosystem = ecosystem_by_name(&ecosystem)?;
     Ok(key_slices(ecosystem, &bytes, &lengths)?
         .into_iter()
-        .map(|key| address_string(ecosystem, should_checksum, key))
+        .map(|key| shown_address_string(ecosystem, should_checksum, key))
         .collect())
 }
 
@@ -184,7 +182,7 @@ pub fn render_contract_addresses(
         .into_iter()
         .zip(contract_ids)
         .filter(|&(_, id)| id == contract_id)
-        .map(|(key, _)| address_string(ecosystem, should_checksum, key))
+        .map(|(key, _)| shown_address_string(ecosystem, should_checksum, key))
         .collect())
 }
 
@@ -222,9 +220,6 @@ struct Entry {
 
 pub struct StoreInner {
     ecosystem: Ecosystem,
-    /// This chain's `lowercaseAddresses` setting, inverted: how an EVM key is
-    /// spelled when it is rendered back out.
-    should_checksum: bool,
     contract_names: Vec<String>,
     contract_start_blocks: Vec<i64>,
     contract_depends_on_addresses: Vec<bool>,
@@ -319,10 +314,6 @@ impl StoreInner {
 
     pub fn contract_idx(&self, name: &str) -> Option<u32> {
         self.contract_idx_by_name.get(name).copied()
-    }
-
-    pub fn ecosystem(&self) -> Ecosystem {
-        self.ecosystem
     }
 
     fn sorted_ids(&self, mut ids: Vec<u64>) -> Vec<u64> {
@@ -436,21 +427,18 @@ impl AddressStore {
     /// address for a name that isn't among them is a caller bug, not a
     /// user-facing rejection.
     #[napi(factory)]
-    pub fn new_evm(
-        should_checksum: bool,
-        contracts: Vec<AddressStoreContract>,
-    ) -> napi::Result<Self> {
-        Self::with_ecosystem(Ecosystem::Evm, should_checksum, contracts)
+    pub fn new_evm(contracts: Vec<AddressStoreContract>) -> napi::Result<Self> {
+        Self::with_ecosystem(Ecosystem::Evm, contracts)
     }
 
     #[napi(factory)]
     pub fn new_svm(contracts: Vec<AddressStoreContract>) -> napi::Result<Self> {
-        Self::with_ecosystem(Ecosystem::Svm, false, contracts)
+        Self::with_ecosystem(Ecosystem::Svm, contracts)
     }
 
     #[napi(factory)]
     pub fn new_fuel(contracts: Vec<AddressStoreContract>) -> napi::Result<Self> {
-        Self::with_ecosystem(Ecosystem::Fuel, false, contracts)
+        Self::with_ecosystem(Ecosystem::Fuel, contracts)
     }
 
     /// The id the next added address will get. Captured before a batch, it
@@ -473,22 +461,14 @@ impl AddressStore {
         self.register_all(registrations, true)
     }
 
-    /// `register_batch` for addresses the database already holds — config
-    /// addresses and the dynamic ones a resume restores. Nothing is marked
-    /// pending, so nothing is ever written back.
-    #[napi]
-    pub fn seed_batch(
-        &self,
-        registrations: Vec<AddressRegistration>,
-    ) -> napi::Result<Vec<RegistrationVerdict>> {
-        self.register_all(registrations, false)
-    }
-
-    /// `seed_batch` for rows read back from storage, columnar: one packed
-    /// buffer of address keys with their `lengths`, plus the parallel contract
-    /// ids and registration blocks. A resume seeds millions of rows, so nothing
-    /// here allocates a string per row — the keys are already the store's own
-    /// encoding, and only the (defensive) rejections come back rendered.
+    /// Registers rows the database already holds, columnar: one packed buffer of
+    /// address keys with their `lengths`, plus the parallel contract ids and
+    /// registration blocks. The only way in for a stored address — config ones
+    /// and the dynamic ones a resume restores — and nothing it adds is marked
+    /// pending, so nothing is ever written back. A resume seeds millions of
+    /// rows, so nothing here allocates a string per row: the keys are already
+    /// the store's own encoding, and only the (defensive) rejections come back
+    /// rendered.
     #[napi]
     pub fn seed_rows(
         &self,
@@ -558,7 +538,7 @@ impl AddressStore {
                 return Err(napi::Error::from_reason(format!(
                     "Registered address {} at block {} has no checkpoint in the batch that writes \
                      it.",
-                    address_string(store.ecosystem, store.should_checksum, &entry.key),
+                    address_string(store.ecosystem, &entry.key),
                     entry.registration_block
                 )));
             };
@@ -590,7 +570,7 @@ impl AddressStore {
             .map(|&id| {
                 let entry = store.entry(id);
                 AddressEntry {
-                    address: address_string(store.ecosystem, store.should_checksum, &entry.key),
+                    address: address_string(store.ecosystem, &entry.key),
                     contract_name: store.contract_name(entry.contract_idx).to_string(),
                     registration_block: entry.registration_block,
                     effective_start_block: entry.effective_start_block,
@@ -746,7 +726,7 @@ impl AddressStore {
             .map(|id| {
                 let entry = store.entry(id);
                 AddressEntry {
-                    address: address_string(store.ecosystem, store.should_checksum, &entry.key),
+                    address: address_string(store.ecosystem, &entry.key),
                     contract_name: store.contract_name(entry.contract_idx).to_string(),
                     registration_block: entry.registration_block,
                     effective_start_block: entry.effective_start_block,
@@ -774,10 +754,11 @@ impl AddressStore {
             .collect()
     }
 
-    /// Canonical strings for every address registered under one contract, in set
-    /// order. Used by `chain.<Contract>.addresses` and by tests.
+    /// Every address registered under one contract, in set order, spelled the
+    /// way the chain shows addresses — what `chain.<Contract>.addresses` answers
+    /// with.
     #[napi]
-    pub fn contract_addresses(&self, contract_name: String) -> Vec<String> {
+    pub fn contract_addresses(&self, contract_name: String, should_checksum: bool) -> Vec<String> {
         let store = self.read();
         match store.contract_idx(&contract_name) {
             None => Vec::new(),
@@ -785,7 +766,7 @@ impl AddressStore {
                 .sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
                 .into_iter()
                 .map(|id| {
-                    address_string(store.ecosystem, store.should_checksum, &store.entry(id).key)
+                    shown_address_string(store.ecosystem, should_checksum, &store.entry(id).key)
                 })
                 .collect(),
         }
@@ -795,7 +776,6 @@ impl AddressStore {
 impl AddressStore {
     fn with_ecosystem(
         ecosystem: Ecosystem,
-        should_checksum: bool,
         contracts: Vec<AddressStoreContract>,
     ) -> napi::Result<Self> {
         let mut contract_names = Vec::with_capacity(contracts.len());
@@ -818,7 +798,6 @@ impl AddressStore {
         Ok(Self {
             inner: Arc::new(RwLock::new(StoreInner {
                 ecosystem,
-                should_checksum,
                 contract_names,
                 contract_start_blocks,
                 contract_depends_on_addresses,
@@ -929,7 +908,7 @@ impl StoreInner {
             derive_effective_start_block(registration_block, contract_start_block);
         if let Some(id) = self.live_id_for(&key, contract_idx) {
             return Some(RejectedRow {
-                address: address_string(self.ecosystem, self.should_checksum, &key),
+                address: address_string(self.ecosystem, &key),
                 contract_name: self.contract_name(contract_idx).to_string(),
                 effective_start_block,
                 existing_effective_start_block: self.entry(id).effective_start_block,
@@ -1257,31 +1236,14 @@ impl AddressSet {
         AddressSet::new(self.store.clone(), ids)
     }
 
-    /// Canonical strings in set order, for `chain.<Contract>.addresses` and
-    /// assertions. Never on a query path — queries read the cached slices.
+    /// Canonical strings in set order. Never on a query path — queries read the
+    /// cached slices.
     #[napi]
     pub fn addresses(&self) -> Vec<String> {
         let store = self.store.read().unwrap();
         self.ids
             .iter()
-            .map(|&id| address_string(store.ecosystem, store.should_checksum, &store.entry(id).key))
-            .collect()
-    }
-
-    #[napi]
-    pub fn entries(&self) -> Vec<AddressEntry> {
-        let store = self.store.read().unwrap();
-        self.ids
-            .iter()
-            .map(|&id| {
-                let entry = store.entry(id);
-                AddressEntry {
-                    address: address_string(store.ecosystem, store.should_checksum, &entry.key),
-                    contract_name: store.contract_name(entry.contract_idx).to_string(),
-                    registration_block: entry.registration_block,
-                    effective_start_block: entry.effective_start_block,
-                }
-            })
+            .map(|&id| address_string(store.ecosystem, &store.entry(id).key))
             .collect()
     }
 }
@@ -1315,11 +1277,9 @@ impl AddressSet {
                         });
                         contracts.len() - 1
                     });
-                contracts[slot].addresses.push(address_string(
-                    store.ecosystem,
-                    store.should_checksum,
-                    &entry.key,
-                ));
+                contracts[slot]
+                    .addresses
+                    .push(address_string(store.ecosystem, &entry.key));
                 if matches!(store.ecosystem, Ecosystem::Evm) {
                     contracts[slot].topics.push(address_topic(&entry.key));
                 }
@@ -1352,13 +1312,36 @@ impl AddressSet {
 }
 
 #[cfg(test)]
+impl AddressSet {
+    /// The set's entries in set order. A projection only assertions need: the
+    /// query path reads `cache()`, and everything else reads the store.
+    pub(crate) fn entries(&self) -> Vec<AddressEntry> {
+        let store = self.store.read().unwrap();
+        self.ids
+            .iter()
+            .map(|&id| {
+                let entry = store.entry(id);
+                AddressEntry {
+                    address: address_string(store.ecosystem, &entry.key),
+                    contract_name: store.contract_name(entry.contract_idx).to_string(),
+                    registration_block: entry.registration_block,
+                    effective_start_block: entry.effective_start_block,
+                }
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
 impl AddressStore {
-    /// `seed_batch` for tests, which never register an unknown contract name.
+    /// Seeds already-stored registrations from address strings, which the
+    /// storage-shaped `seed_rows` makes awkward for a fixture. Tests never
+    /// register an unknown contract name.
     pub(crate) fn register_seed(
         &self,
         registrations: Vec<AddressRegistration>,
     ) -> Vec<RegistrationVerdict> {
-        self.seed_batch(registrations).unwrap()
+        self.register_all(registrations, false).unwrap()
     }
 }
 
@@ -1371,7 +1354,6 @@ pub(crate) mod test_support {
     fn store_of(ecosystem: Ecosystem, entries: &[(&str, &[&str])]) -> AddressStore {
         let store = AddressStore::with_ecosystem(
             ecosystem,
-            false,
             entries
                 .iter()
                 .map(|(name, _)| AddressStoreContract {
@@ -1494,7 +1476,7 @@ mod tests {
     }
 
     fn store() -> AddressStore {
-        AddressStore::new_evm(false, contracts(&[("C", Some(100)), ("D", None)])).unwrap()
+        AddressStore::new_evm(contracts(&[("C", Some(100)), ("D", None)])).unwrap()
     }
 
     fn kinds(verdicts: &[RegistrationVerdict]) -> Vec<&str> {
@@ -1572,8 +1554,8 @@ mod tests {
             (
                 kinds(&verdicts),
                 store.size(),
-                store.contract_addresses("C".to_string()),
-                store.contract_addresses("D".to_string()),
+                store.contract_addresses("C".to_string(), false),
+                store.contract_addresses("D".to_string(), false),
                 store.get_all(A.to_string()).len(),
             ),
             (
@@ -1598,8 +1580,8 @@ mod tests {
                 store.is_indexed_at(A.to_string(), "C".to_string(), 600),
                 // ...while D's registration at 500 is gone.
                 store.is_indexed_at(A.to_string(), "D".to_string(), 600),
-                store.contract_addresses("C".to_string()),
-                store.contract_addresses("D".to_string()),
+                store.contract_addresses("C".to_string(), false),
+                store.contract_addresses("D".to_string(), false),
                 // And the surviving registration is still reachable by key.
                 store.get_all(A.to_string()).len(),
             ),
@@ -1620,8 +1602,7 @@ mod tests {
         // newest-first, so registering D second but at the highest block puts
         // the one the rollback kills in the middle of that chain.
         let store =
-            AddressStore::new_evm(false, contracts(&[("C", None), ("D", None), ("E", None)]))
-                .unwrap();
+            AddressStore::new_evm(contracts(&[("C", None), ("D", None), ("E", None)])).unwrap();
         store
             .register_batch(vec![reg(A, "C", 100), reg(A, "D", 700), reg(A, "E", 200)])
             .unwrap();
@@ -1656,7 +1637,7 @@ mod tests {
     fn a_shared_address_sorts_by_contract_within_its_start_block() {
         // The sort key must stay total over live entries: two registrations of
         // one address at one start block differ only by contract.
-        let store = AddressStore::new_evm(false, contracts(&[("C", None), ("D", None)])).unwrap();
+        let store = AddressStore::new_evm(contracts(&[("C", None), ("D", None)])).unwrap();
         store.register_seed(vec![reg(A, "D", 10), reg(A, "C", 10)]);
         let merged = store
             .make_set("C".to_string(), None)
@@ -1681,7 +1662,6 @@ mod tests {
     fn registering_for_a_contract_the_chain_doesnt_index_is_an_error() {
         let store = store();
         assert!(store.register_batch(vec![reg(A, "Unknown", 10)]).is_err());
-        assert!(store.seed_batch(vec![reg(A, "Unknown", 10)]).is_err());
     }
 
     #[test]
@@ -1698,13 +1678,10 @@ mod tests {
 
     #[test]
     fn only_an_address_dependent_contract_is_fetchable() {
-        let store = AddressStore::new_evm(
-            false,
-            vec![
-                contracts(&[("C", None)]).remove(0),
-                address_independent_contract("D"),
-            ],
-        )
+        let store = AddressStore::new_evm(vec![
+            contracts(&[("C", None)]).remove(0),
+            address_independent_contract("D"),
+        ])
         .unwrap();
         let verdicts = store.register_seed(vec![reg(A, "C", 10), reg(B, "D", 20)]);
         assert_eq!(
@@ -1715,14 +1692,14 @@ mod tests {
 
     #[test]
     fn contract_addresses_are_listed_per_contract_in_set_order() {
-        let store = AddressStore::new_evm(false, contracts(&[("C", None), ("D", None)])).unwrap();
+        let store = AddressStore::new_evm(contracts(&[("C", None), ("D", None)])).unwrap();
         let verdicts = store.register_seed(vec![reg(B, "C", 20), reg(A, "C", 10), reg(C, "D", 30)]);
         assert_eq!(
             (
                 kinds(&verdicts),
-                store.contract_addresses("C".to_string()),
-                store.contract_addresses("D".to_string()),
-                store.contract_addresses("Missing".to_string()),
+                store.contract_addresses("C".to_string(), false),
+                store.contract_addresses("D".to_string(), false),
+                store.contract_addresses("Missing".to_string(), false),
             ),
             (
                 vec!["added", "added", "added"],
@@ -1740,7 +1717,7 @@ mod tests {
         store
             .rollback(target_block)
             .into_iter()
-            .map(|r| (address_string(ecosystem, false, &r.address), r.contract_id))
+            .map(|r| (address_string(ecosystem, &r.address), r.contract_id))
             .collect()
     }
 
@@ -1756,7 +1733,7 @@ mod tests {
             .into_iter()
             .map(|e| {
                 (
-                    address_string(ecosystem, false, &e.address),
+                    address_string(ecosystem, &e.address),
                     e.registration_block,
                     e.checkpoint_idx,
                 )
@@ -1862,17 +1839,22 @@ mod tests {
 
     #[test]
     fn checksummed_and_lowercase_spellings_are_one_address() {
-        let store = AddressStore::new_evm(true, contracts(&[("C", None)])).unwrap();
+        let store = AddressStore::new_evm(contracts(&[("C", None)])).unwrap();
         let verdicts = store.register_seed(vec![
             reg("0x85149247691df622eaf1a8bd0cafd40bc45154a9", "C", 1),
             reg("0x85149247691df622eaF1a8Bd0CaFd40BC45154a9", "C", 2),
         ]);
         assert_eq!(
-            (kinds(&verdicts), store.contract_addresses("C".to_string())),
+            (
+                kinds(&verdicts),
+                store.contract_addresses("C".to_string(), true),
+                store.contract_addresses("C".to_string(), false),
+            ),
             (
                 vec!["added", "duplicate"],
-                // Rendered checksummed, matching what the sources hand back.
-                vec!["0x85149247691df622eaF1a8Bd0CaFd40BC45154a9".to_string()]
+                // One key, spelled the way the reader asks for.
+                vec!["0x85149247691df622eaF1a8Bd0CaFd40BC45154a9".to_string()],
+                vec!["0x85149247691df622eaf1a8bd0cafd40bc45154a9".to_string()],
             )
         );
     }
@@ -2067,8 +2049,8 @@ mod tests {
         assert_eq!(
             (
                 rejected.len(),
-                store.contract_addresses("C".to_string()),
-                store.contract_addresses("D".to_string()),
+                store.contract_addresses("C".to_string(), false),
+                store.contract_addresses("D".to_string(), false),
                 store.contract_count("C".to_string()),
                 // Nothing seeded is ever written back.
                 store.pending_count(),
@@ -2164,7 +2146,7 @@ mod tests {
     #[test]
     fn seeding_reads_svm_keys_at_the_widths_they_carry() {
         let store =
-            AddressStore::with_ecosystem(Ecosystem::Svm, false, contracts(&[("C", None)])).unwrap();
+            AddressStore::with_ecosystem(Ecosystem::Svm, contracts(&[("C", None)])).unwrap();
         let short = "So11111111111111111111111111111111111111112";
         let long = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
         let packed =
@@ -2173,7 +2155,10 @@ mod tests {
             .seed_rows(packed.bytes, packed.lengths, vec![0, 0], vec![-1, -1])
             .unwrap();
         assert_eq!(
-            (rejected.len(), store.contract_addresses("C".to_string())),
+            (
+                rejected.len(),
+                store.contract_addresses("C".to_string(), false)
+            ),
             (0, vec![short.to_string(), long.to_string()])
         );
     }
@@ -2209,7 +2194,10 @@ mod tests {
         store.rollback(300);
         let verdicts = store.register_seed(vec![reg(A, "C", 400)]);
         assert_eq!(
-            (kinds(&verdicts), store.contract_addresses("C".to_string())),
+            (
+                kinds(&verdicts),
+                store.contract_addresses("C".to_string(), false)
+            ),
             (vec!["added"], vec![A.to_string()])
         );
     }
@@ -2316,7 +2304,7 @@ mod tests {
         assert_eq!(
             (
                 kinds(&verdicts),
-                store.contract_addresses("P".to_string()),
+                store.contract_addresses("P".to_string(), false),
                 store.is_indexed_at(program.to_string(), "P".to_string(), 5),
             ),
             (vec!["added"], vec![program.to_string()], true)

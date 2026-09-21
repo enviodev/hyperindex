@@ -494,7 +494,6 @@ describe("Test eventFilters", () => {
         reg :> Internal.onEventRegistration
       )),
       ~addresses=[{address: providerAddress, contractName: "TestEvents", registrationBlock: -1}],
-      ~shouldChecksum=true,
     )
 
     let makeEmittedLog = (~topics, ~logIndex): emittedLog => {

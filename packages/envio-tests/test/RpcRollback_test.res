@@ -57,7 +57,6 @@ let indexedAddresses: array<Internal.indexingAddress> = [
 let addressStore = () =>
   TestAddresses.makeStore(
     ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
-    ~shouldChecksum=false,
   )
 
 // The chain the mock server currently serves. `forkFrom` is the first block
