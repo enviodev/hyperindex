@@ -240,6 +240,33 @@ describe("Worker.detect", () => {
   })
 })
 
+describe("Supervisor.classifyExit", () => {
+  let classify = (~code=Null.null, ~signal=Null.null, ~stopping=false) =>
+    Supervisor.classifyExit(~code, ~signal, ~stopping)
+
+  it("Reads a signalled worker as a run being stopped, not as one failing", t => {
+    t.expect([
+      // `systemctl stop` on a unit with the default kill mode signals every
+      // process in it, so a worker is told before its supervisor has passed it
+      // on. Its exit carries no code at all.
+      classify(~signal=Null.make("SIGTERM")),
+      // The supervisor's own stop, once it has decided.
+      classify(~code=Null.null, ~signal=Null.make("SIGTERM"), ~stopping=true),
+      // Indexing to every end block.
+      classify(~code=Null.make(0)),
+      // The kernel's out-of-memory killer, and a worker that threw.
+      classify(~signal=Null.make("SIGKILL")),
+      classify(~code=Null.make(1)),
+    ]).toStrictEqual([
+      Supervisor.Stopping,
+      Supervisor.Expected,
+      Supervisor.Expected,
+      Supervisor.Failed,
+      Supervisor.Failed,
+    ])
+  })
+})
+
 describe("Supervisor.syncCache", () => {
   Async.it("Dumps once for requests that overlap, and again for a later one", async t => {
     let dumps = ref(0)

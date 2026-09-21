@@ -212,6 +212,14 @@ let stop = group => {
   group.running->Array.forEach(r => r.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore)
 }
 
+// Takes the group down unless it is already going. Signalling a worker that has
+// been signalled changes nothing, but `stopping` is what tells an exit from an
+// expected one, so the first stop is the one that counts.
+let stopOnce = group =>
+  if !group.stopping {
+    group->stop
+  }
+
 // The dev console's cache dump, which belongs to the supervisor rather than to
 // its workers: a dump copies every effect cache table in the schema to a file
 // named after the effect, so a worker asked to do it would copy its siblings'
@@ -246,6 +254,31 @@ let dumpCache = (~config) => {
 // which is what indexing to every end block looks like.
 type outcome = Finished | Stopped
 
+// How one worker's ending reads.
+type ending =
+  // On its own terms, or because the supervisor asked.
+  | Expected
+  // Asked to stop by someone other than the supervisor. A process manager that
+  // signals a whole group reaches the workers itself, so a worker can be told
+  // before the supervisor has decided what the signal meant.
+  | Stopping
+  | Failed
+
+// A worker that stops on a signal is being stopped, not failing: `systemctl
+// stop` on a unit with the default `KillMode=control-group` sends SIGTERM to
+// every process in it, so the workers get it directly and exit on it. Reading
+// that as a failure would fail every clean shutdown under systemd.
+//
+// The kernel's out-of-memory killer sends SIGKILL, which stays a failure — as
+// does every non-zero exit of a worker the supervisor didn't ask to stop.
+let classifyExit = (~code: Null.t<int>, ~signal: Null.t<string>, ~stopping) =>
+  switch (stopping, code->Null.toOption, signal->Null.toOption) {
+  | (true, _, _)
+  | (_, Some(0), _) => Expected
+  | (_, _, Some("SIGTERM")) => Stopping
+  | _ => Failed
+  }
+
 // Resolves once every worker has ended. Throws if any of them ended in a way
 // the supervisor didn't ask for, having first taken the rest down: one worker
 // short leaves its chains unindexed, and a run that kept the others going would
@@ -255,13 +288,19 @@ let awaitExit = async (group): outcome => {
   let alive = ref(group.running->Array.length)
 
   await Promise.make((resolve, _) => {
-    let onGone = (r, ~failure) =>
+    let onGone = (r, ~ending) =>
       if !r.settled {
         r.settled = true
-        if failure {
-          failed := true
-          if !group.stopping {
-            group->stop
+        // The rest of the run goes down with it either way: one worker short
+        // leaves its chains unindexed, and a run that kept the others going
+        // would look healthy while falling behind. What differs is whether the
+        // run reports itself as having failed.
+        switch ending {
+        | Expected => ()
+        | Stopping => group->stopOnce
+        | Failed => {
+            failed := true
+            group->stopOnce
           }
         }
         alive := alive.contents - 1
@@ -272,15 +311,13 @@ let awaitExit = async (group): outcome => {
 
     group.running->Array.forEach(r => {
       r.child->NodeJs.ChildProcess.onExit(
-        (code, _signal) =>
-          // Only an exit the supervisor asked for is expected. Anything else — a
-          // non-zero code, or a signal like the kernel's out-of-memory kill.
-          r->onGone(~failure=!group.stopping && code->Null.toOption !== Some(0)),
+        (code, signal) =>
+          r->onGone(~ending=classifyExit(~code, ~signal, ~stopping=group.stopping)),
       )
       r.child->NodeJs.ChildProcess.onChildError(
         exn => {
           Logging.errorWithExn(exn, `${r.worker->label} failed to start`)
-          r->onGone(~failure=true)
+          r->onGone(~ending=Failed)
         },
       )
     })

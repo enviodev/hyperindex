@@ -105,6 +105,27 @@ describe("Supervisor.awaitExit", () => {
     },
   )
 
+  // A process manager that signals the whole group reaches the workers itself,
+  // so they exit on a SIGTERM the supervisor has not passed on and may not even
+  // have handled yet. Reading that as a worker dying would fail every clean
+  // shutdown under systemd's default kill mode.
+  Async.it("Takes a worker signalled from outside as the run being stopped", async t => {
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "linger")
+    let signalled = forkFixture(~chainIds=[1])
+    let sibling = forkFixture(~chainIds=[137])
+    let group: Supervisor.group = {
+      running: [signalled, sibling],
+      stopping: false,
+      releaseCheck: None,
+    }
+    let ended = outcome(group)
+    signalled.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore
+
+    // The sibling still went down with it: one worker short leaves its chains
+    // unindexed.
+    t.expect((await ended, group.stopping)).toStrictEqual((Ok(Supervisor.Stopped), true))
+  })
+
   Async.it("Stops the group and fails the run when one worker dies", async t => {
     NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "fail")
     let failing = forkFixture(~chainIds=[1])
