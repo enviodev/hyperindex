@@ -41,6 +41,8 @@ let makeChainState = (
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~sourceBlockNumber=1000,
   ~isInReorgThreshold=false,
+  ~maxReorgDepth=200,
+  ~config=TestConfig.default,
 ): ChainState.t =>
   ChainState.makeFromDbState(
     chainConfig,
@@ -48,7 +50,7 @@ let makeChainState = (
       id: chainId,
       startBlock: 100,
       endBlock,
-      maxReorgDepth: 200,
+      maxReorgDepth,
       progressBlockNumber,
       progressBlockTime: None,
       numEventsProcessed: 7.,
@@ -60,7 +62,7 @@ let makeChainState = (
     ~reorgCheckpoints=[],
     ~isInReorgThreshold,
     ~isRealtime=false,
-    ~config=TestConfig.default,
+    ~config,
     ~contractMapping=TestConfig.default.contractMapping,
     ~registrationsByChainId,
   )

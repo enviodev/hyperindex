@@ -182,7 +182,7 @@ let enterReorgThreshold = (crossChainState: t) => {
     let liftsCeiling = cs->ChainState.reorgThresholdLiftsCeiling
     cs->ChainState.enterReorgThreshold
     if liftsCeiling {
-      cs->ChainState.logger->Logging.childInfo(cs->ChainState.reorgThresholdEntryMessage)
+      cs->ChainState.logger->Logging.childInfo(ChainState.reorgThresholdEntryMessage)
     }
   }
 }

@@ -30,52 +30,44 @@ describe("ChainState.takeFinished", () => {
   })
 })
 
-// `makeChainState` puts the head at 1000 with a reorg depth of 200, so a chain
-// is held at block 800 until the indexer crosses into the blocks above it.
+// `makeChainState` puts the head at 1000 with a reorg depth of 200 and no
+// block lag, so a chain fetches no further than block 800 until the indexer
+// crosses into the blocks above it.
 describe("ChainState.reorgThresholdLiftsCeiling", () => {
-  it("Is nothing to a chain whose end block sits below the blocks it opens up", t => {
+  it("Is true only where the lag was holding the chain back", t => {
+    let chain = (~endBlock=None, ~maxReorgDepth=200, ~config=TestConfig.default) =>
+      makeChainState(
+        ~progressBlockNumber=500,
+        ~firstEventBlockNumber=None,
+        ~endBlock,
+        ~maxReorgDepth,
+        ~config,
+      )->ChainState.reorgThresholdLiftsCeiling
+
     t.expect([
       // Runs to the head, so crossing is what lets it get there.
-      makeChainState(~progressBlockNumber=500, ~firstEventBlockNumber=None),
-      // An end block above the held frontier: crossing lets it reach the rest.
-      makeChainState(
-        ~progressBlockNumber=500,
-        ~firstEventBlockNumber=None,
-        ~endBlock=Some(900),
-      ),
-      // An end block below it was never held back, whether or not the chain
-      // has got there yet.
-      makeChainState(
-        ~progressBlockNumber=500,
-        ~firstEventBlockNumber=None,
-        ~endBlock=Some(600),
-      ),
-      makeChainState(
-        ~progressBlockNumber=600,
-        ~firstEventBlockNumber=None,
-        ~endBlock=Some(600),
-      ),
-    ]->Array.map(ChainState.reorgThresholdLiftsCeiling)).toStrictEqual([
-      true,
-      true,
-      false,
-      false,
-    ])
+      chain(),
+      // An end block above the held frontier: crossing opens up the rest of it.
+      chain(~endBlock=Some(900)),
+      // An end block below it was never held back by the lag.
+      chain(~endBlock=Some(600)),
+      // No reorg depth to be held back by, so crossing changes nothing. This is
+      // also every configuration that keeps no history, which is why the line
+      // has no form that leaves the history out.
+      chain(~maxReorgDepth=0),
+      // Nothing is rolled back, so the chain already fetches to the head.
+      chain(~config={...TestConfig.default, shouldRollbackOnReorg: false}),
+    ]).toStrictEqual([true, true, false, false, false])
   })
 })
 
 describe("ChainState.reorgThresholdEntryMessage", () => {
-  // Crossing lifts the lag that held the chain short of the head, and starts
-  // the history a rollback replays. A reader watching writes grow wants the
+  // Crossing lifts the lag that held the chain short of the head and starts the
+  // history a rollback replays. A reader watching the writes grow wants the
   // second half of that.
-  it("Says what crossing changed, and mentions history only when it is kept", t => {
-    let chainState = makeChainState(~progressBlockNumber=500, ~firstEventBlockNumber=None)
-    let beforeCrossing = chainState->ChainState.reorgThresholdEntryMessage
-    chainState->ChainState.enterReorgThreshold
-
-    t.expect((beforeCrossing, chainState->ChainState.reorgThresholdEntryMessage)).toStrictEqual((
-      "Indexing the latest blocks now.",
-      "Indexing the latest blocks now. They can still be reorged, so changes are saved in a way that can be rolled back.",
-    ))
+  it("Says what crossing changed, and what it starts writing", t => {
+    t.expect(ChainState.reorgThresholdEntryMessage).toBe(
+      "Indexing the latest blocks now. These can be reorged, so the indexer starts storing a history of every change to roll back with.",
+    )
   })
 })

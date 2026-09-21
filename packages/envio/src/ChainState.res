@@ -998,21 +998,30 @@ let shouldSaveHistory = (cs: t) =>
 // stopped short of the head by its reorg depth, because it kept nothing it
 // could roll back with; crossing lifts both at once. The second half is the
 // answer to why the indexer starts writing more than it was.
-// Whether crossing into the recent blocks gives this chain anything more to
-// index. A chain whose end block already sits below the lagged head was never
-// held back by the lag, so crossing changes nothing about it and it has nothing
-// to say. Read before the crossing, while the lag it was holding back is still
-// the one in place.
-let reorgThresholdLiftsCeiling = (cs: t) =>
-  switch cs.fetchState.endBlock {
-  | Some(endBlock) => endBlock > cs.fetchState.knownHeight - cs.fetchState.blockLag
-  | None => true
+// Whether crossing gives this chain anything more to index: the last block it
+// may fetch afterwards against the last it may fetch now. Read before the
+// crossing, while the lag being lifted is still the one in place.
+//
+// False wherever the lag was never holding this chain back, which is every
+// configuration that also keeps no history: a chain that isn't rolled back on a
+// reorg, or has no reorg depth, already fetches as far as it ever will. It is
+// false too for a chain whose end block sits below the blocks being opened up,
+// which will never reach one of them.
+let reorgThresholdLiftsCeiling = (cs: t) => {
+  let ceiling = (~blockLag) => {
+    let head = Pervasives.max(0, cs.fetchState.knownHeight - blockLag)
+    switch cs.fetchState.endBlock {
+    | Some(endBlock) => Pervasives.min(endBlock, head)
+    | None => head
+    }
   }
+  ceiling(~blockLag=cs.chainConfig.blockLag) > ceiling(~blockLag=cs.fetchState.blockLag)
+}
 
-let reorgThresholdEntryMessage = (cs: t) =>
-  cs->shouldSaveHistory
-    ? "Indexing the latest blocks now. They can still be reorged, so changes are saved in a way that can be rolled back."
-    : "Indexing the latest blocks now."
+// Only ever said by a chain the crossing lifts, and lifting it takes a reorg
+// depth to have been held back by, which is the same thing that makes the
+// history below worth keeping. So there is no second form without it.
+let reorgThresholdEntryMessage = "Indexing the latest blocks now. These can be reorged, so the indexer starts storing a history of every change to roll back with."
 
 // Snapshot the chain's metadata fields for staging into the chains table.
 let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {

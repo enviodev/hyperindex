@@ -127,7 +127,7 @@ let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 type finished = EndBlock(int) | Backfill(int)
 let takeFinished: t => option<finished>
 let reorgThresholdLiftsCeiling: t => bool
-let reorgThresholdEntryMessage: t => string
+let reorgThresholdEntryMessage: string
 let hasProcessedToEndblock: t => bool
 let isDurablyCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
