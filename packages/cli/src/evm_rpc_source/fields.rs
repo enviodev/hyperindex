@@ -10,6 +10,8 @@
 //! Every match here is exhaustive: a new field cannot compile until its
 //! carrier and its decoding are stated.
 
+use std::sync::LazyLock;
+
 use anyhow::{anyhow, Context, Result};
 use hypersync_client::format::{self, Hex};
 use hypersync_client::simple_types::{Block, Transaction};
@@ -170,6 +172,30 @@ pub(crate) const BLOCK_OBSERVATION_MASK: u64 = BLOCK_KEY_MASK
     | (1u64 << (EvmBlockField::Timestamp as u32))
     | (1u64 << (EvmBlockField::Hash as u32))
     | (1u64 << (EvmBlockField::ParentHash as u32));
+
+/// Transaction fields left out of the chain-wide read, so that only a page
+/// that selected one pays for it. `EffectiveGasPrice` falls back to a second
+/// request on chains predating EIP-1559, which would break the rule that
+/// widening never costs a request; the other two are nested structures rather
+/// than a single value, and cost enough to decode to be worth the refetch on
+/// the rare page that wants them.
+pub(crate) const TX_EAGER_EXCLUDED_MASK: u64 = (1u64 << (EvmTxField::EffectiveGasPrice as u32))
+    | (1u64 << (EvmTxField::AccessList as u32))
+    | (1u64 << (EvmTxField::AuthorizationList as u32));
+
+/// Every transaction field one response carries. Read once per referenced
+/// transaction, so the fold over `tx_carrier` happens once for the process.
+pub(crate) fn tx_mask_of(carrier: Carrier) -> u64 {
+    static MASKS: LazyLock<[u64; 4]> = LazyLock::new(|| {
+        use strum::VariantArray;
+        let mut masks = [0u64; 4];
+        for &field in EvmTxField::VARIANTS {
+            masks[tx_carrier(field) as usize] |= 1u64 << (field as u32);
+        }
+        masks
+    });
+    MASKS[carrier as usize]
+}
 
 /// The requested fields a selection mask stands for — the inverse of
 /// `block_mask`, for turning an accumulated need back into a fetch.

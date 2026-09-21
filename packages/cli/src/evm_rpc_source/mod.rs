@@ -26,7 +26,7 @@ use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
-use enrich::{EnrichError, EnrichRequest, Fetches, SelectedFields, PageRefs};
+use enrich::{EnrichError, EnrichRequest, Fetches, PageRefs, SelectedFields};
 use hypersync_client::format::{self, Hex};
 use interval::{IntervalState, SyncConfig};
 
@@ -269,6 +269,11 @@ pub struct EvmRpcClient {
     /// and transaction are fetched for the union of the masks of the items that
     /// reference them, so an event selecting nothing costs no request.
     registration_fields: HashMap<i64, SelectedFields>,
+    /// The union of the above. A block or transaction is decoded for every
+    /// field the chain selects, not just the ones the page that fetched it
+    /// asked for, so a later page with a different selection is served from the
+    /// stores rather than refetched.
+    chain_fields: SelectedFields,
     should_checksum: bool,
 }
 
@@ -350,7 +355,7 @@ impl EvmRpcClient {
                 .context("backoffMillis must be non-negative")
                 .map_err(map_err)?,
         };
-        let registration_fields = event_registrations
+        let registration_fields: HashMap<i64, SelectedFields> = event_registrations
             .iter()
             .map(|reg| {
                 (
@@ -362,6 +367,7 @@ impl EvmRpcClient {
                 )
             })
             .collect();
+        let chain_fields = SelectedFields::union(registration_fields.values().copied());
         Ok(EvmRpcClient {
             inner: Arc::new(inner),
             decoder,
@@ -370,6 +376,7 @@ impl EvmRpcClient {
             intervals: IntervalState::new(),
             fetches: Fetches::default(),
             registration_fields,
+            chain_fields,
             should_checksum: checksum_addresses,
         })
     }
@@ -663,6 +670,7 @@ impl EvmRpcClient {
                 refs,
                 known_blocks: query.known_blocks,
                 known_transactions: query.known_transactions,
+                chain_fields: self.chain_fields,
                 should_checksum: self.should_checksum,
             },
         )
@@ -813,10 +821,7 @@ impl EvmRpcClient {
             filter["address"] = json!(selection.addresses);
         }
 
-        let raw_logs: Vec<RawLog> = self
-            .inner
-            .request("eth_getLogs", json!([filter]))
-            .await?;
+        let raw_logs: Vec<RawLog> = self.inner.request("eth_getLogs", json!([filter])).await?;
 
         // Decoding is CPU-bound ABI work; keep it off the libuv async thread.
         tokio::task::spawn_blocking(move || {
