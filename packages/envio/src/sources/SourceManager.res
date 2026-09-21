@@ -84,6 +84,10 @@ type t = {
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
+  // Why a source was last disabled for good. A disabled source is never
+  // retried, so by the time the manager runs out of sources this is the reason
+  // it did — and the only thing that tells a caller what to change.
+  mutable disableReason: option<string>,
   mutable hasRealtime: bool,
   mutable committedRateLimitTimeMs: float,
   mutable rateLimitWaiters: int,
@@ -386,6 +390,7 @@ let make = (
     idleSeconds: 0.,
     waitingForNewBlockSeconds: 0.,
     queryingSeconds: 0.,
+    disableReason: None,
     hasRealtime,
     committedRateLimitTimeMs: 0.0,
     rateLimitWaiters: 0,
@@ -942,7 +947,13 @@ let executeQuery = async (
   ~knownHeight,
   ~isRealtime,
 ) => {
-  let noSourcesError = "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
+  // Read when the manager actually runs out of sources, not on the way in: the
+  // reason is recorded by the failure that disabled the last one.
+  let noSourcesError = () => switch sourceManager.disableReason {
+  | Some(reason) =>
+    `The indexer doesn't have data-sources which can continue fetching. The last one was disabled because ${reason}`
+  | None => "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
+  }
 
   // Sources where the query is impossible - lazily allocated, excluded for the duration of this query
   let excludedSourcesRef = ref(None)
@@ -970,7 +981,7 @@ let executeQuery = async (
       s
     | None =>
       let logger = Logging.createChild(~params={"chainId": sourceManager.activeSource.chainId})
-      %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
+      %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError())
     }
     sourceManager.activeSource = sourceState.source
     let source = sourceState.source
@@ -1060,8 +1071,11 @@ let executeQuery = async (
           // failing at the same time. Log only once
           if notAlreadyDisabled {
             switch error {
-            | UnsupportedSelection({message}) => logger->Logging.childError(message)
+            | UnsupportedSelection({message}) =>
+              sourceManager.disableReason = Some(message)
+              logger->Logging.childError(message)
             | FailedGettingFieldSelection({?exn, message, blockNumber}) =>
+              sourceManager.disableReason = Some(message)
               logger->Logging.childError({
                 "msg": message,
                 "err": exn->Option.map(Utils.prettifyExn),

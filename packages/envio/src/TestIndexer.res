@@ -948,7 +948,7 @@ let createTestIndexer = (): t<'processConfig> => {
                 ~exitAfterFirstEventBlock,
                 ~onError=errHandler => {
                   errHandler->ErrorHandling.log
-                  reject(errHandler.exn->Utils.prettifyExn)
+                  reject(errHandler->ErrorHandling.toExn)
                 },
                 // Caught up: resolve the run instead of exiting the process.
                 ~onExit=() => resolve(),

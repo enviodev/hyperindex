@@ -52,15 +52,14 @@ describe("Indexing over an RPC that drops a selected field", () => {
     try {
       await indexer.process({ chains: { 1337: { startBlock: 100, endBlock: 100 } } });
     } catch (error) {
-      // The reason is logged — "the RPC response is missing the selected block
-      // field: gasUsed" — but the rejection carries no payload, so a caller
-      // testing their own indexer can only see that the run failed, not why.
-      // Tightening that should turn this into an assertion on the message.
+      // The null branch is what this used to do: the reason lived only in the
+      // logs and the rejection carried nothing. Keep it named, so a regression
+      // reads as a lost reason rather than a mismatched string.
       outcome = error === null ? "rejected without a reason" : String(error);
     }
 
     t.expect([outcome, await indexer.Transfer.get("100-0")]).toEqual([
-      "rejected without a reason",
+      "Error: The indexer doesn't have data-sources which can continue fetching. The last one was disabled because the RPC response is missing the selected block field: gasUsed. Please double-check your RPC provider returns correct data.",
       undefined,
     ]);
   });
