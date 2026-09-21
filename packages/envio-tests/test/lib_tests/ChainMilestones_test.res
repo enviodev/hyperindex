@@ -43,8 +43,8 @@ describe("ChainState.reorgThresholdEntryMessage", () => {
     chainState->ChainState.enterReorgThreshold
 
     t.expect((beforeCrossing, chainState->ChainState.reorgThresholdEntryMessage)).toStrictEqual((
-      "Entered the reorg threshold. Indexing to the chain head from here.",
-      "Entered the reorg threshold. Indexing to the chain head from here, and keeping the entity history a reorg would be rolled back through.",
+      "Now indexing up to the latest block.",
+      "Now indexing up to the latest block. These can still be reorged, so changes are kept ready to roll back.",
     ))
   })
 })

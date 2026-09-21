@@ -1857,7 +1857,7 @@ let make = (
     if withUpload {
       // Try to restore cache tables from the .envio/cache TSV files
       switch await scanCacheDir() {
-      | [] => Logging.info("No cache found to upload.")
+      | [] => Logging.info("No saved effect cache to load from .envio/cache.")
       | entries =>
         switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) {
         | Ok(psqlExec) =>

@@ -17,7 +17,7 @@ let runOnce = async (state: IndexerState.t) => {
   // chains are named because the pause is theirs, and a split run has a process
   // saying this for each part of it.
   Logging.info({
-    "msg": "Backfill finished. Flushing pending writes, then building the indexes the schema promises. Indexing is paused until they are built, which on a large database can take a while.",
+    "msg": "Synced. Saving the last of the data, then building database indexes. Indexing is paused until that finishes, which can take a while on a large database.",
     "chainIds": state->IndexerState.crossChainState->CrossChainState.chainIds,
   })
 

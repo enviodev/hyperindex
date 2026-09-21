@@ -663,8 +663,8 @@ let dispatch = (
     )
   | _ =>
     cs.isInReorgThreshold
-      ? ("the chain head", cs.fetchState.knownHeight)
-      : ("the safe block", cs.fetchState.knownHeight - cs.fetchState.blockLag)
+      ? ("the head", cs.fetchState.knownHeight)
+      : ("the last block that can't be reorged", cs.fetchState.knownHeight - cs.fetchState.blockLag)
   }
 )
 
@@ -1017,14 +1017,14 @@ let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
 // progress has run.
 let shouldSaveHistory = (cs: t) =>
   cs.shouldRollbackOnReorg && cs.maxReorgDepth > 0 && cs.isInReorgThreshold
-// What entering the reorg threshold changed for this chain. Below it a chain
-// stops short of the head by its reorg depth, because it keeps no history to
-// roll back with; crossing lifts both at once, and the second half is the
+// What crossing into the recent blocks changed for this chain. Until now it
+// stopped short of the head by its reorg depth, because it kept nothing it
+// could roll back with; crossing lifts both at once. The second half is the
 // answer to why the indexer starts writing more than it was.
 let reorgThresholdEntryMessage = (cs: t) =>
   cs->shouldSaveHistory
-    ? "Entered the reorg threshold. Indexing to the chain head from here, and keeping the entity history a reorg would be rolled back through."
-    : "Entered the reorg threshold. Indexing to the chain head from here."
+    ? "Now indexing up to the latest block. These can still be reorged, so changes are kept ready to roll back."
+    : "Now indexing up to the latest block."
 
 // Snapshot the chain's metadata fields for staging into the chains table.
 let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {

@@ -23,8 +23,8 @@ describe("ChainState.takeFetchedTo", () => {
         ~endBlock=Some(600),
       )->takeFrom,
     ]).toStrictEqual([
-      Some(("the safe block", 800)),
-      Some(("the chain head", 1000)),
+      Some(("the last block that can't be reorged", 800)),
+      Some(("the head", 1000)),
       Some(("the end block", 600)),
     ])
   })
@@ -35,6 +35,6 @@ describe("ChainState.takeFetchedTo", () => {
     t.expect((
       chainState->ChainState.takeFetchedTo,
       chainState->ChainState.takeFetchedTo,
-    )).toStrictEqual((Some(("the safe block", 800)), None))
+    )).toStrictEqual((Some(("the last block that can't be reorged", 800)), None))
   })
 })

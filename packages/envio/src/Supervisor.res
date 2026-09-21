@@ -384,7 +384,7 @@ let startReleaseCheck = group =>
         group.running->Array.forEach(r =>
           r.child->NodeJs.ChildProcess.send(Worker.ReleaseRealtime)->ignore
         )
-        Logging.info("Every chain has reached the head. Switching the run to realtime.")
+        Logging.info("Every chain has caught up. Switching to realtime indexing.")
       }
     , releaseCheckIntervalMillis),
   )
@@ -411,12 +411,12 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   let startTimeRef = Performance.now()
 
   Logging.info(
-    `Splitting ${config.chainMap
+    `Indexing ${config.chainMap
       ->ChainMap.values
       ->Array.length
       ->Int.toString} chains across ${workers
       ->Array.length
-      ->Int.toString} processes, from a budget of ${Env.Db.maxConnections->Int.toString} database connections.`,
+      ->Int.toString} processes, from a limit of ${Env.Db.maxConnections->Int.toString} database connections.`,
   )
 
   // Decided before the first fork: it is what makes a worker's output the

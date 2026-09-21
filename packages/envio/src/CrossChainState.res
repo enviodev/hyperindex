@@ -272,7 +272,7 @@ let markReady = (crossChainState: t, ~readyAt) => {
     if !wasReady {
       cs
       ->ChainState.logger
-      ->Logging.childInfo("Ready. Caught up, with every index the schema promises it.")
+      ->Logging.childInfo("Ready. Synced to the head and fully indexed for queries.")
     }
   }
   crossChainState.isRealtime = true
@@ -290,7 +290,7 @@ let reportProcessedToEndBlock = (crossChainState: t) =>
       cs
       ->ChainState.logger
       ->Logging.childInfo({
-        "msg": "Indexed to the end block. Nothing further to index on this chain.",
+        "msg": "Indexed to the end block. This chain is done.",
         "block": endBlock,
       })
     | None => ()
