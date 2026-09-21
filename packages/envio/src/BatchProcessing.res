@@ -105,8 +105,8 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     }
 
     // When resuming from persisted state, all events may already be processed.
+    state->IndexerState.reportProcessedToEndBlock
     if EventProcessing.allChainsEventsProcessedToEndblock(state->IndexerState.chainStates) {
-      Logging.info("All chains are caught up to end blocks.")
       if !(state->IndexerState.keepProcessAlive) && !(state->IndexerState.isHoldingRealtime) {
         await ExitOnCaughtUp.run(state)
       }
@@ -158,6 +158,9 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         // Can safely reset rollback state, since overwrite is not possible.
         state->IndexerState.clearRollback
         state->IndexerState.applyBatchProgress(~batch)
+        // Before the finalize below, so a chain says it reached its end block
+        // ahead of the run saying what it does about that.
+        state->IndexerState.reportProcessedToEndBlock
 
         // Backfilling → FinalizingIndexes → Ready. Awaiting here holds the
         // processing loop for the whole finalize, which is what pauses
@@ -178,9 +181,6 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         let allCaughtUp = EventProcessing.allChainsEventsProcessedToEndblock(
           state->IndexerState.chainStates,
         )
-        if allCaughtUp {
-          Logging.info("All chains are caught up to end blocks.")
-        }
 
         if (
           allCaughtUp &&

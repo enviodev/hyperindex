@@ -104,6 +104,7 @@ let hasArrivedAtHead: t => bool
 // The supervisor's go-ahead for a process driving part of a split run.
 let releaseRealtime: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit
+let reportProcessedToEndBlock: t => unit
 let rollbackState: t => rollbackState
 let indexerStartTime: t => Date.t
 let loadManager: t => LoadManager.t

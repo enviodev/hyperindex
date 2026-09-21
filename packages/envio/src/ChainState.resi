@@ -125,6 +125,8 @@ let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
 let takeFetchedTo: t => option<(string, int)>
+let takeProcessedToEndBlock: t => option<int>
+let reorgThresholdEntryMessage: t => string
 let hasProcessedToEndblock: t => bool
 let isDurablyCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int

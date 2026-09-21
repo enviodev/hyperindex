@@ -291,11 +291,15 @@ and applyQueryResponse = (
     // What the chain is waiting on, which is not itself. A held process is
     // waiting on chains it doesn't drive, so it says so even when it drives
     // only one — how the run is split is not the reader's problem.
+    //
+    // Naming the wait matters most at the safe block, which is as far as a
+    // chain can fetch until the indexer enters the reorg threshold: it looks
+    // stalled short of the head, and the reason is the chains it is waiting on.
     let waitingOn = if (
       state->IndexerState.isHoldingRealtime ||
         state->IndexerState.chainStates->Dict.keysToArray->Array.length > 1
     ) {
-      " Waiting for other chains."
+      " Holding here until every chain has caught up."
     } else {
       ""
     }

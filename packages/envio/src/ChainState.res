@@ -61,6 +61,10 @@ type t = {
   // What this chain last reported reaching. The head moves, so a chain reaches
   // it again on every catch-up; only a new milestone is worth a line.
   mutable reportedFetchedTo: option<string>,
+  // Whether this chain has said it finished its end block. Reaching it stays
+  // true for the rest of the run, and every pass over the chains would say so
+  // again.
+  mutable reportedEndBlock: bool,
   mutable reorgCount: int,
   mutable reorgDetectedBlock: option<int>,
   mutable rollbackTargetBlock: option<int>,
@@ -175,6 +179,7 @@ let make = (
     blockRangeFetchedEvents: 0.,
     blockRangeFetchedBlocks: 0.,
     reportedFetchedTo: None,
+    reportedEndBlock: false,
     reorgCount: 0,
     reorgDetectedBlock: None,
     rollbackTargetBlock: None,
@@ -685,6 +690,18 @@ let hasProcessedToEndblock = (cs: t) => {
   }
 }
 
+// The end block this chain has just finished indexing to, the first time it
+// has. `None` for a chain still working, one with no end block at all, and
+// every pass after the one that reported it.
+let takeProcessedToEndBlock = (cs: t) =>
+  switch cs.fetchState.endBlock {
+  | Some(endBlock) if !cs.reportedEndBlock && cs->hasProcessedToEndblock => {
+      cs.reportedEndBlock = true
+      Some(endBlock)
+    }
+  | _ => None
+  }
+
 // Caught up as judged by persisted values alone: progress reached the endBlock,
 // or the head the previous run had already observed (less the lag that holds the
 // tip back). Unlike `isFetchingAtHead` this doesn't move when a fresh height
@@ -992,6 +1009,7 @@ let enterReorgThreshold = (cs: t) => {
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
 }
 
+
 let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
 
 // Whether the chain's writes need history: only what a rollback could still
@@ -999,6 +1017,14 @@ let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
 // progress has run.
 let shouldSaveHistory = (cs: t) =>
   cs.shouldRollbackOnReorg && cs.maxReorgDepth > 0 && cs.isInReorgThreshold
+// What entering the reorg threshold changed for this chain. Below it a chain
+// stops short of the head by its reorg depth, because it keeps no history to
+// roll back with; crossing lifts both at once, and the second half is the
+// answer to why the indexer starts writing more than it was.
+let reorgThresholdEntryMessage = (cs: t) =>
+  cs->shouldSaveHistory
+    ? "Entered the reorg threshold. Indexing to the chain head from here, and keeping the entity history a reorg would be rolled back through."
+    : "Entered the reorg threshold. Indexing to the chain head from here."
 
 // Snapshot the chain's metadata fields for staging into the chains table.
 let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {

@@ -171,13 +171,14 @@ let isReadyToEnterReorgThreshold = (crossChainState: t, ~batch) =>
     ->Dict.valuesToArray
     ->Array.every(cs => cs->ChainState.isReadyToEnterReorgThresholdAfterBatch(~batch))
 
+// Said by each chain rather than once for the indexer: what crossing changes
+// is a chain's own, and the chains of a split run cross in processes that can
+// only speak for the ones they drive.
 let enterReorgThreshold = (crossChainState: t) => {
-  Logging.info("Reorg threshold reached")
-
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
-    crossChainState
-    ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-    ->ChainState.enterReorgThreshold
+    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    cs->ChainState.enterReorgThreshold
+    cs->ChainState.logger->Logging.childInfo(cs->ChainState.reorgThresholdEntryMessage)
   }
 }
 
@@ -263,12 +264,38 @@ let markCaughtUpOnResume = (crossChainState: t) => {
 // and switches the indexer to realtime.
 let markReady = (crossChainState: t, ~readyAt) => {
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
-    crossChainState
-    ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-    ->ChainState.markReady(~readyAt)
+    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    let wasReady = cs->ChainState.isReady
+    cs->ChainState.markReady(~readyAt)
+    // One line per chain, because `ready_at` is one column per chain: what the
+    // log says and what a reader finds in the row are the same fact.
+    if !wasReady {
+      cs
+      ->ChainState.logger
+      ->Logging.childInfo("Ready. Caught up, with every index the schema promises it.")
+    }
   }
   crossChainState.isRealtime = true
 }
+
+// Each chain that has just finished indexing to its end block, said once, by
+// the chain it is about. A chain that finishes early says so then, rather than
+// when the last chain in its process catches up.
+let reportProcessedToEndBlock = (crossChainState: t) =>
+  crossChainState.chainStates
+  ->Dict.valuesToArray
+  ->Array.forEach(cs =>
+    switch cs->ChainState.takeProcessedToEndBlock {
+    | Some(endBlock) =>
+      cs
+      ->ChainState.logger
+      ->Logging.childInfo({
+        "msg": "Indexed to the end block. Nothing further to index on this chain.",
+        "block": endBlock,
+      })
+    | None => ()
+    }
+  )
 
 // --- Fetch control. ---
 
