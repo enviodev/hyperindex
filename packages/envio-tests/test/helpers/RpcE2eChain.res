@@ -87,10 +87,12 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
 });
 `
 
-let configYaml = (~name, ~url, ~extraRpc="") =>
+// `blockJson` above serves only the fields the reorg check needs, so any
+// `fieldSelection` naming a block field is a field the provider will not return.
+let configYaml = (~name, ~url, ~extraRpc="", ~fieldSelection="") =>
   `
 name: ${name}
-rollback_on_reorg: false
+rollback_on_reorg: false${fieldSelection}
 chains:
   - id: 1337
     start_block: 100
