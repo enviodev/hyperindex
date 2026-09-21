@@ -630,17 +630,6 @@ let getChain = (config, ~chainId) =>
 // be split across processes.
 let isPerChain = (config: t) => !(config.userEntities->Array.some(entity => entity.crossChain))
 
-// What every line this process logs is attributed to. A process driving one
-// of the schema's chains while siblings drive the rest names it, on the lines
-// that had no chain in hand. One driving several has no single owner to name,
-// and its chain-scoped lines already carry theirs.
-let logContext = (config: t): option<dict<JSON.t>> =>
-  switch (config.isolated, config.chainMap->ChainMap.keys) {
-  | (true, [chainId]) =>
-    Some(Dict.fromArray([("chainId", chainId->S.reverseConvertToJsonOrThrow(ChainId.schema))]))
-  | _ => None
-  }
-
 // Narrows a config to the chains one `envio start --chain` process drives.
 // `contractMapping` is deliberately left whole: its ids are what the migration
 // that created the schema stored, and one rebuilt from a subset would hand the

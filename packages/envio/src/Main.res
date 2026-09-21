@@ -453,9 +453,6 @@ exception FatalError(exn)
   ) => {
     // A worker reports to its supervisor, which draws for the whole run.
     let shouldUseTui = Tui.shouldUse(~suppressed=isTest || Worker.isEnabled)
-    // In per-chain mode every line this process writes belongs to the chains it
-    // drives, whether or not a supervisor split the run across processes.
-    config->Config.logContext->Option.forEach(Logging.setContext)
     // isDevelopmentMode controls whether the indexer stays alive after all
     // chains finish (keepProcessAlive) and whether the console API is exposed.
     // Set by `envio dev` via the public config's `isDev` field; `envio start`

@@ -198,28 +198,6 @@ describe("Supervisor worker plumbing", () => {
   })
 })
 
-describe("Config.logContext", () => {
-  it("Names the one chain an isolated process drives, and nothing otherwise", t => {
-    t.expect([
-      // This process drives one of the schema's chains while siblings drive the rest.
-      config(~schema=perChain, ~isolatedChains=[JSON.Number(137.)])->Config.logContext,
-      // Several chains have no single owner to name.
-      config(
-        ~schema=perChain,
-        ~isolatedChains=[JSON.Number(1.), JSON.Number(137.)],
-      )->Config.logContext,
-      // One process driving every chain: chain-scoped lines already name theirs,
-      // and the rest belong to the run as a whole.
-      config(~schema=perChain)->Config.logContext,
-      config(~schema=crossChain)->Config.logContext,
-    ]).toStrictEqual([
-      Some(Dict.fromArray([("chainId", JSON.Number(137.))])),
-      None,
-      None,
-      None,
-    ])
-  })
-})
 
 describe("Worker.detect", () => {
   it("Counts as a worker only when forked with the variable and a channel", t => {
