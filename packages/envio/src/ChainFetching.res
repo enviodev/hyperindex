@@ -331,9 +331,13 @@ let fetchChain = async (
     let isRealtime = state->IndexerState.isRealtime
     let sourceManager = chainState->ChainState.sourceManager
 
-    // Only affects the WaitingForNewBlock branch of dispatch, where
-    // there's nothing to fetch. During backfill any such chain is idle.
-    let reducedPolling = !isRealtime
+    // Only affects the WaitingForNewBlock branch of dispatch, where there's
+    // nothing to fetch. The line is whether any height is known at all, not
+    // whether the head is fetchable yet: a chain held back by its lag is still
+    // tracking a head it has, and asking faster would buy nothing. A chain with
+    // no height has nothing to show for itself until the first one lands, so it
+    // polls at the source's own cadence and earns the normal stall window.
+    let reducedPolling = !isRealtime && chainState->ChainState.knownHeight > 0
 
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
