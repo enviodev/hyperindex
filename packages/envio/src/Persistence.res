@@ -328,7 +328,7 @@ let init = {
           | _ => false
           }
         ) {
-          let logResume = announceResume ? Logging.info : Logging.debug
+          let logResume = announceResume ? Logging.info : Logging.trace
           logResume(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState(
             ~entities=persistence.allEntities,

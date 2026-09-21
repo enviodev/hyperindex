@@ -105,7 +105,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     }
 
     // When resuming from persisted state, all events may already be processed.
-    state->IndexerState.reportProcessedToEndBlock
+    state->IndexerState.reportFinished
     if EventProcessing.allChainsEventsProcessedToEndblock(state->IndexerState.chainStates) {
       if !(state->IndexerState.keepProcessAlive) && !(state->IndexerState.isHoldingRealtime) {
         await ExitOnCaughtUp.run(state)
@@ -158,9 +158,9 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         // Can safely reset rollback state, since overwrite is not possible.
         state->IndexerState.clearRollback
         state->IndexerState.applyBatchProgress(~batch)
-        // Before the finalize below, so a chain says it reached its end block
-        // ahead of the run saying what it does about that.
-        state->IndexerState.reportProcessedToEndBlock
+        // Before the finalize below, so a chain says where it finished ahead of
+        // the process saying what it does about that.
+        state->IndexerState.reportFinished
 
         // Backfilling → FinalizingIndexes → Ready. Awaiting here holds the
         // processing loop for the whole finalize, which is what pauses

@@ -2104,7 +2104,7 @@ let make = (
     switch await sql->loadCatalogRows(~indexName=name) {
     | rows => indexManager->IndexManager.resync(~name, ~rows)
     | exception exn =>
-      Logging.debug({
+      Logging.trace({
         "storage": storageName,
         "msg": `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
         "err": exn->Utils.prettifyExn,

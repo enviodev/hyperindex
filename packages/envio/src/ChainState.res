@@ -58,13 +58,10 @@ type t = {
   mutable blockRangeFetchCount: float,
   mutable blockRangeFetchedEvents: float,
   mutable blockRangeFetchedBlocks: float,
-  // What this chain last reported reaching. The head moves, so a chain reaches
-  // it again on every catch-up; only a new milestone is worth a line.
-  mutable reportedFetchedTo: option<string>,
-  // Whether this chain has said it finished its end block. Reaching it stays
-  // true for the rest of the run, and every pass over the chains would say so
-  // again.
-  mutable reportedEndBlock: bool,
+  // Whether this chain has said where it finished indexing. Being finished
+  // stays true for the rest of the run, and every pass over the chains would
+  // say so again.
+  mutable reportedFinished: bool,
   mutable reorgCount: int,
   mutable reorgDetectedBlock: option<int>,
   mutable rollbackTargetBlock: option<int>,
@@ -178,8 +175,7 @@ let make = (
     blockRangeFetchCount: 0.,
     blockRangeFetchedEvents: 0.,
     blockRangeFetchedBlocks: 0.,
-    reportedFetchedTo: None,
-    reportedEndBlock: false,
+    reportedFinished: false,
     reorgCount: 0,
     reorgDetectedBlock: None,
     rollbackTargetBlock: None,
@@ -651,37 +647,6 @@ let dispatch = (
 
 // --- Derived (pure). ---
 
-%%private(
-  // Where the fetch frontier has just landed. Below the reorg threshold a chain
-  // can only fetch the finalized range, so reaching the end of it is not
-  // reaching the head — the rest opens up once the indexer enters the threshold.
-  let fetchedTo = (cs: t) =>
-  switch cs.fetchState.endBlock {
-  | Some(endBlock) if endBlock <= cs.fetchState.knownHeight - cs.fetchState.blockLag => (
-      "the end block",
-      endBlock,
-    )
-  | _ =>
-    cs.isInReorgThreshold
-      ? ("the head", cs.fetchState.knownHeight)
-      : ("the last block that can't be reorged", cs.fetchState.knownHeight - cs.fetchState.blockLag)
-  }
-)
-
-// What this chain has just reached, the first time it reaches it. `None` once
-// it has been reported: a chain catches up to a moving head over and over, and
-// the milestone is the same one every time. A new one — the head past the
-// threshold, an end block — is a line of its own.
-let takeFetchedTo = (cs: t) => {
-  let (target, block) = cs->fetchedTo
-  if cs.reportedFetchedTo == Some(target) {
-    None
-  } else {
-    cs.reportedFetchedTo = Some(target)
-    Some((target, block))
-  }
-}
-
 let hasProcessedToEndblock = (cs: t) => {
   let {committedProgressBlockNumber, fetchState} = cs
   switch fetchState.endBlock {
@@ -690,16 +655,28 @@ let hasProcessedToEndblock = (cs: t) => {
   }
 }
 
-// The end block this chain has just finished indexing to, the first time it
-// has. `None` for a chain still working, one with no end block at all, and
-// every pass after the one that reported it.
-let takeProcessedToEndBlock = (cs: t) =>
-  switch cs.fetchState.endBlock {
-  | Some(endBlock) if !cs.reportedEndBlock && cs->hasProcessedToEndblock => {
-      cs.reportedEndBlock = true
-      Some(endBlock)
+// Where this chain has finished indexing, the first time it gets there.
+// `EndBlock` is terminal: the chain indexed everything it was configured to.
+// `Backfill` is the rest of the history, up to the point where blocks can
+// still be reorged, which is as far as a chain indexes before the indexer
+// crosses into them.
+type finished = EndBlock(int) | Backfill(int)
+
+let takeFinished = (cs: t) =>
+  if cs.reportedFinished {
+    None
+  } else {
+    switch (cs.fetchState.endBlock, cs->hasProcessedToEndblock, cs.isProgressAtHead) {
+    | (Some(endBlock), true, _) => {
+        cs.reportedFinished = true
+        Some(EndBlock(endBlock))
+      }
+    | (_, _, true) => {
+        cs.reportedFinished = true
+        Some(Backfill(cs.committedProgressBlockNumber))
+      }
+    | _ => None
     }
-  | _ => None
   }
 
 // Caught up as judged by persisted values alone: progress reached the endBlock,
@@ -1021,10 +998,21 @@ let shouldSaveHistory = (cs: t) =>
 // stopped short of the head by its reorg depth, because it kept nothing it
 // could roll back with; crossing lifts both at once. The second half is the
 // answer to why the indexer starts writing more than it was.
+// Whether crossing into the recent blocks gives this chain anything more to
+// index. A chain whose end block already sits below the lagged head was never
+// held back by the lag, so crossing changes nothing about it and it has nothing
+// to say. Read before the crossing, while the lag it was holding back is still
+// the one in place.
+let reorgThresholdLiftsCeiling = (cs: t) =>
+  switch cs.fetchState.endBlock {
+  | Some(endBlock) => endBlock > cs.fetchState.knownHeight - cs.fetchState.blockLag
+  | None => true
+  }
+
 let reorgThresholdEntryMessage = (cs: t) =>
   cs->shouldSaveHistory
-    ? "Now indexing up to the latest block. These can still be reorged, so changes are kept ready to roll back."
-    : "Now indexing up to the latest block."
+    ? "Indexing the latest blocks now. They can still be reorged, so changes are saved in a way that can be rolled back."
+    : "Indexing the latest blocks now."
 
 // Snapshot the chain's metadata fields for staging into the chains table.
 let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {

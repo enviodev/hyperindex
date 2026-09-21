@@ -544,8 +544,7 @@ let releaseRealtime = (state: t) => {
 
 let markReady = (state: t, ~readyAt) => state.crossChainState->CrossChainState.markReady(~readyAt)
 
-let reportProcessedToEndBlock = (state: t) =>
-  state.crossChainState->CrossChainState.reportProcessedToEndBlock
+let reportFinished = (state: t) => state.crossChainState->CrossChainState.reportFinished
 
 let rollbackState = (state: t) => state.rollbackState
 let indexerStartTime = (state: t) => state.indexerStartTime

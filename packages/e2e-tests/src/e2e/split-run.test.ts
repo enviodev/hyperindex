@@ -90,7 +90,7 @@ describe.skipIf(!reachable)("E2E: a split run is one indexer", () => {
     const indexer = start(["-r"]);
     try {
       const exit = exitCode(indexer);
-      await waitForOutput(indexer, "Indexing 2 chains across 2 processes", config.timeouts.indexerStartup);
+      await waitForOutput(indexer, "Indexing will be split across multiple processes", config.timeouts.indexerStartup);
 
       expect({
         exitCode: await exit,
@@ -125,7 +125,7 @@ describe.skipIf(!reachable)("E2E: a split run is one indexer", () => {
     const indexer = start(["-r", "--config", "config.head.yaml"]);
     try {
       const exit = exitCode(indexer);
-      await waitForOutput(indexer, "Indexing 2 chains across 2 processes", config.timeouts.indexerStartup);
+      await waitForOutput(indexer, "Indexing will be split across multiple processes", config.timeouts.indexerStartup);
 
       const [runtime, metrics] = await Promise.all([
         // Each worker's readings, told apart by label.

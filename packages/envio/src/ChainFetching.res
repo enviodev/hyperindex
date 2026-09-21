@@ -279,35 +279,6 @@ and applyQueryResponse = (
     )
   }
 
-  // Report the milestone this response brought the fetch frontier to, once.
-  // The chain reaches it again every time the head moves and it catches up, so
-  // what keeps the line off the log is the chain having already reported it,
-  // not the transition — which re-arms on every advance.
-  switch chainState->ChainState.isFetchingAtHead
-    ? chainState->ChainState.takeFetchedTo
-    : None {
-  | None => ()
-  | Some((target, block)) =>
-    // What the chain is waiting on, which is not itself. A held process is
-    // waiting on chains it doesn't drive, so it says so even when it drives
-    // only one — how the run is split is not the reader's problem.
-    //
-    // Naming the wait matters most at the safe block, which is as far as a
-    // chain can fetch until the indexer enters the reorg threshold: it looks
-    // stalled short of the head, and the reason is the chains it is waiting on.
-    let waitingOn = if (
-      state->IndexerState.isHoldingRealtime ||
-        state->IndexerState.chainStates->Dict.keysToArray->Array.length > 1
-    ) {
-      " Holding here until every chain has caught up."
-    } else {
-      ""
-    }
-    chainState->ChainState.logger->Logging.childInfo({
-      "msg": `Fetched to ${target}.${waitingOn}`,
-      "block": block,
-    })
-  }
 }
 
 let finishWaitingForNewBlock = (

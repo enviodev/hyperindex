@@ -384,7 +384,6 @@ let startReleaseCheck = group =>
         group.running->Array.forEach(r =>
           r.child->NodeJs.ChildProcess.send(Worker.ReleaseRealtime)->ignore
         )
-        Logging.info("Every chain has caught up. Switching to realtime indexing.")
       }
     , releaseCheckIntervalMillis),
   )
@@ -410,14 +409,15 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   let startTime = Date.make()
   let startTimeRef = Performance.now()
 
-  Logging.info(
-    `Indexing ${config.chainMap
-      ->ChainMap.values
-      ->Array.length
-      ->Int.toString} chains across ${workers
-      ->Array.length
-      ->Int.toString} processes, from a limit of ${Env.Db.maxConnections->Int.toString} database connections.`,
-  )
+  // The counts ride as fields rather than in the sentence: the connection limit
+  // is the only setting that decides any of this, and a reader who wants to
+  // change it has nothing else to go on.
+  Logging.info({
+    "msg": "Indexing will be split across multiple processes for faster and more reliable indexing.",
+    "chains": config.chainMap->ChainMap.values->Array.length,
+    "processes": workers->Array.length,
+    "maxConnections": Env.Db.maxConnections,
+  })
 
   // Decided before the first fork: it is what makes a worker's output the
   // supervisor's to print.

@@ -40,7 +40,7 @@ let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => uni
 let markCaughtUpIfSettled: t => unit
 let markCaughtUpOnResume: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit
-let reportProcessedToEndBlock: t => unit
+let reportFinished: t => unit
 
 // Fetch control.
 let priorityOrder: t => array<ChainState.t>

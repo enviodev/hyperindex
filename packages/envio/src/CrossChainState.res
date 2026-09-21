@@ -177,8 +177,13 @@ let isReadyToEnterReorgThreshold = (crossChainState: t, ~batch) =>
 let enterReorgThreshold = (crossChainState: t) => {
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    // A chain whose end block sits below these blocks says nothing: crossing
+    // gives it nothing more to index, and it will never reach one of them.
+    let liftsCeiling = cs->ChainState.reorgThresholdLiftsCeiling
     cs->ChainState.enterReorgThreshold
-    cs->ChainState.logger->Logging.childInfo(cs->ChainState.reorgThresholdEntryMessage)
+    if liftsCeiling {
+      cs->ChainState.logger->Logging.childInfo(cs->ChainState.reorgThresholdEntryMessage)
+    }
   }
 }
 
@@ -272,30 +277,43 @@ let markReady = (crossChainState: t, ~readyAt) => {
     if !wasReady {
       cs
       ->ChainState.logger
-      ->Logging.childInfo("Ready. Synced to the head and fully indexed for queries.")
+      ->Logging.childInfo("Ready. Fully indexed for queries.")
     }
   }
   crossChainState.isRealtime = true
 }
 
-// Each chain that has just finished indexing to its end block, said once, by
-// the chain it is about. A chain that finishes early says so then, rather than
-// when the last chain in its process catches up.
-let reportProcessedToEndBlock = (crossChainState: t) =>
+// Each chain that has just finished indexing, said once, by the chain it is
+// about. A chain that finishes early says so then, rather than when the last
+// chain in its process catches up.
+//
+// A chain with no end block has only finished its history: the blocks that can
+// still be reorged are indexed after every chain gets this far, so it says what
+// it is waiting on when there is anything to wait for.
+let reportFinished = (crossChainState: t) => {
+  let waitingOnOthers =
+    crossChainState.holdRealtime || crossChainState.chainIds->Array.length > 1
   crossChainState.chainStates
   ->Dict.valuesToArray
   ->Array.forEach(cs =>
-    switch cs->ChainState.takeProcessedToEndBlock {
-    | Some(endBlock) =>
+    switch cs->ChainState.takeFinished {
+    | Some(EndBlock(block)) =>
+      cs
+      ->ChainState.logger
+      ->Logging.childInfo({"msg": "Indexed to the end block. This chain is done.", "block": block})
+    | Some(Backfill(block)) =>
       cs
       ->ChainState.logger
       ->Logging.childInfo({
-        "msg": "Indexed to the end block. This chain is done.",
-        "block": endBlock,
+        "msg": waitingOnOthers
+          ? "Finished backfill. Waiting for the other chains."
+          : "Finished backfill.",
+        "block": block,
       })
     | None => ()
     }
   )
+}
 
 // --- Fetch control. ---
 
