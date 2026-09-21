@@ -14,11 +14,17 @@ process.send({
     // A Date survives only under structured-clone serialization, which is
     // what a metrics snapshot's timestamps need.
     startTime: new Date(1700000000000),
+    // The one reading the supervisor's barrier asks each worker for.
+    hasArrivedAtHead: process.env.FAKE_WORKER_ARRIVED === "1",
   },
 });
 
 if (mode === "succeed") process.exit(0);
 if (mode === "fail") process.exit(1);
+
+// Ends the same way "succeed" does, but late enough for a supervisor to have
+// taken its report and registered whatever it listens with.
+if (mode === "succeed-later") setTimeout(() => process.exit(0), 60);
 
 // Writes across chunk boundaries the way a real process does: a pipe hands the
 // supervisor whatever has been flushed, not whole lines.

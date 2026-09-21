@@ -8,6 +8,7 @@ type fixtureReport = {
   maxConnections: string,
   logFile: string,
   startTime: Date.t,
+  hasArrivedAtHead: bool,
 }
 
 let fixturePath = `${NodeJs.Process.cwd()}/test/helpers/fakeWorker.mjs`
@@ -66,6 +67,7 @@ describe("Supervisor.fork", () => {
       // Proof the channel clones rather than stringifies: a JSON round trip
       // would have turned this into a string.
       startTime: Date.fromTime(1700000000000.),
+      hasArrivedAtHead: false,
     })
   })
 })
@@ -82,6 +84,7 @@ describe("Supervisor.awaitExit", () => {
     let group: Supervisor.group = {
       running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
       stopping: false,
+      releaseCheck: None,
     }
 
     t.expect(await outcome(group)).toStrictEqual(Ok(Supervisor.Finished))
@@ -94,6 +97,7 @@ describe("Supervisor.awaitExit", () => {
       let group: Supervisor.group = {
         running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
         stopping: false,
+        releaseCheck: None,
       }
       group->Supervisor.stop
 
@@ -106,7 +110,11 @@ describe("Supervisor.awaitExit", () => {
     let failing = forkFixture(~chainIds=[1])
     NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "linger")
     let lingering = forkFixture(~chainIds=[137])
-    let group: Supervisor.group = {running: [failing, lingering], stopping: false}
+    let group: Supervisor.group = {
+      running: [failing, lingering],
+      stopping: false,
+      releaseCheck: None,
+    }
 
     // The survivor was taken down rather than left indexing half a schema.
     t.expect((await outcome(group), group.stopping, lingering.settled)).toStrictEqual((
@@ -154,6 +162,7 @@ describe("Supervisor.fork output", () => {
         ),
       ],
       stopping: false,
+      releaseCheck: None,
     }
     let _ = await group->Supervisor.awaitExit
 
@@ -164,5 +173,82 @@ describe("Supervisor.fork output", () => {
       ("stderr", "from stderr"),
       ("stdout", "second line"),
     ])
+  })
+})
+
+describe("Supervisor.isRunAtHead", () => {
+  let untilReported = async (running: array<Supervisor.running>) => {
+    let rec until = async deadline =>
+      if !(running->Array.every(r => r.snapshot->Option.isSome)) && Date.now() < deadline {
+        await Utils.delay(10)
+        await until(deadline)
+      }
+    await until(Date.now() +. 3000.)
+  }
+
+  let untilGone = async (r: Supervisor.running) => {
+    let rec until = async deadline =>
+      if r.child->NodeJs.ChildProcess.connected && Date.now() < deadline {
+        await Utils.delay(10)
+        await until(deadline)
+      }
+    await until(Date.now() +. 3000.)
+  }
+
+  let arrivingFixture = (~chainIds, ~mode) => {
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", mode)
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER_ARRIVED", "1")
+    forkFixture(~chainIds)
+  }
+
+  Async.it("Holds the run until every worker has arrived", async t => {
+    let arrived = arrivingFixture(~chainIds=[1], ~mode="linger")
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER_ARRIVED", "0")
+    let backfilling = forkFixture(~chainIds=[137])
+    let group: Supervisor.group = {
+      running: [arrived, backfilling],
+      stopping: false,
+      releaseCheck: None,
+    }
+    await untilReported(group.running)
+
+    // One worker still backfilling speaks for the whole run, and a worker that
+    // has yet to report drives chains nobody can see.
+    let readings = (
+      group.running->Supervisor.isRunAtHead,
+      [arrived]->Supervisor.isRunAtHead,
+      []->Supervisor.isRunAtHead,
+    )
+    group->Supervisor.stop
+    let _ = await group->Supervisor.awaitExit
+
+    t.expect(readings).toStrictEqual((false, true, false))
+  })
+
+  // Every worker said it had arrived, and then one of them was gone. Its
+  // snapshot outlives it, so a run read from the snapshots alone still looks
+  // whole, and the release would be sent into a channel Node had already
+  // closed — which comes back as the error a supervisor reports as a worker
+  // failing to start.
+  Async.it("Never releases a run a worker has left", async t => {
+    let lingering = arrivingFixture(~chainIds=[1], ~mode="linger")
+    let leaving = arrivingFixture(~chainIds=[137], ~mode="succeed-later")
+    let group: Supervisor.group = {
+      running: [lingering, leaving],
+      stopping: false,
+      releaseCheck: None,
+    }
+    await untilReported(group.running)
+    await untilGone(leaving)
+
+    let readings = (
+      group.running->Supervisor.isRunAtHead,
+      // Both snapshots are still there, and both of them still say arrived.
+      group.running->Array.filterMap(r => r.snapshot)->Array.length,
+    )
+    group->Supervisor.stop
+    await untilGone(lingering)
+
+    t.expect(readings).toStrictEqual((false, 2))
   })
 })

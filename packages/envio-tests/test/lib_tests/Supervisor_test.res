@@ -279,26 +279,3 @@ describe("Supervisor.syncCache", () => {
     t.expect(dumps.contents).toBe(2)
   })
 })
-
-describe("Supervisor.isRunAtHead", () => {
-  let snapshot = (~hasArrivedAtHead): Metrics.t => {
-    ...TestChainMetrics.emptySnapshot,
-    hasArrivedAtHead,
-  }
-
-  it("Holds the run until every worker has arrived", t => {
-    t.expect([
-      // A worker that hasn't reported yet drives chains nobody can see. Reading
-      // the run as arrived here would release it on a partial view.
-      [snapshot(~hasArrivedAtHead=true)]->Supervisor.isRunAtHead(~workerCount=2),
-      [
-        snapshot(~hasArrivedAtHead=true),
-        snapshot(~hasArrivedAtHead=false),
-      ]->Supervisor.isRunAtHead(~workerCount=2),
-      [
-        snapshot(~hasArrivedAtHead=true),
-        snapshot(~hasArrivedAtHead=true),
-      ]->Supervisor.isRunAtHead(~workerCount=2),
-    ]).toStrictEqual([false, false, true])
-  })
-})

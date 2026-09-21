@@ -193,10 +193,22 @@ let fork = (
 // The forked workers of one run, and whether their supervisor is the one
 // taking them down. A stop it asked for is expected; every other way a worker
 // can end is a failure.
-type group = {running: array<running>, mutable stopping: bool}
+type group = {
+  running: array<running>,
+  mutable stopping: bool,
+  // The poll that asks whether the run may go realtime, while it is still
+  // asking. A group being taken down has nothing left to release.
+  mutable releaseCheck: option<intervalId>,
+}
+
+let stopReleaseCheck = group => {
+  group.releaseCheck->Option.forEach(clearInterval)
+  group.releaseCheck = None
+}
 
 let stop = group => {
   group.stopping = true
+  group->stopReleaseCheck
   group.running->Array.forEach(r => r.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore)
 }
 
@@ -284,13 +296,21 @@ let awaitExit = async (group): outcome => {
 // rate its workers report at: nothing changes in between.
 %%private(let releaseCheckIntervalMillis = 500)
 
-// Whether a run holding its workers back may let them go: every worker has
-// reported, and every one of them has got as far as it can on its own. What
-// counts as arrived is the worker's own conclusion — the supervisor only asks
-// each of them the question an unsplit run asks itself.
-let isRunAtHead = (snapshots: array<Metrics.t>, ~workerCount) =>
-  snapshots->Array.length === workerCount && snapshots->Array.every(snapshot =>
-      snapshot.hasArrivedAtHead
+// Whether a run holding its workers back may let them go: every worker is still
+// there to be released, has reported, and has got as far as it can on its own.
+// What counts as arrived is the worker's own conclusion, the supervisor only
+// asking each of them the question an unsplit run asks itself.
+//
+// A worker that is gone leaves the run a process short, so there is nothing to
+// release it into, and its last snapshot outlives it. The channel is what says
+// so: Node closes it before it reports the exit, so a process on its way out
+// still reads as running everywhere else, and the release sent to it comes back
+// as the error a supervisor reports as a worker failing to start.
+let isRunAtHead = (running: array<running>) =>
+  running->Utils.Array.notEmpty &&
+    running->Array.every(r =>
+      r.child->NodeJs.ChildProcess.connected &&
+      r.snapshot->Option.mapOr(false, snapshot => snapshot.hasArrivedAtHead)
     )
 
 // Runs the group: creates the schema for every chain, forks a worker per plan
@@ -337,6 +357,7 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
       worker->fork(~workerIndex, ~holdRealtime, ~isDev=config.isDev, ~pipeOutput=shouldUseTui)
     ),
     stopping: false,
+    releaseCheck: None,
   }
 
   let reported = () => group.running->Array.filterMap(r => r.snapshot)
@@ -373,24 +394,18 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // split run only the supervisor can see. Every worker is held until the last
   // one arrives, then released together, so the run switches over exactly as an
   // unsplit one does.
-  let releaseCheck = ref(None)
-  let stopReleaseCheck = () => {
-    releaseCheck.contents->Option.forEach(clearInterval)
-    releaseCheck := None
-  }
   if holdRealtime {
-    releaseCheck :=
-      Some(
-        setInterval(() =>
-          if reported()->isRunAtHead(~workerCount=group.running->Array.length) {
-            stopReleaseCheck()
-            group.running->Array.forEach(r =>
-              r.child->NodeJs.ChildProcess.send(Worker.ReleaseRealtime)->ignore
-            )
-            Logging.info("Every chain has reached the head. Switching the run to realtime.")
-          }
-        , releaseCheckIntervalMillis),
-      )
+    group.releaseCheck = Some(
+      setInterval(() =>
+        if group.running->isRunAtHead {
+          group->stopReleaseCheck
+          group.running->Array.forEach(r =>
+            r.child->NodeJs.ChildProcess.send(Worker.ReleaseRealtime)->ignore
+          )
+          Logging.info("Every chain has reached the head. Switching the run to realtime.")
+        }
+      , releaseCheckIntervalMillis),
+    )
   }
 
   if shouldUseTui {
@@ -408,9 +423,9 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // is the exception, as it is for a single process: it keeps the final state
   // on screen until the terminal closes it.
   let outcome = await group->awaitExit
-  // Nothing left to release, and a display keeps this process alive long enough
-  // for the check to reach children that are gone.
-  stopReleaseCheck()
+  // A group that ended on its own was never stopped, and a display keeps this
+  // process alive long past the last worker the check was asking about.
+  group->stopReleaseCheck
 
   switch outcome {
   | Stopped => NodeJs.process->NodeJs.exitWithCode(Success)

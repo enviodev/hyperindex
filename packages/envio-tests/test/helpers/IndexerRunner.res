@@ -193,7 +193,7 @@ let run = async (
       releaseCheck :=
         Some(
           setInterval(() =>
-            if [state->IndexerState.toMetrics]->Supervisor.isRunAtHead(~workerCount=1) {
+            if state->IndexerState.hasArrivedAtHead {
               releaseCheck.contents->Option.forEach(clearInterval)
               releaseCheck := None
               state->IndexerState.releaseRealtime

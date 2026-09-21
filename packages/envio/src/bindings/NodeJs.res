@@ -174,6 +174,9 @@ module ChildProcess = {
   external onExit: (child, @as("exit") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
   @send external onChildError: (child, @as("error") _, exn => unit) => unit = "on"
   @send external kill: (child, string) => bool = "kill"
+  // Whether the IPC channel is still open. Node closes it before it reports the
+  // exit, so this goes false while the child is still running.
+  @get external connected: child => bool = "connected"
 
   // Present only for a stdio slot the parent asked to pipe.
   type stdioStream
