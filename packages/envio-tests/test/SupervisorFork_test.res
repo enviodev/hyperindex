@@ -20,6 +20,7 @@ let forkFixture = (
   ~isDev=false,
   ~pipeOutput=false,
   ~onOutput=?,
+  ~onErrorOutput=?,
 ) =>
   Supervisor.fork(
     {chainIds: chainIds->Array.map(ChainId.fromInt), maxConnections},
@@ -29,6 +30,7 @@ let forkFixture = (
     ~entryPath=fixturePath,
     ~pipeOutput,
     ~onOutput?,
+    ~onErrorOutput?,
   )
 
 describe("Supervisor.fork", () => {
@@ -135,9 +137,11 @@ describe("Supervisor.readLines", () => {
 
 describe("Supervisor.fork output", () => {
   // A worker writing straight to the terminal tears the frame its supervisor
-  // draws: ink only knows about the lines its own process logs. Sorted, since
-  // stdout and stderr are two pipes and neither waits for the other.
-  Async.it("Hands the supervisor every line a worker writes, whole", async t => {
+  // draws: ink only knows about the lines its own process logs. Each line keeps
+  // the stream it was written to, so redirecting the run's stderr still catches
+  // what its workers wrote there. Sorted, since stdout and stderr are two pipes
+  // and neither waits for the other.
+  Async.it("Hands the supervisor every line a worker writes, on its own stream", async t => {
     NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "print")
     let lines = []
     let group: Supervisor.group = {
@@ -145,17 +149,20 @@ describe("Supervisor.fork output", () => {
         forkFixture(
           ~chainIds=[1],
           ~pipeOutput=true,
-          ~onOutput=line => lines->Array.push(line)->ignore,
+          ~onOutput=line => lines->Array.push(("stdout", line))->ignore,
+          ~onErrorOutput=line => lines->Array.push(("stderr", line))->ignore,
         ),
       ],
       stopping: false,
     }
     let _ = await group->Supervisor.awaitExit
 
-    t.expect(lines->Array.toSorted(String.compare)).toStrictEqual([
-      "first line",
-      "from stderr",
-      "second line",
+    t.expect(
+      lines->Array.toSorted(((_, a), (_, b)) => String.compare(a, b)),
+    ).toStrictEqual([
+      ("stdout", "first line"),
+      ("stderr", "from stderr"),
+      ("stdout", "second line"),
     ])
   })
 })

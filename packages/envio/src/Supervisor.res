@@ -128,6 +128,7 @@ let fork = (
   // them write to the terminal behind the frame's back.
   ~pipeOutput=false,
   ~onOutput=Console.log,
+  ~onErrorOutput=Console.error,
 ) => {
   let env = NodeJs.Process.process.env->Dict.copy
   env->Dict.set(
@@ -158,12 +159,17 @@ let fork = (
     },
   )
   if pipeOutput {
-    // Both streams become one stream of lines: the supervisor logs them the way
-    // it logs its own, which is the only way ink can keep them out of its frame.
-    [child->NodeJs.ChildProcess.stdout, child->NodeJs.ChildProcess.stderr]->Array.forEach(stream =>
+    // The supervisor writes a worker's lines the way it writes its own, which is
+    // the only way ink can keep them out of its frame. Each stream keeps the one
+    // it was written to, so a worker's errors stay on stderr for whoever is
+    // redirecting it.
+    [
+      (child->NodeJs.ChildProcess.stdout, onOutput),
+      (child->NodeJs.ChildProcess.stderr, onErrorOutput),
+    ]->Array.forEach(((stream, onLine)) =>
       switch stream->Null.toOption {
       | Some(stream) => {
-          let (read, flush) = readLines(~onLine=onOutput)
+          let (read, flush) = readLines(~onLine)
           stream->NodeJs.ChildProcess.setEncoding("utf8")
           stream->NodeJs.ChildProcess.onData(read)
           stream->NodeJs.ChildProcess.onEnd(flush)
