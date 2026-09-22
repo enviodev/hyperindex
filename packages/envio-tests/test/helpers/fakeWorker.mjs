@@ -39,3 +39,10 @@ if (mode === "print") {
 
 // Nothing else keeps a "linger" worker alive; it waits to be stopped.
 if (mode === "linger") setInterval(() => {}, 1000);
+
+// Ends only once the supervisor releases it, so a run that reaches its exit is
+// a run whose barrier opened.
+if (mode === "await-release") {
+  setInterval(() => {}, 1000);
+  process.on("message", () => process.exit(0));
+}

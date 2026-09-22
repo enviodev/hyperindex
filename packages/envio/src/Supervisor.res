@@ -7,21 +7,19 @@ type worker = {chainIds: array<ChainId.t>, maxConnections: int}
 let minConnectionsPerWorker = 2
 
 // Most processes a run is split into, however much budget it is given. A worker
-// is a whole Node process, with its own heap, its own copy of the handler
-// modules and its own source clients, and a run holding more of them shares one
-// machine between them. A conservative ceiling while the split is new: past it
-// a raised budget widens the workers' pools rather than adding workers.
+// is a whole Node process with its own heap, handler modules and source
+// clients, and however many of them a run has, they share one machine. Past
+// this a raised budget widens the workers' pools rather than adding workers.
 let maxWorkers = 4
 
 // How to spend a connection budget on the chains a run indexes. `None` keeps
-// the run in one process, which is what a budget too small to afford two
-// workers, or a config with nothing to split, has to do.
+// the run in one process.
 //
-// Chains are dealt in config order and the direction reverses each pass, so
-// the first chains lead different workers and the worker that took the first
-// picks up the last. How much work a chain has is the contracts' to decide,
-// not the chain's, so config order is the one ranking the run can be given:
-// listing chains busiest-first in config.yaml is what balances the layout.
+// Chains are dealt in config order and the direction reverses each pass, so the
+// first chains lead different workers and the worker that took the first picks
+// up the last. How much work a chain has is the contracts' to decide, so config
+// order is the only ranking the run can be given: listing chains busiest-first
+// in config.yaml is what balances the layout.
 let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<worker>> => {
   let workerCount =
     [chainIds->Array.length, maxConnections / minConnectionsPerWorker, maxWorkers]->Array.reduce(
@@ -60,8 +58,7 @@ let planForRun = (~config: Config.t, ~maxConnections=Env.Db.maxConnections) =>
   }
 
 // One forked worker: the process, the chains it drives, and the last snapshot
-// it reported. `None` until it reports, which is what makes a run that hasn't
-// heard from anyone yet render as initializing rather than as empty.
+// it reported.
 type running = {
   worker: worker,
   child: NodeJs.ChildProcess.Child.t,
@@ -72,8 +69,6 @@ type running = {
   mutable settled: bool,
 }
 
-// A worker is named by the chains it drives, which is what an operator reading
-// its memory or its event loop wants to know.
 let name = (worker: worker) => worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(";")
 
 let label = (worker: worker) => `[chain ${worker->name}]`
@@ -117,14 +112,9 @@ let readLines = (~onLine) => {
   (read, flush)
 }
 
-// The run's memory budgets, and each worker's share of them. Both are the whole
-// indexer's rather than one chain's or one process's: the fetch buffer pool is
-// deliberately independent of how many chains a run has, and an indexer split
-// across processes that took each budget whole in every one of them would hold
-// as many times the memory as it happened to have workers.
-//
-// Read here and handed over in the spawn environment for the same reason the
-// connection share is: a worker's `Env` reads them as it loads.
+// Each worker's share of the run's memory budgets. Both are the whole indexer's
+// rather than one process's, so workers that each took the whole of one would
+// hold as many times the memory as the run happened to have workers.
 let memoryBudgets = (~workerCount) =>
   [
     ("ENVIO_INDEXING_MAX_BUFFER_SIZE", CrossChainState.calculateTargetBufferSize()),
@@ -136,9 +126,8 @@ let memoryBudgets = (~workerCount) =>
     Pervasives.max(1, budget / workerCount)->Int.toString,
   ))
 
-// Whether this process's own output is a terminal. `pino-pretty` colorizes on
-// that test, and a piped worker would fail it for a run the operator is
-// watching in colour.
+// `pino-pretty` colorizes on this test, and a piped worker would fail it for a
+// run the operator is watching in colour.
 @val external stdoutIsTty: Nullable.t<bool> = "process.stdout.isTTY"
 
 let fork = (
@@ -161,6 +150,7 @@ let fork = (
   ~pipeOutput=false,
   ~onOutput=Console.log,
   ~onErrorOutput=Console.error,
+  ~onSnapshot=() => (),
 ) => {
   let env = NodeJs.Process.process.env->Dict.copy
   env->Dict.set(
@@ -217,6 +207,7 @@ let fork = (
     | Worker.Snapshot({metrics, runtime}) => {
         running.snapshot = Some(metrics)
         running.runtime = Some(runtime)
+        onSnapshot()
       }
     }
   )
@@ -226,32 +217,23 @@ let fork = (
 // The forked workers of one run, and whether their supervisor is the one
 // taking them down, which is what tells an expected exit from the rest.
 type group = {
-  running: array<running>,
+  // Assigned once the forks are made, which is after the group exists: a
+  // worker's report asks the group whether the run may go realtime.
+  mutable running: array<running>,
   mutable stopping: bool,
-  // The poll that asks whether the run may go realtime, while it is still
-  // asking. A group being taken down has nothing left to release.
-  mutable releaseCheck: option<intervalId>,
-}
-
-let stopReleaseCheck = group => {
-  group.releaseCheck->Option.forEach(clearInterval)
-  group.releaseCheck = None
+  // Whether the workers are still waiting for the run's leave to go realtime.
+  mutable holdingRealtime: bool,
 }
 
 let stop = group => {
   group.stopping = true
-  group->stopReleaseCheck
   group.running->Array.forEach(r => r.child->NodeJs.ChildProcess.Child.kill("SIGTERM")->ignore)
 }
 
-// The dev console's cache dump, which belongs to the supervisor rather than to
-// its workers: a dump copies every effect cache table in the schema to a file
-// named after the effect, so a worker asked to do it would copy its siblings'
-// chains too, and several asked at once would write the same files at the same
-// time. Nothing in it is a worker's to know — the rows it copies are the ones
-// already committed.
-//
-// Requests that overlap join the dump in flight, for the same reason.
+// The dev console's cache dump belongs to the supervisor: a dump copies every
+// effect cache table in the schema, so a worker asked to do it would copy its
+// siblings' chains too, and several asked at once would write the same files at
+// the same time. Overlapping requests join the dump in flight for that reason.
 let syncCache = {
   let inFlight = ref(None)
   (~dump) =>
@@ -265,10 +247,9 @@ let syncCache = {
 }
 
 // The supervisor handed its connections to the workers, so a dump opens one of
-// its own for as long as it takes. That puts the run one connection over its
-// budget, deliberately: the console that asks for a dump is `envio dev` only,
-// one connection is a cheaper price than pausing the indexing to free one, and
-// the pool is capped at that one.
+// its own and puts the run one connection over its budget — deliberately: only
+// `envio dev` asks for a dump, and the alternative is pausing the indexing to
+// free one.
 let dumpCache = (~config) => {
   let storage = PgStorage.makeStorageFromEnv(~config, ~sql=PgStorage.makeClient(~maxConnections=1))
   storage.dumpEffectCache()->Promise.finally(() => storage.close()->Promise.ignore)
@@ -295,6 +276,11 @@ type ending =
 //
 // The kernel's out-of-memory killer sends SIGKILL, which stays a failure — as
 // does every non-zero exit of a worker the supervisor didn't ask to stop.
+//
+// Once the supervisor is stopping, though, every exit reads as expected and the
+// run exits 0: a worker that crashes on its way down is indistinguishable from
+// one that took the SIGTERM, and a stop that reported a failure would fail
+// every restart the crash happened to race.
 let classifyExit = (~code: Null.t<int>, ~signal: Null.t<string>, ~stopping) =>
   switch (stopping, code->Null.toOption, signal->Null.toOption) {
   | (true, _, _)
@@ -316,9 +302,7 @@ let awaitExit = async (group): outcome => {
     let onGone = (r, ~ending) =>
       if !r.settled {
         r.settled = true
-        // The rest of the run goes down with it either way: one worker short
-        // leaves its chains unindexed, and a run that kept the others going
-        // would look healthy while falling behind. What differs is whether the
+        // The rest of the run goes down either way; what differs is whether the
         // run reports itself as having failed.
         switch ending {
         | Expected => ()
@@ -353,14 +337,8 @@ let awaitExit = async (group): outcome => {
   group.stopping ? Stopped : Finished
 }
 
-// How often the supervisor asks whether the run may go realtime. Matches the
-// rate its workers report at: nothing changes in between.
-%%private(let releaseCheckIntervalMillis = 500)
-
 // Whether a run holding its workers back may let them go: every worker is still
 // there to be released, has reported, and has got as far as it can on its own.
-// What counts as arrived is the worker's own conclusion, the supervisor only
-// asking each of them the question an unsplit run asks itself.
 //
 // A worker that is gone leaves the run a process short, so there is nothing to
 // release it into, and its last snapshot outlives it. The channel is what says
@@ -376,16 +354,71 @@ let isRunAtHead = (running: array<running>) =>
 
 // Holds every worker at the head until the last of them arrives, then releases
 // them together. Chains enter the reorg threshold and go realtime as one
-// indexer, and in a split run only the supervisor can see when that is, so the
-// run switches over exactly as an unsplit one does.
-let startReleaseCheck = group => group.releaseCheck = Some(setInterval(() =>
-      if group.running->isRunAtHead {
-        group->stopReleaseCheck
-        group.running->Array.forEach(r =>
-          r.child->NodeJs.ChildProcess.Child.send(Worker.ReleaseRealtime)->ignore
-        )
-      }
-    , releaseCheckIntervalMillis))
+// indexer, and in a split run only the supervisor can see when that is.
+//
+// Asked on every report rather than on a clock of its own: a report is the only
+// thing that can change the answer.
+let releaseIfAtHead = group =>
+  if group.holdingRealtime && !group.stopping && group.running->isRunAtHead {
+    group.holdingRealtime = false
+    group.running->Array.forEach(r =>
+      r.child->NodeJs.ChildProcess.Child.send(Worker.ReleaseRealtime)->ignore
+    )
+  }
+
+// The run's chains as an unsplit indexer reports them before it has fetched
+// anything: at their configured blocks, with nothing indexed. A display that
+// hasn't heard from a worker yet draws these, rather than the indexer with no
+// chains at all that an empty merge would render.
+let configuredChains = (config: Config.t): array<Metrics.chainMetrics> =>
+  config.chainMap
+  ->ChainMap.values
+  ->Array.map((chain): Metrics.chainMetrics => {
+    chainId: chain.id,
+    poweredByHyperSync: switch chain.sourceConfig {
+    | EvmSourceConfig({hypersync}) => hypersync->Option.isSome
+    | FuelSourceConfig(_) | SvmSourceConfig(_) => true
+    | SimulateSourceConfig(_) | CustomSources(_) => false
+    },
+    firstEventBlockNumber: None,
+    latestProcessedBlock: None,
+    timestampCaughtUpToHeadOrEndblock: None,
+    numEventsProcessed: 0.,
+    latestFetchedBlockNumber: 0,
+    knownHeight: 0,
+    numBatchesFetched: 0,
+    // A chain resolves `start_block: latest` against its own head as it starts,
+    // which is a worker's to do and no supervisor's to guess.
+    startBlock: switch chain.startBlock {
+    | Block(block) => block
+    | Latest => 0
+    },
+    endBlock: chain.endBlock,
+    numAddresses: 0,
+    addressesByContract: [],
+    isReady: false,
+    sourceBlockNumber: 0,
+    progressBlockNumber: -1,
+    progressLatencyMs: None,
+    progressBlockTime: None,
+    concurrency: 0,
+    partitionsCount: 0,
+    bufferSize: 0,
+    bufferBlockNumber: -1,
+    idleSeconds: 0.,
+    waitingForNewBlockSeconds: 0.,
+    queryingSeconds: 0.,
+    blockRangeFetchSeconds: 0.,
+    blockRangeParseSeconds: 0.,
+    blockRangeFetchCount: 0.,
+    blockRangeFetchedEvents: 0.,
+    blockRangeFetchedBlocks: 0.,
+    reorgCount: 0,
+    reorgDetectedBlock: None,
+    rollbackTargetBlock: None,
+    rateLimitTimeMs: 0.,
+    rateLimitResetInMs: None,
+  })
 
 // Runs the group: creates the schema for every chain, forks a worker per plan
 // entry, and serves the run's metrics, console and display from what they
@@ -427,19 +460,18 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     (persistence->Persistence.getInitializedState).chains->Array.some(chain =>
       chain.timestampCaughtUpToHeadOrEndblock->Option.isNone
     )
-  let group = {
-    running: workers->Array.mapWithIndex((worker, workerIndex) =>
+  let group = {running: [], stopping: false, holdingRealtime: holdRealtime}
+  group.running =
+    workers->Array.mapWithIndex((worker, workerIndex) =>
       worker->fork(
         ~workerIndex,
         ~workerCount=workers->Array.length,
         ~holdRealtime,
         ~isDev=config.isDev,
         ~pipeOutput=shouldUseTui,
+        ~onSnapshot=() => group->releaseIfAtHead,
       )
-    ),
-    stopping: false,
-    releaseCheck: None,
-  }
+    )
 
   let reported = () => group.running->Array.filterMap(r => r.snapshot)
   let merge = snapshots =>
@@ -475,12 +507,13 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config)),
   )
 
-  if holdRealtime {
-    group->startReleaseCheck
-  }
-
   if shouldUseTui {
-    let _rerender = Tui.start(~config, ~getMetrics=() => reported()->merge)
+    let _rerender = Tui.start(~config, ~getMetrics=() =>
+      switch reported() {
+      | [] => {...[]->merge, chains: configuredChains(config)}
+      | snapshots => snapshots->merge
+      }
+    )
   }
 
   // Whichever signal asks the run to stop, the supervisor is the one that
@@ -494,9 +527,6 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // is the exception, as it is for a single process: it keeps the final state
   // on screen until the terminal closes it.
   let outcome = await group->awaitExit
-  // A group that ended on its own was never stopped, and a display keeps this
-  // process alive long past the last worker the check was asking about.
-  group->stopReleaseCheck
 
   switch outcome {
   | Stopped => NodeJs.process->NodeJs.exitWithCode(Success)

@@ -626,10 +626,9 @@ let getChain = (config, ~chainId) =>
       )
 
 // Whether every entity belongs to exactly one chain. Read off the checkpoint
-// sequence rather than the entities again, because that is the same fact and
-// the one that makes splitting safe: a chain only gets a counter of its own
-// when no other chain can reach its rows, and a counter of its own is what lets
-// a process advance one chain without saying anything about the others.
+// sequence rather than the entities again: a chain gets a counter of its own
+// only when no other chain can reach its rows, which is the same fact and the
+// one that makes splitting a run across processes safe.
 let isPerChain = (config: t) =>
   switch config.checkpointSequence {
   | PerChain => true
@@ -1232,11 +1231,10 @@ let prime = (json: JSON.t): unit => {
   cached := None
 }
 
-// The fields `envio start` and `envio dev` set on a public config from the
-// command they were given rather than from the project's files: which chains
-// the process drives, and whether the run is a dev run. A worker parses the
-// same files its supervisor did, so these are the only two it cannot arrive at
-// on its own, and re-applying them is what makes its config the supervisor's.
+// What the command decided rather than the project's files: which chains this
+// process drives, and whether the run is a dev run. A worker parses the same
+// files its supervisor did, so these are the only two it cannot arrive at on
+// its own.
 let withCommandFields = (json: JSON.t, ~chainIds, ~isDev) =>
   switch json->JSON.Decode.object {
   | Some(fields) => {

@@ -285,12 +285,8 @@ let markReady = (crossChainState: t, ~readyAt) => {
 }
 
 // Each chain that has just finished indexing, said once, by the chain it is
-// about. A chain that finishes early says so then, rather than when the last
-// chain in its process catches up.
-//
-// A chain with no end block has only finished its history: the blocks that can
-// still be reorged are indexed after every chain gets this far, so it says what
-// it is waiting on when there is anything to wait for.
+// about — so a chain that finishes early says so then, rather than when the
+// last chain in its process catches up.
 let reportFinished = (crossChainState: t) => {
   let waitingOnOthers = crossChainState.holdRealtime || crossChainState.chainIds->Array.length > 1
   crossChainState.chainStates

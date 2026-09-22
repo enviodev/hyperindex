@@ -306,3 +306,47 @@ describe("Supervisor.syncCache", () => {
     t.expect(dumps.contents).toBe(2)
   })
 })
+
+describe("Supervisor.configuredChains", () => {
+  it("Draws the run's chains at their configured blocks, with nothing indexed", t => {
+    let config = TestConfig.fromUserApi(`
+name: test-config
+chains:
+  - id: 1
+    start_block: 100
+    end_block: 500
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "TestEvent()"
+  - id: 137
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Poap
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "TestEvent()"
+`)
+
+    t.expect(
+      Supervisor.configuredChains(config)->Array.map(
+        chain => (
+          chain.chainId->ChainId.toString,
+          chain.startBlock,
+          chain.endBlock,
+          chain.poweredByHyperSync,
+          chain.progressBlockNumber,
+          chain.numEventsProcessed,
+          chain.isReady,
+        ),
+      ),
+    ).toStrictEqual([
+      ("1", 100, Some(500), true, -1, 0., false),
+      ("137", 0, None, false, -1, 0., false),
+    ])
+  })
+})

@@ -25,6 +25,7 @@ let forkFixture = (
   ~pipeOutput=false,
   ~onOutput=?,
   ~onErrorOutput=?,
+  ~onSnapshot=?,
 ) =>
   Supervisor.fork(
     {chainIds: chainIds->Array.map(ChainId.fromInt), maxConnections},
@@ -36,6 +37,7 @@ let forkFixture = (
     ~pipeOutput,
     ~onOutput?,
     ~onErrorOutput?,
+    ~onSnapshot?,
   )
 
 describe("Supervisor.fork", () => {
@@ -93,7 +95,7 @@ describe("Supervisor.awaitExit", () => {
     let group: Supervisor.group = {
       running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
       stopping: false,
-      releaseCheck: None,
+      holdingRealtime: false,
     }
 
     t.expect(await outcome(group)).toStrictEqual(Ok(Supervisor.Finished))
@@ -106,7 +108,7 @@ describe("Supervisor.awaitExit", () => {
       let group: Supervisor.group = {
         running: [forkFixture(~chainIds=[1]), forkFixture(~chainIds=[137])],
         stopping: false,
-        releaseCheck: None,
+        holdingRealtime: false,
       }
       group->Supervisor.stop
 
@@ -125,7 +127,7 @@ describe("Supervisor.awaitExit", () => {
     let group: Supervisor.group = {
       running: [signalled, sibling],
       stopping: false,
-      releaseCheck: None,
+      holdingRealtime: false,
     }
     let ended = outcome(group)
     signalled.child->NodeJs.ChildProcess.Child.kill("SIGTERM")->ignore
@@ -143,7 +145,7 @@ describe("Supervisor.awaitExit", () => {
     let group: Supervisor.group = {
       running: [failing, lingering],
       stopping: false,
-      releaseCheck: None,
+      holdingRealtime: false,
     }
 
     // The survivor was taken down rather than left indexing half a schema.
@@ -187,7 +189,7 @@ describe("Supervisor.fork output", () => {
         ),
       ],
       stopping: false,
-      releaseCheck: None,
+      holdingRealtime: false,
     }
     let _ = await group->Supervisor.awaitExit
 
@@ -231,7 +233,7 @@ describe("Supervisor.isRunAtHead", () => {
     let group: Supervisor.group = {
       running: [arrived, backfilling],
       stopping: false,
-      releaseCheck: None,
+      holdingRealtime: false,
     }
     await untilReported(group.running)
 
@@ -259,7 +261,7 @@ describe("Supervisor.isRunAtHead", () => {
     let group: Supervisor.group = {
       running: [lingering, leaving],
       stopping: false,
-      releaseCheck: None,
+      holdingRealtime: false,
     }
     await untilReported(group.running)
     await untilGone(leaving)
@@ -273,5 +275,27 @@ describe("Supervisor.isRunAtHead", () => {
     await untilGone(lingering)
 
     t.expect(readings).toStrictEqual((false, 2))
+  })
+
+  // The release rides the workers' reports rather than a clock: the run opens on
+  // the report that completes it, and these workers exit only once released.
+  Async.it("Releases every worker on the report that completes the run", async t => {
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "await-release")
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER_ARRIVED", "1")
+    let group: Supervisor.group = {running: [], stopping: false, holdingRealtime: true}
+    group.running =
+      [[1], [137]]->Array.map(
+        chainIds =>
+          forkFixture(
+            ~chainIds,
+            ~holdRealtime=true,
+            ~onSnapshot=() => group->Supervisor.releaseIfAtHead,
+          ),
+      )
+
+    t.expect((await group->Supervisor.awaitExit, group.holdingRealtime)).toStrictEqual((
+      Supervisor.Finished,
+      false,
+    ))
   })
 })
