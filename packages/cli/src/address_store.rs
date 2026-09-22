@@ -559,10 +559,13 @@ impl AddressStore {
         self.read().unwritten.len() as i64
     }
 
-    /// The registrations still awaiting persistence, in registration order. For
-    /// assertions — draining is what the write path uses.
+    /// The registrations still awaiting persistence, in registration order.
+    ///
+    /// For assertions only; nothing in the indexer reads it. The write path
+    /// drains instead, and `pending_count` is what the runtime asks — neither
+    /// lets a test see which registrations are queued without consuming them.
     #[napi]
-    pub fn pending_entries(&self) -> Vec<AddressEntry> {
+    pub fn pending_entries_for_test(&self) -> Vec<AddressEntry> {
         let store = self.read();
         store
             .unwritten
@@ -714,8 +717,13 @@ impl AddressStore {
 
     /// Every entry an address is registered under, in set order — one per
     /// owning contract. Empty once every registration is rolled back.
+    ///
+    /// For assertions only; nothing in the indexer reads it. The gate the
+    /// runtime asks is `is_indexed_at`, and what the user sees is
+    /// `contract_addresses` — neither exposes an entry's own start blocks or
+    /// the order registrations sort into, which is what a test needs to pin.
     #[napi]
-    pub fn get_all(&self, address: String) -> Vec<AddressEntry> {
+    pub fn get_all_for_test(&self, address: String) -> Vec<AddressEntry> {
         let store = self.read();
         let Some(key) = address_key(store.ecosystem, &address) else {
             return Vec::new();
@@ -1236,10 +1244,14 @@ impl AddressSet {
         AddressSet::new(self.store.clone(), ids)
     }
 
-    /// Canonical strings in set order. Never on a query path — queries read the
-    /// cached slices.
+    /// Canonical strings in set order.
+    ///
+    /// For assertions only; nothing in the indexer reads it. A query gets its
+    /// address filter from the cached per-contract slices, and the runtime asks
+    /// `contains_at` — so this is the only way a test can compare two sets by
+    /// what they hold rather than by handle identity.
     #[napi]
-    pub fn addresses(&self) -> Vec<String> {
+    pub fn addresses_for_test(&self) -> Vec<String> {
         let store = self.store.read().unwrap();
         self.ids
             .iter()
@@ -1556,7 +1568,7 @@ mod tests {
                 store.size(),
                 store.contract_addresses("C".to_string(), false),
                 store.contract_addresses("D".to_string(), false),
-                store.get_all(A.to_string()).len(),
+                store.get_all_for_test(A.to_string()).len(),
             ),
             (
                 vec!["added", "added", "duplicate"],
@@ -1583,7 +1595,7 @@ mod tests {
                 store.contract_addresses("C".to_string(), false),
                 store.contract_addresses("D".to_string(), false),
                 // And the surviving registration is still reachable by key.
-                store.get_all(A.to_string()).len(),
+                store.get_all_for_test(A.to_string()).len(),
             ),
             (
                 vec![(A.to_string(), 1)],
@@ -1614,7 +1626,7 @@ mod tests {
                 store.is_indexed_at(A.to_string(), "D".to_string(), 800),
                 store.is_indexed_at(A.to_string(), "E".to_string(), 800),
                 store
-                    .get_all(A.to_string())
+                    .get_all_for_test(A.to_string())
                     .into_iter()
                     .map(|e| e.contract_name)
                     .collect::<Vec<_>>(),
@@ -1673,7 +1685,10 @@ mod tests {
         // The valid registration ahead of the bad one must not have landed —
         // a caller that survives the error would otherwise see a store holding
         // an address it was never told about.
-        assert_eq!((store.size(), store.pending_entries().len()), (0, 0));
+        assert_eq!(
+            (store.size(), store.pending_entries_for_test().len()),
+            (0, 0)
+        );
     }
 
     #[test]
@@ -1911,7 +1926,10 @@ mod tests {
                 ..Default::default()
             }),
         );
-        assert_eq!(added.addresses(), vec![B.to_string(), C.to_string()]);
+        assert_eq!(
+            added.addresses_for_test(),
+            vec![B.to_string(), C.to_string()]
+        );
     }
 
     #[test]
@@ -1933,7 +1951,7 @@ mod tests {
                     .into_iter()
                     .map(|g| (g.start_block, g.count))
                     .collect::<Vec<_>>(),
-                window.addresses(),
+                window.addresses_for_test(),
             ),
             (
                 // 100 is the contract's start block, which B's registration
@@ -1953,8 +1971,8 @@ mod tests {
         let merged = c_set.merge(&d_set).merge(&c_set);
         assert_eq!(
             (
-                merged.addresses(),
-                merged.slice(1, Some(1)).addresses(),
+                merged.addresses_for_test(),
+                merged.slice(1, Some(1)).addresses_for_test(),
                 merged.count_for("C".to_string()),
                 merged.count_for("D".to_string()),
             ),
@@ -1977,8 +1995,10 @@ mod tests {
             (
                 rolled_back(&store, 300),
                 store.contract_count("C".to_string()),
-                before.filter_by_registration_block(300).addresses(),
-                store.make_set("C".to_string(), None).addresses(),
+                before
+                    .filter_by_registration_block(300)
+                    .addresses_for_test(),
+                store.make_set("C".to_string(), None).addresses_for_test(),
             ),
             (
                 vec![(C.to_string(), 0)],
@@ -2001,12 +2021,14 @@ mod tests {
         assert_eq!(
             (
                 // Still listed: only filter_by_registration_block prunes.
-                before.addresses(),
+                before.addresses_for_test(),
                 before.size(),
                 // But dead to every router, whichever gate it applies.
                 before.contains_at(B.to_string(), "C".to_string(), 600),
                 store.is_indexed_at(B.to_string(), "C".to_string(), 600),
-                before.filter_by_registration_block(300).addresses(),
+                before
+                    .filter_by_registration_block(300)
+                    .addresses_for_test(),
             ),
             (
                 vec![A.to_string(), B.to_string()],

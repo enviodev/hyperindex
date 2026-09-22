@@ -143,7 +143,7 @@ let realSetOf = (store: AddressStore.t, wanted: array<Address.t>) => {
       acc->AddressSet.merge(store->AddressStore.makeSet(~contractName))
     )
   all
-  ->AddressSet.addresses
+  ->AddressSet.addressesForTest
   ->Array.reduceWithIndex(store->AddressStore.emptySet, (acc, address, idx) =>
     wanted->Array.includes(address)
       ? acc->AddressSet.merge(all->AddressSet.slice(~offset=idx, ~limit=Some(1)))
@@ -175,7 +175,7 @@ function makeFakeSet(unordered) {
   // Enumerable, so vitest compares two of these by the addresses they hold.
   var set = {addressList: entries.map(function (e) { return e.address })};
   var methods = {
-    addresses: function () { return set.addressList },
+    addressesForTest: function () { return set.addressList },
     size: function () { return entries.length },
     contractNames: function () {
       var names = [];
@@ -221,16 +221,16 @@ function makeFakeSet(unordered) {
 // A real handle in the same shape, so both sides of an assertion compare by
 // the addresses they hold rather than by handle identity.
 let comparable: AddressSet.t => AddressSet.t = %raw(`function (set) {
-  if (!(set instanceof Object) || typeof set.addresses !== "function") return set;
+  if (!(set instanceof Object) || typeof set.addressesForTest !== "function") return set;
   if (set.__entries !== undefined) return set;
   var entries = [];
   set.contractNames().forEach(function (contractName) {
-    set.filterByContracts([contractName]).addresses().forEach(function (address) {
+    set.filterByContracts([contractName]).addressesForTest().forEach(function (address) {
       entries.push({address: address, contractName: contractName});
     });
   });
   // Set order, not per-contract order.
-  var order = set.addresses();
+  var order = set.addressesForTest();
   entries.sort(function (a, b) { return order.indexOf(a.address) - order.indexOf(b.address) });
   return makeFakeSet(entries);
 }`)

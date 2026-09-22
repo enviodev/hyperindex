@@ -36,8 +36,8 @@ describe("AddressStore", () => {
       "countB": store->AddressStore.contractCount("B"),
       "size": store->AddressStore.size,
       // Lookup finds every contract holding an address.
-      "ownersOfAddr1": store->AddressStore.getAll(addr(1))->Array.map(ia => ia.contractName),
-      "addr2Gone": store->AddressStore.getAll(addr(2))->Utils.Array.isEmpty,
+      "ownersOfAddr1": store->AddressStore.getAllForTest(addr(1))->Array.map(ia => ia.contractName),
+      "addr2Gone": store->AddressStore.getAllForTest(addr(2))->Utils.Array.isEmpty,
       "addressesOfA": store->AddressStore.contractAddresses("A", ~shouldChecksum=true),
       "addressesOfMissing": store->AddressStore.contractAddresses("MISSING", ~shouldChecksum=true),
     }).toEqual({
@@ -198,7 +198,7 @@ describe("AddressStore", () => {
     let added = store->AddressStore.makeSet(~contractName="B", ~options={minId: cursor})
     t.expect({
       "verdicts": verdicts,
-      "added": added->AddressSet.addresses,
+      "added": added->AddressSet.addressesForTest,
       "noEventsIsStillReported": store->AddressStore.contractAddresses("NoEvents", ~shouldChecksum=true),
       "size": store->AddressStore.size,
     }).toEqual({
@@ -247,7 +247,7 @@ describe("AddressStore", () => {
       "upToBlock20": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
       "drainedOnce": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
       "rest": drain(~toBlockInclusive=30, ~checkpointBlockNumbers=[30]),
-      "nothingLeftPending": store->AddressStore.pendingEntries,
+      "nothingLeftPending": store->AddressStore.pendingEntriesForTest,
     }).toEqual({
       // The checkpoint index points back at the block numbers passed in.
       "upToBlock20": [(0, 1)],
@@ -273,7 +273,7 @@ describe("AddressStore", () => {
     t.expect(
       // The failed drain consumed nothing, so the registration is still there
       // to be written by a batch that does cover it.
-      (threw, store->AddressStore.pendingEntries->Array.map(ia => ia.address)),
+      (threw, store->AddressStore.pendingEntriesForTest->Array.map(ia => ia.address)),
       ~message="a failed drain leaves the queue intact",
     ).toEqual((true, TestAddresses.canonical([addr(1)])))
   })
@@ -289,7 +289,7 @@ describe("AddressStore", () => {
         {address: addr(0), contractName: "B", registrationBlock: 7},
         {address: addr(0), contractName: "B", registrationBlock: 9},
       ]),
-      "ownersOfAddr0": store->AddressStore.getAll(addr(0))->Array.map(ia => ia.contractName),
+      "ownersOfAddr0": store->AddressStore.getAllForTest(addr(0))->Array.map(ia => ia.contractName),
       "indexedForA": store->AddressStore.isIndexedAt(addr(0), "A", 7),
       "indexedForB": store->AddressStore.isIndexedAt(addr(0), "B", 7),
       // B's registration only starts where it was registered.
@@ -362,7 +362,7 @@ describe("AddressStore", () => {
         TestAddresses.makeStore(~onEventRegistrations, ~addresses)->AddressStore.makeSet(
           ~contractName="A",
         )
-      (set->AddressSet.addresses, set->AddressSet.startBlockGroups)
+      (set->AddressSet.addressesForTest, set->AddressSet.startBlockGroups)
     }
 
     t.expect({

@@ -584,7 +584,7 @@ let make = (
             }
             // Non-enumerable so it stays out of `toEqual` comparisons of the
             // payload while remaining inspectable from a test.
-            payload->defineAddresses(addressSet->AddressSet.addresses)
+            payload->defineAddresses(addressSet->AddressSet.addressesForTest)
             {
               payload,
               includeAllBlocks,

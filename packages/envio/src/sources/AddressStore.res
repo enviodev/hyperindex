@@ -126,7 +126,12 @@ external drainForWrite: (t, int, array<int>) => array<drainedAddress> = "drainFo
 
 @send external pendingCount: t => int = "pendingCount"
 
-@send external pendingEntries: t => array<Internal.indexingContract> = "pendingEntries"
+// For assertions only - nothing in the indexer reads it. The write path drains
+// instead, and `pendingCount` is what the runtime asks; neither lets a test see
+// which registrations are queued without consuming them.
+@send
+external pendingEntriesForTest: t => array<Internal.indexingContract> = "pendingEntriesForTest"
+
 @send external makeSetRaw: (t, string, makeSetOptions) => AddressSet.t = "makeSet"
 @send external contractCount: (t, string) => int = "contractCount"
 
@@ -143,7 +148,11 @@ type rolledBackAddress = {address: NodeJs.Buffer.t, contractId: int}
 // still point at the right entries.
 @send external rollback: (t, int) => array<rolledBackAddress> = "rollback"
 
-@send external getAll: (t, Address.t) => array<Internal.indexingContract> = "getAll"
+// For assertions only - nothing in the indexer reads it. The runtime's gate is
+// `isIndexedAt` and the user sees `contractAddresses`; neither exposes an
+// entry's own start blocks or the order registrations sort into.
+@send
+external getAllForTest: (t, Address.t) => array<Internal.indexingContract> = "getAllForTest"
 
 @send external dynamicContractNames: t => array<string> = "dynamicContractNames"
 
