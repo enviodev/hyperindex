@@ -625,6 +625,16 @@ let getChain = (config, ~chainId) =>
         "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
       )
 
+// Whether every entity belongs to exactly one chain. Read off the checkpoint
+// sequence rather than the entities again: a chain gets a counter of its own
+// only when no other chain can reach its rows, which is the same fact and the
+// one that makes splitting a run across processes safe.
+let isPerChain = (config: t) =>
+  switch config.checkpointSequence {
+  | PerChain => true
+  | SharedAcrossChains => false
+  }
+
 // Narrows a config to the chains one `envio start --chain` process drives.
 // `contractMapping` is deliberately left whole: its ids are what the migration
 // that created the schema stored, and one rebuilt from a subset would hand the
@@ -1221,6 +1231,24 @@ let prime = (json: JSON.t): unit => {
   cached := None
 }
 
+// What the command decided rather than the project's files: which chains this
+// process drives, and whether the run is a dev run. A worker parses the same
+// files its supervisor did, so these are the only two it cannot arrive at on
+// its own.
+let withCommandFields = (json: JSON.t, ~chainIds, ~isDev) =>
+  switch json->JSON.Decode.object {
+  | Some(fields) => {
+      let narrowed = fields->Dict.copy
+      narrowed->Dict.set(
+        "isolatedChains",
+        chainIds->S.reverseConvertToJsonOrThrow(S.array(ChainId.schema)),
+      )
+      narrowed->Dict.set("isDev", JSON.Encode.bool(isDev))
+      JSON.Object(narrowed)
+    }
+  | None => JsError.throwWithMessage("Invalid indexer config: not an object")
+  }
+
 let getPublicConfigJson = () =>
   switch primedJson.contents {
   | Some(json) => json
@@ -1265,6 +1293,10 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
   }
   cloned
 }
+
+// What the storage layer records as the config this schema was built from,
+// and checks a resuming run against.
+let envioInfo = () => getPublicConfigJson()->stripSensitiveData
 
 // Postgres jsonb doesn't preserve key order, so canonicalize with sorted
 // keys before string-comparing.

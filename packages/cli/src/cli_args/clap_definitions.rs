@@ -145,11 +145,10 @@ pub struct StartArgs {
     pub restart: bool,
 
     ///Index only this chain, leaving the others to their own `envio start --chain` processes.
-    ///Repeat the flag for several chains. Requires a schema whose entities are all per-chain,
-    ///created for every chain by `envio local db-migrate up` before any process starts.
-    ///Assign each configured chain to exactly one process, and give each its own
-    ///`ENVIO_INDEXER_PORT`. Each process builds the indexes for its own chains and reports them
-    ///ready as they catch up, independently of the others.
+    ///Repeat the flag for several chains.
+    ///
+    ///Only needed to place chains yourself. Requires a per-chain schema, migrated for every
+    ///chain before any process starts, and a separate `ENVIO_INDEXER_PORT` per process.
     #[arg(long = "chain", value_name = "CHAIN_ID")]
     pub chains: Vec<u64>,
 }

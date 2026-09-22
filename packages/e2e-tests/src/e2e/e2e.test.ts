@@ -4,7 +4,7 @@
  * Tests the full indexer flow with database and ClickHouse sink:
  * 1. Ensure ClickHouse is running (CI service or local container)
  * 2. Start `envio dev` in background with ClickHouse sink enabled
- * 3. Wait for "All chains are caught up to end blocks" in stdout
+ * 3. Wait for "Indexed to the end block" in stdout
  * 4. Verify GraphQL queries return expected data
  * 5. Verify ClickHouse sink received the indexed data
  */
@@ -96,7 +96,7 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
 
     await waitForOutput(
       indexerProcess,
-      "All chains are caught up to end blocks",
+      "Indexed to the end block",
       120_000
     );
 
@@ -842,7 +842,7 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
       // waitForOutput rejects. Success means DB state was used.
       await waitForOutput(
         secondProcess,
-        "All chains are caught up to end blocks",
+        "Indexed to the end block",
         120_000
       );
     } finally {

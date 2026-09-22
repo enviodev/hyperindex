@@ -53,6 +53,7 @@ type Counter {
 `
 
 let scenario = Scenario.make(
+  ~supervised=false,
   ~schema=perChainSchema,
   ~configYaml=makeConfigYaml(~name="isolated-rollback"),
 )
@@ -61,6 +62,7 @@ let scenario = Scenario.make(
 // about the mode needs a sibling, and the chain-id column every per-chain entity
 // carries is what its bounds join against.
 let singleChainScenario = Scenario.make(
+  ~supervised=false,
   ~schema=perChainSchema,
   ~configYaml=`
 name: single-chain-per-chain
@@ -78,6 +80,7 @@ chains:${chainYaml(100)}
 // wrote can be what chain 100 read and overwrote, so its reorg has to take
 // every chain back with it.
 let crossChainScenario = Scenario.make(
+  ~supervised=false,
   ~schema=perChainSchema ++ `
 type Total @crossChain {
   id: ID!
@@ -91,12 +94,14 @@ type Total @crossChain {
 // next batch carries, and its current-state view has to resolve to the same
 // thing Postgres holds.
 let clickHouseScenario = Scenario.make(
+  ~supervised=false,
   ~schema=perChainSchema,
   ~configYaml=makeConfigYaml(~name="isolated-rollback-clickhouse"),
   ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
 
 let fullHistoryScenario = Scenario.make(
+  ~supervised=false,
   ~schema=perChainSchema,
   ~configYaml=makeConfigYaml(
     ~name="isolated-rollback-full-history",
@@ -108,6 +113,7 @@ let fullHistoryScenario = Scenario.make(
 // same name the per-chain bounds relation gives its own, so the rollback
 // queries have to keep the two apart.
 let snakeCaseScenario = Scenario.make(
+  ~supervised=false,
   ~schema=perChainSchema,
   ~configYaml=makeConfigYaml(
     ~name="isolated-rollback-snake-case",
