@@ -13,6 +13,12 @@
 let runOnce = async (state: IndexerState.t) => {
   let chainIds = state->IndexerState.crossChainState->CrossChainState.chainIds
 
+  // Whatever brought the process here — a batch, a tick that progressed
+  // nothing, a supervisor's release — its chains say where they finished
+  // before it says what it does about that. Said here rather than left to each
+  // caller to order: a chain that has already spoken says nothing again.
+  state->IndexerState.reportFinished
+
   // Said by the process rather than by each of its chains: the indexes are one
   // build over the tables, and the pause is the whole process's. A chain has
   // already said it caught up, and says it is ready once this commits. The

@@ -92,11 +92,6 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     // finalizing resumes exactly here: it still owes the schema its deferred
     // indexes, and no batch will ever come along to notice.
     state->IndexerState.markCaughtUpIfSettled
-
-    // Before the finalize, as in the progressed-batch path below: a chain says
-    // where it finished ahead of the process saying what it does about that.
-    state->IndexerState.reportFinished
-
     if state->IndexerState.shouldFinalizeIndexes {
       await FinalizeBackfill.run(state)
     }
@@ -110,6 +105,8 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
       scheduleFetch()
     }
 
+    // When resuming from persisted state, all events may already be processed.
+    state->IndexerState.reportFinished
     if EventProcessing.allChainsEventsProcessedToEndblock(state->IndexerState.chainStates) {
       if !(state->IndexerState.keepProcessAlive) && !(state->IndexerState.isHoldingRealtime) {
         await ExitOnCaughtUp.run(state)
@@ -162,8 +159,6 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         // Can safely reset rollback state, since overwrite is not possible.
         state->IndexerState.clearRollback
         state->IndexerState.applyBatchProgress(~batch)
-        // Before the finalize below, so a chain says where it finished ahead of
-        // the process saying what it does about that.
         state->IndexerState.reportFinished
 
         // Backfilling → FinalizingIndexes → Ready. Awaiting here holds the

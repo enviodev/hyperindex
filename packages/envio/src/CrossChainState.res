@@ -199,7 +199,7 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
   for i in 0 to chainIds->Array.length - 1 {
     let cs = crossChainState->getChainState(chainIds->Array.getUnsafe(i))
     cs->ChainState.applyBatchProgress(~batch, ~blockTimestampName)
-    if !(cs->ChainState.hasProcessedToEndblock || cs->ChainState.isProgressAtHead) {
+    if !(cs->ChainState.hasCaughtUp) {
       everyChainCaughtUp := false
     }
   }
@@ -254,7 +254,7 @@ let markCaughtUpOnResume = (crossChainState: t) => {
   let everyChainCaughtUp = ref(crossChainState.chainIds->Array.length > 0)
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-    if !(cs->ChainState.isDurablyCaughtUp) {
+    if !(cs->ChainState.hasCaughtUp) {
       everyChainCaughtUp := false
     }
   }

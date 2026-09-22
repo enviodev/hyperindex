@@ -181,7 +181,11 @@ let make = (
     blockRangeFetchCount: 0.,
     blockRangeFetchedEvents: 0.,
     blockRangeFetchedBlocks: 0.,
-    reportedFinished: false,
+    // A chain resuming with its ready stamp already committed has nothing to
+    // announce: it didn't backfill in this run, and the resume said where it
+    // continues from. Only the chain that gets there while this run watches
+    // says so.
+    reportedFinished: timestampCaughtUpToHeadOrEndblock !== None,
     reorgCount: 0,
     reorgDetectedBlock: None,
     rollbackTargetBlock: None,
@@ -421,7 +425,6 @@ let getLatestValidScannedBlock = (cs: t, ~blockStore: BlockStore.t, ~blockNumber
   ->BlockStore.latestValidBlockFromStore(blockStore, blockNumbers)
   ->Null.toOption
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
-let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let committedProgressBlockTime = (cs: t) => cs.committedProgressBlockTime
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
@@ -679,6 +682,18 @@ let isDurablyCaughtUp = (cs: t) => {
   atEndBlock || atHead
 }
 
+// This chain has indexed everything there was to index: it reached its end
+// block, or its progress reached the head. The single reading of that, for
+// everything that turns on it — what the chain reports, and whether the whole
+// process may finalize.
+//
+// Both spellings, because neither covers the other: `isProgressAtHead` latches
+// the moment a batch's progress met the head known when it was created, which a
+// head that has since moved on would read as behind; `isDurablyCaughtUp` judges
+// the head as it stands, which is all a run resumed at the head has — it has no
+// batch to latch anything.
+let hasCaughtUp = (cs: t) => cs.isProgressAtHead || cs->isDurablyCaughtUp
+
 // Where this chain has finished indexing, the first time it gets there.
 // `EndBlock` is terminal: the chain indexed everything it was configured to.
 // `Backfill` is the rest of the history, up to the point where blocks can
@@ -690,14 +705,7 @@ let takeFinished = (cs: t) =>
   if cs.reportedFinished {
     None
   } else {
-    // `isDurablyCaughtUp` as well as the flag a batch sets: a run resumed at the
-    // head has no batch to set it, and a chain that never says where it finished
-    // would leave the indexes being built for chains that reported nothing.
-    switch (
-      cs.fetchState.endBlock,
-      cs->hasProcessedToEndblock,
-      cs.isProgressAtHead || cs->isDurablyCaughtUp,
-    ) {
+    switch (cs.fetchState.endBlock, cs->hasProcessedToEndblock, cs->hasCaughtUp) {
     | (Some(endBlock), true, _) => {
         cs.reportedFinished = true
         Some(EndBlock(endBlock))

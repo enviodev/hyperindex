@@ -65,7 +65,7 @@ type rec t = {
   restart: (~chains: array<ChainId.t>=?, unit) => promise<t>,
   // Every line this run has logged so far, in order — the run's own and its
   // chains'. Only for a run started with `~captureLogs`.
-  logs: unit => promise<array<logEntry>>,
+  logs: unit => array<logEntry>,
   // Stands in for the supervisor's go-ahead in a run started with
   // `~holdRealtime`.
   releaseRealtime: unit => unit,
@@ -79,49 +79,39 @@ type rec t = {
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
 
-let loggedEntries = async path =>
-  switch await NodeJs.Fs.Promises.readFile(~filepath=NodeJs.Path.resolve([path]), ~encoding=Utf8) {
-  | contents =>
-    contents
-    ->String.trim
-    ->String.split("\n")
-    ->Array.filterMap(line =>
-      switch line->JSON.parseOrThrow->JSON.Decode.object {
-      | Some(fields) =>
-        fields
-        ->Dict.get("msg")
-        ->Option.flatMap(JSON.Decode.string)
-        ->Option.map(msg => {
-          msg,
-          params: fields
-          ->Dict.toArray
-          ->Array.filter(((key, _)) => key !== "msg" && key !== "level" && key !== "time")
-          ->Dict.fromArray,
-        })
-      | None => None
-      }
-    )
-  | exception _ => []
+let parseLogLine = line =>
+  switch line->JSON.parseOrThrow->JSON.Decode.object {
+  | Some(fields) =>
+    fields
+    ->Dict.get("msg")
+    ->Option.flatMap(JSON.Decode.string)
+    ->Option.map(msg => {
+      msg,
+      params: fields
+      ->Dict.toArray
+      ->Array.filter(((key, _)) => key !== "msg" && key !== "level" && key !== "time")
+      ->Dict.fromArray,
+    })
+  | None => None
   }
 
-// The file transport writes on its own thread, so what a log call has already
-// said isn't on disk yet when the call returns. A marker of this read's own
-// says when it is: everything logged before it is in the file the moment it
-// shows up.
-let logMarkerPrefix = "__envio-test-log-marker__"
-
-let readLogs = async (~path, ~marker) => {
-  Logging.info(marker)
-  let deadline = Date.now() +. 5000.
-  let rec until = async () =>
-    switch await loggedEntries(path) {
-    | entries if entries->Array.some(({msg}) => msg === marker) || Date.now() > deadline =>
-      entries->Array.filter(({msg}) => !(msg->String.startsWith(logMarkerPrefix)))
-    | _ =>
-      await Utils.delay(10)
-      await until()
-    }
-  await until()
+// A logger writing into an array in this process, rather than through pino's
+// file transport: that one writes on a thread of its own, so a test would have
+// to wait for the line it has already logged to land.
+let makeLogCapture = () => {
+  let lines = []
+  let logger = Pino.MultiStreamLogger.makeWithMultiStream(
+    {
+      customLevels: Logging.logLevels,
+      level: #info,
+      // Empty base disables pid and hostname, as `Logging.makeLogger` does.
+      base: JSON.Encode.object(Dict.make()),
+    },
+    Pino.MultiStreamLogger.multistream([
+      {stream: {write: line => lines->Array.push(line)->ignore}, level: #info},
+    ]),
+  )
+  (logger, () => lines->Array.filterMap(parseLogLine))
 }
 
 // Runs `body` against a fresh indexer in a Postgres schema of its own, then
@@ -165,13 +155,10 @@ let run = async (
   let clients = []
   let stops = []
 
-  // `lib` is the ReScript build output, so the file lands where the rest of the
-  // run's artifacts do rather than in the source tree.
-  let capturedLogPath = captureLogs
-    ? Some(`${NodeJs.Process.cwd()}/lib/envio-test-logs-${pgSchema}.log`)
-    : None
+  // One capture for the whole run, `restart` included, so a test reads the
+  // resumed indexer's lines after the ones that led to them.
+  let capture = captureLogs ? Some(makeLogCapture()) : None
   let installedLogger = Logging.getLogger()
-  let readsCount = ref(0)
 
   // The ClickHouse leg writes through the sink Postgres storage attaches, into
   // a database of this run's own.
@@ -187,16 +174,8 @@ let run = async (
     | Some(chainIds) => config->Config.isolate(~chainIds)
     | None => config
     }
-    switch capturedLogPath {
-    | Some(logFilePath) =>
-      Logging.setLogger(
-        Logging.makeLogger(
-          ~logStrategy=FileOnly,
-          ~logFilePath,
-          ~defaultFileLogLevel=#info,
-          ~userLogLevel=#info,
-        ),
-      )
+    switch capture {
+    | Some((logger, _)) => Logging.setLogger(logger)
     | None =>
       // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
       switch Env.userLogLevel {
@@ -571,10 +550,8 @@ let run = async (
       pg,
       stop,
       logs: () =>
-        switch capturedLogPath {
-        | Some(path) =>
-          readsCount := readsCount.contents + 1
-          readLogs(~path, ~marker=`${logMarkerPrefix}${readsCount.contents->Int.toString}`)
+        switch capture {
+        | Some((_, entries)) => entries()
         | None =>
           JsError.throwWithMessage(
             "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",

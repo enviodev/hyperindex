@@ -97,7 +97,7 @@ describe("A supervised worker released at the head", () => {
       source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexer.waitUntilReady()
 
-      t.expect((await indexer.logs())->reportedFinishAndPause).toStrictEqual([
+      t.expect(indexer.logs()->reportedFinishAndPause).toStrictEqual([
         "Finished backfill. Waiting for the other chains.",
         "Finished backfill. Waiting for the other chains.",
         indexesMessage,
@@ -124,9 +124,43 @@ describe("A supervised worker resumed at the head", () => {
       resumed.releaseRealtime()
       await resumed.waitUntilReady()
 
-      t.expect((await resumed.logs())->reportedFinishAndPause).toStrictEqual([
+      t.expect(resumed.logs()->reportedFinishAndPause).toStrictEqual([
         "Finished backfill. Waiting for the other chains.",
         "Finished backfill. Waiting for the other chains.",
+        "Finished backfill. Waiting for the other chains.",
+        "Finished backfill. Waiting for the other chains.",
+        indexesMessage,
+      ])
+    },
+  )
+})
+
+describe("A chain resumed already ready", () => {
+  // It didn't backfill in this run and owes the schema nothing, so it has
+  // nothing to announce — the resume already said where indexing continues
+  // from. Only a chain that gets there while this run watches says so.
+  headScenario->Scenario.it(
+    "Says nothing about a backfill it didn't do",
+    ~sources=[{chain: 1, autoHeight: 100}, {chain: 137, autoHeight: 100}],
+    ~captureLogs=true,
+    async (~t, ~indexer, ~source) => {
+      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+
+      // New blocks on both chains, so the resumed run indexes at the head
+      // rather than sitting idle with nothing to say.
+      source(1).setAutoHeight(110)
+      source(137).setAutoHeight(110)
+      let resumed = await indexer.restart()
+      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
+      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
+      await resumed.getBatchWritePromise()
+
+      t.expect(
+        resumed.logs()->reportedFinishAndPause,
+        ~message="Both chains caught up and were stamped ready in the first run, and the resumed one repeats neither",
+      ).toStrictEqual([
         "Finished backfill. Waiting for the other chains.",
         "Finished backfill. Waiting for the other chains.",
         indexesMessage,
@@ -145,9 +179,9 @@ describe("A process driving one chain", () => {
       source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
 
-      t.expect(
-        (await indexer.logs())->Array.filter(({msg}) => msg === indexesMessage),
-      ).toStrictEqual([{msg: indexesMessage, params: dict{"chainId": JSON.Number(1.)}}])
+      t.expect(indexer.logs()->Array.filter(({msg}) => msg === indexesMessage)).toStrictEqual([
+        {msg: indexesMessage, params: dict{"chainId": JSON.Number(1.)}},
+      ])
     },
   )
 })
