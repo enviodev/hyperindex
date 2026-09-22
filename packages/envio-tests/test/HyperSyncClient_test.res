@@ -42,17 +42,13 @@ let transferEventRegistration: HyperSyncClient.Registration.input = {
 // The chain's address index, with USDC registered for ERC20 from block 0 —
 // the client builds the query's address filter from a set of it and gates every
 // returned log against it.
-let addressStore = AddressStore.make(
-  ~ecosystem=Ecosystem.Evm,
-  ~shouldChecksum=false,
+let addressStore = TestAddresses.storeOf(
   ~contracts=[
     {name: "ERC20", startBlock: None, dependsOnAddresses: true},
     {name: "Unrelated", startBlock: None, dependsOnAddresses: true},
   ],
+  ~addresses=[{address: usdcAddress, contractName: "ERC20", registrationBlock: -1}],
 )
-let _ = addressStore->AddressStore.seedBatch([
-  {address: usdcAddress, contractName: "ERC20", registrationBlock: -1},
-])
 let usdcSet = addressStore->AddressStore.makeSet(~contractName="ERC20")
 
 let makeClient = (~eventRegistrations) =>

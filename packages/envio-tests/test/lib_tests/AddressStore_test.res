@@ -36,10 +36,10 @@ describe("AddressStore", () => {
       "countB": store->AddressStore.contractCount("B"),
       "size": store->AddressStore.size,
       // Lookup finds every contract holding an address.
-      "ownersOfAddr1": store->AddressStore.getAll(addr(1))->Array.map(ia => ia.contractName),
-      "addr2Gone": store->AddressStore.getAll(addr(2))->Utils.Array.isEmpty,
-      "addressesOfA": store->AddressStore.contractAddresses("A"),
-      "addressesOfMissing": store->AddressStore.contractAddresses("MISSING"),
+      "ownersOfAddr1": store->AddressStore.getAllForTest(addr(1))->Array.map(ia => ia.contractName),
+      "addr2Gone": store->AddressStore.getAllForTest(addr(2))->Utils.Array.isEmpty,
+      "addressesOfA": store->AddressStore.contractAddresses("A", ~shouldChecksum=true),
+      "addressesOfMissing": store->AddressStore.contractAddresses("MISSING", ~shouldChecksum=true),
     }).toEqual({
       "rolledBackContractIds": [1],
       "countA": 2,
@@ -198,8 +198,8 @@ describe("AddressStore", () => {
     let added = store->AddressStore.makeSet(~contractName="B", ~options={minId: cursor})
     t.expect({
       "verdicts": verdicts,
-      "added": added->AddressSet.addresses,
-      "noEventsIsStillReported": store->AddressStore.contractAddresses("NoEvents"),
+      "added": added->AddressSet.addressesForTest,
+      "noEventsIsStillReported": store->AddressStore.contractAddresses("NoEvents", ~shouldChecksum=true),
       "size": store->AddressStore.size,
     }).toEqual({
       "verdicts": [
@@ -210,7 +210,7 @@ describe("AddressStore", () => {
         Added({effectiveStartBlock: 40, fetchable: false}),
       ],
       // Ordered by effectiveStartBlock, so addr(4) (10) precedes addr(3) (30).
-      "added": [addr(4), addr(3)],
+      "added": TestAddresses.canonical([addr(4), addr(3)]),
       "noEventsIsStillReported": [addr(5)],
       "size": 3,
     })
@@ -247,7 +247,7 @@ describe("AddressStore", () => {
       "upToBlock20": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
       "drainedOnce": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
       "rest": drain(~toBlockInclusive=30, ~checkpointBlockNumbers=[30]),
-      "nothingLeftPending": store->AddressStore.pendingEntries,
+      "nothingLeftPending": store->AddressStore.pendingEntriesForTest,
     }).toEqual({
       // The checkpoint index points back at the block numbers passed in.
       "upToBlock20": [(0, 1)],
@@ -273,9 +273,9 @@ describe("AddressStore", () => {
     t.expect(
       // The failed drain consumed nothing, so the registration is still there
       // to be written by a batch that does cover it.
-      (threw, store->AddressStore.pendingEntries->Array.map(ia => ia.address)),
+      (threw, store->AddressStore.pendingEntriesForTest->Array.map(ia => ia.address)),
       ~message="a failed drain leaves the queue intact",
-    ).toEqual((true, [addr(1)]))
+    ).toEqual((true, TestAddresses.canonical([addr(1)])))
   })
 
   // https://github.com/enviodev/hyperindex/issues/1187
@@ -289,7 +289,7 @@ describe("AddressStore", () => {
         {address: addr(0), contractName: "B", registrationBlock: 7},
         {address: addr(0), contractName: "B", registrationBlock: 9},
       ]),
-      "ownersOfAddr0": store->AddressStore.getAll(addr(0))->Array.map(ia => ia.contractName),
+      "ownersOfAddr0": store->AddressStore.getAllForTest(addr(0))->Array.map(ia => ia.contractName),
       "indexedForA": store->AddressStore.isIndexedAt(addr(0), "A", 7),
       "indexedForB": store->AddressStore.isIndexedAt(addr(0), "B", 7),
       // B's registration only starts where it was registered.
@@ -318,7 +318,6 @@ describe("AddressStore", () => {
     let contractMapping = TestAddresses.contractMapping(~onEventRegistrations)
     let store = AddressStore.make(
       ~ecosystem=Evm,
-      ~shouldChecksum=true,
       ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
     )
     let fetchState = FetchState.make(
@@ -333,8 +332,8 @@ describe("AddressStore", () => {
       ~knownHeight=100,
     )
     t.expect({
-      "addressesOfA": store->AddressStore.contractAddresses("A"),
-      "addressesOfB": store->AddressStore.contractAddresses("B"),
+      "addressesOfA": store->AddressStore.contractAddresses("A", ~shouldChecksum=true),
+      "addressesOfB": store->AddressStore.contractAddresses("B", ~shouldChecksum=true),
       "size": store->AddressStore.size,
       // Both contracts start at 0, so one partition covers them — sharing an
       // address doesn't split it.
@@ -356,21 +355,26 @@ describe("AddressStore", () => {
       contract(~address=addr(1), ~contractName="A", ~registrationBlock=10),
       contract(~address=addr(2), ~contractName="A", ~registrationBlock=20),
     ]
-    let entriesOf = addresses =>
-      (TestAddresses.makeStore(~onEventRegistrations, ~addresses))
-      ->AddressStore.makeSet(~contractName="A")
-      ->AddressSet.entries
+    // Both the order and the start blocks it groups into: a set that came out
+    // in another order would differ in one or the other.
+    let setOf = addresses => {
+      let set =
+        TestAddresses.makeStore(~onEventRegistrations, ~addresses)->AddressStore.makeSet(
+          ~contractName="A",
+        )
+      (set->AddressSet.addressesForTest, set->AddressSet.startBlockGroups)
+    }
 
     t.expect({
-      "reversed": entriesOf(addresses->Array.toReversed),
-      "rotated": entriesOf([
+      "reversed": setOf(addresses->Array.toReversed),
+      "rotated": setOf([
         addresses->Array.getUnsafe(1),
         addresses->Array.getUnsafe(2),
         addresses->Array.getUnsafe(0),
       ]),
     }).toEqual({
-      "reversed": entriesOf(addresses),
-      "rotated": entriesOf(addresses),
+      "reversed": setOf(addresses),
+      "rotated": setOf(addresses),
     })
   })
 })

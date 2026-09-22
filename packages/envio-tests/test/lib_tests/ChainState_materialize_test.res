@@ -56,8 +56,8 @@ describe("ChainState.materializePageItems: single-pass transaction/block groupin
   Async.it(
     "keeps the transaction and block adjacency runs independent within one pass",
     async t => {
-      let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
-      let blockStore = BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
+      let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm)
+      let blockStore = BlockStore.make(~ecosystem=Ecosystem.Evm)
 
       // a, b: same (block, tx) -> share both a transaction row and a block row.
       // c: same block as a/b but a different tx -> starts a new transaction
@@ -72,6 +72,7 @@ describe("ChainState.materializePageItems: single-pass transaction/block groupin
         ~items=[a, b, c, d],
         ~transactionStore=Some(transactionStore),
         ~blockStore,
+        ~shouldChecksum=false,
       )
 
       t.expect({
@@ -97,7 +98,8 @@ describe("ChainState.materializePageItems: single-pass transaction/block groupin
     await ChainState.materializePageItems(
       ~items=[a],
       ~transactionStore=None,
-      ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Fuel, ~shouldChecksum=false),
+      ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Fuel),
+      ~shouldChecksum=false,
     )
     t.expect({
       "tx": rawTx(a)->Nullable.toOption,
@@ -118,7 +120,7 @@ describe("ChainState.materializePageItems: block materialization", () => {
   Async.it(
     "EVM: skips inline blocks, materializes store-backed items, dedupes by block",
     async t => {
-      let blockStore = BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
+      let blockStore = BlockStore.make(~ecosystem=Ecosystem.Evm)
       let inlineBlock = {"number": 1}->(Utils.magic: {..} => Internal.eventBlock)
       let inline = makeItem(~blockNumber=1, ~inlineBlock)
       let mask = Evm.eventBlockFieldMask(Utils.Set.fromArray(["number", "timestamp", "hash"]))
@@ -132,6 +134,7 @@ describe("ChainState.materializePageItems: block materialization", () => {
         ~items=[inline, a, b, c],
         ~transactionStore=None,
         ~blockStore,
+        ~shouldChecksum=false,
       )
 
       t.expect({
@@ -153,7 +156,7 @@ describe("ChainState.materializePageItems: block materialization", () => {
   Async.it(
     "SVM: skips inline blocks, materializes store-backed items, dedupes by slot",
     async t => {
-      let blockStore = BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false)
+      let blockStore = BlockStore.make(~ecosystem=Ecosystem.Svm)
       let inlineBlock = {"slot": 1}->(Utils.magic: {..} => Internal.eventBlock)
       let inline = makeItem(~blockNumber=1, ~inlineBlock)
       let mask = Svm.eventBlockFieldMask(Utils.Set.fromArray(["slot", "time", "hash"]))
@@ -167,6 +170,7 @@ describe("ChainState.materializePageItems: block materialization", () => {
         ~items=[inline, a, b, c],
         ~transactionStore=None,
         ~blockStore,
+        ~shouldChecksum=false,
       )
 
       t.expect({
@@ -191,12 +195,13 @@ describe("ChainState.materializePageItems: block materialization", () => {
 // the actual runtime path), so its coverage now targets materializePageItems.
 describe("ChainState.materializePageItems: transaction materialization", () => {
   Async.it("stamps an empty transaction object when the mask is 0", async t => {
-    let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
+    let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm)
     let item = makeItem(~blockNumber=1, ~transactionIndex=0, ~transactionMask=0.)
     await ChainState.materializePageItems(
       ~items=[item],
       ~transactionStore=Some(transactionStore),
-      ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+      ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm),
+      ~shouldChecksum=false,
     )
     // Store-backed items always get a transaction object (matching the inline
     // sources) — an empty object rather than `undefined` — even with no fields.
@@ -208,7 +213,7 @@ describe("ChainState.materializePageItems: transaction materialization", () => {
     async t => {
       // Empty store ⇒ every key is a miss ⇒ materialize returns one distinct empty
       // object per group, which is enough to assert the grouping/scatter logic.
-      let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
+      let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm)
       let inlineTx = {"hash": "0xinline"}->(Utils.magic: {..} => Internal.eventTransaction)
       let inline = makeItem(~blockNumber=1, ~transactionIndex=0, ~inlineTransaction=inlineTx)
       let a = makeItem(~blockNumber=1, ~transactionIndex=1, ~transactionMask=2.)
@@ -218,7 +223,8 @@ describe("ChainState.materializePageItems: transaction materialization", () => {
       await ChainState.materializePageItems(
         ~items=[inline, a, b, c],
         ~transactionStore=Some(transactionStore),
-        ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+        ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm),
+        ~shouldChecksum=false,
       )
 
       t.expect({
@@ -240,7 +246,7 @@ describe("ChainState.materializePageItems: transaction materialization", () => {
     // still share one row (their masks OR'd together), while an event on another
     // tx stays separate. Exercises the orMask union path (the empty store yields
     // one distinct empty object per row).
-    let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
+    let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm)
     let a = makeItem(~blockNumber=1, ~transactionIndex=1, ~transactionMask=2.)
     let b = makeItem(~blockNumber=1, ~transactionIndex=1, ~transactionMask=4.)
     let c = makeItem(~blockNumber=1, ~transactionIndex=2, ~transactionMask=0.)
@@ -248,7 +254,8 @@ describe("ChainState.materializePageItems: transaction materialization", () => {
     await ChainState.materializePageItems(
       ~items=[a, b, c],
       ~transactionStore=Some(transactionStore),
-      ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+      ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm),
+      ~shouldChecksum=false,
     )
 
     t.expect({

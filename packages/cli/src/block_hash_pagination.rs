@@ -125,7 +125,7 @@ mod tests {
         block_numbers: &[i64],
         responses: Vec<(i64, Canned)>,
     ) -> (napi::Result<()>, Vec<i64>, Vec<i64>) {
-        let aggregate = BlockStore::new_evm(false);
+        let aggregate = BlockStore::new_evm();
         let requested = RefCell::new(Vec::new());
         let result = paginate_block_hashes(
             block_numbers,
@@ -140,7 +140,7 @@ mod tests {
                     .unwrap_or_else(|| {
                         panic!("no canned response for request_from={request_from}")
                     });
-                let store = BlockStore::new_evm(false);
+                let store = BlockStore::new_evm();
                 store.insert_evm_blocks(canned.blocks.iter().copied().map(block).collect());
                 let page = HashPage {
                     next: canned.next,

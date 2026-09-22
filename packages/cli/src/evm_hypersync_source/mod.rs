@@ -131,7 +131,7 @@ impl EvmHyperSyncClient {
         &self,
         block_numbers: Vec<i64>,
     ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
-        let aggregate = BlockStore::new_evm(self.enable_checksum_addresses);
+        let aggregate = BlockStore::new_evm();
         let request_stats = paginate_block_hashes(
             &block_numbers,
             &aggregate,
@@ -148,8 +148,7 @@ impl EvmHyperSyncClient {
                     ..Default::default()
                 };
                 let response = self.get_raw(query).await?;
-                let (next, store) =
-                    block_hash_page(response, self.enable_checksum_addresses).map_err(map_err)?;
+                let (next, store) = block_hash_page(response).map_err(map_err)?;
                 // `include_all_blocks` leaves no gaps, so the last block the
                 // page covered is the one before where it stopped.
                 Ok(HashPage {
@@ -261,8 +260,8 @@ impl EvmHyperSyncClient {
 
         let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
 
-        let transaction_store = TransactionStore::new_evm(self.enable_checksum_addresses);
-        let block_store = BlockStore::new_evm(self.enable_checksum_addresses);
+        let transaction_store = TransactionStore::new_evm();
+        let block_store = BlockStore::new_evm();
         let items = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
@@ -426,10 +425,7 @@ fn convert_response(
 
 /// Convert only the two values needed by the block-hash paginator. Raw blocks
 /// move directly into the response store without constructing napi block DTOs.
-fn block_hash_page(
-    mut response: hypersync_client::QueryResponse,
-    should_checksum: bool,
-) -> Result<(i64, BlockStore)> {
+fn block_hash_page(mut response: hypersync_client::QueryResponse) -> Result<(i64, BlockStore)> {
     let next_block = response
         .next_block
         .try_into()
@@ -438,7 +434,7 @@ fn block_hash_page(
         .into_iter()
         .flatten()
         .collect();
-    let block_store = BlockStore::new_evm(should_checksum);
+    let block_store = BlockStore::new_evm();
     block_store.insert_evm_blocks(blocks);
     Ok((next_block, block_store))
 }
@@ -908,8 +904,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .err()
@@ -937,8 +933,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .err()
@@ -971,8 +967,8 @@ mod tests {
             false,
             REQUIRED_BLOCK_FIELDS,
             &[],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .err()
@@ -1010,8 +1006,8 @@ mod tests {
                 BlockField::BaseFeePerGas,
             ],
             &[],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .expect("expected success when only nullable fields are absent");
@@ -1041,8 +1037,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .err()
@@ -1074,8 +1070,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .err()
@@ -1107,7 +1103,7 @@ mod tests {
             ..Default::default()
         };
 
-        let store = TransactionStore::new_evm(false);
+        let store = TransactionStore::new_evm();
         let items = process_response(
             vec![vec![block]],
             vec![vec![tx]],
@@ -1117,7 +1113,7 @@ mod tests {
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::BlockNumber],
             &store,
-            &BlockStore::new_evm(false),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .expect("expected success when block and transaction join");
@@ -1148,8 +1144,8 @@ mod tests {
             ..Default::default()
         };
 
-        let transaction_store = TransactionStore::new_evm(false);
-        let block_store = BlockStore::new_evm(false);
+        let transaction_store = TransactionStore::new_evm();
+        let block_store = BlockStore::new_evm();
         let items = process_response(
             vec![vec![block(1), block(2)]],
             vec![vec![tx(1), tx(2)]],
@@ -1169,6 +1165,7 @@ mod tests {
                 vec![1, 2],
                 vec![0, 0],
                 vec![(1u64 << (crate::transaction_store::EvmTxField::Hash as u32)) as f64; 2],
+                false,
             )
             .await
             .expect("materialize transactions");
@@ -1176,6 +1173,7 @@ mod tests {
             .materialize(
                 vec![1, 2],
                 vec![(1u64 << (crate::block_store::EvmBlockField::Hash as u32)) as f64; 2],
+                false,
             )
             .await
             .expect("materialize blocks");
@@ -1212,8 +1210,8 @@ mod tests {
             false,
             REQUIRED_BLOCK_FIELDS,
             &[TransactionField::Hash],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .expect("an unrouted log's absent block and transaction are not missing fields");
@@ -1246,8 +1244,8 @@ mod tests {
                 BlockField::GasUsed,
             ],
             &[],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .expect("an unreferenced block's absent selected field is not a missing field");
@@ -1288,8 +1286,8 @@ mod tests {
             false,
             REQUIRED_BLOCK_FIELDS,
             &[TransactionField::Hash],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .expect("a keyless transaction's absent field is not a missing field");

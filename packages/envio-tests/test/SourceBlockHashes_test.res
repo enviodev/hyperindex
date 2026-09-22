@@ -91,7 +91,6 @@ let addressStore = TestAddresses.makeStore(
   ~addresses=[
     {address: uniswapV2FactoryAddress, contractName: "UniswapV2Factory", registrationBlock: -1},
   ],
-  ~shouldChecksum=false,
 )
 let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Factory")
 

@@ -17,7 +17,7 @@ let make = (
     pollingInterval: 0,
     getBlockHashes: (~blockNumbers as _, ~logger as _) => {
       Promise.resolve({
-        Source.result: Ok(BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false)),
+        Source.result: Ok(BlockStore.fromJs([], ~ecosystem)),
         requestStats: [],
       })
     },
@@ -112,9 +112,7 @@ let make = (
         // EVM/Fuel keep transaction and block inline. SVM simulate returns a
         // store page so materialize + activity attach run the same path as HyperSync.
         transactionStore,
-        blockStore: blockStore->Option.getOr(
-          BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false),
-        ),
+        blockStore: blockStore->Option.getOr(BlockStore.fromJs([], ~ecosystem)),
         fromBlockQueried: fromBlock,
         latestFetchedBlockNumber: toBlockQueried,
         stats: {

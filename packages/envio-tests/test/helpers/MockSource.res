@@ -484,7 +484,6 @@ let make = (
           blockHash: ?(block.blockHash->Option.map(evmBlockHash)),
         }),
         ~ecosystem=Evm,
-        ~shouldChecksum=false,
       )
       if getBlockHashesResolveFns->Utils.Array.isEmpty {
         JsError.throwWithMessage("getBlockHashesResolveFns is empty")
@@ -585,7 +584,7 @@ let make = (
             }
             // Non-enumerable so it stays out of `toEqual` comparisons of the
             // payload while remaining inspectable from a test.
-            payload->defineAddresses(addressSet->AddressSet.addresses)
+            payload->defineAddresses(addressSet->AddressSet.addressesForTest)
             {
               payload,
               includeAllBlocks,
@@ -659,10 +658,10 @@ let make = (
                     }
                   },
                 )
-                let responseBlockStore = BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false)
+                let responseBlockStore = BlockStore.make(~ecosystem=Evm)
                 observedBlocks->Array.forEach(
                   block => {
-                    let page = BlockStore.fromJs([block], ~ecosystem=Evm, ~shouldChecksum=false)
+                    let page = BlockStore.fromJs([block], ~ecosystem=Evm)
                     responseBlockStore->BlockStore.appendPage(page)
                   },
                 )
