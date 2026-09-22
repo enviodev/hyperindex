@@ -37,6 +37,29 @@ describe("Supervisor.plan", () => {
   })
 })
 
+describe("Supervisor.plan at the ceiling", () => {
+  // A worker is a whole Node process: its own heap, its own copy of the
+  // handler modules, its own source clients. A budget that would buy more of
+  // them than this spends the surplus widening their pools instead.
+  it("Never spends a budget on more than four processes", t => {
+    let plan = (~chainCount, ~maxConnections) =>
+      Supervisor.plan(~chainIds=chains(chainCount), ~maxConnections)
+      ->Option.getOrThrow
+      ->Array.map(({maxConnections}: Supervisor.worker) => maxConnections)
+
+    t.expect([
+      // Ten chains and the connections for ten workers: four, with the budget
+      // spread across them rather than two connections each and the rest
+      // unspent.
+      plan(~chainCount=10, ~maxConnections=20),
+      // The remainder still goes to the earliest workers.
+      plan(~chainCount=10, ~maxConnections=22),
+      // Below the ceiling nothing changes.
+      plan(~chainCount=10, ~maxConnections=6),
+    ]).toStrictEqual([[5, 5, 5, 5], [6, 6, 5, 5], [2, 2, 2]])
+  })
+})
+
 describe("Supervisor.plan on the default budget", () => {
   // Splitting a run costs connections the operator didn't ask to spend, so the
   // budget they didn't set is the one a single process has always used.

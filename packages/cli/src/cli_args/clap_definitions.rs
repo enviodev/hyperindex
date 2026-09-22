@@ -58,7 +58,7 @@ pub enum CommandType {
 
     ///Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`.
     ///
-    ///A schema whose entities are all per-chain is indexed across several processes, as many as `ENVIO_PG_MAX_CONNECTIONS` affords. List the busiest chains first in `config.yaml` to balance them.
+    ///A schema whose entities are all per-chain is indexed across several processes, as many as `ENVIO_PG_MAX_CONNECTIONS` affords, up to four. List the busiest chains first in `config.yaml` to balance them.
     Start(StartArgs),
 
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint

@@ -6,6 +6,13 @@ type worker = {chainIds: array<ChainId.t>, maxConnections: int}
 // on a single one, so the budget buys workers two at a time.
 let minConnectionsPerWorker = 2
 
+// Most processes a run is split into, however much budget it is given. A worker
+// is a whole Node process, with its own heap, its own copy of the handler
+// modules and its own source clients, and a run holding more of them shares one
+// machine between them. A conservative ceiling while the split is new: past it
+// a raised budget widens the workers' pools rather than adding workers.
+let maxWorkers = 4
+
 // How to spend a connection budget on the chains a run indexes. `None` keeps
 // the run in one process, which is what a budget too small to afford two
 // workers, or a config with nothing to split, has to do.
@@ -16,7 +23,11 @@ let minConnectionsPerWorker = 2
 // not the chain's, so config order is the one ranking the run can be given:
 // listing chains busiest-first in config.yaml is what balances the layout.
 let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<worker>> => {
-  let workerCount = Pervasives.min(chainIds->Array.length, maxConnections / minConnectionsPerWorker)
+  let workerCount =
+    [chainIds->Array.length, maxConnections / minConnectionsPerWorker, maxWorkers]->Array.reduce(
+      maxWorkers,
+      Pervasives.min,
+    )
   if workerCount < 2 {
     None
   } else {
