@@ -151,7 +151,6 @@ let childFatal = (logger, params: 'a) => {
 let createChild = (~params: 'a) => {
   getLogger()->child(params->createChildParams)
 }
-
 let createChildFrom = (~logger: t, ~params: 'a) => {
   logger->child(params->createChildParams)
 }

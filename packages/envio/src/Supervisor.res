@@ -224,8 +224,7 @@ let fork = (
 }
 
 // The forked workers of one run, and whether their supervisor is the one
-// taking them down. A stop it asked for is expected; every other way a worker
-// can end is a failure.
+// taking them down, which is what tells an expected exit from the rest.
 type group = {
   running: array<running>,
   mutable stopping: bool,
@@ -244,14 +243,6 @@ let stop = group => {
   group->stopReleaseCheck
   group.running->Array.forEach(r => r.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore)
 }
-
-// Takes the group down unless it is already going. Signalling a worker that has
-// been signalled changes nothing, but `stopping` is what tells an exit from an
-// expected one, so the first stop is the one that counts.
-let stopOnce = group =>
-  if !group.stopping {
-    group->stop
-  }
 
 // The dev console's cache dump, which belongs to the supervisor rather than to
 // its workers: a dump copies every effect cache table in the schema to a file
@@ -330,10 +321,10 @@ let awaitExit = async (group): outcome => {
         // run reports itself as having failed.
         switch ending {
         | Expected => ()
-        | Stopping => group->stopOnce
+        | Stopping => group->stop
         | Failed => {
             failed := true
-            group->stopOnce
+            group->stop
           }
         }
         alive := alive.contents - 1
