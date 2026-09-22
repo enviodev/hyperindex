@@ -57,7 +57,6 @@ let indexedAddresses: array<Internal.indexingAddress> = [
 let addressStore = () =>
   TestAddresses.makeStore(
     ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
-    ~shouldChecksum=false,
   )
 
 // The chain the mock server currently serves. `forkFrom` is the first block
@@ -179,7 +178,7 @@ let makeChainState = (~source: Source.t, ~knownHeight) => {
     ~shouldRollbackOnReorg=true,
     ~maxReorgDepth=200,
     ~committedProgressBlockNumber=-1,
-    ~blockStore=BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false),
+    ~blockStore=BlockStore.make(~ecosystem=Evm),
     ~logger=Logging.getLogger(),
   )
 }

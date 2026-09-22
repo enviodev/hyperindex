@@ -12,16 +12,15 @@
 // blocks still inside the reorg threshold.
 type t
 
-@send external newEvm: (Core.blockStoreCtor, ~shouldChecksum: bool) => t = "newEvm"
+@send external newEvm: Core.blockStoreCtor => t = "newEvm"
 @send external newSvm: Core.blockStoreCtor => t = "newSvm"
 @send external newFuel: Core.blockStoreCtor => t = "newFuel"
 
-// The store's ecosystem is fixed here, from the chain's config. EVM carries the
-// chain's address-checksumming setting; SVM/Fuel need no extra data.
-let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool): t => {
+// The store's ecosystem is fixed here, from the chain's config.
+let make = (~ecosystem: Ecosystem.name): t => {
   let ctor = Core.getAddon().blockStore
   switch ecosystem {
-  | Evm => ctor->newEvm(~shouldChecksum)
+  | Evm => ctor->newEvm
   | Svm => ctor->newSvm
   | Fuel => ctor->newFuel
   }
@@ -41,7 +40,7 @@ type svmBlockInput = {slot: int, hash?: string, time?: int}
 type fuelBlockInput = {height: int, id?: string, time?: int}
 
 @send
-external fromJsEvm: (Core.blockStoreCtor, array<evmBlockInput>, bool) => t = "fromJsEvm"
+external fromJsEvm: (Core.blockStoreCtor, array<evmBlockInput>) => t = "fromJsEvm"
 @send
 external fromJsSvm: (Core.blockStoreCtor, array<svmBlockInput>) => t = "fromJsSvm"
 @send
@@ -53,7 +52,7 @@ type inputBlock = {blockNumber: int, blockHash?: string, blockTimestamp?: int}
 
 // Build a page from JS-observed blocks (RPC responses, stored reorg
 // checkpoints) for merging into the per-chain store.
-let fromJs = (blocks: array<inputBlock>, ~ecosystem: Ecosystem.name, ~shouldChecksum): t => {
+let fromJs = (blocks: array<inputBlock>, ~ecosystem: Ecosystem.name): t => {
   let ctor = Core.getAddon().blockStore
   switch ecosystem {
   | Evm =>
@@ -63,7 +62,6 @@ let fromJs = (blocks: array<inputBlock>, ~ecosystem: Ecosystem.name, ~shouldChec
         hash: ?b.blockHash,
         timestamp: ?b.blockTimestamp,
       }),
-      shouldChecksum,
     )
   | Svm =>
     ctor->fromJsSvm(
@@ -122,12 +120,15 @@ external latestValidBlockFromStore: (t, t, array<int>) => Null.t<int> = "latestV
 
 // Bulk-materialise blocks off the JS thread, one row per `blockNumbers[i]` key,
 // decoding only the fields set in that row's own `masks[i]`. Result is aligned
-// with the input.
+// with the input. `shouldChecksum` is the caller's spelling for the addresses
+// decoded out of the store: the rows themselves are raw bytes, so a page merged
+// from a differently configured store can't fix it in.
 @send
 external materialize: (
   t,
   ~blockNumbers: array<int>,
   ~masks: array<float>,
+  ~shouldChecksum: bool,
 ) => promise<array<Internal.eventBlock>> = "materialize"
 
 // Drop blocks at or below the given block (already processed), keeping the

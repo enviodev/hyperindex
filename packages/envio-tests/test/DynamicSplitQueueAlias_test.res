@@ -78,10 +78,12 @@ describe("Dynamic-registration partition split queue aliasing", () => {
           Utils.magic: (Internal.handlerArgs => promise<unit>) => MockSource.mockSourceHandler
         )
 
+      // A query carries the store's canonical spelling of an emitter, which is
+      // what the world's events are matched against below.
       let gravatarAddress =
-        "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringOrThrow
+        "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringLowercaseOrThrow
       let nftFactoryAddress =
-        "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.Evm.fromStringOrThrow
+        "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.Evm.fromStringLowercaseOrThrow
 
       // The chain's ground truth: one event per static contract at block 50,000.
       // A query delivers an event when it covers the block and carries the

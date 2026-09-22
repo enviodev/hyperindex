@@ -34,6 +34,7 @@ let make: (
   ~transactionStore: TransactionStore.t=?,
   ~chainDensity: option<float>=?,
   ~blockStore: BlockStore.t=?,
+  ~shouldChecksum: bool=?,
   ~reorgThresholdReadyTolerance: int=?,
   ~perChainEntities: array<Internal.entityConfig>=?,
   ~logger: Pino.t,
@@ -54,6 +55,7 @@ let makeFromDbState: (
 // Accessors.
 let logger: t => Pino.t
 let blockStore: t => BlockStore.t
+let shouldChecksum: t => bool
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
 let sourceManager: t => SourceManager.t
@@ -151,6 +153,7 @@ let materializePageItems: (
   ~items: array<Internal.item>,
   ~transactionStore: option<TransactionStore.t>,
   ~blockStore: BlockStore.t,
+  ~shouldChecksum: bool,
 ) => promise<unit>
 let registerReorgGuard: (
   t,

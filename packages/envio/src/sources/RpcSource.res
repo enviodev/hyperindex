@@ -1074,11 +1074,7 @@ let make = (
       // RPC keeps the transaction and block inline on the payload; no
       // transaction page, and the block page carries only observed hashes.
       transactionStore: None,
-      blockStore: BlockStore.fromJs(
-        observedBlocks,
-        ~ecosystem=Evm,
-        ~shouldChecksum=!lowercaseAddresses,
-      ),
+      blockStore: BlockStore.fromJs(observedBlocks, ~ecosystem=Evm),
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },
@@ -1119,8 +1115,7 @@ let make = (
           ->ignore
         }
       })
-      let blockStore =
-        observedBlocks->BlockStore.fromJs(~ecosystem=Evm, ~shouldChecksum=!lowercaseAddresses)
+      let blockStore = observedBlocks->BlockStore.fromJs(~ecosystem=Evm)
       {Source.result: Ok(blockStore), requestStats: drainRequestStats()}
     })
     ->Promise.catch(exn =>

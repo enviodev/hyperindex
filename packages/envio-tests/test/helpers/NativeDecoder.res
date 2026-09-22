@@ -42,26 +42,26 @@ let decodeLogs = async (
         ContractMapping.make(
           ~names=eventRegistrations->Array.map(reg => reg.contractName),
         )->ContractMapping.names
-      let addressStore = AddressStore.make(
-        ~ecosystem=Ecosystem.Evm,
-        ~shouldChecksum=false,
+      let addressStore = TestAddresses.storeOf(
         ~contracts=contractNames->Array.map((name): AddressStore.contract => {
           name,
           startBlock: None,
           dependsOnAddresses: true,
         }),
+        ~addresses=switch ownedBy {
+        | None => []
+        | Some(contractName) => [
+            {
+              address: mockAddress->Address.unsafeFromString,
+              contractName,
+              registrationBlock: -1,
+            },
+          ]
+        },
       )
       let addressSet = switch ownedBy {
       | None => addressStore->AddressStore.emptySet
-      | Some(contractName) =>
-        let _ = addressStore->AddressStore.seedBatch([
-          {
-            address: mockAddress->Address.unsafeFromString,
-            contractName,
-            registrationBlock: -1,
-          },
-        ])
-        addressStore->AddressStore.makeSet(~contractName)
+      | Some(contractName) => addressStore->AddressStore.makeSet(~contractName)
       }
       let client = EvmRpcClient.make(
         ~url=mock.url,

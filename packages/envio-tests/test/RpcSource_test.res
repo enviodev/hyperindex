@@ -1679,9 +1679,10 @@ describe("RpcSource - builds partition log selections end to end", () => {
         throw(exn)
       }
 
-      let address = mockAddress->Address.toString
-      let addressTopic =
-        "0x000000000000000000000000" ++ address->String.toLowerCase->String.slice(~start=2)
+      // The store filters on its canonical spelling of a key, both as an
+      // address and padded into a topic.
+      let address = mockAddress->Address.toString->String.toLowerCase
+      let addressTopic = "0x000000000000000000000000" ++ address->String.slice(~start=2)
       let expectedFilters = [
         `address=["${address}"];topics=[["${sighash1}"]]`,
         `address=null;topics=[["${sighash2}","${sighash3}"]]`,

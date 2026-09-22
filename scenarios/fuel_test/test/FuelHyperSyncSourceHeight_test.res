@@ -46,7 +46,6 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
   // Height queries carry no selection, so an empty store is all the client needs.
   let addressStore = AddressStore.make(
     ~ecosystem=Ecosystem.Fuel,
-    ~shouldChecksum=false,
     ~contracts=[],
   )
 

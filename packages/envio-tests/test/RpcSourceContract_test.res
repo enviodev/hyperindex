@@ -75,19 +75,21 @@ let makeAddressStore = (~registration: Internal.evmOnEventRegistration) =>
     ~addresses=[
       {address, contractName: registration.eventConfig.contractName, registrationBlock: -1},
     ],
-    // The source lowercases addresses, so the set must render them that way for
-    // the pinned eth_getLogs request bodies to match.
-    ~shouldChecksum=false,
   )
 
-let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration) => {
+let makeSource = (
+  ~factory,
+  ~url,
+  ~registration: Internal.evmOnEventRegistration,
+  ~lowercaseAddresses=true,
+) => {
   let options: RpcSource.options = {
     url,
     chainId,
     onEventRegistrations: [registration],
     sourceFor: Sync,
     syncConfig,
-    lowercaseAddresses: true,
+    lowercaseAddresses,
     addressStore: makeAddressStore(~registration),
   }
   factory(options)
@@ -314,6 +316,36 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           "eth_getTransactionReceipt": 1,
         },
       })
+    })
+
+    // A chain that shows the user checksummed addresses still filters on the
+    // canonical lowercase encoding: what `eth_getLogs` matches on is the
+    // chain's own spelling of a key, not the one `chain.<Contract>.addresses`
+    // presents. `successfulCalls` pins the lowercase filter, and `withScenario`
+    // rejects a request that doesn't match it.
+    Async.it("filters on canonical addresses on a chain that checksums", async t => {
+      let srcAddresses = await MockRpcServer.withScenario(
+        ~name=`${name}: canonical address filter`,
+        ~calls=successfulCalls(~logs=[log(~logIndex="0x2")]),
+        async mock => {
+          let registration = makeRegistration()
+          let source = makeSource(
+            ~factory,
+            ~url=mock.url,
+            ~registration,
+            ~lowercaseAddresses=false,
+          )
+          switch await RpcSourcePins.capture(() => source->invoke(~registration)) {
+          | Ok(page) => page.events->Array.map(event => event.srcAddress)
+          | Error(_) => JsError.throwWithMessage("Expected the pinned RPC page to succeed")
+          }
+        },
+      )
+
+      // The addresses the chain hands back are checksummed, which is what makes
+      // the lowercase filter above a statement about the query rather than
+      // about the chain.
+      t.expect(srcAddresses).toEqual([contractAddress])
     })
 
     Async.it("pins onReorg cache invalidation without resetting paging state", async t => {
@@ -662,7 +694,6 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               {address: addressA, contractName: "ContractA", registrationBlock: -1},
               {address: addressB, contractName: "ContractB", registrationBlock: -1},
             ],
-            ~shouldChecksum=false,
           )
           let options: RpcSource.options = {
             url: mock.url,
