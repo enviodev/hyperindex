@@ -1,4 +1,5 @@
 - Use `pnpm` over `npm`/`npx`.
+- Edit `.res`/`.resi` and Rust files with Write/Edit, never a Bash heredoc or `sed`. The formatter runs on what those tools write; a push carrying an unformatted file is refused.
 - Always use single assert to check the whole value instead of multiple asserts for every field.
 
 ## Comments

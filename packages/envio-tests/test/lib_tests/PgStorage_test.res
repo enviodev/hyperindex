@@ -626,11 +626,20 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"tag": dict{"_eq": Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown), "_in": [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
-                    Utils.magic: array<Uint8Array.t> => unknown
-                  )}, "chunks": dict{"_eq": [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown), "_in": [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
-                    Utils.magic: array<array<Uint8Array.t>> => unknown
-                  )}}->parse(~table=bytesTable),
+          ~filter=dict{
+            "tag": dict{
+              "_eq": Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+              "_in": [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
+                Utils.magic: array<Uint8Array.t> => unknown
+              ),
+            },
+            "chunks": dict{
+              "_eq": [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown),
+              "_in": [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
+                Utils.magic: array<array<Uint8Array.t>> => unknown
+              ),
+            },
+          }->parse(~table=bytesTable),
           ~table=bytesTable,
           ~pgSchema="test_schema",
           ~params,
@@ -654,7 +663,9 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"id": dict{"_in": ["1", "2"]->(Utils.magic: array<string> => unknown)}}->parse(~table),
+          ~filter=dict{
+            "id": dict{"_in": ["1", "2"]->(Utils.magic: array<string> => unknown)},
+          }->parse(~table),
           ~table,
           ~pgSchema="test_schema",
           ~params,
@@ -690,7 +701,10 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"score": dict{"_gte": 5->(Utils.magic: int => unknown)}, "id": dict{"_lte": "9"->(Utils.magic: string => unknown)}}->parse(~table),
+          ~filter=dict{
+            "score": dict{"_gte": 5->(Utils.magic: int => unknown)},
+            "id": dict{"_lte": "9"->(Utils.magic: string => unknown)},
+          }->parse(~table),
           ~table,
           ~pgSchema="test_schema",
           ~params,
@@ -708,7 +722,13 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}, "score": dict{"_gt": 5->(Utils.magic: int => unknown), "_lt": 10->(Utils.magic: int => unknown)}}->parse(~table),
+          ~filter=dict{
+            "id": dict{"_eq": "1"->(Utils.magic: string => unknown)},
+            "score": dict{
+              "_gt": 5->(Utils.magic: int => unknown),
+              "_lt": 10->(Utils.magic: int => unknown),
+            },
+          }->parse(~table),
           ~table,
           ~pgSchema="test_schema",
           ~params,
@@ -756,11 +776,16 @@ FROM "public"."envio_chains";`
         t.expect((
           condition(tagsIn([["a"], ["a", "b"]])),
           condition(tagsIn([])),
-          condition(dict{"flag": dict{"_in": [true, false]->(Utils.magic: array<bool> => unknown)}}),
+          condition(
+            dict{"flag": dict{"_in": [true, false]->(Utils.magic: array<bool> => unknown)}},
+          ),
         )).toEqual((
           (
             `("tags" = $1 OR "tags" = $2)`,
-            [["a"]->(Utils.magic: array<string> => unknown), ["a", "b"]->(Utils.magic: array<string> => unknown)],
+            [
+              ["a"]->(Utils.magic: array<string> => unknown),
+              ["a", "b"]->(Utils.magic: array<string> => unknown),
+            ],
           ),
           ("FALSE", []),
           (
@@ -891,10 +916,12 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
       async t => {
         let query = InternalTable.Chains.makeMetaFieldsUpdateQuery(~pgSchema="test_schema")
 
+        // `ready_at` keeps what is committed: a write staged before the
+        // finalization stamped it must not clear it on its way to the database.
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
 SET "buffer_block" = $2,
     "first_event_block" = $3,
-    "ready_at" = $4,
+    "ready_at" = COALESCE($4, "ready_at"),
     "_is_hyper_sync" = $5
 WHERE "id" = $1;`
 

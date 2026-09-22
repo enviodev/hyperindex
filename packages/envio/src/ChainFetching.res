@@ -269,7 +269,6 @@ and applyQueryResponse = (
   ~query,
 ) => {
   let chainState = state->IndexerState.getChainState(~chainId)
-  let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
 
   chainState->ChainState.handleQueryResult(
     ~query,
@@ -284,17 +283,6 @@ and applyQueryResponse = (
     chainState->ChainState.setEndBlockToFirstEvent(
       ~blockNumber=newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
     )
-  }
-
-  // Log the backfill→head transition once: this response brought the fetch
-  // frontier to the head. Gated on !isReady so realtime re-catch-ups (a new
-  // block arrives, gets fetched) don't spam the log after the chain is synced.
-  if (
-    !wasFetchingAtHead &&
-    !(chainState->ChainState.isReady) &&
-    chainState->ChainState.isFetchingAtHead
-  ) {
-    chainState->ChainState.logger->Logging.childInfo("All events have been fetched")
   }
 }
 

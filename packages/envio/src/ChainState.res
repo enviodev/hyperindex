@@ -62,6 +62,10 @@ type t = {
   mutable blockRangeFetchCount: float,
   mutable blockRangeFetchedEvents: float,
   mutable blockRangeFetchedBlocks: float,
+  // Whether this chain has said where it finished indexing. Being finished
+  // stays true for the rest of the run, and every pass over the chains would
+  // say so again.
+  mutable reportedFinished: bool,
   mutable reorgCount: int,
   mutable reorgDetectedBlock: option<int>,
   mutable rollbackTargetBlock: option<int>,
@@ -177,6 +181,7 @@ let make = (
     blockRangeFetchCount: 0.,
     blockRangeFetchedEvents: 0.,
     blockRangeFetchedBlocks: 0.,
+    reportedFinished: false,
     reorgCount: 0,
     reorgDetectedBlock: None,
     rollbackTargetBlock: None,
@@ -655,6 +660,30 @@ let hasProcessedToEndblock = (cs: t) => {
   }
 }
 
+// Where this chain has finished indexing, the first time it gets there.
+// `EndBlock` is terminal: the chain indexed everything it was configured to.
+// `Backfill` is the rest of the history, up to the point where blocks can
+// still be reorged, which is as far as a chain indexes before the indexer
+// crosses into them.
+type finished = EndBlock(int) | Backfill(int)
+
+let takeFinished = (cs: t) =>
+  if cs.reportedFinished {
+    None
+  } else {
+    switch (cs.fetchState.endBlock, cs->hasProcessedToEndblock, cs.isProgressAtHead) {
+    | (Some(endBlock), true, _) => {
+        cs.reportedFinished = true
+        Some(EndBlock(endBlock))
+      }
+    | (_, _, true) => {
+        cs.reportedFinished = true
+        Some(Backfill(cs.committedProgressBlockNumber))
+      }
+    | _ => None
+    }
+  }
+
 // Caught up as judged by persisted values alone: progress reached the endBlock,
 // or the head the previous run had already observed (less the lag that holds the
 // tip back). Unlike `isFetchingAtHead` this doesn't move when a fresh height
@@ -965,6 +994,34 @@ let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
 // progress has run.
 let shouldSaveHistory = (cs: t) =>
   cs.shouldRollbackOnReorg && cs.maxReorgDepth > 0 && cs.isInReorgThreshold
+// What crossing into the recent blocks changed for this chain. Until now it
+// stopped short of the head by its reorg depth, because it kept nothing it
+// could roll back with; crossing lifts both at once. The second half is the
+// answer to why the indexer starts writing more than it was.
+// Whether crossing gives this chain anything more to index: the last block it
+// may fetch afterwards against the last it may fetch now. Read before the
+// crossing, while the lag being lifted is still the one in place.
+//
+// False wherever the lag was never holding this chain back, which is every
+// configuration that also keeps no history: a chain that isn't rolled back on a
+// reorg, or has no reorg depth, already fetches as far as it ever will. It is
+// false too for a chain whose end block sits below the blocks being opened up,
+// which will never reach one of them.
+let reorgThresholdLiftsCeiling = (cs: t) => {
+  let ceiling = (~blockLag) => {
+    let head = Pervasives.max(0, cs.fetchState.knownHeight - blockLag)
+    switch cs.fetchState.endBlock {
+    | Some(endBlock) => Pervasives.min(endBlock, head)
+    | None => head
+    }
+  }
+  ceiling(~blockLag=cs.chainConfig.blockLag) > ceiling(~blockLag=cs.fetchState.blockLag)
+}
+
+// Only ever said by a chain the crossing lifts, and lifting it takes a reorg
+// depth to have been held back by, which is the same thing that makes the
+// history below worth keeping. So there is no second form without it.
+let reorgThresholdEntryMessage = "Indexing the latest blocks now. These can be reorged, so the indexer starts storing a history of every change to roll back with."
 
 // Snapshot the chain's metadata fields for staging into the chains table.
 let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
@@ -1052,6 +1109,12 @@ let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
 
 // Whether the chain's post-batch fetch frontier is ready to cross into the reorg
 // threshold, using the batch's progressed frontier when this chain advanced.
+// The same question asked of where the chain stands now rather than of where a
+// batch would leave it. Entering the threshold is what lifts the pre-threshold
+// lag, so a chain waiting to enter it has fetched as far as it can.
+let isReadyToEnterReorgThreshold = (cs: t) =>
+  cs.fetchState->FetchState.isReadyToEnterReorgThreshold(~tolerance=cs.reorgThresholdReadyTolerance)
+
 let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
   let fetchState = switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(
     cs.fetchState.chainId,
@@ -1200,6 +1263,7 @@ let markReady = (cs: t, ~readyAt) =>
 let rollbackCommittedProgress = (cs: t, blockNumber) =>
   if blockNumber !== cs.committedProgressBlockNumber {
     cs.committedProgressBlockNumber = blockNumber
+
     // Exact block only: the rolled-back region is about to be refetched, and
     // the next batch re-establishes the time either way.
     cs.committedProgressBlockTime =

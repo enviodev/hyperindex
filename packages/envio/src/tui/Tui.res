@@ -248,6 +248,16 @@ module App = {
   }
 }
 
+// Whether this process draws the progress display: `ENVIO_TUI` first, then
+// whether anything is watching. A supervisor asks the same question its
+// workers would have, since it is the one drawing for the run.
+let shouldUse = (~suppressed=false, ~explicitTui=Env.tuiEnvVar) =>
+  switch (suppressed, explicitTui) {
+  | (true, _) => false
+  | (_, Some(tui)) => tui
+  | (_, None) => !Envio.isNonInteractive()
+  }
+
 let start = (~config, ~getMetrics) => {
   let {rerender} = render(<App config getMetrics />)
   () => {

@@ -123,9 +123,14 @@ let dispatch: (
 let toMetrics: t => Metrics.chainMetrics
 let toChainMetadata: t => InternalTable.Chains.metaFields
 let toChainBeforeBatch: (t, ~isRealtime: bool) => Batch.chainBeforeBatch
+let isReadyToEnterReorgThreshold: t => bool
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
+type finished = EndBlock(int) | Backfill(int)
+let takeFinished: t => option<finished>
+let reorgThresholdLiftsCeiling: t => bool
+let reorgThresholdEntryMessage: string
 let hasProcessedToEndblock: t => bool
 let isDurablyCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int

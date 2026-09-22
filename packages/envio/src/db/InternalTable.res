@@ -344,7 +344,14 @@ VALUES ${valuesRows->Array.joinUnsafe(",\n       ")};`,
     let setClauses = Array.mapWithIndex(metaFields, (field, index) => {
       let fieldName = (field :> string)
       let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
-      `"${fieldName}" = $${Int.toString(paramIndex)}`
+      switch field {
+      // A chain that caught up never un-catches up, so a metadata write staged
+      // before `markReady` and flushed after the stamp must not clear it. The
+      // writes race: metadata is written on a throttle of its own, outside the
+      // batch the finalization flushes.
+      | #ready_at => `"${fieldName}" = COALESCE($${Int.toString(paramIndex)}, "${fieldName}")`
+      | _ => `"${fieldName}" = $${Int.toString(paramIndex)}`
+      }
     })
 
     `UPDATE "${pgSchema}"."${table.tableName}"

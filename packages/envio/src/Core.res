@@ -166,6 +166,10 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
     fs.copyFileSync(srcPath, nodePath);
   }
 
+  // Forked workers inherit this, so only the first process in a run pays for
+  // the cargo build (and they don't contend over the cargo lock).
+  process.env.ENVIO_DEV_ADDON = nodePath;
+
   return req(nodePath);
 }`)
 
