@@ -14,24 +14,14 @@
 // sources the chain goes on to index with; those are built later, once
 // registrations exist.
 let makeProbeSources = (chainConfig: Config.chain, ~lowercaseAddresses): array<Source.t> => {
-  let addressStore = AddressStore.make(
-    ~ecosystem=chainConfig.ecosystem,
-    ~shouldChecksum=!lowercaseAddresses,
-    ~contracts=[],
-  )
+  let addressStore = AddressStore.make(~ecosystem=chainConfig.ecosystem, ~contracts=[])
   ChainSources.make(
     ~chainConfig,
     ~onEventRegistrations=[],
     ~addressStore,
     ~lowercaseAddresses,
-    ~blockStore=BlockStore.make(
-      ~ecosystem=chainConfig.ecosystem,
-      ~shouldChecksum=!lowercaseAddresses,
-    ),
-    ~transactionStore=TransactionStore.make(
-      ~ecosystem=chainConfig.ecosystem,
-      ~shouldChecksum=!lowercaseAddresses,
-    ),
+    ~blockStore=BlockStore.make(~ecosystem=chainConfig.ecosystem),
+    ~transactionStore=TransactionStore.make(~ecosystem=chainConfig.ecosystem),
   )
 }
 

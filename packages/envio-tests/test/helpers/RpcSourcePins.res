@@ -88,9 +88,9 @@ let storedBlockHashes = (blockStore: BlockStore.t): array<ReorgDetection.blockDa
   )
 
 // A chain's pair of EVM stores, as `ChainState` builds them.
-let makeStores = (~shouldChecksum=false) => (
-  BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum),
-  TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum),
+let makeStores = () => (
+  BlockStore.make(~ecosystem=Ecosystem.Evm),
+  TransactionStore.make(~ecosystem=Ecosystem.Evm),
 )
 
 // Resolve a page's items the way the indexer does: both of its stores merge
@@ -101,6 +101,7 @@ let applyPage = async (
   response: Source.blockRangeFetchResponse,
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
+  ~shouldChecksum=false,
 ) => {
   blockStore->BlockStore.merge(response.blockStore, ~fromBlock=0, ~reportOnly=false)->ignore
   switch response.transactionStore {
@@ -111,6 +112,7 @@ let applyPage = async (
     ~items=response.parsedQueueItems,
     ~transactionStore,
     ~blockStore,
+    ~shouldChecksum,
   )
 }
 
@@ -120,8 +122,9 @@ let normalizePage = async (
   response: Source.blockRangeFetchResponse,
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
+  ~shouldChecksum=false,
 ): pinnedPage => {
-  await response->applyPage(~blockStore, ~transactionStore)
+  await response->applyPage(~blockStore, ~transactionStore, ~shouldChecksum)
   {
     knownHeight: response.knownHeight,
     latestFetchedBlockNumber: response.latestFetchedBlockNumber,

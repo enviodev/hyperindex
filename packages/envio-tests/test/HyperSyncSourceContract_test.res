@@ -82,18 +82,16 @@ let onEventRegistrations = () => {
 }
 
 let makeSource = (~url, ~lowercaseAddresses=true) => {
-  let addressStore = AddressStore.make(
-    ~ecosystem=Ecosystem.Evm,
-    ~shouldChecksum=!lowercaseAddresses,
+  let addressStore = TestAddresses.storeOf(
     ~contracts=[{name: "Token", startBlock: None, dependsOnAddresses: true}],
+    ~addresses=[
+      {
+        address: tokenAddress->Address.unsafeFromString,
+        contractName: "Token",
+        registrationBlock: -1,
+      },
+    ],
   )
-  let _ = addressStore->AddressStore.seedBatch([
-    {
-      address: tokenAddress->Address.unsafeFromString,
-      contractName: "Token",
-      registrationBlock: -1,
-    },
-  ])
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
@@ -274,8 +272,7 @@ describe("HyperSync source contract", () => {
       // The chain's stores are what materialisation reads; a response's pages
       // reach them by merging, as the indexer does once the reorg guard passes.
       let transactionStore = TransactionStore.make(
-        ~ecosystem=Ecosystem.Evm,
-        ~shouldChecksum=false,
+        ~ecosystem=Ecosystem.Evm
       )
       switch page.transactionStore {
       | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
@@ -285,6 +282,7 @@ describe("HyperSync source contract", () => {
         ~items=page.parsedQueueItems,
         ~transactionStore,
         ~blockStore=page.blockStore,
+        ~shouldChecksum=false,
       )
       page.parsedQueueItems
     })
@@ -627,8 +625,7 @@ describe("HyperSync source responses", () => {
       server->MockHyperSyncServer.pushResponse(page)
       let response = await source->fetch(~addressSet)
       let transactionStore = TransactionStore.make(
-        ~ecosystem=Ecosystem.Evm,
-        ~shouldChecksum=true,
+        ~ecosystem=Ecosystem.Evm
       )
       switch response.transactionStore {
       | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
@@ -638,6 +635,7 @@ describe("HyperSync source responses", () => {
         ~items=response.parsedQueueItems,
         ~transactionStore,
         ~blockStore=response.blockStore,
+        ~shouldChecksum=true,
       )
       let summary = response.parsedQueueItems->Array.map(eventSummary)->Array.getUnsafe(0)
       {

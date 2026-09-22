@@ -31,7 +31,7 @@ let makeSource = (
   ~stores=?,
 ) => {
   let (blockStore, transactionStore) =
-    stores->Option.getOr(RpcSourcePins.makeStores(~shouldChecksum=!lowercaseAddresses))
+    stores->Option.getOr(RpcSourcePins.makeStores())
   RpcSource.make({
     url,
     chainId,
@@ -162,7 +162,7 @@ describe("RpcSource - field selection end to end", () => {
       ],
     )
     let (blockStore, transactionStore) =
-      stores->Option.getOr(RpcSourcePins.makeStores(~shouldChecksum=!lowercaseAddresses))
+      stores->Option.getOr(RpcSourcePins.makeStores())
     let source = makeSource(
       ~url=mock.url,
       ~onEventRegistrations=[registration],
@@ -187,7 +187,13 @@ describe("RpcSource - field selection end to end", () => {
       ~retry=0,
       ~logger=Logging.createChild(~params={"test": "RpcSource field selection"}),
     )
-    await response->RpcSourcePins.applyPage(~blockStore, ~transactionStore)
+    // The spelling is the chain's, read where the stores are materialised —
+    // which is `ChainState.shouldChecksum` in production.
+    await response->RpcSourcePins.applyPage(
+      ~blockStore,
+      ~transactionStore,
+      ~shouldChecksum=!lowercaseAddresses,
+    )
     response.parsedQueueItems->Array.map(item =>
       switch item {
       | Internal.Event({payload}) => payload->Evm.toPayload
@@ -987,9 +993,10 @@ describe("RpcSource - builds partition log selections end to end", () => {
       throw(exn)
     }
 
-    let address = mockAddress->Address.toString
-    let addressTopic =
-      "0x000000000000000000000000" ++ address->String.toLowerCase->String.slice(~start=2)
+    // The store filters on its canonical spelling of a key, both as an
+    // address and padded into a topic.
+    let address = mockAddress->Address.toString->String.toLowerCase
+    let addressTopic = "0x000000000000000000000000" ++ address->String.slice(~start=2)
     let expectedFilters =
       [
         `address=["${address}"];topics=[["${sighash1}"]]`,
@@ -1007,7 +1014,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
 
 describe("RpcSource - height subscription", () => {
   let makeSource = (~url, ~ws=?, ~pollingInterval=10) => {
-    let (blockStore, transactionStore) = RpcSourcePins.makeStores(~shouldChecksum=true)
+    let (blockStore, transactionStore) = RpcSourcePins.makeStores()
     RpcSource.make({
       url,
       chainId,

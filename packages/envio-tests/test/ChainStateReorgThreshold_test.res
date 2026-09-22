@@ -7,7 +7,7 @@ describe("ChainState reorg threshold", () => {
   let baseChainConfig = TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
   let makeChainState = (~knownHeight, ~maxReorgDepth, ~scannedHashes) => {
-    let addressStore = AddressStore.make(~ecosystem=Evm, ~shouldChecksum=false, ~contracts=[])
+    let addressStore = AddressStore.make(~ecosystem=Evm, ~contracts=[])
     let base = FetchState.make(
       ~onEventRegistrations=[],
       ~addressStore,
@@ -32,14 +32,13 @@ describe("ChainState reorg threshold", () => {
       ~chainId=baseChainConfig.id,
       ~knownHeight=0,
     )
-    let blockStore = BlockStore.make(~ecosystem=Svm, ~shouldChecksum=false)
+    let blockStore = BlockStore.make(~ecosystem=Svm)
     let seedPage = BlockStore.fromJs(
       scannedHashes->Array.map(((blockNumber, blockHash)): BlockStore.inputBlock => {
         blockNumber,
         blockHash,
       }),
       ~ecosystem=Svm,
-      ~shouldChecksum=false,
     )
     switch blockStore->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false) {
     | Null.Value(_) => JsError.throwWithMessage("Unexpected reorg detected in test setup")
@@ -92,7 +91,6 @@ describe("ChainState reorg threshold", () => {
         ~blockStore=BlockStore.fromJs(
           [{BlockStore.blockNumber: 300, blockHash: "0x300-different"}],
           ~ecosystem=Svm,
-          ~shouldChecksum=false,
         ),
         ~knownHeight,
       )

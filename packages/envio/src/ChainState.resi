@@ -34,6 +34,7 @@ let make: (
   ~transactionStore: TransactionStore.t=?,
   ~chainDensity: option<float>=?,
   ~blockStore: BlockStore.t=?,
+  ~shouldChecksum: bool=?,
   ~reorgThresholdReadyTolerance: int=?,
   ~perChainEntities: array<Internal.entityConfig>=?,
   ~logger: Pino.t,
@@ -55,6 +56,7 @@ let makeFromDbState: (
 let logger: t => Pino.t
 let blockStore: t => BlockStore.t
 let transactionStore: t => TransactionStore.t
+let shouldChecksum: t => bool
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
 let sourceManager: t => SourceManager.t
@@ -146,6 +148,7 @@ let materializePageItems: (
   ~items: array<Internal.item>,
   ~transactionStore: TransactionStore.t,
   ~blockStore: BlockStore.t,
+  ~shouldChecksum: bool,
 ) => promise<unit>
 // Merges the page's blocks into the chain's store as it checks them: the check
 // is the merge's own conflict report, so a page that passes is already applied.

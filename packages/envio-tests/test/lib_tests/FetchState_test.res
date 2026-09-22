@@ -39,14 +39,22 @@ let getEarliestEvent = (fetchState: FetchState.t) => {
   }
 }
 
-let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
-let mockAddress1 = Envio.TestHelpers.Addresses.mockAddresses[1]->Option.getOrThrow
-let mockAddress2 = Envio.TestHelpers.Addresses.mockAddresses[2]->Option.getOrThrow
-let mockAddress3 = Envio.TestHelpers.Addresses.mockAddresses[3]->Option.getOrThrow
-let mockAddress4 = Envio.TestHelpers.Addresses.mockAddresses[4]->Option.getOrThrow
-let mockAddress5 = Envio.TestHelpers.Addresses.mockAddresses[5]->Option.getOrThrow
-let mockAddress6 = Envio.TestHelpers.Addresses.mockAddresses[6]->Option.getOrThrow
-let mockFactoryAddress = Envio.TestHelpers.Addresses.mockAddresses[7]->Option.getOrThrow
+// The store keys on an address, not on a spelling, and hands one back
+// canonically - which is what the fetch state and every assertion below
+// see. These are the mock addresses in that spelling.
+let mockAddress = i =>
+  Envio.TestHelpers.Addresses.mockAddresses[i]
+  ->Option.getOrThrow
+  ->Address.Evm.fromAddressLowercaseOrThrow
+
+let mockAddress0 = mockAddress(0)
+let mockAddress1 = mockAddress(1)
+let mockAddress2 = mockAddress(2)
+let mockAddress3 = mockAddress(3)
+let mockAddress4 = mockAddress(4)
+let mockAddress5 = mockAddress(5)
+let mockAddress6 = mockAddress(6)
+let mockFactoryAddress = mockAddress(7)
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 let getBlockData = (~blockNumber): int => blockNumber
@@ -340,7 +348,7 @@ describe("FetchState.make", () => {
       t.expect(
         (
           addressStore->AddressStore.size,
-          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
           // No partition is created for the contract without events
           fetchState.optimizedPartitions.entities
           ->Dict.valuesToArray
@@ -624,7 +632,7 @@ describe("FetchState.make", () => {
       ~message="Close startBlocks: should merge into a single partition (direct push)",
     ).toEqual(["0"])
     t.expect(
-      (closePartitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addresses,
+      (closePartitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addressesForTest,
       ~message="Close startBlocks: single partition has both contracts' addresses",
     ).toEqual([mockAddress0, mockAddress1])
     t.expect(
@@ -672,7 +680,7 @@ describe("FetchState.make", () => {
       ~message="Far startBlocks: earlier partition has mergeBlock",
     ).toEqual(Some(20_001))
     t.expect(
-      (farPartitions.entities->Dict.getUnsafe("1")).addresses->AddressSet.addresses,
+      (farPartitions.entities->Dict.getUnsafe("1")).addresses->AddressSet.addressesForTest,
       ~message="Far startBlocks: later partition has merged addresses from both contracts",
     ).toEqual([mockAddress0, mockAddress1])
   })
@@ -719,7 +727,7 @@ describe("FetchState.make", () => {
         ~message="Close startBlocks: Phase 1 groups into a single partition",
       ).toEqual(["0"])
       t.expect(
-        (closePartitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addresses,
+        (closePartitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addressesForTest,
         ~message="Close startBlocks: single partition has both addresses",
       ).toEqual([mockAddress0, mockAddress1])
       t.expect(
@@ -771,7 +779,7 @@ describe("FetchState.make", () => {
         ~message="Far startBlocks: earlier partition has mergeBlock matching later partition's block",
       ).toEqual(Some(20_001))
       t.expect(
-        (farPartitions.entities->Dict.getUnsafe("1")).addresses->AddressSet.addresses,
+        (farPartitions.entities->Dict.getUnsafe("1")).addresses->AddressSet.addressesForTest,
         ~message="Far startBlocks: later partition has merged addresses",
       ).toEqual([mockAddress0, mockAddress1])
       t.expect(
@@ -825,7 +833,7 @@ describe("FetchState.make", () => {
       ~message="filterByAddresses: contracts merge into a single partition",
     ).toEqual(["0"])
     t.expect(
-      (partitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addresses,
+      (partitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addressesForTest,
       ~message="filterByAddresses: single partition holds both contracts' addresses",
     ).toEqual([mockAddress0, mockAddress1])
     t.expect(
@@ -880,11 +888,11 @@ describe("FetchState.registerDynamicContracts", () => {
         (
           // tracked on addressStore so later conflicting registrations
           // are detected, and so numAddresses reflects it
-          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
           // still written to the db, so a config that later adds events for
           // the contract picks the address up on restart
           addressStore
-          ->AddressStore.pendingEntries
+          ->AddressStore.pendingEntriesForTest
           ->Array.map(ia => ia.address),
           // partitions unchanged - no fetching for contracts without events
           updatedFetchState.optimizedPartitions === fetchState.optimizedPartitions,
@@ -941,10 +949,10 @@ describe("FetchState.registerDynamicContracts", () => {
         (
           // One row per contract; the repeat of an existing pair writes nothing.
           addressStore
-          ->AddressStore.pendingEntries
+          ->AddressStore.pendingEntriesForTest
           ->Array.map(ia => (ia.address, ia.contractName, ia.registrationBlock)),
           // Set order: the earlier registration's start block comes first.
-          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
           // No new partition created across any of the registrations.
           afterThird.optimizedPartitions.entities === fetchState.optimizedPartitions.entities,
         ),
@@ -986,8 +994,8 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          addressStore->AddressStore.getAll(mockAddress2)->Array.map(ia => ia.contractName),
-          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress2)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
           // Only the Gravatar address lands in a partition.
           updatedFetchState.optimizedPartitions.entities
           ->Dict.valuesToArray
@@ -995,7 +1003,7 @@ describe("FetchState.registerDynamicContracts", () => {
             p =>
               p.addresses
               ->AddressSet.filterByContracts(["Gravatar"])
-              ->AddressSet.addresses
+              ->AddressSet.addressesForTest
               ->Array.includes(mockAddress1),
           ),
           updatedFetchState.optimizedPartitions.entities
@@ -1033,9 +1041,9 @@ describe("FetchState.registerDynamicContracts", () => {
       t.expect(
         (
           addressStore
-          ->AddressStore.pendingEntries
+          ->AddressStore.pendingEntriesForTest
           ->Array.map(ia => (ia.address, ia.contractName)),
-          addressStore->AddressStore.getAll(mockAddress0)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress0)->Array.map(ia => ia.contractName),
           updatedFetchState === fetchState,
         ),
         ~message=`the second contract's registration is stored and persisted,
@@ -1076,15 +1084,15 @@ describe("FetchState.registerDynamicContracts", () => {
         p =>
           p.addresses
           ->AddressSet.filterByContracts([contractName])
-          ->AddressSet.addresses
+          ->AddressSet.addressesForTest
           ->Array.includes(mockAddress1),
       )
 
     t.expect(
       (
-        addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+        addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
         addressStore
-        ->AddressStore.pendingEntries
+        ->AddressStore.pendingEntriesForTest
         ->Array.map(ia => (ia.address, ia.contractName)),
         inPartitionsOf("Gravatar"),
         inPartitionsOf("NftFactory"),
@@ -1122,9 +1130,9 @@ describe("FetchState.registerDynamicContracts", () => {
 
     t.expect(
       (
-        addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+        addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
         addressStore
-        ->AddressStore.pendingEntries
+        ->AddressStore.pendingEntriesForTest
         ->Array.map(ia => (ia.address, ia.contractName)),
         updatedFetchState.optimizedPartitions.entities
         ->Dict.valuesToArray
@@ -1132,7 +1140,7 @@ describe("FetchState.registerDynamicContracts", () => {
           p =>
             p.addresses
             ->AddressSet.filterByContracts(["Gravatar"])
-            ->AddressSet.addresses
+            ->AddressSet.addressesForTest
             ->Array.includes(mockAddress1),
         ),
       ),
@@ -1163,9 +1171,9 @@ describe("FetchState.registerDynamicContracts", () => {
 
     // Verify that both DC2 and DC3 were registered correctly
     let hasAddress1 =
-      addressStore->AddressStore.getAll(mockAddress1)->Utils.Array.notEmpty
+      addressStore->AddressStore.getAllForTest(mockAddress1)->Utils.Array.notEmpty
     let hasAddress2 =
-      addressStore->AddressStore.getAll(mockAddress2)->Utils.Array.notEmpty
+      addressStore->AddressStore.getAllForTest(mockAddress2)->Utils.Array.notEmpty
 
     t.expect(hasAddress1, ~message="Address1 should be registered").toBe(true)
     t.expect(
@@ -1398,7 +1406,7 @@ describe("FetchState.registerDynamicContracts", () => {
           p => (
             p.id,
             p.dynamicContract,
-            p.addresses->AddressSet.addresses,
+            p.addresses->AddressSet.addressesForTest,
             p.mergeBlock,
             p.latestFetchedBlock,
           ),
@@ -1438,7 +1446,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
     t.expect(
       addressStore
-      ->AddressStore.pendingEntries
+      ->AddressStore.pendingEntriesForTest
       ->Array.map(ia => (ia.address, ia.registrationBlock)),
       ~message=`Should choose the earliest dc from the batch
   And drop the later one, so they are not duplicated in the db`,
@@ -1447,8 +1455,8 @@ describe("FetchState.registerDynamicContracts", () => {
     t.expect(
       (
         addressStore->AddressStore.size,
-        addressStore->AddressStore.getAll(mockAddress0),
-        addressStore->AddressStore.getAll(mockAddress1),
+        addressStore->AddressStore.getAllForTest(mockAddress0),
+        addressStore->AddressStore.getAllForTest(mockAddress1),
       ),
       ~message="Should choose the earliest dc from the batch",
     ).toEqual((
@@ -3561,13 +3569,13 @@ describe("Dynamic contracts with start blocks", () => {
 
     // The contract should be registered in addressStore
     t.expect(
-      addressStore->AddressStore.getAll(mockAddress1)->Utils.Array.notEmpty,
+      addressStore->AddressStore.getAllForTest(mockAddress1)->Utils.Array.notEmpty,
       ~message="Dynamic contract should be registered in addressStore",
     ).toBeTruthy()
 
     // Verify the startBlock is set correctly
     let registeredContract =
-      addressStore->AddressStore.getAll(mockAddress1)->Array.getUnsafe(0)
+      addressStore->AddressStore.getAllForTest(mockAddress1)->Array.getUnsafe(0)
 
     t.expect(
       registeredContract.effectiveStartBlock,
@@ -3597,10 +3605,10 @@ describe("Dynamic contracts with start blocks", () => {
 
     // Verify both contracts are registered with correct startBlocks
     let contract1Registered =
-      addressStore->AddressStore.getAll(mockAddress1)->Array.getUnsafe(0)
+      addressStore->AddressStore.getAllForTest(mockAddress1)->Array.getUnsafe(0)
 
     let contract2Registered =
-      addressStore->AddressStore.getAll(mockAddress2)->Array.getUnsafe(0)
+      addressStore->AddressStore.getAllForTest(mockAddress2)->Array.getUnsafe(0)
 
     t.expect(
       contract1Registered.effectiveStartBlock,
@@ -5820,7 +5828,7 @@ describe("FetchState client-side address filtering", () => {
         (
           catchUp.selection.dependsOnAddresses,
           catchUp.dynamicContract,
-          catchUp.addresses->AddressSet.addresses,
+          catchUp.addresses->AddressSet.addressesForTest,
         ),
       ),
       ~message="standing partition untouched at 50; catch-up fetches only the new address over [19, 50]",

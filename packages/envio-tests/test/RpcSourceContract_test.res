@@ -72,14 +72,16 @@ let makeAddressStore = (~registration: Internal.evmOnEventRegistration) =>
     ~addresses=[
       {address, contractName: registration.eventConfig.contractName, registrationBlock: -1},
     ],
-    // The source lowercases addresses, so the set must render them that way for
-    // the pinned eth_getLogs request bodies to match.
-    ~shouldChecksum=false,
   )
 
 // One store per source, as in production: the client routes against it and the
 // query's address set is cut from that same store.
-let makeSource = (~url, ~registration: Internal.evmOnEventRegistration, ~syncConfig=syncConfig) => {
+let makeSource = (
+  ~url,
+  ~registration: Internal.evmOnEventRegistration,
+  ~syncConfig=syncConfig,
+  ~lowercaseAddresses=true,
+) => {
   let addressStore = makeAddressStore(~registration)
   let options: RpcSource.options = {
     url,
@@ -87,10 +89,10 @@ let makeSource = (~url, ~registration: Internal.evmOnEventRegistration, ~syncCon
     onEventRegistrations: [registration],
     sourceFor: Sync,
     syncConfig,
-    lowercaseAddresses: true,
+    lowercaseAddresses,
     addressStore,
-    blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-    transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+    blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
+    transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
   }
   (RpcSource.make(options), addressStore)
 }
@@ -329,6 +331,35 @@ describe("RPC source public contract", () => {
     })
   })
 
+  // A chain that shows the user checksummed addresses still filters on the
+  // canonical lowercase encoding: what `eth_getLogs` matches on is the chain's
+  // own spelling of a key, not the one `chain.<Contract>.addresses` presents.
+  // `successfulCalls` pins the lowercase filter, and `withScenario` rejects a
+  // request that does not match it.
+  Async.it("filters on canonical addresses on a chain that checksums", async t => {
+    let srcAddresses = await MockRpcServer.withScenario(
+      ~name="canonical address filter",
+      ~calls=successfulCalls(~logs=[log(~logIndex="0x2")]),
+      async mock => {
+        let registration = makeRegistration()
+        let (source, addressStore) = makeSource(
+          ~url=mock.url,
+          ~registration,
+          ~lowercaseAddresses=false,
+        )
+        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        | Ok(page) => page.events->Array.map(event => event.srcAddress)
+        | Error(_) => JsError.throwWithMessage("Expected the pinned RPC page to succeed")
+        }
+      },
+    )
+
+    // The addresses the chain hands back are checksummed, which is what makes
+    // the lowercase filter above a statement about the query rather than about
+    // the chain.
+    t.expect(srcAddresses).toEqual([contractAddress])
+  })
+
   Async.it("pins that onReorg leaves the partition's paging range alone", async t => {
     // onReorg drops in-flight reads so nothing issued afterwards joins a
     // response describing the orphaned fork — an effect only visible under
@@ -492,8 +523,8 @@ describe("RPC source public contract", () => {
           syncConfig: defaultSyncConfig,
           lowercaseAddresses: true,
           addressStore,
-          blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-          transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+          blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
+          transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
         }
         let source = RpcSource.make(options)
         let call = () =>
@@ -743,8 +774,7 @@ describe("RPC source public contract", () => {
           ~addresses=[
             {address: addressA, contractName: "ContractA", registrationBlock: -1},
             {address: addressB, contractName: "ContractB", registrationBlock: -1},
-          ],
-          ~shouldChecksum=false,
+          ]
         )
         let options: RpcSource.options = {
           url: mock.url,
@@ -754,8 +784,8 @@ describe("RPC source public contract", () => {
           syncConfig,
           lowercaseAddresses: true,
           addressStore,
-          blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-          transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+          blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
+          transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
         }
         let source = RpcSource.make(options)
         switch await RpcSourcePins.capture(

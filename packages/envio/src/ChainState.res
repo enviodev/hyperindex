@@ -43,6 +43,10 @@ type t = {
   maxReorgDepth: int,
   // One-way: past it, everything the chain writes can still be rolled back.
   mutable isInReorgThreshold: bool,
+  // How this chain spells the addresses materialised out of its stores, from
+  // `lowercaseAddresses`. The stores hold raw bytes; the spelling is decided
+  // where they are read.
+  shouldChecksum: bool,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
@@ -136,9 +140,10 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
-  ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+  ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm),
   ~chainDensity=None,
-  ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+  ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm),
+  ~shouldChecksum=false,
   ~reorgThresholdReadyTolerance=100,
   ~perChainEntities: array<Internal.entityConfig>=[],
   ~logger: Pino.t,
@@ -165,6 +170,7 @@ let make = (
     isInReorgThreshold,
     transactionStore,
     blockStore,
+    shouldChecksum,
     reorgThresholdReadyTolerance,
     blockRangeFetchSeconds: 0.,
     blockRangeParseSeconds: 0.,
@@ -228,7 +234,6 @@ let makeInternal = (
   // chain's addresses into it, and every source client holds the same handle.
   let addressStore = AddressStore.make(
     ~ecosystem=config.ecosystem.name,
-    ~shouldChecksum=!lowercaseAddresses,
     ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
   )
 
@@ -274,14 +279,8 @@ let makeInternal = (
   })
 
   // Before the sources, which are constructed holding them.
-  let blockStore = BlockStore.make(
-    ~ecosystem=config.ecosystem.name,
-    ~shouldChecksum=!lowercaseAddresses,
-  )
-  let transactionStore = TransactionStore.make(
-    ~ecosystem=config.ecosystem.name,
-    ~shouldChecksum=!lowercaseAddresses,
-  )
+  let blockStore = BlockStore.make(~ecosystem=config.ecosystem.name)
+  let transactionStore = TransactionStore.make(~ecosystem=config.ecosystem.name)
 
   // Create sources lazily here - this is where API token validation happens
   let sources = ChainSources.make(
@@ -302,7 +301,6 @@ let makeInternal = (
         blockHash: cp.blockHash,
       }),
       ~ecosystem=config.ecosystem.name,
-      ~shouldChecksum=!lowercaseAddresses,
     )
     blockStore
     ->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false)
@@ -339,6 +337,7 @@ let makeInternal = (
     ~transactionStore,
     ~chainDensity,
     ~blockStore,
+    ~shouldChecksum=!lowercaseAddresses,
     ~reorgThresholdReadyTolerance=config.reorgThresholdReadyTolerance,
     ~logger,
   )
@@ -399,6 +398,7 @@ let makeFromDbState = (
 let logger = (cs: t) => cs.logger
 let blockStore = (cs: t) => cs.blockStore
 let transactionStore = (cs: t) => cs.transactionStore
+let shouldChecksum = (cs: t) => cs.shouldChecksum
 let entities = (cs: t) => cs.entities
 
 // Rollback discards every uncommitted change, so this chain's partition is
@@ -455,7 +455,7 @@ let setRollbackTargetBlock = (cs: t, ~blockNumber) => cs.rollbackTargetBlock = S
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
 let contractAddresses = (cs: t, ~contractName) =>
-  cs.addressStore->AddressStore.contractAddresses(contractName)
+  cs.addressStore->AddressStore.contractAddresses(contractName, ~shouldChecksum=cs.shouldChecksum)
 
 // Hands over the dynamically registered addresses the database hasn't seen yet,
 // up to the block the caller is about to commit, each paired with the checkpoint
@@ -801,13 +801,18 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
 // `groupBatchItems`). Store-backed items always get a transaction object - the
 // selected fields, or `{}` when nothing was selected - so `event.transaction`
 // is never `undefined` (matching the inline sources).
-let applyTransactionGroups = async (store: TransactionStore.t, g: transactionGroups) => {
+let applyTransactionGroups = async (
+  store: TransactionStore.t,
+  g: transactionGroups,
+  ~shouldChecksum,
+) => {
   if g.payloadGroups->Utils.Array.notEmpty {
     if g.anyTransactionFieldSelected {
       let txs = await store->TransactionStore.materialize(
         ~blockNumbers=g.txBlockNumbers,
         ~transactionIndices=g.transactionIndices,
         ~masks=g.transactionMasks,
+        ~shouldChecksum,
       )
       g.payloadGroups->Array.forEachWithIndex((payloads, i) => {
         let tx = txs->Array.getUnsafe(i)
@@ -828,11 +833,12 @@ let applyTransactionGroups = async (store: TransactionStore.t, g: transactionGro
 }
 
 // Materialise a `BlockStore` against precomputed groups (see `groupBatchItems`).
-let applyBlockGroups = async (store: BlockStore.t, g: blockGroups) => {
+let applyBlockGroups = async (store: BlockStore.t, g: blockGroups, ~shouldChecksum) => {
   if g.blockItemGroups->Utils.Array.notEmpty {
     let blocks = await store->BlockStore.materialize(
       ~blockNumbers=g.blockBlockNumbers,
       ~masks=g.blockMasks,
+      ~shouldChecksum,
     )
     g.blockItemGroups->Array.forEachWithIndex((group, i) => {
       let block = blocks->Array.getUnsafe(i)
@@ -848,8 +854,8 @@ let applyBlockGroups = async (store: BlockStore.t, g: blockGroups) => {
 let materializeBatchItems = async (cs: t, ~items: array<Internal.item>) => {
   let (txGroups, blockGroups) = items->groupBatchItems
   let _ = await Promise.all2((
-    cs.transactionStore->applyTransactionGroups(txGroups),
-    cs.blockStore->applyBlockGroups(blockGroups),
+    cs.transactionStore->applyTransactionGroups(txGroups, ~shouldChecksum=cs.shouldChecksum),
+    cs.blockStore->applyBlockGroups(blockGroups, ~shouldChecksum=cs.shouldChecksum),
   ))
 }
 
@@ -862,11 +868,12 @@ let materializePageItems = async (
   ~items: array<Internal.item>,
   ~transactionStore: TransactionStore.t,
   ~blockStore: BlockStore.t,
+  ~shouldChecksum: bool,
 ) => {
   let (txGroups, blockGroups) = items->groupBatchItems
   let _ = await Promise.all2((
-    transactionStore->applyTransactionGroups(txGroups),
-    blockStore->applyBlockGroups(blockGroups),
+    transactionStore->applyTransactionGroups(txGroups, ~shouldChecksum),
+    blockStore->applyBlockGroups(blockGroups, ~shouldChecksum),
   ))
 }
 

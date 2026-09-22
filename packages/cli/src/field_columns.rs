@@ -16,12 +16,10 @@ use crate::evm_hypersync_source::types::{
 
 /// Ecosystem selecting `materialize`'s decoder, shared by every per-chain field
 /// store (`TransactionStore`, `BlockStore`). A store is per-chain, hence
-/// single-ecosystem, and is fixed at construction. `Evm` carries that chain's
-/// address-checksumming setting — a per-chain EVM constant the decoder needs,
-/// which the type ties to EVM so it can't be set without (or forgotten for) it.
+/// single-ecosystem, and is fixed at construction.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ecosystem {
-    Evm { should_checksum: bool },
+    Evm,
     Svm,
     Fuel,
 }

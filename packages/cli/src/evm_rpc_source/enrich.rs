@@ -263,7 +263,6 @@ pub(crate) struct EnrichRequest<'a> {
     pub known_transactions: &'a TransactionStore,
     /// The union of every registration's selection on this chain.
     pub chain_fields: SelectedFields,
-    pub should_checksum: bool,
 }
 
 pub(crate) struct EnrichedPage {
@@ -358,7 +357,6 @@ pub(crate) async fn page(
         known_blocks,
         known_transactions,
         chain_fields,
-        should_checksum,
     } = request;
 
     let block_plan = plan_blocks(
@@ -391,8 +389,8 @@ pub(crate) async fn page(
         }
     };
 
-    let page_blocks = BlockStore::new_evm(should_checksum);
-    let page_transactions = TransactionStore::new_evm(should_checksum);
+    let page_blocks = BlockStore::new_evm();
+    let page_transactions = TransactionStore::new_evm();
 
     // What the logs themselves observed of each block, which the fetched blocks
     // and the stored chain are then cross-validated against.
@@ -593,7 +591,6 @@ pub(crate) async fn fetch_block_hashes(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
     block_numbers: &[u64],
-    should_checksum: bool,
 ) -> Result<BlockStore, EnrichError> {
     let plan = BlockReadPlan {
         covering: BLOCK_OBSERVATION_MASK,
@@ -603,7 +600,7 @@ pub(crate) async fn fetch_block_hashes(
     };
     let blocks = fetch_blocks(client, fetches, &plan).await?;
 
-    let page = BlockStore::new_evm(should_checksum);
+    let page = BlockStore::new_evm();
     fill_block_page(&page, Vec::new(), plan.covering, blocks);
     Ok(page)
 }
@@ -754,7 +751,7 @@ mod tests {
         // The case several partitions scanning the same range hit: the first
         // fetched the block, and the rest must not fetch it again.
         let wanted = block_bit(EvmBlockField::GasUsed);
-        let known = BlockStore::new_evm(false);
+        let known = BlockStore::new_evm();
         known.insert_evm_blocks_covering(
             vec![Block {
                 number: Some(50),
@@ -768,7 +765,7 @@ mod tests {
 
     #[test]
     fn a_block_covered_only_for_other_fields_is_still_read() {
-        let known = BlockStore::new_evm(false);
+        let known = BlockStore::new_evm();
         known.insert_evm_blocks_covering(
             vec![Block {
                 number: Some(50),
@@ -785,7 +782,7 @@ mod tests {
     fn a_boundary_block_is_read_even_when_the_store_covers_it() {
         // The boundary blocks are this range's reorg observations, so a stored
         // answer — which is some earlier response's view of them — will not do.
-        let known = BlockStore::new_evm(false);
+        let known = BlockStore::new_evm();
         for number in [40u64, 60] {
             known.insert_evm_blocks_covering(
                 vec![Block {
@@ -804,7 +801,7 @@ mod tests {
     fn a_block_no_item_wants_fields_from_is_not_read() {
         // Its hash still reaches the page as an observation off the log, which
         // is all reorg detection needs from it.
-        let plan = plan_blocks(&refs_for(50, 0, 0), 40, 60, &BlockStore::new_evm(false), 0);
+        let plan = plan_blocks(&refs_for(50, 0, 0), 40, 60, &BlockStore::new_evm(), 0);
         assert_eq!(planned_numbers(&plan), vec![40, 60]);
     }
 
@@ -812,13 +809,13 @@ mod tests {
     fn a_boundary_block_an_item_wants_nothing_from_is_still_read() {
         // The item makes the block referenced but selects no field of it; it is
         // still the range's boundary, so its reorg observation is read.
-        let plan = plan_blocks(&refs_for(40, 0, 0), 40, 40, &BlockStore::new_evm(false), 0);
+        let plan = plan_blocks(&refs_for(40, 0, 0), 40, 40, &BlockStore::new_evm(), 0);
         assert_eq!(planned_numbers(&plan), vec![40]);
     }
 
     #[test]
     fn a_single_block_range_reads_that_block_once() {
-        let plan = plan_blocks(&PageRefs::default(), 40, 40, &BlockStore::new_evm(false), 0);
+        let plan = plan_blocks(&PageRefs::default(), 40, 40, &BlockStore::new_evm(), 0);
         assert_eq!(planned_numbers(&plan), vec![40]);
     }
 
@@ -829,14 +826,14 @@ mod tests {
             0,
             tx_bit(EvmTxField::Hash) | tx_bit(EvmTxField::TransactionIndex),
         );
-        let plan = plan_transactions(&refs, &TransactionStore::new_evm(false), 0);
+        let plan = plan_transactions(&refs, &TransactionStore::new_evm(), 0);
         assert_eq!(planned_keys(&plan), Vec::<TxKey>::new());
     }
 
     #[test]
     fn a_transaction_the_store_already_covers_is_not_read_again() {
         let wanted = tx_bit(EvmTxField::Gas);
-        let known = TransactionStore::new_evm(false);
+        let known = TransactionStore::new_evm();
         known.insert_evm_txs_covering(
             vec![Transaction {
                 block_number: Some(50u64.into()),
@@ -854,7 +851,7 @@ mod tests {
         // `to` is null on a contract creation. Judged by stored values alone
         // the row would look unfetched and be requested on every later page.
         let wanted = tx_bit(EvmTxField::To);
-        let known = TransactionStore::new_evm(false);
+        let known = TransactionStore::new_evm();
         known.insert_evm_txs_covering(
             vec![Transaction {
                 block_number: Some(50u64.into()),
@@ -893,11 +890,7 @@ mod tests {
                 tx_mask: tx_bit(EvmTxField::Gas),
             },
         );
-        let plan = plan_transactions(
-            &refs,
-            &TransactionStore::new_evm(false),
-            tx_bit(EvmTxField::Gas),
-        );
+        let plan = plan_transactions(&refs, &TransactionStore::new_evm(), tx_bit(EvmTxField::Gas));
         assert_eq!(planned_keys(&plan), vec![(50, 1)]);
     }
 
@@ -945,7 +938,7 @@ mod tests {
                 },
             );
         }
-        let mut sizes: Vec<usize> = plan_transactions(&refs, &TransactionStore::new_evm(false), 0)
+        let mut sizes: Vec<usize> = plan_transactions(&refs, &TransactionStore::new_evm(), 0)
             .iter()
             .map(|group| group.entries.len())
             .collect();
@@ -963,7 +956,7 @@ mod tests {
             &refs_for(50, miner, 0),
             40,
             60,
-            &BlockStore::new_evm(false),
+            &BlockStore::new_evm(),
             miner | gas_used,
         );
         assert_eq!(
@@ -984,7 +977,7 @@ mod tests {
         let miner = block_bit(EvmBlockField::Miner);
         let gas_used = block_bit(EvmBlockField::GasUsed);
         let chain_mask = miner | gas_used;
-        let known = BlockStore::new_evm(false);
+        let known = BlockStore::new_evm();
         let first = plan_blocks(&refs_for(50, miner, 0), 40, 60, &known, chain_mask);
         known.insert_evm_blocks_covering(
             vec![Block {
@@ -1010,7 +1003,7 @@ mod tests {
         let gas_used = tx_bit(EvmTxField::GasUsed);
         let plan = plan_transactions(
             &refs_for(50, 0, gas),
-            &TransactionStore::new_evm(false),
+            &TransactionStore::new_evm(),
             gas | input | gas_used,
         );
         assert_eq!(
@@ -1034,7 +1027,7 @@ mod tests {
         // every field comes off the log still costs nothing.
         let plan = plan_transactions(
             &refs_for(50, 0, tx_bit(EvmTxField::Hash)),
-            &TransactionStore::new_evm(false),
+            &TransactionStore::new_evm(),
             tx_bit(EvmTxField::Gas) | tx_bit(EvmTxField::GasUsed),
         );
         assert_eq!(planned_keys(&plan), Vec::<TxKey>::new());
@@ -1048,7 +1041,7 @@ mod tests {
         let gas = tx_bit(EvmTxField::Gas);
         let plan = plan_transactions(
             &refs_for(50, 0, gas),
-            &TransactionStore::new_evm(false),
+            &TransactionStore::new_evm(),
             gas | TX_EAGER_EXCLUDED_MASK,
         );
         assert_eq!(
@@ -1063,7 +1056,7 @@ mod tests {
         let access_list = tx_bit(EvmTxField::AccessList);
         let plan = plan_transactions(
             &refs_for(50, 0, access_list),
-            &TransactionStore::new_evm(false),
+            &TransactionStore::new_evm(),
             access_list,
         );
         assert_eq!(

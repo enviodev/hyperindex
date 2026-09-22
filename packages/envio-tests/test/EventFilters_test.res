@@ -494,7 +494,6 @@ describe("Test eventFilters", () => {
         reg :> Internal.onEventRegistration
       )),
       ~addresses=[{address: providerAddress, contractName: "TestEvents", registrationBlock: -1}],
-      ~shouldChecksum=true,
     )
 
     let makeEmittedLog = (~topics, ~logIndex): emittedLog => {
@@ -575,8 +574,8 @@ describe("Test eventFilters", () => {
         retry: 0,
       },
       addressStore->AddressStore.makeSet(~contractName="TestEvents"),
-      BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=true),
-      TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=true),
+      BlockStore.make(~ecosystem=Ecosystem.Evm),
+      TransactionStore.make(~ecosystem=Ecosystem.Evm),
     ) catch {
     | exn =>
       mock.close()

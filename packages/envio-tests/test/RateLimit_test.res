@@ -36,7 +36,6 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
           }
         }),
         ~ecosystem=Evm,
-        ~shouldChecksum=false,
       )
       Promise.resolve({Source.result: Ok(data), requestStats: []})
     },
@@ -67,14 +66,12 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
         let response = BlockStore.fromJs(
           [{BlockStore.blockNumber, blockHash: evmHash("0x01")}],
           ~ecosystem=Evm,
-          ~shouldChecksum=false,
         )
         if attempt.contents === 0 {
           attempt := 1
           let conflictingPage = BlockStore.fromJs(
             [{BlockStore.blockNumber, blockHash: evmHash("0x02")}],
             ~ecosystem=Evm,
-            ~shouldChecksum=false,
           )
           response->BlockStore.appendPage(conflictingPage)
         }

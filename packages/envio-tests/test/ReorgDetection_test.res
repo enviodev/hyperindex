@@ -10,11 +10,10 @@ describe("Block store reorg detection", () => {
         blockHash,
       }),
       ~ecosystem=Svm, // SVM stores hashes as raw strings, so short mock hashes work
-      ~shouldChecksum=false,
     )
 
   let mock = entries => {
-    let store = BlockStore.make(~ecosystem=Svm, ~shouldChecksum=false)
+    let store = BlockStore.make(~ecosystem=Svm)
     switch store->BlockStore.merge(makePage(entries), ~fromBlock=0, ~reportOnly=false) {
     | Null.Value(_) => JsError.throwWithMessage("Unexpected reorg detected in mock setup")
     | Null.Null => ()

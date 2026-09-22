@@ -21,6 +21,7 @@ let runContractRegistersOrThrow = async (
     ~items=itemsWithContractRegister,
     ~transactionStore=chainState->ChainState.transactionStore,
     ~blockStore=chainState->ChainState.blockStore,
+    ~shouldChecksum=chainState->ChainState.shouldChecksum,
   )
 
   let registrations: array<AddressStore.registration> = []

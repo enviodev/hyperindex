@@ -274,7 +274,6 @@ pub struct EvmRpcClient {
     /// asked for, so a later page with a different selection is served from the
     /// stores rather than refetched.
     chain_fields: SelectedFields,
-    should_checksum: bool,
 }
 
 /// Everything one page read works from: the range it covers, the queries to run
@@ -377,7 +376,6 @@ impl EvmRpcClient {
             fetches: Fetches::default(),
             registration_fields,
             chain_fields,
-            should_checksum: checksum_addresses,
         })
     }
 
@@ -400,16 +398,13 @@ impl EvmRpcClient {
         &self,
         block_numbers: Vec<i64>,
     ) -> napi::Result<(BlockHashResult, BlockStore)> {
-        let should_checksum = self.should_checksum;
         let numbers: Vec<u64> = block_numbers
             .into_iter()
             .map(u64::try_from)
             .collect::<Result<_, _>>()
             .context("block number is negative")
             .map_err(map_err)?;
-        match enrich::fetch_block_hashes(&self.inner, &self.fetches, &numbers, should_checksum)
-            .await
-        {
+        match enrich::fetch_block_hashes(&self.inner, &self.fetches, &numbers).await {
             Ok(blocks) => Ok((
                 BlockHashResult {
                     message: None,
@@ -601,10 +596,7 @@ impl EvmRpcClient {
     }
 
     fn empty_stores(&self) -> (BlockStore, TransactionStore) {
-        (
-            BlockStore::new_evm(self.should_checksum),
-            TransactionStore::new_evm(self.should_checksum),
-        )
+        (BlockStore::new_evm(), TransactionStore::new_evm())
     }
 
     /// Reads the logs, then everything the routed items need to be materialised.
@@ -671,7 +663,6 @@ impl EvmRpcClient {
                 known_blocks: query.known_blocks,
                 known_transactions: query.known_transactions,
                 chain_fields: self.chain_fields,
-                should_checksum: self.should_checksum,
             },
         )
         .await?;

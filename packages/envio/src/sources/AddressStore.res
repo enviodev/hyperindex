@@ -45,15 +45,14 @@ type makeSetOptions = {
   limit?: int,
 }
 
-@send
-external newEvm: (Core.addressStoreCtor, bool, array<contract>) => t = "newEvm"
+@send external newEvm: (Core.addressStoreCtor, array<contract>) => t = "newEvm"
 @send external newSvm: (Core.addressStoreCtor, array<contract>) => t = "newSvm"
 @send external newFuel: (Core.addressStoreCtor, array<contract>) => t = "newFuel"
 
-let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool, ~contracts: array<contract>): t => {
+let make = (~ecosystem: Ecosystem.name, ~contracts: array<contract>): t => {
   let ctor = Core.getAddon().addressStore
   switch ecosystem {
-  | Evm => ctor->newEvm(shouldChecksum, contracts)
+  | Evm => ctor->newEvm(contracts)
   | Svm => ctor->newSvm(contracts)
   | Fuel => ctor->newFuel(contracts)
   }
@@ -105,7 +104,6 @@ let contractsOf = (
 
 @send
 external registerBatchRaw: (t, array<registration>) => array<rawVerdict> = "registerBatch"
-@send external seedBatchRaw: (t, array<registration>) => array<rawVerdict> = "seedBatch"
 
 @send
 external seedRowsRaw: (
@@ -128,7 +126,12 @@ external drainForWrite: (t, int, array<int>) => array<drainedAddress> = "drainFo
 
 @send external pendingCount: t => int = "pendingCount"
 
-@send external pendingEntries: t => array<Internal.indexingContract> = "pendingEntries"
+// For assertions only - nothing in the indexer reads it. The write path drains
+// instead, and `pendingCount` is what the runtime asks; neither lets a test see
+// which registrations are queued without consuming them.
+@send
+external pendingEntriesForTest: t => array<Internal.indexingContract> = "pendingEntriesForTest"
+
 @send external makeSetRaw: (t, string, makeSetOptions) => AddressSet.t = "makeSet"
 @send external contractCount: (t, string) => int = "contractCount"
 
@@ -145,11 +148,19 @@ type rolledBackAddress = {address: NodeJs.Buffer.t, contractId: int}
 // still point at the right entries.
 @send external rollback: (t, int) => array<rolledBackAddress> = "rollback"
 
-@send external getAll: (t, Address.t) => array<Internal.indexingContract> = "getAll"
+// For assertions only - nothing in the indexer reads it. The runtime's gate is
+// `isIndexedAt` and the user sees `contractAddresses`; neither exposes an
+// entry's own start blocks or the order registrations sort into.
+@send
+external getAllForTest: (t, Address.t) => array<Internal.indexingContract> = "getAllForTest"
 
 @send external dynamicContractNames: t => array<string> = "dynamicContractNames"
 
-@send external contractAddresses: (t, string) => array<Address.t> = "contractAddresses"
+// The one place the store spells an address the way the chain shows it: the
+// setting comes from the caller, since the store keeps keys, not spellings.
+@send
+external contractAddresses: (t, string, ~shouldChecksum: bool) => array<Address.t> =
+  "contractAddresses"
 
 let toVerdict = (raw: rawVerdict): verdict =>
   switch raw.kind {
@@ -166,9 +177,6 @@ let toVerdict = (raw: rawVerdict): verdict =>
 // An unknown contract name throws with none of the batch applied.
 let registerBatch = (store: t, registrations: array<registration>): array<verdict> =>
   store->registerBatchRaw(registrations)->Array.map(toVerdict)
-
-let seedBatch = (store: t, registrations: array<registration>): array<verdict> =>
-  store->seedBatchRaw(registrations)->Array.map(toVerdict)
 
 let makeSet = (store: t, ~contractName, ~options={}: makeSetOptions) =>
   store->makeSetRaw(contractName, options)
