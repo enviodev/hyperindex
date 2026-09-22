@@ -26,7 +26,7 @@ use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
-use enrich::{EnrichError, EnrichRequest, Fetches, PageRefs, SelectedFields};
+use enrich::{BlockRead, EnrichError, EnrichRequest, Fetches, PageRefs, SelectedFields};
 use hypersync_client::format::{self, Hex};
 use interval::{IntervalState, SyncConfig};
 
@@ -269,11 +269,12 @@ pub struct EvmRpcClient {
     /// and transaction are fetched for the union of the masks of the items that
     /// reference them, so an event selecting nothing costs no request.
     registration_fields: HashMap<i64, SelectedFields>,
-    /// The union of the above. A block or transaction is decoded for every
-    /// field the chain selects, not just the ones the page that fetched it
-    /// asked for, so a later page with a different selection is served from the
+    /// What every block and transaction is decoded for: the union of the
+    /// selections above, not just the ones of the page that fetched the
+    /// response, so a later page with a different selection is served from the
     /// stores rather than refetched.
-    chain_fields: SelectedFields,
+    block_read: BlockRead,
+    chain_tx_mask: u64,
 }
 
 /// Everything one page read works from: the range it covers, the queries to run
@@ -366,7 +367,15 @@ impl EvmRpcClient {
                 )
             })
             .collect();
-        let chain_fields = SelectedFields::union(registration_fields.values().copied());
+        // Registrations are fixed once the client is built, so what a response
+        // is read for is too.
+        let chain_fields =
+            registration_fields
+                .values()
+                .fold(SelectedFields::default(), |acc, fields| SelectedFields {
+                    block_mask: acc.block_mask | fields.block_mask,
+                    tx_mask: acc.tx_mask | fields.tx_mask,
+                });
         Ok(EvmRpcClient {
             inner: Arc::new(inner),
             decoder,
@@ -375,7 +384,8 @@ impl EvmRpcClient {
             intervals: IntervalState::new(),
             fetches: Fetches::default(),
             registration_fields,
-            chain_fields,
+            block_read: BlockRead::for_chain(chain_fields.block_mask),
+            chain_tx_mask: chain_fields.tx_mask,
         })
     }
 
@@ -662,7 +672,8 @@ impl EvmRpcClient {
                 refs,
                 known_blocks: query.known_blocks,
                 known_transactions: query.known_transactions,
-                chain_fields: self.chain_fields,
+                block_read: &self.block_read,
+                chain_tx_mask: self.chain_tx_mask,
             },
         )
         .await?;

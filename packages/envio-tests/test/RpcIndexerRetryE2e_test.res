@@ -17,12 +17,8 @@ let transfers: array<RpcE2eChain.transfer> = [
 // can only complete if the loop retried it.
 let servedFailure = ref(false)
 
-let server = ref(None)
-let mock = () =>
-  server.contents->Option.getOrThrow(~message="the mock RPC server was never started")
-
-Vitest.Async.beforeAll(async () => {
-  let started = await MockRpcServer.start(~port, ~handler=body => {
+let mock = RpcE2eChain.serveDuringSuite(() =>
+  MockRpcServer.start(~port, ~handler=body => {
     let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
     let method = request->Dict.getUnsafe("method")->JSON.Decode.string->Option.getOrThrow
     if method == "eth_getLogs" && !servedFailure.contents {
@@ -48,15 +44,7 @@ Vitest.Async.beforeAll(async () => {
       )
     }
   })
-  server := Some(started)
-})
-
-Vitest.Async.afterAll(async () => {
-  switch server.contents {
-  | Some(started) => await started.closeAsync()
-  | None => ()
-  }
-})
+)
 
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=RpcE2eChain.configYaml(

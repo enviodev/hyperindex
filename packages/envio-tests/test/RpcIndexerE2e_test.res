@@ -17,23 +17,11 @@ let transfers: array<RpcE2eChain.transfer> = [
   {blockNumber: 101, value: 4, logIndex: 1},
 ]
 
-let server = ref(None)
-let mock = () =>
-  server.contents->Option.getOrThrow(~message="the mock RPC server was never started")
-
-Vitest.Async.beforeAll(async () => {
-  let started = await MockRpcServer.makeWithParams(~port, ~getResult=(~method, ~params) =>
+let mock = RpcE2eChain.serveDuringSuite(() =>
+  MockRpcServer.makeWithParams(~port, ~getResult=(~method, ~params) =>
     RpcE2eChain.resultFor(~transfers, ~height=105, ~method, ~params)
   )
-  server := Some(started)
-})
-
-Vitest.Async.afterAll(async () => {
-  switch server.contents {
-  | Some(started) => await started.closeAsync()
-  | None => ()
-  }
-})
+)
 
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=RpcE2eChain.configYaml(~name="rpc-indexer-e2e", ~url),

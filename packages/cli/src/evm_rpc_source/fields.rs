@@ -22,7 +22,7 @@ use crate::evm_hypersync_source::query::{BlockField, TransactionField};
 use crate::transaction_store::EvmTxField;
 
 /// Which JSON-RPC response carries a transaction field.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, strum::VariantArray)]
 pub(crate) enum Carrier {
     /// Already known from the log that referenced the transaction, so it costs
     /// no request. `eth_getTransactionReceipt` spells the hash
@@ -160,11 +160,6 @@ pub(crate) fn tx_mask(fields: &[TransactionField]) -> u64 {
 /// The block field the store derives from its key, so a row always has it.
 pub(crate) const BLOCK_KEY_MASK: u64 = 1u64 << (EvmBlockField::Number as u32);
 
-/// The transaction fields the referencing log already carries, so they cost no
-/// request and a row always has them.
-pub(crate) const TX_LOG_MASK: u64 =
-    (1u64 << (EvmTxField::TransactionIndex as u32)) | (1u64 << (EvmTxField::Hash as u32));
-
 /// The reorg-detection fields every fetched block carries, whatever the user
 /// selected: the key, the timestamp the indexer reports progress with, and the
 /// two hashes a fork is detected by.
@@ -185,10 +180,12 @@ pub(crate) const TX_EAGER_EXCLUDED_MASK: u64 = (1u64 << (EvmTxField::EffectiveGa
 
 /// Every transaction field one response carries. Read once per referenced
 /// transaction, so the fold over `tx_carrier` happens once for the process.
+/// `Carrier::Log`'s own mask is the fields the referencing log already carries,
+/// which cost no request and are always on a row.
 pub(crate) fn tx_mask_of(carrier: Carrier) -> u64 {
-    static MASKS: LazyLock<[u64; 4]> = LazyLock::new(|| {
-        use strum::VariantArray;
-        let mut masks = [0u64; 4];
+    use strum::VariantArray;
+    static MASKS: LazyLock<[u64; Carrier::VARIANTS.len()]> = LazyLock::new(|| {
+        let mut masks = [0u64; Carrier::VARIANTS.len()];
         for &field in EvmTxField::VARIANTS {
             masks[tx_carrier(field) as usize] |= 1u64 << (field as u32);
         }

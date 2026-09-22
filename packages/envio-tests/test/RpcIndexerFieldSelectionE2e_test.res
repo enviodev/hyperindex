@@ -12,23 +12,11 @@ let url = `http://127.0.0.1:${port->Int.toString}`
 
 let transfers: array<RpcE2eChain.transfer> = [{blockNumber: 100, value: 3, logIndex: 0}]
 
-let server = ref(None)
-let mock = () =>
-  server.contents->Option.getOrThrow(~message="the mock RPC server was never started")
-
-Vitest.Async.beforeAll(async () => {
-  let started = await MockRpcServer.makeWithParams(~port, ~getResult=(~method, ~params) =>
+let mock = RpcE2eChain.serveDuringSuite(() =>
+  MockRpcServer.makeWithParams(~port, ~getResult=(~method, ~params) =>
     RpcE2eChain.resultFor(~transfers, ~height=105, ~method, ~params)
   )
-  server := Some(started)
-})
-
-Vitest.Async.afterAll(async () => {
-  switch server.contents {
-  | Some(started) => await started.closeAsync()
-  | None => ()
-  }
-})
+)
 
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=RpcE2eChain.configYaml(

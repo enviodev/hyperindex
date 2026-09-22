@@ -20,18 +20,25 @@ let blockHash = blockNumber => blockNumber->hex->dropPrefix->padded
 // two transfers into one.
 let transactionHash = blockNumber => ("a" ++ blockNumber->Int.toString(~radix=16))->padded
 
-// A transfer of `value` at `logIndex` in `blockNumber`.
-type transfer = {blockNumber: int, value: int, logIndex: int}
+// A transfer of `value` at `logIndex` in `blockNumber`. `sighash` names a
+// different event on the same contract; it defaults to Transfer.
+type transfer = {blockNumber: int, value: int, logIndex: int, sighash?: string}
 
-let blockJson = blockNumber =>
+// `extraFields` is spliced in as raw JSON, so a chain can serve a field beyond
+// the four the reorg check needs. Blocks carry those four and nothing else by
+// default, which is what makes a `field_selection` naming any other block field
+// a field the provider will not return.
+let blockJson = (blockNumber, ~extraFields="") =>
   JSON.parseOrThrow(
     `{"number":"${blockNumber->hex}","timestamp":"${blockNumber->hex}","hash":"${blockNumber->blockHash}","parentHash":"${(blockNumber - 1)
-        ->blockHash}"}`,
+        ->blockHash}"${extraFields}}`,
   )
 
-let logJson = ({blockNumber, value, logIndex}) =>
+let logJson = ({blockNumber, value, logIndex, ?sighash}) =>
   JSON.parseOrThrow(
-    `{"address":"${contractAddress}","topics":["${transferSighash}","${sender->addressTopic}","${recipient->addressTopic}"],"data":"${value
+    `{"address":"${contractAddress}","topics":["${sighash->Option.getOr(
+        transferSighash,
+      )}","${sender->addressTopic}","${recipient->addressTopic}"],"data":"${value
       ->hex
       ->dropPrefix
       ->padded}","blockNumber":"${blockNumber->hex}","transactionHash":"${blockNumber->transactionHash}","transactionIndex":"0x0","blockHash":"${blockNumber->blockHash}","logIndex":"${logIndex->hex}","removed":false}`,
@@ -45,12 +52,22 @@ let hexParam = json => {
   ->Option.getOrThrow(~message="expected a parsable hex quantity")
 }
 
-// The `result` this chain answers a JSON-RPC method with.
-let resultFor = (~transfers, ~height, ~method, ~params) => {
+// The `result` this chain answers a JSON-RPC method with. `receiptFor` is the
+// chain's receipt for a transaction hash; without one the chain serves no
+// receipts, which is what a selection reading only log-derived fields expects.
+let resultFor = (~transfers, ~height, ~blockFields=_ => "", ~receiptFor=?, ~method, ~params) => {
   let arg = i => params->JSON.Decode.array->Option.getOrThrow->Array.getUnsafe(i)
   switch method {
   | "eth_blockNumber" => JSON.String(height->hex)
-  | "eth_getBlockByNumber" => arg(0)->hexParam->blockJson
+  | "eth_getBlockByNumber" =>
+    let blockNumber = arg(0)->hexParam
+    blockNumber->blockJson(~extraFields=blockNumber->blockFields)
+  | "eth_getTransactionReceipt" =>
+    switch receiptFor {
+    | Some(receiptFor) =>
+      receiptFor(arg(0)->JSON.Decode.string->Option.getOrThrow(~message="expected a hash"))
+    | None => JsError.throwWithMessage("This chain serves no receipts")
+    }
   | "eth_getLogs" =>
     let filter = arg(0)->JSON.Decode.object->Option.getOrThrow
     let fromBlock = filter->Dict.getUnsafe("fromBlock")->hexParam
@@ -105,6 +122,21 @@ chains:
         events:
           - event: Transfer(address indexed from, address indexed to, uint256 value)
 `
+
+// Run one mock RPC server for a file's whole suite. The fixtures are parsed
+// while vitest collects, before any hook runs, so the url has to be known ahead
+// of the server — which is why each file names its own fixed port.
+let serveDuringSuite = (start: unit => promise<MockRpcServer.t>) => {
+  let server: ref<option<MockRpcServer.t>> = ref(None)
+  Vitest.Async.beforeAll(async () => server := Some(await start()))
+  Vitest.Async.afterAll(async () =>
+    switch server.contents {
+    | Some(started) => await started.closeAsync()
+    | None => ()
+    }
+  )
+  () => server.contents->Option.getOrThrow(~message="the mock RPC server was never started")
+}
 
 // The wire traffic a test asserts on: each request as its method, with an
 // eth_getLogs carrying the range it asked for, sorted so concurrent block reads

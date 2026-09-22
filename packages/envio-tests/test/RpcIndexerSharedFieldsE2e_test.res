@@ -13,69 +13,35 @@ let approvalSighash = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac
 
 open RpcE2eChain
 
-let height = 105
+// Both events ride the same contract, so one log stream carries both: a
+// Transfer in 100 whose registration selects nothing off its transaction, and
+// an Approval in 101 whose registration selects a receipt field.
 let transferBlock = 100
 let approvalBlock = 101
 
-let blockJson = blockNumber =>
+let logs: array<RpcE2eChain.transfer> = [
+  {blockNumber: transferBlock, value: 3, logIndex: 0},
+  {blockNumber: approvalBlock, value: 4, logIndex: 0, sighash: approvalSighash},
+]
+
+let receiptJson = hash =>
   JSON.parseOrThrow(
-    `{"number":"${blockNumber->hex}","timestamp":"${blockNumber->hex}","hash":"${blockNumber->blockHash}","parentHash":"${(blockNumber - 1)
-        ->blockHash}","gasUsed":"${(blockNumber * 2)->hex}"}`,
+    `{"transactionHash":"${hash}","blockNumber":"${approvalBlock->hex}","transactionIndex":"0x0","gasUsed":"${(approvalBlock *
+      3)->hex}"}`,
   )
 
-let logJson = (~blockNumber, ~sighash, ~value) =>
-  JSON.parseOrThrow(
-    `{"address":"${contractAddress}","topics":["${sighash}","${sender->addressTopic}","${recipient->addressTopic}"],"data":"${value
-      ->hex
-      ->dropPrefix
-      ->padded}","blockNumber":"${blockNumber->hex}","transactionHash":"${blockNumber->transactionHash}","transactionIndex":"0x0","blockHash":"${blockNumber->blockHash}","logIndex":"0x0","removed":false}`,
-  )
-
-let receiptJson = blockNumber =>
-  JSON.parseOrThrow(
-    `{"transactionHash":"${blockNumber->transactionHash}","blockNumber":"${blockNumber->hex}","transactionIndex":"0x0","gasUsed":"${(blockNumber * 3)
-      ->hex}"}`,
-  )
-
-let getResult = (~method, ~params) => {
-  let arg = i => params->JSON.Decode.array->Option.getOrThrow->Array.getUnsafe(i)
-  switch method {
-  | "eth_blockNumber" => JSON.String(height->hex)
-  | "eth_getBlockByNumber" => arg(0)->hexParam->blockJson
-  | "eth_getTransactionReceipt" => approvalBlock->receiptJson
-  | "eth_getLogs" =>
-    let filter = arg(0)->JSON.Decode.object->Option.getOrThrow
-    let fromBlock = filter->Dict.getUnsafe("fromBlock")->hexParam
-    let toBlock = filter->Dict.getUnsafe("toBlock")->hexParam
-    JSON.Array(
-      [
-        logJson(~blockNumber=transferBlock, ~sighash=transferSighash, ~value=3),
-        logJson(~blockNumber=approvalBlock, ~sighash=approvalSighash, ~value=4),
-      ]->Array.filter(log => {
-        let blockNumber =
-          log->JSON.Decode.object->Option.getOrThrow->Dict.getUnsafe("blockNumber")->hexParam
-        blockNumber >= fromBlock && blockNumber <= toBlock
-      }),
+let mock = serveDuringSuite(() =>
+  MockRpcServer.makeWithParams(~port, ~getResult=(~method, ~params) =>
+    resultFor(
+      ~transfers=logs,
+      ~height=105,
+      ~blockFields=blockNumber => `,"gasUsed":"${(blockNumber * 2)->hex}"`,
+      ~receiptFor=receiptJson,
+      ~method,
+      ~params,
     )
-  | _ => JsError.throwWithMessage(`Unexpected RPC method ${method}`)
-  }
-}
-
-let server = ref(None)
-let mock = () =>
-  server.contents->Option.getOrThrow(~message="the mock RPC server was never started")
-
-Vitest.Async.beforeAll(async () => {
-  let started = await MockRpcServer.makeWithParams(~port, ~getResult)
-  server := Some(started)
-})
-
-Vitest.Async.afterAll(async () => {
-  switch server.contents {
-  | Some(started) => await started.closeAsync()
-  | None => ()
-  }
-})
+  )
+)
 
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`

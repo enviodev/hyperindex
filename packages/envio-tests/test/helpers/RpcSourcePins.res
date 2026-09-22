@@ -122,9 +122,8 @@ let normalizePage = async (
   response: Source.blockRangeFetchResponse,
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
-  ~shouldChecksum=false,
 ): pinnedPage => {
-  await response->applyPage(~blockStore, ~transactionStore, ~shouldChecksum)
+  await response->applyPage(~blockStore, ~transactionStore)
   {
     knownHeight: response.knownHeight,
     latestFetchedBlockNumber: response.latestFetchedBlockNumber,

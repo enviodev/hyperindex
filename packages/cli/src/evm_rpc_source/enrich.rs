@@ -27,7 +27,7 @@ use serde_json::{json, Value as Json};
 use super::client::{JsonRpcClient, RpcError};
 use super::fields::{
     block_fields_in, tx_fields_in, tx_mask_of, Carrier, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
-    TX_EAGER_EXCLUDED_MASK, TX_LOG_MASK,
+    TX_EAGER_EXCLUDED_MASK,
 };
 use super::inflight::Inflight;
 use super::responses::{self, ResponseError};
@@ -183,21 +183,6 @@ pub(crate) struct SelectedFields {
     pub tx_mask: u64,
 }
 
-impl SelectedFields {
-    /// Every field any registration on the chain selects. A block or
-    /// transaction response carries them all at once, so reading them now is
-    /// what lets a later page with a different selection be served from the
-    /// store instead of the provider.
-    pub(crate) fn union(fields: impl IntoIterator<Item = SelectedFields>) -> Self {
-        fields
-            .into_iter()
-            .fold(SelectedFields::default(), |acc, f| SelectedFields {
-                block_mask: acc.block_mask | f.block_mask,
-                tx_mask: acc.tx_mask | f.tx_mask,
-            })
-    }
-}
-
 struct ReferencedBlock {
     mask: u64,
     /// Every distinct hash the logs of this block reported. Each enters the
@@ -261,8 +246,10 @@ pub(crate) struct EnrichRequest<'a> {
     pub refs: PageRefs,
     pub known_blocks: &'a BlockStore,
     pub known_transactions: &'a TransactionStore,
-    /// The union of every registration's selection on this chain.
-    pub chain_fields: SelectedFields,
+    /// What every block is decoded for, resolved once for the chain.
+    pub block_read: &'a BlockRead,
+    /// The union of every registration's transaction selection on this chain.
+    pub chain_tx_mask: u64,
 }
 
 pub(crate) struct EnrichedPage {
@@ -356,17 +343,12 @@ pub(crate) async fn page(
         refs,
         known_blocks,
         known_transactions,
-        chain_fields,
+        block_read,
+        chain_tx_mask,
     } = request;
 
-    let block_plan = plan_blocks(
-        &refs,
-        from_block,
-        to_block,
-        known_blocks,
-        chain_fields.block_mask,
-    );
-    let tx_plan = plan_transactions(&refs, known_transactions, chain_fields.tx_mask);
+    let block_numbers = plan_blocks(&refs, from_block, to_block, known_blocks);
+    let tx_plan = plan_transactions(&refs, known_transactions, chain_tx_mask);
 
     // Both sides are awaited, then judged together. Taking whichever failed
     // first would make the verdict a race: an unservable selection on the block
@@ -375,7 +357,7 @@ pub(crate) async fn page(
     // on the slower side costs at most one more request timeout, since every
     // read is bounded by its own.
     let (blocks, transactions) = futures_util::future::join(
-        fetch_blocks(client, fetches, &block_plan),
+        fetch_blocks(client, fetches, block_read, &block_numbers),
         fetch_transactions(client, fetches, &tx_plan),
     )
     .await;
@@ -405,7 +387,7 @@ pub(crate) async fn page(
             })
         })
         .collect();
-    fill_block_page(&page_blocks, log_observations, block_plan.covering, blocks);
+    fill_block_page(&page_blocks, log_observations, block_read.covering, blocks);
 
     // Every referenced transaction gets its log-derived row even when nothing
     // was fetched for it, so `hash` and `transactionIndex` resolve from the
@@ -473,14 +455,37 @@ fn boundary_blocks(from_block: u64, to_block: u64) -> Vec<u64> {
 /// The blocks to read and the fields to read them for. One response carries
 /// every block field, so the whole page reads the same ones and merges into the
 /// store in a single batch.
-struct BlockReadPlan {
-    covering: u64,
+/// What every block this chain reads is decoded for. One response carries the
+/// whole header, so this depends on the chain's registrations and not on the
+/// page — which is why it is resolved once, when the client is built, rather
+/// than per page.
+pub(crate) struct BlockRead {
+    pub covering: u64,
     fields: Vec<BlockField>,
     /// The subset of `fields` some registration on this chain selected. The
     /// rest are read for the reorg check alone, and a response missing one of
     /// those is a bad answer rather than a selection the chain cannot serve.
     selected: Vec<BlockField>,
-    numbers: Vec<u64>,
+}
+
+impl BlockRead {
+    pub(crate) fn for_chain(chain_mask: u64) -> Self {
+        let covering = chain_mask | BLOCK_OBSERVATION_MASK;
+        BlockRead {
+            covering,
+            fields: block_fields_in(covering),
+            selected: block_fields_in(chain_mask & !BLOCK_OBSERVATION_MASK),
+        }
+    }
+
+    /// Hash observations only, for the rollback-depth search.
+    fn observations_only() -> Self {
+        BlockRead {
+            covering: BLOCK_OBSERVATION_MASK,
+            fields: block_fields_in(BLOCK_OBSERVATION_MASK),
+            selected: Vec::new(),
+        }
+    }
 }
 
 /// The transactions to read from one pair of responses. Unlike blocks, what a
@@ -496,19 +501,8 @@ struct TxReadPlan {
 
 /// Which blocks to read. A referenced block is skipped when the store was
 /// already asked for everything this page needs of it; a boundary block never
-/// is.
-///
-/// What they are read for does not depend on the page: one response carries
-/// every field, so a block is decoded for everything any registration on the
-/// chain selects, plus the reorg fields. That is what lets a page with a
-/// different selection be served from the store rather than refetched.
-fn plan_blocks(
-    refs: &PageRefs,
-    from_block: u64,
-    to_block: u64,
-    known: &BlockStore,
-    chain_mask: u64,
-) -> BlockReadPlan {
+/// is. What they are read for is `BlockRead`, the same for every page.
+fn plan_blocks(refs: &PageRefs, from_block: u64, to_block: u64, known: &BlockStore) -> Vec<u64> {
     let boundary = boundary_blocks(from_block, to_block);
     let mut numbers: Vec<u64> = refs
         .blocks
@@ -523,14 +517,7 @@ fn plan_blocks(
             .iter()
             .filter(|number| !refs.blocks.contains_key(number)),
     );
-
-    let covering = chain_mask | BLOCK_OBSERVATION_MASK;
-    BlockReadPlan {
-        covering,
-        fields: block_fields_in(covering),
-        selected: block_fields_in(chain_mask & !BLOCK_OBSERVATION_MASK),
-        numbers,
-    }
+    numbers
 }
 
 /// Which transactions to read, and from which responses. A transaction whose
@@ -555,7 +542,7 @@ fn plan_transactions(
 
     let mut by_reads: HashMap<ResponsesToRead, Group> = HashMap::new();
     for (&key, tx_ref) in &refs.transactions {
-        let wanted = tx_ref.mask & !TX_LOG_MASK;
+        let wanted = tx_ref.mask & !tx_mask_of(Carrier::Log);
         if known.covers(key, wanted) {
             continue;
         }
@@ -571,6 +558,11 @@ fn plan_transactions(
     by_reads
         .into_iter()
         .map(|(reads, group)| {
+            // Every bit of `wanted` is already in the chain-wide term but the
+            // excluded ones, which only a group that named them gets. It is
+            // unioned whole rather than masked down to those, so that a mask
+            // reaching here from somewhere other than a registration cannot
+            // silently lose the fields its rows were fetched for.
             let covering = group.wanted | (chain_mask & !TX_EAGER_EXCLUDED_MASK & reads.carries());
             TxReadPlan {
                 covering,
@@ -592,16 +584,11 @@ pub(crate) async fn fetch_block_hashes(
     fetches: &Fetches,
     block_numbers: &[u64],
 ) -> Result<BlockStore, EnrichError> {
-    let plan = BlockReadPlan {
-        covering: BLOCK_OBSERVATION_MASK,
-        fields: block_fields_in(BLOCK_OBSERVATION_MASK),
-        selected: Vec::new(),
-        numbers: block_numbers.to_vec(),
-    };
-    let blocks = fetch_blocks(client, fetches, &plan).await?;
+    let read = BlockRead::observations_only();
+    let blocks = fetch_blocks(client, fetches, &read, block_numbers).await?;
 
     let page = BlockStore::new_evm();
-    fill_block_page(&page, Vec::new(), plan.covering, blocks);
+    fill_block_page(&page, Vec::new(), read.covering, blocks);
     Ok(page)
 }
 
@@ -610,11 +597,12 @@ pub(crate) async fn fetch_block_hashes(
 async fn fetch_blocks(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
-    plan: &BlockReadPlan,
+    read: &BlockRead,
+    numbers: &[u64],
 ) -> Result<Vec<Block>, EnrichError> {
-    let blocks = join_all(plan.numbers.iter().map(|&number| async move {
+    let blocks = join_all(numbers.iter().map(|&number| async move {
         let response = require(client, fetches, FetchKey::Block(number)).await?;
-        responses::build_block(&response, number, &plan.fields, &plan.selected)
+        responses::build_block(&response, number, &read.fields, &read.selected)
             .map_err(|error| EnrichError::from_response(number, error))
     }))
     .await;
@@ -679,7 +667,7 @@ async fn fetch_transactions(
         ))
         .await;
         let txs = collect_worst(txs)?;
-        Ok((group.covering | TX_LOG_MASK, txs))
+        Ok((group.covering | tx_mask_of(Carrier::Log), txs))
     });
     collect_worst(join_all(fetches).await)
 }
@@ -731,8 +719,8 @@ mod tests {
         refs
     }
 
-    fn planned_numbers(plan: &BlockReadPlan) -> Vec<u64> {
-        let mut numbers = plan.numbers.clone();
+    fn planned_numbers(numbers: &[u64]) -> Vec<u64> {
+        let mut numbers = numbers.to_vec();
         numbers.sort_unstable();
         numbers
     }
@@ -759,7 +747,7 @@ mod tests {
             }],
             wanted,
         );
-        let plan = plan_blocks(&refs_for(50, wanted, 0), 40, 60, &known, wanted);
+        let plan = plan_blocks(&refs_for(50, wanted, 0), 40, 60, &known);
         assert_eq!(planned_numbers(&plan), vec![40, 60]);
     }
 
@@ -774,7 +762,7 @@ mod tests {
             block_bit(EvmBlockField::GasUsed),
         );
         let miner = block_bit(EvmBlockField::Miner);
-        let plan = plan_blocks(&refs_for(50, miner, 0), 40, 60, &known, miner);
+        let plan = plan_blocks(&refs_for(50, miner, 0), 40, 60, &known);
         assert_eq!(planned_numbers(&plan), vec![40, 50, 60]);
     }
 
@@ -793,7 +781,7 @@ mod tests {
                 BLOCK_OBSERVATION_MASK,
             );
         }
-        let plan = plan_blocks(&PageRefs::default(), 40, 60, &known, 0);
+        let plan = plan_blocks(&PageRefs::default(), 40, 60, &known);
         assert_eq!(planned_numbers(&plan), vec![40, 60]);
     }
 
@@ -801,7 +789,7 @@ mod tests {
     fn a_block_no_item_wants_fields_from_is_not_read() {
         // Its hash still reaches the page as an observation off the log, which
         // is all reorg detection needs from it.
-        let plan = plan_blocks(&refs_for(50, 0, 0), 40, 60, &BlockStore::new_evm(), 0);
+        let plan = plan_blocks(&refs_for(50, 0, 0), 40, 60, &BlockStore::new_evm());
         assert_eq!(planned_numbers(&plan), vec![40, 60]);
     }
 
@@ -809,13 +797,13 @@ mod tests {
     fn a_boundary_block_an_item_wants_nothing_from_is_still_read() {
         // The item makes the block referenced but selects no field of it; it is
         // still the range's boundary, so its reorg observation is read.
-        let plan = plan_blocks(&refs_for(40, 0, 0), 40, 40, &BlockStore::new_evm(), 0);
+        let plan = plan_blocks(&refs_for(40, 0, 0), 40, 40, &BlockStore::new_evm());
         assert_eq!(planned_numbers(&plan), vec![40]);
     }
 
     #[test]
     fn a_single_block_range_reads_that_block_once() {
-        let plan = plan_blocks(&PageRefs::default(), 40, 40, &BlockStore::new_evm(), 0);
+        let plan = plan_blocks(&PageRefs::default(), 40, 40, &BlockStore::new_evm());
         assert_eq!(planned_numbers(&plan), vec![40]);
     }
 
@@ -952,15 +940,9 @@ mod tests {
         // that asks for one of them later must not have to ask again.
         let miner = block_bit(EvmBlockField::Miner);
         let gas_used = block_bit(EvmBlockField::GasUsed);
-        let plan = plan_blocks(
-            &refs_for(50, miner, 0),
-            40,
-            60,
-            &BlockStore::new_evm(),
-            miner | gas_used,
-        );
+        let read = BlockRead::for_chain(miner | gas_used);
         assert_eq!(
-            (plan.covering, plan.fields, plan.selected),
+            (read.covering, read.fields, read.selected),
             (
                 miner | gas_used | BLOCK_OBSERVATION_MASK,
                 block_fields_in(miner | gas_used | BLOCK_OBSERVATION_MASK),
@@ -976,17 +958,17 @@ mod tests {
         // different field of the same block plans no request for it.
         let miner = block_bit(EvmBlockField::Miner);
         let gas_used = block_bit(EvmBlockField::GasUsed);
-        let chain_mask = miner | gas_used;
+        let read = BlockRead::for_chain(miner | gas_used);
         let known = BlockStore::new_evm();
-        let first = plan_blocks(&refs_for(50, miner, 0), 40, 60, &known, chain_mask);
+        let first = plan_blocks(&refs_for(50, miner, 0), 40, 60, &known);
         known.insert_evm_blocks_covering(
             vec![Block {
                 number: Some(50),
                 ..Default::default()
             }],
-            first.covering,
+            read.covering,
         );
-        let second = plan_blocks(&refs_for(50, gas_used, 0), 40, 60, &known, chain_mask);
+        let second = plan_blocks(&refs_for(50, gas_used, 0), 40, 60, &known);
         assert_eq!(
             (planned_numbers(&first), planned_numbers(&second)),
             (vec![40, 50, 60], vec![40, 60])
