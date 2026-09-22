@@ -11,14 +11,25 @@ let log = (self: t) => {
   }
 }
 
+// The exception to hand to whoever is outside the indexer. A failure raised
+// from a message alone carries no exception of its own, so rethrowing or
+// rejecting with `exn` would hand over a bare `null` and the reason would live
+// only in the logs. Fall back to the message, which is the whole of what such a
+// failure knows.
+let toExn = (self: t) =>
+  switch self.exn->(Utils.magic: exn => Nullable.t<exn>)->Nullable.toOption {
+  | Some(exn) => exn->Utils.prettifyExn
+  | None => Utils.Error.make(self.msg->Option.getOr("Indexer has failed with an unexpected error"))
+  }
+
 let raiseExn = (self: t) => {
-  self.exn->Utils.prettifyExn->throw
+  self->toExn->throw
 }
 
 let mkLogAndRaise = (~logger=?, ~msg=?, exn) => {
-  let exn = exn->Utils.prettifyExn
-  exn->make(~logger?, ~msg?)->log
-  exn->throw
+  let self = exn->Utils.prettifyExn->make(~logger?, ~msg?)
+  self->log
+  self->raiseExn
 }
 
 let unwrapLogAndRaise = (~logger=?, ~msg=?, result) => {

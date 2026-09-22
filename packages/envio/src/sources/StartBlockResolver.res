@@ -15,7 +15,14 @@
 // registrations exist.
 let makeProbeSources = (chainConfig: Config.chain, ~lowercaseAddresses): array<Source.t> => {
   let addressStore = AddressStore.make(~ecosystem=chainConfig.ecosystem, ~contracts=[])
-  ChainSources.make(~chainConfig, ~onEventRegistrations=[], ~addressStore, ~lowercaseAddresses)
+  ChainSources.make(
+    ~chainConfig,
+    ~onEventRegistrations=[],
+    ~addressStore,
+    ~lowercaseAddresses,
+    ~blockStore=BlockStore.make(~ecosystem=chainConfig.ecosystem),
+    ~transactionStore=TransactionStore.make(~ecosystem=chainConfig.ecosystem),
+  )
 }
 
 // How long to keep asking a chain that won't answer.

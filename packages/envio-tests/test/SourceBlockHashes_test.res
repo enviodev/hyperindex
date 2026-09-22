@@ -122,6 +122,8 @@ let makeRpcSource = () =>
     syncConfig: EvmChain.getSyncConfig({}),
     lowercaseAddresses: true,
     addressStore,
+    blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
+    transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
   })
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
@@ -182,12 +184,10 @@ describe("Source.blockHashes integration - empty range", () => {
       t.expect({
         "parsedQueueItems": response.parsedQueueItems->Array.length,
         "blockNumbers": response.blockStore->storedBlockNumbers,
-        "fromBlockQueried": response.fromBlockQueried,
       }).toEqual({
         "parsedQueueItems": 0,
         // No items, no rollbackGuard at historical depth → nothing to harvest.
         "blockNumbers": [],
-        "fromBlockQueried": fromBlock,
       })
     },
   )

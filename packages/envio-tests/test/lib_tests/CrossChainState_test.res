@@ -399,7 +399,6 @@ describe("CrossChainState fetch control", () => {
       ~newRegistrations=[],
       ~latestFetchedBlock=1000,
       ~knownHeight=1000,
-      ~transactionStore=None,
     )
 
     let secondTickChains = []

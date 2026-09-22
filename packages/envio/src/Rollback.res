@@ -11,9 +11,9 @@ let getLastKnownValidBlock = async (
   ~isRealtime: bool,
 ) => {
   // Before the search, not after: it re-fetches the scanned hashes through the
-  // sources, and a source answering from a cache it filled on the orphaned
-  // chain would confirm blocks that no longer exist - stopping the rollback
-  // short of the real fork.
+  // sources, and a read still in flight from before the reorg describes the
+  // orphaned chain — joining one would confirm blocks that no longer exist and
+  // stop the rollback short of the real fork.
   chainState->ChainState.sourceManager->SourceManager.onReorg
 
   // Don't include the reorg block itself - different source instances

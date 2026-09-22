@@ -55,6 +55,7 @@ let makeFromDbState: (
 // Accessors.
 let logger: t => Pino.t
 let blockStore: t => BlockStore.t
+let transactionStore: t => TransactionStore.t
 let shouldChecksum: t => bool
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
@@ -146,15 +147,18 @@ let handleQueryResult: (
   ~newRegistrations: array<AddressStore.registration>,
   ~latestFetchedBlock: int,
   ~knownHeight: int,
-  ~transactionStore: option<TransactionStore.t>,
 ) => unit
 let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
 let materializePageItems: (
   ~items: array<Internal.item>,
-  ~transactionStore: option<TransactionStore.t>,
+  ~transactionStore: TransactionStore.t,
   ~blockStore: BlockStore.t,
   ~shouldChecksum: bool,
 ) => promise<unit>
+// Merges the page's blocks into the chain's store as it checks them: the check
+// is the merge's own conflict report, so a page that passes is already applied.
+// Its transactions are a separate page, merged by the caller once this returns
+// no reorg.
 let registerReorgGuard: (
   t,
   ~blockStore: BlockStore.t,
