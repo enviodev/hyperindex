@@ -248,29 +248,15 @@ module App = {
   }
 }
 
-type args = {@as("tui-off") tuiOff?: bool}
-
-type process
-@val external process: process = "process"
-@get external argv: process => 'a = "argv"
-
-type mainArgs = Yargs.parsedArgs<args>
-
-// Whether this process draws the progress display: `--tui-off` first, then
-// `ENVIO_TUI`, then whether anything is watching. A supervisor asks the same
-// question its workers would have, since it is the one drawing for the run.
-let shouldUse = (~suppressed=false) => {
-  let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-  let explicitTui = switch mainArgs.tuiOff {
-  | Some(off) => Some(!off)
-  | None => Env.tuiEnvVar
-  }
+// Whether this process draws the progress display: `ENVIO_TUI` first, then
+// whether anything is watching. A supervisor asks the same question its
+// workers would have, since it is the one drawing for the run.
+let shouldUse = (~suppressed=false, ~explicitTui=Env.tuiEnvVar) =>
   switch (suppressed, explicitTui) {
   | (true, _) => false
   | (_, Some(tui)) => tui
   | (_, None) => !Envio.isNonInteractive()
   }
-}
 
 let start = (~config, ~getMetrics) => {
   let {rerender} = render(<App config getMetrics />)
