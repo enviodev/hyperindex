@@ -35,7 +35,8 @@ let chainYaml = chainId =>
 
 // One cross-chain entity is what makes the checkpoint sequence shared, and what
 // makes a reorg on either chain roll both of them back.
-let scenario = Scenario.make(~supervised=false, 
+let scenario = Scenario.make(
+  ~supervised=false,
   ~schema=`
 type Counter {
   id: ID!
@@ -146,8 +147,7 @@ describe("Rollback diff checkpoint ids", () => {
       await indexer.getBatchWritePromise()
 
       let highestCommitted =
-        (await indexer.queryCheckpoints())
-        ->Array.reduce(0n, (highest, checkpoint) =>
+        (await indexer.queryCheckpoints())->Array.reduce(0n, (highest, checkpoint) =>
           checkpoint.id > highest ? checkpoint.id : highest
         )
 
@@ -169,7 +169,10 @@ describe("Rollback diff checkpoint ids", () => {
         ~message="the rollback's depth search to re-fetch the scanned block hashes",
       )
       source1337.resolveGetBlockHashes(
-        [(100, "0x100"), (101, "0x101")]->Array.map(((blockNumber, blockHash)): BlockStore.inputBlock => {
+        [(100, "0x100"), (101, "0x101")]->Array.map(((
+          blockNumber,
+          blockHash,
+        )): BlockStore.inputBlock => {
           blockNumber,
           blockHash,
           blockTimestamp: blockNumber,
@@ -186,9 +189,10 @@ describe("Rollback diff checkpoint ids", () => {
       )
       await indexer.getBatchWritePromise()
 
-      let sorted = stagedDiffs->Array.toSorted((a, b) =>
-        a.checkpointId < b.checkpointId ? -1. : a.checkpointId > b.checkpointId ? 1. : 0.
-      )
+      let sorted =
+        stagedDiffs->Array.toSorted((a, b) =>
+          a.checkpointId < b.checkpointId ? -1. : a.checkpointId > b.checkpointId ? 1. : 0.
+        )
       t.expect(
         (
           stagedDiffs->Array.length,

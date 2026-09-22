@@ -37,7 +37,8 @@ let chainYaml = (chainId, ~maxReorgDepth) =>
 
 // One chain, and the default cross-chain entities that make its checkpoint
 // sequence a shared one.
-let singleChainScenario = Scenario.make(~supervised=false, 
+let singleChainScenario = Scenario.make(
+  ~supervised=false,
   ~schema,
   ~configYaml=`
 name: zero-reorg-depth-history
@@ -52,7 +53,8 @@ chains:${chainYaml(100, ~maxReorgDepth=0)}
 
 // No cross-chain entity, so each chain counts its own checkpoints and only the
 // chain that can be rolled back keeps any.
-let perChainScenario = Scenario.make(~supervised=false, 
+let perChainScenario = Scenario.make(
+  ~supervised=false,
   ~schema,
   ~configYaml=`
 name: zero-reorg-depth-history-per-chain

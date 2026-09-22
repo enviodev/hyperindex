@@ -119,7 +119,11 @@ describe("A supervised worker", () => {
       let readyAt = await readyAtByChainId(~sql, ~pgSchema)
       let stamps = readyAt->Array.filterMap(((_, at)) => at->Option.map(Date.getTime))
       t.expect(
-        (readyAt->Array.map(((chainId, _)) => chainId), stamps->Array.length, stamps->Set.fromArray->Set.size),
+        (
+          readyAt->Array.map(((chainId, _)) => chainId),
+          stamps->Array.length,
+          stamps->Set.fromArray->Set.size,
+        ),
         ~message="The release stamps every chain, and one caught-up indexer is one instant",
       ).toEqual((["1", "137"], 2, 1))
     },
@@ -200,10 +204,7 @@ describe("A supervised worker on a chain with a reorg depth", () => {
       await indexer.waitUntilIdle()
 
       t.expect(
-        (
-          await indexer.metric("envio_reorg_threshold"),
-          await readyAtByChainId(~sql, ~pgSchema),
-        ),
+        (await indexer.metric("envio_reorg_threshold"), await readyAtByChainId(~sql, ~pgSchema)),
         ~message="Both chains are as far as they can fetch, and the run has not said so",
       ).toEqual(([{value: "0", labels: Dict.make()}], [("1", None), ("137", None)]))
 

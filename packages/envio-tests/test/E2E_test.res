@@ -28,7 +28,8 @@ let chainYaml = (chainId, ~startBlock=1) =>
 `
 
 let makeScenario = (~name, ~rollback=true, ~chains) =>
-  Scenario.make(~supervised=false, 
+  Scenario.make(
+    ~supervised=false,
     ~configYaml=`
 name: ${name}
 rollback_on_reorg: ${rollback ? "true" : "false"}${contractsYaml}chains:${chains}`,
@@ -44,7 +45,8 @@ let scenario = makeScenario(~name="e2e", ~chains=chainYaml(1337))
 
 // Partition ids and the chain's range-cost budget follow the contract set, so
 // this scenario keeps the address-less contracts alongside the addressed ones.
-let partitionScenario = Scenario.make(~supervised=false, 
+let partitionScenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: e2e-partitions
 rollback_on_reorg: true${contractsYaml}  - name: SimpleNft

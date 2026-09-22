@@ -69,7 +69,8 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
   let isInReorgThresholdBeforeUpdate = state->IndexerState.isInReorgThreshold
   let isRealtimeBeforeUpdate = state->IndexerState.isRealtime
 
-  let batch = state->IndexerState.createBatch(~batchSizeTarget=(state->IndexerState.config).batchSize)
+  let batch =
+    state->IndexerState.createBatch(~batchSizeTarget=(state->IndexerState.config).batchSize)
 
   let progressedChainsById = batch.progressedChainsById
 

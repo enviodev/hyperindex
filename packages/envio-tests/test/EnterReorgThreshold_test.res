@@ -20,7 +20,8 @@ type Gravatar {
 
 // Two chains, each lagging maxReorgDepth (200) below head before the
 // threshold. Head starts at 1000, so the pre-threshold head is 800.
-let multichain = Scenario.make(~supervised=false, 
+let multichain = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: enter-reorg-threshold-multichain
 contracts:
@@ -52,7 +53,8 @@ chains:
   ~schema,
 )
 
-let singleChain = Scenario.make(~supervised=false, 
+let singleChain = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: enter-reorg-threshold-single
 chains:
@@ -119,11 +121,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
           logIndex: 0,
         },
       )
-      chainA.resolveGetItemsOrThrow(
-        densitySeed,
-        ~latestFetchedBlockNumber=800,
-        ~knownHeight=1000,
-      )
+      chainA.resolveGetItemsOrThrow(densitySeed, ~latestFetchedBlockNumber=800, ~knownHeight=1000)
       await indexer.getBatchWritePromise()
 
       // Chain A is now at its lagged head with an empty buffer — momentarily

@@ -56,7 +56,8 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
     )}
 `
 
-let scenario = Scenario.make(~supervised=false, 
+let scenario = Scenario.make(
+  ~supervised=false,
   ~schema,
   ~configYaml=makeConfigYaml("per-chain-prune", ~laggingChainId=1337),
 )
@@ -71,13 +72,15 @@ type Total @crossChain {
 
 // One cross-chain entity couples the chains: a reorg on the chain furthest
 // behind can reach a row any chain wrote, so none may prune past its safe point.
-let crossChainScenario = Scenario.make(~supervised=false, 
+let crossChainScenario = Scenario.make(
+  ~supervised=false,
   ~schema=crossChainSchema,
   ~configYaml=makeConfigYaml("per-chain-prune-cross-chain", ~laggingChainId=1337),
 )
 
 // The same, with the lagging chain visited first.
-let crossChainLaggingFirstScenario = Scenario.make(~supervised=false, 
+let crossChainLaggingFirstScenario = Scenario.make(
+  ~supervised=false,
   ~schema=crossChainSchema,
   ~configYaml=makeConfigYaml("per-chain-prune-cross-chain-lagging-first", ~laggingChainId=5),
 )
@@ -86,7 +89,8 @@ let crossChainLaggingFirstScenario = Scenario.make(~supervised=false,
 // is safe. Under the shared sequence a cross-chain entity brings, its own last
 // id is not the bound — an idle chain's would hold every other chain's prune
 // back for as long as it stays idle.
-let crossChainZeroDepthScenario = Scenario.make(~supervised=false, 
+let crossChainZeroDepthScenario = Scenario.make(
+  ~supervised=false,
   ~schema=crossChainSchema,
   ~configYaml=`
 name: per-chain-prune-cross-chain-zero-depth
@@ -107,7 +111,8 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
 // Every chain reaches a safe checkpoint of its own, so the prune carries a bound
 // per chain. Three of them rather than two: a pair of bounds can be crossed and
 // still look right, while three cannot.
-let manyBoundsScenario = Scenario.make(~supervised=false, 
+let manyBoundsScenario = Scenario.make(
+  ~supervised=false,
   ~schema,
   ~configYaml=`
 name: per-chain-prune-many-bounds
@@ -128,7 +133,8 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
 // A chain with no reorg depth can't be rolled back, so with no cross-chain
 // entity to let a sibling's rollback reach its rows, it has no history to keep
 // and everything it has committed is safe to prune.
-let zeroDepthScenario = Scenario.make(~supervised=false, 
+let zeroDepthScenario = Scenario.make(
+  ~supervised=false,
   ~schema,
   ~configYaml=`
 name: per-chain-prune-zero-depth

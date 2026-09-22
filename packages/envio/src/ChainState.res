@@ -993,7 +993,6 @@ let enterReorgThreshold = (cs: t) => {
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
 }
 
-
 let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
 
 // Whether the chain's writes need history: only what a rollback could still
@@ -1120,9 +1119,7 @@ let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
 // batch would leave it. Entering the threshold is what lifts the pre-threshold
 // lag, so a chain waiting to enter it has fetched as far as it can.
 let isReadyToEnterReorgThreshold = (cs: t) =>
-  cs.fetchState->FetchState.isReadyToEnterReorgThreshold(
-    ~tolerance=cs.reorgThresholdReadyTolerance,
-  )
+  cs.fetchState->FetchState.isReadyToEnterReorgThreshold(~tolerance=cs.reorgThresholdReadyTolerance)
 
 let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
   let fetchState = switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(
@@ -1272,6 +1269,7 @@ let markReady = (cs: t, ~readyAt) =>
 let rollbackCommittedProgress = (cs: t, blockNumber) =>
   if blockNumber !== cs.committedProgressBlockNumber {
     cs.committedProgressBlockNumber = blockNumber
+
     // Exact block only: the rolled-back region is about to be refetched, and
     // the next batch re-establishes the time either way.
     cs.committedProgressBlockTime =

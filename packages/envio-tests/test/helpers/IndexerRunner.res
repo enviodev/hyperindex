@@ -190,18 +190,14 @@ let run = async (
     // testing the barrier and owns its own release.
     let releaseCheck = ref(None)
     if superviseRun && !holdRealtime {
-      releaseCheck :=
-        Some(
-          setInterval(() =>
+      releaseCheck := Some(setInterval(() =>
             if state->IndexerState.hasArrivedAtHead {
               releaseCheck.contents->Option.forEach(clearInterval)
               releaseCheck := None
               state->IndexerState.releaseRealtime
             }
-          , releaseCheckIntervalMillis),
-        )
+          , releaseCheckIntervalMillis))
     }
-
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run
@@ -312,7 +308,10 @@ let run = async (
             let isIdle =
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
-              Frontier.equals(state->IndexerState.committedFrontier, state->IndexerState.processedFrontier)
+              Frontier.equals(
+                state->IndexerState.committedFrontier,
+                state->IndexerState.processedFrontier,
+              )
 
             // Catching up hands off to the FinalizingIndexes phase, which is
             // where readiness is decided — so a batch isn't settled until that
@@ -358,7 +357,10 @@ let run = async (
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
               !(state->IndexerState.shouldFinalizeIndexes) &&
-              Frontier.equals(state->IndexerState.committedFrontier, state->IndexerState.processedFrontier)
+              Frontier.equals(
+                state->IndexerState.committedFrontier,
+                state->IndexerState.processedFrontier,
+              )
             ) {
               settled.contents + 1
             } else {

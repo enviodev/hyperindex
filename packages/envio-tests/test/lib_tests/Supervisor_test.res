@@ -221,7 +221,6 @@ describe("Supervisor worker plumbing", () => {
   })
 })
 
-
 describe("Worker.detect", () => {
   it("Counts as a worker only when forked with the variable and a channel", t => {
     let forked = Dict.fromArray([

@@ -4,7 +4,8 @@ open Vitest
 // item came from, not whichever chain the batch happens to start on, and
 // `isRealtime` only flips once every chain in the indexer is at its head.
 
-let scenario = Scenario.make(~supervised=false, 
+let scenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: handler-chain-info
 contracts:
@@ -56,8 +57,7 @@ let recordChain = (~block, ~label): MockSource.itemMock => {
   },
 }
 
-let sortById = (rows: array<seen>) =>
-  rows->Array.toSorted((a, b) => String.compare(a.id, b.id))
+let sortById = (rows: array<seen>) => rows->Array.toSorted((a, b) => String.compare(a.id, b.id))
 
 describe("context.chain inside a handler", () => {
   scenario->Scenario.it(

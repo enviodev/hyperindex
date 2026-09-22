@@ -64,7 +64,7 @@ let planForRun = (~config: Config.t, ~maxConnections=Env.Db.maxConnections) =>
 // heard from anyone yet render as initializing rather than as empty.
 type running = {
   worker: worker,
-  child: NodeJs.ChildProcess.child,
+  child: NodeJs.ChildProcess.Child.t,
   mutable snapshot: option<Metrics.t>,
   mutable runtime: option<Metrics.runtimeSample>,
   // A spawn failure can raise `error` and `exit` both, and a worker counted
@@ -197,22 +197,22 @@ let fork = (
     // it was written to, so a worker's errors stay on stderr for whoever is
     // redirecting it.
     [
-      (child->NodeJs.ChildProcess.stdout, onOutput),
-      (child->NodeJs.ChildProcess.stderr, onErrorOutput),
+      (child->NodeJs.ChildProcess.Child.stdout, onOutput),
+      (child->NodeJs.ChildProcess.Child.stderr, onErrorOutput),
     ]->Array.forEach(((stream, onLine)) =>
       switch stream->Null.toOption {
       | Some(stream) => {
           let (read, flush) = readLines(~onLine)
-          stream->NodeJs.ChildProcess.setEncoding("utf8")
-          stream->NodeJs.ChildProcess.onData(read)
-          stream->NodeJs.ChildProcess.onEnd(flush)
+          stream->NodeJs.ChildProcess.Stream.setEncoding("utf8")
+          stream->NodeJs.ChildProcess.Stream.onData(read)
+          stream->NodeJs.ChildProcess.Stream.onEnd(flush)
         }
       | None => ()
       }
     )
   }
   let running = {worker, child, snapshot: None, runtime: None, settled: false}
-  child->NodeJs.ChildProcess.onMessage(message =>
+  child->NodeJs.ChildProcess.Child.onMessage(message =>
     switch message {
     | Worker.Snapshot({metrics, runtime}) => {
         running.snapshot = Some(metrics)
@@ -241,7 +241,7 @@ let stopReleaseCheck = group => {
 let stop = group => {
   group.stopping = true
   group->stopReleaseCheck
-  group.running->Array.forEach(r => r.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore)
+  group.running->Array.forEach(r => r.child->NodeJs.ChildProcess.Child.kill("SIGTERM")->ignore)
 }
 
 // The dev console's cache dump, which belongs to the supervisor rather than to
@@ -298,7 +298,8 @@ type ending =
 let classifyExit = (~code: Null.t<int>, ~signal: Null.t<string>, ~stopping) =>
   switch (stopping, code->Null.toOption, signal->Null.toOption) {
   | (true, _, _)
-  | (_, Some(0), _) => Expected
+  | (_, Some(0), _) =>
+    Expected
   | (_, _, Some("SIGTERM")) => Stopping
   | _ => Failed
   }
@@ -334,11 +335,10 @@ let awaitExit = async (group): outcome => {
       }
 
     group.running->Array.forEach(r => {
-      r.child->NodeJs.ChildProcess.onExit(
-        (code, signal) =>
-          r->onGone(~ending=classifyExit(~code, ~signal, ~stopping=group.stopping)),
+      r.child->NodeJs.ChildProcess.Child.onExit(
+        (code, signal) => r->onGone(~ending=classifyExit(~code, ~signal, ~stopping=group.stopping)),
       )
-      r.child->NodeJs.ChildProcess.onChildError(
+      r.child->NodeJs.ChildProcess.Child.onError(
         exn => {
           Logging.errorWithExn(exn, `${r.worker->label} failed to start`)
           r->onGone(~ending=Failed)
@@ -370,25 +370,22 @@ let awaitExit = async (group): outcome => {
 let isRunAtHead = (running: array<running>) =>
   running->Utils.Array.notEmpty &&
     running->Array.every(r =>
-      r.child->NodeJs.ChildProcess.connected &&
-      r.snapshot->Option.mapOr(false, snapshot => snapshot.hasArrivedAtHead)
+      r.child->NodeJs.ChildProcess.Child.connected &&
+        r.snapshot->Option.mapOr(false, snapshot => snapshot.hasArrivedAtHead)
     )
 
 // Holds every worker at the head until the last of them arrives, then releases
 // them together. Chains enter the reorg threshold and go realtime as one
 // indexer, and in a split run only the supervisor can see when that is, so the
 // run switches over exactly as an unsplit one does.
-let startReleaseCheck = group =>
-  group.releaseCheck = Some(
-    setInterval(() =>
+let startReleaseCheck = group => group.releaseCheck = Some(setInterval(() =>
       if group.running->isRunAtHead {
         group->stopReleaseCheck
         group.running->Array.forEach(r =>
-          r.child->NodeJs.ChildProcess.send(Worker.ReleaseRealtime)->ignore
+          r.child->NodeJs.ChildProcess.Child.send(Worker.ReleaseRealtime)->ignore
         )
       }
-    , releaseCheckIntervalMillis),
-  )
+    , releaseCheckIntervalMillis))
 
 // Runs the group: creates the schema for every chain, forks a worker per plan
 // entry, and serves the run's metrics, console and display from what they

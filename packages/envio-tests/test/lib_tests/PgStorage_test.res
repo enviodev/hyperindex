@@ -626,11 +626,20 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"tag": dict{"_eq": Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown), "_in": [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
-                    Utils.magic: array<Uint8Array.t> => unknown
-                  )}, "chunks": dict{"_eq": [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown), "_in": [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
-                    Utils.magic: array<array<Uint8Array.t>> => unknown
-                  )}}->parse(~table=bytesTable),
+          ~filter=dict{
+            "tag": dict{
+              "_eq": Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+              "_in": [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
+                Utils.magic: array<Uint8Array.t> => unknown
+              ),
+            },
+            "chunks": dict{
+              "_eq": [Uint8Array.fromArray([3])]->(Utils.magic: array<Uint8Array.t> => unknown),
+              "_in": [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
+                Utils.magic: array<array<Uint8Array.t>> => unknown
+              ),
+            },
+          }->parse(~table=bytesTable),
           ~table=bytesTable,
           ~pgSchema="test_schema",
           ~params,
@@ -654,7 +663,9 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"id": dict{"_in": ["1", "2"]->(Utils.magic: array<string> => unknown)}}->parse(~table),
+          ~filter=dict{
+            "id": dict{"_in": ["1", "2"]->(Utils.magic: array<string> => unknown)},
+          }->parse(~table),
           ~table,
           ~pgSchema="test_schema",
           ~params,
@@ -690,7 +701,10 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"score": dict{"_gte": 5->(Utils.magic: int => unknown)}, "id": dict{"_lte": "9"->(Utils.magic: string => unknown)}}->parse(~table),
+          ~filter=dict{
+            "score": dict{"_gte": 5->(Utils.magic: int => unknown)},
+            "id": dict{"_lte": "9"->(Utils.magic: string => unknown)},
+          }->parse(~table),
           ~table,
           ~pgSchema="test_schema",
           ~params,
@@ -708,7 +722,13 @@ FROM "public"."envio_chains";`
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
-          ~filter=dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}, "score": dict{"_gt": 5->(Utils.magic: int => unknown), "_lt": 10->(Utils.magic: int => unknown)}}->parse(~table),
+          ~filter=dict{
+            "id": dict{"_eq": "1"->(Utils.magic: string => unknown)},
+            "score": dict{
+              "_gt": 5->(Utils.magic: int => unknown),
+              "_lt": 10->(Utils.magic: int => unknown),
+            },
+          }->parse(~table),
           ~table,
           ~pgSchema="test_schema",
           ~params,
@@ -756,11 +776,16 @@ FROM "public"."envio_chains";`
         t.expect((
           condition(tagsIn([["a"], ["a", "b"]])),
           condition(tagsIn([])),
-          condition(dict{"flag": dict{"_in": [true, false]->(Utils.magic: array<bool> => unknown)}}),
+          condition(
+            dict{"flag": dict{"_in": [true, false]->(Utils.magic: array<bool> => unknown)}},
+          ),
         )).toEqual((
           (
             `("tags" = $1 OR "tags" = $2)`,
-            [["a"]->(Utils.magic: array<string> => unknown), ["a", "b"]->(Utils.magic: array<string> => unknown)],
+            [
+              ["a"]->(Utils.magic: array<string> => unknown),
+              ["a", "b"]->(Utils.magic: array<string> => unknown),
+            ],
           ),
           ("FALSE", []),
           (

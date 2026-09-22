@@ -70,10 +70,10 @@ let isHoldingRealtime = (crossChainState: t) => crossChainState.holdRealtime
 let hasArrivedAtHead = (crossChainState: t) =>
   crossChainState.isCaughtUp ||
   crossChainState.isRealtime || {
-      let chainStates = crossChainState.chainStates->Dict.valuesToArray
-      chainStates->Utils.Array.notEmpty &&
-        chainStates->Array.every(ChainState.isReadyToEnterReorgThreshold)
-    }
+    let chainStates = crossChainState.chainStates->Dict.valuesToArray
+    chainStates->Utils.Array.notEmpty &&
+      chainStates->Array.every(ChainState.isReadyToEnterReorgThreshold)
+  }
 
 // Resolve a chain's state by id. The id always comes from `chainIds`, which is
 // derived from `chainStates`, so the entry is guaranteed present.
@@ -167,9 +167,9 @@ let createBatch = (
 // holds the others back whatever process it runs in.
 let isReadyToEnterReorgThreshold = (crossChainState: t, ~batch) =>
   !crossChainState.holdRealtime &&
-    crossChainState.chainStates
-    ->Dict.valuesToArray
-    ->Array.every(cs => cs->ChainState.isReadyToEnterReorgThresholdAfterBatch(~batch))
+  crossChainState.chainStates
+  ->Dict.valuesToArray
+  ->Array.every(cs => cs->ChainState.isReadyToEnterReorgThresholdAfterBatch(~batch))
 
 // Said by each chain rather than once for the indexer: what crossing changes
 // is a chain's own, and the chains of a split run cross in processes that can
@@ -206,9 +206,9 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
 
   crossChainState.isCaughtUp =
     crossChainState.isCaughtUp ||
-      (!crossChainState.holdRealtime &&
-      crossChainState->nextItemIsNone &&
-      everyChainCaughtUp.contents)
+    (!crossChainState.holdRealtime &&
+    crossChainState->nextItemIsNone &&
+    everyChainCaughtUp.contents)
 }
 
 // Every chain has buffered up to its head (or endblock) with nothing
@@ -272,6 +272,7 @@ let markReady = (crossChainState: t, ~readyAt) => {
     let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
     let wasReady = cs->ChainState.isReady
     cs->ChainState.markReady(~readyAt)
+
     // One line per chain, because `ready_at` is one column per chain: what the
     // log says and what a reader finds in the row are the same fact.
     if !wasReady {
@@ -291,8 +292,7 @@ let markReady = (crossChainState: t, ~readyAt) => {
 // still be reorged are indexed after every chain gets this far, so it says what
 // it is waiting on when there is anything to wait for.
 let reportFinished = (crossChainState: t) => {
-  let waitingOnOthers =
-    crossChainState.holdRealtime || crossChainState.chainIds->Array.length > 1
+  let waitingOnOthers = crossChainState.holdRealtime || crossChainState.chainIds->Array.length > 1
   crossChainState.chainStates
   ->Dict.valuesToArray
   ->Array.forEach(cs =>

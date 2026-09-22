@@ -50,7 +50,8 @@ indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async () => {});
 `
 
 let makeScenario = (~name, ~chains, ~extra="") =>
-  Scenario.make(~supervised=false, 
+  Scenario.make(
+    ~supervised=false,
     ~configYaml=`
 name: ${name}
 rollback_on_reorg: true${extra}${contractsYaml}chains:${chains}`,
@@ -776,9 +777,11 @@ describe("E2E rollback tests", () => {
       // registration at suite scope would also collect the rollbacks every
       // other case in this file fires.
       let rollbackCommitCalls = []
-      let unregister = RollbackCommit.register(async (args: RollbackCommit.args) => {
-        rollbackCommitCalls->Array.push(args)
-      })
+      let unregister = RollbackCommit.register(
+        async (args: RollbackCommit.args) => {
+          rollbackCommitCalls->Array.push(args)
+        },
+      )
 
       let sourceMock = source(1337)
       await Utils.delay(0)
@@ -2369,7 +2372,6 @@ describe("E2E rollback tests", () => {
       // so getHighestBlockBelowThreshold = 300 - 200 = 100 is used directly.
       // Wait for the SetRollbackState tasks (NextQuery, ProcessEventBatch) to be scheduled
 
-
       sourceMock1337.resolveGetItemsOrThrow(
         [],
         ~prevRangeLastBlock={
@@ -3026,7 +3028,7 @@ describe("E2E rollback tests", () => {
           await storage.writeBatch(
             ~batch,
             ~rollback,
-                ~config,
+            ~config,
             ~allEntities,
             ~updatedEffectsCache,
             ~updatedEntities,

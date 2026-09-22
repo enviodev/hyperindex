@@ -57,8 +57,6 @@ pub enum CommandType {
     Local(LocalCommandTypes),
 
     ///Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`.
-    ///
-    ///A schema whose entities are all per-chain is indexed across several processes, as many as `ENVIO_PG_MAX_CONNECTIONS` affords, up to four. List the busiest chains first in `config.yaml` to balance them.
     Start(StartArgs),
 
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
@@ -149,13 +147,8 @@ pub struct StartArgs {
     ///Index only this chain, leaving the others to their own `envio start --chain` processes.
     ///Repeat the flag for several chains.
     ///
-    ///Only needed to place the chains yourself, across machines or under your own process
-    ///manager. A plain `envio start` already splits a per-chain schema across processes and
-    ///manages them for you.
-    ///Requires a schema whose entities are all per-chain, created for every chain by
-    ///`envio local db-migrate up` before any process starts. Assign each configured chain to
-    ///exactly one process, and give each its own `ENVIO_INDEXER_PORT`. Each process reports its
-    ///own chains ready as they catch up, independently of the others.
+    ///Only needed to place chains yourself. Requires a per-chain schema, migrated for every
+    ///chain before any process starts, and a separate `ENVIO_INDEXER_PORT` per process.
     #[arg(long = "chain", value_name = "CHAIN_ID")]
     pub chains: Vec<u64>,
 }

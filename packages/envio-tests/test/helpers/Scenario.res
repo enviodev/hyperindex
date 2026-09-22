@@ -308,29 +308,30 @@ let it = (
       async _ => (),
     )
   | None =>
-    let runBody = (~superviseRun) => async (t: Vitest.testContext) =>
-      await scenario->run(
-        ~sources,
-        ~reducedPollingInterval?,
-        ~targetBufferSize?,
-        ~maxAddrInPartition?,
-        ~clientFilterAddressThreshold?,
-        ~reorgThresholdReadyTolerance?,
-        ~holdRealtime?,
-        ~superviseRun,
-        ~onError?,
-        ~onExit?,
-        ~mapStorage?,
-        (~indexer, ~source) => body(~t, ~indexer, ~source),
-      )
+    let runBody = (~superviseRun) =>
+      async (t: Vitest.testContext) =>
+        await scenario->run(
+          ~sources,
+          ~reducedPollingInterval?,
+          ~targetBufferSize?,
+          ~maxAddrInPartition?,
+          ~clientFilterAddressThreshold?,
+          ~reorgThresholdReadyTolerance?,
+          ~holdRealtime?,
+          ~superviseRun,
+          ~onError?,
+          ~onExit?,
+          ~mapStorage?,
+          (~indexer, ~source) => body(~t, ~indexer, ~source),
+        )
     let register = (name, ~superviseRun) =>
       switch retry {
-      | Some(retry) =>
-        Vitest.Async.itWithOptions(name, {retry, ?timeout}, runBody(~superviseRun))
+      | Some(retry) => Vitest.Async.itWithOptions(name, {retry, ?timeout}, runBody(~superviseRun))
       | None => Vitest.Async.it(name, runBody(~superviseRun), ~timeout?)
       }
 
     register(name, ~superviseRun=false)
+
     // One chain is a run whose every chain is its own process's already, so the
     // barrier has nothing to hold: only a multichain scenario says anything new.
     if (

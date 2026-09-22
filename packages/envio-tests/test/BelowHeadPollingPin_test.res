@@ -1,6 +1,7 @@
 open Vitest
 
-let scenario = Scenario.make(~supervised=false, 
+let scenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: below-head-polling
 contracts:
@@ -84,9 +85,7 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
 
       await MockSource.waitItemsQuery(chainWithThresholdWork)
       t.expect(
-        chainWithThresholdWork.getItemsOrThrowCalls->Array.map(
-          call => call.payload["fromBlock"],
-        ),
+        chainWithThresholdWork.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ~message="the zero-lag chain first fetches to its pre-threshold head",
       ).toEqual([1])
       chainWithThresholdWork.resolveGetItemsOrThrow(
@@ -101,9 +100,7 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
       // progress and lets it lead, which sidesteps the production ordering.
       await MockSource.waitItemsQuery(chainWithThresholdWork)
       t.expect(
-        chainWithThresholdWork.getItemsOrThrowCalls->Array.map(
-          call => call.payload["fromBlock"],
-        ),
+        chainWithThresholdWork.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ~message="the second response reaches the zero-lag chain's pre-threshold head",
       ).toEqual([401])
       chainWithThresholdWork.resolveGetItemsOrThrow(
@@ -154,9 +151,7 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
       // lets chain 100 claim the progress-alignment line before discovering that
       // it is WaitingForNewBlock, which clamps chain 1337 behind block 800.
       t.expect(
-        chainWithThresholdWork.getItemsOrThrowCalls->Array.map(
-          call => call.payload["fromBlock"],
-        ),
+        chainWithThresholdWork.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ~message="the below-head chain is not blocked by an unchanged source",
       ).toEqual([801])
 

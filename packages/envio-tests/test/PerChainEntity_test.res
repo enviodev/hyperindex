@@ -70,7 +70,8 @@ let scenario = Scenario.make(~supervised=false, ~schema, ~configYaml=makeConfigY
 
 // The two chains need a reorg threshold to roll back within, so this variant
 // sets one — `max_reorg_depth` is per chain, so it goes in the chain blocks.
-let rollbackScenario = Scenario.make(~supervised=false, 
+let rollbackScenario = Scenario.make(
+  ~supervised=false,
   ~schema,
   ~configYaml=makeConfigYaml(~rollback="\nrollback_on_reorg: true")->String.replaceAll(
     "    start_block: 1\n",
@@ -80,7 +81,8 @@ let rollbackScenario = Scenario.make(~supervised=false,
 
 // The entity object and the getWhere filter key the chain by `chainId` while
 // the column is `chain_id`.
-let snakeCaseScenario = Scenario.make(~supervised=false, 
+let snakeCaseScenario = Scenario.make(
+  ~supervised=false,
   ~schema,
   ~configYaml=makeConfigYaml(
     ~storage=`storage:

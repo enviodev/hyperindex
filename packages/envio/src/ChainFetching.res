@@ -279,7 +279,6 @@ and applyQueryResponse = (
       ~blockNumber=newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
     )
   }
-
 }
 
 let finishWaitingForNewBlock = (

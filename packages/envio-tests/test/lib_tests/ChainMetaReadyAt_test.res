@@ -26,7 +26,9 @@ let storage = PgStorage.make(
 )
 
 let readyAt = async () => {
-  let rows: array<{"ready_at": Null.t<Date.t>}> = await sql->Postgres.unsafe(
+  let rows: array<{
+    "ready_at": Null.t<Date.t>,
+  }> = await sql->Postgres.unsafe(
     `SELECT "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => row["ready_at"]->Null.toOption->Option.isSome)
@@ -54,16 +56,17 @@ describe("A chain metadata write", () => {
     let stale = Dict.make()
     config.chainMap
     ->ChainMap.keys
-    ->Array.forEach(chainId =>
-      stale->Dict.set(
-        chainId->ChainId.toString,
-        {
-          InternalTable.Chains.firstEventBlockNumber: Null.null,
-          latestFetchedBlockNumber: 10,
-          timestampCaughtUpToHeadOrEndblock: Null.null,
-          isHyperSync: false,
-        },
-      )
+    ->Array.forEach(
+      chainId =>
+        stale->Dict.set(
+          chainId->ChainId.toString,
+          {
+            InternalTable.Chains.firstEventBlockNumber: Null.null,
+            latestFetchedBlockNumber: 10,
+            timestampCaughtUpToHeadOrEndblock: Null.null,
+            isHyperSync: false,
+          },
+        ),
     )
     let _ = await storage.setChainMeta(stale)
 

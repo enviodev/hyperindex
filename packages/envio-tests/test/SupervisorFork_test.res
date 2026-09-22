@@ -51,7 +51,7 @@ describe("Supervisor.fork", () => {
 
     let report = await Promise.make(
       (resolve, _) =>
-        running.child->NodeJs.ChildProcess.onMessage(
+        running.child->NodeJs.ChildProcess.Child.onMessage(
           message =>
             switch message {
             | Worker.Snapshot({metrics}) =>
@@ -59,7 +59,7 @@ describe("Supervisor.fork", () => {
             },
         ),
     )
-    running.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore
+    running.child->NodeJs.ChildProcess.Child.kill("SIGTERM")->ignore
 
     t.expect(report).toStrictEqual({
       // Everything the supervisor decided, in the environment: a worker needs it
@@ -128,7 +128,7 @@ describe("Supervisor.awaitExit", () => {
       releaseCheck: None,
     }
     let ended = outcome(group)
-    signalled.child->NodeJs.ChildProcess.kill("SIGTERM")->ignore
+    signalled.child->NodeJs.ChildProcess.Child.kill("SIGTERM")->ignore
 
     // The sibling still went down with it: one worker short leaves its chains
     // unindexed.
@@ -164,12 +164,7 @@ describe("Supervisor.readLines", () => {
     // Nothing is left to flush twice.
     flush()
 
-    t.expect(lines).toStrictEqual([
-      "a line",
-      "and half of another",
-      "last",
-      "no newline here",
-    ])
+    t.expect(lines).toStrictEqual(["a line", "and half of another", "last", "no newline here"])
   })
 })
 
@@ -196,9 +191,7 @@ describe("Supervisor.fork output", () => {
     }
     let _ = await group->Supervisor.awaitExit
 
-    t.expect(
-      lines->Array.toSorted(((_, a), (_, b)) => String.compare(a, b)),
-    ).toStrictEqual([
+    t.expect(lines->Array.toSorted(((_, a), (_, b)) => String.compare(a, b))).toStrictEqual([
       ("stdout", "first line"),
       ("stderr", "from stderr"),
       ("stdout", "second line"),
@@ -218,7 +211,7 @@ describe("Supervisor.isRunAtHead", () => {
 
   let untilGone = async (r: Supervisor.running) => {
     let rec until = async deadline =>
-      if r.child->NodeJs.ChildProcess.connected && Date.now() < deadline {
+      if r.child->NodeJs.ChildProcess.Child.connected && Date.now() < deadline {
         await Utils.delay(10)
         await until(deadline)
       }
