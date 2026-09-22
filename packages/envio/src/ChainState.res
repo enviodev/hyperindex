@@ -655,30 +655,6 @@ let hasProcessedToEndblock = (cs: t) => {
   }
 }
 
-// Where this chain has finished indexing, the first time it gets there.
-// `EndBlock` is terminal: the chain indexed everything it was configured to.
-// `Backfill` is the rest of the history, up to the point where blocks can
-// still be reorged, which is as far as a chain indexes before the indexer
-// crosses into them.
-type finished = EndBlock(int) | Backfill(int)
-
-let takeFinished = (cs: t) =>
-  if cs.reportedFinished {
-    None
-  } else {
-    switch (cs.fetchState.endBlock, cs->hasProcessedToEndblock, cs.isProgressAtHead) {
-    | (Some(endBlock), true, _) => {
-        cs.reportedFinished = true
-        Some(EndBlock(endBlock))
-      }
-    | (_, _, true) => {
-        cs.reportedFinished = true
-        Some(Backfill(cs.committedProgressBlockNumber))
-      }
-    | _ => None
-    }
-  }
-
 // Caught up as judged by persisted values alone: progress reached the endBlock,
 // or the head the previous run had already observed (less the lag that holds the
 // tip back). Unlike `isFetchingAtHead` this doesn't move when a fresh height
@@ -702,6 +678,37 @@ let isDurablyCaughtUp = (cs: t) => {
       Pervasives.max(0, fetchState.knownHeight - cs.chainConfig.blockLag)
   atEndBlock || atHead
 }
+
+// Where this chain has finished indexing, the first time it gets there.
+// `EndBlock` is terminal: the chain indexed everything it was configured to.
+// `Backfill` is the rest of the history, up to the point where blocks can
+// still be reorged, which is as far as a chain indexes before the indexer
+// crosses into them.
+type finished = EndBlock(int) | Backfill(int)
+
+let takeFinished = (cs: t) =>
+  if cs.reportedFinished {
+    None
+  } else {
+    // `isDurablyCaughtUp` as well as the flag a batch sets: a run resumed at the
+    // head has no batch to set it, and a chain that never says where it finished
+    // would leave the indexes being built for chains that reported nothing.
+    switch (
+      cs.fetchState.endBlock,
+      cs->hasProcessedToEndblock,
+      cs.isProgressAtHead || cs->isDurablyCaughtUp,
+    ) {
+    | (Some(endBlock), true, _) => {
+        cs.reportedFinished = true
+        Some(EndBlock(endBlock))
+      }
+    | (_, _, true) => {
+        cs.reportedFinished = true
+        Some(Backfill(cs.committedProgressBlockNumber))
+      }
+    | _ => None
+    }
+  }
 
 let getHighestBlockBelowThreshold = (cs: t): int => {
   let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.maxReorgDepth

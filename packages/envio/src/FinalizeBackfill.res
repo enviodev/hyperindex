@@ -11,15 +11,19 @@
 // `envio start --chain` process is indexing and never waits on one.
 
 let runOnce = async (state: IndexerState.t) => {
+  let chainIds = state->IndexerState.crossChainState->CrossChainState.chainIds
+
   // Said by the process rather than by each of its chains: the indexes are one
   // build over the tables, and the pause is the whole process's. A chain has
   // already said it caught up, and says it is ready once this commits. The
   // chains are named because the pause is theirs, and a split run has a process
-  // saying this for each part of it.
-  Logging.info({
-    "msg": "Building database indexes. Indexing is paused until they are ready, which can take a while on a large database.",
-    "chainIds": state->IndexerState.crossChainState->CrossChainState.chainIds,
-  })
+  // saying this for each part of it — one of them, for a process driving a
+  // single chain.
+  let msg = "Building database indexes. Indexing is paused until they are ready, which can take a while on a large database."
+  switch chainIds {
+  | [chainId] => Logging.info({"msg": msg, "chainId": chainId})
+  | chainIds => Logging.info({"msg": msg, "chainIds": chainIds})
+  }
 
   await Writing.flush(state)
 
@@ -30,11 +34,7 @@ let runOnce = async (state: IndexerState.t) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let readyAt = Date.make()
 
-    await storage.finalizeBackfill(
-      ~entities=persistence.allEntities,
-      ~chainIds=state->IndexerState.crossChainState->CrossChainState.chainIds,
-      ~readyAt,
-    )
+    await storage.finalizeBackfill(~entities=persistence.allEntities, ~chainIds, ~readyAt)
 
     // Only after the commit: in-memory readiness must never run ahead of the
     // `ready_at` a restart would read back.
