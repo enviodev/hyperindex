@@ -35,12 +35,14 @@ let gravatar1337 = "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 let gravatar1 = "0x3B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 
 let scenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: resume-finalize${contractsYaml}chains:${chainYaml(1337, gravatar1337, "")}`,
   ~schema,
 )
 
 let endBlockScenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: resume-finalize-end-block${contractsYaml}chains:${chainYaml(
       1337,
@@ -51,6 +53,7 @@ name: resume-finalize-end-block${contractsYaml}chains:${chainYaml(
 )
 
 let multichainScenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: resume-finalize-multichain${contractsYaml}chains:${chainYaml(1, gravatar1, "")}${chainYaml(
       1337,

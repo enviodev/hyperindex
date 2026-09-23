@@ -191,6 +191,9 @@ type itemsQuery = {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": 
 
 type getItemsOrThrowCall = {
   payload: itemsQuery,
+  // Whether the query asked for every block in its range, which the chain only
+  // does once it is at the head.
+  includeAllBlocks: bool,
   resolve: (
     array<itemMock>,
     ~latestFetchedBlockNumber: int=?,
@@ -481,7 +484,6 @@ let make = (
           blockHash: ?(block.blockHash->Option.map(evmBlockHash)),
         }),
         ~ecosystem=Evm,
-        ~shouldChecksum=false,
       )
       if getBlockHashesResolveFns->Utils.Array.isEmpty {
         JsError.throwWithMessage("getBlockHashesResolveFns is empty")
@@ -562,6 +564,7 @@ let make = (
           ~fromBlock,
           ~toBlock,
           ~addressSet,
+          ~includeAllBlocks,
           ~knownHeight,
           ~partitionId,
           ~selection as _,
@@ -581,9 +584,10 @@ let make = (
             }
             // Non-enumerable so it stays out of `toEqual` comparisons of the
             // payload while remaining inspectable from a test.
-            payload->defineAddresses(addressSet->AddressSet.addresses)
+            payload->defineAddresses(addressSet->AddressSet.addressesForTest)
             {
               payload,
+              includeAllBlocks,
               resolve: (
                 items,
                 ~latestFetchedBlockNumber=?,
@@ -606,6 +610,7 @@ let make = (
                     {
                       blockNumber: latestFetchedBlockNumber,
                       blockHash: evmBlockHash(latestFetchedBlockHash),
+                      blockTimestamp: latestFetchedBlockNumber,
                     }: BlockStore.inputBlock
                   ),
                 ]
@@ -638,23 +643,25 @@ let make = (
                 | None => ()
                 }
                 // A real source returns the header of every block a matched
-                // item came from, so those blocks carry a hash too. Without
-                // them the store only ever learns the range's seam and end,
-                // and reorg detection never sees the blocks events landed on.
+                // item came from, so those blocks carry a hash and a timestamp
+                // too. Without them the store only ever learns the range's seam
+                // and end, and reorg detection never sees the blocks events
+                // landed on.
                 items->Array.forEach(
                   item => {
                     if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
                       observedBlocks->Array.push({
                         blockNumber: item.blockNumber,
                         blockHash: mockBlockHash(item.blockNumber),
+                        blockTimestamp: item.blockNumber,
                       })
                     }
                   },
                 )
-                let responseBlockStore = BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false)
+                let responseBlockStore = BlockStore.make(~ecosystem=Evm)
                 observedBlocks->Array.forEach(
                   block => {
-                    let page = BlockStore.fromJs([block], ~ecosystem=Evm, ~shouldChecksum=false)
+                    let page = BlockStore.fromJs([block], ~ecosystem=Evm)
                     responseBlockStore->BlockStore.appendPage(page)
                   },
                 )
@@ -695,7 +702,6 @@ let make = (
                   ),
                   transactionStore: None,
                   blockStore: responseBlockStore,
-                  fromBlockQueried: fromBlock,
                   latestFetchedBlockNumber,
                   stats: {
                     totalTimeElapsed: 0.,

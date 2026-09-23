@@ -13,7 +13,7 @@ use crate::transaction_store::TransactionStore;
 
 mod config;
 pub(crate) mod decode;
-mod query;
+pub(crate) mod query;
 pub(crate) mod selection;
 pub(crate) mod types;
 
@@ -131,7 +131,7 @@ impl EvmHyperSyncClient {
         &self,
         block_numbers: Vec<i64>,
     ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
-        let aggregate = BlockStore::new_evm(self.enable_checksum_addresses);
+        let aggregate = BlockStore::new_evm();
         let request_stats = paginate_block_hashes(
             &block_numbers,
             &aggregate,
@@ -148,8 +148,7 @@ impl EvmHyperSyncClient {
                     ..Default::default()
                 };
                 let response = self.get_raw(query).await?;
-                let (next, store) =
-                    block_hash_page(response, self.enable_checksum_addresses).map_err(map_err)?;
+                let (next, store) = block_hash_page(response).map_err(map_err)?;
                 // `include_all_blocks` leaves no gaps, so the last block the
                 // page covered is the one before where it stopped.
                 Ok(HashPage {
@@ -242,6 +241,7 @@ impl EvmHyperSyncClient {
                     LogField::TransactionIndex,
                 ]),
             },
+            include_all_blocks: params.include_all_blocks,
             ..Default::default()
         };
 
@@ -260,8 +260,8 @@ impl EvmHyperSyncClient {
 
         let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
 
-        let transaction_store = TransactionStore::new_evm(self.enable_checksum_addresses);
-        let block_store = BlockStore::new_evm(self.enable_checksum_addresses);
+        let transaction_store = TransactionStore::new_evm();
+        let block_store = BlockStore::new_evm();
         let items = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
@@ -331,6 +331,9 @@ pub struct EventItemsQuery {
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
     pub client_filtered_contracts: Option<Vec<String>>,
+    /// Return a header for every block in the range, not only the ones a log
+    /// landed on. Absent means only the blocks logs came from.
+    pub include_all_blocks: Option<bool>,
 }
 
 fn log_selection_from_built(
@@ -422,10 +425,7 @@ fn convert_response(
 
 /// Convert only the two values needed by the block-hash paginator. Raw blocks
 /// move directly into the response store without constructing napi block DTOs.
-fn block_hash_page(
-    mut response: hypersync_client::QueryResponse,
-    should_checksum: bool,
-) -> Result<(i64, BlockStore)> {
+fn block_hash_page(mut response: hypersync_client::QueryResponse) -> Result<(i64, BlockStore)> {
     let next_block = response
         .next_block
         .try_into()
@@ -434,7 +434,7 @@ fn block_hash_page(
         .into_iter()
         .flatten()
         .collect();
-    let block_store = BlockStore::new_evm(should_checksum);
+    let block_store = BlockStore::new_evm();
     block_store.insert_evm_blocks(blocks);
     Ok((next_block, block_store))
 }
@@ -594,8 +594,10 @@ fn process_response(
 
     // Full fields for referenced blocks, whose trio and any selected fields
     // decode from the store like any other field. Blocks whose logs were all
-    // dropped by client-side routing keep a hash-only row so every returned
-    // header still backs reorg detection.
+    // dropped by client-side routing, and blocks `include_all_blocks` returned
+    // that carried no log at all, keep the always-required trio: the hash backs
+    // reorg detection, and the timestamp is what says how far behind chain time
+    // a progress block no event landed on leaves the indexer.
     let store_blocks: Vec<simple_types::Block> = returned_blocks
         .into_iter()
         .map(|b| {
@@ -607,6 +609,7 @@ fn process_response(
                 simple_types::Block {
                     number: b.number,
                     hash: b.hash,
+                    timestamp: b.timestamp,
                     ..Default::default()
                 }
             }
@@ -703,7 +706,7 @@ fn convert_error_to_napi(err: ConvertError) -> napi::Error {
 
 /// Returns `Some(camelCaseFieldName)` if the user requested this field but the
 /// server's response omits it AND the field isn't inherently nullable per-row.
-fn block_field_missing(
+pub(crate) fn block_field_missing(
     block: &hypersync_client::simple_types::Block,
     field: BlockField,
 ) -> Option<&'static str> {
@@ -746,7 +749,7 @@ fn block_field_missing(
     }
 }
 
-fn transaction_field_missing(
+pub(crate) fn transaction_field_missing(
     tx: &hypersync_client::simple_types::Transaction,
     field: TransactionField,
 ) -> Option<&'static str> {
@@ -755,6 +758,11 @@ fn transaction_field_missing(
         GasPrice | V | R | S | YParity | MaxPriorityFeePerGas | MaxFeePerGas | MaxFeePerBlobGas
         | BlobVersionedHashes | ContractAddress | Root | Status | L1Fee | L1GasPrice
         | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type => None,
+        AccessList => tx.access_list.is_none().then_some("accessList"),
+        AuthorizationList => tx
+            .authorization_list
+            .is_none()
+            .then_some("authorizationList"),
         BlockHash => tx.block_hash.is_none().then_some("blockHash"),
         BlockNumber => tx.block_number.is_none().then_some("blockNumber"),
         Gas => tx.gas.is_none().then_some("gas"),
@@ -764,11 +772,6 @@ fn transaction_field_missing(
         TransactionIndex => tx.transaction_index.is_none().then_some("transactionIndex"),
         Value => tx.value.is_none().then_some("value"),
         ChainId => tx.chain_id.is_none().then_some("chainId"),
-        AccessList => tx.access_list.is_none().then_some("accessList"),
-        AuthorizationList => tx
-            .authorization_list
-            .is_none()
-            .then_some("authorizationList"),
         CumulativeGasUsed => tx
             .cumulative_gas_used
             .is_none()
@@ -901,8 +904,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .err()
@@ -930,8 +933,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .err()
@@ -964,8 +967,8 @@ mod tests {
             false,
             REQUIRED_BLOCK_FIELDS,
             &[],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .err()
@@ -1003,8 +1006,8 @@ mod tests {
                 BlockField::BaseFeePerGas,
             ],
             &[],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .expect("expected success when only nullable fields are absent");
@@ -1034,8 +1037,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .err()
@@ -1067,8 +1070,8 @@ mod tests {
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .err()
@@ -1100,7 +1103,7 @@ mod tests {
             ..Default::default()
         };
 
-        let store = TransactionStore::new_evm(false);
+        let store = TransactionStore::new_evm();
         let items = process_response(
             vec![vec![block]],
             vec![vec![tx]],
@@ -1110,7 +1113,7 @@ mod tests {
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::BlockNumber],
             &store,
-            &BlockStore::new_evm(false),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .expect("expected success when block and transaction join");
@@ -1141,8 +1144,8 @@ mod tests {
             ..Default::default()
         };
 
-        let transaction_store = TransactionStore::new_evm(false);
-        let block_store = BlockStore::new_evm(false);
+        let transaction_store = TransactionStore::new_evm();
+        let block_store = BlockStore::new_evm();
         let items = process_response(
             vec![vec![block(1), block(2)]],
             vec![vec![tx(1), tx(2)]],
@@ -1162,6 +1165,7 @@ mod tests {
                 vec![1, 2],
                 vec![0, 0],
                 vec![(1u64 << (crate::transaction_store::EvmTxField::Hash as u32)) as f64; 2],
+                false,
             )
             .await
             .expect("materialize transactions");
@@ -1169,6 +1173,7 @@ mod tests {
             .materialize(
                 vec![1, 2],
                 vec![(1u64 << (crate::block_store::EvmBlockField::Hash as u32)) as f64; 2],
+                false,
             )
             .await
             .expect("materialize blocks");
@@ -1205,8 +1210,8 @@ mod tests {
             false,
             REQUIRED_BLOCK_FIELDS,
             &[TransactionField::Hash],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .expect("an unrouted log's absent block and transaction are not missing fields");
@@ -1239,8 +1244,8 @@ mod tests {
                 BlockField::GasUsed,
             ],
             &[],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .expect("an unreferenced block's absent selected field is not a missing field");
@@ -1281,8 +1286,8 @@ mod tests {
             false,
             REQUIRED_BLOCK_FIELDS,
             &[TransactionField::Hash],
-            &TransactionStore::new_evm(false),
-            &BlockStore::new_evm(false),
+            &TransactionStore::new_evm(),
+            &BlockStore::new_evm(),
             empty_set().cache(),
         )
         .expect("a keyless transaction's absent field is not a missing field");
@@ -1304,5 +1309,20 @@ mod tests {
         assert_eq!(parsed["kind"], "MissingFields");
         assert_eq!(parsed["fields"][0], "block.timestamp");
         assert_eq!(parsed["fields"][1], "transaction.hash");
+    }
+
+    #[test]
+    fn a_dropped_access_or_authorization_list_is_still_reported_missing() {
+        // HyperSync serves both lists as columns, an empty one for a
+        // transaction that has none, so a null here is the response dropping a
+        // selected field rather than the transaction's shape.
+        let tx = simple_types::Transaction::default();
+        assert_eq!(
+            (
+                transaction_field_missing(&tx, TransactionField::AccessList),
+                transaction_field_missing(&tx, TransactionField::AuthorizationList),
+            ),
+            (Some("accessList"), Some("authorizationList"))
+        );
     }
 }

@@ -196,10 +196,7 @@ let addHeaders = (~base: dict<string>, extra: option<dict<string>>) => {
 }
 
 let writeRaw = (res, ~status, ~headers=?, ~body) => {
-  let responseHeaders = addHeaders(
-    ~base=Dict.fromArray([("Content-Type", "application/json")]),
-    headers,
-  )
+  let responseHeaders = addHeaders(~base=dict{"Content-Type": "application/json"}, headers)
   res->writeHead(status, responseHeaders)
   res->end_(body)
 }
@@ -219,10 +216,7 @@ let rec sendReply = (res, request, reply, ~onTimer) =>
   switch reply {
   | RpcResult(result) => res->writeEnvelope(~id=request.id, ~fieldName="result", ~value=result)
   | RpcError({code, message, ?data}) => {
-      let error = Dict.fromArray([
-        ("code", JSON.Number(code->Int.toFloat)),
-        ("message", JSON.String(message)),
-      ])
+      let error = dict{"code": JSON.Number(code->Int.toFloat), "message": JSON.String(message)}
       switch data {
       | Some(value) => error->Dict.set("data", value)
       | None => ()
@@ -266,7 +260,10 @@ let verificationMessage = (~name, {failures, pending}: verification) => {
   sections->Array.joinUnsafe("\n\n")
 }
 
-let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?) =>
+// `port` defaults to 0, so the OS picks a free one and the caller reads it back
+// off `url`. Pass a fixed port only when the url has to be known before the
+// server can start — a config fixture parsed while vitest collects, say.
+let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?, ~port=0) =>
   Promise.make((resolve, reject) => {
     let requests = []
     let requestHeaders = []
@@ -344,9 +341,7 @@ let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?) =>
                     failures->Array.push(detail)->ignore
                     res->writeRaw(
                       ~status=500,
-                      ~body=JSON.stringify(
-                        JSON.Object(Dict.fromArray([("error", JSON.String(detail))])),
-                      ),
+                      ~body=JSON.stringify(JSON.Object(dict{"error": JSON.String(detail)})),
                     )
                   }
                 }
@@ -357,7 +352,7 @@ let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?) =>
       )
     })
     server->onceServerError(reject)
-    server->listenOnHost(0, "127.0.0.1", () => {
+    server->listenOnHost(port, "127.0.0.1", () => {
       let closeAsync = () =>
         Promise.make(
           (resolveClose, _rejectClose) => {
@@ -413,16 +408,16 @@ let withScenario = async (~name="unnamed", ~calls, testFn) => {
 
 // Low-level dynamic server retained for cases whose reply cannot reasonably be
 // expressed as a finite inline scenario.
-let start = (~handler: string => (int, string)) =>
-  startInternal(~name="legacy dynamic handler", ~calls=[], ~legacyHandler=handler)
+let start = (~handler: string => (int, string), ~port=0) =>
+  startInternal(~name="legacy dynamic handler", ~calls=[], ~legacyHandler=handler, ~port)
 
 // Reply with a fixed status and body to every request.
 let makeRaw = (~status, ~body) => start(~handler=_ => (status, body))
 
 // Reply 200 with a JSON-RPC envelope whose `result` is routed by the request's
 // `method` and `params`, echoing the request's `id` back.
-let makeWithParams = (~getResult: (~method: string, ~params: JSON.t) => JSON.t) =>
-  start(~handler=requestBody => {
+let makeWithParams = (~getResult: (~method: string, ~params: JSON.t) => JSON.t, ~port=0) =>
+  start(~port, ~handler=requestBody => {
     let parsed = requestBody->JSON.parseOrThrow->JSON.Decode.object
     let method =
       parsed
@@ -435,11 +430,7 @@ let makeWithParams = (~getResult: (~method: string, ~params: JSON.t) => JSON.t) 
       200,
       JSON.stringify(
         JSON.Object(
-          Dict.fromArray([
-            ("jsonrpc", JSON.String("2.0")),
-            ("id", id),
-            ("result", getResult(~method, ~params)),
-          ]),
+          dict{"jsonrpc": JSON.String("2.0"), "id": id, "result": getResult(~method, ~params)},
         ),
       ),
     )
@@ -447,5 +438,5 @@ let makeWithParams = (~getResult: (~method: string, ~params: JSON.t) => JSON.t) 
 
 // Reply 200 with a JSON-RPC envelope whose `result` is routed by the request's
 // `method`, echoing the request's `id` back.
-let make = (~getResult: string => JSON.t) =>
-  makeWithParams(~getResult=(~method, ~params as _) => getResult(method))
+let make = (~getResult: string => JSON.t, ~port=0) =>
+  makeWithParams(~port, ~getResult=(~method, ~params as _) => getResult(method))

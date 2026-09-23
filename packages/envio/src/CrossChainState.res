@@ -17,6 +17,11 @@ type t = {
   mutable isCaughtUp: bool,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
+  // Set on a process driving part of a split run: the chains it drives may be
+  // at the head while chains in another process are still backfilling, and an
+  // indexer switches to realtime as a whole or not at all. Cleared by the
+  // supervisor once every chain in the run has arrived.
+  mutable holdRealtime: bool,
 }
 
 // The whole-indexer fetch buffer pool, independent of chain count.
@@ -26,15 +31,49 @@ let calculateTargetBufferSize = () =>
   | None => 100_000
   }
 
-let make = (~chainStates, ~isRealtime, ~targetBufferSize=calculateTargetBufferSize()): t => {
+let make = (
+  ~chainStates,
+  ~isRealtime,
+  ~targetBufferSize=calculateTargetBufferSize(),
+  ~holdRealtime=false,
+): t => {
   {
     chainStates,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isCaughtUp: isRealtime,
     targetBufferSize,
+    holdRealtime,
   }
 }
+
+// The supervisor's go-ahead: every chain in the run has reached the head, so
+// this process may make the transitions it has been holding back.
+let releaseRealtime = (crossChainState: t) => crossChainState.holdRealtime = false
+
+let isHoldingRealtime = (crossChainState: t) => crossChainState.holdRealtime
+
+// Whether this process has got as far as it can without the run's leave. What a
+// supervisor reads to decide that a split run may go realtime as one.
+//
+// Three ways to have arrived, because a chain can be as far along as it can get
+// in three different states. Its chains have caught up; or it resumed already
+// realtime; or every chain is waiting to enter the reorg threshold, which is as
+// far as one can fetch while the pre-threshold lag holds it at the safe block —
+// entering the threshold is what lifts that lag, so a run held until its chains
+// reached the head would be holding back the transition that gets them there.
+//
+// The process's own conclusion rather than a reading a supervisor reassembles:
+// a chain committed at what was the head and resumed once the head had moved on
+// has arrived, and no live reading of it can say so — which is the same reason
+// `markCaughtUpOnResume` decides before any source request.
+let hasArrivedAtHead = (crossChainState: t) =>
+  crossChainState.isCaughtUp ||
+  crossChainState.isRealtime || {
+    let chainStates = crossChainState.chainStates->Dict.valuesToArray
+    chainStates->Utils.Array.notEmpty &&
+      chainStates->Array.every(ChainState.isReadyToEnterReorgThreshold)
+  }
 
 // Resolve a chain's state by id. The id always comes from `chainIds`, which is
 // derived from `chainStates`, so the entry is guaranteed present.
@@ -114,7 +153,7 @@ let createBatch = (
     ~history=config->HistoryPolicy.decide(~shouldSaveHistory=crossChainState->shouldSaveHistory),
     ~frontier,
     ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues(
-      ChainState.toChainBeforeBatch,
+      ChainState.toChainBeforeBatch(~isRealtime=crossChainState.isRealtime, ...),
     ),
     ~batchSizeTarget,
   )
@@ -122,13 +161,29 @@ let createBatch = (
 
 // Enter the reorg threshold: shrink each chain's buffer by its configured
 // blockLag and flip the flag.
-let enterReorgThreshold = (crossChainState: t) => {
-  Logging.info("Reorg threshold reached")
+// Whether every chain this process drives has buffered close enough to the head
+// to enter the threshold together — and, in a split run, whether the rest of the
+// run has too. Chains enter it as one indexer, so one chain still backfilling
+// holds the others back whatever process it runs in.
+let isReadyToEnterReorgThreshold = (crossChainState: t, ~batch) =>
+  !crossChainState.holdRealtime &&
+  crossChainState.chainStates
+  ->Dict.valuesToArray
+  ->Array.every(cs => cs->ChainState.isReadyToEnterReorgThresholdAfterBatch(~batch))
 
+// Said by each chain rather than once for the indexer: what crossing changes
+// is a chain's own, and the chains of a split run cross in processes that can
+// only speak for the ones they drive.
+let enterReorgThreshold = (crossChainState: t) => {
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
-    crossChainState
-    ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-    ->ChainState.enterReorgThreshold
+    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    // A chain whose end block sits below these blocks says nothing: crossing
+    // gives it nothing more to index, and it will never reach one of them.
+    let liftsCeiling = cs->ChainState.reorgThresholdLiftsCeiling
+    cs->ChainState.enterReorgThreshold
+    if liftsCeiling {
+      cs->ChainState.logger->Logging.childInfo(ChainState.reorgThresholdEntryMessage)
+    }
   }
 }
 
@@ -150,7 +205,10 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
   }
 
   crossChainState.isCaughtUp =
-    crossChainState.isCaughtUp || (crossChainState->nextItemIsNone && everyChainCaughtUp.contents)
+    crossChainState.isCaughtUp ||
+    (!crossChainState.holdRealtime &&
+    crossChainState->nextItemIsNone &&
+    everyChainCaughtUp.contents)
 }
 
 // Every chain has buffered up to its head (or endblock) with nothing
@@ -174,8 +232,13 @@ let isSettledAtHead = (crossChainState: t) => {
 }
 
 // Enter the FinalizingIndexes phase without a batch, for the resume above.
+// Not while the run holds this process back: the hold keeps the pre-threshold
+// lag in place, and a chain that has fetched to a lagged head it was never
+// going to get past reads as settled without having indexed anything. What a
+// held process may conclude about where it stands, it concludes from what was
+// persisted — see `markCaughtUpOnResume`, which the hold leaves alone.
 let markCaughtUpIfSettled = (crossChainState: t) =>
-  if crossChainState->isSettledAtHead {
+  if !crossChainState.holdRealtime && crossChainState->isSettledAtHead {
     crossChainState.isCaughtUp = true
   }
 
@@ -206,11 +269,46 @@ let markCaughtUpOnResume = (crossChainState: t) => {
 // and switches the indexer to realtime.
 let markReady = (crossChainState: t, ~readyAt) => {
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
-    crossChainState
-    ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-    ->ChainState.markReady(~readyAt)
+    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    let wasReady = cs->ChainState.isReady
+    cs->ChainState.markReady(~readyAt)
+
+    // One line per chain, because `ready_at` is one column per chain: what the
+    // log says and what a reader finds in the row are the same fact.
+    if !wasReady {
+      cs
+      ->ChainState.logger
+      ->Logging.childInfo("Ready. Fully indexed for queries.")
+    }
   }
   crossChainState.isRealtime = true
+}
+
+// Each chain that has just finished indexing, said once, by the chain it is
+// about — so a chain that finishes early says so then, rather than when the
+// last chain in its process catches up.
+let reportFinished = (crossChainState: t) => {
+  let waitingOnOthers = crossChainState.holdRealtime || crossChainState.chainIds->Array.length > 1
+  crossChainState.chainStates
+  ->Dict.valuesToArray
+  ->Array.forEach(cs =>
+    switch cs->ChainState.takeFinished {
+    | Some(EndBlock(block)) =>
+      cs
+      ->ChainState.logger
+      ->Logging.childInfo({"msg": "Indexed to the end block. This chain is done.", "block": block})
+    | Some(Backfill(block)) =>
+      cs
+      ->ChainState.logger
+      ->Logging.childInfo({
+        "msg": waitingOnOthers
+          ? "Finished backfill. Waiting for the other chains."
+          : "Finished backfill.",
+        "block": block,
+      })
+    | None => ()
+    }
+  )
 }
 
 // --- Fetch control. ---
@@ -256,6 +354,10 @@ let idleOrWaitAction = (cs: ChainState.t) =>
   cs->ChainState.bufferReadyCount > 0
     ? FetchState.NothingToQuery
     : FetchState.WaitingForNewBlock
+
+// How far past the alignment anchor's frontier progress a follower may fetch,
+// as a fraction of its own alignable range.
+let alignmentMargin = 0.2
 
 // Dispatch a fetch tick across the whole indexer from one shared pool of
 // ~targetBufferSize ready events, as a waterfall: visit chains furthest-behind
@@ -340,11 +442,14 @@ let checkAndFetch = async (
         (isCold ? Pervasives.min(remaining.contents, coldChainBudget) : remaining.contents) +.
         cs->ChainState.pendingBudget
       let maxTargetBlock = switch alignment {
-      // 10% margin past the anchor's line: chains whose progress tracks the
+      // 20% margin past the anchor's line: chains whose progress tracks the
       // anchor closely would otherwise flap in and out of the clamp on every
-      // small frontier move, stalling their pipeline every other tick.
+      // small frontier move, stalling their pipeline every other tick. The
+      // margin is also the headroom a follower keeps buffered while the anchor
+      // is mid-fetch, so it has to outlast a slow anchor response, not just
+      // absorb frontier jitter.
       | Some((anchorChainId, progress)) if anchorChainId !== chainId =>
-        Some(cs->ChainState.blockAtProgress(~progress=progress +. 0.1))
+        Some(cs->ChainState.blockAtProgress(~progress=progress +. alignmentMargin))
       | _ => None
       }
       switch cs->ChainState.getNextQuery(~chainTargetItems, ~maxTargetBlock?) {

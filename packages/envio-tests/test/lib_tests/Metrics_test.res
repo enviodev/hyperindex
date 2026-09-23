@@ -62,31 +62,7 @@ envio_source_request_seconds_total{method="getLogs"} 1.5`)
 
 // The state a Metrics.t carries when a test says nothing about it. Each test
 // below spreads this and names only the fields it asserts on.
-let baseMetrics: Metrics.t = {
-  startTime: Date.fromTime(0.),
-  metricTime: Date.fromTime(0.),
-  elapsedSeconds: 0.,
-  targetBufferSize: 0,
-  isInReorgThreshold: false,
-  rollbackEnabled: false,
-  maxBatchSize: 0,
-  preloadSeconds: 0.,
-  processingSeconds: 0.,
-  processingStalledOnFetchSeconds: 0.,
-  processingStalledOnStorageWriteSeconds: 0.,
-  rollbackSeconds: 0.,
-  rollbackCount: 0,
-  rollbackEventsCount: 0.,
-  chains: [],
-  handlers: [],
-  effects: [],
-  storageLoads: [],
-  storageWrites: [],
-  historyPrunes: [],
-  sourceRequests: [],
-  sourceHeights: [],
-  sourceHeightStreams: [],
-}
+let baseMetrics = TestChainMetrics.emptySnapshot
 
 describe("Metrics.collect", () => {
   it("Renders only the indexer info when there is no state", t => {
@@ -241,6 +217,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       elapsedSeconds: 123.456,
       targetBufferSize: 5000,
       isInReorgThreshold: true,
+      hasArrivedAtHead: true,
       rollbackEnabled: true,
       maxBatchSize: 5000,
       preloadSeconds: 12.3456,
@@ -269,6 +246,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           sourceBlockNumber: 305,
           progressBlockNumber: 200,
           progressLatencyMs: Some(1500),
+          progressBlockTime: Some(1700000000),
           concurrency: 2,
           partitionsCount: 3,
           bufferSize: 42,
@@ -587,6 +565,10 @@ envio_progress_block{chainId="1"} 200
 # TYPE envio_progress_events gauge
 envio_progress_events{chainId="1"} 12345
 
+# HELP envio_progress_block_time_seconds Unix timestamp of the block the chain has processed up to. Subtract it from the scrape time for how far behind chain time the indexer is, which stays honest when the data source itself is behind the chain. Best effort in realtime mode, absent during backfill.
+# TYPE envio_progress_block_time_seconds gauge
+envio_progress_block_time_seconds{chainId="1"} 1700000000
+
 # HELP envio_progress_latency The latency in milliseconds between the latest processed event creation and the time it was written to storage.
 # TYPE envio_progress_latency gauge
 envio_progress_latency{chainId="1"} 1500
@@ -661,5 +643,275 @@ envio_indexing_contract_addresses{chainId="1",contract="Gravatar"} 5
 envio_indexing_contract_addresses{chainId="1",contract="NftFactory"} 2
 `,
     )
+  })
+})
+
+describe("Metrics.merge", () => {
+  let startTime = Date.fromTime(1000.)
+  let metricTime = Date.fromTime(5000.)
+
+  let handler = (~event, ~processingCount): Metrics.handlerMetrics => {
+    contract: "Token",
+    event,
+    processingSeconds: 1.,
+    processingCount,
+    preloadSeconds: 0.5,
+    preloadCount: 2.,
+    preloadSecondsTotal: 3.,
+  }
+
+  let effect = (~cacheCount): Metrics.effectMetrics => {
+    effect: "getMetadata",
+    scope: "crossChain",
+    callSeconds: 1.,
+    callSecondsTotal: 2.,
+    callCount: 3.,
+    activeCallsCount: 1,
+    queueCount: 2,
+    queueWaitSeconds: 0.25,
+    invalidationsCount: 1.,
+    cacheCount,
+  }
+
+  it("Returns one worker's snapshot unchanged, taking the clock from the caller", t => {
+    let only: Metrics.t = {
+      ...baseMetrics,
+      startTime: Date.fromTime(777.),
+      metricTime: Date.fromTime(888.),
+      elapsedSeconds: 42.,
+      processingSeconds: 1.5,
+      maxBatchSize: 5000,
+      chains: [TestChainMetrics.make(~progressBlockNumber=400, ~firstEventBlockNumber=Some(150))],
+      handlers: [handler(~event="Transfer", ~processingCount=4.)],
+      effects: [effect(~cacheCount=Some(7))],
+    }
+
+    t.expect(
+      Metrics.merge([only], ~startTime, ~metricTime, ~elapsedSeconds=9., ~targetBufferSize=100),
+    ).toStrictEqual({
+      ...only,
+      startTime,
+      metricTime,
+      elapsedSeconds: 9.,
+      targetBufferSize: 100,
+    })
+  })
+
+  it("Concatenates chain series, sums what shares a key, and folds the scalars", t => {
+    let chainOne = TestChainMetrics.make(~progressBlockNumber=400, ~firstEventBlockNumber=None)
+    let chainTwo = {...chainOne, Metrics.chainId: 137->ChainId.fromInt}
+
+    let first: Metrics.t = {
+      ...baseMetrics,
+      targetBufferSize: 100,
+      maxBatchSize: 5000,
+      isInReorgThreshold: false,
+      rollbackEnabled: true,
+      processingSeconds: 1.5,
+      rollbackCount: 1,
+      chains: [chainOne],
+      handlers: [handler(~event="Transfer", ~processingCount=4.)],
+      effects: [effect(~cacheCount=Some(7))],
+      storageWrites: [{storage: "Postgres", seconds: 2., count: 3}],
+    }
+    let second: Metrics.t = {
+      ...baseMetrics,
+      targetBufferSize: 50,
+      maxBatchSize: 1000,
+      isInReorgThreshold: true,
+      hasArrivedAtHead: true,
+      rollbackEnabled: true,
+      processingSeconds: 0.5,
+      rollbackCount: 2,
+      chains: [chainTwo],
+      handlers: [
+        handler(~event="Transfer", ~processingCount=6.),
+        handler(~event="Approval", ~processingCount=1.),
+      ],
+      effects: [effect(~cacheCount=None)],
+      storageWrites: [{storage: "Postgres", seconds: 1., count: 4}],
+    }
+
+    t.expect(
+      Metrics.merge(
+        [first, second],
+        ~startTime,
+        ~metricTime,
+        ~elapsedSeconds=9.,
+        ~targetBufferSize=100,
+      ),
+    ).toStrictEqual({
+      ...baseMetrics,
+      startTime,
+      metricTime,
+      elapsedSeconds: 9.,
+      // Every worker holds a pool of the run's target, so the targets are one
+      // number the run was configured with, not a total to add up.
+      targetBufferSize: 100,
+      maxBatchSize: 5000,
+      // Chains cross into the threshold as one indexer, so one worker still
+      // below it speaks for the whole run, exactly as for arriving at the head.
+      isInReorgThreshold: false,
+      hasArrivedAtHead: false,
+      rollbackEnabled: true,
+      processingSeconds: 2.,
+      rollbackCount: 3,
+      chains: [chainOne, chainTwo],
+      handlers: [
+        {
+          ...handler(~event="Transfer", ~processingCount=10.),
+          processingSeconds: 2.,
+          preloadSeconds: 1.,
+          preloadCount: 4.,
+          preloadSecondsTotal: 6.,
+        },
+        handler(~event="Approval", ~processingCount=1.),
+      ],
+      effects: [
+        {
+          ...effect(~cacheCount=Some(7)),
+          callSeconds: 2.,
+          callSecondsTotal: 4.,
+          callCount: 6.,
+          activeCallsCount: 2,
+          queueCount: 4,
+          queueWaitSeconds: 0.5,
+          invalidationsCount: 2.,
+        },
+      ],
+      storageWrites: [{storage: "Postgres", seconds: 3., count: 7}],
+    })
+  })
+
+  it("Renders an empty group as an indexer that has reported nothing yet", t => {
+    t.expect(
+      Metrics.merge([], ~startTime, ~metricTime, ~elapsedSeconds=0., ~targetBufferSize=100),
+    ).toStrictEqual({
+      ...baseMetrics,
+      startTime,
+      metricTime,
+      targetBufferSize: 100,
+    })
+  })
+})
+
+describe("Metrics.renderRuntime", () => {
+  let sample = (~heapUsed, ~gc): Metrics.runtimeSample => {
+    cpuUserSeconds: 1.5,
+    cpuSystemSeconds: 0.5,
+    processStartTimeSeconds: 1700000000.,
+    residentMemoryBytes: 300.,
+    heapTotalBytes: 200.,
+    heapUsedBytes: heapUsed,
+    externalMemoryBytes: 10.,
+    eventLoopUtilization: 0.25,
+    eventLoopLagMeanSeconds: 0.001,
+    eventLoopLagMinSeconds: 0.,
+    eventLoopLagMaxSeconds: 0.002,
+    eventLoopLagStddevSeconds: 0.0005,
+    eventLoopLagP50Seconds: 0.001,
+    eventLoopLagP90Seconds: 0.0015,
+    eventLoopLagP99Seconds: 0.002,
+    heapSpaces: [{space: "new", size: 100., used: 40., available: 60.}],
+    activeResources: [("TCPSocketWrap", 2.)],
+    gc,
+    nodeVersion: "v24.1.2",
+  }
+
+  // Comment lines are the same in every layout, so only the samples are compared.
+  let samples = rendered =>
+    rendered
+    ->String.split("\n")
+    ->Array.filter(line => line !== "" && !(line->String.startsWith("#")))
+
+  it("Renders one process without labels, and a run's processes under a worker label", t => {
+    t.expect((
+      Metrics.renderRuntime([("", sample(~heapUsed=150., ~gc=[]))])->samples,
+      Metrics.renderRuntime([
+        (`worker="1"`, sample(~heapUsed=50., ~gc=[])),
+        (`worker="137"`, sample(~heapUsed=150., ~gc=[{kind: "minor", count: 3., seconds: 0.03}])),
+      ])->samples,
+    )).toStrictEqual((
+      [
+        "process_cpu_user_seconds_total 1.5",
+        "process_cpu_system_seconds_total 0.5",
+        "process_cpu_seconds_total 2",
+        "process_start_time_seconds 1700000000",
+        "process_resident_memory_bytes 300",
+        "nodejs_heap_size_total_bytes 200",
+        "nodejs_heap_size_used_bytes 150",
+        "nodejs_external_memory_bytes 10",
+        "nodejs_eventloop_utilization 0.25",
+        "nodejs_eventloop_lag_mean_seconds 0.001",
+        "nodejs_eventloop_lag_min_seconds 0",
+        "nodejs_eventloop_lag_max_seconds 0.002",
+        "nodejs_eventloop_lag_stddev_seconds 0.001",
+        "nodejs_eventloop_lag_p50_seconds 0.001",
+        "nodejs_eventloop_lag_p90_seconds 0.002",
+        "nodejs_eventloop_lag_p99_seconds 0.002",
+        `nodejs_heap_space_size_total_bytes{space="new"} 100`,
+        `nodejs_heap_space_size_used_bytes{space="new"} 40`,
+        `nodejs_heap_space_size_available_bytes{space="new"} 60`,
+        `nodejs_active_resources{type="TCPSocketWrap"} 2`,
+        "nodejs_active_resources_total 2",
+        `nodejs_version_info{version="v24.1.2",major="24",minor="1",patch="2"} 1`,
+      ],
+      [
+        `process_cpu_user_seconds_total{worker="1"} 1.5`,
+        `process_cpu_user_seconds_total{worker="137"} 1.5`,
+        `process_cpu_system_seconds_total{worker="1"} 0.5`,
+        `process_cpu_system_seconds_total{worker="137"} 0.5`,
+        `process_cpu_seconds_total{worker="1"} 2`,
+        `process_cpu_seconds_total{worker="137"} 2`,
+        `process_start_time_seconds{worker="1"} 1700000000`,
+        `process_start_time_seconds{worker="137"} 1700000000`,
+        `process_resident_memory_bytes{worker="1"} 300`,
+        `process_resident_memory_bytes{worker="137"} 300`,
+        `nodejs_heap_size_total_bytes{worker="1"} 200`,
+        `nodejs_heap_size_total_bytes{worker="137"} 200`,
+        `nodejs_heap_size_used_bytes{worker="1"} 50`,
+        `nodejs_heap_size_used_bytes{worker="137"} 150`,
+        `nodejs_external_memory_bytes{worker="1"} 10`,
+        `nodejs_external_memory_bytes{worker="137"} 10`,
+        `nodejs_eventloop_utilization{worker="1"} 0.25`,
+        `nodejs_eventloop_utilization{worker="137"} 0.25`,
+        `nodejs_eventloop_lag_mean_seconds{worker="1"} 0.001`,
+        `nodejs_eventloop_lag_mean_seconds{worker="137"} 0.001`,
+        `nodejs_eventloop_lag_min_seconds{worker="1"} 0`,
+        `nodejs_eventloop_lag_min_seconds{worker="137"} 0`,
+        `nodejs_eventloop_lag_max_seconds{worker="1"} 0.002`,
+        `nodejs_eventloop_lag_max_seconds{worker="137"} 0.002`,
+        `nodejs_eventloop_lag_stddev_seconds{worker="1"} 0.001`,
+        `nodejs_eventloop_lag_stddev_seconds{worker="137"} 0.001`,
+        `nodejs_eventloop_lag_p50_seconds{worker="1"} 0.001`,
+        `nodejs_eventloop_lag_p50_seconds{worker="137"} 0.001`,
+        `nodejs_eventloop_lag_p90_seconds{worker="1"} 0.002`,
+        `nodejs_eventloop_lag_p90_seconds{worker="137"} 0.002`,
+        `nodejs_eventloop_lag_p99_seconds{worker="1"} 0.002`,
+        `nodejs_eventloop_lag_p99_seconds{worker="137"} 0.002`,
+        `nodejs_heap_space_size_total_bytes{worker="1",space="new"} 100`,
+        `nodejs_heap_space_size_total_bytes{worker="137",space="new"} 100`,
+        `nodejs_heap_space_size_used_bytes{worker="1",space="new"} 40`,
+        `nodejs_heap_space_size_used_bytes{worker="137",space="new"} 40`,
+        `nodejs_heap_space_size_available_bytes{worker="1",space="new"} 60`,
+        `nodejs_heap_space_size_available_bytes{worker="137",space="new"} 60`,
+        `nodejs_active_resources{worker="1",type="TCPSocketWrap"} 2`,
+        `nodejs_active_resources{worker="137",type="TCPSocketWrap"} 2`,
+        `nodejs_active_resources_total{worker="1"} 2`,
+        `nodejs_active_resources_total{worker="137"} 2`,
+        `nodejs_gc_duration_seconds_sum{worker="137",kind="minor"} 0.03`,
+        `nodejs_gc_duration_seconds_count{worker="137",kind="minor"} 3`,
+        `nodejs_version_info{worker="1",version="v24.1.2",major="24",minor="1",patch="2"} 1`,
+        `nodejs_version_info{worker="137",version="v24.1.2",major="24",minor="1",patch="2"} 1`,
+      ],
+    ))
+  })
+
+  // A scrape whose last line has no line feed is a parse error to a strict
+  // consumer, which drops the whole body rather than its last sample.
+  it("Ends its body with a line feed, the way the text format requires", t => {
+    t.expect(
+      Metrics.renderRuntime([("", sample(~heapUsed=150., ~gc=[]))])->String.endsWith("\n"),
+    ).toBe(true)
   })
 })

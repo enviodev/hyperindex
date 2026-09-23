@@ -24,6 +24,7 @@ type initialChainState = {
   endBlock: option<int>,
   maxReorgDepth: int,
   progressBlockNumber: int,
+  progressBlockTime: option<int>,
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
@@ -274,6 +275,10 @@ let init = {
     // would create rows for this process's chains only, leaving the ones it
     // skipped with no state for their own processes to resume.
     ~requireInitialized=false,
+    // Whether this process is the one that tells the operator the run resumed.
+    // A supervisor says it once for the whole run, so the workers it forked
+    // keep it to their own log files.
+    ~announceResume=true,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
   ) => {
     try {
@@ -323,7 +328,8 @@ let init = {
           | _ => false
           }
         ) {
-          Logging.info(`Found existing indexer storage. Resuming indexing state...`)
+          let logResume = announceResume ? Logging.info : Logging.trace
+          logResume(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState(
             ~entities=persistence.allEntities,
             ~chainIds=chainConfigs->Array.map(chain => chain.id),
@@ -342,7 +348,7 @@ let init = {
           initialState.chains->Array.forEach(c => {
             progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
           })
-          Logging.info({
+          logResume({
             "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
             "progress": progress,
           })
@@ -354,6 +360,29 @@ let init = {
     }
   }
 }
+
+// Brings the schema up to date for a run that is about to start, as opposed to
+// a migration command: what a config change prints names the command the
+// operator ran, and an unreachable chain is waited on rather than reported,
+// since somebody is watching the run come up.
+let initForRun = (
+  persistence,
+  ~config: Config.t,
+  ~reset,
+  ~isDevelopmentMode,
+  ~requireInitialized,
+) =>
+  persistence->init(
+    ~announceResume=!Worker.isEnabled,
+    ~reset,
+    ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping=config.contractMapping,
+    ~envioInfo=Config.envioInfo(),
+    ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
+    ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
+    ~lowercaseAddresses=config.lowercaseAddresses,
+    ~requireInitialized,
+  )
 
 let getInitializedStorageOrThrow = persistence => {
   switch persistence.storageStatus {

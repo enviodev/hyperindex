@@ -11,9 +11,15 @@
 // `envio start --chain` process is indexing and never waits on one.
 
 let runOnce = async (state: IndexerState.t) => {
-  Logging.info(
-    "All chains are caught up. Finalizing the indexer before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
-  )
+  // Said by the process rather than by each of its chains: the indexes are one
+  // build over the tables, and the pause is the whole process's. A chain has
+  // already said it caught up, and says it is ready once this commits. The
+  // chains are named because the pause is theirs, and a split run has a process
+  // saying this for each part of it.
+  Logging.info({
+    "msg": "Building database indexes. Indexing is paused until they are ready, which can take a while on a large database.",
+    "chainIds": state->IndexerState.crossChainState->CrossChainState.chainIds,
+  })
 
   await Writing.flush(state)
 
@@ -32,8 +38,8 @@ let runOnce = async (state: IndexerState.t) => {
 
     // Only after the commit: in-memory readiness must never run ahead of the
     // `ready_at` a restart would read back.
+    // Says so per chain, which is the grain `ready_at` is committed at.
     state->IndexerState.markReady(~readyAt)
-    Logging.info("The indexer is ready. Switching to realtime indexing.")
   }
 }
 

@@ -29,7 +29,7 @@ use crate::field_table::{
     access_lists_cells, access_lists_from, auth_lists_cells, auth_lists_from, bool_cells,
     bool_from, bytes_cells, f64_cells, f64_from, fixed_from, hash_list_cells, hash_list_from,
     hex_full, hex_quantity, str_list_cells, str_list_from, u64_cells, u64_from, utf8, var_from,
-    AnyCol, Table,
+    AnyCol, Coverage, Table,
 };
 use crate::svm_hypersync_source::types::bigint_u64;
 
@@ -559,11 +559,11 @@ pub struct TransactionStore {
 
 #[napi]
 impl TransactionStore {
-    /// EVM store, carrying that chain's address-checksumming setting. Used for
-    /// both fetch-response pages and the persistent per-chain store.
+    /// EVM store. Used for both fetch-response pages and the persistent
+    /// per-chain store.
     #[napi(factory)]
-    pub fn new_evm(should_checksum: bool) -> Self {
-        Self::with_ecosystem(Ecosystem::Evm { should_checksum })
+    pub fn new_evm() -> Self {
+        Self::with_ecosystem(Ecosystem::Evm)
     }
 
     /// SVM store. Used for both fetch-response pages and the persistent store.
@@ -582,18 +582,26 @@ impl TransactionStore {
     /// Move every row from `page` into this store (merging a fetch-response
     /// page into the persistent per-chain store).
     #[napi]
-    pub fn merge(&self, page: &TransactionStore) {
+    pub fn merge(&self, page: &TransactionStore) -> napi::Result<()> {
         // Merging a store into itself would lock the same Mutex twice (deadlock).
         if std::ptr::eq(self, page) {
-            return;
+            return Ok(());
         }
-        // A page and its persistent store are the same per-chain ecosystem (both
-        // derive it from the one chain config), so the decoder is unaffected by the merge.
-        debug_assert_eq!(self.ecosystem, page.ecosystem);
+        // Field codes are per-ecosystem, so merging across one would read a
+        // column as a different field. A page and its persistent store always
+        // share the chain's ecosystem, but `merge` is public over N-API, so
+        // reject it in every build rather than panicking inside a callback,
+        // where an abort would take the process down.
+        if std::mem::discriminant(&self.ecosystem) != std::mem::discriminant(&page.ecosystem) {
+            return Err(napi::Error::from_reason(
+                "TransactionStore.merge: cannot merge a page from a different ecosystem",
+            ));
+        }
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
         dst.txs.append_from(&mut src.txs);
         dst.account_activity.append_from(&mut src.account_activity);
+        Ok(())
     }
 
     /// Bulk-materialise transactions in columnar form, one row per
@@ -605,13 +613,15 @@ impl TransactionStore {
     /// it fits in 32 bits). The lock is held only to gather the requested cells;
     /// decoding runs after it is released, off the JS thread via
     /// `block_in_place`. Missing keys yield an empty object. Result is aligned
-    /// with input.
+    /// with input. `should_checksum` is the caller's: rows are stored as raw
+    /// bytes, so the only place an address spelling is decided is here.
     #[napi(ts_return_type = "Promise<object[]>")]
     pub async fn materialize(
         &self,
         block_numbers: Vec<i64>,
         transaction_indices: Vec<u32>,
         masks: Vec<f64>,
+        should_checksum: bool,
     ) -> napi::Result<Columns> {
         // The three columns are zipped row-wise into the output; a length mismatch
         // would silently truncate and misalign the result with the caller's items.
@@ -632,7 +642,7 @@ impl TransactionStore {
             .collect();
 
         match self.ecosystem {
-            Ecosystem::Evm { should_checksum } => {
+            Ecosystem::Evm => {
                 let scratch = self.inner.lock().unwrap().txs.gather_scratch(&keys, &masks);
                 tokio::task::block_in_place(|| {
                     decode_evm_columns(&scratch, &transaction_indices, &masks, should_checksum)
@@ -782,7 +792,7 @@ impl TransactionStore {
 impl TransactionStore {
     fn with_ecosystem(ecosystem: Ecosystem) -> Self {
         let n_fields = match ecosystem {
-            Ecosystem::Evm { .. } => EvmTxField::VARIANTS.len(),
+            Ecosystem::Evm => EvmTxField::VARIANTS.len(),
             Ecosystem::Svm => SvmTxField::VARIANTS.len(),
             Ecosystem::Fuel => 0,
         };
@@ -798,7 +808,24 @@ impl TransactionStore {
     /// Merge one response's EVM transactions into the table (called by the
     /// HyperSync source while building a page). Rows without a (block, index)
     /// key are dropped. Not exposed to JS.
-    pub(crate) fn insert_evm_txs(&self, mut txs: Vec<simple_types::Transaction>) {
+    pub(crate) fn insert_evm_txs(&self, txs: Vec<simple_types::Transaction>) {
+        self.insert_evm_txs_covering(txs, 0);
+    }
+
+    /// Whether this transaction was already fetched for every field in `mask`.
+    pub(crate) fn covers(&self, key: (u64, u32), mask: u64) -> bool {
+        self.inner.lock().unwrap().txs.covers(&key, mask)
+    }
+
+    /// Merge transactions fetched for a known field selection. `covering` marks
+    /// every field the fetch asked for, so one the transaction genuinely has no
+    /// value for (a null `to` on a contract creation) still reads as fetched
+    /// and is not requested again.
+    pub(crate) fn insert_evm_txs_covering(
+        &self,
+        mut txs: Vec<simple_types::Transaction>,
+        covering: u64,
+    ) {
         txs.retain(|t| t.block_number.is_some() && t.transaction_index.is_some());
         if txs.is_empty() {
             return;
@@ -814,7 +841,11 @@ impl TransactionStore {
             .iter()
             .map(|&f| evm_tx_col(f, &txs))
             .collect();
-        self.inner.lock().unwrap().txs.merge_batch(keys, cols);
+        self.inner
+            .lock()
+            .unwrap()
+            .txs
+            .merge_batch_covering(keys, cols, Coverage::All(covering));
     }
 
     /// Merge one response's SVM transactions into the table, keyed by
@@ -1006,7 +1037,7 @@ mod tests {
     // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn decode_selected_only_materialises_masked_fields() {
-        let store = TransactionStore::new_evm(false);
+        let store = TransactionStore::new_evm();
         let mut tx = raw_tx(1, 0);
         tx.input = Some(hypersync_client::format::Data::from(
             vec![0xab, 0xcd].into_boxed_slice(),
@@ -1016,7 +1047,7 @@ mod tests {
         // Select only `input` via the bitmask.
         let mask = bit(EvmTxField::Input) as f64;
         let cols = store
-            .materialize(vec![1], vec![0], vec![mask])
+            .materialize(vec![1], vec![0], vec![mask], false)
             .await
             .expect("materialize");
 
@@ -1035,7 +1066,7 @@ mod tests {
     async fn decode_applies_each_rows_own_mask() {
         // Row 0 selects `input`; row 1 selects only `transactionIndex`. The union
         // builds both columns, but each field is present only on its row.
-        let store = TransactionStore::new_evm(false);
+        let store = TransactionStore::new_evm();
         let mut tx0 = raw_tx(1, 0);
         tx0.input = Some(hypersync_client::format::Data::from(
             vec![0xab, 0xcd].into_boxed_slice(),
@@ -1054,6 +1085,7 @@ mod tests {
                     bit(EvmTxField::Input) as f64,
                     bit(EvmTxField::TransactionIndex) as f64,
                 ],
+                false,
             )
             .await
             .expect("materialize");
@@ -1078,12 +1110,12 @@ mod tests {
     async fn evm_transaction_index_comes_from_key_even_on_miss() {
         // A missing row still materialises the requested key as
         // `transactionIndex`, so it never depends on a fetched transaction row.
-        let store = TransactionStore::new_evm(false);
+        let store = TransactionStore::new_evm();
         store.insert_evm_txs(vec![raw_tx(1, 3)]);
 
         let mask = bit(EvmTxField::TransactionIndex) as f64;
         let cols = store
-            .materialize(vec![9, 1], vec![7, 3], vec![mask, mask])
+            .materialize(vec![9, 1], vec![7, 3], vec![mask, mask], false)
             .await
             .expect("materialize");
         match column(&cols, "transactionIndex") {
@@ -1107,7 +1139,7 @@ mod tests {
         // Select only accountKeys.
         let mask = (1u64 << (SvmTxField::AccountKeys as u32)) as f64;
         let cols = store
-            .materialize(vec![5], vec![0], vec![mask])
+            .materialize(vec![5], vec![0], vec![mask], false)
             .await
             .expect("materialize");
 
@@ -1144,7 +1176,7 @@ mod tests {
 
         let mask = (1u64 << (SvmTxField::AccountKeys as u32)) as f64;
         let cols = store
-            .materialize(vec![5, 5], vec![0, 1], vec![mask, mask])
+            .materialize(vec![5, 5], vec![0, 1], vec![mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1188,7 +1220,7 @@ mod tests {
 
         let mask = svm_mask(SvmTxField::AccountActivities);
         let cols = store
-            .materialize(vec![5, 5, 5], vec![0, 1, 2], vec![mask, mask, mask])
+            .materialize(vec![5, 5, 5], vec![0, 1, 2], vec![mask, mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1267,6 +1299,7 @@ mod tests {
                 vec![5],
                 vec![0],
                 vec![svm_mask(SvmTxField::AccountActivities)],
+                false,
             )
             .await
             .expect("materialize");
@@ -1322,6 +1355,7 @@ mod tests {
                 vec![5],
                 vec![0],
                 vec![svm_mask(SvmTxField::AccountActivities)],
+                false,
             )
             .await
             .expect("materialize");
@@ -1330,7 +1364,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn prune_and_rollback_drop_by_block() {
-        let store = TransactionStore::new_evm(false);
+        let store = TransactionStore::new_evm();
         let txs = [10u64, 20, 30]
             .into_iter()
             .map(|block| {
@@ -1344,12 +1378,22 @@ mod tests {
         let mask = bit(EvmTxField::Nonce) as f64;
         store.prune(10);
         let after_prune = store
-            .materialize(vec![10, 20, 30], vec![0, 0, 0], vec![mask, mask, mask])
+            .materialize(
+                vec![10, 20, 30],
+                vec![0, 0, 0],
+                vec![mask, mask, mask],
+                false,
+            )
             .await
             .expect("materialize");
         store.rollback(20);
         let after_rollback = store
-            .materialize(vec![10, 20, 30], vec![0, 0, 0], vec![mask, mask, mask])
+            .materialize(
+                vec![10, 20, 30],
+                vec![0, 0, 0],
+                vec![mask, mask, mask],
+                false,
+            )
             .await
             .expect("materialize");
 
@@ -1363,32 +1407,82 @@ mod tests {
         );
     }
 
+    /// EIP-55 spelling of `[0xab; 20]`, the address every checksum case below
+    /// stores as `from`.
+    const CHECKSUMMED_FROM: &str = "0xABaBaBaBABabABabAbAbABAbABabababaBaBABaB";
+    const LOWERCASE_FROM: &str = "0xabababababababababababababababababababab";
+
+    fn from_tx(block: u64, index: u64) -> simple_types::Transaction {
+        let mut tx = raw_tx(block, index);
+        tx.from = Some(hypersync_client::format::Address::from([0xabu8; 20]));
+        tx
+    }
+
+    async fn materialized_from(store: &TransactionStore, should_checksum: bool) -> Option<String> {
+        let cols = store
+            .materialize(
+                vec![1],
+                vec![0],
+                vec![bit(EvmTxField::From) as f64],
+                should_checksum,
+            )
+            .await
+            .expect("materialize");
+        match column(&cols, "from") {
+            Some(Column::Str(v)) => v[0].clone(),
+            other => panic!("expected from column, got present={}", other.is_some()),
+        }
+    }
+
+    // A page and the store it merges into may disagree on checksumming: `merge`
+    // compares nothing about the flag, so neither side guards the other. The
+    // setting belongs to the caller of `materialize`, which is the only place it
+    // is read.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn materialize_honours_the_callers_checksum_setting() {
+        let page = TransactionStore::new_evm();
+        page.insert_evm_txs(vec![from_tx(1, 0)]);
+        let store = TransactionStore::new_evm();
+        store.merge(&page).unwrap();
+
+        assert_eq!(
+            (
+                materialized_from(&store, true).await,
+                materialized_from(&store, false).await,
+            ),
+            (
+                Some(CHECKSUMMED_FROM.to_string()),
+                Some(LOWERCASE_FROM.to_string()),
+            )
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn merge_resolves_re_fetched_transaction_to_newest() {
         // The same (block, index) is re-fetched with a different `input` (an
         // overlapping-partition or reorg re-fetch): the persistent store must
         // resolve to the fresh copy, not accumulate both.
-        let persistent = TransactionStore::new_evm(false);
+        let persistent = TransactionStore::new_evm();
 
-        let page1 = TransactionStore::new_evm(false);
+        let page1 = TransactionStore::new_evm();
         let mut first = raw_tx(1, 0);
         first.input = Some(hypersync_client::format::Data::from(
             vec![0xaa].into_boxed_slice(),
         ));
         page1.insert_evm_txs(vec![first]);
-        persistent.merge(&page1);
+        persistent.merge(&page1).unwrap();
 
-        let page2 = TransactionStore::new_evm(false);
+        let page2 = TransactionStore::new_evm();
         let mut second = raw_tx(1, 0);
         second.input = Some(hypersync_client::format::Data::from(
             vec![0xbb].into_boxed_slice(),
         ));
         page2.insert_evm_txs(vec![second]);
-        persistent.merge(&page2);
+        persistent.merge(&page2).unwrap();
 
         let mask = bit(EvmTxField::Input) as f64;
         let cols = persistent
-            .materialize(vec![1], vec![0], vec![mask])
+            .materialize(vec![1], vec![0], vec![mask], false)
             .await
             .expect("materialize");
         match column(&cols, "input") {

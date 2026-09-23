@@ -62,6 +62,23 @@ pub(crate) fn error_with_request_stats(
     napi::Error::from_reason(format!("{NATIVE_FAILURE_PREFIX}{payload}"))
 }
 
+/// Collects request timings until a source operation reports them.
+#[derive(Default)]
+pub(crate) struct Stats(std::sync::Mutex<Vec<RequestStat>>);
+
+impl Stats {
+    pub(crate) fn record(&self, method: &str, seconds: f64) {
+        self.0.lock().unwrap().push(RequestStat {
+            method: method.to_string(),
+            seconds,
+        });
+    }
+
+    pub(crate) fn take(&self) -> Vec<RequestStat> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -34,19 +34,27 @@ let getEarliestEvent = (fetchState: FetchState.t) => {
     Item(fetchState.buffer->Array.getUnsafe(0))
   } else {
     NoItem({
-      latestFetchedBlock: fetchState->FetchState.bufferBlock,
+      latestFetchedBlock: fetchState->FetchState.bufferBlockNumber,
     })
   }
 }
 
-let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
-let mockAddress1 = Envio.TestHelpers.Addresses.mockAddresses[1]->Option.getOrThrow
-let mockAddress2 = Envio.TestHelpers.Addresses.mockAddresses[2]->Option.getOrThrow
-let mockAddress3 = Envio.TestHelpers.Addresses.mockAddresses[3]->Option.getOrThrow
-let mockAddress4 = Envio.TestHelpers.Addresses.mockAddresses[4]->Option.getOrThrow
-let mockAddress5 = Envio.TestHelpers.Addresses.mockAddresses[5]->Option.getOrThrow
-let mockAddress6 = Envio.TestHelpers.Addresses.mockAddresses[6]->Option.getOrThrow
-let mockFactoryAddress = Envio.TestHelpers.Addresses.mockAddresses[7]->Option.getOrThrow
+// The store keys on an address, not on a spelling, and hands one back
+// canonically - which is what the fetch state and every assertion below
+// see. These are the mock addresses in that spelling.
+let mockAddress = i =>
+  Envio.TestHelpers.Addresses.mockAddresses[i]
+  ->Option.getOrThrow
+  ->Address.Evm.fromAddressLowercaseOrThrow
+
+let mockAddress0 = mockAddress(0)
+let mockAddress1 = mockAddress(1)
+let mockAddress2 = mockAddress(2)
+let mockAddress3 = mockAddress(3)
+let mockAddress4 = mockAddress(4)
+let mockAddress5 = mockAddress(5)
+let mockAddress6 = mockAddress(6)
+let mockFactoryAddress = mockAddress(7)
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 let getBlockData = (~blockNumber): int => blockNumber
@@ -340,7 +348,7 @@ describe("FetchState.make", () => {
       t.expect(
         (
           addressStore->AddressStore.size,
-          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
           // No partition is created for the contract without events
           fetchState.optimizedPartitions.entities
           ->Dict.valuesToArray
@@ -624,7 +632,7 @@ describe("FetchState.make", () => {
       ~message="Close startBlocks: should merge into a single partition (direct push)",
     ).toEqual(["0"])
     t.expect(
-      (closePartitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addresses,
+      (closePartitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addressesForTest,
       ~message="Close startBlocks: single partition has both contracts' addresses",
     ).toEqual([mockAddress0, mockAddress1])
     t.expect(
@@ -672,7 +680,7 @@ describe("FetchState.make", () => {
       ~message="Far startBlocks: earlier partition has mergeBlock",
     ).toEqual(Some(20_001))
     t.expect(
-      (farPartitions.entities->Dict.getUnsafe("1")).addresses->AddressSet.addresses,
+      (farPartitions.entities->Dict.getUnsafe("1")).addresses->AddressSet.addressesForTest,
       ~message="Far startBlocks: later partition has merged addresses from both contracts",
     ).toEqual([mockAddress0, mockAddress1])
   })
@@ -719,7 +727,7 @@ describe("FetchState.make", () => {
         ~message="Close startBlocks: Phase 1 groups into a single partition",
       ).toEqual(["0"])
       t.expect(
-        (closePartitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addresses,
+        (closePartitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addressesForTest,
         ~message="Close startBlocks: single partition has both addresses",
       ).toEqual([mockAddress0, mockAddress1])
       t.expect(
@@ -771,7 +779,7 @@ describe("FetchState.make", () => {
         ~message="Far startBlocks: earlier partition has mergeBlock matching later partition's block",
       ).toEqual(Some(20_001))
       t.expect(
-        (farPartitions.entities->Dict.getUnsafe("1")).addresses->AddressSet.addresses,
+        (farPartitions.entities->Dict.getUnsafe("1")).addresses->AddressSet.addressesForTest,
         ~message="Far startBlocks: later partition has merged addresses",
       ).toEqual([mockAddress0, mockAddress1])
       t.expect(
@@ -825,7 +833,7 @@ describe("FetchState.make", () => {
       ~message="filterByAddresses: contracts merge into a single partition",
     ).toEqual(["0"])
     t.expect(
-      (partitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addresses,
+      (partitions.entities->Dict.getUnsafe("0")).addresses->AddressSet.addressesForTest,
       ~message="filterByAddresses: single partition holds both contracts' addresses",
     ).toEqual([mockAddress0, mockAddress1])
     t.expect(
@@ -880,11 +888,11 @@ describe("FetchState.registerDynamicContracts", () => {
         (
           // tracked on addressStore so later conflicting registrations
           // are detected, and so numAddresses reflects it
-          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
           // still written to the db, so a config that later adds events for
           // the contract picks the address up on restart
           addressStore
-          ->AddressStore.pendingEntries
+          ->AddressStore.pendingEntriesForTest
           ->Array.map(ia => ia.address),
           // partitions unchanged - no fetching for contracts without events
           updatedFetchState.optimizedPartitions === fetchState.optimizedPartitions,
@@ -941,10 +949,10 @@ describe("FetchState.registerDynamicContracts", () => {
         (
           // One row per contract; the repeat of an existing pair writes nothing.
           addressStore
-          ->AddressStore.pendingEntries
+          ->AddressStore.pendingEntriesForTest
           ->Array.map(ia => (ia.address, ia.contractName, ia.registrationBlock)),
           // Set order: the earlier registration's start block comes first.
-          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
           // No new partition created across any of the registrations.
           afterThird.optimizedPartitions.entities === fetchState.optimizedPartitions.entities,
         ),
@@ -986,8 +994,8 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          addressStore->AddressStore.getAll(mockAddress2)->Array.map(ia => ia.contractName),
-          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress2)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
           // Only the Gravatar address lands in a partition.
           updatedFetchState.optimizedPartitions.entities
           ->Dict.valuesToArray
@@ -995,7 +1003,7 @@ describe("FetchState.registerDynamicContracts", () => {
             p =>
               p.addresses
               ->AddressSet.filterByContracts(["Gravatar"])
-              ->AddressSet.addresses
+              ->AddressSet.addressesForTest
               ->Array.includes(mockAddress1),
           ),
           updatedFetchState.optimizedPartitions.entities
@@ -1033,9 +1041,9 @@ describe("FetchState.registerDynamicContracts", () => {
       t.expect(
         (
           addressStore
-          ->AddressStore.pendingEntries
+          ->AddressStore.pendingEntriesForTest
           ->Array.map(ia => (ia.address, ia.contractName)),
-          addressStore->AddressStore.getAll(mockAddress0)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAllForTest(mockAddress0)->Array.map(ia => ia.contractName),
           updatedFetchState === fetchState,
         ),
         ~message=`the second contract's registration is stored and persisted,
@@ -1076,15 +1084,15 @@ describe("FetchState.registerDynamicContracts", () => {
         p =>
           p.addresses
           ->AddressSet.filterByContracts([contractName])
-          ->AddressSet.addresses
+          ->AddressSet.addressesForTest
           ->Array.includes(mockAddress1),
       )
 
     t.expect(
       (
-        addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+        addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
         addressStore
-        ->AddressStore.pendingEntries
+        ->AddressStore.pendingEntriesForTest
         ->Array.map(ia => (ia.address, ia.contractName)),
         inPartitionsOf("Gravatar"),
         inPartitionsOf("NftFactory"),
@@ -1122,9 +1130,9 @@ describe("FetchState.registerDynamicContracts", () => {
 
     t.expect(
       (
-        addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+        addressStore->AddressStore.getAllForTest(mockAddress1)->Array.map(ia => ia.contractName),
         addressStore
-        ->AddressStore.pendingEntries
+        ->AddressStore.pendingEntriesForTest
         ->Array.map(ia => (ia.address, ia.contractName)),
         updatedFetchState.optimizedPartitions.entities
         ->Dict.valuesToArray
@@ -1132,7 +1140,7 @@ describe("FetchState.registerDynamicContracts", () => {
           p =>
             p.addresses
             ->AddressSet.filterByContracts(["Gravatar"])
-            ->AddressSet.addresses
+            ->AddressSet.addressesForTest
             ->Array.includes(mockAddress1),
         ),
       ),
@@ -1163,9 +1171,9 @@ describe("FetchState.registerDynamicContracts", () => {
 
     // Verify that both DC2 and DC3 were registered correctly
     let hasAddress1 =
-      addressStore->AddressStore.getAll(mockAddress1)->Utils.Array.notEmpty
+      addressStore->AddressStore.getAllForTest(mockAddress1)->Utils.Array.notEmpty
     let hasAddress2 =
-      addressStore->AddressStore.getAll(mockAddress2)->Utils.Array.notEmpty
+      addressStore->AddressStore.getAllForTest(mockAddress2)->Utils.Array.notEmpty
 
     t.expect(hasAddress1, ~message="Address1 should be registered").toBe(true)
     t.expect(
@@ -1398,7 +1406,7 @@ describe("FetchState.registerDynamicContracts", () => {
           p => (
             p.id,
             p.dynamicContract,
-            p.addresses->AddressSet.addresses,
+            p.addresses->AddressSet.addressesForTest,
             p.mergeBlock,
             p.latestFetchedBlock,
           ),
@@ -1438,7 +1446,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
     t.expect(
       addressStore
-      ->AddressStore.pendingEntries
+      ->AddressStore.pendingEntriesForTest
       ->Array.map(ia => (ia.address, ia.registrationBlock)),
       ~message=`Should choose the earliest dc from the batch
   And drop the later one, so they are not duplicated in the db`,
@@ -1447,8 +1455,8 @@ describe("FetchState.registerDynamicContracts", () => {
     t.expect(
       (
         addressStore->AddressStore.size,
-        addressStore->AddressStore.getAll(mockAddress0),
-        addressStore->AddressStore.getAll(mockAddress1),
+        addressStore->AddressStore.getAllForTest(mockAddress0),
+        addressStore->AddressStore.getAllForTest(mockAddress1),
       ),
       ~message="Should choose the earliest dc from the batch",
     ).toEqual((
@@ -2208,7 +2216,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     t.expect(
       (
-        fetchStateWithResponse1->FetchState.bufferBlock,
+        fetchStateWithResponse1->FetchState.bufferBlockNumber,
         fetchStateWithResponse1.optimizedPartitions.idsInAscOrder,
         fetchStateWithResponse1.buffer->Array.length,
       ),
@@ -2265,7 +2273,7 @@ describe("FetchState.getNextQuery & integration", () => {
     })->TestAddresses.fetchState)
   })
 
-  it("Skips the blocks below a partition's earliest registration start block", t => {
+  it("Starts a partition at its earliest registration start block", t => {
     let makeWildcard = (~id, ~startBlock=?) =>
       (EventRegistration.evmOnEventRegistration(
         ~id,
@@ -2274,9 +2282,12 @@ describe("FetchState.getNextQuery & integration", () => {
         ~startBlock?,
       ) :> Internal.onEventRegistration)
 
-    // The address-free partition is the only one here, so its query is the
-    // whole story.
-    let fromBlockOf = (~knownHeight, ~endBlock=None, onEventRegistrations) => {
+    // The address-free partition is the only one here, so its frontier is the
+    // chain's and its query is the whole story. The target is deliberately
+    // kept short of the head: a chain that has fetched nothing yet sizes its
+    // queries off its frontier, so a partition that only skipped its cursor
+    // ahead would fall outside the target and never query at all.
+    let nextQueryOf = (~knownHeight, ~endBlock=None, onEventRegistrations) => {
       let (fetchState, _) = makeFs(
         ~onEventRegistrations,
         ~addresses=[],
@@ -2287,46 +2298,49 @@ describe("FetchState.getNextQuery & integration", () => {
         ~chainId,
         ~knownHeight,
       )
-      switch fetchState->FetchState.getNextQuery(
-        ~chainTargetBlock=knownHeight,
+      let query = switch fetchState->FetchState.getNextQuery(
+        ~chainTargetBlock=fetchState->FetchState.bufferBlockNumber + 100,
         ~chainTargetItems=10_000.,
       ) {
       | Ready(queries) => queries->Array.map(q => q.fromBlock)
       | WaitingForNewBlock => ["WaitingForNewBlock"]->Obj.magic
       | NothingToQuery => ["NothingToQuery"]->Obj.magic
       }
+      (fetchState->FetchState.bufferBlockNumber, query)
     }
 
     t.expect({
-      // Nothing below 500 can match, and the head is past it, so the scan
-      // starts there instead of at the chain start.
-      "restricted": fromBlockOf(~knownHeight=1000, [makeWildcard(~id="a", ~startBlock=500)]),
-      // The earliest of several still bounds the skip.
-      "twoRestricted": fromBlockOf(
+      // Nothing below 500 can match, so the frontier starts there and the scan
+      // starts above it instead of at the chain start.
+      "restricted": nextQueryOf(~knownHeight=1000, [makeWildcard(~id="a", ~startBlock=500)]),
+      // The earliest of several still bounds the frontier.
+      "twoRestricted": nextQueryOf(
         ~knownHeight=1000,
         [makeWildcard(~id="a", ~startBlock=900), makeWildcard(~id="b", ~startBlock=500)],
       ),
       // An unrestricted sibling can fire from the chain start, so nothing is
       // skipped.
-      "mixed": fromBlockOf(
+      "mixed": nextQueryOf(
         ~knownHeight=1000,
         [makeWildcard(~id="a", ~startBlock=500), makeWildcard(~id="b")],
       ),
-      // Start block past the head: skipping there would leave the partition
-      // with no query at all, so it fetches as before until the chain catches
-      // up. Same when the chain's endBlock is below it.
-      "beyondHead": fromBlockOf(~knownHeight=100, [makeWildcard(~id="a", ~startBlock=500)]),
-      "beyondEndBlock": fromBlockOf(
+      // Start block past the head: the partition sits at its start block with
+      // nothing to ask for until the chain gets there, and the chain's frontier
+      // is capped at the head meanwhile.
+      "beyondHead": nextQueryOf(~knownHeight=100, [makeWildcard(~id="a", ~startBlock=500)]),
+      // Start block past the chain's endBlock: the partition is done before it
+      // ever queries.
+      "beyondEndBlock": nextQueryOf(
         ~knownHeight=1000,
         ~endBlock=Some(200),
         [makeWildcard(~id="a", ~startBlock=500)],
       ),
     }).toEqual({
-      "restricted": [500],
-      "twoRestricted": [500],
-      "mixed": [0],
-      "beyondHead": [0],
-      "beyondEndBlock": [0],
+      "restricted": (499, [500]),
+      "twoRestricted": (499, [500]),
+      "mixed": (-1, [0]),
+      "beyondHead": (100, ["WaitingForNewBlock"]->Obj.magic),
+      "beyondEndBlock": (499, ["NothingToQuery"]->Obj.magic),
     })
   })
 
@@ -3555,13 +3569,13 @@ describe("Dynamic contracts with start blocks", () => {
 
     // The contract should be registered in addressStore
     t.expect(
-      addressStore->AddressStore.getAll(mockAddress1)->Utils.Array.notEmpty,
+      addressStore->AddressStore.getAllForTest(mockAddress1)->Utils.Array.notEmpty,
       ~message="Dynamic contract should be registered in addressStore",
     ).toBeTruthy()
 
     // Verify the startBlock is set correctly
     let registeredContract =
-      addressStore->AddressStore.getAll(mockAddress1)->Array.getUnsafe(0)
+      addressStore->AddressStore.getAllForTest(mockAddress1)->Array.getUnsafe(0)
 
     t.expect(
       registeredContract.effectiveStartBlock,
@@ -3591,10 +3605,10 @@ describe("Dynamic contracts with start blocks", () => {
 
     // Verify both contracts are registered with correct startBlocks
     let contract1Registered =
-      addressStore->AddressStore.getAll(mockAddress1)->Array.getUnsafe(0)
+      addressStore->AddressStore.getAllForTest(mockAddress1)->Array.getUnsafe(0)
 
     let contract2Registered =
-      addressStore->AddressStore.getAll(mockAddress2)->Array.getUnsafe(0)
+      addressStore->AddressStore.getAllForTest(mockAddress2)->Array.getUnsafe(0)
 
     t.expect(
       contract1Registered.effectiveStartBlock,
@@ -3786,6 +3800,42 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
     interval,
     handler: Utils.magic("mock handler"),
   }
+
+  // A partition can sit past the head, on a start block the chain hasn't reached
+  // yet. onBlock items are generated up to the lowest partition frontier, so
+  // without a cap they would be generated for blocks the chain doesn't have and
+  // handled as if it did.
+  it("Generates onBlock items no further than the head past a later start block", t => {
+    let (fetchState, _) = makeFs(
+      ~onEventRegistrations=[
+        (EventRegistration.evmOnEventRegistration(
+          ~id="a",
+          ~contractName="Gravatar",
+          ~isWildcard=true,
+          ~startBlock=500,
+        ) :> Internal.onEventRegistration),
+      ],
+      ~addresses=[],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~maxOnBlockBufferSize=1000,
+      ~chainId,
+      ~knownHeight=100,
+      ~onBlockRegistrations=[makeOnBlockRegistration(~interval=1, ~startBlock=Some(0))],
+    )
+    let lastBufferedBlock = fs =>
+      fs.FetchState.buffer->Array.last->Option.map(Internal.getItemBlockNumber)
+
+    let updated = fetchState->FetchState.updateKnownHeight(~knownHeight=150)
+    t.expect({
+      "made": (fetchState.latestOnBlockBlockNumber, fetchState->FetchState.bufferBlockNumber, fetchState->lastBufferedBlock),
+      "updated": (updated.latestOnBlockBlockNumber, updated->FetchState.bufferBlockNumber, updated->lastBufferedBlock),
+    }).toEqual({
+      "made": (100, 100, Some(100)),
+      "updated": (150, 150, Some(150)),
+    })
+  })
 
   it(
     "Creates FetchState with no event configs, triggers WaitingForNewBlock, then fills buffer on updateKnownHeight",
@@ -4037,10 +4087,7 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
       eventDensity: None,
       latestSourceRangeCapacityUpdateBlock: 0,
     }
-    let byId = Dict.fromArray([
-      ("overshoot", overshootPartition),
-      ("unknown", unknownPartition),
-    ])
+    let byId = dict{"overshoot": overshootPartition, "unknown": unknownPartition}
     let partitions = order->Array.map(id => byId->Dict.getUnsafe(id))
     {
       optimizedPartitions: FetchState.OptimizedPartitions.make(
@@ -4089,8 +4136,8 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
       (resultA, resultB),
       ~message="Same totals whichever partition the round processes first",
     ).toEqual((
-      Dict.fromArray([("overshoot", 1800), ("unknown", 1000)]),
-      Dict.fromArray([("overshoot", 1800), ("unknown", 1000)]),
+      dict{"overshoot": 1800, "unknown": 1000},
+      dict{"overshoot": 1800, "unknown": 1000},
     ))
   })
 })
@@ -4159,10 +4206,7 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
     }
 
     t.expect(byPartition).toEqual(
-      Dict.fromArray([
-        ("deep", [(1, 180), (19, 180), (37, 90)]),
-        ("capped", [(1, 180)]),
-      ]),
+      dict{"deep": [(1, 180), (19, 180), (37, 90)], "capped": [(1, 180)]},
     )
   })
 })
@@ -4253,7 +4297,7 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
     // sits above it). Partition "0": 2 chunks fit the 500 budget + 1 forced
     // chunk for the 140-item leftover — the only overshoot is the
     // min-one-chunk quantization, not the reservation-inflated mean.
-    t.expect(byPartition).toEqual(Dict.fromArray([("0", [(1, 180), (19, 180), (37, 180)])]))
+    t.expect(byPartition).toEqual(dict{"0": [(1, 180), (19, 180), (37, 180)]})
   })
 
   it(
@@ -5784,7 +5828,7 @@ describe("FetchState client-side address filtering", () => {
         (
           catchUp.selection.dependsOnAddresses,
           catchUp.dynamicContract,
-          catchUp.addresses->AddressSet.addresses,
+          catchUp.addresses->AddressSet.addressesForTest,
         ),
       ),
       ~message="standing partition untouched at 50; catch-up fetches only the new address over [19, 50]",

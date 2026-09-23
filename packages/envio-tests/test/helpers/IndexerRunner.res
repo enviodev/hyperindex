@@ -59,7 +59,15 @@ type rec t = {
   // `~chains` resumes the same schema driving only those chains, the way
   // `envio start --chain` does. The chains left out keep their stored state.
   restart: (~chains: array<ChainId.t>=?, unit) => promise<t>,
+  // Stands in for the supervisor's go-ahead in a run started with
+  // `~holdRealtime`.
+  releaseRealtime: unit => unit,
 }
+
+// How often the stand-in supervisor of a supervised pass asks whether the run
+// may go realtime. Short enough that the run gets there in the same tick a test
+// would otherwise see it.
+%%private(let releaseCheckIntervalMillis = 1)
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
@@ -77,6 +85,15 @@ let run = async (
   ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
   ~targetBufferSize=?,
+  // Runs the indexer the way a supervised worker runs: it waits to be released
+  // before entering the reorg threshold or switching to realtime.
+  ~holdRealtime=false,
+  // Runs it behind the same barrier with a stand-in supervisor releasing it on
+  // the real predicate, so a scenario exercises the held path without a test
+  // having to drive it. A split run can't be simulated here — the sources a
+  // test drives are objects in this process, which a forked worker wouldn't
+  // have — but the hold, the predicate and the release are the production ones.
+  ~superviseRun=false,
   ~onError=?,
   ~onExit=?,
   ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
@@ -163,10 +180,24 @@ let run = async (
       ~targetBufferSize?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
+      ~holdRealtime={holdRealtime || superviseRun},
       ~onError,
       ~onExit?,
     )
     state->IndexerLoop.start
+
+    // Only when the test didn't ask for the hold itself: one that did is
+    // testing the barrier and owns its own release.
+    let releaseCheck = ref(None)
+    if superviseRun && !holdRealtime {
+      releaseCheck := Some(setInterval(() =>
+            if state->IndexerState.hasArrivedAtHead {
+              releaseCheck.contents->Option.forEach(clearInterval)
+              releaseCheck := None
+              state->IndexerState.releaseRealtime
+            }
+          , releaseCheckIntervalMillis))
+    }
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run
@@ -180,6 +211,8 @@ let run = async (
       | None =>
         let promise = (
           async () => {
+            releaseCheck.contents->Option.forEach(clearInterval)
+            releaseCheck := None
             await state->Writing.flush
             state->IndexerState.stop
             // Tests deliberately leave handlers that never resolve, which pins
@@ -305,7 +338,7 @@ let run = async (
             // phase is over. The idle fallback below still bounds the wait.
             if (
               before < state->IndexerState.processedBatchesCount &&
-                !(state->IndexerState.isFinalizingIndexes)
+                !(state->IndexerState.shouldFinalizeIndexes)
             ) {
               ()
             } else if isIdle && idleChecks.contents >= 5 {
@@ -343,7 +376,7 @@ let run = async (
           settled := if (
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
-              !(state->IndexerState.isFinalizingIndexes) &&
+              !(state->IndexerState.shouldFinalizeIndexes) &&
               Frontier.equals(
                 state->IndexerState.committedFrontier,
                 state->IndexerState.processedFrontier,
@@ -359,6 +392,7 @@ let run = async (
           JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
         }
       },
+      releaseRealtime: () => state->IndexerState.releaseRealtime,
       waitUntilReady: async () => {
         let isReady = () =>
           state

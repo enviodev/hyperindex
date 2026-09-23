@@ -1,12 +1,18 @@
 open Ink
 
 let isIndexerFullySynced = (chains: array<TuiData.chain>) => {
-  chains->Array.reduce(true, (accum, current) => {
-    switch current.progress {
-    | Synced(_) => accum
-    | _ => false
-    }
-  })
+  switch chains {
+  // A supervised run draws its first frame before any worker has reported, and
+  // a run with nothing to report hasn't finished syncing.
+  | [] => false
+  | chains =>
+    chains->Array.every(chain =>
+      switch chain.progress {
+      | Synced(_) => true
+      | _ => false
+      }
+    )
+  }
 }
 
 let getTotalRemainingBlocks = (chains: array<TuiData.chain>) => {

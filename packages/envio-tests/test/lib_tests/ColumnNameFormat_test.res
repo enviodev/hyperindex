@@ -233,17 +233,13 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
 
     let rawRows = await sql->Sql.query(`SELECT * FROM "${pgSchema}"."Snapshot";`)
     let loadedByIds = await storage.loadOrThrow(
-      ~filter=EntityFilter.In({
-        fieldName: "id",
-        fieldValue: ["1"]->(Utils.magic: array<string> => array<unknown>),
-      }),
+      ~filter=EntityFilter.byIds(["1"]),
       ~table=snapshotEntity.table,
     )
     let loadedByField = await storage.loadOrThrow(
-      ~filter=EntityFilter.Eq({
-        fieldName: "transactionIndex",
-        fieldValue: 5->(Utils.magic: int => unknown),
-      }),
+      ~filter=dict{
+        "transactionIndex": dict{"_eq": 5->(Utils.magic: int => unknown)},
+      }->EntityFilter.parseOrThrow(~entityName=snapshotEntity.name, ~table=snapshotEntity.table),
       ~table=snapshotEntity.table,
     )
 

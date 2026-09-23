@@ -129,6 +129,7 @@ type addon = {
     ~table: string,
     ~idColumn: string,
     ~columns: array<string>,
+    ~keepWhenNull: array<string>,
   ) => string,
   pgSetByUnnestQuery: (
     ~pgSchema: string,
@@ -269,6 +270,10 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   if (!fs.existsSync(nodePath) || fs.statSync(nodePath).mtimeMs < fs.statSync(srcPath).mtimeMs) {
     fs.copyFileSync(srcPath, nodePath);
   }
+
+  // Forked workers inherit this, so only the first process in a run pays for
+  // the cargo build (and they don't contend over the cargo lock).
+  process.env.ENVIO_DEV_ADDON = nodePath;
 
   return req(nodePath);
 }`)
@@ -430,8 +435,8 @@ let pgRollbackRemovedIdsQuery = (~input) => getAddon().pgRollbackRemovedIdsQuery
 
 let pgInsertDeleteRowsQuery = (~input) => getAddon().pgInsertDeleteRowsQuery(~input)
 
-let pgUpdateByIdQuery = (~pgSchema, ~table, ~idColumn, ~columns) =>
-  getAddon().pgUpdateByIdQuery(~pgSchema, ~table, ~idColumn, ~columns)
+let pgUpdateByIdQuery = (~pgSchema, ~table, ~idColumn, ~columns, ~keepWhenNull=[]) =>
+  getAddon().pgUpdateByIdQuery(~pgSchema, ~table, ~idColumn, ~columns, ~keepWhenNull)
 
 let pgSetByUnnestQuery = (
   ~pgSchema,

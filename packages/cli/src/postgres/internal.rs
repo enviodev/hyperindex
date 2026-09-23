@@ -7,17 +7,27 @@
 /// `UPDATE ... SET each column ... WHERE id = $1`.
 ///
 /// The row is named by `$1` and the columns follow it, so a caller binds the id
-/// first and then the values in the order it asked for the columns.
+/// first and then the values in the order it asked for the columns. A column in
+/// `keep_when_null` is only ever set, never cleared: a null bound to it leaves
+/// what the row already holds.
 pub fn update_by_id_query(
     pg_schema: &str,
     table: &str,
     id_column: &str,
     columns: &[String],
+    keep_when_null: &[String],
 ) -> String {
     let assignments = columns
         .iter()
         .enumerate()
-        .map(|(index, column)| format!("\"{column}\" = ${}", index + 2))
+        .map(|(index, column)| {
+            let param = index + 2;
+            if keep_when_null.contains(column) {
+                format!("\"{column}\" = COALESCE(${param}, \"{column}\")")
+            } else {
+                format!("\"{column}\" = ${param}")
+            }
+        })
         .collect::<Vec<_>>();
     format!(
         "UPDATE \"{pg_schema}\".\"{table}\"\nSET {}\nWHERE \"{id_column}\" = $1;",
@@ -67,7 +77,8 @@ mod tests {
                     "first_event_block",
                     "ready_at",
                     "_is_hyper_sync"
-                ])
+                ]),
+                &[]
             ),
             "UPDATE \"test_schema\".\"envio_chains\"\n\
              SET \"buffer_block\" = $2,\n    \
@@ -81,8 +92,27 @@ mod tests {
     #[test]
     fn one_column_still_starts_at_the_second_parameter() {
         assert_eq!(
-            update_by_id_query("s", "t", "id", &columns(&["only"])),
+            update_by_id_query("s", "t", "id", &columns(&["only"]), &[]),
             "UPDATE \"s\".\"t\"\nSET \"only\" = $2\nWHERE \"id\" = $1;"
+        );
+    }
+
+    /// A chain that caught up never un-catches up, so a null bound to its
+    /// `ready_at` keeps the stamp rather than clearing it.
+    #[test]
+    fn a_column_kept_when_null_only_ever_moves_forward() {
+        assert_eq!(
+            update_by_id_query(
+                "s",
+                "envio_chains",
+                "id",
+                &columns(&["buffer_block", "ready_at"]),
+                &columns(&["ready_at"])
+            ),
+            "UPDATE \"s\".\"envio_chains\"\n\
+             SET \"buffer_block\" = $2,\n    \
+             \"ready_at\" = COALESCE($3, \"ready_at\")\n\
+             WHERE \"id\" = $1;"
         );
     }
 

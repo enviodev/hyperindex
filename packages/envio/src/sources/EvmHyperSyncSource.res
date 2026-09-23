@@ -55,35 +55,11 @@ let make = (
     )
   }
 
-  let makeEventBatchQueueItem = (
-    item: HyperSyncClient.EventItems.item,
-    ~onEventRegistration: Internal.evmOnEventRegistration,
-  ): Internal.item => {
-    let {transactionIndex, logIndex, srcAddress} = item
-
-    Internal.Event({
-      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-      chainId,
-      blockNumber: item.blockNumber,
-      logIndex,
-      transactionIndex,
-      // `block` and `transaction` are omitted; they're materialised from the
-      // per-chain stores onto the payload at batch prep.
-      payload: {
-        contractName: onEventRegistration.eventConfig.contractName,
-        eventName: onEventRegistration.eventConfig.name,
-        chainId,
-        params: item.params,
-        srcAddress,
-        logIndex,
-      }->Evm.fromPayload,
-    })
-  }
-
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
+    ~includeAllBlocks,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -95,6 +71,8 @@ let make = (
 
     let startFetchingBatchTimeRef = Performance.now()
 
+    let fetchStats = () => RequestStat.single(~method="getLogs", ~sentAt=startFetchingBatchTimeRef)
+
     //fetch batch
     let pageUnsafe = try await HyperSync.GetLogs.query(
       ~client,
@@ -104,14 +82,15 @@ let make = (
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressSet,
       ~clientFilteredContracts=selection.clientFilteredContracts,
+      ~includeAllBlocks,
     ) catch {
     | HyperSync.GetLogs.Error(WrongInstance) =>
-      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
     | HyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
-            exn: %raw(`null`),
+            requestStats: fetchStats(),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: ImpossibleForTheQuery({
               message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
@@ -126,6 +105,7 @@ let make = (
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
+            requestStats: fetchStats(),
             exn,
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({
@@ -155,15 +135,8 @@ let make = (
 
     let parsingTimeRef = Performance.now()
 
-    //Parse page items into queue items
-    let parsedQueueItems = []
-
-    pageUnsafe.items->Array.forEach(item => {
-      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
-      parsedQueueItems
-      ->Array.push(makeEventBatchQueueItem(item, ~onEventRegistration))
-      ->ignore
-    })
+    let parsedQueueItems =
+      pageUnsafe.items->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
@@ -184,7 +157,6 @@ let make = (
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      fromBlockQueried: fromBlock,
       requestStats,
     }
   }

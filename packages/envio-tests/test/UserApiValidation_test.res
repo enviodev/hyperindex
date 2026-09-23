@@ -35,7 +35,7 @@ let firstContract = (config: Config.t): Config.contract => {
 
 describe("InternalTestIndexer.fromUserApi validation", () => {
   it("parses user YAML with explicit env and no project schema", t => {
-    let env = Dict.fromArray([("RPC_URL", "https://rpc.example.test"), ("START_BLOCK", "42")])
+    let env = dict{"RPC_URL": "https://rpc.example.test", "START_BLOCK": "42"}
 
     let {config} = InternalTestIndexer.fromUserApi(
       ~env,
@@ -65,9 +65,9 @@ chains:
   })
 
   it("resolves ABI paths from caller-provided virtual files", t => {
-    let files = Dict.fromArray([
-      ("abis/token.json", `[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]`),
-    ])
+    let files = dict{
+      "abis/token.json": `[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]`,
+    }
 
     let {config} = InternalTestIndexer.fromUserApi(
       ~files,
@@ -803,61 +803,6 @@ chains:
       "block_fields selection contains the following duplicates: parentHash",
     ),
     (
-      "rejects transaction fields unavailable through RPC sync",
-      `
-name: unavailable-rpc-transaction-field
-field_selection:
-  transaction_fields: [accessList]
-chains:
-  - id: 999999
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-`,
-      "The following selected transaction_fields are unavailable for indexing via RPC: accessList",
-    ),
-    (
-      "rejects event fields unavailable on a local RPC contract",
-      `
-name: unavailable-local-event-field
-chains:
-  - id: 999999
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-    contracts:
-      - name: Token
-        events:
-          - event: Transfer()
-            field_selection:
-              transaction_fields: [accessList]
-`,
-      "Failed parsing abi types for events in contract Token on network 999999: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
-    ),
-    (
-      "rejects event fields unavailable on a global contract used by RPC",
-      `
-name: unavailable-global-event-field
-contracts:
-  - name: Token
-    events:
-      - event: Transfer()
-        field_selection:
-          transaction_fields: [accessList]
-chains:
-  - id: 999999
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-    contracts:
-      - name: Token
-`,
-      "Failed parsing abi types for events in global contract Token: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
-    ),
-    (
       "rejects duplicate contract names case-insensitively",
       `
 name: duplicate-contracts
@@ -1133,12 +1078,9 @@ chains:
   })
 
   it("parses nested Hardhat ABI objects from virtual files", t => {
-    let files = Dict.fromArray([
-      (
-        "artifacts/Token.json",
-        `{"contractName":"Token","abi":[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]}`,
-      ),
-    ])
+    let files = dict{
+      "artifacts/Token.json": `{"contractName":"Token","abi":[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]}`,
+    }
     let {config} = InternalTestIndexer.fromUserApi(
       ~files,
       ~configYaml=`
@@ -2126,7 +2068,7 @@ chains:
   it("reports malformed ABI JSON", t => {
     expectParseError(
       t,
-      ~files=Dict.fromArray([("abis/Token.json", "not json")]),
+      ~files=dict{"abis/Token.json": "not json"},
       evmYaml,
       "Failed parsing abi types for events in contract Token on network 1: abis/Token.json is not valid JSON: expected ident at line 1 column 2.",
     )
@@ -2135,9 +2077,7 @@ chains:
   it("reports events missing from an ABI", t => {
     expectParseError(
       t,
-      ~files=Dict.fromArray([
-        ("abis/Token.json", `[{"type":"event","name":"Approval","inputs":[],"anonymous":false}]`),
-      ]),
+      ~files=dict{"abis/Token.json": `[{"type":"event","name":"Approval","inputs":[],"anonymous":false}]`},
       evmYaml,
       "Failed parsing abi types for events in contract Token on network 1: Event Transfer not found in ABI file",
     )
@@ -2215,7 +2155,7 @@ describe("SVM IDL catalog", () => {
       }
     ]
   }`
-  let files = Dict.fromArray([("idls/program.json", poolIdl)])
+  let files = dict{"idls/program.json": poolIdl}
   let yaml = instructions =>
     `
 name: svm-idl-catalog
@@ -2252,10 +2192,8 @@ ${instructions}`
   // literal early and leave the rest of the file as syntax.
   it("escapes an IDL instruction name that carries a quote", t => {
     let {config} = InternalTestIndexer.fromUserApi(
-      ~files=Dict.fromArray([
-        (
-          "idls/program.json",
-          `{
+      ~files=dict{
+        "idls/program.json": `{
             "instructions": [{
               "name": "say\\"hi",
               "discriminator": [7],
@@ -2263,8 +2201,7 @@ ${instructions}`
               "args": [{"name": "amount", "type": "u64"}]
             }]
           }`,
-        ),
-      ]),
+      },
       ~configYaml=yaml("    instructions: []\n"),
       ~handlers=`
 import { indexer } from "envio";
@@ -2306,10 +2243,8 @@ indexer.onInstruction(
   it("rejects an overwrite of an instruction the IDL could not use", t => {
     expectParseError(
       t,
-      ~files=Dict.fromArray([
-        (
-          "idls/program.json",
-          `{
+      ~files=dict{
+        "idls/program.json": `{
             "instructions": [{
               "name": "swap",
               "discriminator": [1],
@@ -2317,8 +2252,7 @@ indexer.onInstruction(
               "args": [{"name": "amount", "type": {"coption": "u64"}}]
             }]
           }`,
-        ),
-      ]),
+      },
       yaml(`    instructions:
       - name: swap
         discriminator: "0x"

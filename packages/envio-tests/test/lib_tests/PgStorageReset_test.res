@@ -38,10 +38,11 @@ describe("Resetting Postgres storage", () => {
       ~ecosystem=Evm,
     )
     let table = (entities->Array.getUnsafe(0)).table
-    let filter = EntityFilter.Eq({
-      fieldName: "id",
-      fieldValue: "1"->(Utils.magic: string => unknown),
-    })
+    let filter =
+      dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}}->EntityFilter.parseOrThrow(
+        ~entityName="Counter",
+        ~table,
+      )
     let initialize = () =>
       storage.initialize(
         ~chainConfigs=config.chainMap->ChainMap.values,

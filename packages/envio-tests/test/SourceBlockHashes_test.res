@@ -91,7 +91,6 @@ let addressStore = TestAddresses.makeStore(
   ~addresses=[
     {address: uniswapV2FactoryAddress, contractName: "UniswapV2Factory", registrationBlock: -1},
   ],
-  ~shouldChecksum=false,
 )
 let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Factory")
 
@@ -123,10 +122,13 @@ let makeRpcSource = () =>
     syncConfig: EvmChain.getSyncConfig({}),
     lowercaseAddresses: true,
     addressStore,
+    blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
+    transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
   })
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
   try await source.getItemsOrThrow(
+    ~includeAllBlocks=false,
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressSet=factorySet,
@@ -182,12 +184,10 @@ describe("Source.blockHashes integration - empty range", () => {
       t.expect({
         "parsedQueueItems": response.parsedQueueItems->Array.length,
         "blockNumbers": response.blockStore->storedBlockNumbers,
-        "fromBlockQueried": response.fromBlockQueried,
       }).toEqual({
         "parsedQueueItems": 0,
         // No items, no rollbackGuard at historical depth → nothing to harvest.
         "blockNumbers": [],
-        "fromBlockQueried": fromBlock,
       })
     },
   )

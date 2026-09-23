@@ -1,6 +1,6 @@
 open Vitest
 
-let files = Dict.fromArray([("abis/greeter-abi.json", FuelAbiFixtures.greeter)])
+let files = dict{"abis/greeter-abi.json": FuelAbiFixtures.greeter}
 
 let configYaml = `
 name: fuel-api-types

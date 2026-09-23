@@ -372,7 +372,6 @@ describe("IndexerState", () => {
             }),
           ],
           ~knownHeight=cs->ChainState.knownHeight,
-          ~transactionStore=None,
         )
 
         state->IndexerState.applyBatchProgress(~batch)

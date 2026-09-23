@@ -15,6 +15,11 @@ type t = {
   handlers: option<string>,
   unsupported: array<unsupported>,
   site: string,
+  // Whether a multichain scenario also runs behind the barrier. Off for a
+  // scenario that stages its chains at different heights and drives the
+  // reorg-threshold transition itself: the hold deferring that transition is
+  // the premise such a body sets up being taken away.
+  supervised: bool,
 }
 
 type sourceMock = {
@@ -46,7 +51,15 @@ let withClickHouseStorage = configYaml =>
     configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
   }
 
-let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=[]): t => {
+let make = (
+  ~configYaml,
+  ~schema=?,
+  ~env=?,
+  ~files=?,
+  ~handlers=?,
+  ~unsupported=[],
+  ~supervised=true,
+): t => {
   let isUnsupported =
     unsupported->Array.some(({backend}) => backend === IndexerRunner.selectedBackend)
 
@@ -90,6 +103,7 @@ let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=
     handlers,
     unsupported,
     site,
+    supervised,
   }
 }
 
@@ -168,6 +182,8 @@ let run = async (
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
   ~reorgThresholdReadyTolerance=?,
+  ~holdRealtime=?,
+  ~superviseRun=?,
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
@@ -237,6 +253,8 @@ let run = async (
       }),
     ~reducedPollingInterval?,
     ~targetBufferSize?,
+    ~holdRealtime?,
+    ~superviseRun?,
     ~onError?,
     ~onExit?,
     ~mapStorage?,
@@ -267,6 +285,11 @@ let it = (
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
   ~reorgThresholdReadyTolerance=?,
+  ~holdRealtime=?,
+  // Runs a multichain scenario a second time behind the barrier a supervised
+  // worker runs behind, so the scenario covers the held path as well as the
+  // plain one. `Scenario.make(~supervised=false)` opts a whole scenario out.
+  ~supervised=true,
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
@@ -285,22 +308,36 @@ let it = (
       async _ => (),
     )
   | None =>
-    let runBody = async (t: Vitest.testContext) =>
-      await scenario->run(
-        ~sources,
-        ~reducedPollingInterval?,
-        ~targetBufferSize?,
-        ~maxAddrInPartition?,
-        ~clientFilterAddressThreshold?,
-        ~reorgThresholdReadyTolerance?,
-        ~onError?,
-        ~onExit?,
-        ~mapStorage?,
-        (~indexer, ~source) => body(~t, ~indexer, ~source),
-      )
-    switch retry {
-    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, ?timeout}, runBody)
-    | None => Vitest.Async.it(name, runBody, ~timeout?)
+    let runBody = (~superviseRun) =>
+      async (t: Vitest.testContext) =>
+        await scenario->run(
+          ~sources,
+          ~reducedPollingInterval?,
+          ~targetBufferSize?,
+          ~maxAddrInPartition?,
+          ~clientFilterAddressThreshold?,
+          ~reorgThresholdReadyTolerance?,
+          ~holdRealtime?,
+          ~superviseRun,
+          ~onError?,
+          ~onExit?,
+          ~mapStorage?,
+          (~indexer, ~source) => body(~t, ~indexer, ~source),
+        )
+    let register = (name, ~superviseRun) =>
+      switch retry {
+      | Some(retry) => Vitest.Async.itWithOptions(name, {retry, ?timeout}, runBody(~superviseRun))
+      | None => Vitest.Async.it(name, runBody(~superviseRun), ~timeout?)
+      }
+
+    register(name, ~superviseRun=false)
+
+    // One chain is a run whose every chain is its own process's already, so the
+    // barrier has nothing to hold: only a multichain scenario says anything new.
+    if (
+      supervised && scenario.supervised && scenario.config.chainMap->ChainMap.keys->Array.length > 1
+    ) {
+      register(`${name} [supervised]`, ~superviseRun=true)
     }
   }
 }

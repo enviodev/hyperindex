@@ -57,5 +57,6 @@ module GetLogs: {
     ~registrationIndexes: array<int>,
     ~addressSet: AddressSet.t,
     ~clientFilteredContracts: option<array<string>>,
+    ~includeAllBlocks: bool,
   ) => promise<logsQueryPage>
 }

@@ -5,7 +5,12 @@ type t
 
 let calculateTargetBufferSize: unit => int
 
-let make: (~chainStates: dict<ChainState.t>, ~isRealtime: bool, ~targetBufferSize: int=?) => t
+let make: (
+  ~chainStates: dict<ChainState.t>,
+  ~isRealtime: bool,
+  ~targetBufferSize: int=?,
+  ~holdRealtime: bool=?,
+) => t
 
 // Accessors.
 let chainStates: t => dict<ChainState.t>
@@ -25,12 +30,17 @@ let getSafeCheckpointIdByChain: (
 ) => array<(ChainId.t, option<Internal.checkpointId>)>
 
 // Cross-chain transitions.
+let releaseRealtime: t => unit
+let isHoldingRealtime: t => bool
+let hasArrivedAtHead: t => bool
+let isReadyToEnterReorgThreshold: (t, ~batch: Batch.t) => bool
 let createBatch: (t, ~config: Config.t, ~frontier: Frontier.t, ~batchSizeTarget: int) => Batch.t
 let enterReorgThreshold: t => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markCaughtUpIfSettled: t => unit
 let markCaughtUpOnResume: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit
+let reportFinished: t => unit
 
 // Fetch control.
 let priorityOrder: t => array<ChainState.t>

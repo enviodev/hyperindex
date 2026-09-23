@@ -603,8 +603,9 @@ pub fn pg_update_by_id_query(
     table: String,
     id_column: String,
     columns: Vec<String>,
+    keep_when_null: Vec<String>,
 ) -> String {
-    internal::update_by_id_query(&pg_schema, &table, &id_column, &columns)
+    internal::update_by_id_query(&pg_schema, &table, &id_column, &columns, &keep_when_null)
 }
 
 #[napi]

@@ -143,6 +143,11 @@ module EventItems = {
     // depend on addresses (client-side filtering). None/empty means every
     // address-dependent program is filtered server-side.
     clientFilteredContracts: option<array<string>>,
+    // Return a block for every slot in the range, not only the ones an
+    // instruction landed on. Absent means only the slots instructions came
+    // from, which leaves a skipped slot indistinguishable from an unfetched
+    // one.
+    includeAllBlocks?: bool,
   }
 
   // NAPI encodes Rust `None` as `null`, never `undefined`, so an unselected
