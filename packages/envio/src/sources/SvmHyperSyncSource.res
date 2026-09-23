@@ -158,6 +158,8 @@ let make = (
     let totalTimeRef = Performance.now()
     let pageFetchRef = Performance.now()
 
+    let fetchStats = () => RequestStat.single(~method="getInstructions", ~sentAt=pageFetchRef)
+
     let query: SvmHyperSyncClient.EventItems.query = {
       fromSlot: fromBlock,
       toSlot: toBlock,
@@ -179,6 +181,7 @@ let make = (
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
+            requestStats: fetchStats(),
             exn,
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({
@@ -193,7 +196,7 @@ let make = (
       )
     }
     let pageFetchTime = pageFetchRef->Performance.secondsSince
-    let requestStats = [{Source.method: "getInstructions", seconds: pageFetchTime}]
+    let requestStats = fetchStats()
 
     let parsingRef = Performance.now()
 
@@ -244,7 +247,6 @@ let make = (
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
-      fromBlockQueried: fromBlock,
       requestStats,
     }
   }

@@ -113,7 +113,6 @@ let make = (
         // store page so materialize + activity attach run the same path as HyperSync.
         transactionStore,
         blockStore: blockStore->Option.getOr(BlockStore.fromJs([], ~ecosystem)),
-        fromBlockQueried: fromBlock,
         latestFetchedBlockNumber: toBlockQueried,
         stats: {
           totalTimeElapsed: 0.,

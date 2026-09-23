@@ -12,15 +12,14 @@ let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
   ~chainState: ChainState.t,
-  ~transactionStore: option<TransactionStore.t>,
 ) => {
   // contractRegister handlers can read event.transaction and event.block, so
   // materialise the selected fields onto the payloads before running them. All
-  // items belong to the chain being fetched: transactions come from its
-  // response page, blocks from the chain store the page was merged into.
+  // items belong to the chain being fetched, and both stores are the chain's
+  // own, which this response's pages have already been merged into.
   await ChainState.materializePageItems(
     ~items=itemsWithContractRegister,
-    ~transactionStore,
+    ~transactionStore=chainState->ChainState.transactionStore,
     ~blockStore=chainState->ChainState.blockStore,
     ~shouldChecksum=chainState->ChainState.shouldChecksum,
   )
@@ -114,14 +113,13 @@ let rec onQueryResponse = async (
       latestFetchedBlockNumber,
       stats,
       knownHeight,
-      fromBlockQueried,
     } = response
 
     chainState->ChainState.recordBlockRangeFetch(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Option.getOr(0.),
       ~numEvents=parsedQueueItems->Array.length,
-      ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
+      ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )
 
     let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
@@ -133,7 +131,7 @@ let rec onQueryResponse = async (
         "msg": "Finished querying",
         "chainId": chainId,
         "partitionId": query.partitionId,
-        "fromBlock": fromBlockQueried,
+        "fromBlock": query.fromBlock,
         "toBlock": latestFetchedBlockNumber,
         "numEvents": parsedQueueItems->Array.length,
       })
@@ -142,7 +140,7 @@ let rec onQueryResponse = async (
         "msg": "Finished querying",
         "chainId": chainId,
         "partitionId": query.partitionId,
-        "fromBlock": fromBlockQueried,
+        "fromBlock": query.fromBlock,
         "toBlock": latestFetchedBlockNumber,
         "numEvents": parsedQueueItems->Array.length,
         "numContractRegisterEvents": numContractRegisterEvents,
@@ -201,7 +199,18 @@ let rec onQueryResponse = async (
       // Advances synchronously to FindingReorgDepth, so a concurrent rollback
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
+    // No rollback: either the guard found no reorg, or it found one and this
+    // chain only reports them. Either way the guard has merged the blocks, so
+    // the transactions follow. A source that reads the chain store to decide
+    // what to fetch leaves out what the store already holds, so its page alone
+    // does not cover its own items — only the merged store does, and contract
+    // registers read it below.
     | None =>
+      switch transactionStore {
+      | Some(page) => chainState->ChainState.transactionStore->TransactionStore.merge(page)
+      | None => ()
+      }
+
       // Over-fetched events (a merged partition returning an address before its
       // effectiveStartBlock, a wildcard param referencing an address registered
       // after the log's block, or a registration whose own start block is later
@@ -229,7 +238,6 @@ let rec onQueryResponse = async (
             ~knownHeight,
             ~latestFetchedBlock=latestFetchedBlockNumber,
             ~query,
-            ~transactionStore,
           )
           ChainMetadata.stage(state)
           scheduleFetch()
@@ -243,7 +251,6 @@ let rec onQueryResponse = async (
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
           ~chainState,
-          ~transactionStore,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newRegistrations => proceed(~newRegistrations)
@@ -260,7 +267,6 @@ and applyQueryResponse = (
   ~knownHeight,
   ~latestFetchedBlock,
   ~query,
-  ~transactionStore,
 ) => {
   let chainState = state->IndexerState.getChainState(~chainId)
 
@@ -270,7 +276,6 @@ and applyQueryResponse = (
     ~newItems,
     ~newRegistrations,
     ~knownHeight,
-    ~transactionStore,
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
