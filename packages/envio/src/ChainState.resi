@@ -70,7 +70,6 @@ let getLatestValidScannedBlock: (
   ~blockNumbers: array<int>,
 ) => option<int>
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
-let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
 let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
@@ -132,7 +131,7 @@ let takeFinished: t => option<finished>
 let reorgThresholdLiftsCeiling: t => bool
 let reorgThresholdEntryMessage: string
 let hasProcessedToEndblock: t => bool
-let isDurablyCaughtUp: t => bool
+let hasCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
 let isActivelyIndexing: t => bool
 let isReady: t => bool

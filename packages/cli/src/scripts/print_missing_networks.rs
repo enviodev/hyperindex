@@ -17,17 +17,18 @@ const UNLISTED_BUT_SERVED: &[u64] = &[
     HypersyncChain::XdcTestnet as u64,
 ];
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
     Evm,
     Fuel,
+    Solana,
 }
 
 #[derive(Deserialize, Debug)]
 struct Chain {
     name: String,
-    chain_id: Option<u64>, // None for Fuel testnet chain
+    chain_id: Option<u64>, // None for non-EVM chains
     tier: Option<String>,
     ecosystem: Ecosystem,
 }
@@ -65,8 +66,8 @@ impl Diff {
             };
             match chain.ecosystem {
                 Ecosystem::Evm => (),
-                // Skip Fuel
-                Ecosystem::Fuel => continue,
+                // Only EVM chains have a `HypersyncChain` entry.
+                Ecosystem::Fuel | Ecosystem::Solana => continue,
             }
 
             api_chain_ids.insert(chain_id);
@@ -143,4 +144,33 @@ pub fn format_extra_chain(chain: &HypersyncChain) -> String {
 pub async fn run() -> Result<()> {
     Diff::get().await?.print_message();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_every_ecosystem_the_api_lists() {
+        let chains: Vec<Chain> = serde_json::from_str(
+            r#"[
+                {"name": "eth", "chain_id": 1, "tier": "GOLD", "ecosystem": "evm"},
+                {"name": "fuel-mainnet", "tier": "GOLD", "ecosystem": "fuel"},
+                {"name": "solana-448h", "tier": "TESTNET", "ecosystem": "solana"}
+            ]"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            chains
+                .iter()
+                .map(|c| (c.name.as_str(), &c.ecosystem))
+                .collect::<Vec<_>>(),
+            vec![
+                ("eth", &Ecosystem::Evm),
+                ("fuel-mainnet", &Ecosystem::Fuel),
+                ("solana-448h", &Ecosystem::Solana)
+            ]
+        );
+    }
 }
