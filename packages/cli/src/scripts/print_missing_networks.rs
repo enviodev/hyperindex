@@ -17,17 +17,21 @@ const UNLISTED_BUT_SERVED: &[u64] = &[
     HypersyncChain::XdcTestnet as u64,
 ];
 
-#[derive(Deserialize, Debug)]
+// Only EVM chains have a `HypersyncChain` entry. Any other ecosystem the API
+// lists — Fuel, Solana, whatever comes next — is skipped rather than failing
+// the whole listing.
+#[derive(Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
     Evm,
-    Fuel,
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Deserialize, Debug)]
 struct Chain {
     name: String,
-    chain_id: Option<u64>, // None for Fuel testnet chain
+    chain_id: Option<u64>, // None for non-EVM chains
     tier: Option<String>,
     ecosystem: Ecosystem,
 }
@@ -63,10 +67,8 @@ impl Diff {
             let Some(chain_id) = chain.chain_id else {
                 continue;
             };
-            match chain.ecosystem {
-                Ecosystem::Evm => (),
-                // Skip Fuel
-                Ecosystem::Fuel => continue,
+            if chain.ecosystem != Ecosystem::Evm {
+                continue;
             }
 
             api_chain_ids.insert(chain_id);
@@ -143,4 +145,33 @@ pub fn format_extra_chain(chain: &HypersyncChain) -> String {
 pub async fn run() -> Result<()> {
     Diff::get().await?.print_message();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_chains_of_an_ecosystem_it_does_not_index() {
+        let chains: Vec<Chain> = serde_json::from_str(
+            r#"[
+                {"name": "eth", "chain_id": 1, "tier": "GOLD", "ecosystem": "evm"},
+                {"name": "fuel-mainnet", "tier": "GOLD", "ecosystem": "fuel"},
+                {"name": "solana-448h", "tier": "TESTNET", "ecosystem": "solana"}
+            ]"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            chains
+                .iter()
+                .map(|c| (c.name.as_str(), c.ecosystem == Ecosystem::Evm))
+                .collect::<Vec<_>>(),
+            vec![
+                ("eth", true),
+                ("fuel-mainnet", false),
+                ("solana-448h", false)
+            ]
+        );
+    }
 }
