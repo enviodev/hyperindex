@@ -99,16 +99,12 @@ let persistedChains = async (~sql, ~pgSchema) => {
 let persistedReadyAt = async (~sql, ~pgSchema) => {
   let rows: array<{
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.query(
-    `SELECT "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
+  }> = await sql->Sql.query(`SELECT "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`)
   rows->Array.map(row => row["ready_at"]->Null.toOption->Option.map(Date.toISOString))
 }
 
 let dropIndex = async (definition, ~sql, ~pgSchema) => {
-  let _ = await sql->Sql.query(
-    `DROP INDEX "${pgSchema}"."${definition->IndexDefinition.name}";`,
-  )
+  let _ = await sql->Sql.query(`DROP INDEX "${pgSchema}"."${definition->IndexDefinition.name}";`)
 }
 
 let clearReadyAt = async (~sql, ~pgSchema) => {

@@ -40,13 +40,7 @@ let cacheRow = (~id, ~output) => {
 }
 
 let storageFor = pgSchema =>
-  PgStorage.make(
-    ~sql,
-    ~pgSchema,
-    ~pgUser=Env.Db.user,
-    ~isHasuraEnabled=false,
-    ~ecosystem=Evm,
-  )
+  PgStorage.make(~sql, ~pgSchema, ~pgUser=Env.Db.user, ~isHasuraEnabled=false, ~ecosystem=Evm)
 
 let initialize = (storage: Persistence.storage) =>
   storage.initialize(

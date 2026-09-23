@@ -142,9 +142,9 @@ describe("start_block: latest", () => {
       await indexer.getBatchWritePromise()
 
       let {sql, pgSchema} = indexer.pg
-      let rows: array<{"seenStartBlock": int}> = await sql->Sql.query(
-        `SELECT "seenStartBlock" FROM "${pgSchema}"."Seen";`,
-      )
+      let rows: array<{
+        "seenStartBlock": int,
+      }> = await sql->Sql.query(`SELECT "seenStartBlock" FROM "${pgSchema}"."Seen";`)
 
       t.expect(rows->Array.map(row => row["seenStartBlock"])).toEqual([1000])
     },

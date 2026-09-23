@@ -57,7 +57,9 @@ describe("A json column", () => {
     let rows: array<{
       "id": string,
       "doc": JSON.t,
-    }> = await sql->Sql.query(`SELECT "id", "doc" FROM "${pgSchema}"."documents" ORDER BY "id" COLLATE "C";`)
+    }> = await sql->Sql.query(
+      `SELECT "id", "doc" FROM "${pgSchema}"."documents" ORDER BY "id" COLLATE "C";`,
+    )
     await sql->TestPgSchema.drop(~pgSchema)
     await sql->Sql.close
 

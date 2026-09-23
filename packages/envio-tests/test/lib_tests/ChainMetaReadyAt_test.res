@@ -24,9 +24,7 @@ let storage = PgStorage.make(
 let readyAt = async () => {
   let rows: array<{
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.query(
-    `SELECT "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
+  }> = await sql->Sql.query(`SELECT "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`)
   rows->Array.map(row => row["ready_at"]->Null.toOption->Option.isSome)
 }
 

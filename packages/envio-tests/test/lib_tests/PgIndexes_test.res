@@ -63,13 +63,7 @@ let makeFlakySql = (sql: Sql.t, log, shouldFail): Sql.t => {
 }
 
 let makeStorage = (~sql=sql, pgSchema) =>
-  PgStorage.make(
-    ~sql,
-    ~pgSchema,
-    ~pgUser=Env.Db.user,
-    ~isHasuraEnabled=false,
-    ~ecosystem=Evm,
-  )
+  PgStorage.make(~sql, ~pgSchema, ~pgUser=Env.Db.user, ~isHasuraEnabled=false, ~ecosystem=Evm)
 
 // A schema of its own per test, so the fixtures below can leave whatever
 // indexes they like behind without disturbing the other suites. `fixtures` run

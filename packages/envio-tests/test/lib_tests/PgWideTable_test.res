@@ -21,19 +21,16 @@ let text = (name, ~isPrimaryKey=false) => {
 
 let columns =
   [text("id", ~isPrimaryKey=true)]
-  ->Array.concat(Array.fromInitializer(~length=columnCount - 2, index => text(`f${index->Int.toString}`)))
+  ->Array.concat(
+    Array.fromInitializer(~length=columnCount - 2, index => text(`f${index->Int.toString}`)),
+  )
   // An array column is what sends the table down the per-cell path, the one
   // whose parameters are counted.
   ->Array.concat([
     {
       name: "tags",
       schema: S.array(S.string)->S.toUnknown,
-      field: Table.mkField(
-        "tags",
-        Table.String,
-        ~fieldSchema=S.array(S.string),
-        ~isArray=true,
-      ),
+      field: Table.mkField("tags", Table.String, ~fieldSchema=S.array(S.string), ~isArray=true),
     },
   ])
 
@@ -62,7 +59,9 @@ let items = Array.fromInitializer(~length=rows, row => {
 
 Async.beforeAll(async () => {
   await sql->Sql.batch(`CREATE SCHEMA "${pgSchema}";`)
-  await sql->Sql.batch(PgStorage.makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
+  await sql->Sql.batch(
+    PgStorage.makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
+  )
 })
 
 Async.afterAll(async () => {

@@ -137,7 +137,9 @@ describe("Two processes indexing one schema", () => {
       (await InternalTable.Chains.getInitialState(migrateClient, ~pgSchema))
       ->Array.map(chain => (chain.id->ChainId.toString, chain.firstEventBlockNumber->Null.toOption))
       ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
-    let readyChains: array<{"count": string}> = await migrateClient->Sql.query(
+    let readyChains: array<{
+      "count": string,
+    }> = await migrateClient->Sql.query(
       `SELECT count(*)::text AS "count" FROM "${pgSchema}"."envio_chains" WHERE "ready_at" IS NOT NULL;`,
     )
     let indexes: array<{

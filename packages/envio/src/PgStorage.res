@@ -1353,15 +1353,16 @@ let rec writeBatch = async (
           //
           // Nothing is rethrown here: the transaction fails on its own, and a
           // rejection let out of this loop would be unhandled.
-          let _ =
-            await promises
-            ->Array.map(promise =>
-              promise->Promise.catch(exn => {
+          let _ = await promises
+          ->Array.map(promise =>
+            promise->Promise.catch(
+              exn => {
                 classifyWriteError(~specificError, ~table=entityConfig.table, ~exn)
                 Promise.resolve()
-              })
+              },
             )
-            ->Promise.all
+          )
+          ->Promise.all
         } catch {
         | exn => classifyWriteError(~specificError, ~table=entityConfig.table, ~exn)
         }
@@ -1542,6 +1543,7 @@ let rec writeBatch = async (
     | Some(set) => set
     | None => Utils.Set.make()
     }
+
     // Already written again without the bytes Postgres refused, and refused
     // again: a third attempt would strip the same nothing. Fail with what the
     // server said rather than spin on it.
@@ -1793,7 +1795,9 @@ let make = (
         try {
           let _ = await entries
           ->Array.map(async ((table, inputFile)) => {
-            await sql->Sql.batch(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
+            await sql->Sql.batch(
+              makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
+            )
             await sql->Sql.copyIn(
               `COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER)`,
               ~path=inputFile,
@@ -2329,7 +2333,9 @@ let make = (
 
         Logging.info(
           `Dumping cache: ${cacheTableInfo
-            ->Array.map(({tableName, count}) => tableName ++ " (" ++ count->Int.toString ++ " rows)")
+            ->Array.map(({tableName, count}) =>
+              tableName ++ " (" ++ count->Int.toString ++ " rows)"
+            )
             ->Array.joinUnsafe(", ")}`,
         )
 

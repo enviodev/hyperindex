@@ -109,7 +109,6 @@ describe("Per-chain entity partition DDL", () => {
       [62, Table.maxPgTableNameLength],
     ))
   })
-
 })
 
 describe("A changed chain set can't reach an existing schema", () => {
@@ -202,12 +201,11 @@ describe("Per-chain entity partitions against Postgres", () => {
       // Postgres cascades a partitioned index down to every partition. The
       // indexer declared its index on the parent, so that is what has to
       // satisfy the declaration — a child's copy must never stand in for it.
-      let catalog =
-        IndexCatalog.fromRows(
-          ~rows=(await sql->Sql.query(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
-            IndexCatalog.rowsSchema,
-          ),
-        )
+      let catalog = IndexCatalog.fromRows(
+        ~rows=(await sql->Sql.query(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
+          IndexCatalog.rowsSchema,
+        ),
+      )
       let ownerIndex =
         catalog
         ->IndexCatalog.find(
@@ -308,40 +306,42 @@ describe("Reused chain-scoped statements stay pruned", () => {
       // One transaction pins one connection, so a statement Postgres decides to
       // cache is reused across the runs and its locks accumulate where they can
       // be counted.
-      let lockCounts = await sql->Sql.begin(async sql => {
-        let storage = PgStorage.make(
-          ~sql,
-          ~pgSchema,
-          ~pgUser="",
-          ~isHasuraEnabled=false,
-          ~ecosystem=Evm,
-        )
-        let counts = []
-        for _ in 1 to 8 {
-          let _ = await storage.loadOrThrow(~filter, ~table=entityConfig.table)
-          // Scans the entity table for ids that have no history row yet, and
-          // runs inside the same write transaction as the delete below.
-          await sql->EntityHistory.backfillHistory(
+      let lockCounts = await sql->Sql.begin(
+        async sql => {
+          let storage = PgStorage.make(
+            ~sql,
             ~pgSchema,
-            ~table=entityConfig.table,
-            ~entityIndex=entityConfig.index,
-            ~chainId=Some(chainId),
-            ~ids=["a"]->Array.map(EntityId.unsafeOfString),
+            ~pgUser="",
+            ~isHasuraEnabled=false,
+            ~ecosystem=Evm,
           )
-          await sql->PgStorage.deleteByIdsOrThrow(
-            ~pgSchema,
-            ~ids=["a", "b"]->Array.map(EntityId.unsafeOfString),
-            ~table=entityConfig.table,
-            ~chainId=Some(chainId),
-          )
-          let rows: array<{"count": int}> = await sql->Sql.query(
-            `SELECT count(*)::int AS count FROM pg_locks
-             WHERE pid = pg_backend_pid() AND locktype = 'relation'`,
-          )
-          counts->Array.push(rows->Array.getUnsafe(0)->(row => row["count"]))->ignore
-        }
-        counts
-      })
+          let counts = []
+          for _ in 1 to 8 {
+            let _ = await storage.loadOrThrow(~filter, ~table=entityConfig.table)
+            // Scans the entity table for ids that have no history row yet, and
+            // runs inside the same write transaction as the delete below.
+            await sql->EntityHistory.backfillHistory(
+              ~pgSchema,
+              ~table=entityConfig.table,
+              ~entityIndex=entityConfig.index,
+              ~chainId=Some(chainId),
+              ~ids=["a"]->Array.map(EntityId.unsafeOfString),
+            )
+            await sql->PgStorage.deleteByIdsOrThrow(
+              ~pgSchema,
+              ~ids=["a", "b"]->Array.map(EntityId.unsafeOfString),
+              ~table=entityConfig.table,
+              ~chainId=Some(chainId),
+            )
+            let rows: array<{
+              "count": int,
+            }> = await sql->Sql.query(`SELECT count(*)::int AS count FROM pg_locks
+             WHERE pid = pg_backend_pid() AND locktype = 'relation'`)
+            counts->Array.push(rows->Array.getUnsafe(0)->(row => row["count"]))->ignore
+          }
+          counts
+        },
+      )
 
       t.expect(lockCounts->Utils.Set.fromArray->Utils.Set.toArray).toEqual([
         lockCounts->Array.getUnsafe(0),

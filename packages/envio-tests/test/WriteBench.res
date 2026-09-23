@@ -176,7 +176,9 @@ let splits = async () => {
       columns->Array.map(column => (column.kind :> int)),
     )
   let items =
-    batch(~offset=0, ~rows=rowsPerBatch, ~withDate=false)->(Utils.magic: array<'a> => array<unknown>)
+    batch(~offset=0, ~rows=rowsPerBatch, ~withDate=false)->(
+      Utils.magic: array<'a> => array<unknown>
+    )
 
   // Warm, so that none of the measured runs pays for the converter's own first
   // pass through the shapes it sees.
