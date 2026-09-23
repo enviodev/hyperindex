@@ -8,9 +8,10 @@ type blockRangeFetchStats = {
 }
 
 // A single backend request a source method actually made (cache/dedup hits
-// aren't requests), with the time it took. SourceManager aggregates these
-// per (source, method) into the envio_source_request_* metrics.
-type requestStat = RequestStat.t = {method: string, seconds: float}
+// aren't requests), with the time it took and how much it brought back.
+// SourceManager aggregates these per (source, method) into the
+// envio_source_request_* and envio_source_response_* metrics.
+type requestStat = RequestStat.t = {method: string, seconds: float, responseBlocks?: int}
 
 // Native clients wrap a failure of a multi-request operation in a structured
 // payload, so the source can still return timings when SourceManager retries
@@ -77,14 +78,13 @@ type blockRangeFetchResponse = {
   parsedQueueItems: array<Internal.item>,
   // Page of transactions for this response's items, keyed by (blockNumber,
   // transactionIndex); merged into the chain's store on apply. `None` for
-  // sources that keep the transaction inline on the payload (RPC/Fuel/Simulate).
+  // sources that keep the transaction inline on the payload (Fuel/Simulate).
   transactionStore: option<TransactionStore.t>,
   // Page of blocks observed while fetching this range, keyed by block number;
   // merged into the chain's store on apply, where its hashes drive reorg
-  // detection. Sources that keep the block inline on the payload (RPC/Simulate)
-  // contribute hash-only rows built from the block hashes they saw.
+  // detection. A source that keeps the block inline on the payload (Simulate)
+  // contributes hash-only rows built from the block hashes it saw.
   blockStore: BlockStore.t,
-  fromBlockQueried: int,
   latestFetchedBlockNumber: int,
   stats: blockRangeFetchStats,
   requestStats: array<requestStat>,
@@ -121,12 +121,34 @@ type getItemsRetry =
 type rateLimited = {resetMs: int, requestStats: array<requestStat>}
 exception RateLimited(rateLimited)
 
+// The two failures that can follow requests carry their timings, so a page
+// that ends in a retry still counts towards the source's metrics — the same
+// contract `RateLimited` and `SourceBehindHead` keep.
 type getItemsError =
   | UnsupportedSelection({message: string})
-  | FailedGettingFieldSelection({exn: exn, blockNumber: int, logIndex: int, message: string})
-  | FailedGettingItems({exn: exn, attemptedToBlock: int, retry: getItemsRetry})
+  | FailedGettingFieldSelection({
+      // The cause, where the source has one beyond `message`.
+      exn?: exn,
+      blockNumber: int,
+      message: string,
+      requestStats: array<requestStat>,
+    })
+  | FailedGettingItems({
+      // The cause, where the source has one beyond the retry's own message.
+      exn?: exn,
+      attemptedToBlock: int,
+      retry: getItemsRetry,
+      requestStats: array<requestStat>,
+    })
 
 exception GetItemsError(getItemsError)
+
+let getItemsErrorRequestStats = (error: getItemsError) =>
+  switch error {
+  // Raised before anything is requested.
+  | UnsupportedSelection(_) => []
+  | FailedGettingFieldSelection({requestStats}) | FailedGettingItems({requestStats}) => requestStats
+  }
 
 type sourceFor = Sync | Fallback | Realtime
 
@@ -196,6 +218,13 @@ type t = {
     // straight to its Rust client, which builds the query's address filter from
     // it and gates every returned item against the chain-wide store.
     ~addressSet: AddressSet.t,
+    // Return a header for every block in the range, not only the ones an item
+    // landed on. The progress block's timestamp is what measures how far behind
+    // chain time the indexer is, and at the head that block often carries no
+    // item of its own. Only set once the chain is at the head, where the range
+    // is a handful of blocks; over a backfill range it would be a header per
+    // block for no gain.
+    ~includeAllBlocks: bool,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
@@ -214,11 +243,12 @@ type t = {
     ~onHeight: int => unit,
     ~onStatus: heightSubscriptionStatus => unit,
   ) => unit => unit,
-  // Invoked when a reorg or internally inconsistent response means local state
-  // may point at an orphaned chain (e.g. the RPC block cache): drop all of it.
-  // Deliberately takes no rollback target — the deepest reorged block isn't
-  // known until the depth search runs, and that search reads back through this
-  // very state, so pruning relative to a target would keep exactly the entries
-  // that make it answer wrong.
+  // Invoked when a reorg or an internally inconsistent response means what the
+  // source is holding may describe an orphaned chain — for RPC, the reads still
+  // in flight, which anything asking afterwards would otherwise join. The
+  // stores are rolled back separately; this is only about what the source
+  // itself carries. Deliberately takes no rollback target: the deepest reorged
+  // block isn't known until the depth search runs, and that search reads back
+  // through this very state.
   onReorg?: unit => unit,
 }

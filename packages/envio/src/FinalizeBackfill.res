@@ -1,15 +1,35 @@
-// The FinalizingIndexes phase. Reached from the processing loop when every
-// chain has caught up: processing is already paused (the loop awaits this),
-// pending writes are flushed, then storage builds every missing schema-defined
-// index and, once they all verify, commits `ready_at`. A failure part-way
-// leaves the indexes built so far in place and reaches the processing loop's
-// error boundary; the retry only owes what's left. Either way the indexer never
-// reports ready with an index the schema promised still missing.
+// The FinalizingIndexes phase. Reached from the processing loop when the chains
+// this process drives have caught up: processing is already paused (the loop
+// awaits this), pending writes are flushed, then storage builds every index the
+// schema promises for those chains and, once they all verify, commits their
+// `ready_at`. A failure part-way leaves the indexes built so far in place and
+// reaches the processing loop's error boundary; the retry only owes what's left.
+// Either way a chain never reports ready with an index the schema promised for
+// it still missing.
+//
+// A chain's rows live in a partition of its own, so this touches nothing another
+// `envio start --chain` process is indexing and never waits on one.
 
 let runOnce = async (state: IndexerState.t) => {
-  Logging.info(
-    "All chains are caught up. Finalizing the indexer before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
-  )
+  let chainIds = state->IndexerState.crossChainState->CrossChainState.chainIds
+
+  // Whatever brought the process here — a batch, a tick that progressed
+  // nothing, a supervisor's release — its chains say where they finished
+  // before it says what it does about that. Said here rather than left to each
+  // caller to order: a chain that has already spoken says nothing again.
+  state->IndexerState.reportFinished
+
+  // Said by the process rather than by each of its chains: the indexes are one
+  // build over the tables, and the pause is the whole process's. A chain has
+  // already said it caught up, and says it is ready once this commits. The
+  // chains are named because the pause is theirs, and a split run has a process
+  // saying this for each part of it — one of them, for a process driving a
+  // single chain.
+  let msg = "Building database indexes. Indexing is paused until they are ready, which can take a while on a large database."
+  switch chainIds {
+  | [chainId] => Logging.info({"msg": msg, "chainId": chainId})
+  | chainIds => Logging.info({"msg": msg, "chainIds": chainIds})
+  }
 
   await Writing.flush(state)
 
@@ -20,19 +40,12 @@ let runOnce = async (state: IndexerState.t) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let readyAt = Date.make()
 
-    await storage.finalizeBackfill(
-      ~entities=persistence.allEntities,
-      ~chainIds=state
-      ->IndexerState.chainStates
-      ->Dict.valuesToArray
-      ->Array.map(cs => (cs->ChainState.chainConfig).id),
-      ~readyAt,
-    )
+    await storage.finalizeBackfill(~entities=persistence.allEntities, ~chainIds, ~readyAt)
 
     // Only after the commit: in-memory readiness must never run ahead of the
     // `ready_at` a restart would read back.
+    // Says so per chain, which is the grain `ready_at` is committed at.
     state->IndexerState.markReady(~readyAt)
-    Logging.info("The indexer is ready. Switching to realtime indexing.")
   }
 }
 
@@ -57,5 +70,8 @@ let run = (state: IndexerState.t) =>
 let repairSchemaIndexes = (state: IndexerState.t) => {
   let persistence = state->IndexerState.persistence
   let storage = persistence->Persistence.getInitializedStorageOrThrow
-  storage.ensureSchemaIndexes(~entities=persistence.allEntities)
+  storage.ensureSchemaIndexes(
+    ~entities=persistence.allEntities,
+    ~chainIds=state->IndexerState.crossChainState->CrossChainState.chainIds,
+  )
 }

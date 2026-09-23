@@ -118,7 +118,6 @@ Entry point:
   - For `start`: primes the config JSON (`Config.prime`), sets `cwd` + env vars, then calls `Main.start(~migrate?)`.
   - For `migrate` / `drop-schema`: primes config and calls `Main.migrate` / `Main.dropSchema`.
 - `Main.start` (in `packages/envio`) is the indexer entry proper. Responsibilities:
-  - Parses CLI flags (`--tui-off`, etc.).
   - Loads runtime configuration (`Config.res`).
   - Starts an Express server that serves `/metrics`, `/health`, and the Development Console endpoints.
   - Initializes the Persistence layer (Postgres + Hasura) — a single `init()` call that also handles `~reset` + `upsertPersistedState` when `~migrate` is provided.

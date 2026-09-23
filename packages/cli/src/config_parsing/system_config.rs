@@ -20,7 +20,6 @@ use super::{
 use crate::clickhouse::ch_type;
 use crate::utils::project_env::ProjectEnv;
 use crate::{
-    config_parsing::human_config::evm::RpcTransactionField,
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
     evm::abi::AbiOrNestedAbi,
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
@@ -1048,27 +1047,15 @@ impl SystemConfig {
 
         match human_config {
             HumanConfig::Evm(ref evm_config) => {
-                // TODO: Add similar validation for Fuel
                 validation::validate_deserialized_config_yaml(evm_config)?;
-
-                let has_rpc_src = evm_config.chains.iter().any(evm_chain_has_rpc_src);
 
                 //Add all global contracts
                 if let Some(global_contracts) = &evm_config.contracts {
                     for g_contract in global_contracts {
-                        let contract_has_rpc_src = evm_config.chains.iter().any(|chain| {
-                            evm_chain_has_rpc_src(chain)
-                                && chain.contracts.as_ref().is_some_and(|contracts| {
-                                    contracts
-                                        .iter()
-                                        .any(|contract| contract.name == g_contract.name)
-                                })
-                        });
                         let (events, evm_abi) = Event::from_evm_events_config(
                             g_contract.config.events.clone(),
                             &g_contract.config.abi_file_path,
                             source,
-                            contract_has_rpc_src,
                         )
                         .context(format!(
                             "Failed parsing abi types for events in global contract {}",
@@ -1090,7 +1077,6 @@ impl SystemConfig {
                 }
 
                 for network in &evm_config.chains {
-                    let network_has_rpc_src = evm_chain_has_rpc_src(network);
                     for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
                         match contract.config {
@@ -1099,7 +1085,6 @@ impl SystemConfig {
                                     l_contract.events,
                                     &l_contract.abi_file_path,
                                     source,
-                                    network_has_rpc_src,
                                 )
                                 .context(format!(
                                     "Failed parsing abi types for events in contract {} on \
@@ -1186,7 +1171,6 @@ impl SystemConfig {
                             block_fields: None,
                         },
                     ),
-                    has_rpc_src,
                 )?;
 
                 let chain_id_mode = ChainIdMode::resolve(&chains)?;
@@ -1219,6 +1203,8 @@ impl SystemConfig {
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
+                validation::validate_deserialized_fuel_config_yaml(fuel_config)?;
+
                 //Add all global contracts
                 if let Some(global_contracts) = &fuel_config.contracts {
                     for g_contract in global_contracts {
@@ -1368,94 +1354,91 @@ impl SystemConfig {
             }
             HumanConfig::Svm(ref svm_config) => {
                 validation::validate_deserialized_svm_config_yaml(svm_config)?;
-                for network in &svm_config.chains {
-                    let chain_id = network.id.to_u64();
-                    let hypersync_endpoint_url = network
-                        .experimental
-                        .as_ref()
-                        .map(|e| match &e.hypersync_config {
-                            Some(hypersync_config) => Ok(hypersync_config.url.clone()),
-                            None => svm::default_hypersync_endpoint(chain_id).ok_or_else(|| {
-                                anyhow!(
-                                    "Chain {chain_id} has no default HyperSync endpoint. Set \
-                                     `experimental.hypersync_config.url` explicitly, or use the \
-                                     `solana` / `solana-devnet` chain id."
-                                )
-                            }),
-                        })
-                        .transpose()?;
-                    let sync_source = DataSource::Svm {
-                        rpc: network.rpc.clone(),
-                        hypersync_endpoint_url,
-                    };
 
-                    let programs = network
-                        .experimental
-                        .as_ref()
-                        .map(|e| e.programs.as_slice())
-                        .unwrap_or(&[]);
-                    let mut chain_contracts = Vec::new();
-                    for program in programs {
-                        let svm_abi = resolve_program_schema(program, source)
-                            .with_context(|| format!("Program '{}'", program.name))?;
-                        let events = instruction_catalog(program, &svm_abi.idl)?
-                            .into_iter()
-                            .map(|(name, resolved)| {
-                                let ResolvedInstruction {
-                                    discriminator,
+                let program_addresses = resolve_svm_program_addresses(svm_config)?;
+
+                let mut chain_contracts: HashMap<u64, Vec<ChainContract>> = HashMap::new();
+                for program in &svm_config.programs {
+                    let svm_abi = resolve_program_schema(program, source)
+                        .with_context(|| format!("Program '{}'", program.name))?;
+                    let events = instruction_catalog(program, &svm_abi.idl)?
+                        .into_iter()
+                        .map(|(name, resolved)| {
+                            let ResolvedInstruction {
+                                discriminator,
+                                accounts,
+                                args,
+                            } = resolved;
+                            let normalized_discriminator =
+                                discriminator.map(|d| format!("0x{}", crate::hex::encode(&d)));
+                            Event {
+                                name,
+                                kind: EventKind::Svm(SvmEventKind {
+                                    discriminator: normalized_discriminator.clone(),
                                     accounts,
                                     args,
-                                } = resolved;
-                                let normalized_discriminator =
-                                    discriminator.map(|d| format!("0x{}", crate::hex::encode(&d)));
-                                Event {
-                                    name,
-                                    kind: EventKind::Svm(SvmEventKind {
-                                        discriminator: normalized_discriminator.clone(),
-                                        accounts,
-                                        args,
-                                    }),
-                                    sighash: normalized_discriminator.unwrap_or_default(),
-                                    event_signature: String::new(),
-                                    field_selection: None,
-                                }
-                            })
-                            .collect();
-                        warn_about_unindexable(program, &svm_abi.idl.unusable);
+                                }),
+                                sighash: normalized_discriminator.unwrap_or_default(),
+                                event_signature: String::new(),
+                                field_selection: None,
+                            }
+                        })
+                        .collect();
+                    warn_about_unindexable(program, &svm_abi.idl.unusable);
 
-                        let contract = Contract::new(
-                            program.name.clone(),
-                            program.handler.clone(),
-                            events,
-                            Abi::Svm(svm_abi),
-                        )?;
-                        contracts.insert(contract.name.clone(), contract.clone());
-                        chain_contracts.push(ChainContract {
-                            name: program.name.clone(),
-                            addresses: vec![program.program_id.clone()],
-                            start_block: None,
-                        });
+                    let contract =
+                        Contract::new(program.name.clone(), None, events, Abi::Svm(svm_abi))?;
+                    contracts.insert(contract.name.clone(), contract);
+
+                    for (chain_id, address) in &program_addresses[&program.name] {
+                        chain_contracts
+                            .entry(*chain_id)
+                            .or_default()
+                            .push(ChainContract {
+                                name: program.name.clone(),
+                                addresses: vec![address.clone()],
+                                start_block: None,
+                            });
                     }
+                }
+
+                for network in &svm_config.chains {
+                    let chain_id = network.id.to_u64();
+                    let hypersync_endpoint_url = match &network.hypersync_config {
+                        Some(hypersync_config) => {
+                            parse_url(&hypersync_config.url).ok_or_else(|| {
+                                anyhow!(
+                                    "The HyperSync URL \"{}\" is in incorrect format. The URL \
+                                     needs to start with either http:// or https://",
+                                    hypersync_config.url
+                                )
+                            })?
+                        }
+                        None => svm::default_hypersync_endpoint(chain_id).ok_or_else(|| {
+                            anyhow!(
+                                "Chain {chain_id} has no default HyperSync endpoint. Set \
+                                 `hypersync_config.url` explicitly, or use the `solana` / \
+                                 `solana-devnet` chain id."
+                            )
+                        })?,
+                    };
 
                     let chain = Chain {
                         id: chain_id,
                         skip: network.skip.unwrap_or(false),
-                        start_block: network.start_block,
-                        end_block: network.end_block,
+                        start_block: network.start_slot,
+                        end_block: network.end_slot,
                         max_reorg_depth: None,
                         block_lag: network.block_lag,
-                        sync_source,
-                        contracts: chain_contracts,
+                        sync_source: DataSource::Svm {
+                            hypersync_endpoint_url,
+                        },
+                        contracts: chain_contracts.remove(&chain_id).unwrap_or_default(),
                     };
 
                     unique_hashmap::try_insert(&mut chains, chain.id, chain)
                         .context("Failed inserting chain at chains map")?;
                 }
-
-                // Reorg rollback is only meaningful for the experimental
-                // HyperSync source (it surfaces block hashes); RPC-only chains
-                // keep it off for now.
-                let uses_hypersync = svm_config.chains.iter().any(|n| n.experimental.is_some());
 
                 let chain_id_mode = ChainIdMode::resolve(&chains)?;
 
@@ -1470,7 +1453,7 @@ impl SystemConfig {
                     chains,
                     chain_id_mode,
                     contracts,
-                    rollback_on_reorg: uses_hypersync,
+                    rollback_on_reorg: true,
                     save_full_history: false,
                     default_chain_scope: default_scope,
                     schema,
@@ -1478,7 +1461,7 @@ impl SystemConfig {
                     enable_raw_events: false,
                     storage,
                     lowercase_addresses: false,
-                    handlers: None,
+                    handlers: svm_config.base.handlers.clone(),
                     human_config,
                     is_rescript,
                     subgraph: None,
@@ -1753,8 +1736,7 @@ pub enum DataSource {
         hypersync_endpoint_url: ServerUrl,
     },
     Svm {
-        rpc: Option<ServerUrl>,
-        hypersync_endpoint_url: Option<ServerUrl>,
+        hypersync_endpoint_url: ServerUrl,
     },
 }
 
@@ -1778,18 +1760,6 @@ fn default_rpc_for(chain: &EvmChain) -> For {
         For::Fallback
     } else {
         For::Sync
-    }
-}
-
-/// Whether any of a chain's data reaches the indexer over RPC. Every RPC counts,
-/// whatever it's `for`: a fallback or realtime source parses events with the
-/// same field registry a sync one does, so a field RPC can't deliver would go
-/// missing for whichever blocks that source served.
-fn evm_chain_has_rpc_src(chain: &EvmChain) -> bool {
-    match &chain.rpc {
-        Some(RpcSelection::Single(_)) | Some(RpcSelection::Url(_)) => true,
-        Some(RpcSelection::List(rpcs)) => !rpcs.is_empty(),
-        None => false,
     }
 }
 
@@ -1902,7 +1872,7 @@ pub struct Chain {
     pub id: u64,
     pub skip: bool,
     pub sync_source: DataSource,
-    pub start_block: u64,
+    pub start_block: human_config::StartBlock,
     pub end_block: Option<u64>,
     pub max_reorg_depth: Option<u32>,
     pub block_lag: Option<u32>,
@@ -2003,6 +1973,113 @@ impl EvmAbi {
     }
 }
 
+/// Places every program on the chains it is deployed to, in `chains` order.
+/// A program's `program_id` must name every chain the config declares — the
+/// mapping is the single place that says where a program lives, so a chain it
+/// forgets is a config the user cannot read off the page.
+fn resolve_svm_program_addresses(
+    svm_config: &human_config::svm::HumanConfig,
+) -> Result<HashMap<String, Vec<(u64, String)>>> {
+    use human_config::svm::{ChainProgramId, ProgramId};
+
+    let chain_tokens: Vec<String> = svm_config.chains.iter().map(|c| c.id.token()).collect();
+
+    let mut resolved = HashMap::new();
+    for program in &svm_config.programs {
+        let placements: Vec<(u64, String)> = match &program.program_id {
+            ProgramId::Single(address) => {
+                let [chain] = svm_config.chains.as_slice() else {
+                    let suggestion = chain_tokens
+                        .iter()
+                        .enumerate()
+                        .map(|(i, token)| {
+                            let value = if i == 0 { address.as_str() } else { "_" };
+                            format!("    {token}: {value}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    return Err(anyhow!(
+                        "Program '{name}' gives a single `program_id`, but the config defines \
+                         {count} chains. Name every chain instead:\n\n  program_id:\n{suggestion}\n\n\
+                         Write `_` for a chain the program is not deployed on.",
+                        name = program.name,
+                        count = svm_config.chains.len(),
+                    ));
+                };
+                vec![(chain.id.to_u64(), address.clone())]
+            }
+            ProgramId::PerChain(by_chain) => {
+                // A cluster answers to its label and to its number, so keys are
+                // matched on the id they resolve to rather than on spelling.
+                let mut by_id: HashMap<u64, &ChainProgramId> = HashMap::new();
+                for (token, program_id) in by_chain {
+                    let Some(chain_id) = human_config::svm::ChainId::parse(token) else {
+                        return Err(anyhow!(
+                            "Program '{name}' keys a `program_id` on '{token}', which is not a \
+                             chain id: expected a cluster label or a number. Declared chains: \
+                             {chains}.",
+                            name = program.name,
+                            chains = chain_tokens.join(", "),
+                        ));
+                    };
+                    let chain_id = chain_id.to_u64();
+                    if !svm_config.chains.iter().any(|c| c.id.to_u64() == chain_id) {
+                        return Err(anyhow!(
+                            "Program '{name}' gives a `program_id` for chain '{token}', which the \
+                             config does not define. Declared chains: {chains}.",
+                            name = program.name,
+                            chains = chain_tokens.join(", "),
+                        ));
+                    }
+                    if by_id.insert(chain_id, program_id).is_some() {
+                        return Err(anyhow!(
+                            "Program '{name}' gives a `program_id` for chain '{token}' twice, \
+                             once by label and once by number.",
+                            name = program.name,
+                        ));
+                    }
+                }
+
+                let missing: Vec<String> = svm_config
+                    .chains
+                    .iter()
+                    .filter(|chain| !by_id.contains_key(&chain.id.to_u64()))
+                    .map(|chain| format!("chain '{}'", chain.id.token()))
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(anyhow!(
+                        "Program '{name}' gives no `program_id` for {missing}. Every chain the \
+                         config defines must be named; write `_` for a chain the program is not \
+                         deployed on.",
+                        name = program.name,
+                        missing = missing.join(", "),
+                    ));
+                }
+
+                svm_config
+                    .chains
+                    .iter()
+                    .filter_map(|chain| match by_id.get(&chain.id.to_u64()) {
+                        Some(ChainProgramId::Address(address)) => {
+                            Some((chain.id.to_u64(), address.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            }
+        };
+
+        if placements.is_empty() {
+            return Err(anyhow!(
+                "Program '{}' is not deployed on any chain: every `program_id` entry is `_`.",
+                program.name
+            ));
+        }
+        resolved.insert(program.name.clone(), placements);
+    }
+    Ok(resolved)
+}
+
 fn resolve_program_schema(
     program: &human_config::svm::Program,
     source: &dyn ConfigSource,
@@ -2018,14 +2095,12 @@ fn resolve_program_schema(
             .to_string();
         let idl = svm_idl::parse_idl(&path, &resolved.raw)?;
         return Ok(SvmAbi {
-            program_id: program.program_id.clone(),
             idl,
             source: SvmSchemaSource::AnchorIdl { path },
         });
     }
 
     Ok(SvmAbi {
-        program_id: program.program_id.clone(),
         idl: ProgramIdl::default(),
         source: SvmSchemaSource::Inline,
     })
@@ -2174,8 +2249,6 @@ pub enum Abi {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvmAbi {
-    /// Base58 program id this schema describes.
-    pub program_id: String,
     /// Every instruction the program declares, by name, with the reason for
     /// each one this runtime cannot dispatch or decode. Read from the user's
     /// `idl:` file, and empty for a program whose instructions carry their
@@ -2222,12 +2295,17 @@ impl Contract {
         abi: Abi,
     ) -> Result<Self> {
         // Every ecosystem builds its contracts through here, unlike
-        // `validate_deserialized_config_yaml`, which only sees EVM configs.
-        validate_names_valid_rescript(std::slice::from_ref(&name), "contract".to_string())?;
-        validate_names_valid_rescript(
-            &events.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
-            "event".to_string(),
-        )?;
+        // `validate_deserialized_config_yaml`, which only sees EVM configs. Svm
+        // is the exception: it generates no ReScript, and its program and
+        // instruction names are held to the identifier rule in
+        // `validation::validate_deserialized_svm_config_yaml` instead.
+        if !matches!(abi, Abi::Svm(_)) {
+            validate_names_valid_rescript(std::slice::from_ref(&name), "contract".to_string())?;
+            validate_names_valid_rescript(
+                &events.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
+                "event".to_string(),
+            )?;
+        }
 
         // Codegen keys the generated event modules by name and routing looks
         // events up by name, so two events on one contract can't share a name.
@@ -2325,12 +2403,15 @@ pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
     /// instruction in the program.
     pub discriminator: Option<String>,
-    /// Positional account names. Empty when the user supplied no schema and
-    /// no IDL applies; in that case `decoded.accounts` is `{}`.
-    pub accounts: Vec<String>,
-    /// Borsh argument layout in declared order. Empty for unknown
-    /// instructions; the raw `instruction.data` is still available.
-    pub args: Vec<SvmNamedField>,
+    /// Positional account slots in declared order. Empty when the user supplied
+    /// no schema and no IDL applies; in that case `decoded.accounts` is `{}`.
+    pub accounts: Vec<human_config::svm::AccountSlot>,
+    /// Borsh argument layout in declared order. `None` when no layout is
+    /// attached, so nothing is decoded and every matched call is delivered
+    /// with `instruction.data` raw. `Some` filters: a call whose data the
+    /// layout rejects is skipped, and an empty layout takes only the calls
+    /// carrying nothing past the discriminator.
+    pub args: Option<Vec<SvmNamedField>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2452,7 +2533,6 @@ impl Event {
         events_config: Vec<EvmEventConfig>,
         abi_file_path: &Option<String>,
         source: &dyn ConfigSource,
-        has_rpc_src: bool,
     ) -> Result<(Vec<Self>, EvmAbi)> {
         let abi_from_file = EvmAbi::from_source(abi_file_path, source)?;
 
@@ -2485,12 +2565,9 @@ impl Event {
                 sighash,
                 event_signature,
                 field_selection: match event_config.field_selection {
-                    Some(ref selection_config) => {
-                        Some(FieldSelection::try_from_config_field_selection(
-                            selection_config.clone(),
-                            has_rpc_src,
-                        )?)
-                    }
+                    Some(ref selection_config) => Some(
+                        FieldSelection::try_from_config_field_selection(selection_config.clone())?,
+                    ),
                     None => None,
                 },
             })
@@ -2789,8 +2866,6 @@ impl FieldSelection {
 
     pub fn try_from_config_field_selection(
         field_selection_cfg: human_config::evm::FieldSelection,
-        // For validating transaction field selection with rpc
-        has_rpc_src: bool,
     ) -> Result<Self> {
         use human_config::evm::BlockField;
         use human_config::evm::TransactionField;
@@ -2815,30 +2890,6 @@ impl FieldSelection {
                 "block_fields selection contains the following duplicates: {}",
                 block_duplicates.iter().join(", ")
             ));
-        }
-
-        // Every block field is derivable from `eth_getBlockByNumber`, so only
-        // transactions have an RPC-unavailable set: the two whose complex array
-        // shape has no parser in `RpcSource`'s field registry.
-        //
-        // The runtime re-checks this over every registration in
-        // `HandlerRegister.validateRpcFieldSelection`, which is the only check
-        // an inline `fields` selection reaches. This one runs at codegen, so a
-        // `config.yaml` selection fails before a project is even built.
-        if has_rpc_src {
-            let invalid_rpc_tx_fields: Vec<_> = transaction_fields
-                .iter()
-                .filter(|&field| RpcTransactionField::try_from(field.clone()).is_err())
-                .cloned()
-                .collect();
-
-            if !invalid_rpc_tx_fields.is_empty() {
-                return Err(anyhow!(
-                    "The following selected transaction_fields are unavailable for indexing via \
-                     RPC: {}",
-                    invalid_rpc_tx_fields.iter().join(", ")
-                ));
-            }
         }
 
         let mut selected_block_fields = vec![];
@@ -2976,27 +3027,33 @@ mod test {
         };
 
         let schema = "type Foo @entity { id: ID! }";
-        let program_block = |name: &str| {
+        let program_block = |name: &str, mainnet: &str, devnet: &str| {
             format!(
-                r#"    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: {name}
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
+                r#"  - name: {name}
+    program_id:
+      solana: {mainnet}
+      solana-devnet: {devnet}
+    instructions:
+      - name: UpdateMetadataAccountV2
+        discriminator: "0x0f"
 "#
             )
         };
         // Labels resolve to the HOS-1682 ids, and two SVM chains coexist in
         // one config: the old hardcoded 0 made the second insert collide.
         let yaml = format!(
-            "\nname: svm-chain-id\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
-             0\n{}  - id: solana-devnet\n    start_block: 0\n{}",
-            program_block("TokenMetadata"),
-            program_block("TokenMetadataDevnet"),
+            "\nname: svm-chain-id\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
+             0\n  - id: solana-devnet\n    start_slot: 0\nprograms:\n{}{}",
+            program_block(
+                "TokenMetadata",
+                "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+                "_"
+            ),
+            program_block(
+                "TokenMetadataDevnet",
+                "_",
+                "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+            ),
         );
         let config =
             SystemConfig::parse_yaml(&yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
@@ -3004,6 +3061,75 @@ mod test {
         let mut ids: Vec<_> = config.chains.keys().copied().collect();
         ids.sort();
         assert_eq!(ids, vec![SOLANA_MAINNET_CHAIN_ID, SOLANA_DEVNET_CHAIN_ID]);
+    }
+
+    // svm parsed `handlers` and then dropped it, so a custom directory never
+    // reached the runtime config. Rejecting a per-program `handler` is covered
+    // at the user-API rung in UserApiValidation_test.
+    #[test]
+    fn svm_carries_the_handlers_directory_through() {
+        let schema = "type Foo @entity { id: ID! }";
+        let yaml = |base: &str| {
+            format!(
+                "name: x\necosystem: svm\n{base}chains:\n  - id: solana\n    start_slot: \
+                 0\nprograms:\n  - name: TokenMetadata\n    program_id: \
+                 metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n    instructions:\n      - name: \
+                 UpdateMetadataAccountV2\n        discriminator: \"0x0f\"\n"
+            )
+        };
+        let parse = |yaml: &str| {
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("svm config")
+                .handlers
+        };
+
+        assert_eq!(
+            (
+                parse(&yaml("")),
+                parse(&yaml("handlers: src/svm-handlers\n"))
+            ),
+            (None, Some("src/svm-handlers".to_string()))
+        );
+    }
+
+    // `start_block: latest` has to survive the whole config pipeline on every
+    // ecosystem, not just the one it was written against. The runtime half is
+    // covered in StartBlockResolver_test.
+    #[test]
+    fn latest_start_block_survives_parsing_on_every_ecosystem() {
+        let schema = "type A { id: ID! }";
+        let parse = |yaml: &str| {
+            let config = SystemConfig::parse_yaml(
+                yaml,
+                Some(schema),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )
+            .expect("config");
+            config
+                .chains
+                .values()
+                .map(|chain| chain.start_block)
+                .collect::<Vec<_>>()
+        };
+
+        let evm = parse(
+            "name: x\nchains:\n  - id: 1\n    rpc: https://rpc.example.test\n    start_block: \
+             latest\n",
+        );
+        let fuel = parse("name: x\necosystem: fuel\nchains:\n  - id: 0\n    start_block: latest\n");
+        // svm names the field for what it indexes; `latest` means the same
+        // thing on it.
+        let svm = parse(
+            "name: x\necosystem: svm\nchains:\n  - id: solana\n    rpc: \
+             https://api.mainnet-beta.solana.com\n    start_slot: latest\n",
+        );
+
+        let latest = vec![super::human_config::StartBlock::Tag(
+            super::human_config::StartBlockTag::Latest,
+        )];
+        assert_eq!((evm, fuel, svm), (latest.clone(), latest.clone(), latest));
     }
 
     #[test]
@@ -3912,13 +4038,12 @@ type Foo {
             let instructions_yaml = if instructions.is_empty() {
                 String::new()
             } else {
-                format!("          instructions:\n{instructions}")
+                format!("    instructions:\n{instructions}")
             };
             let yaml = format!(
-                "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
-                 0\n    experimental:\n      hypersync_config:\n        url: \
-                 https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
-                 program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          idl: \
+                "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
+                 0\nprograms:\n  - name: Pool\n    program_id: \
+                 TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    idl: \
                  idls/pool.json\n{instructions_yaml}"
             );
             SystemConfig::parse_yaml(
@@ -3930,8 +4055,9 @@ type Foo {
             )
         }
 
-        /// Name, discriminator, account names, arg names.
-        type SvmEvent = (String, Option<String>, Vec<String>, Vec<String>);
+        /// Name, discriminator, account slots as YAML tokens, and the arg
+        /// names of the attached layout — `None` where none is attached.
+        type SvmEvent = (String, Option<String>, Vec<String>, Option<Vec<String>>);
 
         fn svm_events(config: &SystemConfig) -> Vec<SvmEvent> {
             config
@@ -3942,13 +4068,28 @@ type Foo {
                     EventKind::Svm(k) => (
                         e.name.clone(),
                         k.discriminator.clone(),
-                        k.accounts.clone(),
-                        k.args.iter().map(|a| a.name.clone()).collect(),
+                        k.accounts.iter().map(ToString::to_string).collect(),
+                        k.args
+                            .as_ref()
+                            .map(|args| args.iter().map(|a| a.name.clone()).collect()),
                     ),
                     other => panic!("expected an Svm event kind, got {other:?}"),
                 })
                 .collect()
         }
+
+        /// The error a row on an IDL-declared name gets when it leaves fields
+        /// out, as one string so a wording change is one edit.
+        fn overwrite_error(instruction: &str, why: &str, spell_out: &str) -> String {
+            format!(
+                "Program 'Pool', instruction '{instruction}': {why}. Spell out {spell_out}: an \
+                 overwrite takes nothing from the IDL, so a field left out here is absent, not \
+                 inherited."
+            )
+        }
+
+        const DECLARED: &str = "the IDL declares this instruction too, so this row replaces it \
+                                rather than adding to the catalog";
 
         const LEGACY_ANCHOR_IDL: &str = r#"{
           "version": "0.1.0",
@@ -4002,11 +4143,9 @@ type Foo {
         /// to `onInstruction`.
         #[test]
         fn omits_yaml_instructions_to_expose_the_idl_catalog() {
-            let yaml = "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
-                 0\n    experimental:\n      hypersync_config:\n        url: \
-                 https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
-                 program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          idl: \
-                 idls/pool.json\n";
+            let yaml = "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
+                 0\nprograms:\n  - name: Pool\n    program_id: \
+                 TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    idl: idls/pool.json\n";
             let config = SystemConfig::parse_yaml(
                 yaml,
                 Some("type Foo @entity { id: ID! }"),
@@ -4023,13 +4162,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0xf223c68952e1f2b6".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0xf8c69e91e17587c8".to_string()),
                         vec!["payer".to_string(), "pool".to_string()],
-                        vec!["amount".to_string()],
+                        Some(vec!["amount".to_string()]),
                     ),
                 ]
             );
@@ -4045,37 +4184,166 @@ type Foo {
 
             assert_eq!(
                 svm_events(&config),
-                vec![("swap".to_string(), None, Vec::new(), Vec::new(),)]
+                vec![("swap".to_string(), None, Vec::new(), Some(Vec::new()),)]
             );
         }
 
-        /// A YAML row next to `idl:` without `discriminator` is not an
-        /// allowlist and is not a program-wide overwrite.
+        /// A YAML-only program whose one instruction declares `accounts` as
+        /// the given YAML, read back as the canonical slot tokens.
+        fn account_slots(accounts: &str) -> anyhow::Result<Vec<String>> {
+            let yaml = format!(
+                "name: svm-slots\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
+                 0\nprograms:\n  - name: Pool\n    program_id: \
+                 TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    instructions:\n      - name: \
+                 swap\n        discriminator: \"0x01\"\n        args: []\n        accounts: \
+                 {accounts}\n"
+            );
+            let config = SystemConfig::parse_yaml(
+                &yaml,
+                Some("type Foo @entity { id: ID! }"),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )?;
+            Ok(svm_events(&config).remove(0).2)
+        }
+
+        /// The same slots as a block sequence under `accounts:`.
+        fn block_list(slots: &[&str]) -> String {
+            slots
+                .iter()
+                .map(|slot| format!("\n                - {slot}"))
+                .collect()
+        }
+
+        /// `?name` marks a slot optional and `_` holds a position without a
+        /// name. YAML reads a leading `?` as a plain scalar in a block
+        /// sequence, but as its explicit-key indicator in a flow one — where
+        /// the slot arrives as a one-entry mapping with no value instead.
         #[test]
-        fn rejects_a_yaml_row_next_to_idl_without_a_discriminator() {
-            let err = program_reading_idl(LEGACY_ANCHOR_IDL, "            - name: swap\n")
-                .expect_err("missing discriminator");
+        fn reads_optional_and_unnamed_slots_in_either_yaml_style() {
+            let expected = vec![
+                "payer".to_string(),
+                "?authority".to_string(),
+                "_".to_string(),
+                "mint".to_string(),
+            ];
 
             assert_eq!(
-                format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': a YAML row next to 'idl' must set \
-                 'discriminator' to overwrite the IDL definition, or omit this row."
+                vec![
+                    account_slots(&block_list(&["payer", "?authority", "_", "mint"]))
+                        .expect("block"),
+                    account_slots(&block_list(&["payer", "\"?authority\"", "_", "mint"]))
+                        .expect("quoted"),
+                    account_slots(&block_list(&["payer", "? authority", "_", "mint"]))
+                        .expect("explicit key"),
+                    account_slots("[payer, ?authority, _, mint]").expect("flow"),
+                ],
+                vec![
+                    expected.clone(),
+                    expected.clone(),
+                    expected.clone(),
+                    expected
+                ]
             );
         }
 
         #[test]
-        fn rejects_an_idl_overwrite_that_sets_layout_without_a_discriminator() {
+        fn rejects_a_slot_the_grammar_has_no_reading_for() {
+            let cases = [
+                ("optional and unnamed", "[payer, ?_, mint]"),
+                ("trailing unnamed", "[payer, _]"),
+                ("duplicate name", "[payer, mint, payer]"),
+                ("no letter in the name", "[payer, _1]"),
+                ("punctuation in the name", "[payer, mint-authority]"),
+                ("a mapping carrying a value", "[payer, ?mint: yes]"),
+            ];
+
+            assert_eq!(
+                cases
+                    .iter()
+                    .map(|(case, accounts)| format!(
+                        "{case}: {:#}",
+                        account_slots(accounts).expect_err(case)
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![
+                    "optional and unnamed: Failed to deserialize config. Visit the docs for more \
+                     information https://docs.envio.dev/docs/configuration-file: \
+                     programs[0].instructions[0].accounts[1]: account slot \
+                     '?_' marks an unnamed slot optional, which nothing can observe. Write '_' to \
+                     hold the position, or name the slot. at line 13 column 27",
+                    "trailing unnamed: Program 'Pool', instruction 'swap': the account list ends \
+                     with '_', a position nothing follows. Drop it.",
+                    "duplicate name: Program 'Pool', instruction 'swap': account 'payer' is \
+                     declared more than once.",
+                    "no letter in the name: Failed to deserialize config. Visit the docs for more \
+                     information https://docs.envio.dev/docs/configuration-file: \
+                     programs[0].instructions[0].accounts[1]: account slot \
+                     '_1' is not a name: expected letters, digits and underscores, at least one \
+                     of them a letter. Prefix a name with '?' to mark the slot optional, or write \
+                     '_' to hold a position without naming it. at line 13 column 27",
+                    "punctuation in the name: Failed to deserialize config. Visit the docs for \
+                     more information https://docs.envio.dev/docs/configuration-file: \
+                     programs[0].instructions[0].accounts[1]: account slot \
+                     'mint-authority' is not a name: expected letters, digits and underscores, at \
+                     least one of them a letter. Prefix a name with '?' to mark the slot \
+                     optional, or write '_' to hold a position without naming it. at line 13 \
+                     column 27",
+                    "a mapping carrying a value: Failed to deserialize config. Visit the docs \
+                     for more information https://docs.envio.dev/docs/configuration-file: \
+                     programs[0].instructions[0].accounts[1]: expected an \
+                     account name, got a mapping. To mark 'mint' optional, write \"?mint\". at \
+                     line 13 column 27",
+                ]
+            );
+        }
+
+        /// A row on a name the IDL declares replaces it, so it says the
+        /// fields that would otherwise read as absent rather than as the
+        /// IDL's. This one leaves out both.
+        #[test]
+        fn rejects_an_overwrite_that_leaves_out_the_whole_layout() {
             let err = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
-                "            - name: swap\n              accounts:\n                - source\n              \
-                 args: []\n",
+                "            - name: swap\n              discriminator: \"0x\"\n",
             )
-            .expect_err("layout without discriminator");
+            .expect_err("missing the layout");
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': a YAML row next to 'idl' must set \
-                 'discriminator' to overwrite the IDL definition, or omit this row."
+                overwrite_error("swap", DECLARED, "'accounts' and 'args'")
+            );
+        }
+
+        /// An overwrite says what a row on any other name says: the empty
+        /// prefix is a program-wide match, here replacing the prefix the IDL
+        /// declared for the name.
+        #[test]
+        fn an_overwrite_on_the_empty_prefix_is_program_wide() {
+            let config = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: swap\n              discriminator: \"0x\"\n              \
+                 accounts:\n                - source\n              args: []\n",
+            )
+            .expect("the empty prefix");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string()),
+                        vec!["vault".to_string()],
+                        Some(Vec::new()),
+                    ),
+                    (
+                        "swap".to_string(),
+                        None,
+                        vec!["source".to_string()],
+                        Some(Vec::new()),
+                    ),
+                ]
             );
         }
 
@@ -4104,19 +4372,19 @@ type Foo {
                         "deposit".to_string(),
                         Some("0x02".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0x09".to_string()),
                         vec!["source".to_string(), "dest".to_string()],
-                        vec!["amountIn".to_string()],
+                        Some(vec!["amountIn".to_string()]),
                     ),
                     (
                         "extra".to_string(),
                         Some("0xab".to_string()),
                         vec!["payer".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4145,13 +4413,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0x02".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0x09".to_string()),
                         vec!["source".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4175,13 +4443,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0xf223c68952e1f2b6".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0xf8c69e91e17587c8".to_string()),
                         vec!["payer".to_string(), "pool".to_string()],
-                        vec!["amount".to_string()],
+                        Some(vec!["amount".to_string()]),
                     ),
                 ]
             );
@@ -4210,13 +4478,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0x09".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0xdeadbeefdeadbeef".to_string()),
                         Vec::new(),
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4232,8 +4500,61 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': set both 'accounts' and 'args' to \
-                 overwrite the IDL layout."
+                overwrite_error("swap", DECLARED, "'accounts' and 'args'")
+            );
+        }
+
+        /// The IDL has no name for this row, so it adds an instruction and is
+        /// read like an inline one: the empty prefix matches every call, and
+        /// the layout is the row's own business.
+        #[test]
+        fn a_row_the_idl_does_not_declare_needs_no_layout() {
+            let config = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: anyCall\n              discriminator: \"0x\"\n",
+            )
+            .expect("a row adding a name");
+
+            assert_eq!(
+                svm_events(&config)
+                    .into_iter()
+                    .map(|(name, discriminator, _, _)| (name, discriminator))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string())
+                    ),
+                    ("swap".to_string(), Some("0xf8c69e91e17587c8".to_string())),
+                    ("anyCall".to_string(), None),
+                ]
+            );
+        }
+
+        /// A row on a name the IDL declares but could not use is still an
+        /// overwrite: the IDL has a definition for it, and the reason it was
+        /// set aside is what the row has to answer.
+        #[test]
+        fn rejects_an_overwrite_of_an_unusable_idl_instruction() {
+            let err = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1],
+                       "accounts": [], "args": [{ "name": "amount", "type": { "coption": "u64" } }] },
+                     { "name": "deposit", "discriminator": [4],
+                       "accounts": [], "args": [] }] }"#,
+                "            - name: swap\n              discriminator: \"0x\"\n",
+            )
+            .expect_err("a row on a set-aside name");
+
+            assert_eq!(
+                format!("{err:#}"),
+                overwrite_error(
+                    "swap",
+                    "the IDL declares this instruction too, but it cannot be indexed as declared: \
+                     idls/pool.json:2:22: args.amount: `coption` is not Borsh-compatible and \
+                     cannot be decoded",
+                    "'accounts' and 'args'"
+                )
             );
         }
 
@@ -4256,7 +4577,7 @@ type Foo {
                     "deposit".to_string(),
                     Some("0x04".to_string()),
                     Vec::new(),
-                    Vec::new(),
+                    Some(Vec::new()),
                 )]
             );
         }
@@ -4296,7 +4617,7 @@ type Foo {
                     "transfer".to_string(),
                     Some("0x03".to_string()),
                     vec!["source".to_string(), "destination".to_string()],
-                    vec!["amount".to_string()],
+                    Some(vec!["amount".to_string()]),
                 )]
             );
         }
@@ -4320,7 +4641,15 @@ type Foo {
                 .into_iter()
                 .filter(|(_, discriminator, ..)| discriminator.is_some())
                 .map(|(name, discriminator, accounts, args)| {
-                    (name, discriminator.unwrap(), accounts.len(), args.len())
+                    // `None` where the row attached no layout at all: the Orca
+                    // and Meteora swaps take every call and leave the payload
+                    // raw, which an empty layout would not do.
+                    (
+                        name,
+                        discriminator.unwrap(),
+                        accounts.len(),
+                        args.map(|a| a.len()),
+                    )
                 })
                 .collect();
 
@@ -4354,40 +4683,60 @@ type Foo {
                             "borrowObligationLiquidity".into(),
                             "0x797f12cc49f5e141".into(),
                             12,
-                            1
+                            Some(1)
                         ),
                         (
                             "depositReserveLiquidityAndObligationCollateral".into(),
                             "0x81c70402de271a2e".into(),
                             14,
-                            1
+                            Some(1)
                         ),
-                        ("fillPerpOrder".into(), "0x0dbcf86786d96af0".into(), 6, 2),
-                        ("liquidatePerp".into(), "0x4b2377f7bf128b02".into(), 6, 3),
-                        ("liquidateSpot".into(), "0x6b00802923e5fb12".into(), 6, 4),
-                        ("placePerpOrder".into(), "0x45a15dca787e4cb9".into(), 3, 1),
+                        (
+                            "fillPerpOrder".into(),
+                            "0x0dbcf86786d96af0".into(),
+                            6,
+                            Some(2)
+                        ),
+                        (
+                            "liquidatePerp".into(),
+                            "0x4b2377f7bf128b02".into(),
+                            6,
+                            Some(3)
+                        ),
+                        (
+                            "liquidateSpot".into(),
+                            "0x6b00802923e5fb12".into(),
+                            6,
+                            Some(4)
+                        ),
+                        (
+                            "placePerpOrder".into(),
+                            "0x45a15dca787e4cb9".into(),
+                            3,
+                            Some(1)
+                        ),
                         (
                             "repayObligationLiquidity".into(),
                             "0x91b20de14cf09348".into(),
                             9,
-                            1
+                            Some(1)
                         ),
-                        ("route".into(), "0xe517cb977ae3ad2a".into(), 9, 5),
-                        ("settlePnl".into(), "0x2b3dea2d0f5f9899".into(), 4, 1),
+                        ("route".into(), "0xe517cb977ae3ad2a".into(), 9, Some(5)),
+                        ("settlePnl".into(), "0x2b3dea2d0f5f9899".into(), 4, Some(1)),
                         (
                             "sharedAccountsRoute".into(),
                             "0xc1209b3341d69c81".into(),
                             13,
-                            6
+                            Some(6)
                         ),
-                        ("swap".into(), "0x09".into(), 18, 2),
-                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, 0),
-                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, 0),
+                        ("swap".into(), "0x09".into(), 18, Some(2)),
+                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, None),
+                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, None),
                         (
                             "withdrawObligationCollateralAndRedeemReserveCollateral".into(),
                             "0x4b5d5ddc2296dac4".into(),
                             14,
-                            1
+                            Some(1)
                         ),
                     ]
                 )
@@ -4412,13 +4761,13 @@ type Foo {
                         "swap".to_string(),
                         Some("0x01".to_string()),
                         Vec::new(),
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "wide".to_string(),
                         Some("0x090909".to_string()),
                         Vec::new(),
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4426,9 +4775,8 @@ type Foo {
 
         #[test]
         fn does_not_attach_a_schema_to_metaplex_by_program_id() {
-            let yaml = "name: metaplex\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
-                 0\n    experimental:\n      hypersync_config:\n        url: \
-                 https://solana.hypersync.xyz\n      programs:\n        - name: TokenMetadata\n          \
+            let yaml = "name: metaplex\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
+                 0\nprograms:\n  - name: TokenMetadata\n    \
                  program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n";
             let config = SystemConfig::parse_yaml(
                 yaml,
@@ -4502,7 +4850,7 @@ type Foo {
             assert!(matches!(
                 &chain.sync_source,
                 DataSource::Svm {
-                    hypersync_endpoint_url: Some(url),
+                    hypersync_endpoint_url: url,
                     ..
                 } if url == "https://solana.hypersync.xyz"
             ));

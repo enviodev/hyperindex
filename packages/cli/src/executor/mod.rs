@@ -107,6 +107,10 @@ pub async fn execute(
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
+            // Before codegen, so a mistyped `--chain` fails in the moment rather
+            // than after a full regeneration.
+            validate_chain_selection(&config, &start_args.chains, start_args.restart)?;
+
             // Always regenerate so the runtime never boots against stale
             // codegen output (e.g. after an `envio` package upgrade).
             // Mirrors `envio dev`; the JS side handles DB compat via
@@ -122,6 +126,7 @@ pub async fn execute(
                 start_args.restart,
                 false,
                 &[],
+                &start_args.chains,
             )?))
         }
 
@@ -182,6 +187,10 @@ pub fn build_start_command(
     reset: bool,
     is_dev: bool,
     extra_env: &[(String, String)],
+    // `--chain`: rides in the public config as `isolatedChains`, next to
+    // `isDev`, so the runtime reads the selection off the config it already
+    // parses. Empty means every chain, which is what a run without the flag does.
+    chains: &[u64],
 ) -> Result<Command> {
     let config_path = config
         .parsed_project_paths
@@ -194,6 +203,11 @@ pub fn build_start_command(
             .chain(extra_env.iter().map(|(k, v)| (k.clone(), v.clone().into())))
             .collect();
 
+    let mut public_config = public_config_value(config, is_dev)?;
+    if !chains.is_empty() {
+        public_config["isolatedChains"] = chains.iter().copied().collect();
+    }
+
     Ok(Command::Start {
         reset,
         cwd: config
@@ -202,8 +216,76 @@ pub fn build_start_command(
             .to_string_lossy()
             .into_owned(),
         env,
-        config: public_config_value(config, is_dev)?,
+        config: public_config,
     })
+}
+
+/// `--chain` splits one schema's chains across processes. Two things have to
+/// hold, and both are cheaper to reject here than to discover at runtime: every
+/// id has to name a configured chain, and no entity may be shared across chains,
+/// since separate processes each advance their own checkpoint sequence.
+fn validate_chain_selection(config: &SystemConfig, chains: &[u64], restart: bool) -> Result<()> {
+    if chains.is_empty() {
+        return Ok(());
+    }
+
+    // Clap could reject this as a conflict, but the generic message wouldn't say
+    // what to do instead, and a reset is the one thing a `--chain` process can't
+    // do for itself: it would wipe the chains other processes are driving.
+    if restart {
+        anyhow::bail!(
+            "`envio start --chain` can't restart from scratch, because the database it clears \
+             holds the chains other processes are driving. Stop every chain's process, run \
+             `envio local db-migrate setup` once with the full config, then start them again."
+        );
+    }
+
+    let mut shared: Vec<&str> = config
+        .schema
+        .entities
+        .values()
+        .filter(|entity| entity.is_cross_chain(config.default_chain_scope))
+        .map(|entity| entity.name.as_str())
+        .collect();
+    if !shared.is_empty() {
+        shared.sort_unstable();
+        // Naming all of them is only useful when some are per-chain. Without
+        // `disable_default_cross_chain` every entity is shared, and the list is
+        // just the schema read back.
+        let remedy = if shared.len() == config.schema.entities.len() {
+            "Every entity in this schema is cross-chain, because config.yaml doesn't set \
+             `disable_default_cross_chain: true`. Set it, then run every chain in its own process."
+                .to_string()
+        } else {
+            format!(
+                "Entities shared across chains: {}. Drop `@crossChain` from them, or run every \
+                 chain in one process.",
+                shared.join(", ")
+            )
+        };
+        anyhow::bail!(
+            "`envio start --chain` needs every entity to be per-chain, because chains indexed in \
+             separate processes can't share a checkpoint sequence. {remedy}"
+        );
+    }
+
+    for chain in chains {
+        if !config.chains.contains_key(chain) {
+            let mut configured: Vec<u64> = config.chains.keys().copied().collect();
+            configured.sort_unstable();
+            anyhow::bail!(
+                "Chain {chain} is not configured, so `envio start --chain {chain}` has nothing to \
+                 index. Configured chains: {}.",
+                configured
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+
+    Ok(())
 }
 
 /// Returns a `Value` (not a string) so the serde payload embeds the config
@@ -211,4 +293,110 @@ pub fn build_start_command(
 pub fn public_config_value(config: &SystemConfig, is_dev: bool) -> Result<serde_json::Value> {
     serde_json::from_str(&config.to_public_config_json(is_dev)?)
         .context("Failed parsing public config JSON")
+}
+
+#[cfg(test)]
+mod chain_selection_tests {
+    use super::validate_chain_selection;
+    use crate::config_parsing::system_config::SystemConfig;
+    use std::collections::HashMap;
+
+    const PER_CHAIN_SCHEMA: &str = r#"
+type Counter {
+  id: ID!
+  count: BigInt!
+}
+"#;
+
+    fn config(disable_default_cross_chain: bool) -> SystemConfig {
+        let yaml = format!(
+            r#"
+name: chain-selection
+{}
+contracts:
+  - name: Counters
+    events:
+      - event: Bumped(uint256 amount)
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Counters
+        address: "0x1111111111111111111111111111111111111111"
+  - id: 137
+    start_block: 0
+    contracts:
+      - name: Counters
+        address: "0x2222222222222222222222222222222222222222"
+"#,
+            if disable_default_cross_chain {
+                "disable_default_cross_chain: true"
+            } else {
+                ""
+            }
+        );
+        // The same schema either way: without the flag every entity is
+        // cross-chain by default, which is the case `--chain` has to reject.
+        SystemConfig::parse_yaml(
+            &yaml,
+            Some(PER_CHAIN_SCHEMA),
+            &HashMap::new(),
+            &HashMap::new(),
+            false,
+        )
+        .expect("config should parse")
+    }
+
+    #[test]
+    fn accepts_configured_chains_of_a_per_chain_schema() {
+        let config = config(true);
+        assert_eq!(
+            (
+                validate_chain_selection(&config, &[137], false).is_ok(),
+                validate_chain_selection(&config, &[1, 137], false).is_ok(),
+            ),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn accepts_a_run_without_the_flag_whatever_the_schema() {
+        assert!(validate_chain_selection(&config(false), &[], false).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_restart_and_says_what_to_do_instead() {
+        let err = validate_chain_selection(&config(true), &[1], true)
+            .expect_err("a restart under --chain should be rejected");
+        assert_eq!(
+            err.to_string(),
+            "`envio start --chain` can't restart from scratch, because the database it clears \
+             holds the chains other processes are driving. Stop every chain's process, run \
+             `envio local db-migrate setup` once with the full config, then start them again."
+        );
+    }
+
+    #[test]
+    fn rejects_a_chain_the_config_does_not_declare() {
+        let err = validate_chain_selection(&config(true), &[42], false)
+            .expect_err("an unconfigured chain should be rejected");
+        assert_eq!(
+            err.to_string(),
+            "Chain 42 is not configured, so `envio start --chain 42` has nothing to index. \
+             Configured chains: 1, 137."
+        );
+    }
+
+    #[test]
+    fn rejects_a_schema_that_shares_entities_across_chains() {
+        let err = validate_chain_selection(&config(false), &[1], false)
+            .expect_err("a cross-chain schema should be rejected");
+        assert_eq!(
+            err.to_string(),
+            "`envio start --chain` needs every entity to be per-chain, because chains indexed in \
+             separate processes can't share a checkpoint sequence. Every entity in this schema is \
+             cross-chain, because config.yaml doesn't set `disable_default_cross_chain: true`. Set \
+             it, then run every chain in its own process."
+        );
+    }
 }

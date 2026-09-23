@@ -1216,6 +1216,9 @@ export type SvmAllTransactionFields = {
   readonly err: string | undefined;
   readonly fee: bigint;
   readonly computeUnitsConsumed: bigint | undefined;
+  /** Every account the transaction resolves to: the static keys, then the
+   *  address lookup tables' writable then readonly addresses. A transaction's
+   *  account indexes address this list. */
   readonly accountKeys: readonly string[];
   readonly recentBlockhash: string;
   readonly version: string | undefined;
@@ -1377,7 +1380,7 @@ type SvmNamedAccounts<
   Acc extends Readonly<Record<string, unknown>>,
   Fields extends SvmFieldsSelection,
 > = {
-  readonly [K in keyof Acc & string]: SvmInstructionAccount<Fields, K>;
+  readonly [K in keyof Acc]: SvmInstructionAccount<Fields, K & string>;
 };
 
 /** The parent transaction of a {@link SvmInstruction}, narrowed to the

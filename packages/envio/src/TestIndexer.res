@@ -75,15 +75,10 @@ let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFi
   | None => []
   | Some(entityConfig) =>
     let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
-    let matched =
-      entityDict
-      ->Dict.valuesToArray
-      ->Array.filter(entity => {
-        // The store holds decoded entities and the filter carries decoded values,
-        // so compare directly (same approach as InMemoryTable) — no JSON round-trip.
-        let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
-        filter->EntityFilter.matches(~entity=entityAsDict)
-      })
+    // The store holds decoded entities and the filter carries decoded values,
+    // so compare directly (same approach as InMemoryTable) — no JSON round-trip.
+    let matcher = filter->EntityFilter.makeMatcher(~table=entityConfig.table)
+    let matched = entityDict->Dict.valuesToArray->Array.filter(matcher)
     // The chain is already fixed by the scope the load ran for, so the loaded
     // entity is handed back in the shape the handlers see.
     switch entityConfig.table->Table.getChainIdField {
@@ -259,13 +254,17 @@ let makeInitialState = (
       addressRowsByChain
       ->Utils.Dict.dangerouslyGetNonOption(chainIdStr)
       ->Option.getOr(AddressRows.emptySeedRows())
+    // The pinned startBlock resumes the chain rather than moving its start, so
+    // contract start blocks and onBlock intervals stay what config.yaml says.
+    // https://github.com/enviodev/hyperindex/issues/1656
     {
       Persistence.id: chain,
-      startBlock: processChainConfig.startBlock,
+      startBlock: config.chainMap->ChainMap.get(chain)->Config.startBlockOrZero,
       endBlock: processChainConfig.endBlock,
       sourceBlockNumber: processChainConfig.endBlock->Option.getOr(0),
       maxReorgDepth: 0, // No reorg support in test indexer
-      progressBlockNumber: -1,
+      progressBlockNumber: processChainConfig.startBlock - 1,
+      progressBlockTime: None,
       numEventsProcessed: 0.,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
@@ -279,7 +278,7 @@ let makeInitialState = (
     envioInfo: Some(JSON.Encode.object(Dict.make())),
     cache: Dict.make(),
     chains,
-    checkpointId: InternalTable.Checkpoints.initialCheckpointId,
+    checkpointFrontier: Frontier.empty(),
     reorgCheckpoints: [],
   }
 }
@@ -355,13 +354,14 @@ let parseBlockRange = (
     JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
   }
   let configChain = config.chainMap->ChainMap.get(chain)
+  let configStartBlock = configChain->Config.startBlockOrZero
 
   let startBlock = switch rawChainConfig.startBlock {
   | Some(sb) => sb
   | None =>
     switch progressBlock {
     | Some(prevEndBlock) => prevEndBlock + 1
-    | None => configChain.startBlock
+    | None => configStartBlock
     }
   }
 
@@ -378,10 +378,10 @@ let parseBlockRange = (
   | None => None // auto-exit mode: will fetch first block with events and exit
   }
 
-  if startBlock < configChain.startBlock {
+  if startBlock < configStartBlock {
     JsError.throwWithMessage(
-      `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) is less than config.startBlock (${configChain.startBlock->Int.toString}). ` ++
-      `Either use startBlock >= ${configChain.startBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
+      `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) is less than config.startBlock (${configStartBlock->Int.toString}). ` ++
+      `Either use startBlock >= ${configStartBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
   }
 
@@ -542,23 +542,12 @@ let makeEntityGetWhere = (~state: testIndexerState, ~entityConfig: Internal.enti
         `Cannot call ${entityConfig.name}.getWhere() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
       )
     }
-    let filters =
-      filter->EntityFilter.parseGetWhereOrThrow(
-        ~entityName=entityConfig.name,
-        ~table=entityConfig.table,
-      )
+    let matcher =
+      filter
+      ->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table)
+      ->EntityFilter.makeMatcher(~table=entityConfig.table)
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-    // parseGetWhereOrThrow expands an operator group into alternatives whose
-    // matches are disjoint, so the union needs no dedup.
-    Promise.resolve(
-      entityDict
-      ->Dict.valuesToArray
-      ->Array.filter(entity => {
-        let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
-        filters->Array.some(filter => filter->EntityFilter.matches(~entity=entityAsDict))
-      })
-      ->Array.map(copyEntity),
-    )
+    Promise.resolve(entityDict->Dict.valuesToArray->Array.filter(matcher)->Array.map(copyEntity))
   }
 }
 
@@ -589,7 +578,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
-  resumeInitialState: async (~entities as _, ~throwIfIncompatible as _) =>
+  resumeInitialState: async (~entities as _, ~chainIds as _, ~throwIfIncompatible as _) =>
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
     ),
@@ -598,13 +587,12 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     ->handleLoad(~tableName=table.tableName, ~filter)
     ->(Utils.magic: array<Internal.entity> => array<unknown>),
   // The in-memory storage has no indexes to build, and it's always ready.
-  ensureQueryIndexes: async (~table as _, ~filters as _) => (),
-  ensureSchemaIndexes: async (~entities as _) => (),
+  ensureQueryIndexes: async (~entityConfig as _, ~scope as _, ~filters as _) => (),
+  ensureSchemaIndexes: async (~entities as _, ~chainIds as _) => (),
   finalizeBackfill: async (~entities as _, ~chainIds as _, ~readyAt as _) => (),
   writeBatch: async (
     ~batch,
     ~rollback as _,
-    ~isInReorgThreshold as _,
     ~config,
     ~allEntities as _,
     ~updatedEffectsCache as _,
@@ -754,7 +742,7 @@ let createTestIndexer = (): t<'processConfig> => {
     ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
     ->Utils.Object.definePropertyWithValue(
       "startBlock",
-      {enumerable: true, value: chainConfig.startBlock},
+      {enumerable: true, value: chainConfig->Config.startBlockOrZero},
     )
     ->Utils.Object.definePropertyWithValue(
       "endBlock",
@@ -963,7 +951,7 @@ let createTestIndexer = (): t<'processConfig> => {
                 ~exitAfterFirstEventBlock,
                 ~onError=errHandler => {
                   errHandler->ErrorHandling.log
-                  reject(errHandler.exn->Utils.prettifyExn)
+                  reject(errHandler->ErrorHandling.toExn)
                 },
                 // Caught up: resolve the run instead of exiting the process.
                 ~onExit=() => resolve(),

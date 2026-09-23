@@ -24,39 +24,36 @@ name: svm-where-live
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 420650000
-    end_block: 420650200
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Raydium
-          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              args:
-                - { name: amountIn, type: u64 }
-                - { name: minAmountOut, type: u64 }
-              accounts:
-                - tokenProgram
-                - amm
-                - ammAuthority
-                - ammOpenOrders
-                - ammTargetOrders
-                - poolCoinTokenAccount
-                - poolPcTokenAccount
-                - serumProgram
-                - serumMarket
-                - serumBids
-                - serumAsks
-                - serumEventQueue
-                - serumCoinVaultAccount
-                - serumPcVaultAccount
-                - serumVaultSigner
-                - userSourceTokenAccount
-                - userDestTokenAccount
-                - userSourceOwner
+    start_slot: 420650000
+    end_slot: 420650200
+programs:
+  - name: Raydium
+    program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+    instructions:
+      - name: swap
+        discriminator: "0x09"
+        args:
+          - { name: amountIn, type: u64 }
+          - { name: minAmountOut, type: u64 }
+        accounts:
+          - tokenProgram
+          - amm
+          - ammAuthority
+          - ammOpenOrders
+          - ammTargetOrders
+          - poolCoinTokenAccount
+          - poolPcTokenAccount
+          - serumProgram
+          - serumMarket
+          - serumBids
+          - serumAsks
+          - serumEventQueue
+          - serumCoinVaultAccount
+          - serumPcVaultAccount
+          - serumVaultSigner
+          - userSourceTokenAccount
+          - userDestTokenAccount
+          - userSourceOwner
 `,
   ~schema=`
 type Hit {

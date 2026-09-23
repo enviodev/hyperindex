@@ -30,6 +30,45 @@ fn records_each_defect_against_what_carries_it() {
                }] }"#,
         ),
         (
+            // Both levels are a one-byte tag, so the two shapes are one value
+            // on the wire and a handler could not tell them apart.
+            "anchor nested option",
+            r#"{ "instructions": [{
+                 "name": "swap",
+                 "discriminator": [1],
+                 "args": [{ "name": "maybe", "type": { "option": { "option": "u64" } } }]
+               }] }"#,
+        ),
+        (
+            // The decoder sizes its buffer from the declared length, not from
+            // the bytes on the wire, so this is an allocation before it is a
+            // decode failure.
+            "anchor array longer than the decoder will preallocate",
+            r#"{ "instructions": [{
+                 "name": "swap",
+                 "discriminator": [1],
+                 "args": [{ "name": "big", "type": { "array": ["u64", 70000] } }]
+               }] }"#,
+        ),
+        (
+            "codama nested option",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{
+                 "kind": "instructionNode", "name": "swap",
+                 "arguments": [
+                   { "name": "maybe", "type": { "kind": "optionTypeNode", "item": {
+                       "kind": "optionTypeNode",
+                       "item": { "kind": "numberTypeNode", "format": "u64" } } } }] }] } }"#,
+        ),
+        (
+            "codama array longer than the decoder will preallocate",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{
+                 "kind": "instructionNode", "name": "swap",
+                 "arguments": [
+                   { "name": "big", "type": { "kind": "arrayTypeNode",
+                       "item": { "kind": "numberTypeNode", "format": "u64" },
+                       "count": { "kind": "fixedCountNode", "value": 70000 } } }] }] } }"#,
+        ),
+        (
             "discriminator wider than dispatch probes",
             r#"{ "instructions": [{ "name": "swap", "discriminator": [1, 2, 3] }] }"#,
         ),
@@ -147,10 +186,10 @@ fn records_each_defect_against_what_carries_it() {
                                       "name": "tag", "offset": 0 }] }] } }"#,
         ),
         (
-            // A count is a number off the file, so the running total of
-            // argument widths is checked rather than trusted: unchecked it
-            // overflows and takes the CLI down with it.
-            "codama argument whose declared width overruns the address space",
+            // Counts are numbers off the file, and they nest, so the running
+            // total of argument widths is checked rather than trusted:
+            // unchecked it overflows and takes the CLI down with it.
+            "codama argument whose declared width overruns the discriminator",
             r#"{ "kind": "rootNode", "program": { "instructions": [{
                  "kind": "instructionNode", "name": "swap",
                  "arguments": [
@@ -158,9 +197,11 @@ fn records_each_defect_against_what_carries_it() {
                      "type": { "kind": "numberTypeNode", "format": "u8" } },
                    { "kind": "instructionArgumentNode", "name": "big",
                      "type": { "kind": "arrayTypeNode",
-                               "item": { "kind": "numberTypeNode", "format": "u8" },
+                               "item": { "kind": "arrayTypeNode",
+                                         "item": { "kind": "numberTypeNode", "format": "u8" },
+                                         "count": { "kind": "fixedCountNode", "value": 65536 } },
                                "count": { "kind": "fixedCountNode",
-                                          "value": 18446744073709551615 } } }],
+                                          "value": 65536 } } }],
                  "discriminators": [{ "kind": "constantDiscriminatorNode", "offset": 0,
                    "constant": { "value": { "kind": "bytesValueNode",
                                             "data": "0c02" } } }] }] } }"#,
@@ -296,6 +337,10 @@ fn records_each_defect_against_what_carries_it() {
             "duplicate instruction name: fatal: idl.json: IDL declares instruction 'swap' more than once",
             "anchor coption: initializeMint set aside: idl.json:1:20: args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
             "unknown primitive type: swap set aside: idl.json:1:20: args.amount: unknown type 'u46'",
+            "anchor nested option: swap set aside: idl.json:1:20: args.maybe.option: a nested `option` decodes ambiguously and cannot be indexed",
+            "anchor array longer than the decoder will preallocate: swap set aside: idl.json:1:20: args.big.array: 70000 elements is more than the 65536 an array may declare",
+            "codama nested option: swap set aside: idl.json:1:53: args.maybe.item: a nested option decodes ambiguously and cannot be indexed",
+            "codama array longer than the decoder will preallocate: swap set aside: idl.json:1:53: args.big: 70000 elements is more than the 65536 an array may declare",
             "discriminator wider than dispatch probes: accepted",
             "instruction with no discriminator at all: accepted",
             "one discriminator a prefix of another: accepted",
@@ -308,7 +353,7 @@ fn records_each_defect_against_what_carries_it() {
             "one discriminator a prefix of several others: accepted",
             "instruction shadowed by one of an undispatchable width: accepted",
             "codama discriminator argument out of declaration order: swap set aside: idl.json:1:53: the 1-byte discriminator stops inside argument 'amount', which starts at byte 0 and is 8 bytes wide",
-            "codama argument whose declared width overruns the address space: swap set aside: idl.json:1:53: the 2-byte discriminator stops inside argument 'big', which starts at byte 1 and is 18446744073709551615 bytes wide",
+            "codama argument whose declared width overruns the discriminator: swap set aside: idl.json:1:53: the 2-byte discriminator stops inside argument 'big', which starts at byte 1 and is 4294967296 bytes wide",
             "duplicate type name: fatal: idl.json: IDL declares type 'Fee' more than once",
             "duplicate account name: swap set aside: idl.json:1:20: IDL declares account 'vault' more than once",
             "codama argument reusing a discriminator name: swap set aside: idl.json:1:53: IDL declares argument 'tag' more than once",

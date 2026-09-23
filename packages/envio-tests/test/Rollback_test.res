@@ -51,6 +51,7 @@ indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async () => {});
 
 let makeScenario = (~name, ~chains, ~extra="") =>
   Scenario.make(
+    ~supervised=false,
     ~configYaml=`
 name: ${name}
 rollback_on_reorg: true${extra}${contractsYaml}chains:${chains}`,
@@ -119,6 +120,10 @@ describe("E2E rollback tests", () => {
     ~sourceMock: MockSource.t,
     ~indexer: IndexerRunner.t,
     ~firstHistoryCheckpointId=2n,
+    // How far the id after the rollback sits above the first history one. The
+    // diff takes an id per chain it moves, so a run with a sibling to move
+    // burns one more before the re-index.
+    ~afterRollback=3n,
     ~chainId=1337->ChainId.fromInt,
   ) => {
     t.expect(
@@ -379,7 +384,7 @@ describe("E2E rollback tests", () => {
     ).toEqual((
       [
         {
-          id: firstHistoryCheckpointId->BigInt.add(3n),
+          id: firstHistoryCheckpointId->BigInt.add(afterRollback),
           blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0101")),
           blockNumber: 101,
           chainId,
@@ -398,7 +403,7 @@ describe("E2E rollback tests", () => {
       ],
       [
         Set({
-          checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
+          checkpointId: firstHistoryCheckpointId->BigInt.add(afterRollback),
           entityId: "1"->EntityId.unsafeOfString,
           entity: {
             id: "1",
@@ -406,7 +411,7 @@ describe("E2E rollback tests", () => {
           },
         }),
         Set({
-          checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
+          checkpointId: firstHistoryCheckpointId->BigInt.add(afterRollback),
           entityId: "2"->EntityId.unsafeOfString,
           entity: {
             id: "2",
@@ -772,9 +777,11 @@ describe("E2E rollback tests", () => {
       // registration at suite scope would also collect the rollbacks every
       // other case in this file fires.
       let rollbackCommitCalls = []
-      let unregister = RollbackCommit.register(async (args: RollbackCommit.args) => {
-        rollbackCommitCalls->Array.push(args)
-      })
+      let unregister = RollbackCommit.register(
+        async (args: RollbackCommit.args) => {
+          rollbackCommitCalls->Array.push(args)
+        },
+      )
 
       let sourceMock = source(1337)
       await Utils.delay(0)
@@ -910,6 +917,7 @@ describe("E2E rollback tests", () => {
         ~sourceMock=sourceMock2,
         ~indexer,
         ~firstHistoryCheckpointId=3n,
+        ~afterRollback=4n,
         ~chainId=100->ChainId.fromInt,
       )
     },
@@ -1371,8 +1379,8 @@ describe("E2E rollback tests", () => {
         },
         ~message="Events count before rollback",
       ).toEqual([
-        {value: "2", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "4", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "2", labels: dict{"chainId": "100"}},
+        {value: "4", labels: dict{"chainId": "1337"}},
       ])
       t.expect(
         {
@@ -1388,8 +1396,8 @@ describe("E2E rollback tests", () => {
         },
         ~message="Progress block number before rollback",
       ).toEqual([
-        {value: "106", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "109", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "106", labels: dict{"chainId": "100"}},
+        {value: "109", labels: dict{"chainId": "1337"}},
       ])
       t.expect(
         await indexer.metric("envio_rollback_events"),
@@ -1432,20 +1440,20 @@ describe("E2E rollback tests", () => {
         await indexer.metric("envio_progress_events"),
         ~message="Events count after rollback",
       ).toEqual([
-        {value: "1", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "2", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "1", labels: dict{"chainId": "100"}},
+        {value: "2", labels: dict{"chainId": "1337"}},
       ])
       t.expect(
         await indexer.metric("envio_progress_block"),
         ~message="Progress block number after rollback",
       ).toEqual([
-        {value: "105", labels: Dict.fromArray([("chainId", "100")])},
+        {value: "105", labels: dict{"chainId": "100"}},
         // Chain 1337 forked at 103. Blocks 104-105 held no events on the
         // orphaned chain, so no checkpoint of its own survives between the two —
         // but the chain replacing them can have events there, so the rollback
         // leaves it at the fork rather than at the block below its next
         // checkpoint.
-        {value: "103", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "103", labels: dict{"chainId": "1337"}},
       ])
       t.expect(
         await indexer.metric("envio_rollback_events"),
@@ -1465,14 +1473,19 @@ describe("E2E rollback tests", () => {
       ).toEqual((
         // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
         // chunkRange=3 -> chunkSize=ceil(3*1.8)=6, tiled uniformly from 106 and
-        // stopping at the alignment cap, which chain 1337 anchors from its fork
-        // block.
+        // stopping at the alignment cap (chain 1337's fork block plus
+        // CrossChainState.alignmentMargin of chain 100's range).
         [
           {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
           {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
           {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
-          {"fromBlock": 130, "toBlock": Some(133), "retry": 0, "p": "0"},
+          {"fromBlock": 130, "toBlock": Some(135), "retry": 0, "p": "0"},
+          {"fromBlock": 136, "toBlock": Some(141), "retry": 0, "p": "0"},
+          {"fromBlock": 142, "toBlock": Some(147), "retry": 0, "p": "0"},
+          {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
+          {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
+          {"fromBlock": 160, "toBlock": Some(163), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition DELETED (lfb > target), recreated fresh from
         // just above the fork block.
@@ -1543,14 +1556,14 @@ describe("E2E rollback tests", () => {
           // for chain 1337. After rollback it was removed
           // and replaced with chain id 100.
           {
-            id: 10n,
+            id: 11n,
             eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 11n,
+            id: 12n,
             eventsProcessed: 0,
             chainId: 100->ChainId.fromInt,
             blockNumber: 111,
@@ -1581,7 +1594,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 10n,
+            checkpointId: 11n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -1945,14 +1958,14 @@ describe("E2E rollback tests", () => {
           // for chain 1337. After rollback it was removed
           // and replaced with chain id 100.
           {
-            id: 10n,
+            id: 11n,
             eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 11n,
+            id: 12n,
             eventsProcessed: 0,
             chainId: 100->ChainId.fromInt,
             blockNumber: 111,
@@ -1983,7 +1996,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 10n,
+            checkpointId: 11n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -2011,7 +2024,7 @@ describe("E2E rollback tests", () => {
         ],
         [
           Set({
-            checkpointId: 10n,
+            checkpointId: 11n,
             entityId: "foo"->EntityId.unsafeOfString,
             entity: {
               id: "foo",
@@ -2135,7 +2148,7 @@ describe("E2E rollback tests", () => {
       t.expect(
         await indexer.metric("envio_progress_events"),
         ~message="Should have 1 event processed initially",
-      ).toEqual([{value: "1", labels: Dict.fromArray([("chainId", "1337")])}])
+      ).toEqual([{value: "1", labels: dict{"chainId": "1337"}}])
 
       // Trigger first reorg
       sourceMock.resolveGetItemsOrThrow(
@@ -2166,7 +2179,7 @@ describe("E2E rollback tests", () => {
       t.expect(
         await indexer.metric("envio_progress_events"),
         ~message="Should have 0 events after first rollback",
-      ).toEqual([{value: "0", labels: Dict.fromArray([("chainId", "1337")])}])
+      ).toEqual([{value: "0", labels: dict{"chainId": "1337"}}])
 
       // Detects second reorg
       sourceMock.resolveGetItemsOrThrow(
@@ -2195,7 +2208,7 @@ describe("E2E rollback tests", () => {
       t.expect(
         await indexer.metric("envio_progress_events"),
         ~message="Shouldn't go to negative with the counter",
-      ).toEqual([{value: "0", labels: Dict.fromArray([("chainId", "1337")])}])
+      ).toEqual([{value: "0", labels: dict{"chainId": "1337"}}])
 
       // Process batch after rollback
       sourceMock.drainItemsQueries()
@@ -2306,8 +2319,8 @@ describe("E2E rollback tests", () => {
         },
         ~message="Events count before rollback",
       ).toEqual([
-        {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
-        {value: "2", labels: Dict.fromArray([("chainId", "100")])},
+        {value: "1", labels: dict{"chainId": "1337"}},
+        {value: "2", labels: dict{"chainId": "100"}},
       ])
 
       // === FIRST REORG on chain 1337 at block 103 ===
@@ -2347,8 +2360,8 @@ describe("E2E rollback tests", () => {
         },
         ~message="After first rollback: all events should be rolled back to 0",
       ).toEqual([
-        {value: "0", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "0", labels: dict{"chainId": "100"}},
+        {value: "0", labels: dict{"chainId": "1337"}},
       ])
 
       // === SECOND REORG on chain 1337 at block 100 ===
@@ -2358,7 +2371,6 @@ describe("E2E rollback tests", () => {
       // No getBlockHashes call needed: getThresholdBlockNumbersBelowBlock(~blockNumber=100) = []
       // so getHighestBlockBelowThreshold = 300 - 200 = 100 is used directly.
       // Wait for the SetRollbackState tasks (NextQuery, ProcessEventBatch) to be scheduled
-
 
       sourceMock1337.resolveGetItemsOrThrow(
         [],
@@ -2403,8 +2415,8 @@ describe("E2E rollback tests", () => {
         },
         ~message="After second rollback: event counters should NOT be negative",
       ).toEqual([
-        {value: "0", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "0", labels: dict{"chainId": "100"}},
+        {value: "0", labels: dict{"chainId": "1337"}},
       ])
     },
   )
@@ -2519,8 +2531,8 @@ describe("E2E rollback tests", () => {
         },
         ~message="Events count before rollback: chain 1337=1, chain 100=2",
       ).toEqual([
-        {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
-        {value: "2", labels: Dict.fromArray([("chainId", "100")])},
+        {value: "1", labels: dict{"chainId": "1337"}},
+        {value: "2", labels: dict{"chainId": "100"}},
       ])
 
       // === FIRST REORG on chain 1337 at block 103 ===
@@ -2558,8 +2570,8 @@ describe("E2E rollback tests", () => {
         },
         ~message="After first rollback: counters restored to the pre-reorg state",
       ).toEqual([
-        {value: "0", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "0", labels: dict{"chainId": "100"}},
+        {value: "0", labels: dict{"chainId": "1337"}},
       ])
 
       // === SECOND REORG on chain 1337 at block 100 ===
@@ -2598,8 +2610,8 @@ describe("E2E rollback tests", () => {
         },
         ~message="After second rollback: non-reorg chain 100 must NOT go negative",
       ).toEqual([
-        {value: "0", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
+        {value: "0", labels: dict{"chainId": "100"}},
+        {value: "0", labels: dict{"chainId": "1337"}},
       ])
     },
   )
@@ -2999,7 +3011,6 @@ describe("E2E rollback tests", () => {
       writeBatch: (
         ~batch,
         ~rollback,
-        ~isInReorgThreshold,
         ~config,
         ~allEntities,
         ~updatedEffectsCache,
@@ -3017,7 +3028,6 @@ describe("E2E rollback tests", () => {
           await storage.writeBatch(
             ~batch,
             ~rollback,
-            ~isInReorgThreshold,
             ~config,
             ~allEntities,
             ~updatedEffectsCache,
@@ -3175,13 +3185,19 @@ describe("E2E rollback tests", () => {
       ).toEqual((
         // Chain 100: partition kept (lfb <= target), chunk history preserved.
         // chunkRange=3 -> chunkSize=6, tiled uniformly from 106 and stopping at
-        // the alignment cap, which chain 1337 anchors from its fork block.
+        // the alignment cap (chain 1337's fork block plus
+        // CrossChainState.alignmentMargin of chain 100's range).
         [
           {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
           {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
           {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
-          {"fromBlock": 130, "toBlock": Some(133), "retry": 0, "p": "0"},
+          {"fromBlock": 130, "toBlock": Some(135), "retry": 0, "p": "0"},
+          {"fromBlock": 136, "toBlock": Some(141), "retry": 0, "p": "0"},
+          {"fromBlock": 142, "toBlock": Some(147), "retry": 0, "p": "0"},
+          {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
+          {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
+          {"fromBlock": 160, "toBlock": Some(163), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition deleted (lfb > target), recreated fresh from
         // just above the fork block at 103.
@@ -3246,7 +3262,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 8n,
+            checkpointId: 9n,
             entityId: "victim"->EntityId.unsafeOfString,
             entity: {
               id: "victim",

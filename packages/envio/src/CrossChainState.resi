@@ -7,37 +7,40 @@ let calculateTargetBufferSize: unit => int
 
 let make: (
   ~chainStates: dict<ChainState.t>,
-  ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
+  ~holdRealtime: bool=?,
 ) => t
 
 // Accessors.
 let chainStates: t => dict<ChainState.t>
 let isRealtime: t => bool
+let chainIds: t => array<ChainId.t>
 let isCaughtUp: t => bool
 let isInReorgThreshold: t => bool
 let targetBufferSize: t => int
+let shouldSaveHistory: t => dict<bool>
 
 // Derived (pure).
 let nextItemIsNone: t => bool
 let getSafeCheckpointIdByChain: (
   t,
-  ~committedCheckpointId: Internal.checkpointId,
+  ~sequence: CheckpointSequence.t,
+  ~committedFrontier: Frontier.t,
 ) => array<(ChainId.t, option<Internal.checkpointId>)>
 
 // Cross-chain transitions.
-let createBatch: (
-  t,
-  ~processedCheckpointId: Internal.checkpointId,
-  ~batchSizeTarget: int,
-  ~isRollback: bool,
-) => Batch.t
+let releaseRealtime: t => unit
+let isHoldingRealtime: t => bool
+let hasArrivedAtHead: t => bool
+let isReadyToEnterReorgThreshold: (t, ~batch: Batch.t) => bool
+let createBatch: (t, ~config: Config.t, ~frontier: Frontier.t, ~batchSizeTarget: int) => Batch.t
 let enterReorgThreshold: t => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markCaughtUpIfSettled: t => unit
 let markCaughtUpOnResume: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit
+let reportFinished: t => unit
 
 // Fetch control.
 let priorityOrder: t => array<ChainState.t>

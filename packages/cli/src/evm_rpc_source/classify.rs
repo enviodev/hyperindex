@@ -122,89 +122,82 @@ pub fn suggested_block_interval_from_message(message: &str) -> Option<(u64, bool
 mod tests {
     use super::*;
 
+    /// Every provider message the classifier is meant to recognise, with the
+    /// block interval it should read out of it and whether that is a structural
+    /// cap on the whole source (`true`) or a one-off suggestion for this query.
+    /// Ordering matters in the classifier — a message can match both a
+    /// "maximum allowed" pattern and a bare "block range too large" — so the
+    /// pairs that overlap are kept adjacent here.
     #[test]
-    fn retry_with_range() {
-        let message = "query exceeds max results 20000, retry with the range 6000000-6000509";
+    fn known_provider_messages_yield_their_block_interval() {
+        let cases = [
+            (
+                "query exceeds max results 20000, retry with the range 6000000-6000509",
+                Some((510, false)),
+            ),
+            (
+                "block range too large (2000), maximum allowed is 1000 blocks",
+                Some((1000, true)),
+            ),
+            ("block range too large", Some((2000, true))),
+            (
+                "eth_getLogs is limited to a 1000 blocks range",
+                Some((1000, true)),
+            ),
+            (
+                "You can make eth_getLogs requests with up to a 500 block range. Based on your \
+                 parameters, this block range should work: [0x3d7773, 0x3d7966]",
+                Some((500, true)),
+            ),
+            ("Max range: 3500", Some((3500, true))),
+            (
+                "Maximum allowed number of requested blocks is 3500",
+                Some((3500, true)),
+            ),
+            ("limited to 2000 block", Some((2000, true))),
+            (
+                "exceeds the range allowed for your plan (5000 > 3000)",
+                Some((3000, true)),
+            ),
+            ("Block range limit exceeded.", Some((10000, true))),
+            (
+                "please limit the query to at most 1000 blocks",
+                Some((1000, true)),
+            ),
+            ("maximum block range: 2000", Some((2000, true))),
+            ("query exceeds max block range 1000", Some((1000, true))),
+            // Not a range limit at all.
+            (
+                "height is not available (requested height: 138913957, base height: 155251499)",
+                None,
+            ),
+            // A range that ends before it starts describes no interval.
+            (
+                "query exceeds max results 20000, retry with the range 6000509-6000000",
+                None,
+            ),
+        ];
         assert_eq!(
-            suggested_block_interval_from_message(message),
-            Some((510, false))
-        );
-    }
-
-    #[test]
-    fn ignores_unrelated_errors() {
-        let message =
-            "height is not available (requested height: 138913957, base height: 155251499)";
-        assert_eq!(suggested_block_interval_from_message(message), None);
-    }
-
-    #[test]
-    fn block_range_too_large_with_max_allowed() {
-        let message = "block range too large (2000), maximum allowed is 1000 blocks";
-        assert_eq!(
-            suggested_block_interval_from_message(message),
-            Some((1000, true))
-        );
-    }
-
-    #[test]
-    fn ignores_inverted_range() {
-        let message = "query exceeds max results 20000, retry with the range 6000509-6000000";
-        assert_eq!(suggested_block_interval_from_message(message), None);
-    }
-
-    #[test]
-    fn one_rpc_block_range_limit() {
-        let message = "eth_getLogs is limited to a 1000 blocks range";
-        assert_eq!(
-            suggested_block_interval_from_message(message),
-            Some((1000, true))
-        );
-    }
-
-    #[test]
-    fn alchemy_block_range() {
-        let message = "You can make eth_getLogs requests with up to a 500 block range. Based on \
-                       your parameters, this block range should work: [0x3d7773, 0x3d7966]";
-        assert_eq!(
-            suggested_block_interval_from_message(message),
-            Some((500, true))
-        );
-    }
-
-    #[test]
-    fn base_fixed_range() {
-        assert_eq!(
-            suggested_block_interval_from_message("block range too large"),
-            Some((2000, true))
-        );
-    }
-
-    #[test]
-    fn chainstack_fixed_range() {
-        assert_eq!(
-            suggested_block_interval_from_message("Block range limit exceeded."),
-            Some((10000, true))
+            cases.map(|(message, _)| suggested_block_interval_from_message(message)),
+            cases.map(|(_, expected)| expected),
         );
     }
 
     #[test]
     fn too_large_classifies_known_providers_and_ignores_unrelated() {
-        assert!(is_response_too_large_message(
-            "More than 50000 logs returned"
-        ));
-        assert!(is_response_too_large_message(
-            "query returned more than 10000 results"
-        ));
-        assert!(is_response_too_large_message("query exceeds max results"));
-        assert!(is_response_too_large_message("backend response too large"));
-        assert!(is_response_too_large_message(
-            "logs matched by query exceeds limit of 10000"
-        ));
-        // Block-range limits are handled by suggested_block_interval_from_message, not here.
-        assert!(!is_response_too_large_message(
-            "eth_getLogs is limited to a 1000 blocks range"
-        ));
-        assert!(!is_response_too_large_message("rate limited"));
+        let messages = [
+            "More than 50000 logs returned",
+            "query returned more than 10000 results",
+            "query exceeds max results",
+            "backend response too large",
+            "logs matched by query exceeds limit of 10000",
+            // Block-range limits belong to suggested_block_interval_from_message.
+            "eth_getLogs is limited to a 1000 blocks range",
+            "rate limited",
+        ];
+        assert_eq!(
+            messages.map(is_response_too_large_message),
+            [true, true, true, true, true, false, false]
+        );
     }
 }

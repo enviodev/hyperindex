@@ -57,6 +57,11 @@ describe("Test Persistence layer init", () => {
       ~message=`Storage status should be initializing`,
     ).toEqual(true)
 
+    // Resolving "latest" start blocks (a no-op here, chainConfigs is empty)
+    // runs between the isInitialized check and the storage.initialize call;
+    // drain the microtask queue rather than counting its awaits.
+    await Utils.delay(0)
+
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -84,7 +89,7 @@ describe("Test Persistence layer init", () => {
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
-      checkpointId: 0n,
+      checkpointFrontier: Frontier.empty(),
     }
     storageMock.resolveInitialize(initialState)
     let _ = await Promise.resolve()
@@ -123,6 +128,10 @@ describe("Test Persistence layer init", () => {
         ~resetCommand=resetCmd,
         ~runCommand=runCmd,
       )
+    // Resolving "latest" start blocks (a no-op here, chainConfigs is empty)
+    // runs between the reset check and the storage.initialize call; drain
+    // the microtask queue rather than counting its awaits.
+    await Utils.delay(0)
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -187,7 +196,7 @@ describe("Test Persistence layer init", () => {
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
-      checkpointId: 0n,
+      checkpointFrontier: Frontier.empty(),
     }
     storageMock.resolveLoadInitialState(initialState)
     await p
@@ -240,7 +249,7 @@ Although it should load effect caches metadata.`,
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
-      checkpointId: 0n,
+      checkpointFrontier: Frontier.empty(),
     }
     storageMock.resolveLoadInitialState(initialState)
 

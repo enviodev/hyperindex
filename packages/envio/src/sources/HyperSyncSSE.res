@@ -25,7 +25,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
             args.headers
             ->Option.getOr(Dict.make())
             ->Utils.Dict.merge(
-              Dict.fromArray([("Authorization", `Bearer ${apiToken}`), ("User-Agent", userAgent)]),
+              dict{"Authorization": `Bearer ${apiToken}`, "User-Agent": userAgent},
             )
           EventSource.Fetch.fetch(url, ~args={...args, headers: headers})
         },

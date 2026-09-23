@@ -58,7 +58,7 @@ describe("TransactionStore field-code contract", () => {
 
   it("fieldCodes maps each field name to its bit index", t => {
     t.expect(TransactionStore.fieldCodes(["transactionIndex", "hash", "from"])).toEqual(
-      Dict.fromArray([("transactionIndex", 0), ("hash", 1), ("from", 2)]),
+      dict{"transactionIndex": 0, "hash": 1, "from": 2},
     )
   })
 

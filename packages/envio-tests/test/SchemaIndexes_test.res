@@ -20,7 +20,8 @@ type C {
 }
 `
 
-let chainYaml = (chainId, address) => `
+let chainYaml = (chainId, address) =>
+  `
   - id: ${chainId->Int.toString}
     rpc:
       url: https://rpc${chainId->Int.toString}.example.test
@@ -39,6 +40,7 @@ contracts:
 `
 
 let scenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: schema-indexes${contractsYaml}chains:${chainYaml(
       1337,
@@ -47,7 +49,46 @@ name: schema-indexes${contractsYaml}chains:${chainYaml(
   ~schema,
 )
 
+// An `end_block` the chain never reaches: the indexer still counts itself caught
+// up once progress sits at the head, so the deferred indexes are owed then, not
+// at the unreachable end block.
+let unreachableEndBlockScenario = Scenario.make(
+  ~supervised=false,
+  ~configYaml=`
+name: schema-indexes-unreachable-end${contractsYaml}chains:
+  - id: 1337
+    rpc:
+      url: https://rpc1337.example.test
+      for: sync
+    start_block: 1
+    end_block: 1000000
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+`,
+  ~schema,
+)
+
+// A `start_block` past the head: the chain is at its head from the first moment
+// and never has a batch to process, so nothing ever writes its progress row.
+let aheadOfHeadScenario = Scenario.make(
+  ~supervised=false,
+  ~configYaml=`
+name: schema-indexes-ahead-of-head${contractsYaml}chains:
+  - id: 1337
+    rpc:
+      url: https://rpc1337.example.test
+      for: sync
+    start_block: 5000
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+`,
+  ~schema,
+)
+
 let multichainScenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: schema-indexes-multichain${contractsYaml}chains:${chainYaml(
       100,
@@ -137,6 +178,53 @@ let asContext = (context: Internal.handlerContext) =>
   context->(Utils.magic: Internal.handlerContext => indexesContext)
 
 describe("Deferred schema indexes", () => {
+  aheadOfHeadScenario->Scenario.it(
+    "Are committed for a chain that starts past the head and never processes a batch",
+    ~sources=[{chain: 1337}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      let {sql, pgSchema} = indexer.pg
+
+      source.resolveGetHeightOrThrow(100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+
+      t.expect(
+        (
+          (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
+            entry => entry.name,
+          ),
+          await readyAtByChainId(~sql, ~pgSchema),
+        ),
+        ~message="A chain with nothing to do is caught up, and the indexes are owed on that",
+      ).toEqual(([aBIdIndexName], [(ChainId.fromInt(1337), true)]))
+    },
+  )
+
+  unreachableEndBlockScenario->Scenario.it(
+    "Are committed once the chain sits at the head, even with an end block it never reaches",
+    ~sources=[{chain: 1337}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      let {sql, pgSchema} = indexer.pg
+
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+
+      t.expect(
+        (
+          (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
+            entry => entry.name,
+          ),
+          await readyAtByChainId(~sql, ~pgSchema),
+        ),
+        ~message="Sitting at the head is what the indexes are owed on, not reaching the end block",
+      ).toEqual(([aBIdIndexName], [(ChainId.fromInt(1337), true)]))
+    },
+  )
+
   scenario->Scenario.it(
     "Are absent through backfill, committed with ready_at, and kept across a restart",
     ~sources=[{chain: 1337}],
@@ -227,8 +315,8 @@ describe("Deferred schema indexes", () => {
       await indexer.waitUntilReady()
 
       t.expect((
-        (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
-          entry => entry.name,
+        (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(entry =>
+          entry.name
         ),
         await readyAtByChainId(~sql, ~pgSchema),
       )).toEqual(([aBIdIndexName], [(ChainId.fromInt(1337), true)]))
@@ -311,7 +399,10 @@ describe("Deferred schema indexes", () => {
       },
     },
     async (~t, ~indexer, ~source) => {
-      let finalizeCalls = multichainFinalizeCalls
+      // Counted from where this pass began: a multichain scenario runs a second
+      // time behind the barrier, over the same counter.
+      let before = multichainFinalizeCalls.contents
+      let finalizeCalls = () => multichainFinalizeCalls.contents - before
       let chainA = source(100)
       let chainB = source(1337)
       let {sql, pgSchema} = indexer.pg
@@ -326,7 +417,7 @@ describe("Deferred schema indexes", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (finalizeCalls.contents, await readyAtByChainId(~sql, ~pgSchema)),
+        (finalizeCalls(), await readyAtByChainId(~sql, ~pgSchema)),
         ~message="Chain A is at its head, but chain B is still backfilling",
       ).toEqual((0, [(ChainId.fromInt(100), false), (ChainId.fromInt(1337), false)]))
 
@@ -338,7 +429,7 @@ describe("Deferred schema indexes", () => {
       let times = readyAtTimes->Array.map(((_, readyAt)) => readyAt)
       t.expect(
         (
-          finalizeCalls.contents,
+          finalizeCalls(),
           readyAtTimes->Array.map(((id, _)) => id),
           times->Array.every(Option.isSome),
           times->Array.get(0) == times->Array.get(1),
@@ -388,7 +479,11 @@ describe("Deferred schema indexes", () => {
           aIndexes->Array.map(entry => (entry->isValid, entry->isPartial, entry->predicate)),
         ),
         ~message="The conflicting index is left alone and A(b_id) still gets a usable index of its own",
-      ).toEqual(([{value: "1", labels: dict{"chainId": "1337"}}], ["A_b_id"], [(true, false, None)]))
+      ).toEqual((
+        [{value: "1", labels: dict{"chainId": "1337"}}],
+        ["A_b_id"],
+        [(true, false, None)],
+      ))
 
       t.expect(
         aIndexes->Array.map(entry => entry.name),
@@ -469,9 +564,9 @@ describe("Automatic getWhere indexes", () => {
       t.expect(
         (
           matched.contents,
-          (await findIndexes(~sql, ~tableName="A", ~columns=[optionalColumn], ~pgSchema))->Array.map(
-            entry => (entry.name, entry->isValid),
-          ),
+          (
+            await findIndexes(~sql, ~tableName="A", ~columns=[optionalColumn], ~pgSchema)
+          )->Array.map(entry => (entry.name, entry->isValid)),
           await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema),
           await readyAtByChainId(~sql, ~pgSchema),
         ),
@@ -497,12 +592,9 @@ describe("Automatic getWhere indexes", () => {
 
       t.expect(
         (
-          (await findIndexes(
-            ~sql,
-            ~tableName="A",
-            ~columns=[optionalColumn],
-            ~pgSchema,
-          ))->Array.length,
+          (
+            await findIndexes(~sql, ~tableName="A", ~columns=[optionalColumn], ~pgSchema)
+          )->Array.length,
           (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
             entry => entry.name,
           ),

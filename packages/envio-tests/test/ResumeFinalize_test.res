@@ -35,12 +35,14 @@ let gravatar1337 = "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 let gravatar1 = "0x3B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 
 let scenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: resume-finalize${contractsYaml}chains:${chainYaml(1337, gravatar1337, "")}`,
   ~schema,
 )
 
 let endBlockScenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: resume-finalize-end-block${contractsYaml}chains:${chainYaml(
       1337,
@@ -51,6 +53,7 @@ name: resume-finalize-end-block${contractsYaml}chains:${chainYaml(
 )
 
 let multichainScenario = Scenario.make(
+  ~supervised=false,
   ~configYaml=`
 name: resume-finalize-multichain${contractsYaml}chains:${chainYaml(1, gravatar1, "")}${chainYaml(
       1337,
@@ -240,6 +243,47 @@ describe("Resuming a backfill that never finalized", () => {
         ),
         ~message="A restart inherits the readiness it already earned",
       ).toEqual((1, readyAtBefore, [{value: "1", labels: dict{"chainId": "1337"}}]))
+    },
+  )
+
+  // A resumed run seeds its chains' caught-up timestamps from the database, and
+  // a batch that progresses must not be read as "already realtime": the run is
+  // past the head it committed, but the indexes it owes for that head are still
+  // missing.
+  let (finalizeCalls, mapStorage) = makeFlakyFinalize(~failCount=1)
+
+  scenario->Scenario.it(
+    "Finalizes after the resumed run processes a fresh block",
+    ~sources=[{chain: 1337, methods}],
+    ~mapStorage,
+    ~onError=_ => (),
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      let {sql, pgSchema} = indexer.pg
+
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        (finalizeCalls.contents, await hasIndex(aBIdIndex, ~sql, ~pgSchema)),
+        ~message="The first run reached the head, then died before committing the indexes",
+      ).toEqual((1, false))
+
+      let restarted = await indexer.restart()
+      source.resolveGetHeightOrThrow(101)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
+      await restarted.waitUntilReady()
+      await restarted.waitUntilIdle()
+
+      t.expect(
+        (
+          finalizeCalls.contents,
+          await hasIndex(aBIdIndex, ~sql, ~pgSchema),
+          await persistedChains(~sql, ~pgSchema),
+        ),
+        ~message="A progressing batch doesn't excuse the indexes the resumed run still owes",
+      ).toEqual((2, true, [{id: 1337, progressBlock: 101, isReady: true}]))
     },
   )
 

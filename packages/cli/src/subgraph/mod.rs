@@ -17,10 +17,10 @@ use serde::Serialize;
 
 use crate::config_parsing::human_config::{
     evm::{
-        AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, For,
-        HumanConfig, Rpc, RpcSelection, RpcTransactionField, TransactionField,
+        AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, HumanConfig,
+        RpcSelection, TransactionField,
     },
-    BaseConfig, BytesType, ChainContract, GlobalContract,
+    BaseConfig, BytesType, ChainContract, GlobalContract, StartBlock,
 };
 use crate::utils::normalized_list::NormalizedList;
 
@@ -153,7 +153,7 @@ pub fn graph_codegen_failed_message() -> String {
         .to_string()
 }
 
-fn field_selection_for(receipt: bool, rpc_only: bool, usage: &usage::FieldUsage) -> FieldSelection {
+fn field_selection_for(receipt: bool, usage: &usage::FieldUsage) -> FieldSelection {
     let mut transaction_fields = match &usage.transaction {
         Some(fields) => fields.clone(),
         None => DEFAULT_TRANSACTION_FIELDS.to_vec(),
@@ -165,17 +165,10 @@ fn field_selection_for(receipt: bool, rpc_only: bool, usage: &usage::FieldUsage)
             }
         }
     }
-    // Transaction `accessList` / `authorizationList` have no RPC parser; a
-    // mapping indexing over RPC gets whatever RPC can serve rather than failing
-    // to start. Every selectable block field comes back from
-    // `eth_getBlockByNumber`.
     let block_fields = match &usage.block {
         Some(fields) => fields.clone(),
         None => DEFAULT_BLOCK_FIELDS.to_vec(),
     };
-    if rpc_only {
-        transaction_fields.retain(|field| RpcTransactionField::try_from(field.clone()).is_ok());
-    }
     FieldSelection {
         transaction_fields: Some(transaction_fields),
         block_fields: Some(block_fields),
@@ -185,7 +178,6 @@ fn field_selection_for(receipt: bool, rpc_only: bool, usage: &usage::FieldUsage)
 fn contract_config(
     source: &mut DataSource,
     files: &HashMap<String, String>,
-    rpc_only: bool,
     usage: &usage::FieldUsage,
     report: &mut Report,
 ) -> ContractConfig {
@@ -259,7 +251,7 @@ fn contract_config(
             EventConfig {
                 event,
                 name,
-                field_selection: Some(field_selection_for(handler.receipt, rpc_only, usage)),
+                field_selection: Some(field_selection_for(handler.receipt, usage)),
             }
         })
         .collect();
@@ -296,15 +288,6 @@ pub fn translate(
         Some(raw) => Some(parse_rpc_env(raw)?),
         None => None,
     };
-    // Only when RPC is the sync source; a fallback entry leaves HyperSync in
-    // charge of the fields.
-    let rpc_only = match &rpc {
-        Some(RpcSelection::Single(entry)) => entry.source_for == Some(For::Sync),
-        Some(RpcSelection::List(entries)) => entries
-            .iter()
-            .any(|entry| entry.source_for == Some(For::Sync)),
-        _ => false,
-    };
     let rpc_urls = match &rpc {
         Some(RpcSelection::Url(url)) => vec![url.clone()],
         Some(RpcSelection::Single(rpc)) => vec![rpc.url.clone()],
@@ -319,7 +302,7 @@ pub fn translate(
     for source in manifest.data_sources.iter_mut() {
         contracts.push(GlobalContract {
             name: source.name.clone(),
-            config: contract_config(source, files, rpc_only, &usage, &mut report),
+            config: contract_config(source, files, &usage, &mut report),
         });
 
         let Some(chain_id) = source.chain_id else {
@@ -334,12 +317,16 @@ pub fn translate(
             hypersync_config: None,
             max_reorg_depth: None,
             block_lag: None,
-            start_block,
+            start_block: StartBlock::Number(start_block),
             end_block: source.end_block,
             contracts: Some(vec![]),
         });
         if !is_first {
-            chain.start_block = chain.start_block.min(start_block);
+            // A subgraph names only block numbers, so every chain it opens
+            // starts at one.
+            if let StartBlock::Number(current) = chain.start_block {
+                chain.start_block = StartBlock::Number(current.min(start_block));
+            }
             // A chain stops only once every data source on it has, so one
             // open-ended source keeps the whole chain open-ended.
             chain.end_block = match (chain.end_block, source.end_block) {
@@ -367,7 +354,7 @@ pub fn translate(
         chains.keys().cloned().collect()
     };
     for source in manifest.templates.iter_mut() {
-        let config = contract_config(source, files, rpc_only, &usage, &mut report);
+        let config = contract_config(source, files, &usage, &mut report);
 
         // graph-node keeps `dataSources` and `templates` in separate namespaces,
         // so a name can appear in both — Balancer's FXPoolDeployer is a fixed
@@ -494,12 +481,10 @@ pub fn translate(
     })
 }
 
-/// Only used to keep `Rpc` in scope for callers building an rpc selection.
-pub type SubgraphRpc = Rpc;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config_parsing::human_config::evm::{For, Rpc};
 
     /// Mapping source the usage scan can't account for, so these cases see the
     /// full selection rather than a narrowed one.
@@ -662,7 +647,7 @@ type Gravatar @entity {
                 Some(AddressFormat::Lowercase),
                 vec!["Gravity", "Wallet"],
                 1,
-                6175244,
+                StartBlock::Number(6175244),
                 2,
                 vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()],
                 "Wallet",
@@ -825,42 +810,6 @@ type Gravatar @entity {
         );
     }
 
-    // Nothing a mapping can reach is unservable over RPC — graph-ts exposes no
-    // `accessList` — so the narrowing above drops nothing and the selection is
-    // the same whichever source syncs the chain. This fails if that stops
-    // holding, rather than the indexer starting and finding a field absent.
-    #[test]
-    fn rpc_sync_keeps_the_default_field_selection() {
-        let over_rpc = translate(
-            MANIFEST,
-            SCHEMA,
-            "gravatar",
-            Some(r#"{"url":"https://rpc.example.test","for":"sync"}"#),
-            ".",
-            &HashMap::new(),
-            &ambiguous(),
-        )
-        .unwrap();
-        let over_hypersync = translate(
-            MANIFEST,
-            SCHEMA,
-            "gravatar",
-            None,
-            ".",
-            &HashMap::new(),
-            &ambiguous(),
-        )
-        .unwrap();
-
-        let selection = |t: &Translation| {
-            t.human_config.contracts.as_ref().unwrap()[0].config.events[0]
-                .field_selection
-                .clone()
-        };
-
-        assert_eq!(selection(&over_rpc), selection(&over_hypersync));
-    }
-
     // ENVIO_SUBGRAPH_RPC is one endpoint and says nothing about which chain it
     // serves, so over several chains the runtime would answer an eth_call with
     // another chain's state.
@@ -937,7 +886,7 @@ type Gravatar @entity {
             translation.human_config.chains[0].rpc.clone(),
             Some(RpcSelection::Single(Rpc {
                 url: "https://rpc.example.test".to_string(),
-                source_for: Some(crate::config_parsing::human_config::evm::For::Fallback),
+                source_for: Some(For::Fallback),
                 ws: None,
                 headers: None,
                 initial_block_interval: None,

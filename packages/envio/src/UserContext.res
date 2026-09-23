@@ -177,6 +177,7 @@ let rec prepareEffectCall = (
     input,
     context: effectContext,
     cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+    chainId: params.item->Internal.getItemChainId,
     checkpointId: params.checkpointId,
   }
   (scope, effectArgs)
@@ -251,39 +252,20 @@ type entityContextParams = {
 // The handler context is always chain-scoped, so a per-chain entity resolves to
 // the chain the handler runs on and a cross-chain one to the shared partition.
 let entityScope = (params: entityContextParams) =>
-  params.entityConfig->InMemoryStore.entityScope(
-    ~chainId=params.item->Internal.getItemChainId,
+  params.entityConfig->InMemoryStore.entityScope(~chainId=params.item->Internal.getItemChainId)
+
+let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) =>
+  LoadLayer.loadByFilter(
+    ~loadManager=params.loadManager,
+    ~persistence=params.persistence,
+    ~entityConfig=params.entityConfig,
+    ~scope=params->entityScope,
+    ~indexerState=params.indexerState,
+    ~shouldGroup=params.isPreload,
+    ~item=params.item,
+    ~ecosystem=params.config.ecosystem,
+    ~filter,
   )
-
-let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
-  let entityConfig = params.entityConfig
-
-  @inline
-  let loadWithFilter = filter =>
-    LoadLayer.loadByFilter(
-      ~loadManager=params.loadManager,
-      ~persistence=params.persistence,
-      ~entityConfig,
-      ~scope=params->entityScope,
-      ~indexerState=params.indexerState,
-      ~shouldGroup=params.isPreload,
-      ~item=params.item,
-      ~ecosystem=params.config.ecosystem,
-      ~filter,
-    )
-
-  switch filter->EntityFilter.parseGetWhereOrThrow(
-    ~entityName=entityConfig.name,
-    ~table=entityConfig.table,
-  ) {
-  | [single] => loadWithFilter(single)
-  | filters =>
-    filters
-    ->Array.map(filter => loadWithFilter(filter))
-    ->Promise.all
-    ->Promise.thenResolve(results => results->Array.flat)
-  }
-}
 
 let noopSet = (_entity: Internal.entity) => ()
 let noopDeleteUnsafe = (_entityId: EntityId.t) => ()
@@ -296,17 +278,15 @@ let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) 
     `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
   )
 
-// A sync read against the in-memory entity table: a hit is returned as-is
-// (including a recorded absence), a miss schedules the async load and suspends.
-let getSyncHandler = (params: entityContextParams, entityId: string) => {
-  let inMemTable =
-    params.indexerState->InMemoryStore.getInMemTable(
-      ~entityConfig=params.entityConfig,
-      ~scope=params->entityScope,
-    )
-  if inMemTable.latestEntityChangeById->Dict.has(entityId) {
-    (inMemTable->InMemoryTable.Entity.getUnsafe)(entityId)
-  } else {
+let getSyncHandler = (params: entityContextParams, entityId: string) =>
+  switch LoadLayer.getByIdInMemory(
+    ~entityConfig=params.entityConfig,
+    ~scope=params->entityScope,
+    ~indexerState=params.indexerState,
+    ~entityId,
+  ) {
+  | Some(entity) => entity
+  | None =>
     (params :> contextParams)->scheduleAndSuspend(
       LoadLayer.loadById(
         ~loadManager=params.loadManager,
@@ -321,51 +301,33 @@ let getSyncHandler = (params: entityContextParams, entityId: string) => {
       ),
     )
   }
-}
 
 let getWhereSyncHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
-  let inMemTable =
-    params.indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope=params->entityScope)
-  let hasIndex = inMemTable->InMemoryTable.Entity.hasIndex
-  let getOnIndex = inMemTable->InMemoryTable.Entity.getUnsafeOnIndex
-
-  let filters =
-    filter->EntityFilter.parseGetWhereOrThrow(
-      ~entityName=entityConfig.name,
-      ~table=entityConfig.table,
+  let filter =
+    filter->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table)
+  switch LoadLayer.getByFilterInMemory(
+    ~entityConfig,
+    ~scope=params->entityScope,
+    ~indexerState=params.indexerState,
+    ~filter,
+  ) {
+  | Some(entities) => entities
+  | None =>
+    (params :> contextParams)->scheduleAndSuspend(
+      LoadLayer.loadByParsedFilter(
+        ~loadManager=params.loadManager,
+        ~persistence=params.persistence,
+        ~entityConfig,
+        ~scope=params->entityScope,
+        ~indexerState=params.indexerState,
+        ~shouldGroup=params.isPreload,
+        ~item=params.item,
+        ~ecosystem=params.config.ecosystem,
+        ~filter,
+      ),
     )
-
-  let missing = []
-  let entities = []
-  filters->Array.forEach(filter => {
-    let filterKey = filter->EntityFilter.toString
-    if hasIndex(filterKey) {
-      entities->Array.pushMany(getOnIndex(filterKey))
-    } else {
-      missing->Array.push(
-        LoadLayer.loadByFilter(
-          ~loadManager=params.loadManager,
-          ~persistence=params.persistence,
-          ~entityConfig,
-          ~scope=params->entityScope,
-          ~indexerState=params.indexerState,
-          ~shouldGroup=params.isPreload,
-          ~item=params.item,
-          ~ecosystem=params.config.ecosystem,
-          ~filter,
-        )->Utils.Promise.ignoreValue,
-      )
-    }
-  })
-
-  if missing->Utils.Array.notEmpty {
-    let pending = params.sync->getPending
-    missing->Array.forEach(promise => pending->Array.push(promise))
-    params.sync.status = Aborted(Suspend)
-    throw(Suspend)
   }
-  entities
 }
 
 // Never suspends: the in-memory table spans the whole batch, so a change only
@@ -392,6 +354,8 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     )
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
+    let scope = params->entityScope
+    let committedCheckpointId = params.indexerState->IndexerState.committedCheckpointIdFor(~scope)
 
     let set = params.isPreload
       ? noopSet
@@ -402,9 +366,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~access=`context.${params.entityConfig.name}.set`,
           )
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
+            ~committedCheckpointId,
             Set({
               entityId: entity.id->EntityId.unsafeOfString,
               checkpointId: params.checkpointId,
@@ -529,9 +493,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~access=`context.${params.entityConfig.name}.deleteUnsafe`,
           )
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
+            ~committedCheckpointId,
             Delete({
               entityId,
               checkpointId: params.checkpointId,

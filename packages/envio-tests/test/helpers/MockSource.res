@@ -191,12 +191,16 @@ type itemsQuery = {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": 
 
 type getItemsOrThrowCall = {
   payload: itemsQuery,
+  // Whether the query asked for every block in its range, which the chain only
+  // does once it is at the head.
+  includeAllBlocks: bool,
   resolve: (
     array<itemMock>,
     ~latestFetchedBlockNumber: int=?,
     ~latestFetchedBlockHash: string=?,
     ~knownHeight: int=?,
     ~prevRangeLastBlock: ReorgDetection.blockData=?,
+    ~requestStats: array<Source.requestStat>=?,
   ) => unit,
   reject: 'exn. 'exn => unit,
 }
@@ -237,6 +241,7 @@ type t = {
     ~latestFetchedBlockHash: string=?,
     ~knownHeight: int=?,
     ~prevRangeLastBlock: ReorgDetection.blockData=?,
+    ~requestStats: array<Source.requestStat>=?,
   ) => unit,
   // Empty-response every matching pending query. A statement about queries that
   // already exist, so unlike `resolveGetItemsOrThrow` it never waits for one.
@@ -296,6 +301,11 @@ let make = (
   ~sourceFor=Source.Sync,
   ~pollingInterval=1000,
   ~isWildcard=false,
+  // Pre-configures the standing height answer at construction time, before
+  // the mock is handed to the indexer - needed for a call that happens during
+  // startup itself (e.g. resolving a `latest` start block), which completes
+  // before a test body would ever get a chance to call `setAutoHeight`.
+  ~autoHeight=?,
 ) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
@@ -351,7 +361,7 @@ let make = (
     heightSubscriptionCallbacks->Utils.Array.clearInPlace
     heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
   }
-  let autoHeight = ref(None)
+  let autoHeight = ref(autoHeight)
   let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
   // Answers registered before their call arrived, consumed in order by the
@@ -430,6 +440,7 @@ let make = (
       ~latestFetchedBlockHash=?,
       ~knownHeight=?,
       ~prevRangeLastBlock=?,
+      ~requestStats=?,
     ) => {
       let respond = (call: getItemsOrThrowCall) =>
         call.resolve(
@@ -438,6 +449,7 @@ let make = (
           ~latestFetchedBlockHash?,
           ~knownHeight?,
           ~prevRangeLastBlock?,
+          ~requestStats?,
         )
       let matches = (call: getItemsOrThrowCall) =>
         switch filter {
@@ -472,7 +484,6 @@ let make = (
           blockHash: ?(block.blockHash->Option.map(evmBlockHash)),
         }),
         ~ecosystem=Evm,
-        ~shouldChecksum=false,
       )
       if getBlockHashesResolveFns->Utils.Array.isEmpty {
         JsError.throwWithMessage("getBlockHashesResolveFns is empty")
@@ -553,6 +564,7 @@ let make = (
           ~fromBlock,
           ~toBlock,
           ~addressSet,
+          ~includeAllBlocks,
           ~knownHeight,
           ~partitionId,
           ~selection as _,
@@ -572,15 +584,17 @@ let make = (
             }
             // Non-enumerable so it stays out of `toEqual` comparisons of the
             // payload while remaining inspectable from a test.
-            payload->defineAddresses(addressSet->AddressSet.addresses)
+            payload->defineAddresses(addressSet->AddressSet.addressesForTest)
             {
               payload,
+              includeAllBlocks,
               resolve: (
                 items,
                 ~latestFetchedBlockNumber=?,
                 ~latestFetchedBlockHash=?,
                 ~knownHeight=knownHeight,
                 ~prevRangeLastBlock=?,
+                ~requestStats=[],
               ) => {
                 let latestFetchedBlockNumber =
                   latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
@@ -596,6 +610,7 @@ let make = (
                     {
                       blockNumber: latestFetchedBlockNumber,
                       blockHash: evmBlockHash(latestFetchedBlockHash),
+                      blockTimestamp: latestFetchedBlockNumber,
                     }: BlockStore.inputBlock
                   ),
                 ]
@@ -628,23 +643,25 @@ let make = (
                 | None => ()
                 }
                 // A real source returns the header of every block a matched
-                // item came from, so those blocks carry a hash too. Without
-                // them the store only ever learns the range's seam and end,
-                // and reorg detection never sees the blocks events landed on.
+                // item came from, so those blocks carry a hash and a timestamp
+                // too. Without them the store only ever learns the range's seam
+                // and end, and reorg detection never sees the blocks events
+                // landed on.
                 items->Array.forEach(
                   item => {
                     if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
                       observedBlocks->Array.push({
                         blockNumber: item.blockNumber,
                         blockHash: mockBlockHash(item.blockNumber),
+                        blockTimestamp: item.blockNumber,
                       })
                     }
                   },
                 )
-                let responseBlockStore = BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false)
+                let responseBlockStore = BlockStore.make(~ecosystem=Evm)
                 observedBlocks->Array.forEach(
                   block => {
-                    let page = BlockStore.fromJs([block], ~ecosystem=Evm, ~shouldChecksum=false)
+                    let page = BlockStore.fromJs([block], ~ecosystem=Evm)
                     responseBlockStore->BlockStore.appendPage(page)
                   },
                 )
@@ -685,12 +702,11 @@ let make = (
                   ),
                   transactionStore: None,
                   blockStore: responseBlockStore,
-                  fromBlockQueried: fromBlock,
                   latestFetchedBlockNumber,
                   stats: {
                     totalTimeElapsed: 0.,
                   },
-                  requestStats: [],
+                  requestStats,
                 })
               },
               reject: reject->Utils.magic,

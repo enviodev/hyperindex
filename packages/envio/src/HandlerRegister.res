@@ -312,13 +312,7 @@ let addOnEventRegistration = (
         ),
       )
     | Svm =>
-      Some(
-        EventConfigBuilder.resolveSvmInlineFieldSelection(
-          fields,
-          ~contractName,
-          ~eventName,
-        ),
-      )
+      Some(EventConfigBuilder.resolveSvmInlineFieldSelection(fields, ~contractName, ~eventName))
     | Fuel =>
       JsError.throwWithMessage(
         `The fields option of the "${eventName}" event registration on contract "${contractName}" is not supported on Fuel. Select the fields in your config instead.`,
@@ -340,13 +334,16 @@ let addOnEventRegistration = (
         | (Svm, Some(fieldSelection)) if fieldSelection.instructionFields->Utils.Set.has("args") =>
           let svmEventConfig =
             eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+          // An empty layout is still a layout: it decodes to `{}` and filters
+          // out the calls that carry a payload. Only an absent one has nothing
+          // to decode.
           let declaresArgs = switch svmEventConfig.args {
-          | JSON.Array(args) => args->Array.length > 0
+          | JSON.Array(_) => true
           | _ => false
           }
           if !declaresArgs {
             JsError.throwWithMessage(
-              `Invalid "args" field in the fields.instruction option of the "${eventName}" instruction on program "${contractName}". The instruction declares no args in config.yaml, so there is nothing to decode. Remove "args" from the selection, or declare the instruction's args.`,
+              `Invalid "args" field in the fields.instruction option of the "${eventName}" instruction on program "${contractName}". The instruction attaches no args layout in config.yaml, so there is nothing to decode. Remove "args" from the selection, or give the instruction an \`args\` layout — \`args: []\` if it takes none.`,
             )
           }
         | _ => ()
@@ -496,41 +493,6 @@ let getSimulateOnEventRegistrations = (
   }
 }
 
-// An RPC source can only deliver the fields it knows how to parse; the rest are
-// silently skipped at materialisation. Every RPC on the chain counts, whatever
-// it's for — a fallback or realtime source runs the same parsers as a sync one,
-// so a field it can't deliver would go missing for whichever blocks it served.
-// The selection can come from either `config.yaml` or the inline `fields`
-// option, so the message names neither. Runs on the registrations a chain
-// actually keeps, so a handler whose `where` opts out of this chain isn't held
-// to its limits.
-//
-// The `config.yaml` half of this is also rejected at codegen, by the
-// `RpcTransactionField` subenum in `system_config.rs`. That one reports every
-// offending field at once and before the project builds; this one is the only
-// check an inline selection reaches. `RpcFieldSelection_test.res` pins the two
-// to the same field set.
-let validateRpcFieldSelection = (
-  chainConfig: Config.chain,
-  registrations: array<Internal.onEventRegistration>,
-) => {
-  let hasRpc = switch chainConfig.sourceConfig {
-  | EvmSourceConfig({rpcs}) => !(rpcs->Utils.Array.isEmpty)
-  | _ => false
-  }
-  if hasRpc {
-    registrations->Array.forEach(reg =>
-      reg.fieldSelection.transactionFields->Utils.Set.forEach(name =>
-        if !RpcSource.isRpcTransactionField(name) {
-          JsError.throwWithMessage(
-            `The "${name}" transaction field selected for the "${reg.eventConfig.name}" event on contract "${reg.eventConfig.contractName}" is unavailable for indexing via RPC. Remove it from the field selection, or remove chain ${chainConfig.id->ChainId.toString}'s RPC source — even an RPC the chain only falls back to has to deliver the selection.`,
-          )
-        }
-      )
-    )
-  }
-}
-
 let finishRegistration = (~config: Config.t): registrationsByChainId => {
   switch getActiveRegistration() {
   | Some(r) => {
@@ -616,8 +578,6 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             ->ignore
           }
         })
-
-        validateRpcFieldSelection(chainConfig, onEventRegistrations)
 
         registrationsByChainId->Dict.set(
           key,
@@ -800,9 +760,13 @@ let registerOnBlock = (
 
       if shouldRegister {
         matchedAny := true
-        if range._gte->Option.getOr(chainConfig.startBlock) < chainConfig.startBlock {
+        // Off the same object the predicate above was handed, not off
+        // `chainConfig`: that one still says whatever config.yaml said, and for
+        // `start_block: latest` the resolved head only lives in persisted state.
+        let chainStartBlock = (chainObj->(Utils.magic: unknown => {"startBlock": int}))["startBlock"]
+        if range._gte->Option.getOr(chainStartBlock) < chainStartBlock {
           JsError.throwWithMessage(
-            `The start block for onBlock handler "${name}" is less than the chain start block (${chainConfig.startBlock->Int.toString}). This is not supported yet.`,
+            `The start block for onBlock handler "${name}" is less than the chain start block (${chainStartBlock->Int.toString}). This is not supported yet.`,
           )
         }
         switch chainConfig.endBlock {

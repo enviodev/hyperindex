@@ -14,10 +14,10 @@ let make: (
   ~config: Config.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
-  ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
-  ~committedCheckpointId: Internal.checkpointId=?,
+  ~holdRealtime: bool=?,
+  ~committedFrontier: Frontier.t=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
@@ -35,6 +35,7 @@ let makeFromDbState: (
   ~exitAfterFirstEventBlock: bool=?,
   ~reducedPollingInterval: int=?,
   ~targetBufferSize: int=?,
+  ~holdRealtime: bool=?,
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
 ) => t
@@ -60,12 +61,7 @@ let beginProcessing: t => unit
 let endProcessing: t => unit
 let markProcessingStalledOnFetch: t => unit
 let recordProcessedBatch: t => unit
-let createBatch: (
-  t,
-  ~processedCheckpointId: Internal.checkpointId,
-  ~batchSizeTarget: int,
-  ~isRollback: bool,
-) => Batch.t
+let createBatch: (t, ~batchSizeTarget: int) => Batch.t
 let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpointId>)>
 
 // Accessors.
@@ -82,8 +78,9 @@ let eachEntityTable: (
   ) => unit,
 ) => unit
 let effectState: t => EffectState.t
-let committedCheckpointId: t => Internal.checkpointId
-let processedCheckpointId: t => Internal.checkpointId
+let committedFrontier: t => Frontier.t
+let processedFrontier: t => Frontier.t
+let committedCheckpointIdFor: (t, ~scope: Internal.chainScope) => Internal.checkpointId
 let processedBatches: t => array<Batch.t>
 let processedBatchesCount: t => int
 let writeFiber: t => option<promise<unit>>
@@ -94,10 +91,20 @@ let chainMetaThrottler: t => Throttler.t
 let crossChainState: t => CrossChainState.t
 let chainStates: t => dict<ChainState.t>
 let isInReorgThreshold: t => bool
+let shouldSaveHistory: t => dict<bool>
 let isRealtime: t => bool
 let isFinalizingIndexes: t => bool
 let markCaughtUpIfSettled: t => unit
+let isReadyToEnterReorgThreshold: (t, ~batch: Batch.t) => bool
+let shouldFinalizeIndexes: t => bool
+// Wires the loop's way back in. IndexerLoop calls this as it starts.
+let bindScheduleProcessing: (t, unit => unit) => unit
+let isHoldingRealtime: t => bool
+let hasArrivedAtHead: t => bool
+// The supervisor's go-ahead for a process driving part of a split run.
+let releaseRealtime: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit
+let reportFinished: t => unit
 let rollbackState: t => rollbackState
 let indexerStartTime: t => Date.t
 let loadManager: t => LoadManager.t
@@ -137,14 +144,13 @@ let queueProcessedBatch: (t, ~batch: Batch.t) => unit
 let drainBatchRun: t => Batch.t
 let pendingRollback: t => option<Persistence.rollback>
 let takeRollback: t => option<Persistence.rollback>
-let markCommitted: (t, ~upToCheckpointId: Internal.checkpointId) => unit
+let markCommitted: (t, ~writtenFrontier: Frontier.t) => unit
 let beginRollbackDiff: (
   t,
-  ~diffCheckpointId: Internal.checkpointId,
   ~floors: RollbackFloors.t,
   ~progressedChains: array<InternalTable.Chains.progressedChain>,
   ~rolledBackAddresses: array<AddressRows.key>,
-) => unit
+) => Frontier.t
 let recordWriteFailure: (t, exn) => unit
 let beginWriteFiber: (t, promise<unit>) => unit
 let endWriteFiber: t => unit

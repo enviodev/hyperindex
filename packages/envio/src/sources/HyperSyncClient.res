@@ -262,27 +262,20 @@ module EventItems = {
     // depend on addresses (client-side filtering). None/empty means
     // every address-dependent contract is filtered server-side.
     clientFilteredContracts: option<array<string>>,
+    // Return a header for every block in the range, not only the ones a log
+    // landed on. Absent means only the blocks logs came from.
+    includeAllBlocks?: bool,
   }
 
-  type item = {
-    logIndex: int,
-    srcAddress: Address.t,
-    // Number of the block this log belongs to; the block itself is resolved from
-    // `response.blocks`, deduplicated across items sharing a block.
-    blockNumber: int,
-    // Key (with the block number) into the transaction store; the transaction
-    // is resolved from the store on demand.
-    transactionIndex: int,
-    // The registration this log routed to, by chain-scoped index. Logs that
-    // route to no registration never cross the boundary.
-    onEventRegistrationIndex: int,
-    params: Internal.eventParams,
-  }
+  type item = EvmEventItem.t
 
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
     items: array<item>,
+    // Blocks the server returned for the query, counted before routing drops
+    // the ones no item joins to.
+    responseBlocks: int,
   }
 }
 

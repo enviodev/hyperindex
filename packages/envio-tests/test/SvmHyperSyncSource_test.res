@@ -88,10 +88,16 @@ let capturedPrograms: array<array<SvmHyperSyncClient.Registration.program>> = []
 
 // The chain's address index; created outside the mock-addon window below so it
 // loads the real native addon.
-let addressStore = AddressStore.make(
-  ~ecosystem=Ecosystem.Svm,
-  ~shouldChecksum=false,
+let addressStore = TestAddresses.storeOf(
   ~contracts=[{name: "TokenMetadata", startBlock: None, dependsOnAddresses: true}],
+  ~addresses=[
+    {
+      address: metaplexProgramId->Address.unsafeFromString,
+      contractName: "TokenMetadata",
+      registrationBlock: -1,
+    },
+  ],
+  ~ecosystem=Svm,
 )
 
 let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
@@ -105,8 +111,8 @@ let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
     // tests).
     Promise.resolve((
       response,
-      TransactionStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
-      BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+      TransactionStore.make(~ecosystem=Ecosystem.Svm),
+      BlockStore.make(~ecosystem=Ecosystem.Svm),
     ))
   },
 }
@@ -116,7 +122,12 @@ let mockClient = makeMockClient()
 // The source captures its client at construction, so the mock addon only
 // needs to be in place for the `make` call; restore the previous addon right
 // after to avoid leaking the mock into other tests.
-let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
+let makeSource = (
+  ~onEventRegistrations=[makeReg()],
+  ~client=mockClient,
+  ~endpointUrl="https://solana.hypersync.xyz",
+  ~apiToken=Some("test-token"),
+) => {
   let prevAddon = Core.addonRef.contents
   Core.addonRef :=
     Some(
@@ -136,8 +147,8 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
     )
   let source = try SvmHyperSyncSource.make({
     chainId,
-    endpointUrl: "https://solana.hypersync.xyz",
-    apiToken: None,
+    endpointUrl,
+    apiToken,
     onEventRegistrations,
     clientTimeoutMillis: 10_000,
     addressStore,
@@ -150,18 +161,8 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
   source
 }
 
-// The chain's address index, with the Metaplex program registered for the
-// TokenMetadata program name.
-let programSet = {
-  let _ = addressStore->AddressStore.seedBatch([
-    {
-      address: metaplexProgramId->Address.unsafeFromString,
-      contractName: "TokenMetadata",
-      registrationBlock: -1,
-    },
-  ])
-  addressStore->AddressStore.makeSet(~contractName="TokenMetadata")
-}
+// The Metaplex program, registered under the TokenMetadata program name.
+let programSet = addressStore->AddressStore.makeSet(~contractName="TokenMetadata")
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it("passes the selection to the client and builds items by registration index", async t => {
@@ -169,6 +170,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     let source = makeSource(~onEventRegistrations=[reg])
 
     let response = await source.getItemsOrThrow(
+      ~includeAllBlocks=false,
       ~fromBlock=slot - 10,
       ~toBlock=Some(slot + 10),
       ~addressSet=programSet,
@@ -292,7 +294,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     )
     let eventConfig = {
       ...eventConfig,
-      accounts: ["metadata", "mint"],
+      accounts: [Required("metadata"), Required("mint")],
       args: %raw(`[{"name": "amount", "type": "u64"}]`),
       fieldSelection: Internal.makeFieldSelection(
         ~blockFields=eventConfig.fieldSelection.blockFields,
@@ -331,5 +333,96 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "argsJson": Some(`[{"name":"amount","type":"u64"}]`),
       "definedTypesJson": None,
     })
+  })
+})
+
+describe("SvmHyperSyncSource include_all_blocks", () => {
+  // A slot the source returns no block for is either skipped or simply never
+  // asked about. Asking for every slot in the range is what makes the first
+  // reading the only one left, which is what lets a skipped slot fall back to
+  // the last real one's time.
+  Async.it("asks for every slot in the range once the chain is at the head", async t => {
+    let source = makeSource()
+    capturedQueries->Utils.Array.clearInPlace
+
+    let _ = await source.getItemsOrThrow(
+      ~includeAllBlocks=true,
+      ~fromBlock=slot,
+      ~toBlock=Some(slot + 1),
+      ~addressSet=programSet,
+      ~knownHeight=slot + 1,
+      ~partitionId="0",
+      ~itemsTarget=None,
+      ~selection={
+        onEventRegistrations: [(makeReg() :> Internal.onEventRegistration)],
+        dependsOnAddresses: true,
+      },
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
+
+    t.expect(
+      capturedQueries->Array.map(query => query.includeAllBlocks),
+    ).toEqual([Some(true)])
+  })
+})
+
+describe("SvmHyperSyncSource height subscription", () => {
+  Async.it("Streams heights over HyperSync SSE the same way the EVM source does", async t => {
+    let (server, url) = await Promise.make((resolve, _reject) => {
+      let server = MockRpcServer.createServer((_req, res) => {
+        res->MockRpcServer.writeHead(
+          200,
+          dict{"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+        )
+        res->MockRpcServer.write("event: height\ndata: 445073332\n\n")
+        res->MockRpcServer.write("event: ping\ndata: \n\n")
+        res->MockRpcServer.write("event: height\ndata: 445073335\n\n")
+      })
+      server->MockRpcServer.listenOnHost(0, "127.0.0.1", () =>
+        resolve((
+          server,
+          `http://127.0.0.1:${(server->MockRpcServer.address).port->Int.toString}`,
+        ))
+      )
+    })
+
+    let source = makeSource(~endpointUrl=url)
+    let statuses = []
+    let heights = []
+    let unsubscribe =
+      (source.createHeightSubscription->Option.getOrThrow)(
+        ~onHeight=height => heights->Array.push(height)->ignore,
+        ~onStatus=status =>
+          statuses
+          ->Array.push(
+            switch status {
+            | Live => "live"
+            | Down({reason}) => `down:${reason->Source.downReasonLabel}`
+            },
+          )
+          ->ignore,
+      )
+
+    await Scenario.waitUntil(
+      () => heights->Array.length === 2,
+      ~message="the SVM height stream",
+    )
+    unsubscribe()
+    server->MockRpcServer.closeAllConnections
+    await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
+
+    t.expect((statuses, heights)).toStrictEqual((["live"], [445073332, 445073335]))
+  })
+})
+
+describe("SvmHyperSyncSource api token", () => {
+  it("Throws the same actionable error as the EVM source when the token is missing", t => {
+    t->toThrowErrorEqual(
+      () => makeSource(~apiToken=None)->ignore,
+      `An Envio API token is required for using HyperSync as a data-source.
+Set the ENVIO_API_TOKEN environment variable in your .env file.
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
+    )
   })
 })

@@ -11,6 +11,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 
+use crate::config_parsing::human_config::svm::MAX_ARRAY_LEN;
+
 use super::{
     account_slot, collect_instructions, declared_array, le_bytes, parse_defined_types,
     required_str, IdlAccount, Positions, ProgramIdl,
@@ -502,10 +504,13 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
                     "{path}: a fixed option pads its body when absent, which Borsh does not encode"
                 );
             }
-            Ok(FieldType::Option(Box::new(parse_type(
-                item(node, path)?,
-                &format!("{path}.item"),
-            )?)))
+            let inner = parse_type(item(node, path)?, &format!("{path}.item"))?;
+            // Both levels are a one-byte tag, so `Some(None)` decodes to the
+            // same value as `None` and a handler cannot tell them apart.
+            if matches!(inner, FieldType::Option(_)) {
+                bail!("{path}.item: a nested option decodes ambiguously and cannot be indexed");
+            }
+            Ok(FieldType::Option(Box::new(inner)))
         }
         // A zeroable option carries no tag at all — presence is encoded by the
         // value being non-zero. There is no Borsh shape for that, and reading
@@ -526,9 +531,16 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
                         .get("value")
                         .and_then(Value::as_u64)
                         .ok_or_else(|| anyhow!("{path}: fixed count has no 'value'"))?;
+                    let len = usize::try_from(len).unwrap_or(usize::MAX);
+                    if len > MAX_ARRAY_LEN {
+                        bail!(
+                            "{path}: {len} elements is more than the {MAX_ARRAY_LEN} an array may \
+                             declare"
+                        );
+                    }
                     Ok(FieldType::Array {
                         ty: Box::new(item),
-                        len: len as usize,
+                        len,
                     })
                 }
                 // Borsh frames a vector with a u32 length prefix.

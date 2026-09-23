@@ -64,6 +64,21 @@ module Process = {
   @module("process") external version: string = "version"
   @module("process")
   external getActiveResourcesInfo: unit => array<string> = "getActiveResourcesInfo"
+
+  // Only a process forked with an IPC channel has these. Called through
+  // `process` rather than off a namespace import, which would drop the
+  // receiver Node's own implementations read.
+  @val @scope("process") external sendToParent: 'msg => bool = "send"
+  @val @scope("process")
+  external onMessage: (@as("message") _, 'msg => unit) => unit = "on"
+  @val @scope("process") external onSignal: (string, unit => unit) => unit = "on"
+  // Present only in a process forked with an IPC channel.
+  @val @scope("process") external channel: Nullable.t<unknown> = "channel"
+  @val @scope("process")
+  external onDisconnect: (@as("disconnect") _, unit => unit) => unit = "on"
+  @val @scope("process") external argv: array<string> = "argv"
+  @val @scope("process")
+  external emitMessage: (@as("message") _, 'msg) => bool = "emit"
 }
 
 module Buffer = {
@@ -141,6 +156,41 @@ module ChildProcess = {
 
   @module("child_process")
   external execWithOptions: (string, execOptions, callback) => unit = "exec"
+
+  // One of a child's stdio slots, present only for a slot the parent asked to
+  // pipe rather than inherit.
+  module Stream = {
+    type t
+    @send external setEncoding: (t, string) => unit = "setEncoding"
+    @send external onData: (t, @as("data") _, string => unit) => unit = "on"
+    @send external onEnd: (t, @as("end") _, unit => unit) => unit = "on"
+  }
+
+  module Child = {
+    type t
+    @send external send: (t, 'msg) => bool = "send"
+    @send external onMessage: (t, @as("message") _, 'msg => unit) => unit = "on"
+    @send
+    external onExit: (t, @as("exit") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
+    @send external onError: (t, @as("error") _, exn => unit) => unit = "on"
+    @send external kill: (t, string) => bool = "kill"
+    // Whether the IPC channel is still open. Node closes it before it reports
+    // the exit, so this goes false while the child is still running.
+    @get external connected: t => bool = "connected"
+    @get external stdout: t => Null.t<Stream.t> = "stdout"
+    @get external stderr: t => Null.t<Stream.t> = "stderr"
+  }
+
+  type forkOptions = {
+    cwd?: string,
+    env?: dict<string>,
+    // "advanced" uses the structured clone algorithm, so a message keeps the
+    // Date values a metrics snapshot carries instead of stringifying them.
+    serialization?: string,
+    stdio?: array<string>,
+  }
+  @module("child_process")
+  external fork: (string, array<string>, forkOptions) => Child.t = "fork"
 }
 
 module Url = {

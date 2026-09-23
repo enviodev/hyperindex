@@ -23,15 +23,18 @@ let make: (
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
+  ~committedProgressBlockTime: option<int>=?,
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
   ~shouldRollbackOnReorg: bool,
   ~maxReorgDepth: int,
+  ~isInReorgThreshold: bool=?,
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
   ~transactionStore: TransactionStore.t=?,
   ~chainDensity: option<float>=?,
   ~blockStore: BlockStore.t=?,
+  ~shouldChecksum: bool=?,
   ~reorgThresholdReadyTolerance: int=?,
   ~perChainEntities: array<Internal.entityConfig>=?,
   ~logger: Pino.t,
@@ -52,6 +55,8 @@ let makeFromDbState: (
 // Accessors.
 let logger: t => Pino.t
 let blockStore: t => BlockStore.t
+let transactionStore: t => TransactionStore.t
+let shouldChecksum: t => bool
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
 let sourceManager: t => SourceManager.t
@@ -65,8 +70,8 @@ let getLatestValidScannedBlock: (
   ~blockNumbers: array<int>,
 ) => option<int>
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
-let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
+let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
 let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
@@ -116,12 +121,17 @@ let dispatch: (
 // Views.
 let toMetrics: t => Metrics.chainMetrics
 let toChainMetadata: t => InternalTable.Chains.metaFields
-let toChainBeforeBatch: t => Batch.chainBeforeBatch
+let toChainBeforeBatch: (t, ~isRealtime: bool) => Batch.chainBeforeBatch
+let isReadyToEnterReorgThreshold: t => bool
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
+type finished = EndBlock(int) | Backfill(int)
+let takeFinished: t => option<finished>
+let reorgThresholdLiftsCeiling: t => bool
+let reorgThresholdEntryMessage: string
 let hasProcessedToEndblock: t => bool
-let isDurablyCaughtUp: t => bool
+let hasCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
 let isActivelyIndexing: t => bool
 let isReady: t => bool
@@ -136,14 +146,18 @@ let handleQueryResult: (
   ~newRegistrations: array<AddressStore.registration>,
   ~latestFetchedBlock: int,
   ~knownHeight: int,
-  ~transactionStore: option<TransactionStore.t>,
 ) => unit
 let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
 let materializePageItems: (
   ~items: array<Internal.item>,
-  ~transactionStore: option<TransactionStore.t>,
+  ~transactionStore: TransactionStore.t,
   ~blockStore: BlockStore.t,
+  ~shouldChecksum: bool,
 ) => promise<unit>
+// Merges the page's blocks into the chain's store as it checks them: the check
+// is the merge's own conflict report, so a page that passes is already applied.
+// Its transactions are a separate page, merged by the caller once this returns
+// no reorg.
 let registerReorgGuard: (
   t,
   ~blockStore: BlockStore.t,
@@ -154,6 +168,8 @@ let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
+let isInReorgThreshold: t => bool
+let shouldSaveHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit

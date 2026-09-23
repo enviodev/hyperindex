@@ -51,7 +51,7 @@ describe("MockSource answers", () => {
       t.expect(
         await indexer.metric("envio_progress_block"),
         ~message="the item query took the waiting answer and carried the chain to the head",
-      ).toEqual([{value: "300", labels: Dict.fromArray([("chainId", "1")])}])
+      ).toEqual([{value: "300", labels: dict{"chainId": "1"}}])
     },
   )
 

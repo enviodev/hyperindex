@@ -191,7 +191,7 @@ Initialize Svm indexer from an example template
 
 * `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
 
-  Possible values: `metaplex-token-metadata`, `feature-block-handler`
+  Possible values: `usdc-transfers`
 
 
 
@@ -378,6 +378,9 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
+* `--chain <CHAIN_ID>` — Index only this chain, leaving the others to their own `envio start --chain` processes. Repeat the flag for several chains.
+
+   Only needed to place chains yourself. Requires a per-chain schema, migrated for every chain before any process starts, and a separate `ENVIO_INDEXER_PORT` per process.
 
 
 

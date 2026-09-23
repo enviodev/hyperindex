@@ -50,6 +50,22 @@ let makeSelection = (~onEventRegistrations, ~dependsOnAddresses, ~clientFiltered
   startBlock: ?deriveSelectionStartBlock(onEventRegistrations),
 }
 
+// A partition's frontier never sits below the block before its selection can
+// first match: the blocks below hold nothing for it, so they count as fetched
+// the same way the blocks before an address's start block do. The chain's
+// buffer frontier is its lowest partition frontier, so a partition left at the
+// chain start would hold every other partition's events back as unprocessable
+// and keep the chain's query target — sized from that frontier — short of
+// anything worth asking for. A start block the chain has not reached yet leaves
+// the partition waiting there, like an address partition does, rather than
+// scanning empty ranges up to it; bufferBlockNumber caps the chain's frontier at
+// the head meanwhile.
+let floorAtSelectionStart = (latestFetchedBlock, ~selection) =>
+  switch selection.startBlock {
+  | Some(startBlock) => Pervasives.max(latestFetchedBlock, startBlock - 1)
+  | None => latestFetchedBlock
+  }
+
 type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
@@ -398,6 +414,10 @@ module OptimizedPartitions = {
     ~dynamicContracts: Utils.Set.t<string>,
     ~clientFilteredContracts: Utils.Set.t<string>,
   ) => {
+    let partitions = partitions->Array.map(p => {
+      let floored = p.latestFetchedBlock->floorAtSelectionStart(~selection=p.selection)
+      floored === p.latestFetchedBlock ? p : {...p, latestFetchedBlock: floored}
+    })
     let newPartitions = []
     let mergingPartitions = Dict.make()
     let nextPartitionIndexRef = ref(nextPartitionIndex)
@@ -847,28 +867,17 @@ type t = {
   clientFilterAddressThreshold: option<int>,
 }
 
+// The latest block whose items are all in the buffer: the lowest partition
+// frontier, held back by the onBlock pointer. Without onBlock registrations the
+// pointer tracks the known height, so this also caps the frontier at the head: a
+// partition can sit past it, on a response that reported a block the chain
+// hadn't heard of yet or on a start block the chain hasn't reached.
 @inline
 let bufferBlockNumber = ({latestOnBlockBlockNumber, optimizedPartitions}: t) => {
   switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
   | None => latestOnBlockBlockNumber
   | Some(latestFullyFetchedBlock) =>
-    latestOnBlockBlockNumber < latestFullyFetchedBlock
-      ? latestOnBlockBlockNumber
-      : latestFullyFetchedBlock
-  }
-}
-
-/**
-* Returns the latest block which is ready to be consumed
-*/
-@inline
-let bufferBlock = ({optimizedPartitions, latestOnBlockBlockNumber}: t) => {
-  switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
-  | None => latestOnBlockBlockNumber
-  | Some(latestFullyFetchedBlock) =>
-    latestOnBlockBlockNumber < latestFullyFetchedBlock
-      ? latestOnBlockBlockNumber
-      : latestFullyFetchedBlock
+    Pervasives.min(latestOnBlockBlockNumber, latestFullyFetchedBlock)
   }
 }
 
@@ -978,6 +987,20 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
     }
   }
 }
+
+// Whether two adjacent buffer items came from one log routed to two
+// registrations: everything `compareBufferItem` orders on except the
+// registration index is equal. Only meaningful on neighbours of a sorted
+// buffer, where such items sit next to each other.
+let isSameLog = (a: Internal.item, b: Internal.item): bool =>
+  a->Internal.getItemKind === 0 &&
+  b->Internal.getItemKind === 0 &&
+  a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
+  a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
+  switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
+  | (Value(pa), Value(pb)) => comparePath(pa, pb) === 0
+  | _ => true
+  }
 
 // Merge a maybe-unsorted `newItems` run into the already-sorted, already-deduped
 // `buffer`, dropping items equal on every component of `compareBufferItem`.
@@ -1124,14 +1147,20 @@ let updateInternal = (
     // Use maxOnBlockBufferSize to get the last target item in the buffer
     // (sorted, so this is the highest-block item within the buffer cap).
     // All this needed to prevent OOM when adding too many block items to the queue
-    let maxBlockNumber = switch base->Array.get(fetchState.maxOnBlockBufferSize - 1) {
-    | Some(item) => item->Internal.getItemBlockNumber
-    | None =>
-      switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
-      | None => knownHeight
-      | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock
-      }
-    }
+    // Never past the head: a partition can sit there, on a start block the
+    // chain hasn't reached, and a response is applied before the height it
+    // reported, so its events can run past the height still known here.
+    let maxBlockNumber = Pervasives.min(
+      switch base->Array.get(fetchState.maxOnBlockBufferSize - 1) {
+      | Some(item) => item->Internal.getItemBlockNumber
+      | None =>
+        switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+        | None => knownHeight
+        | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock
+        }
+      },
+      knownHeight,
+    )
     appendOnBlockItems(
       ~mutItems=blockItems,
       ~onBlockRegistrations,
@@ -2151,27 +2180,11 @@ let walkPartitionPending = (
     pqIdx := pqIdx.contents + 1
   }
 
-  // Nothing in this partition's selection can match below its earliest start
-  // block, so forward work skips straight to it instead of scanning up to it and
-  // discarding whole pages. Only the cursor moves — `latestFetchedBlock` still
-  // advances solely on a response, so no block is ever reported fetched that
-  // wasn't. Bounded by the head and the query end block: past either, the
-  // partition would offer no candidate at all, so it queries as before rather
-  // than going quiet until the chain reaches its start block.
-  let cursor = switch p.selection.startBlock {
-  | Some(startBlock) if startBlock > cursor.contents =>
-    switch Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock) {
-    | Some(reachable) if startBlock <= reachable => startBlock
-    | _ => cursor.contents
-    }
-  | _ => cursor.contents
-  }
-
   canContinue.contents
     ? Some({
         partitionId,
         p,
-        cursor,
+        cursor: cursor.contents,
         chunksUsedThisCall: chunksUsedThisCall.contents,
         inFlightCount,
         queryEndBlock,
@@ -2766,10 +2779,17 @@ let make = (
   // fetching, so without seeding the buffer here getNextQuery would return
   // NothingToQuery and the indexer would get stuck.
   let buffer = []
-  let latestOnBlockBlockNumber = if knownHeight > 0 && onBlockRegistrations->Utils.Array.notEmpty {
+  let latestOnBlockBlockNumber = switch onBlockRegistrations {
+  // As updateInternal keeps it: with nothing to generate per block the pointer
+  // is the head cap on the buffer frontier, and left at the progress block it
+  // would hold the frontier there until the first height update — below a
+  // partition that starts later, whose queries the chain sizes off that
+  // frontier and so never reaches.
+  | [] if knownHeight > 0 => knownHeight
+  | onBlockRegistrations if knownHeight > 0 =>
     let maxBlockNumber = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
     | None => knownHeight
-    | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock
+    | Some(latestFullyFetchedBlock) => Pervasives.min(latestFullyFetchedBlock, knownHeight)
     }
     appendOnBlockItems(
       ~mutItems=buffer,
@@ -2779,8 +2799,7 @@ let make = (
       ~maxBlockNumber,
       ~maxOnBlockBufferSize,
     )
-  } else {
-    progressBlockNumber
+  | _ => progressBlockNumber
   }
 
   let fetchState = {

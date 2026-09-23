@@ -82,18 +82,16 @@ let onEventRegistrations = () => {
 }
 
 let makeSource = (~url, ~lowercaseAddresses=true) => {
-  let addressStore = AddressStore.make(
-    ~ecosystem=Ecosystem.Evm,
-    ~shouldChecksum=!lowercaseAddresses,
+  let addressStore = TestAddresses.storeOf(
     ~contracts=[{name: "Token", startBlock: None, dependsOnAddresses: true}],
+    ~addresses=[
+      {
+        address: tokenAddress->Address.unsafeFromString,
+        contractName: "Token",
+        registrationBlock: -1,
+      },
+    ],
   )
-  let _ = addressStore->AddressStore.seedBatch([
-    {
-      address: tokenAddress->Address.unsafeFromString,
-      contractName: "Token",
-      registrationBlock: -1,
-    },
-  ])
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
@@ -109,11 +107,18 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
   (source, addressStore->AddressStore.makeSet(~contractName="Token"))
 }
 
-let fetch = (source: Source.t, ~addressSet, ~fromBlock=10, ~toBlock=Some(11)) =>
+let fetch = (
+  source: Source.t,
+  ~addressSet,
+  ~fromBlock=10,
+  ~toBlock=Some(11),
+  ~includeAllBlocks=false,
+) =>
   source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock,
     ~addressSet,
+    ~includeAllBlocks,
     ~knownHeight=100,
     ~partitionId="mock-partition",
     ~selection={
@@ -238,15 +243,46 @@ describe("HyperSync source contract", () => {
     ])
   })
 
+  // At the head the progress block is often a block no event landed on, and its
+  // timestamp is what says how far behind chain time the indexer is. Asking for
+  // every block in the range is what puts that header in the response.
+  Async.it("asks for every block in the range once the chain is at the head", async t => {
+    let queries = await MockHyperSyncServer.withServer(~height=100, async server => {
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      server->MockHyperSyncServer.pushResponse(page)
+      let _ = await source->fetch(~addressSet, ~includeAllBlocks=true)
+      server->MockHyperSyncServer.takeQueries
+    })
+
+    t.expect(
+      queries->Array.map(query =>
+        query
+        ->JSON.Decode.object
+        ->Option.flatMap(o => o->Dict.get("include_all_blocks"))
+        ->Option.getOr(JSON.Encode.null)
+      ),
+    ).toEqual([JSON.Encode.bool(true)])
+  })
+
   Async.it("materialises the selected fields onto the page's items", async t => {
     let items = await MockHyperSyncServer.withServer(~height=100, async server => {
       let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
       server->MockHyperSyncServer.pushResponse(page)
       let page = await source->fetch(~addressSet)
+      // The chain's stores are what materialisation reads; a response's pages
+      // reach them by merging, as the indexer does once the reorg guard passes.
+      let transactionStore = TransactionStore.make(
+        ~ecosystem=Ecosystem.Evm
+      )
+      switch page.transactionStore {
+      | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
+      | None => ()
+      }
       await ChainState.materializePageItems(
         ~items=page.parsedQueueItems,
-        ~transactionStore=page.transactionStore,
+        ~transactionStore,
         ~blockStore=page.blockStore,
+        ~shouldChecksum=false,
       )
       page.parsedQueueItems
     })
@@ -313,6 +349,34 @@ describe("HyperSync source contract", () => {
     ])
   })
 
+  // The whole point of asking for every block: the one the chain has processed
+  // up to usually carries no log of its own, and its timestamp is what measures
+  // how far behind chain time the indexer is.
+  Async.it("keeps the timestamp of a block no log came from", async t => {
+    let timestamps = await MockHyperSyncServer.withServer(~height=100, async server => {
+      server->MockHyperSyncServer.pushResponse({
+        ...page,
+        blocks: page.blocks->Option.getOr([])->Array.concat([
+          JSON.parseOrThrow(
+            `{"number":12,"timestamp":1700000024,"hash":"${blockHash(
+                12,
+              )}","parent_hash":"${blockHash(11)}","miner":"${minerAddress}","state_root":"${stateRoot}"}`,
+          ),
+        ]),
+      })
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      let page = await source->fetch(~addressSet, ~toBlock=Some(12), ~includeAllBlocks=true)
+      [10, 12]->Array.map(blockNumber =>
+        page.blockStore->BlockStore.getTimestamp(blockNumber, ~allowSkippedSlot=false)->Null.toOption
+      )
+    })
+
+    t.expect(
+      timestamps,
+      ~message="block 12 has no log, but the header the query asked for still carries its time",
+    ).toEqual([Some(1700000000), Some(1700000024)])
+  })
+
   Async.it("reads the height off the server", async t => {
     let height = await MockHyperSyncServer.withServer(~height=42, async server => {
       let (source, _) = makeSource(~url=server->MockHyperSyncServer.url)
@@ -368,6 +432,47 @@ describe("HyperSync source contract", () => {
     t.expect(heights).toEqual([7, 9])
   })
 
+  Async.it("counts the blocks the server returned, before any routing drops them", async t => {
+    let requestStats = await MockHyperSyncServer.withServer(~height=100, async server => {
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      server->MockHyperSyncServer.pushResponse({
+        ...page,
+        // Block 12 carries no log, so nothing routes to it. It is still a block
+        // the server scanned and returned, which is what the billing model
+        // counts — the metric follows the response, not the items.
+        blocks: page.blocks
+        ->Option.getOrThrow
+        ->Array.concat([
+          JSON.parseOrThrow(
+            `{"number":12,"timestamp":1700000024,"hash":"${blockHash(12)}","parent_hash":"${blockHash(
+                11,
+              )}","miner":"${minerAddress}","state_root":"${stateRoot}"}`,
+          ),
+        ]),
+      })
+      let page = await source->fetch(~addressSet, ~toBlock=Some(12))
+      page.requestStats->Array.map(({method, responseBlocks: ?responseBlocks}) => (
+        method,
+        responseBlocks,
+      ))
+    })
+
+    t.expect(requestStats).toEqual([("getLogs", Some(3))])
+  })
+
+  Async.it("counts zero blocks for a range the server matched nothing in", async t => {
+    let requestStats = await MockHyperSyncServer.withServer(~height=100, async server => {
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      let page = await source->fetch(~addressSet)
+      page.requestStats->Array.map(({method, responseBlocks: ?responseBlocks}) => (
+        method,
+        responseBlocks,
+      ))
+    })
+
+    t.expect(requestStats).toEqual([("getLogs", Some(0))])
+  })
+
   Async.it("surfaces a page that withholds a selected field", async t => {
     let result = await MockHyperSyncServer.withServer(~height=100, async server => {
       let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
@@ -420,7 +525,7 @@ describe("HyperSync source responses", () => {
       let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
       server->MockHyperSyncServer.pushRawReply({
         status: 429,
-        headers: Dict.fromArray([("x-ratelimit-reset", "3"), ("x-ratelimit-remaining", "0")]),
+        headers: dict{"x-ratelimit-reset": "3", "x-ratelimit-remaining": "0"},
         body: "slow down",
       })
       await attempt(async () => {
@@ -519,10 +624,18 @@ describe("HyperSync source responses", () => {
       )
       server->MockHyperSyncServer.pushResponse(page)
       let response = await source->fetch(~addressSet)
+      let transactionStore = TransactionStore.make(
+        ~ecosystem=Ecosystem.Evm
+      )
+      switch response.transactionStore {
+      | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
+      | None => ()
+      }
       await ChainState.materializePageItems(
         ~items=response.parsedQueueItems,
-        ~transactionStore=response.transactionStore,
+        ~transactionStore,
         ~blockStore=response.blockStore,
+        ~shouldChecksum=true,
       )
       let summary = response.parsedQueueItems->Array.map(eventSummary)->Array.getUnsafe(0)
       {
@@ -605,5 +718,25 @@ describe("HyperSync source responses", () => {
     t.expect(result).toBe(
       "impossible:Source returned invalid data with missing required fields: block.miner",
     )
+  })
+})
+
+describe("EvmHyperSyncSource - request accounting", () => {
+  // A page that ends in a failure still made its request, and the source's
+  // metrics count it — otherwise a source that is erroring reports no traffic
+  // at all while it hammers the endpoint.
+  Async.it("Counts the request a failed page made", async t => {
+    let methods = await MockHyperSyncServer.withServer(~height=100, async server => {
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      server->MockHyperSyncServer.pushRawReply({status: 500, body: "upstream exploded"})
+      try {
+        let _ = await source->fetch(~addressSet)
+        []
+      } catch {
+      | Source.GetItemsError(error) =>
+        error->Source.getItemsErrorRequestStats->Array.map(({Source.method: method}) => method)
+      }
+    })
+    t.expect(methods).toEqual(["getLogs"])
   })
 })

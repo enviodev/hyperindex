@@ -35,6 +35,10 @@ type addressRow = {
   registrationBlock: int,
 }
 
+// A logged line as a test reads it: what was said, and the fields said with it
+// — without the ones pino adds to every line, which no test is about.
+type logEntry = {msg: string, params: dict<JSON.t>}
+
 type rec t = {
   getBatchWritePromise: unit => promise<unit>,
   getRollbackReadyPromise: unit => promise<unit>,
@@ -56,11 +60,59 @@ type rec t = {
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.
   stop: unit => promise<unit>,
-  restart: unit => promise<t>,
+  // `~chains` resumes the same schema driving only those chains, the way
+  // `envio start --chain` does. The chains left out keep their stored state.
+  restart: (~chains: array<ChainId.t>=?, unit) => promise<t>,
+  // Every line this run has logged so far, in order — the run's own and its
+  // chains'. Only for a run started with `~captureLogs`.
+  logs: unit => array<logEntry>,
+  // Stands in for the supervisor's go-ahead in a run started with
+  // `~holdRealtime`.
+  releaseRealtime: unit => unit,
 }
+
+// How often the stand-in supervisor of a supervised pass asks whether the run
+// may go realtime. Short enough that the run gets there in the same tick a test
+// would otherwise see it.
+%%private(let releaseCheckIntervalMillis = 1)
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
+
+let parseLogLine = line =>
+  switch line->JSON.parseOrThrow->JSON.Decode.object {
+  | Some(fields) =>
+    fields
+    ->Dict.get("msg")
+    ->Option.flatMap(JSON.Decode.string)
+    ->Option.map(msg => {
+      msg,
+      params: fields
+      ->Dict.toArray
+      ->Array.filter(((key, _)) => key !== "msg" && key !== "level" && key !== "time")
+      ->Dict.fromArray,
+    })
+  | None => None
+  }
+
+// A logger writing into an array in this process, rather than through pino's
+// file transport: that one writes on a thread of its own, so a test would have
+// to wait for the line it has already logged to land.
+let makeLogCapture = () => {
+  let lines = []
+  let logger = Pino.MultiStreamLogger.makeWithMultiStream(
+    {
+      customLevels: Logging.logLevels,
+      level: #info,
+      // Empty base disables pid and hostname, as `Logging.makeLogger` does.
+      base: JSON.Encode.object(Dict.make()),
+    },
+    Pino.MultiStreamLogger.multistream([
+      {stream: {write: line => lines->Array.push(line)->ignore}, level: #info},
+    ]),
+  )
+  (logger, () => lines->Array.filterMap(parseLogLine))
+}
 
 // Runs `body` against a fresh indexer in a Postgres schema of its own, then
 // tears both down — so tests never stop an indexer by hand, and files can run
@@ -75,12 +127,26 @@ let run = async (
   ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
   ~targetBufferSize=?,
+  // Runs the indexer the way a supervised worker runs: it waits to be released
+  // before entering the reorg threshold or switching to realtime.
+  ~holdRealtime=false,
+  // Runs it behind the same barrier with a stand-in supervisor releasing it on
+  // the real predicate, so a scenario exercises the held path without a test
+  // having to drive it. A split run can't be simulated here — the sources a
+  // test drives are objects in this process, which a forked worker wouldn't
+  // have — but the hold, the predicate and the release are the production ones.
+  ~superviseRun=false,
   ~onError=?,
   ~onExit=?,
   ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   // Runs after `restart` has stopped the previous indexer and before the next
   // one starts, so mocked sources can void what the stopped one left in flight.
   ~onIndexerStopped: unit => unit=() => (),
+  // Logs what the run says instead of silencing it, for a test about the
+  // reporting itself. A chain's logger is a child of whichever logger was
+  // installed when its chain state was built, so this has to be in place
+  // before the indexer starts rather than set from the body.
+  ~captureLogs=false,
   body: t => promise<unit>,
 ) => {
   // Postgres resources this run owns: one schema, plus every client and
@@ -88,6 +154,11 @@ let run = async (
   let pgSchema = TestPgSchema.make()
   let clients = []
   let stops = []
+
+  // One capture for the whole run, `restart` included, so a test reads the
+  // resumed indexer's lines after the ones that led to them.
+  let capture = captureLogs ? Some(makeLogCapture()) : None
+  let installedLogger = Logging.getLogger()
 
   // The ClickHouse leg writes through the sink Postgres storage attaches, into
   // a database of this run's own.
@@ -98,15 +169,20 @@ let run = async (
 
   // The builder is only reachable here and from `restart`, so it takes just
   // the flag that differs between them and reads the rest off this call.
-  let rec make = async (~reset) => {
-    // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
-    switch Env.userLogLevel {
-    | None => Logging.setLogLevel(#silent)
-    | Some(_) => ()
+  let rec make = async (~reset, ~chains=?) => {
+    let config = switch chains {
+    | Some(chainIds) => config->Config.isolate(~chainIds)
+    | None => config
     }
-
-    let registrationsByChainId = await resolveRegistrations()
-    MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
+    switch capture {
+    | Some((logger, _)) => Logging.setLogger(logger)
+    | None =>
+      // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
+      switch Env.userLogLevel {
+      | None => Logging.setLogLevel(#silent)
+      | Some(_) => ()
+      }
+    }
 
     switch clickHouseDatabase {
     | Some(database) => TestClickHouse.use(~database)
@@ -119,6 +195,10 @@ let run = async (
       PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+    // `Main.start` does this before handler modules load, so the exported
+    // indexer can expose persisted state. Without it every `indexer.chains[N]`
+    // getter silently falls back to static config.
+    Main.setGlobalPersistence(persistence)
     let pg = {sql, pgSchema}
 
     let onError = switch onError {
@@ -137,7 +217,15 @@ let run = async (
       ~resetCommand="envio dev -r",
       ~runCommand=Some("envio dev"),
       ~reset,
+      ~lowercaseAddresses=config.lowercaseAddresses,
+      ~requireInitialized=config.isolated,
     )
+
+    // Same order as `Main.start`: storage is initialized - which is where a
+    // `start_block: latest` chain reads its head - before handler modules load,
+    // so a registration-time `chain.startBlock` sees the resolved block.
+    let registrationsByChainId = await resolveRegistrations()
+    MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let state = IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
@@ -148,10 +236,24 @@ let run = async (
       ~targetBufferSize?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
+      ~holdRealtime={holdRealtime || superviseRun},
       ~onError,
       ~onExit?,
     )
     state->IndexerLoop.start
+
+    // Only when the test didn't ask for the hold itself: one that did is
+    // testing the barrier and owns its own release.
+    let releaseCheck = ref(None)
+    if superviseRun && !holdRealtime {
+      releaseCheck := Some(setInterval(() =>
+            if state->IndexerState.hasArrivedAtHead {
+              releaseCheck.contents->Option.forEach(clearInterval)
+              releaseCheck := None
+              state->IndexerState.releaseRealtime
+            }
+          , releaseCheckIntervalMillis))
+    }
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run
@@ -165,6 +267,8 @@ let run = async (
       | None =>
         let promise = (
           async () => {
+            releaseCheck.contents->Option.forEach(clearInterval)
+            releaseCheck := None
             await state->Writing.flush
             state->IndexerState.stop
             // Tests deliberately leave handlers that never resolve, which pins
@@ -260,14 +364,17 @@ let run = async (
             let isIdle =
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
+              Frontier.equals(
+                state->IndexerState.committedFrontier,
+                state->IndexerState.processedFrontier,
+              )
 
             // Catching up hands off to the FinalizingIndexes phase, which is
             // where readiness is decided — so a batch isn't settled until that
             // phase is over. The idle fallback below still bounds the wait.
             if (
               before < state->IndexerState.processedBatchesCount &&
-                !(state->IndexerState.isFinalizingIndexes)
+                !(state->IndexerState.shouldFinalizeIndexes)
             ) {
               ()
             } else if isIdle && idleChecks.contents >= 5 {
@@ -305,8 +412,11 @@ let run = async (
           settled := if (
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
-              !(state->IndexerState.isFinalizingIndexes) &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
+              !(state->IndexerState.shouldFinalizeIndexes) &&
+              Frontier.equals(
+                state->IndexerState.committedFrontier,
+                state->IndexerState.processedFrontier,
+              )
             ) {
               settled.contents + 1
             } else {
@@ -318,6 +428,7 @@ let run = async (
           JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
         }
       },
+      releaseRealtime: () => state->IndexerState.releaseRealtime,
       waitUntilReady: async () => {
         let isReady = () =>
           state
@@ -438,12 +549,20 @@ let run = async (
       },
       pg,
       stop,
-      restart: async () => {
+      logs: () =>
+        switch capture {
+        | Some((_, entries)) => entries()
+        | None =>
+          JsError.throwWithMessage(
+            "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",
+          )
+        },
+      restart: async (~chains=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        await make(~reset=false)
+        await make(~reset=false, ~chains?)
       },
     }
   }
@@ -493,6 +612,12 @@ let run = async (
     | Some(sql) => await attempt(() => sql->Postgres.endSql)
     | None => ()
     }
+  }
+
+  // The logger is process-global, so a capturing run gives it back — after its
+  // teardown, which is still this run's to log.
+  if captureLogs {
+    Logging.setLogger(installedLogger)
   }
 
   switch (outcome, teardownFailure.contents) {

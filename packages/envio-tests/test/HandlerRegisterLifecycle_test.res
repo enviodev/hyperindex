@@ -102,13 +102,17 @@ describe("HandlerRegister — every onEvent registers separately", () => {
 describe("HandlerRegister — onBlock validation at registration", () => {
   let noopBlockHandler = async (_: Internal.onBlockArgs) => ()
 
-  // A minimal chains object: the predicates below only read `chain.id`.
+  // Stands in for the object `Main` builds: the predicates below read
+  // `chain.id`, and onBlock validation reads `chain.startBlock` - which is
+  // where the resolved `start_block: latest` block lives in a real run.
   let getChainsObject = (config: Config.t) =>
     config.chainMap
     ->ChainMap.values
     ->Array.map(chainConfig => (
       chainConfig.id->ChainId.toString,
-      {"id": chainConfig.id}->(Utils.magic: {"id": ChainId.t} => unknown),
+      {"id": chainConfig.id, "startBlock": chainConfig->Config.startBlockOrZero}->(
+        Utils.magic: {"id": ChainId.t, "startBlock": int} => unknown
+      ),
     ))
     ->Dict.fromArray
 

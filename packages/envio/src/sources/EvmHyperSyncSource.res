@@ -1,11 +1,5 @@
 open Source
 
-// Surfaced by the HyperSync client (Rust) when HyperSync rejects the API
-// token. The corrupted-token test feeds the real server error (from the query
-// endpoint; the edge no longer 401s malformed tokens on /height) through this
-// check so it can't silently drift away from what getHeightOrThrow guards on.
-let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
-
 type options = {
   chainId: ChainId.t,
   endpointUrl: string,
@@ -37,13 +31,11 @@ let make = (
 ): t => {
   let name = "HyperSync"
 
-  let apiToken = switch apiToken {
-  | Some(token) => token
-  | None =>
-    JsError.throwWithMessage(`An Envio API token is required for using HyperSync as a data-source.
-Set the ENVIO_API_TOKEN environment variable in your .env file.
-Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
-  }
+  // Per source, so one rejected token is reported once rather than on every
+  // height retry for the life of the process.
+  let unauthorizedWarned = ref(false)
+
+  let apiToken = apiToken->HyperSync.requireApiToken
 
   let client = switch HyperSyncClient.make(
     ~url=endpointUrl,
@@ -63,35 +55,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     )
   }
 
-  let makeEventBatchQueueItem = (
-    item: HyperSyncClient.EventItems.item,
-    ~onEventRegistration: Internal.evmOnEventRegistration,
-  ): Internal.item => {
-    let {transactionIndex, logIndex, srcAddress} = item
-
-    Internal.Event({
-      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-      chainId,
-      blockNumber: item.blockNumber,
-      logIndex,
-      transactionIndex,
-      // `block` and `transaction` are omitted; they're materialised from the
-      // per-chain stores onto the payload at batch prep.
-      payload: {
-        contractName: onEventRegistration.eventConfig.contractName,
-        eventName: onEventRegistration.eventConfig.name,
-        chainId,
-        params: item.params,
-        srcAddress,
-        logIndex,
-      }->Evm.fromPayload,
-    })
-  }
-
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
+    ~includeAllBlocks,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -103,6 +71,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let startFetchingBatchTimeRef = Performance.now()
 
+    let fetchStats = () => RequestStat.single(~method="getLogs", ~sentAt=startFetchingBatchTimeRef)
+
     //fetch batch
     let pageUnsafe = try await HyperSync.GetLogs.query(
       ~client,
@@ -112,14 +82,15 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressSet,
       ~clientFilteredContracts=selection.clientFilteredContracts,
+      ~includeAllBlocks,
     ) catch {
     | HyperSync.GetLogs.Error(WrongInstance) =>
-      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
     | HyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
-            exn: %raw(`null`),
+            requestStats: fetchStats(),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: ImpossibleForTheQuery({
               message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
@@ -134,6 +105,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
+            requestStats: fetchStats(),
             exn,
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({
@@ -149,7 +121,9 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
-    let requestStats = [{Source.method: "getLogs", seconds: pageFetchTime}]
+    let requestStats = [
+      {Source.method: "getLogs", seconds: pageFetchTime, responseBlocks: pageUnsafe.responseBlocks},
+    ]
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -161,15 +135,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeRef = Performance.now()
 
-    //Parse page items into queue items
-    let parsedQueueItems = []
-
-    pageUnsafe.items->Array.forEach(item => {
-      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
-      parsedQueueItems
-      ->Array.push(makeEventBatchQueueItem(item, ~onEventRegistration))
-      ->ignore
-    })
+    let parsedQueueItems =
+      pageUnsafe.items->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
@@ -190,7 +157,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      fromBlockQueried: fromBlock,
       requestStats,
     }
   }
@@ -213,15 +179,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       let height = try {
         await client.getHeight()
       } catch {
-      | JsExn(e) =>
-        switch e->JsExn.message {
-        | Some(message) if message->isUnauthorizedError =>
-          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
-          // Retrying an unauthorized request can never succeed, so block forever
-          let _ = await Promise.make((_, _) => ())
-          0
-        | _ => throw(JsExn(e))
-        }
+      | exn =>
+        exn->HyperSync.rethrowLoggingUnauthorized(
+          ~warned=unauthorizedWarned,
+          ~product="HyperSync",
+        )
       }
       let seconds = timerRef->Performance.secondsSince
       {height, requestStats: [{method: "getHeight", seconds}]}

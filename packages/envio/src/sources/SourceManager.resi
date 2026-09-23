@@ -27,6 +27,8 @@ type requestStatSample = {
   method: string,
   count: int,
   seconds: float,
+  responseBlocks: option<int>,
+  emptyResponseCount: int,
 }
 
 let getRequestStatSamples: t => array<requestStatSample>
@@ -71,6 +73,10 @@ let waitForNewBlock: (
   ~isRealtime: bool,
   ~reducedPolling: bool,
 ) => promise<int>
+
+// The retry at which a query that no source can answer stops being a hiccup
+// and gets reported as a stalled chain.
+let stallRetries: int
 
 let executeQuery: (
   t,
