@@ -523,8 +523,8 @@ let shouldFinalizeIndexes = (state: t) =>
 let markCaughtUpIfSettled = (state: t) =>
   state.crossChainState->CrossChainState.markCaughtUpIfSettled
 
-let isReadyToEnterReorgThreshold = (state: t, ~batch) =>
-  state.crossChainState->CrossChainState.isReadyToEnterReorgThreshold(~batch)
+let isReadyToEnterReorgThreshold = (state: t) =>
+  state.crossChainState->CrossChainState.isReadyToEnterReorgThreshold
 
 let bindScheduleProcessing = (state: t, scheduleProcessing) =>
   state.scheduleProcessing = scheduleProcessing

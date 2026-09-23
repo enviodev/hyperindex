@@ -95,7 +95,7 @@ let shouldSaveHistory: t => dict<bool>
 let isRealtime: t => bool
 let isFinalizingIndexes: t => bool
 let markCaughtUpIfSettled: t => unit
-let isReadyToEnterReorgThreshold: (t, ~batch: Batch.t) => bool
+let isReadyToEnterReorgThreshold: t => bool
 let shouldFinalizeIndexes: t => bool
 // Wires the loop's way back in. IndexerLoop calls this as it starts.
 let bindScheduleProcessing: (t, unit => unit) => unit

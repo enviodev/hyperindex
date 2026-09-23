@@ -74,10 +74,17 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
 
   let progressedChainsById = batch.progressedChainsById
 
+  // Synchronously after creating the batch, so no response lands on a buffer
+  // still holding its items. Leaves each chain where the batch takes it, which
+  // is where the threshold check below has to look.
+  state
+  ->IndexerState.chainStates
+  ->Utils.Dict.forEach(cs => cs->ChainState.advanceAfterBatch(~batch))
+
   let isBelowReorgThreshold =
     !isInReorgThresholdBeforeUpdate && (state->IndexerState.config).shouldRollbackOnReorg
   let shouldEnterReorgThreshold =
-    isBelowReorgThreshold && state->IndexerState.isReadyToEnterReorgThreshold(~batch)
+    isBelowReorgThreshold && state->IndexerState.isReadyToEnterReorgThreshold
 
   if shouldEnterReorgThreshold {
     IndexerState.enterReorgThreshold(state)
@@ -113,14 +120,6 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
       }
     }
   } else {
-    // The batch was created from pre-threshold fetch states, so advanceAfterBatch
-    // applies blockLag when crossing the threshold; enterReorgThreshold already
-    // covered the non-progressed chain states.
-    state
-    ->IndexerState.chainStates
-    ->Utils.Dict.forEach(cs =>
-      cs->ChainState.advanceAfterBatch(~batch, ~enteringReorgThreshold=shouldEnterReorgThreshold)
-    )
     // Kick the next fetch round before awaiting the batch. A response that
     // lands mid-batch commits only fetch-frontier fields (buffer, knownHeight),
     // while applyBatchProgress below commits only progress fields, so the two

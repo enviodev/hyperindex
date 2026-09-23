@@ -2,13 +2,13 @@ open Vitest
 
 let baseChainConfig = TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
-let mockEvent = (~blockNumber): Internal.item => Internal.Event({
+let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   chainId: 1->ChainId.fromInt,
   blockNumber,
   // Carries an `index` so the buffer's dedup key resolves; the rest of the
   // registration is unused by these tests.
   onEventRegistration: {"index": 0}->(Utils.magic: {"index": int} => Internal.onEventRegistration),
-  logIndex: 0,
+  logIndex,
   transactionIndex: 0,
   payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
 })
@@ -58,7 +58,10 @@ let makeChainState = (
     latestOnBlockBlockNumber: frontier,
     firstEventBlock: Some(firstEventBlock),
     clientFilterAddressThreshold: None,
-    buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
+    // Distinct log indexes keep repeated blocks from deduplicating.
+    buffer: bufferBlocks
+    ->Array.mapWithIndex((blockNumber, logIndex) => mockEvent(~blockNumber, ~logIndex))
+    ->ItemBuffer.fromItems,
   }
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
@@ -120,7 +123,10 @@ let makeFetchingChainState = (
     ),
     startBlock: 0,
     endBlock,
-    buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
+    // Distinct log indexes keep repeated blocks from deduplicating.
+    buffer: bufferBlocks
+    ->Array.mapWithIndex((blockNumber, logIndex) => mockEvent(~blockNumber, ~logIndex))
+    ->ItemBuffer.fromItems,
     normalSelection,
     latestOnBlockBlockNumber: latestFetchedBlock,
     maxOnBlockBufferSize: 10000,
@@ -524,7 +530,7 @@ describe("CrossChainState fetch control", () => {
       ),
       startBlock: 0,
       endBlock: Some(20),
-      buffer: [],
+      buffer: ItemBuffer.make(),
       normalSelection,
       latestOnBlockBlockNumber: 0,
       maxOnBlockBufferSize: 10000,
@@ -1068,7 +1074,7 @@ describe("ChainState density from the ready buffer", () => {
   })
 
   it("mid-batch, the span starts at the processing block, not the committed one", t => {
-    // A batch was created up to block 100, consuming the buffer's head; its
+    // A batch was created up to block 100 from the buffer's first 5 items; its
     // progress commits only after processing. The remaining 2 ready items span
     // the 100 blocks since the batch's progress — not the 201 since the still
     // uncommitted progress (-1).
@@ -1076,7 +1082,7 @@ describe("ChainState density from the ready buffer", () => {
       ~chainId=1->ChainId.fromInt,
       ~knownHeight=1_000_000,
       ~latestFetchedBlock=200,
-      ~bufferBlocks=[150, 160],
+      ~bufferBlocks=[20, 40, 60, 80, 100, 150, 160],
     )
     let progressedChainsById = Dict.make()
     progressedChainsById->ChainId.Dict.set(
@@ -1088,15 +1094,12 @@ describe("ChainState density from the ready buffer", () => {
           progressBlockTime: None,
           sourceBlockNumber: 1_000_000,
           totalEventsProcessed: 5.,
-          fetchState: (cs->ChainState.toChainBeforeBatch(~isRealtime=false)).fetchState,
+          chainId: 1->ChainId.fromInt,
           isProgressAtHeadWhenBatchCreated: false,
         }: Batch.chainAfterBatch
       ),
     )
-    cs->ChainState.advanceAfterBatch(
-      ~batch={...emptyBatch, progressedChainsById},
-      ~enteringReorgThreshold=false,
-    )
+    cs->ChainState.advanceAfterBatch(~batch={...emptyBatch, progressedChainsById})
     t.expect(cs->ChainState.effectiveDensity).toEqual(Some(2. /. 100.))
   })
 

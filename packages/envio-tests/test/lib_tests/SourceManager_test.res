@@ -469,7 +469,7 @@ describe("SourceManager fetchNext", () => {
       optimizedPartitions,
       startBlock: 0,
       endBlock,
-      buffer,
+      buffer: ItemBuffer.fromItems(buffer),
       normalSelection,
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents,
       maxOnBlockBufferSize: targetBufferSize,

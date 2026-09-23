@@ -31,7 +31,7 @@ let getItem = (item: oldQueueItem) =>
 let getEarliestEvent = (fetchState: FetchState.t) => {
   let readyItemsCount = fetchState->FetchState.getReadyItemsCount(~targetSize=1, ~fromItem=0)
   if readyItemsCount > 0 {
-    Item(fetchState.buffer->Array.getUnsafe(0))
+    Item(fetchState.buffer->ItemBuffer.peek(~count=1)->Array.getUnsafe(0))
   } else {
     NoItem({
       latestFetchedBlock: fetchState->FetchState.bufferBlockNumber,
@@ -282,7 +282,7 @@ describe("FetchState.make", () => {
         endBlock: None,
         latestOnBlockBlockNumber: -1,
         maxOnBlockBufferSize: 5000,
-        buffer: [],
+        buffer: ItemBuffer.make(),
         normalSelection: fetchState.normalSelection,
         chainId: 0->ChainId.fromInt,
         blockLag: 0,
@@ -397,7 +397,7 @@ describe("FetchState.make", () => {
         ),
         maxOnBlockBufferSize: targetBufferSize,
         latestOnBlockBlockNumber: -1,
-        buffer: [],
+        buffer: ItemBuffer.make(),
         startBlock: 0,
         endBlock: None,
         normalSelection: fetchState.normalSelection,
@@ -470,7 +470,7 @@ describe("FetchState.make", () => {
           ),
           maxOnBlockBufferSize: targetBufferSize,
           latestOnBlockBlockNumber: -1,
-          buffer: [],
+          buffer: ItemBuffer.make(),
           startBlock: 0,
           endBlock: None,
           normalSelection: fetchState.normalSelection,
@@ -582,7 +582,7 @@ describe("FetchState.make", () => {
           ),
           maxOnBlockBufferSize: targetBufferSize,
           latestOnBlockBlockNumber: -1,
-          buffer: [],
+          buffer: ItemBuffer.make(),
           startBlock: 0,
           endBlock: None,
           normalSelection: fetchState.normalSelection,
@@ -1683,7 +1683,7 @@ describe("FetchState.registerDynamicContracts", () => {
           endBlock: None,
           latestOnBlockBlockNumber: -1,
           maxOnBlockBufferSize: targetBufferSize,
-          buffer: [],
+          buffer: ItemBuffer.make(),
           normalSelection: fetchState.normalSelection,
           chainId,
           blockLag: 0,
@@ -1744,7 +1744,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ),
       latestOnBlockBlockNumber: knownHeight,
       maxOnBlockBufferSize: targetBufferSize,
-      buffer: [mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
+      buffer: ItemBuffer.fromItems([mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)]),
       startBlock: 0,
       endBlock: None,
       blockLag: 0,
@@ -1804,7 +1804,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ),
       latestOnBlockBlockNumber: knownHeight,
       maxOnBlockBufferSize: targetBufferSize,
-      buffer: [mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
+      buffer: ItemBuffer.fromItems([mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)]),
       startBlock: 0,
       endBlock: None,
       normalSelection,
@@ -2295,7 +2295,7 @@ describe("FetchState.getNextQuery & integration", () => {
       (
         fetchStateWithResponse1->FetchState.bufferBlockNumber,
         fetchStateWithResponse1.optimizedPartitions.idsInAscOrder,
-        fetchStateWithResponse1.buffer->Array.length,
+        fetchStateWithResponse1->FetchState.bufferSize,
       ),
       ~message="The buffer block should be the latest fetched block",
     ).toEqual((9, ["2", "0"], 4))
@@ -2646,7 +2646,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ),
         // Removed an item here
 
-        buffer: [mockEvent(~blockNumber=1)],
+        buffer: ItemBuffer.fromItems([mockEvent(~blockNumber=1)]),
       }->TestAddresses.fetchState,
     )
 
@@ -2679,7 +2679,7 @@ describe("FetchState.getNextQuery & integration", () => {
           ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
           ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
         ),
-        buffer: [],
+        buffer: ItemBuffer.make(),
       }->TestAddresses.fetchState,
     )
   })
@@ -2779,7 +2779,7 @@ describe("FetchState.getNextQuery & integration", () => {
           ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
           ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
         ),
-        buffer: [],
+        buffer: ItemBuffer.make(),
       }->TestAddresses.fetchState,
     )
   })
@@ -2789,6 +2789,13 @@ describe("FetchState unit tests for specific cases", () => {
   it("Should merge events in correct order on merging", t => {
     let (base, _) = makeInitial()
     let normalSelection = base.normalSelection
+    base.buffer->ItemBuffer.insert([
+      mockEvent(~blockNumber=4, ~logIndex=2),
+      mockEvent(~blockNumber=4),
+      mockEvent(~blockNumber=3),
+      mockEvent(~blockNumber=2),
+      mockEvent(~blockNumber=1),
+    ])
     let fetchState = base->FetchState.updateInternal(
       ~optimizedPartitions=FetchState.OptimizedPartitions.make(
         ~partitions=[
@@ -2824,13 +2831,6 @@ describe("FetchState unit tests for specific cases", () => {
         ~dynamicContracts=base.optimizedPartitions.dynamicContracts,
         ~clientFilteredContracts=base.optimizedPartitions.clientFilteredContracts,
       ),
-      ~mutItems=[
-        mockEvent(~blockNumber=4, ~logIndex=2),
-        mockEvent(~blockNumber=4),
-        mockEvent(~blockNumber=3),
-        mockEvent(~blockNumber=2),
-        mockEvent(~blockNumber=1),
-      ],
     )
 
     let query: FetchState.query = {
@@ -2855,7 +2855,10 @@ describe("FetchState unit tests for specific cases", () => {
         ],
       )
 
-    t.expect(updatedFetchState.buffer, ~message="Should merge events in correct order").toEqual([
+    t.expect(
+      updatedFetchState.buffer->ItemBuffer.toArray,
+      ~message="Should merge events in correct order",
+    ).toEqual([
       mockEvent(~blockNumber=1),
       mockEvent(~blockNumber=2),
       mockEvent(~blockNumber=3),
@@ -2897,7 +2900,7 @@ describe("FetchState unit tests for specific cases", () => {
       )
 
     t.expect(
-      updatedFetchState.buffer,
+      updatedFetchState.buffer->ItemBuffer.toArray,
       ~message="Queue must be sorted DESC by (blockNumber, logIndex) regardless of input order",
     ).toEqual([
       mockEvent(~blockNumber=5, ~logIndex=0),
@@ -3106,6 +3109,11 @@ describe("FetchState unit tests for specific cases", () => {
     let latestFetchedBlock = getBlockData(~blockNumber=500)
     let (base, addressStore) = makeInitial()
     let normalSelection = base.normalSelection
+    base.buffer->ItemBuffer.insert([
+      mockEvent(~blockNumber=6, ~logIndex=1),
+      mockEvent(~blockNumber=5),
+      mockEvent(~blockNumber=2, ~logIndex=1),
+    ])
     let fetchState = base->FetchState.updateInternal(
       ~optimizedPartitions=FetchState.OptimizedPartitions.make(
         ~partitions=[
@@ -3141,11 +3149,6 @@ describe("FetchState unit tests for specific cases", () => {
         ~dynamicContracts=base.optimizedPartitions.dynamicContracts,
         ~clientFilteredContracts=base.optimizedPartitions.clientFilteredContracts,
       ),
-      ~mutItems=[
-        mockEvent(~blockNumber=6, ~logIndex=1),
-        mockEvent(~blockNumber=5),
-        mockEvent(~blockNumber=2, ~logIndex=1),
-      ],
       ~knownHeight=10,
     )
 
@@ -3447,7 +3450,9 @@ describe("FetchState.sortForBatch", () => {
     let prepared = FetchState.sortForBatch([fsHigh, fsLow, fsMid], ~batchSizeTarget=3)
 
     t.expect(
-      prepared->Array.map(fs => fs.buffer->Array.getUnsafe(0)->Internal.getItemBlockNumber),
+      prepared->Array.map(
+        fs => fs.buffer->ItemBuffer.toArray->Array.getUnsafe(0)->Internal.getItemBlockNumber,
+      ),
     ).toEqual([1, 5, 8])
   })
 
@@ -3460,7 +3465,9 @@ describe("FetchState.sortForBatch", () => {
     let prepared = FetchState.sortForBatch([fsHalfEarlier, fsFullLater], ~batchSizeTarget=2)
 
     t.expect(
-      prepared->Array.map(fs => fs.buffer->Array.getUnsafe(0)->Internal.getItemBlockNumber),
+      prepared->Array.map(
+        fs => fs.buffer->ItemBuffer.toArray->Array.getUnsafe(0)->Internal.getItemBlockNumber,
+      ),
     ).toEqual([7, 1])
   })
 
@@ -3474,7 +3481,9 @@ describe("FetchState.sortForBatch", () => {
 
     // Full batch should take priority regardless of earlier timestamp of half batch
     t.expect(
-      prepared->Array.map(fs => fs.buffer->Array.getUnsafe(0)->Internal.getItemBlockNumber),
+      prepared->Array.map(
+        fs => fs.buffer->ItemBuffer.toArray->Array.getUnsafe(0)->Internal.getItemBlockNumber,
+      ),
     ).toEqual([2, 1])
   })
 })
@@ -3678,9 +3687,8 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
         ~blockLag=0,
         ~knownHeight=10,
       )
-      fs
-      ->FetchState.updateInternal(~mutItems=[mockEvent(~blockNumber=itemBlockNumber)])
-      ->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)
+      fs.buffer->ItemBuffer.insert([mockEvent(~blockNumber=itemBlockNumber)])
+      fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)
     }
     // A processable item (<= frontier 5) still needs draining; an item stuck
     // above the frontier (as behind a lagging partition's gap) is reorg-safe and
@@ -3989,15 +3997,17 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
       ~onBlockRegistrations=[makeOnBlockRegistration(~interval=1, ~startBlock=Some(0))],
     )
     let lastBufferedBlock = fs =>
-      fs.FetchState.buffer->Array.last->Option.map(Internal.getItemBlockNumber)
+      fs.FetchState.buffer->ItemBuffer.toArray->Array.last->Option.map(Internal.getItemBlockNumber)
 
+    // Read before updating: the update tops up the buffer both versions share.
+    let made = (
+      fetchState.latestOnBlockBlockNumber,
+      fetchState->FetchState.bufferBlockNumber,
+      fetchState->lastBufferedBlock,
+    )
     let updated = fetchState->FetchState.updateKnownHeight(~knownHeight=150)
     t.expect({
-      "made": (
-        fetchState.latestOnBlockBlockNumber,
-        fetchState->FetchState.bufferBlockNumber,
-        fetchState->lastBufferedBlock,
-      ),
+      "made": made,
       "updated": (
         updated.latestOnBlockBlockNumber,
         updated->FetchState.bufferBlockNumber,
@@ -4032,7 +4042,10 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
         fetchState.optimizedPartitions.idsInAscOrder,
         ~message="Partitions should be empty when there are no event configs",
       ).toEqual([])
-      t.expect(fetchState.buffer, ~message="Buffer should be empty initially").toEqual([])
+      t.expect(
+        fetchState.buffer->ItemBuffer.toArray,
+        ~message="Buffer should be empty initially",
+      ).toEqual([])
       t.expect(fetchState.knownHeight, ~message="knownHeight should be 0 initially").toBe(0)
       t.expect(
         fetchState.onBlockRegistrations,
@@ -4066,7 +4079,9 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
       // Block items should be created from block 0 up to min(latestFullyFetchedBlock, targetBufferSize item)
       // With interval=1, startBlock=0, we expect blocks 0,1,2,3,4,5,6,7,8,9,10
       let blockNumbers =
-        updatedFetchState.buffer->Array.map(item => item->Internal.getItemBlockNumber)
+        updatedFetchState.buffer
+        ->ItemBuffer.toArray
+        ->Array.map(item => item->Internal.getItemBlockNumber)
 
       t.expect(blockNumbers, ~message="Buffer should contain block items for blocks 0-10").toEqual([
         0,
@@ -4269,7 +4284,7 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
       ),
       startBlock: 0,
       endBlock: None,
-      buffer: [],
+      buffer: ItemBuffer.make(),
       normalSelection,
       latestOnBlockBlockNumber: 0,
       maxOnBlockBufferSize: 10000,
@@ -4343,7 +4358,7 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
     ),
     startBlock: 0,
     endBlock: None,
-    buffer: [],
+    buffer: ItemBuffer.make(),
     normalSelection,
     latestOnBlockBlockNumber: 0,
     maxOnBlockBufferSize: 10000,
@@ -4427,7 +4442,7 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
     ),
     startBlock: 0,
     endBlock: None,
-    buffer: [],
+    buffer: ItemBuffer.make(),
     normalSelection,
     latestOnBlockBlockNumber: 0,
     maxOnBlockBufferSize: 10000,
@@ -4651,7 +4666,7 @@ describe("FetchState.getNextQuery target containment", () => {
     ),
     startBlock: 0,
     endBlock: None,
-    buffer: [],
+    buffer: ItemBuffer.make(),
     normalSelection,
     latestOnBlockBlockNumber: partition.latestFetchedBlock,
     maxOnBlockBufferSize: 10000,
@@ -4785,7 +4800,7 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
     ),
     startBlock: 0,
     endBlock: None,
-    buffer: [],
+    buffer: ItemBuffer.make(),
     normalSelection,
     latestOnBlockBlockNumber: 0,
     maxOnBlockBufferSize: 10000,
@@ -4882,7 +4897,7 @@ describe("Response density and source range capacity update independently", () =
     ),
     startBlock: 0,
     endBlock: None,
-    buffer: [],
+    buffer: ItemBuffer.make(),
     normalSelection,
     latestOnBlockBlockNumber: 0,
     maxOnBlockBufferSize: 10000,
@@ -4971,68 +4986,6 @@ describe("Response density and source range capacity update independently", () =
   })
 })
 
-describe("mergeIntoBuffer", () => {
-  it("merges an unsorted response into the sorted buffer and drops duplicates", t => {
-    let buffer = [mockEvent(~blockNumber=1), mockEvent(~blockNumber=3), mockEvent(~blockNumber=5)]
-    let newItems = [
-      mockEvent(~blockNumber=4),
-      mockEvent(~blockNumber=2),
-      mockEvent(~blockNumber=3), // duplicate of the buffer's block 3
-      mockEvent(~blockNumber=4), // duplicate within the response
-    ]
-    t.expect(buffer->FetchState.mergeIntoBuffer(newItems)).toEqual([
-      mockEvent(~blockNumber=1),
-      mockEvent(~blockNumber=2),
-      mockEvent(~blockNumber=3),
-      mockEvent(~blockNumber=4),
-      mockEvent(~blockNumber=5),
-    ])
-  })
-
-  it("keeps two registrations for one log (equal block+logIndex, distinct index)", t => {
-    let newItems = [
-      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=1),
-      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=0),
-    ]
-    t.expect([]->FetchState.mergeIntoBuffer(newItems)).toEqual([
-      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=0),
-      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=1),
-    ])
-  })
-
-  it("runs a block item after every event of its block, whatever the log index", t => {
-    // The item kind separates the two runs, so no log index can leapfrog the
-    // block handler. SVM keys instructions by transaction index, which climbs
-    // far past anything an EVM log index reaches.
-    let event = mockEvent(~blockNumber=7, ~logIndex=1_500)
-    let blockItem = mockBlockItem(~blockNumber=7)
-    t.expect([]->FetchState.mergeIntoBuffer([blockItem, event])).toEqual([event, blockItem])
-  })
-
-  it("keeps a deep call and a later transaction's call distinct", t => {
-    // Guards the pair that the superseded packed key conflated: it folded the
-    // path into the transaction's stride, so `tx 0, path [0,0,0]` and
-    // `tx 16, path [0,0]` produced one key and the merge dropped one of them.
-    let deepInFirstTx = mockEvent(~blockNumber=7, ~logIndex=0, ~orderPath=[0, 0, 0])
-    let innerInLaterTx = mockEvent(~blockNumber=7, ~logIndex=16, ~orderPath=[0, 0])
-    t.expect([]->FetchState.mergeIntoBuffer([innerInLaterTx, deepInFirstTx])).toEqual([
-      deepInFirstTx,
-      innerInLaterTx,
-    ])
-  })
-
-  it("orders sibling calls of one transaction by path, and dedupes an exact repeat", t => {
-    let outer = mockEvent(~blockNumber=7, ~logIndex=3, ~orderPath=[1])
-    let inner = mockEvent(~blockNumber=7, ~logIndex=3, ~orderPath=[1, 0])
-    let nextOuter = mockEvent(~blockNumber=7, ~logIndex=3, ~orderPath=[2])
-    t.expect([]->FetchState.mergeIntoBuffer([nextOuter, inner, outer, inner])).toEqual([
-      outer,
-      inner,
-      nextOuter,
-    ])
-  })
-})
-
 describe("FetchState.getNextQuery caps per-chain concurrency", () => {
   let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let addresses = TestAddresses.setOf([mockAddress0])
@@ -5074,7 +5027,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
     ),
     startBlock: 0,
     endBlock: None,
-    buffer: [],
+    buffer: ItemBuffer.make(),
     normalSelection,
     latestOnBlockBlockNumber: 0,
     maxOnBlockBufferSize: 10000,
@@ -5480,7 +5433,7 @@ describe("FetchState client-side address filtering", () => {
         (frontierAfterSettled, readyAfterSettled),
         (
           afterNewGeneration->FetchState.bufferBlockNumber,
-          afterNewGeneration.buffer->Array.map(Internal.getItemBlockNumber),
+          afterNewGeneration.buffer->ItemBuffer.toArray->Array.map(Internal.getItemBlockNumber),
           afterNewGeneration->FetchState.bufferReadyCount,
         ),
       ),

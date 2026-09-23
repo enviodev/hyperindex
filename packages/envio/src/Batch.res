@@ -12,7 +12,7 @@ type chainAfterBatch = {
   progressBlockTime: option<int>,
   sourceBlockNumber: int,
   totalEventsProcessed: float,
-  fetchState: FetchState.t,
+  chainId: ChainId.t,
   isProgressAtHeadWhenBatchCreated: bool,
 }
 
@@ -68,7 +68,6 @@ let getProgressedChainsById = {
   let getChainAfterBatchIfProgressed = (
     ~chainBeforeBatch: chainBeforeBatch,
     ~progressBlockNumberAfterBatch,
-    ~fetchStateAfterBatch,
     ~counts: chainBatchCounts,
   ) => {
     // The check is sufficient, since we guarantee to include a full block in a batch
@@ -84,7 +83,7 @@ let getProgressedChainsById = {
             sourceBlockNumber: chainBeforeBatch.sourceBlockNumber,
             totalEventsProcessed: chainBeforeBatch.totalEventsProcessed +.
             counts.eventsProcessed->Int.toFloat,
-            fetchState: fetchStateAfterBatch,
+            chainId: chainBeforeBatch.fetchState.chainId,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
             chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.blockLag,
           }: chainAfterBatch
@@ -118,26 +117,17 @@ let getProgressedChainsById = {
       | None => chainBeforeBatch.progressBlockNumber
       }
 
-      switch switch countsPerChain->Utils.Dict.dangerouslyGetNonOption(
-        fetchState.chainId->ChainId.toString,
+      switch getChainAfterBatchIfProgressed(
+        ~chainBeforeBatch,
+        ~counts=switch countsPerChain->Utils.Dict.dangerouslyGetNonOption(
+          fetchState.chainId->ChainId.toString,
+        ) {
+        | Some(counts) => counts
+        // Skip not affected chains
+        | None => {size: 0, eventsProcessed: 0}
+        },
+        ~progressBlockNumberAfterBatch,
       ) {
-      | Some(counts) =>
-        let leftItems = fetchState.buffer->Array.slice(~start=counts.size)
-        getChainAfterBatchIfProgressed(
-          ~chainBeforeBatch,
-          ~counts,
-          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(~mutItems=leftItems),
-          ~progressBlockNumberAfterBatch,
-        )
-      // Skip not affected chains
-      | None =>
-        getChainAfterBatchIfProgressed(
-          ~chainBeforeBatch,
-          ~counts={size: 0, eventsProcessed: 0},
-          ~fetchStateAfterBatch=chainBeforeBatch.fetchState,
-          ~progressBlockNumberAfterBatch,
-        )
-      } {
       | Some(progressedChain) =>
         progressedChainsById->ChainId.Dict.set(chainBeforeBatch.fetchState.chainId, progressedChain)
       | None => ()
@@ -257,13 +247,14 @@ let make = (
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
     let chainEventsProcessed = ref(0)
     if chainBatchSize > 0 {
+      // Left buffered: ChainState.advanceAfterBatch takes them off once the batch
+      // is created.
+      let chainItems = fetchState.buffer->ItemBuffer.peek(~count=chainBatchSize)
+      let newEventFlags = fetchState.buffer->ItemBuffer.newEventFlags(~count=chainBatchSize)
       for idx in 0 to chainBatchSize - 1 {
-        let item = fetchState.buffer->Array.getUnsafe(idx)
+        let item = chainItems->Array.getUnsafe(idx)
         let blockNumber = item->Internal.getItemBlockNumber
-        // The buffer is sorted, so a log's items are consecutive: the first of
-        // them is the only one that counts as an event.
-        let isNewEvent =
-          idx === 0 || !(fetchState.buffer->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
+        let isNewEvent = newEventFlags->TypedArray.get(idx)->Option.getUnsafe === 1
         if isNewEvent {
           chainEventsProcessed := chainEventsProcessed.contents + 1
         }

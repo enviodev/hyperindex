@@ -165,11 +165,11 @@ let createBatch = (
 // to enter the threshold together — and, in a split run, whether the rest of the
 // run has too. Chains enter it as one indexer, so one chain still backfilling
 // holds the others back whatever process it runs in.
-let isReadyToEnterReorgThreshold = (crossChainState: t, ~batch) =>
+let isReadyToEnterReorgThreshold = (crossChainState: t) =>
   !crossChainState.holdRealtime &&
   crossChainState.chainStates
   ->Dict.valuesToArray
-  ->Array.every(cs => cs->ChainState.isReadyToEnterReorgThresholdAfterBatch(~batch))
+  ->Array.every(ChainState.isReadyToEnterReorgThreshold)
 
 // Said by each chain rather than once for the indexer: what crossing changes
 // is a chain's own, and the chains of a split run cross in processes that can

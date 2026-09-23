@@ -123,7 +123,7 @@ describe("ChainState reorg threshold", () => {
           progressBlockTime: None,
           sourceBlockNumber: 500,
           totalEventsProcessed: 0.,
-          fetchState,
+          chainId: fetchState.chainId,
           isProgressAtHeadWhenBatchCreated: false,
         }: Batch.chainAfterBatch
       ),

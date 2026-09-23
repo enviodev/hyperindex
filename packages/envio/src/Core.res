@@ -12,6 +12,7 @@ type transactionStoreCtor
 type blockStoreCtor
 type clickHouseSinkCtor
 type addressStoreCtor
+type itemBufferCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
 type fromUserApiOptions = {
@@ -47,6 +48,8 @@ type addon = {
   blockStore: blockStoreCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
+  @as("ItemBuffer")
+  itemBuffer: itemBufferCtor,
   @as("ClickHouseSink")
   clickHouseSink: clickHouseSinkCtor,
   @as("MockHyperSyncServer")

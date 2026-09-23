@@ -124,7 +124,6 @@ let toMetrics: t => Metrics.chainMetrics
 let toChainMetadata: t => InternalTable.Chains.metaFields
 let toChainBeforeBatch: (t, ~isRealtime: bool) => Batch.chainBeforeBatch
 let isReadyToEnterReorgThreshold: t => bool
-let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
 type finished = EndBlock(int) | Backfill(int)
@@ -171,7 +170,7 @@ let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
 let isInReorgThreshold: t => bool
 let shouldSaveHistory: t => bool
-let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
+let advanceAfterBatch: (t, ~batch: Batch.t) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit
 // What a rollback's progress diff says about one chain: the block its surviving

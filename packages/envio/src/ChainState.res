@@ -1107,32 +1107,19 @@ let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
   }
 }
 
-// Whether the chain's post-batch fetch frontier is ready to cross into the reorg
-// threshold, using the batch's progressed frontier when this chain advanced.
-// The same question asked of where the chain stands now rather than of where a
-// batch would leave it. Entering the threshold is what lifts the pre-threshold
-// lag, so a chain waiting to enter it has fetched as far as it can.
+// Whether the chain's fetch frontier is ready to cross into the reorg threshold.
+// Entering the threshold is what lifts the pre-threshold lag, so a chain waiting
+// to enter it has fetched as far as it can.
 let isReadyToEnterReorgThreshold = (cs: t) =>
   cs.fetchState->FetchState.isReadyToEnterReorgThreshold(~tolerance=cs.reorgThresholdReadyTolerance)
 
-let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
-  let fetchState = switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(
-    cs.fetchState.chainId,
-  ) {
-  | Some(chainAfterBatch) => chainAfterBatch.fetchState
-  | None => cs.fetchState
-  }
-  fetchState->FetchState.isReadyToEnterReorgThreshold(~tolerance=cs.reorgThresholdReadyTolerance)
-}
-
-// Commit the post-batch fetch frontier for a chain that progressed in the batch,
-// applying blockLag when this batch also crosses into the reorg threshold.
-let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
+// Take a batch's items off the buffer of a chain that progressed in it. Creating
+// the batch leaves them buffered, so this must follow it before any response is
+// applied to the chain.
+let advanceAfterBatch = (cs: t, ~batch: Batch.t) =>
   switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(cs.fetchState.chainId) {
   | Some(chainAfterBatch) =>
-    cs.fetchState = enteringReorgThreshold
-      ? chainAfterBatch.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
-      : chainAfterBatch.fetchState
+    cs.fetchState = cs.fetchState->FetchState.consumeItems(~count=chainAfterBatch.batchSize)
 
     // The batch's items just left the buffer, so the remaining buffer's span
     // starts at the batch's progress.

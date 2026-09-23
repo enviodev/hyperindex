@@ -1477,7 +1477,7 @@ let rec writeBatch = async (
                 ~progressedChains=batch.progressedChainsById->Utils.Dict.mapValuesToArray((
                   chainAfterBatch
                 ): InternalTable.Chains.progressedChain => {
-                  chainId: chainAfterBatch.fetchState.chainId,
+                  chainId: chainAfterBatch.chainId,
                   progressBlockNumber: chainAfterBatch.progressBlockNumber,
                   progressBlockTime: chainAfterBatch.progressBlockTime,
                   sourceBlockNumber: chainAfterBatch.sourceBlockNumber,

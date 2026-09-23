@@ -852,8 +852,10 @@ type t = {
   // How much blocks behind the head we should query
   // Needed to query before entering reorg threshold
   blockLag: int,
-  // Buffer of items ordered from earliest to latest
-  buffer: array<Internal.item>,
+  // Items ordered from earliest to latest. Mutated in place and shared across
+  // fetchState versions, like a partition's mutPendingQueries: only the latest
+  // version of a chain's fetch state may be read from or written through.
+  buffer: ItemBuffer.t,
   // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
   // size). Event fetch depth is bounded separately, by CrossChainState's
   // cross-chain admission against the indexer-wide buffer pool.
@@ -883,181 +885,8 @@ let bufferBlockNumber = ({latestOnBlockBlockNumber, optimizedPartitions}: t) => 
 
 // Number of buffered items at or below the ready frontier (processable now,
 // i.e. not stuck behind a gap from a lagging partition or out-of-order chunk).
-// The buffer is kept sorted, so binary-search the frontier in O(log n).
-let bufferReadyCount = (fetchState: t) => {
-  let frontier = fetchState->bufferBlockNumber
-  let buffer = fetchState.buffer
-  let lo = ref(0)
-  let hi = ref(buffer->Array.length)
-  while lo.contents < hi.contents {
-    let mid = (lo.contents + hi.contents) / 2
-    if buffer->Array.getUnsafe(mid)->Internal.getItemBlockNumber <= frontier {
-      lo := mid + 1
-    } else {
-      hi := mid
-    }
-  }
-  lo.contents
-}
-
-/*
-Comparitor for two events from the same chain. No need for chain id or timestamp
-*/
-let getRegistrationIndex = (item: Internal.item): int =>
-  switch item {
-  | Event({onEventRegistration}) => onEventRegistration.index
-  | Block({onBlockRegistration}) => onBlockRegistration.index
-  }
-
-// Lexicographic order on two call paths, parent before child: `[1]` precedes
-// `[1, 0]`, which is the order the runtime executed them in.
-let comparePath = (a: array<int>, b: array<int>): int => {
-  let la = a->Array.length
-  let lb = b->Array.length
-  let shared = la < lb ? la : lb
-  let i = ref(0)
-  let result = ref(0)
-  while result.contents === 0 && i.contents < shared {
-    let x = a->Array.getUnsafe(i.contents)
-    let y = b->Array.getUnsafe(i.contents)
-    if x !== y {
-      result := (x < y ? -1 : 1)
-    }
-    i := i.contents + 1
-  }
-  if result.contents !== 0 {
-    result.contents
-  } else if la === lb {
-    0
-  } else if la < lb {
-    -1
-  } else {
-    1
-  }
-}
-
-// Cold tail of `compareBufferItem`, out of line so the block/kind/log-index
-// comparison that every merge step runs stays small enough for V8 to inline.
-let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
-  // Two items an ecosystem's scalar key can't separate: instructions of one
-  // Solana transaction, ordered by their position in its CPI tree.
-  let byPath = switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
-  | (Value(pa), Value(pb)) => comparePath(pa, pb)
-  | _ => 0
-  }
-  if byPath !== 0 {
-    byPath
-  } else {
-    let ia = a->getRegistrationIndex
-    let ib = b->getRegistrationIndex
-    ia < ib ? -1 : ia > ib ? 1 : 0
-  }
-}
-
-// Total order on buffer items: block, then item kind, then the ecosystem's
-// within-block order, then registration index. Returns a plain int (-1/0/1)
-// with explicit field comparisons so it can be called directly from the
-// merge/insertion loops below — no Array.sort callback, no allocated key. `0`
-// means a true duplicate: the same log routed to the same registration (two
-// registrations for one log differ by index and are kept).
-//
-// Kind outranks the log index so that every event of a block precedes that
-// block's handlers by construction. A sentinel log index for block items
-// would put the same guarantee at the mercy of how large an ecosystem's key
-// grows — which is how SVM, keyed by transaction index, came to run slot
-// handlers ahead of most of a slot's instructions.
-let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
-  let ba = a->Internal.getItemBlockNumber
-  let bb = b->Internal.getItemBlockNumber
-  if ba != bb {
-    ba < bb ? -1 : 1
-  } else {
-    let ka = a->Internal.getItemKind
-    let kb = b->Internal.getItemKind
-    if ka !== kb {
-      ka < kb ? -1 : 1
-    } else {
-      let la = a->Internal.getItemLogIndex
-      let lb = b->Internal.getItemLogIndex
-      if la != lb {
-        la < lb ? -1 : 1
-      } else {
-        compareTiebreak(a, b)
-      }
-    }
-  }
-}
-
-// Whether two adjacent buffer items came from one log routed to two
-// registrations: everything `compareBufferItem` orders on except the
-// registration index is equal. Only meaningful on neighbours of a sorted
-// buffer, where such items sit next to each other.
-let isSameLog = (a: Internal.item, b: Internal.item): bool =>
-  a->Internal.getItemKind === 0 &&
-  b->Internal.getItemKind === 0 &&
-  a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
-  a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
-  switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
-  | (Value(pa), Value(pb)) => comparePath(pa, pb) === 0
-  | _ => true
-  }
-
-// Merge a maybe-unsorted `newItems` run into the already-sorted, already-deduped
-// `buffer`, dropping items equal on every component of `compareBufferItem`.
-// Single linear pass over both runs after ordering `newItems` in place; every
-// comparison is a direct `compareBufferItem` call (V8 inlines it) rather than a
-// callback through `Array.sort`.
-let mergeIntoBuffer = (buffer: array<Internal.item>, newItems: array<Internal.item>): array<
-  Internal.item,
-> => {
-  let n = newItems->Array.length
-  // Insertion sort: a source response is small and usually already ascending,
-  // so this is ~O(n) here.
-  for i in 1 to n - 1 {
-    let x = newItems->Array.getUnsafe(i)
-    let j = ref(i - 1)
-    while j.contents >= 0 && compareBufferItem(newItems->Array.getUnsafe(j.contents), x) > 0 {
-      newItems->Array.setUnsafe(j.contents + 1, newItems->Array.getUnsafe(j.contents))
-      j := j.contents - 1
-    }
-    newItems->Array.setUnsafe(j.contents + 1, x)
-  }
-
-  let m = buffer->Array.length
-  let merged = []
-  let last = ref(None)
-  let push = item =>
-    switch last.contents {
-    | Some(l) if compareBufferItem(l, item) === 0 => ()
-    | _ => {
-        merged->Array.push(item)
-        last := Some(item)
-      }
-    }
-
-  let i = ref(0)
-  let j = ref(0)
-  while i.contents < m && j.contents < n {
-    let a = buffer->Array.getUnsafe(i.contents)
-    let b = newItems->Array.getUnsafe(j.contents)
-    if compareBufferItem(a, b) <= 0 {
-      push(a)
-      i := i.contents + 1
-    } else {
-      push(b)
-      j := j.contents + 1
-    }
-  }
-  while i.contents < m {
-    push(buffer->Array.getUnsafe(i.contents))
-    i := i.contents + 1
-  }
-  while j.contents < n {
-    push(newItems->Array.getUnsafe(j.contents))
-    j := j.contents + 1
-  }
-  merged
-}
+let bufferReadyCount = (fetchState: t) =>
+  fetchState.buffer->ItemBuffer.readyCount(~frontier=fetchState->bufferBlockNumber)
 
 // Appends Block items produced by the onBlock handlers for every block in
 // (fromBlock, maxBlockNumber] into mutItems and returns the new
@@ -1116,29 +945,16 @@ let appendOnBlockItems = (
 }
 
 /*
-Update fetchState, merge registers and recompute derived values.
-Runs partition optimization when partitions change.
+Update fetchState and recompute derived values, topping the buffer up with the
+onBlock items its new state allows. Items are added to the buffer before this
+runs, so the onBlock cap sees them.
 */
 let updateInternal = (
   fetchState: t,
   ~optimizedPartitions=fetchState.optimizedPartitions,
-  ~mutItems=?,
-  // Set when the caller already passes a sorted, deduped buffer (hot paths merge
-  // via mergeIntoBuffer or filter the sorted buffer). Otherwise mutItems is
-  // normalized here, so callers can hand over items in any order.
-  ~mutItemsSorted=false,
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
 ): t => {
-  // The buffer to build on: the caller's items (normalized to sorted if needed),
-  // or the current buffer when only onBlock items change.
-  let base = switch mutItems {
-  | Some(items) => mutItemsSorted ? items : []->mergeIntoBuffer(items)
-  | None => fetchState.buffer
-  }
-
-  // onBlock items are generated as their own ascending run and
-  // folded into `base` by the single merge below.
   let blockItems = []
   let latestOnBlockBlockNumber = switch fetchState.onBlockRegistrations {
   | [] => knownHeight
@@ -1151,8 +967,8 @@ let updateInternal = (
     // chain hasn't reached, and a response is applied before the height it
     // reported, so its events can run past the height still known here.
     let maxBlockNumber = Pervasives.min(
-      switch base->Array.get(fetchState.maxOnBlockBufferSize - 1) {
-      | Some(item) => item->Internal.getItemBlockNumber
+      switch fetchState.buffer->ItemBuffer.blockNumberAt(fetchState.maxOnBlockBufferSize - 1) {
+      | Some(blockNumber) => blockNumber
       | None =>
         switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
         | None => knownHeight
@@ -1170,8 +986,9 @@ let updateInternal = (
       ~maxOnBlockBufferSize=fetchState.maxOnBlockBufferSize,
     )
   }
+  fetchState.buffer->ItemBuffer.insert(blockItems)
 
-  let updatedFetchState = {
+  {
     startBlock: fetchState.startBlock,
     endBlock: fetchState.endBlock,
     normalSelection: fetchState.normalSelection,
@@ -1182,16 +999,10 @@ let updateInternal = (
     latestOnBlockBlockNumber,
     blockLag,
     knownHeight,
-    // Single merge point: fold any onBlock items into the sorted base buffer.
-    buffer: switch blockItems {
-    | [] => base
-    | blockItems => base->mergeIntoBuffer(blockItems)
-    },
+    buffer: fetchState.buffer,
     firstEventBlock: fetchState.firstEventBlock,
     clientFilterAddressThreshold: fetchState.clientFilterAddressThreshold,
   }
-
-  updatedFetchState
 }
 
 // Move a contract to client-side address filtering, recording why.
@@ -1252,7 +1063,7 @@ let claimedFetchedBlock = (p: partition, ~knownHeight) =>
 //   contracts are client-filtered, plus any prior backfill) become one bounded
 //   backfill partition covering [their min frontier, that claimed block]:
 //   getNextQuery caps its queries at mergeBlock and handleQueryResponse deletes
-//   it on arrival. The overlap it re-delivers is deduped by mergeIntoBuffer, and
+//   it on arrival. The overlap it re-delivers is deduped by the buffer, and
 //   the re-fetch doubles as history for freshly registered addresses: events
 //   dropped before the address was registered now pass the address gate.
 // - A dynamic partition for a contract the standing partition already covers is
@@ -1916,24 +1727,17 @@ Throws if the partition with given query cannot be found (unexpected)
 newItems are ordered earliest to latest (as they are returned from the worker)
 */
 let handleQueryResult = (fetchState: t, ~query: query, ~latestFetchedBlock: int, ~newItems): t => {
-  fetchState->updateInternal(
-    ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
+  let optimizedPartitions =
+    fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,
       ~knownHeight=fetchState.knownHeight,
       ~itemsCount=newItems->Array.length,
       ~latestFetchedBlock,
-    ),
-    // Merge the response into the sorted buffer, dropping duplicates an
-    // overlapping query may re-deliver (e.g. an over-fetched log matched by two
-    // partitions). Absorbs sorting too, so updateInternal doesn't re-sort.
-    ~mutItemsSorted=true,
-    ~mutItems=?{
-      switch newItems {
-      | [] => None
-      | _ => Some(fetchState.buffer->mergeIntoBuffer(newItems))
-      }
-    },
-  )
+    )
+  // Drops the duplicates an overlapping query may re-deliver (e.g. an
+  // over-fetched log matched by two partitions).
+  fetchState.buffer->ItemBuffer.insert(newItems)
+  fetchState->updateInternal(~optimizedPartitions)
 }
 
 type nextQuery =
@@ -2590,33 +2394,27 @@ let getNextQuery = (
 }
 
 let hasReadyItem = ({buffer} as fetchState: t) => {
-  switch buffer->Array.get(0) {
-  | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
+  switch buffer->ItemBuffer.blockNumberAt(0) {
+  | Some(blockNumber) => blockNumber <= fetchState->bufferBlockNumber
   | None => false
   }
 }
 
-let getReadyItemsCount = (fetchState: t, ~targetSize: int, ~fromItem) => {
-  let readyBlockNumber = ref(fetchState->bufferBlockNumber)
-  let acc = ref(0)
-  let isFinished = ref(false)
-  while !isFinished.contents {
-    switch fetchState.buffer->Array.get(fromItem + acc.contents) {
-    | Some(item) =>
-      let itemBlockNumber = item->Internal.getItemBlockNumber
-      if itemBlockNumber <= readyBlockNumber.contents {
-        acc := acc.contents + 1
-        if acc.contents === targetSize {
-          // Should finish accumulating items from the same block
-          readyBlockNumber := itemBlockNumber
-        }
-      } else {
-        isFinished := true
-      }
-    | None => isFinished := true
-    }
-  }
-  acc.contents
+// Ready items from `fromItem` on: `targetSize` of them, extended to the end of
+// the last one's block so a batch never splits a block, or every ready item
+// when fewer are ready.
+let getReadyItemsCount = (fetchState: t, ~targetSize: int, ~fromItem) =>
+  fetchState.buffer->ItemBuffer.readyItemsCount(
+    ~targetSize,
+    ~fromItem,
+    ~frontier=fetchState->bufferBlockNumber,
+  )
+
+// Takes a processed batch's items off the front of the buffer, making room for
+// the onBlock items they held back.
+let consumeItems = (fetchState: t, ~count) => {
+  fetchState.buffer->ItemBuffer.consume(~count)
+  fetchState->updateInternal
 }
 
 /**
@@ -2778,7 +2576,7 @@ let make = (
   // For onBlock-only indexers (e.g. SVM onSlot) there are no partitions to drive
   // fetching, so without seeding the buffer here getNextQuery would return
   // NothingToQuery and the indexer would get stuck.
-  let buffer = []
+  let initialBlockItems = []
   let latestOnBlockBlockNumber = switch onBlockRegistrations {
   // As updateInternal keeps it: with nothing to generate per block the pointer
   // is the head cap on the buffer frontier, and left at the progress block it
@@ -2792,7 +2590,7 @@ let make = (
     | Some(latestFullyFetchedBlock) => Pervasives.min(latestFullyFetchedBlock, knownHeight)
     }
     appendOnBlockItems(
-      ~mutItems=buffer,
+      ~mutItems=initialBlockItems,
       ~onBlockRegistrations,
       ~indexerStartBlock=startBlock,
       ~fromBlock=progressBlockNumber,
@@ -2813,7 +2611,7 @@ let make = (
     onBlockRegistrations,
     maxOnBlockBufferSize,
     knownHeight,
-    buffer,
+    buffer: ItemBuffer.fromItems(initialBlockItems),
     firstEventBlock,
     clientFilterAddressThreshold,
   }
@@ -2821,7 +2619,7 @@ let make = (
   fetchState
 }
 
-let bufferSize = ({buffer}: t) => buffer->Array.length
+let bufferSize = ({buffer}: t) => buffer->ItemBuffer.length
 
 let partitionsCount = ({optimizedPartitions}: t) => optimizedPartitions->OptimizedPartitions.count
 
@@ -2960,6 +2758,7 @@ let rollback = (
     ~knownHeight=fetchState.knownHeight,
   )
 
+  fetchState.buffer->ItemBuffer.truncateAbove(~blockNumber=targetBlockNumber)
   let rolledBack = {
     ...fetchState,
     // TODO: Test this. Currently it's not tested.
@@ -2967,18 +2766,7 @@ let rollback = (
       fetchState.latestOnBlockBlockNumber,
       targetBlockNumber,
     ),
-  }->updateInternal(
-    ~optimizedPartitions,
-    // Filtering the sorted buffer keeps it sorted and deduped.
-    ~mutItemsSorted=true,
-    ~mutItems=fetchState.buffer->Array.filter(item =>
-      switch item {
-      | Event({blockNumber})
-      | Block({blockNumber}) => blockNumber
-      } <=
-      targetBlockNumber
-    ),
-  )
+  }->updateInternal(~optimizedPartitions)
   {fetchState: rolledBack, rolledBackAddresses}
 }
 
@@ -3071,8 +2859,8 @@ let getProgressPercentage = (fetchState: t) => {
     if totalRange <= 0 {
       0.
     } else {
-      let progress = switch fetchState.buffer->Array.get(0) {
-      | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
+      let progress = switch fetchState.buffer->ItemBuffer.blockNumberAt(0) {
+      | Some(blockNumber) => blockNumber - firstEventBlock
       | None => fetchState->bufferBlockNumber - firstEventBlock
       }
       progress->Int.toFloat /. totalRange->Int.toFloat
@@ -3082,8 +2870,8 @@ let getProgressPercentage = (fetchState: t) => {
 
 let sortForBatch = {
   let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
-    switch buffer->Array.get(batchSizeTarget - 1) {
-    | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
+    switch buffer->ItemBuffer.blockNumberAt(batchSizeTarget - 1) {
+    | Some(blockNumber) => blockNumber <= fetchState->bufferBlockNumber
     | None => false
     }
   }
@@ -3114,9 +2902,8 @@ let sortForBatch = {
 
 let getProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
-  switch buffer->Array.get(index) {
-  | Some(item) if bufferBlockNumber >= item->Internal.getItemBlockNumber =>
-    item->Internal.getItemBlockNumber - 1
+  switch buffer->ItemBuffer.blockNumberAt(index) {
+  | Some(blockNumber) if bufferBlockNumber >= blockNumber => blockNumber - 1
   | _ => bufferBlockNumber
   }
 }

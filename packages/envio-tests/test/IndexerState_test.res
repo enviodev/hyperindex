@@ -158,9 +158,7 @@ let getItemKey = (item: Internal.item) =>
 let advanceChains = (state: IndexerState.t, ~batch) =>
   state
   ->IndexerState.chainStates
-  ->Utils.Dict.forEach(cs =>
-    cs->ChainState.advanceAfterBatch(~batch, ~enteringReorgThreshold=false)
-  )
+  ->Utils.Dict.forEach(cs => cs->ChainState.advanceAfterBatch(~batch))
 
 describe("IndexerState", () => {
   //Test was previously popBlockBatchItems

@@ -122,6 +122,7 @@ describe("FetchState onBlock functionality", () => {
 
     let lastBlockItem =
       updatedFetchState.buffer
+      ->ItemBuffer.toArray
       ->Array.filter(
         item =>
           switch item {
@@ -163,7 +164,7 @@ describe("FetchState onBlock functionality", () => {
       )
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.buffer
+    let queue = updatedFetchState.buffer->ItemBuffer.toArray
     let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items for blocks 0, 2, 4, 6, 8, 10 (interval=2, startBlock=0) plus event at block 5
@@ -210,7 +211,7 @@ describe("FetchState onBlock functionality", () => {
       )
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.buffer
+    let queue = updatedFetchState.buffer->ItemBuffer.toArray
     let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items starting from block 5 (startBlock=5, interval=1) plus event at block 5
@@ -258,7 +259,7 @@ describe("FetchState onBlock functionality", () => {
       )
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.buffer
+    let queue = updatedFetchState.buffer->ItemBuffer.toArray
     let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items that don't exceed endBlock=8 plus event at block 5
@@ -312,7 +313,7 @@ describe("FetchState onBlock functionality", () => {
       )
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.buffer
+    let queue = updatedFetchState.buffer->ItemBuffer.toArray
     let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items for both configs plus event at block 5
@@ -367,7 +368,7 @@ describe("FetchState onBlock functionality", () => {
       )
 
     // Verify that no block items were added when onBlock configs are not provided
-    let queue = updatedFetchState.buffer
+    let queue = updatedFetchState.buffer->ItemBuffer.toArray
     let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have only the event item

@@ -195,7 +195,7 @@ let prepareRollbackDiff = async (
 // ones the database hasn't seen yet.
 let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
   batch.progressedChainsById->Utils.Dict.forEach(progressedChain => {
-    let chainId = progressedChain.fetchState.chainId
+    let chainId = progressedChain.chainId
     let chainState = state->IndexerState.getChainState(~chainId)
 
     // Most batches register nothing, so the checkpoints are only collected for a
