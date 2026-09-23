@@ -77,7 +77,7 @@ describe("Durably caught up", () => {
     )
     cs->ChainState.updateKnownHeight(~knownHeight=5)
 
-    t.expect(cs->ChainState.isDurablyCaughtUp).toBe(false)
+    t.expect(cs->ChainState.hasCaughtUp).toBe(false)
   })
 })
 

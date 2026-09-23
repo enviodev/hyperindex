@@ -426,7 +426,6 @@ let getLatestValidScannedBlock = (cs: t, ~blockStore: BlockStore.t, ~blockNumber
   ->BlockStore.latestValidBlockFromStore(blockStore, blockNumbers)
   ->Null.toOption
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
-let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let committedProgressBlockTime = (cs: t) => cs.committedProgressBlockTime
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
@@ -660,30 +659,6 @@ let hasProcessedToEndblock = (cs: t) => {
   }
 }
 
-// Where this chain has finished indexing, the first time it gets there.
-// `EndBlock` is terminal: the chain indexed everything it was configured to.
-// `Backfill` is the rest of the history, up to the point where blocks can
-// still be reorged, which is as far as a chain indexes before the indexer
-// crosses into them.
-type finished = EndBlock(int) | Backfill(int)
-
-let takeFinished = (cs: t) =>
-  if cs.reportedFinished {
-    None
-  } else {
-    switch (cs.fetchState.endBlock, cs->hasProcessedToEndblock, cs.isProgressAtHead) {
-    | (Some(endBlock), true, _) => {
-        cs.reportedFinished = true
-        Some(EndBlock(endBlock))
-      }
-    | (_, _, true) => {
-        cs.reportedFinished = true
-        Some(Backfill(cs.committedProgressBlockNumber))
-      }
-    | _ => None
-    }
-  }
-
 // Caught up as judged by persisted values alone: progress reached the endBlock,
 // or the head the previous run had already observed (less the lag that holds the
 // tip back). Unlike `isFetchingAtHead` this doesn't move when a fresh height
@@ -707,6 +682,45 @@ let isDurablyCaughtUp = (cs: t) => {
       Pervasives.max(0, fetchState.knownHeight - cs.chainConfig.blockLag)
   atEndBlock || atHead
 }
+
+// This chain has indexed everything there was to index: it reached its end
+// block, or its progress reached the head. The single reading of that, for
+// everything that turns on it — what the chain reports, and whether the whole
+// process may finalize.
+//
+// Both spellings, because neither covers the other: `isProgressAtHead` latches
+// the moment a batch's progress met the head known when it was created, which a
+// head that has since moved on would read as behind; `isDurablyCaughtUp` judges
+// the head as it stands, which is all a run resumed at the head has — it has no
+// batch to latch anything.
+let hasCaughtUp = (cs: t) => cs.isProgressAtHead || cs->isDurablyCaughtUp
+
+// Where this chain has finished indexing, the first time it gets there.
+// `EndBlock` is terminal: the chain indexed everything it was configured to.
+// `Backfill` is the rest of the history, up to the point where blocks can
+// still be reorged, which is as far as a chain indexes before the indexer
+// crosses into them.
+type finished = EndBlock(int) | Backfill(int)
+
+let takeFinished = (cs: t) =>
+  if cs.reportedFinished {
+    None
+  } else {
+    switch (cs.fetchState.endBlock, cs->hasProcessedToEndblock, cs->hasCaughtUp) {
+    | (Some(endBlock), true, _) => {
+        cs.reportedFinished = true
+        Some(EndBlock(endBlock))
+      }
+    | (_, _, true) => {
+        cs.reportedFinished = true
+        // Finishing a backfill happens in a run, and a chain resumed with its
+        // `ready_at` already committed did none in this one. Being at the end
+        // block, above, stays true across runs and is said on every one.
+        cs->isReady ? None : Some(Backfill(cs.committedProgressBlockNumber))
+      }
+    | _ => None
+    }
+  }
 
 let getHighestBlockBelowThreshold = (cs: t): int => {
   let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.maxReorgDepth

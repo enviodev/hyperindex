@@ -159,8 +159,6 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         // Can safely reset rollback state, since overwrite is not possible.
         state->IndexerState.clearRollback
         state->IndexerState.applyBatchProgress(~batch)
-        // Before the finalize below, so a chain says where it finished ahead of
-        // the process saying what it does about that.
         state->IndexerState.reportFinished
 
         // Backfilling → FinalizingIndexes → Ready. Awaiting here holds the

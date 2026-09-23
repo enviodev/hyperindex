@@ -254,13 +254,16 @@ let makeInitialState = (
       addressRowsByChain
       ->Utils.Dict.dangerouslyGetNonOption(chainIdStr)
       ->Option.getOr(AddressRows.emptySeedRows())
+    // The pinned startBlock resumes the chain rather than moving its start, so
+    // contract start blocks and onBlock intervals stay what config.yaml says.
+    // https://github.com/enviodev/hyperindex/issues/1656
     {
       Persistence.id: chain,
-      startBlock: processChainConfig.startBlock,
+      startBlock: config.chainMap->ChainMap.get(chain)->Config.startBlockOrZero,
       endBlock: processChainConfig.endBlock,
       sourceBlockNumber: processChainConfig.endBlock->Option.getOr(0),
       maxReorgDepth: 0, // No reorg support in test indexer
-      progressBlockNumber: -1,
+      progressBlockNumber: processChainConfig.startBlock - 1,
       progressBlockTime: None,
       numEventsProcessed: 0.,
       firstEventBlockNumber: None,

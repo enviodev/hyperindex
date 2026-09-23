@@ -187,6 +187,7 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
+  ~captureLogs=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
@@ -258,6 +259,7 @@ let run = async (
     ~onError?,
     ~onExit?,
     ~mapStorage?,
+    ~captureLogs?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
       await body(~indexer, ~source)
@@ -293,6 +295,7 @@ let it = (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
+  ~captureLogs=?,
   ~timeout=?,
   ~retry=?,
   body: (
@@ -322,6 +325,7 @@ let it = (
           ~onError?,
           ~onExit?,
           ~mapStorage?,
+          ~captureLogs?,
           (~indexer, ~source) => body(~t, ~indexer, ~source),
         )
     let register = (name, ~superviseRun) =>

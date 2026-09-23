@@ -35,6 +35,10 @@ type addressRow = {
   registrationBlock: int,
 }
 
+// A logged line as a test reads it: what was said, and the fields said with it
+// — without the ones pino adds to every line, which no test is about.
+type logEntry = {msg: string, params: dict<JSON.t>}
+
 type rec t = {
   getBatchWritePromise: unit => promise<unit>,
   getRollbackReadyPromise: unit => promise<unit>,
@@ -59,6 +63,9 @@ type rec t = {
   // `~chains` resumes the same schema driving only those chains, the way
   // `envio start --chain` does. The chains left out keep their stored state.
   restart: (~chains: array<ChainId.t>=?, unit) => promise<t>,
+  // Every line this run has logged so far, in order — the run's own and its
+  // chains'. Only for a run started with `~captureLogs`.
+  logs: unit => array<logEntry>,
   // Stands in for the supervisor's go-ahead in a run started with
   // `~holdRealtime`.
   releaseRealtime: unit => unit,
@@ -71,6 +78,41 @@ type rec t = {
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
+
+let parseLogLine = line =>
+  switch line->JSON.parseOrThrow->JSON.Decode.object {
+  | Some(fields) =>
+    fields
+    ->Dict.get("msg")
+    ->Option.flatMap(JSON.Decode.string)
+    ->Option.map(msg => {
+      msg,
+      params: fields
+      ->Dict.toArray
+      ->Array.filter(((key, _)) => key !== "msg" && key !== "level" && key !== "time")
+      ->Dict.fromArray,
+    })
+  | None => None
+  }
+
+// A logger writing into an array in this process, rather than through pino's
+// file transport: that one writes on a thread of its own, so a test would have
+// to wait for the line it has already logged to land.
+let makeLogCapture = () => {
+  let lines = []
+  let logger = Pino.MultiStreamLogger.makeWithMultiStream(
+    {
+      customLevels: Logging.logLevels,
+      level: #info,
+      // Empty base disables pid and hostname, as `Logging.makeLogger` does.
+      base: JSON.Encode.object(Dict.make()),
+    },
+    Pino.MultiStreamLogger.multistream([
+      {stream: {write: line => lines->Array.push(line)->ignore}, level: #info},
+    ]),
+  )
+  (logger, () => lines->Array.filterMap(parseLogLine))
+}
 
 // Runs `body` against a fresh indexer in a Postgres schema of its own, then
 // tears both down — so tests never stop an indexer by hand, and files can run
@@ -100,6 +142,11 @@ let run = async (
   // Runs after `restart` has stopped the previous indexer and before the next
   // one starts, so mocked sources can void what the stopped one left in flight.
   ~onIndexerStopped: unit => unit=() => (),
+  // Logs what the run says instead of silencing it, for a test about the
+  // reporting itself. A chain's logger is a child of whichever logger was
+  // installed when its chain state was built, so this has to be in place
+  // before the indexer starts rather than set from the body.
+  ~captureLogs=false,
   body: t => promise<unit>,
 ) => {
   // Postgres resources this run owns: one schema, plus every client and
@@ -107,6 +154,11 @@ let run = async (
   let pgSchema = TestPgSchema.make()
   let clients = []
   let stops = []
+
+  // One capture for the whole run, `restart` included, so a test reads the
+  // resumed indexer's lines after the ones that led to them.
+  let capture = captureLogs ? Some(makeLogCapture()) : None
+  let installedLogger = Logging.getLogger()
 
   // The ClickHouse leg writes through the sink Postgres storage attaches, into
   // a database of this run's own.
@@ -122,10 +174,14 @@ let run = async (
     | Some(chainIds) => config->Config.isolate(~chainIds)
     | None => config
     }
-    // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
-    switch Env.userLogLevel {
-    | None => Logging.setLogLevel(#silent)
-    | Some(_) => ()
+    switch capture {
+    | Some((logger, _)) => Logging.setLogger(logger)
+    | None =>
+      // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
+      switch Env.userLogLevel {
+      | None => Logging.setLogLevel(#silent)
+      | Some(_) => ()
+      }
     }
 
     switch clickHouseDatabase {
@@ -519,6 +575,14 @@ let run = async (
       },
       pg,
       stop,
+      logs: () =>
+        switch capture {
+        | Some((_, entries)) => entries()
+        | None =>
+          JsError.throwWithMessage(
+            "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",
+          )
+        },
       restart: async (~chains=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
@@ -574,6 +638,12 @@ let run = async (
     | Some(sql) => await attempt(() => sql->Sql.close)
     | None => ()
     }
+  }
+
+  // The logger is process-global, so a capturing run gives it back — after its
+  // teardown, which is still this run's to log.
+  if captureLogs {
+    Logging.setLogger(installedLogger)
   }
 
   switch (outcome, teardownFailure.contents) {
