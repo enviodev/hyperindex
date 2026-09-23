@@ -554,11 +554,7 @@ module Bytes = {
 
   @get_index external byteAt: (Uint8Array.t, int) => int = ""
 
-  // A bytea[] parameter as the array literal Postgres parses itself. postgres.js
-  // serializes an array parameter with the element serializer of the type the
-  // server describes, and the bytea one expects a Uint8Array — yet it types the
-  // array after its first element, so an array of Uint8Arrays binds as a single
-  // bytea. Text binds untyped and reaches the server's array parser as it is.
+  // A bytea[] parameter as the array literal Postgres parses itself.
   //
   // Nests, since an `in` filter over a list column carries one array per
   // candidate value. A sub-array is written unquoted, which is how Postgres

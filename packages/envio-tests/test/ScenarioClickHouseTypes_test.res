@@ -100,10 +100,12 @@ let timestamp = Date.fromTime(1234567890123.0)
 
 // Not ASCII on purpose: RowBinary prefixes a string with its length in UTF-8
 // bytes, which is not the length JS reports for anything outside Latin-1. "é"
-// is one UTF-16 unit over two bytes, "😀" is two units over four.
+// is one UTF-16 unit over two bytes, "😀" is two units over four. Both values
+// also run past the length where staging copies a string in bulk instead of
+// character by character, which is where a mis-sized reservation would show.
 let entity = {
-  id: "every-1",
-  string: "héllo 😀",
+  id: "0x5c4f2e1d9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d",
+  string: "héllo 😀 and the quick brown fox jumps over the lazy dog",
   optString: None,
   arrayOfStrings: ["a", "日本"],
   int_: -7,
@@ -164,8 +166,8 @@ describe("ClickHouse stores every schema type", () => {
 
     t.expect(rows->String.trim->JSON.parseOrThrow).toStrictEqual(
       %raw(`{
-          id: "every-1",
-          string: "héllo 😀",
+          id: "0x5c4f2e1d9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d",
+          string: "héllo 😀 and the quick brown fox jumps over the lazy dog",
           optString: null,
           arrayOfStrings: ["a", "日本"],
           int_: -7,

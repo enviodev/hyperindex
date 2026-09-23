@@ -99,9 +99,6 @@ importers:
       pino-pretty:
         specifier: 13.1.3
         version: 13.1.3
-      postgres:
-        specifier: 3.4.8
-        version: 3.4.8
       react:
         specifier: 19.2.5
         version: 19.2.5

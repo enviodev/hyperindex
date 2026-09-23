@@ -5,10 +5,9 @@ open Vitest
 // On startup the indexer loads every registered address for a chain through
 // InternalTable.Chains.getInitialState. Aggregating the whole envio_addresses
 // table into one json column (what it used to do) blows past V8's max string
-// length once a chain has enough addresses, and postgres.js throws
-// ERR_STRING_TOO_LONG while decoding the row — the indexer can never resume.
-// Reading plain rows and grouping them in JS is what keeps that from
-// happening.
+// length once a chain has enough addresses, so decoding the row throws and the
+// indexer can never resume. Reading plain rows and grouping them in JS is what
+// keeps that from happening.
 //
 // Skipped by default: crossing the limit takes enough rows to be too slow for
 // every CI run. Run it manually to guard the fix for #1242.
@@ -47,7 +46,7 @@ describe("Dynamic contracts startup size", () => {
           let chainId = 1337->ChainId.fromInt
           let rowCount = 30_000_000
 
-          let _ = await sql->Postgres.unsafe(
+          let _ = await sql->Sql.query(
             `INSERT INTO "${pgSchema}"."${InternalTable.EnvioAddresses.name}" ("chain_id", "address", "contract_id", "registration_block")
   SELECT ${chainId->ChainId.toString}, decode(lpad(to_hex(g), 40, '0'), 'hex'), 0, 0
   FROM generate_series(1, ${rowCount->Int.toString}) AS g

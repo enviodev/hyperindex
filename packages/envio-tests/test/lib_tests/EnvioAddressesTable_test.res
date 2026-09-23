@@ -32,9 +32,9 @@ let createdSchemas = []
 
 Async.afterAll(async () => {
   let _ = await createdSchemas
-  ->Array.map(pgSchema => sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`))
+  ->Array.map(pgSchema => sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`))
   ->Promise.all
-  await sql->Postgres.endSql
+  await sql->Sql.close
 })
 
 let setup = async () => {
@@ -42,12 +42,8 @@ let setup = async () => {
   createdSchemas->Array.push(pgSchema)->ignore
   let storage = PgStorage.make(
     ~sql,
-    ~pgHost=Env.Db.host,
     ~pgSchema,
-    ~pgPort=Env.Db.port,
     ~pgUser=Env.Db.user,
-    ~pgDatabase=Env.Db.database,
-    ~pgPassword=Env.Db.password,
     ~isHasuraEnabled=false,
     ~ecosystem=Evm,
   )
@@ -64,22 +60,24 @@ let setup = async () => {
 let address = index => Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(index)
 
 let configAddress =
-  ((config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.getUnsafe(0)).addresses
-  ->Array.getUnsafe(0)
+  (
+    (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.getUnsafe(0)
+  ).addresses->Array.getUnsafe(0)
 
 let row = (~address: Address.t, ~contractName, ~registrationBlock): AddressRows.row => {
   {
     chainId,
-    address: Core.getAddon()
-    .encodeAddresses(~ecosystem="evm", ~addresses=[address])
-    ->Array.getUnsafe(0),
+    address: Core.getAddon().encodeAddresses(
+      ~ecosystem="evm",
+      ~addresses=[address],
+    )->Array.getUnsafe(0),
     contractId: contractMapping->ContractMapping.idOfOrThrow(contractName),
     registrationBlock,
   }
 }
 
 let storedRows = async (~pgSchema) => {
-  let rows: array<AddressRows.row> = await sql->Postgres.unsafe(
+  let rows: array<AddressRows.row> = await sql->Sql.query(
     InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),
   )
   let rendered = rows->AddressRows.render(~ecosystem="evm", ~shouldChecksum=true)
@@ -115,8 +113,11 @@ describe("envio_addresses", () => {
       ~pgSchema,
       ~keys=[
         sharedForNftFactory->AddressRows.keyOf,
-        row(~address=address(2), ~contractName="NftFactory", ~registrationBlock=20)
-        ->AddressRows.keyOf,
+        row(
+          ~address=address(2),
+          ~contractName="NftFactory",
+          ~registrationBlock=20,
+        )->AddressRows.keyOf,
       ],
     )
 
@@ -132,7 +133,7 @@ describe("envio_addresses", () => {
   // resume.
   Async.it("refuses to resume a schema that predates the contract mapping", async t => {
     let (storage, pgSchema) = await setup()
-    let _ = await sql->Postgres.unsafe(
+    let _ = await sql->Sql.query(
       `DROP TABLE "${pgSchema}"."${InternalTable.EnvioContracts.table.tableName}";`,
     )
     let persistence = Persistence.make(
@@ -155,7 +156,7 @@ describe("envio_addresses", () => {
     }
     t.expect(
       message->String.includes("storage was initialized by an older envio version"),
-      ~message=message,
+      ~message,
     ).toBe(true)
   })
 
@@ -176,9 +177,6 @@ describe("envio_addresses", () => {
     t.expect(
       (await storedRows(~pgSchema))->Array.filter(((_, _, block)) => block !== -1),
       ~message="the address is stored once per contract, however often it is written",
-    ).toEqual([
-      (address(1), "Gravatar", 10),
-      (address(1), "NftFactory", 10),
-    ])
+    ).toEqual([(address(1), "Gravatar", 10), (address(1), "NftFactory", 10)])
   })
 })

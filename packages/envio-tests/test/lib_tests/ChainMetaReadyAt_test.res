@@ -10,17 +10,13 @@ let config = TestConfig.make()
 
 Async.afterAll(async () => {
   await sql->TestPgSchema.drop(~pgSchema)
-  await sql->Postgres.endSql
+  await sql->Sql.close
 })
 
 let storage = PgStorage.make(
   ~sql,
-  ~pgHost=Env.Db.host,
   ~pgSchema,
-  ~pgPort=Env.Db.port,
   ~pgUser=Env.Db.user,
-  ~pgDatabase=Env.Db.database,
-  ~pgPassword=Env.Db.password,
   ~isHasuraEnabled=false,
   ~ecosystem=Evm,
 )
@@ -28,9 +24,7 @@ let storage = PgStorage.make(
 let readyAt = async () => {
   let rows: array<{
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Postgres.unsafe(
-    `SELECT "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
+  }> = await sql->Sql.query(`SELECT "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`)
   rows->Array.map(row => row["ready_at"]->Null.toOption->Option.isSome)
 }
 

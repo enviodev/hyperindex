@@ -443,8 +443,8 @@ describe("Isolated multichain rollback", () => {
         [
           counterSet(~checkpointId=2n, ~chain=100, ~count=100n),
           counterSet(~checkpointId=2n, ~chain=1337, ~count=1337n),
-          counterSet(~checkpointId=3n, ~chain=1337, ~count=13372n),
           counterSet(~checkpointId=3n, ~chain=100, ~count=1002n),
+          counterSet(~checkpointId=3n, ~chain=1337, ~count=13372n),
         ],
         progress(~chain100="102", ~chain1337="102"),
       ))
@@ -591,8 +591,8 @@ describe("Isolated multichain rollback", () => {
         [
           counterSet(~checkpointId=2n, ~chain=100, ~count=100n),
           counterSet(~checkpointId=2n, ~chain=1337, ~count=1337n),
-          counterSet(~checkpointId=5n, ~chain=1337, ~count=999n),
           counterSet(~checkpointId=5n, ~chain=100, ~count=1003n),
+          counterSet(~checkpointId=5n, ~chain=1337, ~count=999n),
         ],
         progress(~chain100="102", ~chain1337="102"),
       ))

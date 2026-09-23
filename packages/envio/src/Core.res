@@ -11,6 +11,7 @@ type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
 type clickHouseSinkCtor
+type pgClientCtor
 type addressStoreCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
@@ -27,12 +28,118 @@ type fromUserApiResult = {
   indexerCode: Null.t<string>,
 }
 
+// One column of a Postgres table, flattened for the boundary: napi carries no
+// tagged union, so the field type arrives as its name plus whichever of the
+// modifiers it takes.
+type pgColumnInput = {
+  // The database column name, renames already resolved.
+  name: string,
+  fieldType: string,
+  isArray?: bool,
+  isNullable?: bool,
+  isPrimaryKey?: bool,
+  defaultValue?: string,
+  precision?: int,
+  scale?: int,
+  enumName?: string,
+}
+
+type pgTableInput = {
+  tableName: string,
+  columns: array<pgColumnInput>,
+  partitionByColumn?: string,
+}
+
+type pgHistoryQueryInput = {
+  pgSchema: string,
+  historyTable: string,
+  dataColumns: array<string>,
+  keyColumns: array<string>,
+  chainIdColumn?: string,
+  checkpointColumn: string,
+  changeColumn: string,
+  sequence: string,
+}
+
+type pgDeleteRowsInput = {
+  pgSchema: string,
+  historyTable: string,
+  columns: array<string>,
+  idColumn: string,
+  checkpointColumn: string,
+  changeColumn: string,
+  deleteVariant: string,
+  chainIdColumn?: string,
+  idPgType: string,
+  checkpointPgType: string,
+}
+
+type pgIndexColumnInput = {
+  name: string,
+  direction: string,
+}
+
+type pgIndexInput = {
+  tableName: string,
+  columns: array<pgIndexColumnInput>,
+  method: string,
+}
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
+  pgCreateTableQuery: (
+    ~table: pgTableInput,
+    ~pgSchema: string,
+    ~isNumericArrayAsText: bool,
+    ~chainIdMode: string,
+  ) => string,
+  pgInsertUnnestQuery: (
+    ~table: pgTableInput,
+    ~pgSchema: string,
+    ~appendOnly: bool,
+    ~chainIdMode: string,
+  ) => string,
+  pgInsertValuesQuery: (~table: pgTableInput, ~pgSchema: string, ~rows: int) => string,
+  pgFieldType: (
+    ~fieldType: string,
+    ~pgSchema: string,
+    ~isArray: bool,
+    ~isNullable: bool,
+    ~isNumericArrayAsText: bool,
+    ~chainIdMode: string,
+    ~precision: Null.t<int>,
+    ~scale: Null.t<int>,
+    ~enumName: Null.t<string>,
+  ) => string,
+  pgIndexKey: (~definition: pgIndexInput) => string,
+  pgIndexName: (~definition: pgIndexInput) => string,
+  pgIndexReadablePrefix: (~definition: pgIndexInput) => string,
+  pgIndexColumnKey: (~column: pgIndexColumnInput) => string,
+  pgIndexCreateQuery: (~definition: pgIndexInput, ~pgSchema: string) => string,
+  pgIndexDropQuery: (~pgSchema: string, ~indexName: string) => string,
+  pgRollbackPreTargetRowsQuery: (~input: pgHistoryQueryInput) => string,
+  pgRollbackRemovedIdsQuery: (~input: pgHistoryQueryInput) => string,
+  pgInsertDeleteRowsQuery: (~input: pgDeleteRowsInput) => string,
+  pgUpdateByIdQuery: (
+    ~pgSchema: string,
+    ~table: string,
+    ~idColumn: string,
+    ~columns: array<string>,
+    ~keepWhenNull: array<string>,
+  ) => string,
+  pgSetByUnnestQuery: (
+    ~pgSchema: string,
+    ~table: string,
+    ~idColumn: string,
+    ~setColumn: string,
+    ~idArrayType: string,
+    ~valueArrayType: string,
+    ~relation: string,
+  ) => string,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
@@ -49,6 +156,8 @@ type addon = {
   addressStore: addressStoreCtor,
   @as("ClickHouseSink")
   clickHouseSink: clickHouseSinkCtor,
+  @as("PgClient")
+  pgClient: pgClientCtor,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
@@ -103,10 +212,6 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;
   var fs = Nodefs;
-
-  // Vitest test.env points workers at the addon globalSetup already built.
-  var preBuilt = process.env.ENVIO_DEV_ADDON;
-  if (preBuilt && fs.existsSync(preBuilt)) return req(preBuilt);
 
   var repoRoot = null;
   var dir = path.resolve(envioDir);
@@ -177,6 +282,17 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
 // `code`, and any other fields a diagnostic might rely on.
 let rethrow: JsExn.t => 'a = %raw(`function(e) { throw e }`)
 
+// An addon named outright, which a test run or a bisect points at the build it
+// just made. Checked before the installed platform package, or a stale one left
+// in `node_modules` would silently shadow it — the failure that follows is an
+// argument-count mismatch at a boundary whose two sides look like they agree.
+%%private(
+  let namedAddon: unit => option<string> = %raw(`() => {
+    var named = process.env.ENVIO_DEV_ADDON;
+    return named && Nodefs.existsSync(named) ? named : undefined;
+  }`)
+)
+
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
 
@@ -209,20 +325,26 @@ let loadAddon = () => {
       }
     }
 
-  switch tryRequire(0) {
-  | Some(addon) => addon
+  switch namedAddon() {
+  | Some(named) => callRequire(req, named)
   | None =>
-    // Dev build fallback (cargo build on every run)
-    switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
+    switch tryRequire(0) {
     | Some(addon) => addon
     | None =>
-      let host = `${processPlatform}-${processArch}`
-      let msg = if candidates->Array.length === 0 {
-        `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
-      } else {
-        `Couldn't load the envio native addon for ${host}. Reinstall envio (ensure optional dependencies aren't skipped).`
+      // Dev build fallback (cargo build on every run)
+      // `null` rather than `undefined` when there is no dev build, which an
+      // `option` would read as `Some`.
+      switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => Null.t<addon>) {
+      | Value(addon) => addon
+      | Null =>
+        let host = `${processPlatform}-${processArch}`
+        let msg = if candidates->Array.length === 0 {
+          `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
+        } else {
+          `Couldn't load the envio native addon for ${host}. Reinstall envio (ensure optional dependencies aren't skipped).`
+        }
+        JsError.throwWithMessage(msg)
       }
-      JsError.throwWithMessage(msg)
     }
   }
 }
@@ -269,3 +391,70 @@ let runCli = args => {
   let addon = getAddon()
   addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
 }
+
+let pgCreateTableQuery = (~table, ~pgSchema, ~isNumericArrayAsText, ~chainIdMode) =>
+  getAddon().pgCreateTableQuery(~table, ~pgSchema, ~isNumericArrayAsText, ~chainIdMode)
+
+let pgFieldType = (
+  ~fieldType,
+  ~pgSchema,
+  ~isArray,
+  ~isNullable,
+  ~isNumericArrayAsText,
+  ~chainIdMode,
+  ~precision,
+  ~scale,
+  ~enumName,
+) =>
+  getAddon().pgFieldType(
+    ~fieldType,
+    ~pgSchema,
+    ~isArray,
+    ~isNullable,
+    ~isNumericArrayAsText,
+    ~chainIdMode,
+    ~precision,
+    ~scale,
+    ~enumName,
+  )
+
+let pgIndexKey = (~definition) => getAddon().pgIndexKey(~definition)
+let pgIndexName = (~definition) => getAddon().pgIndexName(~definition)
+let pgIndexReadablePrefix = (~definition) => getAddon().pgIndexReadablePrefix(~definition)
+let pgIndexColumnKey = (~column) => getAddon().pgIndexColumnKey(~column)
+let pgIndexCreateQuery = (~definition, ~pgSchema) =>
+  getAddon().pgIndexCreateQuery(~definition, ~pgSchema)
+let pgIndexDropQuery = (~pgSchema, ~indexName) => getAddon().pgIndexDropQuery(~pgSchema, ~indexName)
+
+let pgInsertUnnestQuery = (~table, ~pgSchema, ~appendOnly, ~chainIdMode) =>
+  getAddon().pgInsertUnnestQuery(~table, ~pgSchema, ~appendOnly, ~chainIdMode)
+
+let pgInsertValuesQuery = (~table, ~pgSchema, ~rows) =>
+  getAddon().pgInsertValuesQuery(~table, ~pgSchema, ~rows)
+
+let pgRollbackPreTargetRowsQuery = (~input) => getAddon().pgRollbackPreTargetRowsQuery(~input)
+let pgRollbackRemovedIdsQuery = (~input) => getAddon().pgRollbackRemovedIdsQuery(~input)
+
+let pgInsertDeleteRowsQuery = (~input) => getAddon().pgInsertDeleteRowsQuery(~input)
+
+let pgUpdateByIdQuery = (~pgSchema, ~table, ~idColumn, ~columns, ~keepWhenNull=[]) =>
+  getAddon().pgUpdateByIdQuery(~pgSchema, ~table, ~idColumn, ~columns, ~keepWhenNull)
+
+let pgSetByUnnestQuery = (
+  ~pgSchema,
+  ~table,
+  ~idColumn,
+  ~setColumn,
+  ~idArrayType,
+  ~valueArrayType,
+  ~relation,
+) =>
+  getAddon().pgSetByUnnestQuery(
+    ~pgSchema,
+    ~table,
+    ~idColumn,
+    ~setColumn,
+    ~idArrayType,
+    ~valueArrayType,
+    ~relation,
+  )

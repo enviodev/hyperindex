@@ -6,7 +6,7 @@ let config = TestConfig.make()
 
 Async.afterAll(async () => {
   await sql->TestPgSchema.drop(~pgSchema)
-  await sql->Postgres.endSql
+  await sql->Sql.close
 })
 
 let makePersistence = () =>
@@ -15,12 +15,8 @@ let makePersistence = () =>
     ~allEnums=config.allEnums,
     ~storage=PgStorage.make(
       ~sql,
-      ~pgHost=Env.Db.host,
       ~pgSchema,
-      ~pgPort=Env.Db.port,
       ~pgUser=Env.Db.user,
-      ~pgDatabase=Env.Db.database,
-      ~pgPassword=Env.Db.password,
       ~isHasuraEnabled=false,
       ~ecosystem=Evm,
     ),
@@ -44,10 +40,12 @@ let logLines = async path =>
     contents
     ->String.trim
     ->String.split("\n")
+    // The worker may be mid-way through appending the last line.
     ->Array.filterMap(line =>
       switch line->JSON.parseOrThrow->JSON.Decode.object {
       | Some(fields) => fields->Dict.get("msg")->Option.flatMap(JSON.Decode.string)
       | None => None
+      | exception _ => None
       }
     )
   | exception _ => []

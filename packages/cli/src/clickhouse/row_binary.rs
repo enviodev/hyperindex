@@ -378,6 +378,10 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
 
     let values = column.values;
     match (values.kind(), ch_type) {
+        // Nothing registers one: a ClickHouse array is still staged as the JSON
+        // text of its elements, so the list slot only reaches here once the two
+        // sinks share it.
+        (ColumnKind::List, _) => bail!("a list column is not one this encoder writes yet"),
         (ColumnKind::F64, ChType::Float64) => {
             let value = values.f64_at(row);
             if !value.is_finite() {

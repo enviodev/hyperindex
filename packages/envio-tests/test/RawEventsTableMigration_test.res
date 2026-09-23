@@ -51,7 +51,7 @@ describe("Raw Events Table Migrations", () => {
       let rawEventsColumnsRes: array<{
         "column_name": string,
         "data_type": string,
-      }> = await sql->Postgres.unsafe(
+      }> = await sql->Sql.query(
         `SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type
            FROM INFORMATION_SCHEMA.COLUMNS
            WHERE TABLE_SCHEMA = '${pgSchema}'

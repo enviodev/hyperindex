@@ -186,12 +186,8 @@ describe("EntityFilter matcher against Postgres", () => {
     let sql = PgStorage.makeClient()
     let storage = PgStorage.make(
       ~sql,
-      ~pgHost=Env.Db.host,
       ~pgSchema,
-      ~pgPort=Env.Db.port,
       ~pgUser=Env.Db.user,
-      ~pgDatabase=Env.Db.database,
-      ~pgPassword=Env.Db.password,
       ~isHasuraEnabled=false,
       ~ecosystem=Evm,
     )
@@ -261,7 +257,7 @@ describe("EntityFilter matcher against Postgres", () => {
       }
     }
 
-    let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+    let _ = await sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
     await storage.close()
 
     t.expect({"mismatches": mismatches, "someFiltersMatched": matched.contents > 200}).toEqual({

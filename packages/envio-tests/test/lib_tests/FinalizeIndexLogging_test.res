@@ -9,7 +9,7 @@ let config = TestConfig.make()
 
 Async.afterAll(async () => {
   await sql->TestPgSchema.drop(~pgSchema)
-  await sql->Postgres.endSql
+  await sql->Sql.close
 })
 
 let loggedMessages = async path =>
@@ -31,12 +31,8 @@ describe("Finalizing a schema with no indexes", () => {
   Async.it("Says nothing about the indexes it didn't have to build", async t => {
     let storage = PgStorage.make(
       ~sql,
-      ~pgHost=Env.Db.host,
       ~pgSchema,
-      ~pgPort=Env.Db.port,
       ~pgUser=Env.Db.user,
-      ~pgDatabase=Env.Db.database,
-      ~pgPassword=Env.Db.password,
       ~isHasuraEnabled=false,
       ~ecosystem=Evm,
     )

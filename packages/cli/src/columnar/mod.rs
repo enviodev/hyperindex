@@ -58,12 +58,36 @@ pub enum ColumnKind {
     I64 = 2,
     Text = 3,
     Bytes = 4,
+    /// A column of arrays. The elements are a column of their own, and
+    /// `row_ends` says where each row's run of them stops.
+    List = 5,
 }
 
 impl ColumnKind {
     pub fn is_variable(self) -> bool {
         matches!(self, ColumnKind::Text | ColumnKind::Bytes)
     }
+}
+
+/// What a column holds. A list has to say what its elements are and how many of
+/// them there are in total, since the element column is sized once.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ColumnSpec {
+    Scalar(ColumnKind),
+    List {
+        element: ColumnKind,
+        elements: usize,
+    },
+}
+
+/// A zeroed vector of `len`, always holding at least one slot's worth of
+/// allocation. An empty `Vec` has no pointer to lend, and a result matching
+/// nothing — or an array with no elements — would otherwise have nothing to
+/// hand JavaScript.
+fn sized<T: Clone + Default>(len: usize) -> Vec<T> {
+    let mut values = Vec::with_capacity(len.max(1));
+    values.resize(len, T::default());
+    values
 }
 
 /// What a variable-width column reserves per row before anything grows. A hex
@@ -81,6 +105,17 @@ enum Storage {
     /// they start. `data` is a capacity, not a length: past `ends[rows - 1]` it
     /// holds whatever the last growth zeroed.
     Variable { data: Vec<u8>, ends: Vec<u32> },
+    /// The elements laid out as a column in their own right — so an array of
+    /// text and an array of bytes are the same shape twice over, rather than
+    /// two — and `row_ends[row]` saying which of them belong to that row.
+    ///
+    /// Sized from a count taken up front, which is what the reading direction
+    /// has. Filling one from JavaScript would need the element column to grow
+    /// the way a variable one does.
+    List {
+        elements: Box<Column>,
+        row_ends: Vec<u32>,
+    },
 }
 
 pub struct Column {
@@ -100,17 +135,44 @@ impl Column {
     fn new(kind: ColumnKind, rows: usize) -> Self {
         let storage = if kind.is_variable() {
             Storage::Variable {
-                data: vec![0; (rows * VARIABLE_GUESS_PER_ROW).max(MIN_VARIABLE_CAPACITY)],
-                ends: vec![0; rows],
+                data: sized((rows * VARIABLE_GUESS_PER_ROW).max(MIN_VARIABLE_CAPACITY)),
+                ends: sized(rows),
             }
         } else {
-            Storage::Fixed(vec![0; rows])
+            Storage::Fixed(sized(rows))
         };
         Self {
             kind,
             storage,
-            nulls: vec![0; rows],
+            nulls: sized(rows),
             any_null: false,
+        }
+    }
+
+    /// A column of arrays, with room for `elements` of them in total across the
+    /// `rows`. The count has to be known here: the element column is sized once
+    /// and never grows.
+    fn new_list(element: ColumnKind, rows: usize, elements: usize) -> Self {
+        Self {
+            kind: ColumnKind::List,
+            storage: Storage::List {
+                elements: Box::new(Column::new(element, elements)),
+                row_ends: sized(rows),
+            },
+            nulls: sized(rows),
+            any_null: false,
+        }
+    }
+
+    /// The elements of a list column, and where each row's run of them stops.
+    /// Nothing in the indexer reaches for these — the Postgres reader walks the
+    /// lent buffers from the other side of the boundary and ClickHouse only
+    /// writes — but a check on how a list grows does.
+    #[cfg(test)]
+    pub fn list(&self) -> Result<(&Column, &[u32])> {
+        match &self.storage {
+            Storage::List { elements, row_ends } => Ok((elements, row_ends)),
+            _ => bail!("this column is not a list"),
         }
     }
 
@@ -128,6 +190,7 @@ impl Column {
         match &self.storage {
             Storage::Fixed(words) => words.len(),
             Storage::Variable { ends, .. } => ends.len(),
+            Storage::List { row_ends, .. } => row_ends.len(),
         }
     }
 
@@ -142,7 +205,7 @@ impl Column {
     fn words(&self) -> &[u64] {
         match &self.storage {
             Storage::Fixed(words) => words,
-            Storage::Variable { .. } => &[],
+            Storage::Variable { .. } | Storage::List { .. } => &[],
         }
     }
 
@@ -169,7 +232,7 @@ impl Column {
                 let start = if row == 0 { 0 } else { ends[row - 1] as usize };
                 &data[start..end]
             }
-            Storage::Fixed(_) => &[],
+            Storage::Fixed(_) | Storage::List { .. } => &[],
         }
     }
 
@@ -188,10 +251,39 @@ impl Column {
                 self.nulls.len()
             );
         }
-        match &self.storage {
+        match &mut self.storage {
             Storage::Fixed(words) => {
                 if words.len() != rows {
                     bail!("column `{name}` has {} values, not {rows}", words.len());
+                }
+            }
+            Storage::List { elements, row_ends } => {
+                if row_ends.len() != rows {
+                    bail!("column `{name}` has {} rows, not {rows}", row_ends.len());
+                }
+                let mut previous = 0u32;
+                for (row, &end) in row_ends.iter().enumerate() {
+                    if end < previous {
+                        bail!(
+                            "column `{name}` row {row} ends at element {end}, before row {} at \
+                             {previous}",
+                            row - 1
+                        );
+                    }
+                    previous = end;
+                }
+                let elements_len = elements.len();
+                if previous as usize > elements_len {
+                    bail!(
+                        "column `{name}` runs to element {previous}, past the {elements_len} it \
+                         was given"
+                    );
+                }
+                let mut elements =
+                    std::mem::replace(elements, Box::new(Column::new(ColumnKind::F64, 0)));
+                elements.seal(&format!("{name}'s elements"), elements_len)?;
+                if let Storage::List { elements: slot, .. } = &mut self.storage {
+                    *slot = elements;
                 }
             }
             Storage::Variable { data, ends } => {
@@ -221,16 +313,25 @@ impl Column {
     }
 
     fn buffers(&mut self) -> Vec<(*mut u8, usize)> {
-        let nulls = (self.nulls.as_mut_ptr(), self.nulls.len());
+        let nulls = (self.nulls.as_mut_ptr(), self.nulls.len().max(1));
         match &mut self.storage {
             Storage::Fixed(words) => {
-                vec![(words.as_mut_ptr().cast(), words.len() * 8), nulls]
+                vec![(words.as_mut_ptr().cast(), (words.len() * 8).max(8)), nulls]
             }
             Storage::Variable { data, ends } => vec![
                 (data.as_mut_ptr(), data.len()),
-                (ends.as_mut_ptr().cast(), ends.len() * 4),
+                (ends.as_mut_ptr().cast(), (ends.len() * 4).max(4)),
                 nulls,
             ],
+            // The elements' own buffers first, so a reader builds the element
+            // column exactly as it would a top-level one, then what cuts them
+            // into rows.
+            Storage::List { elements, row_ends } => {
+                let mut buffers = elements.buffers();
+                buffers.push((row_ends.as_mut_ptr().cast(), (row_ends.len() * 4).max(4)));
+                buffers.push(nulls);
+                buffers
+            }
         }
     }
 }
@@ -245,6 +346,10 @@ enum Phase {
     Detached,
     /// The values have been checked against the row count and Rust may read them.
     Sealed,
+    /// JavaScript holds the buffers and reads through them. The mirror of
+    /// `Filling`, and it ends the same way: every buffer detached before the
+    /// memory behind it is freed.
+    Reading,
 }
 
 /// One batch's columns, allocated together and filled by JavaScript.
@@ -259,11 +364,45 @@ impl Arena {
         if rows == 0 {
             bail!("a staged batch needs at least one row");
         }
-        Ok(Self {
+        Ok(Self::with_rows(rows, kinds))
+    }
+
+    fn with_rows(rows: usize, kinds: &[ColumnKind]) -> Self {
+        Self {
             rows,
             columns: kinds.iter().map(|&kind| Column::new(kind, rows)).collect(),
             phase: Phase::Filling,
-        })
+        }
+    }
+
+    /// An arena Rust fills and JavaScript reads — a result set on its way out,
+    /// rather than a batch on its way in. Nothing is lent yet, so it starts
+    /// where a filled one that has handed its buffers back would be.
+    /// Unlike a staged batch, this one may hold no rows: a query matching
+    /// nothing is an ordinary answer, and the columns still have to be
+    /// described so the other side builds the same views over them.
+    pub fn new_filled(rows: usize, specs: &[ColumnSpec]) -> Self {
+        Self {
+            rows,
+            columns: specs
+                .iter()
+                .map(|spec| match *spec {
+                    ColumnSpec::Scalar(kind) => Column::new(kind, rows),
+                    ColumnSpec::List { element, elements } => {
+                        Column::new_list(element, rows, elements)
+                    }
+                })
+                .collect(),
+            phase: Phase::Detached,
+        }
+    }
+
+    /// Hands a laid-out arena back to JavaScript to fill. The reading direction
+    /// lays one out and reads it here; the writing direction lays one out and
+    /// lets JavaScript write it, which is the same memory before anything is in
+    /// it.
+    pub fn reopen_for_filling(&mut self) {
+        self.phase = Phase::Filling;
     }
 
     pub fn rows(&self) -> usize {
@@ -278,8 +417,21 @@ impl Arena {
         self.phase == Phase::Sealed
     }
 
-    fn is_filling(&self) -> bool {
-        self.phase == Phase::Filling
+    /// Whether JavaScript currently holds the arena's buffers, in either
+    /// direction. Both end by detaching every one of them.
+    fn is_lent(&self) -> bool {
+        self.phase == Phase::Filling || self.phase == Phase::Reading
+    }
+
+    /// Hands sealed values to JavaScript to read. Only from `Sealed`: the
+    /// values have been checked against the row count by then, so the views
+    /// built over them describe what is actually there.
+    fn start_reading(&mut self) -> Result<()> {
+        if self.phase != Phase::Sealed {
+            bail!("only a sealed batch can be read, and only once");
+        }
+        self.phase = Phase::Reading;
+        Ok(())
     }
 
     /// Records that nothing outside the arena points into it any more. Only
@@ -316,7 +468,14 @@ impl Arena {
             .columns
             .get_mut(index)
             .with_context(|| format!("no column {index} to grow"))?;
-        let Storage::Variable { data, .. } = &mut column.storage else {
+        // A list's payload is its elements', so growing the column grows that:
+        // the elements are sized from a count taken up front, but how many bytes
+        // they come to is only known as they are written.
+        let storage = match &mut column.storage {
+            Storage::List { elements, .. } => &mut elements.storage,
+            storage => storage,
+        };
+        let Storage::Variable { data, .. } = storage else {
             bail!("a fixed-width column is sized from the row count and never grows");
         };
         if !std::ptr::eq(data.as_ptr(), current) {
@@ -349,35 +508,25 @@ impl Arena {
     }
 }
 
-/// Filling an arena from Rust, which is how the encoder's own tests build a
-/// batch without an isolate. JavaScript writes the same bytes through the lent
-/// views instead.
-#[cfg(test)]
-impl Arena {
-    pub fn set_f64(&mut self, column: usize, row: usize, value: f64) {
-        self.set_word(column, row, value.to_bits());
-    }
-
-    pub fn set_u64(&mut self, column: usize, row: usize, value: u64) {
-        self.set_word(column, row, value);
-    }
-
-    pub fn set_i64(&mut self, column: usize, row: usize, value: i64) {
-        self.set_word(column, row, value as u64);
-    }
-
-    fn set_word(&mut self, column: usize, row: usize, bits: u64) {
-        match &mut self.columns[column].storage {
+/// Filling an arena from Rust: how a result set is laid out on its way to
+/// JavaScript, and how the encoder's own tests build a batch without an isolate.
+/// On the way in it is JavaScript that writes these same bytes, through the
+/// lent views.
+impl Column {
+    fn write_word(&mut self, row: usize, bits: u64) {
+        match &mut self.storage {
             Storage::Fixed(words) => words[row] = bits,
-            Storage::Variable { .. } => panic!("column {column} is variable-width"),
+            Storage::Variable { .. } | Storage::List { .. } => {
+                panic!("this column holds no fixed-width slot")
+            }
         }
     }
 
     /// Rows have to be written in order: a row's start is where the row before
     /// it ended, which is what JavaScript's cursor does too.
-    pub fn set_bytes(&mut self, column: usize, row: usize, value: &[u8]) {
-        let Storage::Variable { data, ends } = &mut self.columns[column].storage else {
-            panic!("column {column} is fixed-width");
+    fn write_bytes(&mut self, row: usize, value: &[u8]) {
+        let Storage::Variable { data, ends } = &mut self.storage else {
+            panic!("this column holds no bytes");
         };
         let start = if row == 0 { 0 } else { ends[row - 1] as usize };
         let end = start + value.len();
@@ -388,18 +537,83 @@ impl Arena {
         ends[row] = end as u32;
     }
 
+    fn write_null(&mut self, row: usize) {
+        self.nulls[row] = 1;
+        self.any_null = true;
+        // A variable-width row still has to say where it ends, or the row after
+        // it would start from the wrong place.
+        if let Storage::Variable { ends, .. } = &mut self.storage {
+            ends[row] = if row == 0 { 0 } else { ends[row - 1] };
+        }
+    }
+
+    fn elements_mut(&mut self) -> &mut Column {
+        match &mut self.storage {
+            Storage::List { elements, .. } => elements,
+            _ => panic!("this column holds no elements"),
+        }
+    }
+}
+
+impl Arena {
+    pub fn set_f64(&mut self, column: usize, row: usize, value: f64) {
+        self.columns[column].write_word(row, value.to_bits());
+    }
+
+    pub fn set_bytes(&mut self, column: usize, row: usize, value: &[u8]) {
+        self.columns[column].write_bytes(row, value);
+    }
+
     pub fn mark_null(&mut self, column: usize, row: usize) {
-        self.columns[column].nulls[row] = 1;
-        self.columns[column].any_null = true;
+        self.columns[column].write_null(row);
+    }
+
+    /// The element column of a list, written by the same calls as a top-level
+    /// one — `element` counts across the whole column, not within a row.
+    pub fn set_element_f64(&mut self, column: usize, element: usize, value: f64) {
+        self.columns[column]
+            .elements_mut()
+            .write_word(element, value.to_bits());
+    }
+
+    pub fn set_element_bytes(&mut self, column: usize, element: usize, value: &[u8]) {
+        self.columns[column]
+            .elements_mut()
+            .write_bytes(element, value);
+    }
+
+    pub fn mark_element_null(&mut self, column: usize, element: usize) {
+        self.columns[column].elements_mut().write_null(element);
+    }
+
+    /// Closes a list row at `elements` written so far, which is where the next
+    /// row's own elements begin.
+    pub fn end_list_row(&mut self, column: usize, row: usize, elements: usize) {
+        match &mut self.columns[column].storage {
+            Storage::List { row_ends, .. } => row_ends[row] = elements as u32,
+            _ => panic!("column {column} is not a list"),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn set_u64(&mut self, column: usize, row: usize, value: u64) {
+        self.columns[column].write_word(row, value);
+    }
+
+    #[cfg(test)]
+    pub fn set_i64(&mut self, column: usize, row: usize, value: i64) {
+        self.columns[column].write_word(row, value as u64);
     }
 
     /// Nothing was lent out — the values came from Rust, not from an isolate —
     /// so there is no buffer to detach before sealing.
+    #[cfg(test)]
     pub fn seal_unlent(&mut self, names: &[String]) -> Result<()> {
         self.finish_lending();
         self.seal(names)
     }
 
+    #[cfg(test)]
     pub fn seal_for_test(&mut self) -> Result<()> {
         let names: Vec<String> = (0..self.columns.len()).map(|i| i.to_string()).collect();
         self.seal_unlent(&names)
@@ -466,6 +680,23 @@ mod tests {
     }
 
     #[test]
+    fn a_list_grows_the_payload_its_elements_share() {
+        let long = "x".repeat(MIN_VARIABLE_CAPACITY * 2);
+        let mut arena = Arena::new_filled(
+            1,
+            &[ColumnSpec::List {
+                element: ColumnKind::Text,
+                elements: 1,
+            }],
+        );
+        arena.set_element_bytes(0, 0, long.as_bytes());
+        arena.end_list_row(0, 0, 1);
+        arena.seal(&["xs".to_string()]).unwrap();
+        let (elements, _) = arena.columns()[0].list().unwrap();
+        assert_eq!(elements.str_at(0).unwrap(), long.as_str());
+    }
+
+    #[test]
     fn a_value_past_the_initial_guess_grows_the_payload() {
         let long = "x".repeat(MIN_VARIABLE_CAPACITY * 3);
         let mut arena = Arena::new(1, &[ColumnKind::Text]).unwrap();
@@ -488,6 +719,64 @@ mod tests {
                 MIN_VARIABLE_CAPACITY + 1,
                 MIN_VARIABLE_CAPACITY
             )
+        );
+    }
+
+    #[test]
+    fn a_list_column_cuts_its_elements_into_rows() {
+        let mut arena = Arena::new_filled(
+            3,
+            &[ColumnSpec::List {
+                element: ColumnKind::Text,
+                elements: 4,
+            }],
+        );
+        // ["a", "bb"], [], ["c", "d"]
+        arena.set_element_bytes(0, 0, b"a");
+        arena.set_element_bytes(0, 1, b"bb");
+        arena.end_list_row(0, 0, 2);
+        arena.end_list_row(0, 1, 2);
+        arena.set_element_bytes(0, 2, b"c");
+        arena.set_element_bytes(0, 3, b"d");
+        arena.end_list_row(0, 2, 4);
+        arena.seal(&["tags".to_string()]).unwrap();
+        assert_eq!(arena.columns()[0].len(), 3);
+    }
+
+    /// A row with no elements and a row that has none because it is null end at
+    /// the same element; only the null flag tells them apart.
+    #[test]
+    fn a_null_list_row_is_not_an_empty_one() {
+        let mut arena = Arena::new_filled(
+            2,
+            &[ColumnSpec::List {
+                element: ColumnKind::F64,
+                elements: 0,
+            }],
+        );
+        arena.end_list_row(0, 0, 0);
+        arena.mark_null(0, 1);
+        arena.end_list_row(0, 1, 0);
+        arena.seal(&["xs".to_string()]).unwrap();
+        assert_eq!(
+            (arena.columns()[0].is_null(0), arena.columns()[0].is_null(1)),
+            (false, true)
+        );
+    }
+
+    #[test]
+    fn a_list_row_ending_past_its_elements_is_refused() {
+        let mut arena = Arena::new_filled(
+            1,
+            &[ColumnSpec::List {
+                element: ColumnKind::F64,
+                elements: 1,
+            }],
+        );
+        arena.end_list_row(0, 0, 2);
+        assert_eq!(
+            arena.seal(&["xs".to_string()]).unwrap_err().to_string(),
+            "column `xs` runs to element 2, past the 1 it was given"
         );
     }
 

@@ -49,7 +49,7 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}${chainYaml(
 // chains whose rows are indexed.
 let indexedTables = async (~sql, ~pgSchema) => {
   let rows =
-    (await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
+    (await sql->Sql.query(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
       IndexCatalog.rowsSchema,
     )
   rows
@@ -62,7 +62,7 @@ let readyByChainId = async (~sql, ~pgSchema) => {
   let rows: array<{
     "id": ChainId.t,
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.query(
     `SELECT "id", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (

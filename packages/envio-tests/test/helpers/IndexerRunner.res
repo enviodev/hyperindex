@@ -6,7 +6,7 @@ type metric = {
 // The schema this indexer's tables live in, and the run's own client — closed
 // with it. A test needing raw SQL should reach for these rather than opening a
 // client the run won't clean up.
-type pg = {sql: Postgres.sql, pgSchema: string}
+type pg = {sql: Sql.t, pgSchema: string}
 
 // Which persistence a run is exercised against. Both are Postgres-backed; the
 // ClickHouse one adds the sink on top. CI runs the suite once per backend.
@@ -296,14 +296,32 @@ let run = async (
     // Rows come back decoded: postgres parses them with the table's field schemas.
     let queryEntity = (entityConfig: Internal.entityConfig) =>
       sql
-      ->Postgres.unsafe(
-        PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-      )
+      ->Sql.query(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
       ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
 
-    let queryEntityHistory = (entityConfig: Internal.entityConfig) =>
+    // Which chain a stored row belongs to, for a table that has chains at all.
+    // Read off the row rather than the change decoded from it: a delete keeps
+    // only its id and checkpoint, and two chains can share both.
+    let chainIdOfRow = (entityConfig: Internal.entityConfig) =>
+      switch entityConfig.table->Table.getChainIdField {
+      | None => _ => 0.
+      | Some(field) =>
+        row =>
+          switch row
+          ->(Utils.magic: unknown => dict<unknown>)
+          ->Utils.Dict.dangerouslyGetNonOption(field->Table.getPgDbFieldName) {
+          // Text when the chain-id column is a bigint.
+          | Some(value) if typeof(value) === #string =>
+            value->(Utils.magic: unknown => string)->Float.fromString->Option.getOr(0.)
+          | Some(value) => value->(Utils.magic: unknown => float)
+          | None => 0.
+          }
+      }
+
+    let queryEntityHistory = (entityConfig: Internal.entityConfig) => {
+      let chainIdOfRow = chainIdOfRow(entityConfig)
       sql
-      ->Postgres.unsafe(
+      ->Sql.query(
         PgStorage.makeLoadAllQuery(
           ~pgSchema,
           ~tableName=PgStorage.getEntityHistory(~entityConfig).table.tableName,
@@ -312,8 +330,7 @@ let run = async (
       ->Promise.thenResolve(items => {
         // Rows aren't ordered by the query, and insert order isn't meaningful
         // since checkpointId is the source of truth. Sort for stable assertions.
-        items
-        ->S.parseOrThrow(
+        let changes = items->S.parseOrThrow(
           S.array(
             S.union([
               PgStorage.getEntityHistory(~entityConfig).setChangeSchema,
@@ -330,7 +347,12 @@ let run = async (
             ]),
           ),
         )
-        ->Array.toSorted((a, b) => {
+        changes
+        ->Array.mapWithIndex((change, index) => (
+          change,
+          chainIdOfRow(items->Array.getUnsafe(index)),
+        ))
+        ->Array.toSorted(((a, aChain), (b, bChain)) => {
           switch String.compare(
             a->Change.getEntityId->EntityId.toKey,
             b->Change.getEntityId->EntityId.toKey,
@@ -338,18 +360,24 @@ let run = async (
           | 0. =>
             // Compared as bigints: checkpoint ids are unbounded, and past 2^53
             // a float comparison would call distinct ids equal.
-            let (a, b) = (a->Change.getCheckpointId, b->Change.getCheckpointId)
-            if a == b {
-              0.
-            } else if a < b {
+            let (aCheckpoint, bCheckpoint) = (a->Change.getCheckpointId, b->Change.getCheckpointId)
+            if aCheckpoint < bCheckpoint {
               -1.
-            } else {
+            } else if aCheckpoint > bCheckpoint {
               1.
+            } else {
+              // A per-chain entity gives every chain its own row under the same
+              // id and checkpoint, and nothing above tells those apart. The
+              // statements that wrote them run together in one transaction, so
+              // which landed first says nothing.
+              Float.compare(aChain, bChain)
             }
           | order => order
           }
         })
+        ->Array.map(((change, _)) => change)
       })
+    }
 
     {
       getBatchWritePromise: () => {
@@ -465,8 +493,8 @@ let run = async (
         queryEntity(entityConfig)->(Utils.magic: promise<array<unknown>> => promise<array<entity>>),
       queryAddresses: async () => {
         let rows =
-          (await sql->Postgres.unsafe(InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema)))->(
-            Utils.magic: unknown => array<AddressRows.row>
+          (await sql->Sql.query(InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema)))->(
+            Utils.magic: array<unknown> => array<AddressRows.row>
           )
         let addresses =
           rows->AddressRows.render(
@@ -486,23 +514,21 @@ let run = async (
         ),
       queryCheckpoints: () =>
         sql
-        ->Postgres.unsafe(
+        ->Sql.query(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
             ~tableName=InternalTable.Checkpoints.table.tableName,
           ),
         )
         ->Promise.thenResolve(rows =>
-          rows
-          ->(Utils.magic: unknown => array<unknown>)
-          ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+          rows->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         ),
       queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
         sql
-        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
-        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
+        ->Sql.query(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
+        ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
         // Parse the metric's samples back out of the rendered /metrics text.
@@ -609,7 +635,7 @@ let run = async (
   }
   for i in 0 to clients->Array.length - 1 {
     switch clients->Array.get(i) {
-    | Some(sql) => await attempt(() => sql->Postgres.endSql)
+    | Some(sql) => await attempt(() => sql->Sql.close)
     | None => ()
     }
   }

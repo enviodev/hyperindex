@@ -61,7 +61,7 @@ let init = async (~schema, ~pgSchema, ~reset) => {
 }
 
 Async.afterAll(async () => {
-  await sql->Postgres.endSql
+  await sql->Sql.close
 })
 
 describe("Resuming ClickHouse storage against a changed config", () => {
@@ -83,7 +83,7 @@ describe("Resuming ClickHouse storage against a changed config", () => {
       | JsExn(e) => e->JsExn.message->Option.getOr("an error without a message")
       | Persistence.StorageError({message}) => message
       }
-      let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+      let _ = await sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
       await TestClickHouse.drop(~database)
 
       t.expect(

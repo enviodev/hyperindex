@@ -28,7 +28,7 @@ let parseCreatedAt = name =>
   }
 
 let drop = async (sql, ~pgSchema) => {
-  let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+  let _ = await sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
 }
 
 let staleAfterMs = 60. *. 60. *. 1000.
@@ -36,10 +36,11 @@ let staleAfterMs = 60. *. 60. *. 1000.
 // Collects schemas left behind by workers that died before their cleanup ran.
 // Only touches schemas older than an hour, so it can't race a live test.
 let sweep = async sql => {
-  let rows: array<{"schema_name": string}> =
-    await sql->Postgres.unsafe(
-      `SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE '${prefix}%';`,
-    )
+  let rows: array<{
+    "schema_name": string,
+  }> = await sql->Sql.query(
+    `SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE '${prefix}%';`,
+  )
   let now = Date.now()
   let stale = rows->Array.filterMap(row => {
     let name = row["schema_name"]

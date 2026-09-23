@@ -32,6 +32,10 @@ fn lend<'env>(env: &'env Env, data: *mut u8, len: usize) -> napi::Result<ArrayBu
 /// Every buffer of `arena`, column by column, in the order the column's kind
 /// lays them out. The arena is in its filling phase from here on.
 pub fn expose<'env>(env: &'env Env, arena: &mut Arena) -> napi::Result<Vec<ArrayBuffer<'env>>> {
+    lend_all(env, arena)
+}
+
+fn lend_all<'env>(env: &'env Env, arena: &mut Arena) -> napi::Result<Vec<ArrayBuffer<'env>>> {
     let mut buffers = Vec::new();
     for column in arena.columns.iter_mut() {
         for (data, len) in column.buffers() {
@@ -65,7 +69,8 @@ pub fn grow<'env>(
     lend(env, data, len)
 }
 
-/// Ends the filling phase: detaches every buffer JavaScript hands back, then
+/// Ends the lending phase, in whichever direction it ran: detaches every buffer
+/// JavaScript hands back, then
 /// checks that this covered all of the arena's. A buffer the caller forgot
 /// would be a live view over memory Rust is about to read and then free, so it
 /// fails instead — and the caller has to keep the arena rather than free it.
@@ -74,7 +79,7 @@ pub fn grow<'env>(
 /// a commit that detached everything and then failed to seal. Counting those
 /// buffers as missing would report the cleanup instead of the failure.
 pub fn detach_all(arena: &mut Arena, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
-    if !arena.is_filling() {
+    if !arena.is_lent() {
         return Ok(());
     }
     let mut detached = Vec::with_capacity(buffers.len());
@@ -102,4 +107,15 @@ pub fn detach_all(arena: &mut Arena, buffers: Vec<ArrayBuffer>) -> napi::Result<
 
 fn to_napi(err: anyhow::Error) -> napi::Error {
     napi::Error::from_reason(format!("{err:#}"))
+}
+
+/// Hands a filled arena's buffers to JavaScript to read from. The mirror of
+/// [`expose`]: the same memory, lent the other way round, and taken back by the
+/// same [`detach_all`].
+pub fn lend_for_reading<'env>(
+    env: &'env Env,
+    arena: &mut Arena,
+) -> napi::Result<Vec<ArrayBuffer<'env>>> {
+    arena.start_reading().map_err(to_napi)?;
+    lend_all(env, arena)
 }

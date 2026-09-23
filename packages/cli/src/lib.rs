@@ -26,6 +26,7 @@ mod mock_hypersync_server;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod param_value;
+mod postgres;
 mod project_paths;
 mod registration_start_block;
 mod request_stats;

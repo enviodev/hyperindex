@@ -18,20 +18,16 @@ let enums =
 let pgSchema = TestPgSchema.make()
 
 Async.afterAll(async () => {
-  let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
-  await sql->Postgres.endSql
+  let _ = await sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+  await sql->Sql.close
 })
 
 describe("Resuming Postgres storage", () => {
   Async.it("hands the stored config to the compatibility check and stops on its throw", async t => {
     let storage = PgStorage.make(
       ~sql,
-      ~pgHost=Env.Db.host,
       ~pgSchema,
-      ~pgPort=Env.Db.port,
       ~pgUser=Env.Db.user,
-      ~pgDatabase=Env.Db.database,
-      ~pgPassword=Env.Db.password,
       ~isHasuraEnabled=false,
       ~ecosystem=Evm,
     )

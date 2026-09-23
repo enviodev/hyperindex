@@ -74,7 +74,7 @@ type sql = {
 
 // The chain ids are cast to the widest integer type rather than the column's
 // own: nothing indexes the join, so the values only have to compare.
-let relation = `unnest($1::${(Postgres.BigInt :> string)}[],$2::${(Postgres.BigInt :> string)}[]) AS envio_bounds(chain_id, checkpoint_id)`
+let relation = `unnest($1::${(Sql.BigInt :> string)}[],$2::${(Sql.BigInt :> string)}[]) AS envio_bounds(chain_id, checkpoint_id)`
 
 let sql = (
   bounds: checkpointBoundsByChain,
@@ -100,10 +100,11 @@ let sql = (
 // Bound in the order `sql` reads them: under one shared sequence the lowest of
 // the ids as `$1` (every chain is held to it), otherwise the chains and their
 // own ids as the two parallel arrays the relation unnests.
-let params = (bounds: checkpointBoundsByChain): unknown =>
+let params = (bounds: checkpointBoundsByChain): array<unknown> =>
   switch bounds.sequence {
-  | SharedAcrossChains =>
-    [bounds.byChain->Frontier.min->BigInt.toString]->(Utils.magic: array<string> => unknown)
+  | SharedAcrossChains => [
+      bounds.byChain->Frontier.min->BigInt.toString->(Utils.magic: string => unknown),
+    ]
   | PerChain =>
-    bounds.byChain->Frontier.unnestParams->(Utils.magic: Frontier.unnestParams => unknown)
+    bounds.byChain->Frontier.unnestParams->(Utils.magic: Frontier.unnestParams => array<unknown>)
   }
