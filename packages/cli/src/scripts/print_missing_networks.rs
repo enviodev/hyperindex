@@ -17,15 +17,12 @@ const UNLISTED_BUT_SERVED: &[u64] = &[
     HypersyncChain::XdcTestnet as u64,
 ];
 
-// Only EVM chains have a `HypersyncChain` entry. Any other ecosystem the API
-// lists — Fuel, Solana, whatever comes next — is skipped rather than failing
-// the whole listing.
 #[derive(Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
     Evm,
-    #[serde(other)]
-    Other,
+    Fuel,
+    Solana,
 }
 
 #[derive(Deserialize, Debug)]
@@ -67,8 +64,10 @@ impl Diff {
             let Some(chain_id) = chain.chain_id else {
                 continue;
             };
-            if chain.ecosystem != Ecosystem::Evm {
-                continue;
+            match chain.ecosystem {
+                Ecosystem::Evm => (),
+                // Only EVM chains have a `HypersyncChain` entry.
+                Ecosystem::Fuel | Ecosystem::Solana => continue,
             }
 
             api_chain_ids.insert(chain_id);
@@ -152,7 +151,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_chains_of_an_ecosystem_it_does_not_index() {
+    fn parses_every_ecosystem_the_api_lists() {
         let chains: Vec<Chain> = serde_json::from_str(
             r#"[
                 {"name": "eth", "chain_id": 1, "tier": "GOLD", "ecosystem": "evm"},
@@ -165,12 +164,12 @@ mod tests {
         assert_eq!(
             chains
                 .iter()
-                .map(|c| (c.name.as_str(), c.ecosystem == Ecosystem::Evm))
+                .map(|c| (c.name.as_str(), &c.ecosystem))
                 .collect::<Vec<_>>(),
             vec![
-                ("eth", true),
-                ("fuel-mainnet", false),
-                ("solana-448h", false)
+                ("eth", &Ecosystem::Evm),
+                ("fuel-mainnet", &Ecosystem::Fuel),
+                ("solana-448h", &Ecosystem::Solana)
             ]
         );
     }
