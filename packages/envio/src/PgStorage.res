@@ -619,20 +619,29 @@ type batchSet = {
 // An absent value stays absent: a column that takes NULL has to keep it apart
 // from the document `null`, and only one of the two can survive this.
 %%private(
-  let renderDocuments = (columns: array<array<unknown>>, ~at: array<int>) => {
-    at->Array.forEach(index => {
+  let renderDocument = value =>
+    value->(Utils.magic: unknown => Nullable.t<unknown>)->Nullable.toOption->Option.isSome
+      ? value->(Utils.magic: unknown => JSON.t)->JSON.stringify->(Utils.magic: string => unknown)
+      : value
+)
+
+// A list of documents is bound as an array whose elements are each their own
+// document's text.
+%%private(
+  let renderDocuments = (columns: array<array<unknown>>, ~at: array<(int, bool)>) => {
+    at->Array.forEach(((index, isArray)) => {
       let values = columns->Array.getUnsafe(index)
       for row in 0 to values->Array.length - 1 {
         let value = values->Array.getUnsafe(row)
-        if value->(Utils.magic: unknown => Nullable.t<unknown>)->Nullable.toOption->Option.isSome {
-          values->Array.setUnsafe(
-            row,
-            value
-            ->(Utils.magic: unknown => JSON.t)
-            ->JSON.stringify
-            ->(Utils.magic: string => unknown),
-          )
-        }
+        values->Array.setUnsafe(
+          row,
+          switch value->(Utils.magic: unknown => Nullable.t<array<unknown>>)->Nullable.toOption {
+          | Some(documents) if isArray =>
+            documents->Array.map(renderDocument)->(Utils.magic: array<unknown> => unknown)
+          | Some(_) => value->renderDocument
+          | None => value
+          },
+        )
       }
     })
     columns
@@ -641,13 +650,13 @@ type batchSet = {
 
 // Where the schema's fields land among the columns, for the ones whose values
 // have to be rendered before they are bound. A schema whose fields aren't the
-// table's own — the history tables carry a transformation — names none.
+// table's own names none.
 %%private(
   let documentColumns = (table: Table.table, ~schema) =>
     switch table->Table.schemaOrderedFields(~schema) {
     | fields =>
       fields->Array.filterMapWithIndex((field: Table.field, index) =>
-        field.fieldType === Table.Json && !field.isArray ? Some(index) : None
+        field.fieldType === Table.Json ? Some((index, field.isArray)) : None
       )
     | exception _ => []
     }
