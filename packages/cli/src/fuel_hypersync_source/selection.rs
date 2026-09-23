@@ -6,8 +6,9 @@ use hyperfuel_client::net_types;
 use napi_derive::napi;
 
 use crate::address_store::{AddressSet, Emitter, StoreInner};
+use crate::fuel::log_decoder::LogDecoder;
 
-// FuelVM receipt type codes (see FuelSDK.receiptType on the JS side).
+// FuelVM receipt type codes.
 const RECEIPT_CALL: u8 = 0;
 const RECEIPT_LOG_DATA: u8 = 6;
 const RECEIPT_TRANSFER: u8 = 7;
@@ -32,13 +33,12 @@ pub enum FuelEventKind {
 }
 
 /// Internal per-registration kind. Unlike the `FuelEventKind` boundary enum,
-/// the `LogData` variant carries its parsed `rb`, so a LogData registration
-/// can't exist without one and no other kind can carry a stray rb — the
-/// invalid states the napi input's `kind`+`log_id` pair could express are
-/// resolved once, at construction.
-#[derive(Clone, Copy)]
+/// the `LogData` variant carries its parsed `rb` and decoder, so a LogData
+/// registration can't exist without them and no other kind can carry a stray
+/// one — the invalid states the napi input's `kind`+`log_id`+`abi` fields
+/// could express are resolved once, at construction.
 pub(crate) enum RegistrationKind {
-    LogData { rb: u64 },
+    LogData { rb: u64, decoder: LogDecoder },
     Mint,
     Burn,
     Transfer,
@@ -75,6 +75,9 @@ pub struct FuelOnEventRegistrationInput {
     /// The LogData `rb` value as a decimal string (u64). Required for
     /// `LogData`, ignored otherwise.
     pub log_id: Option<String>,
+    /// The contract's Fuel ABI JSON, which LogData `data` is decoded against.
+    /// Required for `LogData`, ignored otherwise.
+    pub abi: Option<serde_json::Value>,
 }
 
 pub(crate) struct Registration {
@@ -106,9 +109,9 @@ impl Registration {
         force_wildcard: bool,
         store: &StoreInner,
     ) -> bool {
-        let kind_matches = match self.kind {
-            RegistrationKind::LogData { rb: reg_rb } => {
-                receipt_type == RECEIPT_LOG_DATA && rb == Some(reg_rb)
+        let kind_matches = match &self.kind {
+            RegistrationKind::LogData { rb: reg_rb, .. } => {
+                receipt_type == RECEIPT_LOG_DATA && rb == Some(*reg_rb)
             }
             kind => kind.receipt_types().contains(&receipt_type),
         };
@@ -173,7 +176,13 @@ impl SelectionBuilder {
                     let rb = log_id.parse::<u64>().with_context(|| {
                         format!("parse logId {} for event {}", log_id, reg.event_name)
                     })?;
-                    RegistrationKind::LogData { rb }
+                    let abi = reg.abi.clone().with_context(|| {
+                        format!("LogData registration {} is missing abi", reg.event_name)
+                    })?;
+                    let decoder = LogDecoder::new(abi, log_id).with_context(|| {
+                        format!("build the LogData decoder for event {}", reg.event_name)
+                    })?;
+                    RegistrationKind::LogData { rb, decoder }
                 }
                 FuelEventKind::Call => {
                     anyhow::ensure!(
@@ -239,7 +248,7 @@ impl SelectionBuilder {
                 .get(id)
                 .with_context(|| format!("Unknown registration index {id} in query selection"))?;
             registrations.push(reg.clone());
-            match reg.kind {
+            match &reg.kind {
                 RegistrationKind::LogData { .. } => needs_log_data = true,
                 RegistrationKind::Mint | RegistrationKind::Burn => needs_supply = true,
                 RegistrationKind::Transfer => needs_transfer = true,
@@ -251,13 +260,13 @@ impl SelectionBuilder {
             // alone (`force_wildcard`); dropping them from the query instead
             // would mean never fetching the contract at all.
             let address_free = reg.is_wildcard || client_filtered.applies(&reg.contract_name);
-            match (reg.kind, address_free) {
-                (RegistrationKind::LogData { rb }, true) => push_unique(&mut wildcard_rbs, rb),
-                (RegistrationKind::LogData { rb }, false) => push_unique(
+            match (&reg.kind, address_free) {
+                (RegistrationKind::LogData { rb, .. }, true) => push_unique(&mut wildcard_rbs, *rb),
+                (RegistrationKind::LogData { rb, .. }, false) => push_unique(
                     rbs_by_contract
                         .entry(reg.contract_name.as_str())
                         .or_default(),
-                    rb,
+                    *rb,
                 ),
                 (kind, true) => {
                     for &receipt_type in kind.receipt_types() {
@@ -360,6 +369,7 @@ mod tests {
             start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
+            abi: log_id.map(crate::fuel::log_decoder::test_abi),
         }
     }
 

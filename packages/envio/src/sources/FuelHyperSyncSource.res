@@ -116,23 +116,22 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
         )
 
       let params = switch eventConfig.kind {
-      | LogData({decode}) =>
-        // Kind-required columns are validated present in Rust before the item
-        // crosses the boundary.
-        let data = item.data->Option.getOr("")
-        try decode(data) catch {
-        | exn => {
-            let params = {
-              "chainId": chainId,
-              "blockNumber": item.blockHeight,
-              "logIndex": item.receiptIndex,
-            }
-            let logger = Logging.createChildFrom(~logger, ~params)
-            exn->ErrorHandling.mkLogAndRaise(
-              ~msg="Failed to decode Fuel LogData receipt, please double check your ABI.",
-              ~logger,
-            )
+      | LogData(_) =>
+        switch item.params {
+        | Some(params) => params
+        | None =>
+          let params = {
+            "chainId": chainId,
+            "blockNumber": item.blockHeight,
+            "logIndex": item.receiptIndex,
           }
+          let logger = Logging.createChildFrom(~logger, ~params)
+          Utils.Error.make(
+            item.decodeError->Option.getOr("Missing decoded params"),
+          )->ErrorHandling.mkLogAndRaise(
+            ~msg="Failed to decode Fuel LogData receipt, please double check your ABI.",
+            ~logger,
+          )
         }
       | Mint | Burn =>
         (
@@ -213,10 +212,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
       let timerRef = Performance.now()
       let height = try await client->FuelHyperSyncClient.getHeight catch {
       | exn =>
-        exn->HyperSync.rethrowLoggingUnauthorized(
-          ~warned=unauthorizedWarned,
-          ~product="HyperFuel",
-        )
+        exn->HyperSync.rethrowLoggingUnauthorized(~warned=unauthorizedWarned, ~product="HyperFuel")
       }
       let seconds = timerRef->Performance.secondsSince
       {height, requestStats: [{method: "getHeight", seconds}]}

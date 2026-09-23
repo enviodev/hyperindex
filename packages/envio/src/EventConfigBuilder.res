@@ -343,7 +343,7 @@ let validateFieldsShapeOrThrow = (
 }
 
 let selectionList = (fields: unknown, key: string): option<array<string>> =>
-  switch (fields->(Utils.magic: unknown => dict<unknown>))->Dict.get(key) {
+  switch fields->(Utils.magic: unknown => dict<unknown>)->Dict.get(key) {
   | None => None
   | Some(value) => Some(value->(Utils.magic: unknown => array<string>))
   }
@@ -371,8 +371,8 @@ let parseFieldsOrThrow = (
     if !(valid->Utils.Set.has(name)) {
       JsError.throwWithMessage(
         `Invalid "${name}" field in the fields.${kind} option of ${registration}. Valid ${kind} fields: ${Utils.Array.quotedJoin(
-          valid->Utils.Set.toArray,
-        )}.`,
+            valid->Utils.Set.toArray,
+          )}.`,
       )
     }
     if seen->Utils.Set.has(name) {
@@ -858,13 +858,7 @@ let buildFuelEventConfig = (
   ~rawAbi: JSON.t,
 ): Internal.fuelEventConfig => {
   let fuelKind = switch kind {
-  | "logData" =>
-    // Transpile raw Fuel ABI to the format expected by the vendored ABI coder
-    let abi = FuelSDK.transpileAbi(rawAbi)
-    Internal.LogData({
-      logId: sighash,
-      decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
-    })
+  | "logData" => Internal.LogData({logId: sighash, abi: rawAbi})
   | "mint" => Mint
   | "burn" => Burn
   | "transfer" => Transfer

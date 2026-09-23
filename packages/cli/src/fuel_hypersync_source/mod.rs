@@ -11,6 +11,7 @@ mod types;
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_store::{BlockStore, FuelBlockRow};
 use crate::hex::decode_prefixed;
+use crate::param_value::ParamValue;
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
@@ -149,8 +150,9 @@ pub struct EventItemsQuery {
 }
 
 /// One routed receipt. The receipt's kind-specific columns are flattened so
-/// JS builds params without a tagged receipt union: LogData carries `data`
-/// (decoded in JS against the contract ABI), Mint/Burn carry `val`/`subId`,
+/// JS builds params without a tagged receipt union: LogData carries `params`
+/// decoded against the contract ABI (or `decodeError` when its data doesn't
+/// fit the logged type), Mint/Burn carry `val`/`subId`,
 /// Transfer/TransferOut/Call carry `amount`/`assetId`/`to` — with
 /// TransferOut's wallet recipient normalised into `to`.
 #[napi(object)]
@@ -164,7 +166,8 @@ pub struct EventItem {
     /// the `BlockStore` returned alongside this response.
     pub block_height: i64,
     pub src_address: String,
-    pub data: Option<String>,
+    pub params: Option<ParamValue>,
+    pub decode_error: Option<String>,
     pub sub_id: Option<String>,
     pub val: Option<BigInt>,
     pub amount: Option<BigInt>,
@@ -293,27 +296,40 @@ fn route_receipts(
                 }
                 value.map(BigInt::from)
             };
-            let item = match reg.kind {
-                RegistrationKind::LogData { .. } => EventItem {
-                    on_event_registration_index: reg.index,
-                    receipt_index: receipt.receipt_index,
-                    tx_id: receipt.tx_id.clone(),
-                    block_height: receipt.block_height,
-                    src_address: src_address.clone(),
-                    data: require_hex(&receipt.data, "receipt.data", &mut missing),
-                    sub_id: None,
-                    val: None,
-                    amount: None,
-                    asset_id: None,
-                    to: None,
-                },
+            let item = match &reg.kind {
+                RegistrationKind::LogData { decoder, .. } => {
+                    let (params, decode_error) =
+                        match receipt.data.as_deref().map(|data| decoder.decode(data)) {
+                            Some(Ok(params)) => (Some(params), None),
+                            Some(Err(e)) => (None, Some(format!("{e:#}"))),
+                            None => {
+                                push_unique(&mut missing, "receipt.data");
+                                (None, None)
+                            }
+                        };
+                    EventItem {
+                        on_event_registration_index: reg.index,
+                        receipt_index: receipt.receipt_index,
+                        tx_id: receipt.tx_id.clone(),
+                        block_height: receipt.block_height,
+                        src_address: src_address.clone(),
+                        params,
+                        decode_error,
+                        sub_id: None,
+                        val: None,
+                        amount: None,
+                        asset_id: None,
+                        to: None,
+                    }
+                }
                 RegistrationKind::Mint | RegistrationKind::Burn => EventItem {
                     on_event_registration_index: reg.index,
                     receipt_index: receipt.receipt_index,
                     tx_id: receipt.tx_id.clone(),
                     block_height: receipt.block_height,
                     src_address: src_address.clone(),
-                    data: None,
+                    params: None,
+                    decode_error: None,
                     sub_id: require_hex(&receipt.sub_id, "receipt.subId", &mut missing),
                     val: require_u64(receipt.val, "receipt.val", &mut missing),
                     amount: None,
@@ -335,7 +351,8 @@ fn route_receipts(
                         tx_id: receipt.tx_id.clone(),
                         block_height: receipt.block_height,
                         src_address: src_address.clone(),
-                        data: None,
+                        params: None,
+                        decode_error: None,
                         sub_id: None,
                         val: None,
                         amount: require_u64(receipt.amount, "receipt.amount", &mut missing),
@@ -388,6 +405,7 @@ mod tests {
     use super::selection::FuelEventKind;
     use super::*;
     use crate::address_store::test_support::{fuel_store, set_of};
+    use crate::param_value::ParamValue;
 
     #[test]
     fn convert_error_serializes_as_expected_json() {
@@ -418,6 +436,7 @@ mod tests {
             start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
+            abi: log_id.map(crate::fuel::log_decoder::test_abi),
         }
     }
 
@@ -428,7 +447,7 @@ mod tests {
             tx_id: "0xtx".to_string(),
             block_height: 42,
             receipt_type,
-            data: Some("0x01".to_string()),
+            data: Some(vec![0x01]),
             rb: Some(7),
             val: Some(100),
             sub_id: Some("0xsub".to_string()),
@@ -517,6 +536,31 @@ mod tests {
                 .map(|i| i.on_event_registration_index)
                 .collect::<Vec<_>>(),
             vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn decodes_log_data_against_the_registration_abi() {
+        let (store, set, built) = build(
+            &[reg_input(0, "C", FuelEventKind::LogData, true, Some("7"))],
+            &[0],
+            &[("C", &[])],
+        );
+        let mut truncated = raw_receipt(6);
+        truncated.data = Some(vec![]);
+        let items = route(&store, &set, &built, vec![raw_receipt(6), truncated]).unwrap();
+        assert_eq!(
+            items
+                .into_iter()
+                .map(|i| (i.params, i.decode_error))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some(ParamValue::Num(1.0)), None),
+                (
+                    None,
+                    Some("unexpected end of data: needed 1 bytes, 0 left".to_string())
+                ),
+            ]
         );
     }
 

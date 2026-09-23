@@ -4,11 +4,10 @@
  * If your project's types look out of date, run `envio codegen`
  * (or your package manager's `codegen` script, e.g. `pnpm codegen`).
  */
-
 module Transaction = {
   type t = {
     id: string,
-}
+  }
 }
 
 module Block = {
@@ -16,7 +15,7 @@ module Block = {
     id: string,
     height: int,
     time: int,
-}
+  }
 }
 
 module SingleOrMultiple: {
@@ -67,9 +66,7 @@ type onEventOptions<'eventIdentity, 'where> = {
   where?: 'where,
 }
 
-module Enums = {
-
-}
+module Enums = {}
 
 module Entities = {
   type id = string
@@ -78,7 +75,12 @@ module Entities = {
     type id = string
     type t = {id: id, greetings: array<string>, latestGreeting: string, numberOfGreetings: int}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("greetings") greetings?: Envio.whereOperator<array<string>>, @as("latestGreeting") latestGreeting?: Envio.whereOperator<string>, @as("numberOfGreetings") numberOfGreetings?: Envio.whereOperator<int>}
+    type getWhereFilter = {
+      @as("id") id?: Envio.whereOperator<id>,
+      @as("greetings") greetings?: Envio.whereOperator<array<string>>,
+      @as("latestGreeting") latestGreeting?: Envio.whereOperator<string>,
+      @as("numberOfGreetings") numberOfGreetings?: Envio.whereOperator<int>,
+    }
 
     type testIndexerRow = t
     type testIndexerGetWhereFilter = getWhereFilter
@@ -115,7 +117,7 @@ type handlerContext = {
   \"User": handlerEntityOperations<Entities.User.t, Entities.User.getWhereFilter>,
 }
 
-type contractRegisterContract = { add: Address.t => unit }
+type contractRegisterContract = {add: Address.t => unit}
 
 type contractRegisterChain = {
   id: chainId,
@@ -129,41 +131,40 @@ type contractRegisterContext = {
 }
 
 module AllEvents = {
-let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../abis/all-events-abi.json`))["default"])
-/*Silence warning of label defined in multiple types*/
-@@warning("-30")
-type rec type0 = (type27, type22)
- and type1 = array<type28>
- @tag("case") and type2 = | Pending({payload: type20}) | Completed({payload: type26}) | Failed({payload: type11})
- @tag("case") and type3 = | Address({payload: type13}) | ContractId({payload: type16})
- @tag("case") and type4<'t> = | None({payload: type20}) | Some({payload: 't})
- @tag("case") and type5<'t, 'e> = | Ok({payload: 't}) | Err({payload: 'e})
- and type8 = bigint
- and type9 = {f1: type26}
- and type10 = {f1: type26, f2: type4<type26>}
- and type11 = {reason: type26}
- and type12 = {tags: type4<type19<type17>>}
- and type13 = {bits: type21}
- and type14 = unknown
- and type15 = {ptr: type8, cap: type27}
- and type16 = {bits: type21}
- and type17 = string
- and type18<'t> = {ptr: type8, cap: type27}
- and type19<'t> = array<'t>
- and type20 = unit
- and type21 = string
- and type22 = bool
- and type23 = string
- and type24 = int
- and type25 = bigint
- and type26 = int
- and type27 = bigint
- and type28 = int
-@@warning("+30")
-let contractName = "AllEvents"
+  /* Silence warning of label defined in multiple types */
+  @@warning("-30")
+  type rec type0 = (type27, type22)
+  and type1 = array<type28>
+  @tag("case")
+  and type2 = Pending({payload: type20}) | Completed({payload: type26}) | Failed({payload: type11})
+  @tag("case") and type3 = Address({payload: type13}) | ContractId({payload: type16})
+  @tag("case") and type4<'t> = None({payload: type20}) | Some({payload: 't})
+  @tag("case") and type5<'t, 'e> = Ok({payload: 't}) | Err({payload: 'e})
+  and type8 = bigint
+  and type9 = {f1: type26}
+  and type10 = {f1: type26, f2: type4<type26>}
+  and type11 = {reason: type26}
+  and type12 = {tags: type4<type19<type17>>}
+  and type13 = {bits: type21}
+  and type14 = unknown
+  and type15 = {ptr: type8, cap: type27}
+  and type16 = {bits: type21}
+  and type17 = string
+  and type18<'t> = {ptr: type8, cap: type27}
+  and type19<'t> = array<'t>
+  and type20 = unit
+  and type21 = string
+  and type22 = bool
+  and type23 = string
+  and type24 = int
+  and type25 = bigint
+  and type26 = int
+  and type27 = bigint
+  and type28 = int
+  @@warning("+30")
+  let contractName = "AllEvents"
 
   module UnitLog = {
-
     let name = "UnitLog"
     let contractName = contractName
     type params = type20
@@ -197,7 +198,6 @@ let contractName = "AllEvents"
   }
 
   module Option_ = {
-
     let name = "Option_"
     let contractName = contractName
     type params = type4<type26>
@@ -231,7 +231,6 @@ let contractName = "AllEvents"
   }
 
   module SimpleStructWithOptionalField = {
-
     let name = "SimpleStructWithOptionalField"
     let contractName = contractName
     type params = type10
@@ -265,7 +264,6 @@ let contractName = "AllEvents"
   }
 
   module U8Log = {
-
     let name = "U8Log"
     let contractName = contractName
     type params = type28
@@ -299,7 +297,6 @@ let contractName = "AllEvents"
   }
 
   module ArrayLog = {
-
     let name = "ArrayLog"
     let contractName = contractName
     type params = type1
@@ -333,7 +330,6 @@ let contractName = "AllEvents"
   }
 
   module Result = {
-
     let name = "Result"
     let contractName = contractName
     type params = type5<type26, type22>
@@ -367,7 +363,6 @@ let contractName = "AllEvents"
   }
 
   module U64Log = {
-
     let name = "U64Log"
     let contractName = contractName
     type params = type27
@@ -401,7 +396,6 @@ let contractName = "AllEvents"
   }
 
   module B256Log = {
-
     let name = "B256Log"
     let contractName = contractName
     type params = type21
@@ -435,7 +429,6 @@ let contractName = "AllEvents"
   }
 
   module U32Log = {
-
     let name = "U32Log"
     let contractName = contractName
     type params = type26
@@ -469,7 +462,6 @@ let contractName = "AllEvents"
   }
 
   module Status = {
-
     let name = "Status"
     let contractName = contractName
     type params = type2
@@ -503,7 +495,6 @@ let contractName = "AllEvents"
   }
 
   module U16Log = {
-
     let name = "U16Log"
     let contractName = contractName
     type params = type24
@@ -537,7 +528,6 @@ let contractName = "AllEvents"
   }
 
   module TupleLog = {
-
     let name = "TupleLog"
     let contractName = contractName
     type params = type0
@@ -571,7 +561,6 @@ let contractName = "AllEvents"
   }
 
   module SimpleStruct = {
-
     let name = "SimpleStruct"
     let contractName = contractName
     type params = type9
@@ -605,7 +594,6 @@ let contractName = "AllEvents"
   }
 
   module UnknownLog = {
-
     let name = "UnknownLog"
     let contractName = contractName
     type params = type25
@@ -639,7 +627,6 @@ let contractName = "AllEvents"
   }
 
   module BoolLog = {
-
     let name = "BoolLog"
     let contractName = contractName
     type params = type22
@@ -673,7 +660,6 @@ let contractName = "AllEvents"
   }
 
   module StrLog = {
-
     let name = "StrLog"
     let contractName = contractName
     type params = type23
@@ -707,7 +693,6 @@ let contractName = "AllEvents"
   }
 
   module StringLog = {
-
     let name = "StringLog"
     let contractName = contractName
     type params = type17
@@ -741,7 +726,6 @@ let contractName = "AllEvents"
   }
 
   module Option2 = {
-
     let name = "Option2"
     let contractName = contractName
     type params = type4<type4<type26>>
@@ -775,7 +759,6 @@ let contractName = "AllEvents"
   }
 
   module VecLog = {
-
     let name = "VecLog"
     let contractName = contractName
     type params = type19<type27>
@@ -809,7 +792,6 @@ let contractName = "AllEvents"
   }
 
   module TagsEvent = {
-
     let name = "TagsEvent"
     let contractName = contractName
     type params = type12
@@ -843,7 +825,6 @@ let contractName = "AllEvents"
   }
 
   module BytesLog = {
-
     let name = "BytesLog"
     let contractName = contractName
     type params = type14
@@ -877,7 +858,6 @@ let contractName = "AllEvents"
   }
 
   module Mint = {
-
     let name = "Mint"
     let contractName = contractName
     type params = Internal.fuelSupplyParams
@@ -911,7 +891,6 @@ let contractName = "AllEvents"
   }
 
   module Burn = {
-
     let name = "Burn"
     let contractName = contractName
     type params = Internal.fuelSupplyParams
@@ -945,7 +924,6 @@ let contractName = "AllEvents"
   }
 
   module Transfer = {
-
     let name = "Transfer"
     let contractName = contractName
     type params = Internal.fuelTransferParams
@@ -979,50 +957,81 @@ let contractName = "AllEvents"
   }
 
   type rec eventIdentity<'event, 'paramsConstructor, 'where> =
-    | @as("UnitLog") UnitLog: eventIdentity<UnitLog.event, UnitLog.paramsConstructor, UnitLog.onEventWhere>
-    | @as("Option_") Option_: eventIdentity<Option_.event, Option_.paramsConstructor, Option_.onEventWhere>
-    | @as("SimpleStructWithOptionalField") SimpleStructWithOptionalField: eventIdentity<SimpleStructWithOptionalField.event, SimpleStructWithOptionalField.paramsConstructor, SimpleStructWithOptionalField.onEventWhere>
+    | @as("UnitLog")
+    UnitLog: eventIdentity<UnitLog.event, UnitLog.paramsConstructor, UnitLog.onEventWhere>
+    | @as("Option_")
+    Option_: eventIdentity<Option_.event, Option_.paramsConstructor, Option_.onEventWhere>
+    | @as("SimpleStructWithOptionalField")
+    SimpleStructWithOptionalField: eventIdentity<
+        SimpleStructWithOptionalField.event,
+        SimpleStructWithOptionalField.paramsConstructor,
+        SimpleStructWithOptionalField.onEventWhere,
+      >
     | @as("U8Log") U8Log: eventIdentity<U8Log.event, U8Log.paramsConstructor, U8Log.onEventWhere>
-    | @as("ArrayLog") ArrayLog: eventIdentity<ArrayLog.event, ArrayLog.paramsConstructor, ArrayLog.onEventWhere>
-    | @as("Result") Result: eventIdentity<Result.event, Result.paramsConstructor, Result.onEventWhere>
-    | @as("U64Log") U64Log: eventIdentity<U64Log.event, U64Log.paramsConstructor, U64Log.onEventWhere>
-    | @as("B256Log") B256Log: eventIdentity<B256Log.event, B256Log.paramsConstructor, B256Log.onEventWhere>
-    | @as("U32Log") U32Log: eventIdentity<U32Log.event, U32Log.paramsConstructor, U32Log.onEventWhere>
-    | @as("Status") Status: eventIdentity<Status.event, Status.paramsConstructor, Status.onEventWhere>
-    | @as("U16Log") U16Log: eventIdentity<U16Log.event, U16Log.paramsConstructor, U16Log.onEventWhere>
-    | @as("TupleLog") TupleLog: eventIdentity<TupleLog.event, TupleLog.paramsConstructor, TupleLog.onEventWhere>
-    | @as("SimpleStruct") SimpleStruct: eventIdentity<SimpleStruct.event, SimpleStruct.paramsConstructor, SimpleStruct.onEventWhere>
-    | @as("UnknownLog") UnknownLog: eventIdentity<UnknownLog.event, UnknownLog.paramsConstructor, UnknownLog.onEventWhere>
-    | @as("BoolLog") BoolLog: eventIdentity<BoolLog.event, BoolLog.paramsConstructor, BoolLog.onEventWhere>
-    | @as("StrLog") StrLog: eventIdentity<StrLog.event, StrLog.paramsConstructor, StrLog.onEventWhere>
-    | @as("StringLog") StringLog: eventIdentity<StringLog.event, StringLog.paramsConstructor, StringLog.onEventWhere>
-    | @as("Option2") Option2: eventIdentity<Option2.event, Option2.paramsConstructor, Option2.onEventWhere>
-    | @as("VecLog") VecLog: eventIdentity<VecLog.event, VecLog.paramsConstructor, VecLog.onEventWhere>
-    | @as("TagsEvent") TagsEvent: eventIdentity<TagsEvent.event, TagsEvent.paramsConstructor, TagsEvent.onEventWhere>
-    | @as("BytesLog") BytesLog: eventIdentity<BytesLog.event, BytesLog.paramsConstructor, BytesLog.onEventWhere>
+    | @as("ArrayLog")
+    ArrayLog: eventIdentity<ArrayLog.event, ArrayLog.paramsConstructor, ArrayLog.onEventWhere>
+    | @as("Result")
+    Result: eventIdentity<Result.event, Result.paramsConstructor, Result.onEventWhere>
+    | @as("U64Log")
+    U64Log: eventIdentity<U64Log.event, U64Log.paramsConstructor, U64Log.onEventWhere>
+    | @as("B256Log")
+    B256Log: eventIdentity<B256Log.event, B256Log.paramsConstructor, B256Log.onEventWhere>
+    | @as("U32Log")
+    U32Log: eventIdentity<U32Log.event, U32Log.paramsConstructor, U32Log.onEventWhere>
+    | @as("Status")
+    Status: eventIdentity<Status.event, Status.paramsConstructor, Status.onEventWhere>
+    | @as("U16Log")
+    U16Log: eventIdentity<U16Log.event, U16Log.paramsConstructor, U16Log.onEventWhere>
+    | @as("TupleLog")
+    TupleLog: eventIdentity<TupleLog.event, TupleLog.paramsConstructor, TupleLog.onEventWhere>
+    | @as("SimpleStruct")
+    SimpleStruct: eventIdentity<
+        SimpleStruct.event,
+        SimpleStruct.paramsConstructor,
+        SimpleStruct.onEventWhere,
+      >
+    | @as("UnknownLog")
+    UnknownLog: eventIdentity<
+        UnknownLog.event,
+        UnknownLog.paramsConstructor,
+        UnknownLog.onEventWhere,
+      >
+    | @as("BoolLog")
+    BoolLog: eventIdentity<BoolLog.event, BoolLog.paramsConstructor, BoolLog.onEventWhere>
+    | @as("StrLog")
+    StrLog: eventIdentity<StrLog.event, StrLog.paramsConstructor, StrLog.onEventWhere>
+    | @as("StringLog")
+    StringLog: eventIdentity<StringLog.event, StringLog.paramsConstructor, StringLog.onEventWhere>
+    | @as("Option2")
+    Option2: eventIdentity<Option2.event, Option2.paramsConstructor, Option2.onEventWhere>
+    | @as("VecLog")
+    VecLog: eventIdentity<VecLog.event, VecLog.paramsConstructor, VecLog.onEventWhere>
+    | @as("TagsEvent")
+    TagsEvent: eventIdentity<TagsEvent.event, TagsEvent.paramsConstructor, TagsEvent.onEventWhere>
+    | @as("BytesLog")
+    BytesLog: eventIdentity<BytesLog.event, BytesLog.paramsConstructor, BytesLog.onEventWhere>
     | @as("Mint") Mint: eventIdentity<Mint.event, Mint.paramsConstructor, Mint.onEventWhere>
     | @as("Burn") Burn: eventIdentity<Burn.event, Burn.paramsConstructor, Burn.onEventWhere>
-    | @as("Transfer") Transfer: eventIdentity<Transfer.event, Transfer.paramsConstructor, Transfer.onEventWhere>
+    | @as("Transfer")
+    Transfer: eventIdentity<Transfer.event, Transfer.paramsConstructor, Transfer.onEventWhere>
 }
 
 module Greeter = {
-let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../abis/greeter-abi.json`))["default"])
-/*Silence warning of label defined in multiple types*/
-@@warning("-30")
-type rec type0 = string
- @tag("case") and type1 = | InvalidContractSender({payload: type8}) | ToThrow({payload: type8})
- @tag("case") and type2<'t> = | None({payload: type8}) | Some({payload: 't})
- and type4 = {user: type7}
- and type5 = {value: type9}
- and type6 = {user: type7, greeting: type5}
- and type7 = {bits: type0}
- and type8 = unit
- and type9 = string
-@@warning("+30")
-let contractName = "Greeter"
+  /* Silence warning of label defined in multiple types */
+  @@warning("-30")
+  type rec type0 = string
+  @tag("case") and type1 = InvalidContractSender({payload: type8}) | ToThrow({payload: type8})
+  @tag("case") and type2<'t> = None({payload: type8}) | Some({payload: 't})
+  and type4 = {user: type7}
+  and type5 = {value: type9}
+  and type6 = {user: type7, greeting: type5}
+  and type7 = {bits: type0}
+  and type8 = unit
+  and type9 = string
+  @@warning("+30")
+  let contractName = "Greeter"
 
   module NewGreeting = {
-
     let name = "NewGreeting"
     let contractName = contractName
     type params = type6
@@ -1056,7 +1065,6 @@ let contractName = "Greeter"
   }
 
   module ClearGreeting = {
-
     let name = "ClearGreeting"
     let contractName = contractName
     type params = type4
@@ -1090,8 +1098,18 @@ let contractName = "Greeter"
   }
 
   type rec eventIdentity<'event, 'paramsConstructor, 'where> =
-    | @as("NewGreeting") NewGreeting: eventIdentity<NewGreeting.event, NewGreeting.paramsConstructor, NewGreeting.onEventWhere>
-    | @as("ClearGreeting") ClearGreeting: eventIdentity<ClearGreeting.event, ClearGreeting.paramsConstructor, ClearGreeting.onEventWhere>
+    | @as("NewGreeting")
+    NewGreeting: eventIdentity<
+        NewGreeting.event,
+        NewGreeting.paramsConstructor,
+        NewGreeting.onEventWhere,
+      >
+    | @as("ClearGreeting")
+    ClearGreeting: eventIdentity<
+        ClearGreeting.event,
+        ClearGreeting.paramsConstructor,
+        ClearGreeting.onEventWhere,
+      >
 }
 
 /** Contract configuration with name and ABI. */
@@ -1167,7 +1185,9 @@ type indexer = {
   /** Register a contract register handler for dynamic contract indexing. */
   contractRegister: 'event 'paramsConstructor 'where. (
     onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
-    Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
+    Internal.genericContractRegister<
+      Internal.genericContractRegisterArgs<'event, contractRegisterContext>,
+    >,
   ) => unit,
   /** Register a Block Handler. Evaluates `where` once per configured chain at registration time. */
   onBlock: (
@@ -1178,9 +1198,9 @@ type indexer = {
 
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
-switch chainId {
+  switch chainId {
   | #0 => indexer.chains.\"0"
-}
+  }
 }
 
 type testIndexerProcessConfigChains = {
@@ -1226,10 +1246,17 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"User": testIndexerEntityOperations<Entities.User.testIndexerRow, Entities.User.testIndexerGetWhereFilter>,
+  \"User": testIndexerEntityOperations<
+    Entities.User.testIndexerRow,
+    Entities.User.testIndexerGetWhereFilter,
+  >,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id, 'getWhereFilter>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = ""
+@get_index
+external getTestIndexerEntityOperations: (
+  testIndexer,
+  Entities.name<'entity, 'id, 'getWhereFilter>,
+) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 
