@@ -97,11 +97,10 @@ describe("A supervised worker released at the head", () => {
       source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->reportedFinishAndPause).toStrictEqual([
-        "Finished backfill. Waiting for the other chains.",
-        "Finished backfill. Waiting for the other chains.",
-        indexesMessage,
-      ])
+      t.expect(
+        indexer.logs()->reportedFinishAndPause,
+        ~message="Released, nothing holds the process back, and its chains finish together",
+      ).toStrictEqual(["Finished backfill.", "Finished backfill.", indexesMessage])
     },
   )
 })
@@ -124,7 +123,10 @@ describe("A supervised worker resumed at the head", () => {
       resumed.releaseRealtime()
       await resumed.waitUntilReady()
 
-      t.expect(resumed.logs()->reportedFinishAndPause).toStrictEqual([
+      t.expect(
+        resumed.logs()->reportedFinishAndPause,
+        ~message="Both runs' chains speak while the hold is on, so both runs say they are waiting",
+      ).toStrictEqual([
         "Finished backfill. Waiting for the other chains.",
         "Finished backfill. Waiting for the other chains.",
         "Finished backfill. Waiting for the other chains.",
@@ -160,10 +162,114 @@ describe("A chain resumed already ready", () => {
       t.expect(
         resumed.logs()->reportedFinishAndPause,
         ~message="Both chains caught up and were stamped ready in the first run, and the resumed one repeats neither",
+      ).toStrictEqual(["Finished backfill.", "Finished backfill.", indexesMessage])
+    },
+  )
+})
+
+let endBlockScenario = Scenario.make(
+  ~configYaml=`
+name: finalize-backfill-logging-end-block
+disable_default_cross_chain: true
+contracts:
+  - name: Gravatar
+    events:
+      - event: "TestEvent()"
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc1.example.test
+      for: sync
+    start_block: 1
+    end_block: 100
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"`,
+  ~schema,
+)
+
+describe("A chain resumed already at its end block", () => {
+  // Unlike a finished backfill, being done is still true on the resume, and it
+  // is what explains a run that exits as soon as it starts.
+  endBlockScenario->Scenario.it(
+    "Says it is done again, before the resumed run exits",
+    ~sources=[{chain: 1, autoHeight: 100}],
+    ~captureLogs=true,
+    ~onExit=() => (),
+    async (~t, ~indexer, ~source) => {
+      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+
+      let resumed = await indexer.restart()
+      await resumed.waitUntilIdle()
+
+      t.expect(
+        resumed.logs()->Array.filter(({msg}) =>
+          msg === "Indexed to the end block. This chain is done."
+        ),
+        ~message="Said once by each run",
       ).toStrictEqual([
-        "Finished backfill. Waiting for the other chains.",
-        "Finished backfill. Waiting for the other chains.",
-        indexesMessage,
+        {
+          msg: "Indexed to the end block. This chain is done.",
+          params: dict{"chainId": JSON.Number(1.), "block": JSON.Number(100.)},
+        },
+        {
+          msg: "Indexed to the end block. This chain is done.",
+          params: dict{"chainId": JSON.Number(1.), "block": JSON.Number(100.)},
+        },
+      ])
+    },
+  )
+})
+
+let finishLines = (logs: array<IndexerRunner.logEntry>) =>
+  logs->Array.filter(({msg}) => msg->String.startsWith("Finished backfill"))
+
+describe("A process whose chains finish at different times", () => {
+  // Waiting is said only while it is true: the chain that finishes first waits
+  // on the one still behind, and the last one in waits on nobody.
+  headScenario->Scenario.it(
+    "Says it is waiting only while another chain is still behind",
+    ~sources=[{chain: 1, autoHeight: 100}, {chain: 137, autoHeight: 100}],
+    ~captureLogs=true,
+    async (~t, ~indexer, ~source) => {
+      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=50)
+      await indexer.getBatchWritePromise()
+      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+
+      t.expect(indexer.logs()->finishLines).toStrictEqual([
+        {
+          msg: "Finished backfill. Waiting for the other chains.",
+          params: dict{"chainId": JSON.Number(1.), "block": JSON.Number(100.)},
+        },
+        {
+          msg: "Finished backfill.",
+          params: dict{"chainId": JSON.Number(137.), "block": JSON.Number(100.)},
+        },
+      ])
+    },
+  )
+
+  headScenario->Scenario.it(
+    "Says neither is waiting when they finish together",
+    ~sources=[{chain: 1, autoHeight: 100}, {chain: 137, autoHeight: 100}],
+    ~captureLogs=true,
+    async (~t, ~indexer, ~source) => {
+      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+
+      t.expect(indexer.logs()->finishLines).toStrictEqual([
+        {
+          msg: "Finished backfill.",
+          params: dict{"chainId": JSON.Number(1.), "block": JSON.Number(100.)},
+        },
+        {
+          msg: "Finished backfill.",
+          params: dict{"chainId": JSON.Number(137.), "block": JSON.Number(100.)},
+        },
       ])
     },
   )

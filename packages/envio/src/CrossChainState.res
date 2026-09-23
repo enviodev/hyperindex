@@ -284,11 +284,19 @@ let markReady = (crossChainState: t, ~readyAt) => {
   crossChainState.isRealtime = true
 }
 
+// What a caught-up chain is waiting on before its process can finalize: the run
+// holding the process back, or another chain it drives still behind. Read when
+// the chain speaks, so "waiting" is said only while it is true.
+let isWaitingOnOthers = (crossChainState: t, cs: ChainState.t) =>
+  crossChainState.holdRealtime ||
+  crossChainState.chainStates
+  ->Dict.valuesToArray
+  ->Array.some(other => other !== cs && !(other->ChainState.hasCaughtUp))
+
 // Each chain that has just finished indexing, said once, by the chain it is
 // about — so a chain that finishes early says so then, rather than when the
 // last chain in its process catches up.
-let reportFinished = (crossChainState: t) => {
-  let waitingOnOthers = crossChainState.holdRealtime || crossChainState.chainIds->Array.length > 1
+let reportFinished = (crossChainState: t) =>
   crossChainState.chainStates
   ->Dict.valuesToArray
   ->Array.forEach(cs =>
@@ -301,7 +309,7 @@ let reportFinished = (crossChainState: t) => {
       cs
       ->ChainState.logger
       ->Logging.childInfo({
-        "msg": waitingOnOthers
+        "msg": crossChainState->isWaitingOnOthers(cs)
           ? "Finished backfill. Waiting for the other chains."
           : "Finished backfill.",
         "block": block,
@@ -309,7 +317,6 @@ let reportFinished = (crossChainState: t) => {
     | None => ()
     }
   )
-}
 
 // --- Fetch control. ---
 

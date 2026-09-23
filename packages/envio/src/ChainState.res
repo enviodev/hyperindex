@@ -181,11 +181,7 @@ let make = (
     blockRangeFetchCount: 0.,
     blockRangeFetchedEvents: 0.,
     blockRangeFetchedBlocks: 0.,
-    // A chain resuming with its ready stamp already committed has nothing to
-    // announce: it didn't backfill in this run, and the resume said where it
-    // continues from. Only the chain that gets there while this run watches
-    // says so.
-    reportedFinished: timestampCaughtUpToHeadOrEndblock !== None,
+    reportedFinished: false,
     reorgCount: 0,
     reorgDetectedBlock: None,
     rollbackTargetBlock: None,
@@ -712,7 +708,10 @@ let takeFinished = (cs: t) =>
       }
     | (_, _, true) => {
         cs.reportedFinished = true
-        Some(Backfill(cs.committedProgressBlockNumber))
+        // Finishing a backfill happens in a run, and a chain resumed with its
+        // `ready_at` already committed did none in this one. Being at the end
+        // block, above, stays true across runs and is said on every one.
+        cs->isReady ? None : Some(Backfill(cs.committedProgressBlockNumber))
       }
     | _ => None
     }
