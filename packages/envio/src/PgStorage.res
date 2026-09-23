@@ -2126,9 +2126,11 @@ let make = (
   }
 
   // Unlike `ensureQueryIndexes`, this doesn't go through `IndexManager.ensure`.
-  // It's safe because the caller guarantees exclusivity — `FinalizeBackfill.run`
-  // is reached from the processing loop with processing already paused, so no
-  // handler can be running a getWhere.
+  // Within this process that is safe: `FinalizeBackfill.run` is reached from the
+  // processing loop with processing already paused, so no handler can be running
+  // a getWhere. Nothing keeps a sibling process driving other chains of the same
+  // schema out, though — it builds the same indexes at the same moment, which is
+  // why a lost create below is re-read rather than taken as a failure.
   //
   // Each index is built on its own rather than in one transaction with
   // `ready_at`: a build that dies half way through a large schema would
