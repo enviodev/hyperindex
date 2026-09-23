@@ -1592,12 +1592,14 @@ describe("SourceManager.executeQuery", () => {
     t.expect(
       sourceManager
       ->SourceManager.getRequestStatSamples
-      ->Array.map(({method, count, responseBlocks, emptyResponseCount}) => (
-        method,
-        count,
-        responseBlocks,
-        emptyResponseCount,
-      )),
+      ->Array.map(
+        ({method, count, responseBlocks, emptyResponseCount}) => (
+          method,
+          count,
+          responseBlocks,
+          emptyResponseCount,
+        ),
+      ),
     ).toEqual([("getLogs", 2, Some(3), 1)])
   })
 

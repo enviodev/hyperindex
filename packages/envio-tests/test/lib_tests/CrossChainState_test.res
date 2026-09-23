@@ -2,19 +2,16 @@ open Vitest
 
 let baseChainConfig = TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
-let mockEvent = (~blockNumber): Internal.item =>
-  Internal.Event({
-    chainId: 1->ChainId.fromInt,
-    blockNumber,
-    // Carries an `index` so the buffer's dedup key resolves; the rest of the
-    // registration is unused by these tests.
-    onEventRegistration: {"index": 0}->(
-      Utils.magic: {"index": int} => Internal.onEventRegistration
-    ),
-    logIndex: 0,
-    transactionIndex: 0,
-    payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
-  })
+let mockEvent = (~blockNumber): Internal.item => Internal.Event({
+  chainId: 1->ChainId.fromInt,
+  blockNumber,
+  // Carries an `index` so the buffer's dedup key resolves; the rest of the
+  // registration is unused by these tests.
+  onEventRegistration: {"index": 0}->(Utils.magic: {"index": int} => Internal.onEventRegistration),
+  logIndex: 0,
+  transactionIndex: 0,
+  payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
+})
 
 // A chain state with no partitions, so bufferBlockNumber is latestOnBlockBlockNumber
 // (the fetch frontier) and every derived value used by the scheduler is set directly.
@@ -97,7 +94,7 @@ let makeFetchingChainState = (
   let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
   let partition: FetchState.partition = {
     id: "0",
-    latestFetchedBlock:latestFetchedBlock,
+    latestFetchedBlock,
     selection: normalSelection,
     addresses: TestAddresses.setOf(~contractName="MockContract", [address]),
     mergeBlock: None,
@@ -179,15 +176,15 @@ let makeRegistration = (~contractName, ~index): Internal.onEventRegistration =>
 
 describe("ChainState event registration ownership", () => {
   it("rejects a registration whose index differs from its ChainState position", t => {
-    t->toThrowErrorEqual(() =>
-      makeChainState(
-        ~chainId=1->ChainId.fromInt,
-        ~knownHeight=10,
-        ~frontier=10,
-        ~firstEventBlock=0,
-        ~onEventRegistrations=[makeRegistration(~contractName="ContractA", ~index=4)],
-      )->ignore
-    , 
+    t->toThrowErrorEqual(
+      () =>
+        makeChainState(
+          ~chainId=1->ChainId.fromInt,
+          ~knownHeight=10,
+          ~frontier=10,
+          ~firstEventBlock=0,
+          ~onEventRegistrations=[makeRegistration(~contractName="ContractA", ~index=4)],
+        )->ignore,
       "Invalid onEvent registration index for chain 1: ContractA.EventWithoutFields has index 4, but its ChainState position is 0.",
     )
   })
@@ -195,9 +192,27 @@ describe("ChainState event registration ownership", () => {
 
 describe("CrossChainState fetch control", () => {
   it("priorityOrder visits the furthest-behind chain first", t => {
-    let a = makeChainState(~chainId=1->ChainId.fromInt, ~knownHeight=1000, ~frontier=100, ~firstEventBlock=0, ~bufferBlocks=[100])
-    let b = makeChainState(~chainId=2->ChainId.fromInt, ~knownHeight=1000, ~frontier=500, ~firstEventBlock=0, ~bufferBlocks=[500])
-    let cHead = makeChainState(~chainId=3->ChainId.fromInt, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0, ~bufferBlocks=[950])
+    let a = makeChainState(
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~frontier=100,
+      ~firstEventBlock=0,
+      ~bufferBlocks=[100],
+    )
+    let b = makeChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~frontier=500,
+      ~firstEventBlock=0,
+      ~bufferBlocks=[500],
+    )
+    let cHead = makeChainState(
+      ~chainId=3->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~frontier=1000,
+      ~firstEventBlock=0,
+      ~bufferBlocks=[950],
+    )
 
     let cm = makeCrossChainState(~chainStatesList=[cHead, a, b])
 
@@ -220,7 +235,11 @@ describe("CrossChainState fetch control", () => {
       ~latestFetchedBlock=900,
       ~firstEventBlock=None,
     )
-    let behind = makeFetchingChainState(~chainId=2->ChainId.fromInt, ~knownHeight=1000, ~latestFetchedBlock=300)
+    let behind = makeFetchingChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=300,
+    )
     let cm = makeCrossChainState(~chainStatesList=[ahead, behind])
 
     t.expect(
@@ -235,16 +254,28 @@ describe("CrossChainState fetch control", () => {
     // block, so they're dispatched with that action. A chain whose buffer is
     // already full of ready items (>= targetBufferSize) gets no budget, so it
     // isn't dispatched.
-    let a = makeChainState(~chainId=1->ChainId.fromInt, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0)
-    let b = makeChainState(~chainId=2->ChainId.fromInt, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0)
+    let a = makeChainState(
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~frontier=1000,
+      ~firstEventBlock=0,
+    )
+    let b = makeChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~frontier=1000,
+      ~firstEventBlock=0,
+    )
 
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime=true)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-      dispatched->Array.push((chainId->ChainId.toInt, action))->ignore
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chainId, ~action) => {
+        dispatched->Array.push((chainId->ChainId.toInt, action))->ignore
+        Promise.resolve()
+      },
+    )
 
     t.expect(
       dispatched->Array.map(((chainId, action)) => (chainId, action === WaitingForNewBlock)),
@@ -271,10 +302,12 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=100)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action as _) => {
-      dispatched->Array.push(chainId->ChainId.toInt)->ignore
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chainId, ~action as _) => {
+        dispatched->Array.push(chainId->ChainId.toInt)->ignore
+        Promise.resolve()
+      },
+    )
 
     t.expect(dispatched).toEqual([])
   })
@@ -283,22 +316,28 @@ describe("CrossChainState fetch control", () => {
     // Fresh partition behind the head: its query estimates at the default
     // (10000), far above the tiny remaining budget (1). Admission must still let
     // one query through, otherwise the chain would never make progress.
-    let cs = makeFetchingChainState(~chainId=1->ChainId.fromInt, ~knownHeight=1000, ~latestFetchedBlock=0)
+    let cs = makeFetchingChainState(
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=0,
+    )
     let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=1)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-      dispatched
-      ->Array.push((
-        chainId->ChainId.toInt,
-        switch action {
-        | Ready(queries) => queries->Array.length
-        | _ => 0
-        },
-      ))
-      ->ignore
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chainId, ~action) => {
+        dispatched
+        ->Array.push((
+          chainId->ChainId.toInt,
+          switch action {
+          | Ready(queries) => queries->Array.length
+          | _ => 0
+          },
+        ))
+        ->ignore
+        Promise.resolve()
+      },
+    )
 
     t.expect(dispatched).toEqual([(1, 1)])
   })
@@ -312,7 +351,11 @@ describe("CrossChainState fetch control", () => {
       ~firstEventBlock=0,
       ~bufferBlocks=Array.make(~length=targetBufferSize - freeBudget, 900),
     )
-    let fetching = makeFetchingChainState(~chainId=2->ChainId.fromInt, ~knownHeight=1000, ~latestFetchedBlock=0)
+    let fetching = makeFetchingChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=0,
+    )
     let cm = makeCrossChainState(~chainStatesList=[buffered, fetching], ~targetBufferSize)
     let admitted = []
 
@@ -348,18 +391,28 @@ describe("CrossChainState fetch control", () => {
       ~firstEventBlock=0,
       ~bufferBlocks=Array.make(~length=91, 1000),
     )
-    let behind = makeFetchingChainState(~chainId=2->ChainId.fromInt, ~knownHeight=1000, ~latestFetchedBlock=0)
-    let waitingForHeight = makeFetchingChainState(~chainId=3->ChainId.fromInt, ~knownHeight=0, ~latestFetchedBlock=0)
+    let behind = makeFetchingChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=0,
+    )
+    let waitingForHeight = makeFetchingChainState(
+      ~chainId=3->ChainId.fromInt,
+      ~knownHeight=0,
+      ~latestFetchedBlock=0,
+    )
     let cm = makeCrossChainState(
       ~chainStatesList=[atHead, behind, waitingForHeight],
       ~targetBufferSize=100,
     )
     let dispatched = []
 
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-      dispatched->Array.push((chainId->ChainId.toInt, action))->ignore
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chainId, ~action) => {
+        dispatched->Array.push((chainId->ChainId.toInt, action))->ignore
+        Promise.resolve()
+      },
+    )
 
     t.expect(
       dispatched,
@@ -367,54 +420,72 @@ describe("CrossChainState fetch control", () => {
     ).toEqual([(3, FetchState.WaitingForNewBlock)])
   })
 
-  Async.it("waits below the admission unit and retries after a response releases budget", async t => {
-    let first = makeFetchingChainState(~chainId=1->ChainId.fromInt, ~knownHeight=1000, ~latestFetchedBlock=0)
-    let second = makeFetchingChainState(~chainId=2->ChainId.fromInt, ~knownHeight=1000, ~latestFetchedBlock=500)
-    let buffered = makeChainState(
-      ~chainId=3->ChainId.fromInt,
-      ~knownHeight=1000,
-      ~frontier=900,
-      ~firstEventBlock=0,
-      ~bufferBlocks=Array.make(~length=85, 900),
-    )
-    let cm = makeCrossChainState(~chainStatesList=[first, second, buffered], ~targetBufferSize=100)
-    let firstTickQueries = []
+  Async.it(
+    "waits below the admission unit and retries after a response releases budget",
+    async t => {
+      let first = makeFetchingChainState(
+        ~chainId=1->ChainId.fromInt,
+        ~knownHeight=1000,
+        ~latestFetchedBlock=0,
+      )
+      let second = makeFetchingChainState(
+        ~chainId=2->ChainId.fromInt,
+        ~knownHeight=1000,
+        ~latestFetchedBlock=500,
+      )
+      let buffered = makeChainState(
+        ~chainId=3->ChainId.fromInt,
+        ~knownHeight=1000,
+        ~frontier=900,
+        ~firstEventBlock=0,
+        ~bufferBlocks=Array.make(~length=85, 900),
+      )
+      let cm = makeCrossChainState(
+        ~chainStatesList=[first, second, buffered],
+        ~targetBufferSize=100,
+      )
+      let firstTickQueries = []
 
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-      switch action {
-      | Ready(queries) =>
-        firstTickQueries->Array.push((chainId->ChainId.toInt, queries))->ignore
-      | _ => ()
-      }
-      Promise.resolve()
-    })
+      await cm->CrossChainState.checkAndFetch(
+        ~dispatchChain=(~chainId, ~action) => {
+          switch action {
+          | Ready(queries) =>
+            firstTickQueries->Array.push((chainId->ChainId.toInt, queries))->ignore
+          | _ => ()
+          }
+          Promise.resolve()
+        },
+      )
 
-    t.expect(firstTickQueries->Array.map(((chainId, _)) => chainId)).toEqual([1])
+      t.expect(firstTickQueries->Array.map(((chainId, _)) => chainId)).toEqual([1])
 
-    let (_, releasedQueries) = firstTickQueries->Utils.Array.firstUnsafe
-    let releasedQuery = releasedQueries->Utils.Array.firstUnsafe
-    first->ChainState.handleQueryResult(
-      ~query=releasedQuery,
-      ~newItems=[],
-      ~newRegistrations=[],
-      ~latestFetchedBlock=1000,
-      ~knownHeight=1000,
-    )
+      let (_, releasedQueries) = firstTickQueries->Utils.Array.firstUnsafe
+      let releasedQuery = releasedQueries->Utils.Array.firstUnsafe
+      first->ChainState.handleQueryResult(
+        ~query=releasedQuery,
+        ~newItems=[],
+        ~newRegistrations=[],
+        ~latestFetchedBlock=1000,
+        ~knownHeight=1000,
+      )
 
-    let secondTickChains = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-      switch action {
-      | Ready(_) => secondTickChains->Array.push(chainId->ChainId.toInt)->ignore
-      | _ => ()
-      }
-      Promise.resolve()
-    })
+      let secondTickChains = []
+      await cm->CrossChainState.checkAndFetch(
+        ~dispatchChain=(~chainId, ~action) => {
+          switch action {
+          | Ready(_) => secondTickChains->Array.push(chainId->ChainId.toInt)->ignore
+          | _ => ()
+          }
+          Promise.resolve()
+        },
+      )
 
-    t.expect(
-      secondTickChains,
-      ~message="The second chain waits at 5% free, then starts after the first query releases its 10% reservation",
-    ).toEqual([2])
-  })
+      t.expect(
+        secondTickChains,
+        ~message="The second chain waits at 5% free, then starts after the first query releases its 10% reservation",
+      ).toEqual([2])
+    },
+  )
 
   // Chain 1 (furthest behind, so priorityOrder visits it first): a single
   // known-density partition with a short remaining range (endBlock=20 at
@@ -423,90 +494,90 @@ describe("CrossChainState fetch control", () => {
   // 3000-item pool the waterfall would otherwise hand it. Returns each
   // chain's dispatched itemsEst total and pendingBudget.
   let runShortRangeWaterfall = async (~isRealtime) => {
-      let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-      let address1 = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
-      let partition1: FetchState.partition = {
-        id: "0",
-        latestFetchedBlock:0,
-        selection: normalSelection,
-        addresses: TestAddresses.setOf(~contractName="MockContract", [address1]),
-        mergeBlock: None,
-        dynamicContract: None,
-        mutPendingQueries: [],
-        sourceRangeCapacity: 10,
-        prevSourceRangeCapacity: 10,
-        eventDensity: Some(10.), // density = 100 / 10 = 10 items/block
-        latestSourceRangeCapacityUpdateBlock: 0,
-      }
-      let addressStore1 = TestAddresses.makeStore(
-        ~onEventRegistrations=normalSelection.onEventRegistrations,
-        ~addresses=[{address: address1, contractName: "MockContract", registrationBlock: -1}],
-        ~configContractNames=["MockContract"],
-      )
-      let fetchState1: FetchState.t = {
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[partition1],
-          ~maxAddrInPartition=2,
-          ~nextPartitionIndex=1,
-          ~dynamicContracts=Utils.Set.make(),
-      ~clientFilteredContracts=Utils.Set.make(),
-        ),
-        startBlock: 0,
-        endBlock: Some(20),
-        buffer: [],
-        normalSelection,
-        latestOnBlockBlockNumber: 0,
-        maxOnBlockBufferSize: 10000,
-        chainId: 1->ChainId.fromInt,
-        blockLag: 0,
-        onBlockRegistrations: [],
-        knownHeight: 1000,
-        firstEventBlock: Some(0),
-        clientFilterAddressThreshold: None,
-      }
-      let mockSource1 = MockSource.make([], ~chainId=1)
-      let a = ChainState.make(
-        ~chainConfig={...baseChainConfig, id: 1->ChainId.fromInt},
-        ~fetchState=fetchState1,
-        ~addressStore=addressStore1,
-        ~sourceManager=SourceManager.make(~sources=[mockSource1.source], ~isRealtime=false),
-        ~maxReorgDepth=200,
-        ~shouldRollbackOnReorg=false,
-        ~committedProgressBlockNumber=-1,
-        ~logger=Logging.getLogger(),
-      )
+    let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+    let address1 = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
+    let partition1: FetchState.partition = {
+      id: "0",
+      latestFetchedBlock: 0,
+      selection: normalSelection,
+      addresses: TestAddresses.setOf(~contractName="MockContract", [address1]),
+      mergeBlock: None,
+      dynamicContract: None,
+      mutPendingQueries: [],
+      sourceRangeCapacity: 10,
+      prevSourceRangeCapacity: 10,
+      eventDensity: Some(10.), // density = 100 / 10 = 10 items/block
+      latestSourceRangeCapacityUpdateBlock: 0,
+    }
+    let addressStore1 = TestAddresses.makeStore(
+      ~onEventRegistrations=normalSelection.onEventRegistrations,
+      ~addresses=[{address: address1, contractName: "MockContract", registrationBlock: -1}],
+      ~configContractNames=["MockContract"],
+    )
+    let fetchState1: FetchState.t = {
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[partition1],
+        ~maxAddrInPartition=2,
+        ~nextPartitionIndex=1,
+        ~dynamicContracts=Utils.Set.make(),
+        ~clientFilteredContracts=Utils.Set.make(),
+      ),
+      startBlock: 0,
+      endBlock: Some(20),
+      buffer: [],
+      normalSelection,
+      latestOnBlockBlockNumber: 0,
+      maxOnBlockBufferSize: 10000,
+      chainId: 1->ChainId.fromInt,
+      blockLag: 0,
+      onBlockRegistrations: [],
+      knownHeight: 1000,
+      firstEventBlock: Some(0),
+      clientFilterAddressThreshold: None,
+    }
+    let mockSource1 = MockSource.make([], ~chainId=1)
+    let a = ChainState.make(
+      ~chainConfig={...baseChainConfig, id: 1->ChainId.fromInt},
+      ~fetchState=fetchState1,
+      ~addressStore=addressStore1,
+      ~sourceManager=SourceManager.make(~sources=[mockSource1.source], ~isRealtime=false),
+      ~maxReorgDepth=200,
+      ~shouldRollbackOnReorg=false,
+      ~committedProgressBlockNumber=-1,
+      ~logger=Logging.getLogger(),
+    )
 
-      // Chain 2 (less behind, visited second): its density-bearing partition
-      // sizes exactly to whatever budget it's given, so it directly reflects
-      // what chain 1 left behind.
-      let b = makeFetchingChainState(
-        ~chainId=2->ChainId.fromInt,
-        ~knownHeight=1000,
-        ~latestFetchedBlock=500,
-        ~chainDensity=Some(10.),
+    // Chain 2 (less behind, visited second): its density-bearing partition
+    // sizes exactly to whatever budget it's given, so it directly reflects
+    // what chain 1 left behind.
+    let b = makeFetchingChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=500,
+      ~chainDensity=Some(10.),
+    )
+
+    let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime, ~targetBufferSize=3000)
+
+    let dispatchedItemsByChain = Dict.make()
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+      dispatchedItemsByChain->ChainId.Dict.set(
+        chainId,
+        switch action {
+        | Ready(queries) =>
+          queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
+        | _ => 0.
+        },
       )
+      Promise.resolve()
+    })
 
-      let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime, ~targetBufferSize=3000)
-
-      let dispatchedItemsByChain = Dict.make()
-      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-        dispatchedItemsByChain->ChainId.Dict.set(
-          chainId,
-          switch action {
-          | Ready(queries) =>
-            queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
-          | _ => 0.
-          },
-        )
-        Promise.resolve()
-      })
-
-      (
-        dispatchedItemsByChain->ChainId.Dict.dangerouslyGetNonOption(1->ChainId.fromInt),
-        dispatchedItemsByChain->ChainId.Dict.dangerouslyGetNonOption(2->ChainId.fromInt),
-        a->ChainState.pendingBudget,
-        b->ChainState.pendingBudget,
-      )
+    (
+      dispatchedItemsByChain->ChainId.Dict.dangerouslyGetNonOption(1->ChainId.fromInt),
+      dispatchedItemsByChain->ChainId.Dict.dangerouslyGetNonOption(2->ChainId.fromInt),
+      a->ChainState.pendingBudget,
+      b->ChainState.pendingBudget,
+    )
   }
 
   Async.it(
@@ -533,26 +604,36 @@ describe("CrossChainState fetch control", () => {
       // for a new block instead of setting the alignment line from a
       // degenerate progress range and letting every other chain run
       // unconstrained on a stale line.
-      let a = makeFetchingChainState(~chainId=1->ChainId.fromInt, ~knownHeight=0, ~latestFetchedBlock=0)
-      let b = makeFetchingChainState(~chainId=2->ChainId.fromInt, ~knownHeight=1000, ~latestFetchedBlock=500)
+      let a = makeFetchingChainState(
+        ~chainId=1->ChainId.fromInt,
+        ~knownHeight=0,
+        ~latestFetchedBlock=0,
+      )
+      let b = makeFetchingChainState(
+        ~chainId=2->ChainId.fromInt,
+        ~knownHeight=1000,
+        ~latestFetchedBlock=500,
+      )
       let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=3000)
 
       let actionsByChain = Dict.make()
-      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-        actionsByChain->ChainId.Dict.set(
-          chainId,
-          switch action {
-          | WaitingForNewBlock => "waitingForNewBlock"
-          | NothingToQuery => "nothingToQuery"
-          | Ready(queries) =>
-            "ready:" ++
-            queries
-            ->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
-            ->Float.toString
-          },
-        )
-        Promise.resolve()
-      })
+      await cm->CrossChainState.checkAndFetch(
+        ~dispatchChain=(~chainId, ~action) => {
+          actionsByChain->ChainId.Dict.set(
+            chainId,
+            switch action {
+            | WaitingForNewBlock => "waitingForNewBlock"
+            | NothingToQuery => "nothingToQuery"
+            | Ready(queries) =>
+              "ready:" ++
+              queries
+              ->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
+              ->Float.toString
+            },
+          )
+          Promise.resolve()
+        },
+      )
 
       t.expect(
         actionsByChain,
@@ -561,33 +642,29 @@ describe("CrossChainState fetch control", () => {
     },
   )
 
-  Async.it(
-    "checkAndFetch aligns progress against the currently reachable end block",
-    async t => {
-      // The anchor's endBlock (1e9) is far past its head (1000). Its frontier
-      // progress must be measured against the reachable range (500/1000 = 50%),
-      // not the raw endBlock (500/1e9 ≈ 0%) — the latter would clamp the
-      // follower below its own frontier and stall it.
-      let anchor = makeFetchingChainState(
-        ~chainId=1->ChainId.fromInt,
-        ~knownHeight=1000,
-        ~latestFetchedBlock=500,
-        ~endBlock=Some(1_000_000_000),
-        ~chainDensity=Some(1.),
-      )
-      let follower = makeFetchingChainState(
-        ~chainId=2->ChainId.fromInt,
-        ~knownHeight=1000,
-        ~latestFetchedBlock=520,
-        ~chainDensity=Some(1.),
-      )
-      let cm = makeCrossChainState(
-        ~chainStatesList=[anchor, follower],
-        ~targetBufferSize=3000,
-      )
+  Async.it("checkAndFetch aligns progress against the currently reachable end block", async t => {
+    // The anchor's endBlock (1e9) is far past its head (1000). Its frontier
+    // progress must be measured against the reachable range (500/1000 = 50%),
+    // not the raw endBlock (500/1e9 ≈ 0%) — the latter would clamp the
+    // follower below its own frontier and stall it.
+    let anchor = makeFetchingChainState(
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=500,
+      ~endBlock=Some(1_000_000_000),
+      ~chainDensity=Some(1.),
+    )
+    let follower = makeFetchingChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=520,
+      ~chainDensity=Some(1.),
+    )
+    let cm = makeCrossChainState(~chainStatesList=[anchor, follower], ~targetBufferSize=3000)
 
-      let estimatesByChain = Dict.make()
-      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    let estimatesByChain = Dict.make()
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chainId, ~action) => {
         estimatesByChain->ChainId.Dict.set(
           chainId,
           switch action {
@@ -597,14 +674,14 @@ describe("CrossChainState fetch control", () => {
           },
         )
         Promise.resolve()
-      })
+      },
+    )
 
-      t.expect(
-        estimatesByChain,
-        ~message="The follower fetches up to the anchor's 50% line (+20% margin = block 700), not to nothing",
-      ).toEqual(dict{"1": 500, "2": 180})
-    },
-  )
+    t.expect(
+      estimatesByChain,
+      ~message="The follower fetches up to the anchor's 50% line (+20% margin = block 700), not to nothing",
+    ).toEqual(dict{"1": 500, "2": 180})
+  })
 
   it("getNextQuery caps the budget at the plain range cost regardless of caught-up status", t => {
     let makeChain = (~caughtUpOnce) =>
@@ -711,7 +788,11 @@ describe("CrossChainState readiness", () => {
 
 describe("ChainState cold start", () => {
   it("targets frontier + 20k with no density signal", t => {
-    let cs = makeFetchingChainState(~chainId=1->ChainId.fromInt, ~knownHeight=1_000_000, ~latestFetchedBlock=5_000)
+    let cs = makeFetchingChainState(
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=1_000_000,
+      ~latestFetchedBlock=5_000,
+    )
     t.expect(cs->ChainState.targetBlock(~chainTargetItems=1000.)).toBe(25_000)
   })
 
@@ -729,7 +810,11 @@ describe("ChainState cold start", () => {
     // Chain 1 is cold and most behind. Its target is a guess, but its frontier
     // is a real measurement — chain 2 must not run ahead of it just because
     // chain 1 hasn't produced a density signal yet.
-    let a = makeFetchingChainState(~chainId=1->ChainId.fromInt, ~knownHeight=1_000_000, ~latestFetchedBlock=0)
+    let a = makeFetchingChainState(
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=1_000_000,
+      ~latestFetchedBlock=0,
+    )
     let b = makeFetchingChainState(
       ~chainId=2->ChainId.fromInt,
       ~knownHeight=1000,
@@ -739,17 +824,19 @@ describe("ChainState cold start", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=10_000)
 
     let dispatchedItemsByChain = Dict.make()
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-      dispatchedItemsByChain->ChainId.Dict.set(
-        chainId,
-        switch action {
-        | Ready(queries) =>
-          queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
-        | _ => 0.
-        },
-      )
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chainId, ~action) => {
+        dispatchedItemsByChain->ChainId.Dict.set(
+          chainId,
+          switch action {
+          | Ready(queries) =>
+            queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
+          | _ => 0.
+          },
+        )
+        Promise.resolve()
+      },
+    )
 
     t.expect(
       dispatchedItemsByChain,
@@ -778,21 +865,23 @@ describe("ChainState cold start", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=10_000)
 
     let actionsByChain = Dict.make()
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-      actionsByChain->ChainId.Dict.set(
-        chainId,
-        switch action {
-        | WaitingForNewBlock => "waitingForNewBlock"
-        | NothingToQuery => "nothingToQuery"
-        | Ready(queries) =>
-          "ready:" ++
-          queries
-          ->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
-          ->Float.toString
-        },
-      )
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chainId, ~action) => {
+        actionsByChain->ChainId.Dict.set(
+          chainId,
+          switch action {
+          | WaitingForNewBlock => "waitingForNewBlock"
+          | NothingToQuery => "nothingToQuery"
+          | Ready(queries) =>
+            "ready:" ++
+            queries
+            ->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
+            ->Float.toString
+          },
+        )
+        Promise.resolve()
+      },
+    )
 
     t.expect(
       actionsByChain->Dict.get("2"),
@@ -823,17 +912,19 @@ describe("ChainState cold start", () => {
     )
 
     let dispatchedItemsByChain = Dict.make()
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-      dispatchedItemsByChain->ChainId.Dict.set(
-        chainId,
-        switch action {
-        | Ready(queries) =>
-          queries->Array.reduce(0, (acc, q: FetchState.query) => acc + q.itemsEst)
-        | _ => 0
-        },
-      )
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chainId, ~action) => {
+        dispatchedItemsByChain->ChainId.Dict.set(
+          chainId,
+          switch action {
+          | Ready(queries) =>
+            queries->Array.reduce(0, (acc, q: FetchState.query) => acc + q.itemsEst)
+          | _ => 0
+          },
+        )
+        Promise.resolve()
+      },
+    )
 
     t.expect(
       dispatchedItemsByChain->Dict.get("2"),
@@ -843,20 +934,27 @@ describe("ChainState cold start", () => {
 
   Async.it("gives a cold chain one 10% admission unit", async t => {
     let probeSize = async (~targetBufferSize) => {
-      let cs = makeFetchingChainState(~chainId=1->ChainId.fromInt, ~knownHeight=1_000_000, ~latestFetchedBlock=0)
+      let cs = makeFetchingChainState(
+        ~chainId=1->ChainId.fromInt,
+        ~knownHeight=1_000_000,
+        ~latestFetchedBlock=0,
+      )
       let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize)
       let dispatched = ref(0.)
-      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId as _, ~action) => {
-        switch action {
-        | Ready(queries) =>
-          dispatched :=
-            queries->Array.reduce(0., (acc, q: FetchState.query) =>
-              acc +. q.itemsEst->Int.toFloat
-            )
-        | _ => ()
-        }
-        Promise.resolve()
-      })
+      await cm->CrossChainState.checkAndFetch(
+        ~dispatchChain=(~chainId as _, ~action) => {
+          switch action {
+          | Ready(queries) =>
+            dispatched :=
+              queries->Array.reduce(
+                0.,
+                (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat,
+              )
+          | _ => ()
+          }
+          Promise.resolve()
+        },
+      )
       dispatched.contents
     }
     t.expect(
@@ -910,16 +1008,19 @@ describe("ChainState cold start", () => {
     )
 
     let itemsByChain = Dict.make()
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
-      itemsByChain->ChainId.Dict.set(
-        chainId,
-        switch action {
-        | Ready(queries) => queries->Array.reduce(0, (acc, q: FetchState.query) => acc + q.itemsEst)
-        | _ => 0
-        },
-      )
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chainId, ~action) => {
+        itemsByChain->ChainId.Dict.set(
+          chainId,
+          switch action {
+          | Ready(queries) =>
+            queries->Array.reduce(0, (acc, q: FetchState.query) => acc + q.itemsEst)
+          | _ => 0
+          },
+        )
+        Promise.resolve()
+      },
+    )
 
     let items = chainId =>
       itemsByChain->ChainId.Dict.dangerouslyGetNonOption(chainId->ChainId.fromInt)->Option.getOr(0)

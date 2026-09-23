@@ -263,8 +263,7 @@ let make = (
         // The buffer is sorted, so a log's items are consecutive: the first of
         // them is the only one that counts as an event.
         let isNewEvent =
-          idx === 0 ||
-            !(fetchState.buffer->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
+          idx === 0 || !(fetchState.buffer->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
         if isNewEvent {
           chainEventsProcessed := chainEventsProcessed.contents + 1
         }
@@ -389,8 +388,7 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
   while idx.contents < checkpointsLength && result.contents === None {
     let checkpointChainId = batch.checkpointChainIds->Array.getUnsafe(idx.contents)
     if (
-      checkpointChainId === chainId &&
-        batch.checkpointItemsCount->Array.getUnsafe(idx.contents) > 0
+      checkpointChainId === chainId && batch.checkpointItemsCount->Array.getUnsafe(idx.contents) > 0
     ) {
       result := Some(batch.checkpointBlockNumbers->Array.getUnsafe(idx.contents))
     } else {
