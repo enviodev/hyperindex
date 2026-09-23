@@ -35,8 +35,8 @@ type Token @entity {
 }
 `
 
-
-let manifestWith = mapping => `
+let manifestWith = mapping =>
+  `
 specVersion: 0.0.5
 schema:
   file: ./schema.graphql
@@ -65,10 +65,10 @@ let plainEventHandler = `      eventHandlers:
 // A finding is identified by its headline and the location it names; the
 // shared tail is asserted once, in the reporting suite below.
 let expectFindingHelper = (message, t, ~headline, ~location) =>
-  t.expect((
-    message->String.includes(headline),
-    message->String.includes(`Found in ${location}.`),
-  ), ~message=message).toEqual((true, true))
+  t.expect(
+    (message->String.includes(headline), message->String.includes(`Found in ${location}.`)),
+    ~message,
+  ).toEqual((true, true))
 
 describe("subgraph translation: unsupported features", () => {
   it("refuses call handlers", t => {
@@ -87,10 +87,12 @@ describe("subgraph translation: unsupported features", () => {
   it("does not run when events and call handlers are on the same data source", t => {
     translate(
       ~schema=baseSchema,
-      ~manifest=manifestWith(`${plainEventHandler}
+      ~manifest=manifestWith(
+        `${plainEventHandler}
       callHandlers:
         - function: approve(address,uint256)
-          handler: handleApprove`),
+          handler: handleApprove`,
+      ),
     )->expectFindingHelper(
       t,
       ~headline="Envio Subgraph doesn't support call handlers yet.",
@@ -201,7 +203,10 @@ type Token @entity(timeseries: true) {
 describe("subgraph translation: unknown things", () => {
   it("refuses an unknown manifest field", t => {
     let manifest =
-      manifestWith(plainEventHandler)->String.replace("dataSources:", "speVersion: 0.0.5\ndataSources:")
+      manifestWith(plainEventHandler)->String.replace(
+        "dataSources:",
+        "speVersion: 0.0.5\ndataSources:",
+      )
     translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
       t,
       ~headline=`Envio Subgraph doesn't know the manifest field "speVersion".`,
@@ -402,13 +407,12 @@ issue so we can add it: https://github.com/enviodev/hyperindex/issues`)
   })
 
   it("reports every finding in one run", t => {
-    let manifest =
-      manifestWith(`      callHandlers:
+    let manifest = manifestWith(`      callHandlers:
         - function: approve(address,uint256)
           handler: handleApprove`)->String.replace(
-        "dataSources:",
-        "features:\n  - teleportation\ndataSources:",
-      )
+      "dataSources:",
+      "features:\n  - teleportation\ndataSources:",
+    )
     let message = translate(
       ~manifest,
       ~schema=`
@@ -418,13 +422,11 @@ type Token @entity {
 }
 `,
     )
-    t.expect(
-      (
-        message->String.includes(`doesn't know the feature "teleportation"`),
-        message->String.includes("doesn't support call handlers"),
-        message->String.includes("doesn't know the type NotAType"),
-      ),
-    ).toEqual((true, true, true))
+    t.expect((
+      message->String.includes(`doesn't know the feature "teleportation"`),
+      message->String.includes("doesn't support call handlers"),
+      message->String.includes("doesn't know the type NotAType"),
+    )).toEqual((true, true, true))
   })
 })
 
@@ -435,9 +437,12 @@ describe("subgraph translation: overloaded events", () => {
         - event: Transfer(indexed address,indexed address,uint256)
           handler: handleTransfer
         - event: Transfer(indexed address,indexed address,uint256,bytes)
-          handler: handleTransferData`)->String.replace("      abis: []", `      abis:
+          handler: handleTransferData`)->String.replace(
+    "      abis: []",
+    `      abis:
         - name: Token
-          file: ./abis/Token.json`)
+          file: ./abis/Token.json`,
+  )
 
   let files = Dict.fromArray([
     (

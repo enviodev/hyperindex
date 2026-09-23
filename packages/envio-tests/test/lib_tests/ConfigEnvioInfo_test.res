@@ -44,10 +44,9 @@ describe("Config.stripSensitiveData", () => {
       }
     }`)
 
-    t.expect(
-      Config.stripSensitiveData(input),
-      ~message="strips rpcs and hypersync",
-    ).toEqual(expected)
+    t.expect(Config.stripSensitiveData(input), ~message="strips rpcs and hypersync").toEqual(
+      expected,
+    )
   })
 
   it("does not mutate the input JSON", t => {
@@ -110,10 +109,7 @@ describe("Config.diffPaths", () => {
   it("returns [] for structurally equal JSON regardless of key order", t => {
     let stored = json(`{"a": {"x": 1, "y": 2}, "b": [1, 2, 3]}`)
     let current = json(`{"b": [1, 2, 3], "a": {"y": 2, "x": 1}}`)
-    t.expect(
-      Config.diffPaths(~stored, ~current),
-      ~message="key-order independent",
-    ).toEqual([])
+    t.expect(Config.diffPaths(~stored, ~current), ~message="key-order independent").toEqual([])
   })
 
   it("reports the dotted path of a single changed leaf", t => {
@@ -125,37 +121,31 @@ describe("Config.diffPaths", () => {
   it("drills into nested objects to the actual leaf path", t => {
     let stored = json(`{"evm": {"chains": {"1": {"startBlock": 0}}}}`)
     let current = json(`{"evm": {"chains": {"1": {"startBlock": 100}}}}`)
-    t.expect(
-      Config.diffPaths(~stored, ~current),
-      ~message="nested leaf, not 'evm'",
-    ).toEqual(["evm.chains.1.startBlock"])
+    t.expect(Config.diffPaths(~stored, ~current), ~message="nested leaf, not 'evm'").toEqual([
+      "evm.chains.1.startBlock",
+    ])
   })
 
   it("uses [i] notation for array index changes", t => {
     let stored = json(`{"contracts": [{"name": "A"}, {"name": "B"}]}`)
     let current = json(`{"contracts": [{"name": "A"}, {"name": "C"}]}`)
-    t.expect(
-      Config.diffPaths(~stored, ~current),
-      ~message="array index path",
-    ).toEqual(["contracts[1].name"])
+    t.expect(Config.diffPaths(~stored, ~current), ~message="array index path").toEqual([
+      "contracts[1].name",
+    ])
   })
 
   it("reports an array element that exists on only one side", t => {
     let stored = json(`{"contracts": [{"name": "A"}]}`)
     let current = json(`{"contracts": [{"name": "A"}, {"name": "B"}]}`)
-    t.expect(
-      Config.diffPaths(~stored, ~current),
-      ~message="missing array slot",
-    ).toEqual(["contracts[1]"])
+    t.expect(Config.diffPaths(~stored, ~current), ~message="missing array slot").toEqual([
+      "contracts[1]",
+    ])
   })
 
   it("reports keys present on only one side", t => {
     let stored = json(`{"a": 1, "b": 2}`)
     let current = json(`{"a": 1, "c": 3}`)
-    t.expect(
-      Config.diffPaths(~stored, ~current),
-      ~message="added/removed keys",
-    ).toEqual(["b", "c"])
+    t.expect(Config.diffPaths(~stored, ~current), ~message="added/removed keys").toEqual(["b", "c"])
   })
 
   it("collects multiple diffs in deterministic key order", t => {

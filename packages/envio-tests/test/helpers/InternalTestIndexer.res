@@ -55,8 +55,11 @@ let tmpDir = pathJoin([pathDirname(fileURLToPath(importMetaUrl)), "..", ".tmp"])
 // fails, so they must outlive the run. `globalSetup.ts` clears the directory
 // before any worker starts.
 let writeModule = (~kind, ~site, ~source) => {
-  let slug = site->String.replaceRegExp(%re("/[^a-zA-Z0-9]+/g"), "-")
-  let file = pathJoin([tmpDir, `${slug}-${kind}-${randomUUID()->String.slice(~start=0, ~end=8)}.ts`])
+  let slug = site->String.replaceRegExp(/[^a-zA-Z0-9]+/g, "-")
+  let file = pathJoin([
+    tmpDir,
+    `${slug}-${kind}-${randomUUID()->String.slice(~start=0, ~end=8)}.ts`,
+  ])
   writeFileSync(file, source)
   file
 }
@@ -78,7 +81,13 @@ let claimProcess = (~site) => {
 }
 
 let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array<string> => {
-  let {indexerTypes} = Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes=true, configYaml)
+  let {indexerTypes} = Core.fromUserApi(
+    ~schema?,
+    ~env?,
+    ~files?,
+    ~withIndexerTypes=true,
+    configYaml,
+  )
   switch indexerTypes->Null.toOption {
   | Some(typesDts) => completionsAtUnsafe(typesDts, handlers)
   | None => JsError.throwWithMessage("Config parsed without generated indexer types.")
@@ -98,9 +107,22 @@ let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array
 // Parses a subgraph project the way `envio dev` does inside one, with the
 // mappings written to disk so the manifest's `file:` paths resolve. `test` is
 // evaluated exactly as in `fromUserApi`.
-let fromSubgraph = (~env=?, ~files=?, ~mappings=Dict.make(), ~test=?, ~manifest, ~schema): parsed => {
+let fromSubgraph = (
+  ~env=?,
+  ~files=?,
+  ~mappings=Dict.make(),
+  ~test=?,
+  ~manifest,
+  ~schema,
+): parsed => {
   let site = callSite()
-  let root = pathJoin([tmpDir, `subgraph-${site->String.replaceRegExp(%re("/[^a-zA-Z0-9]+/g"), "-")}-${randomUUID()->String.slice(~start=0, ~end=8)}`])
+  let root = pathJoin([
+    tmpDir,
+    `subgraph-${site->String.replaceRegExp(/[^a-zA-Z0-9]+/g, "-")}-${randomUUID()->String.slice(
+        ~start=0,
+        ~end=8,
+      )}`,
+  ])
   mappings->Dict.forEachWithKey((source, relativePath) => {
     let dest = pathJoin([root, relativePath])
     mkdirSync(pathDirname(dest), {"recursive": true})
@@ -139,13 +161,11 @@ let fromSubgraph = (~env=?, ~files=?, ~mappings=Dict.make(), ~test=?, ~manifest,
         await importModule(testFile)
         collected := true
       })
-      Vitest.it(
-        `${suiteName} collected`,
-        t =>
-          t.expect(
-            collected.contents,
-            ~message="test module was not imported during collection",
-          ).toBe(true),
+      Vitest.it(`${suiteName} collected`, t =>
+        t.expect(
+          collected.contents,
+          ~message="test module was not imported during collection",
+        ).toBe(true)
       )
     | Error(exn) => Vitest.it(`${suiteName} setup`, _ => throw(exn))
     }
@@ -167,15 +187,20 @@ let fromUserApi = (
   ~configYaml,
 ): parsed => {
   let withIndexerTypes = handlers->Option.isSome || test->Option.isSome
-  let {config: configJson, indexerTypes} =
-    Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes, configYaml)
+  let {config: configJson, indexerTypes} = Core.fromUserApi(
+    ~schema?,
+    ~env?,
+    ~files?,
+    ~withIndexerTypes,
+    configYaml,
+  )
 
   let typeErrors = if withIndexerTypes {
     let typesDts = switch indexerTypes->Null.toOption {
     | Some(typesDts) => typesDts
     | None => JsError.throwWithMessage("Config parsed without generated indexer types.")
     }
-    switch checkSources(typesDts, {handlers: ?handlers, test: ?test}) {
+    switch checkSources(typesDts, {?handlers, ?test}) {
     | [] => None
     | errors => Some("Type errors:\n" ++ errors->Array.join("\n"))
     }
@@ -199,7 +224,9 @@ let fromUserApi = (
     }
 
   if registerHandlers && handlers->Option.isNone {
-    JsError.throwWithMessage("fromUserApi was called with ~registerHandlers but no ~handlers source.")
+    JsError.throwWithMessage(
+      "fromUserApi was called with ~registerHandlers but no ~handlers source.",
+    )
   }
 
   switch (test, registerHandlers ? handlers : None) {
@@ -228,13 +255,11 @@ let fromUserApi = (
       registrationsRef := Some(HandlerRegister.finishRegistration(~config))
       collected := true
     })
-    Vitest.it(
-      `indexerHandlers(${site}) collected`,
-      t =>
-        t.expect(
-          collected.contents,
-          ~message="handlers module was not imported during collection",
-        ).toBe(true),
+    Vitest.it(`indexerHandlers(${site}) collected`, t =>
+      t.expect(
+        collected.contents,
+        ~message="handlers module was not imported during collection",
+      ).toBe(true)
     )
   | (Some(test), _) =>
     let site = callSite()
@@ -277,9 +302,11 @@ let fromUserApi = (
       // simply never register — the suite shrinks instead of failing, which no
       // reporter flags. This sentinel is registered outside the callback, so it
       // still runs and turns that silence into a failure.
-      Vitest.it(
-        `${suiteName} collected`,
-        t => t.expect(collected.contents, ~message="test module was not imported during collection").toBe(true),
+      Vitest.it(`${suiteName} collected`, t =>
+        t.expect(
+          collected.contents,
+          ~message="test module was not imported during collection",
+        ).toBe(true)
       )
     // Surface setup failures as a named test rather than a collection crash, so
     // the reporter attributes them to this fixture.

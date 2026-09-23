@@ -146,9 +146,10 @@ let rec prepareEffectCall = (
   // A chain-scoped effect always resolves against the chain of the handler that
   // triggered the call, even several effects deep, so the chain id is captured
   // once from the item and reused for the whole nested-call tree.
-  let scope = effect->isCrossChain
-    ? Internal.CrossChain
-    : Internal.Chain(params.item->Internal.getItemChainId)
+  let scope =
+    effect->isCrossChain
+      ? Internal.CrossChain
+      : Internal.Chain(params.item->Internal.getItemChainId)
 
   switch caller {
   | Some(callerEffect) if callerEffect->isCrossChain && !(effect->isCrossChain) =>
@@ -382,6 +383,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       (entityId => params->getSyncHandler(entityId))->(
         Utils.magic: (string => option<Internal.entity>) => unknown
       )
+
     | "getWhereSync" =>
       (
         filter => params->getWhereSyncHandler(filter->(Utils.magic: unknown => dict<dict<unknown>>))
@@ -390,6 +392,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       (entityId => params->getInBlockSyncHandler(entityId))->(
         Utils.magic: (string => option<Internal.entity>) => unknown
       )
+
     | "get" =>
       if isClickHouseOnly {
         ((_entityId: string) => throwClickHouseReadOnly(params.entityConfig, "get"))->(
@@ -550,15 +553,14 @@ let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) =
     params.sync.pending = None
     if suspended {
       let errors = []
-      let _ =
-        await pending
-        ->Array.map(promise =>
-          promise->Promise.catch(exn => {
-            errors->Array.push(exn)
-            Promise.resolve()
-          })
-        )
-        ->Promise.all
+      let _ = await pending
+      ->Array.map(promise =>
+        promise->Promise.catch(exn => {
+          errors->Array.push(exn)
+          Promise.resolve()
+        })
+      )
+      ->Promise.all
       switch errors->Array.get(0) {
       | Some(exn) => throw(exn)
       | None => ()
@@ -582,10 +584,12 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       initEffectSync((params :> contextParams))->(
         Utils.magic: ((Internal.effect, Internal.effectInput) => Internal.effectOutput) => unknown
       )
+
     | "runSync" =>
       (fn => params->runSyncRound(fn, ~round=1))->(
         Utils.magic: ((unit => unit) => promise<unit>) => unknown
       )
+
     | "log" =>
       (
         params.isPreload

@@ -5,7 +5,8 @@ open Vitest
 // contract with nothing configured is misconfigured, and saying so before
 // indexing starts is the difference between a config error and a handler
 // failure mid-batch.
-let mapping = body => `
+let mapping = body =>
+  `
 import { Address, ethereum, store } from "@graphprotocol/graph-ts";
 
 class Token extends ethereum.SmartContract {
@@ -72,10 +73,13 @@ type Probe @entity {
   }
 
 let expectsAnEndpointFor = (message, t, ~callSite) =>
-  t.expect((
-    message->String.includes(`performs contract calls (${callSite})`),
-    message->String.includes("ENVIO_SUBGRAPH_RPC=https://..."),
-  ), ~message).toEqual((true, true))
+  t.expect(
+    (
+      message->String.includes(`performs contract calls (${callSite})`),
+      message->String.includes("ENVIO_SUBGRAPH_RPC=https://..."),
+    ),
+    ~message,
+  ).toEqual((true, true))
 
 describe("a mapping that needs an RPC with none configured", () => {
   it("names the binding it would have called through", t => {
@@ -100,9 +104,9 @@ describe("a mapping that needs an RPC with none configured", () => {
   })
 
   it("asks for nothing when the mapping only touches the store", t => {
-    t.expect(
-      translate(~mapping=`  store.remove("Probe", "probe");`),
-    ).toBe("the translation to fail, but it succeeded")
+    t.expect(translate(~mapping=`  store.remove("Probe", "probe");`)).toBe(
+      "the translation to fail, but it succeeded",
+    )
   })
 
   it("asks for nothing once an endpoint is configured", t => {
