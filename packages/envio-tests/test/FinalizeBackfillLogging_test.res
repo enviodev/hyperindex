@@ -275,6 +275,65 @@ describe("A process whose chains finish at different times", () => {
   )
 })
 
+// A run split one chain per worker: no chain in the process has a sibling, so
+// what it waits on is the other processes, which is what the hold stands for.
+describe("A supervised worker driving one chain", () => {
+  let singleChainHeadScenario = Scenario.make(
+    ~configYaml=`
+name: finalize-backfill-logging-single-chain-head
+rollback_on_reorg: false
+disable_default_cross_chain: true
+contracts:
+  - name: Gravatar
+    events:
+      - event: "TestEvent()"
+chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}`,
+    ~schema,
+  )
+
+  // Rollback off, so nothing keeps the chain below the head while it is held.
+  singleChainHeadScenario->Scenario.it(
+    "Says it is waiting when it reaches the head while the run holds it back",
+    ~sources=[{chain: 1, autoHeight: 100}],
+    ~holdRealtime=true,
+    ~captureLogs=true,
+    async (~t, ~indexer, ~source) => {
+      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilIdle()
+      indexer.releaseRealtime()
+      await indexer.waitUntilReady()
+
+      t.expect(indexer.logs()->reportedFinishAndPause).toStrictEqual([
+        "Finished backfill. Waiting for the other chains.",
+        indexesMessage,
+      ])
+    },
+  )
+
+  // Rollback on: held, the chain can only reach the safe block, and finishes
+  // only after the release — when no other process is waited on any more.
+  singleChainScenario->Scenario.it(
+    "Says nothing about waiting when it finishes after the release",
+    ~sources=[{chain: 1}],
+    ~holdRealtime=true,
+    ~captureLogs=true,
+    async (~t, ~indexer, ~source) => {
+      source(1).resolveGetHeightOrThrow(300)
+      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilIdle()
+      indexer.releaseRealtime()
+      await indexer.waitUntilIdle()
+      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await indexer.waitUntilReady()
+
+      t.expect(indexer.logs()->reportedFinishAndPause).toStrictEqual([
+        "Finished backfill.",
+        indexesMessage,
+      ])
+    },
+  )
+})
+
 describe("A process driving one chain", () => {
   singleChainScenario->Scenario.it(
     "Names the chain it pauses in the singular",
