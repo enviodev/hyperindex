@@ -17,7 +17,13 @@ CERTS=/var/lib/postgresql/tls
 # tests can tell a verified connection from an unverified one. The same setup
 # runs in CI, against a container instead of this cluster.
 ensure_tls() {
-  if grep -q "^ssl_cert_file = '$CERTS/server.crt'" "$CONF"; then
+  # Every part has to be in place, not just the line naming the certificate: a
+  # cluster stopped half way through this would otherwise start without TLS.
+  if grep -q '^ssl = on' "$CONF" &&
+    grep -q "^ssl_cert_file = '$CERTS/server.crt'" "$CONF" &&
+    grep -q "^ssl_key_file = '$CERTS/server.key'" "$CONF" &&
+    sudo test -s "$CERTS/server.crt" &&
+    sudo test -s "$CERTS/server.key"; then
     return
   fi
   "$(dirname "$0")/../../scripts/pg-tls.sh" "$CERTS" postgres:postgres >/dev/null

@@ -39,8 +39,22 @@ let cacheRow = (~id, ~output) => {
   row
 }
 
+let dumped = TestPgSchema.make()
+let restored = TestPgSchema.make()
+// A directory of the test's own, so neither a developer's cache nor another
+// run's is written over or removed.
+@module("os") external tmpdir: unit => string = "tmpdir"
+let cacheDir = NodeJs.Path.resolve([tmpdir(), `envio-effect-cache-${dumped}`])
+
 let storageFor = pgSchema =>
-  PgStorage.make(~sql, ~pgSchema, ~pgUser=Env.Db.user, ~isHasuraEnabled=false, ~ecosystem=Evm)
+  PgStorage.make(
+    ~sql,
+    ~pgSchema,
+    ~pgUser=Env.Db.user,
+    ~isHasuraEnabled=false,
+    ~cacheDir,
+    ~ecosystem=Evm,
+  )
 
 let initialize = (storage: Persistence.storage) =>
   storage.initialize(
@@ -71,12 +85,6 @@ let read = async (~pgSchema, ~table: Table.table) =>
     row->Dict.getUnsafe("id")->(Utils.magic: unknown => string),
     row->Dict.getUnsafe("output")->(Utils.magic: unknown => JSON.t)->JSON.stringify,
   ))
-
-let dumped = TestPgSchema.make()
-let restored = TestPgSchema.make()
-// Where `dumpEffectCache` writes, which is the project root and not a path the
-// storage takes as an argument.
-let cacheDir = NodeJs.Path.resolve([".envio", "cache"])
 
 Async.afterAll(async () => {
   await TestPgSchema.drop(sql, ~pgSchema=dumped)

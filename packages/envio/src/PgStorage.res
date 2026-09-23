@@ -1503,6 +1503,17 @@ let rec writeBatch = async (
           ->Promise.all
           ->Utils.Promise.ignoreValue
 
+          // A write that failed is classified rather than rethrown, so the
+          // transaction would commit everything else in the batch — the
+          // checkpoint and the chains' progress included. Postgres already
+          // refuses to commit after a failure of its own; one raised before a
+          // statement went out, like a value the staging buffer refuses, it
+          // never hears about. Thrown here so the transaction rolls back.
+          switch specificError.contents {
+          | Some(specificError) => throw(specificError)
+          | None => ()
+          }
+
           switch sinkPromise {
           | Some(sinkPromise) =>
             switch await sinkPromise {
@@ -1664,6 +1675,8 @@ let make = (
   // storage runs goes through `sql`, which already holds the connection.
   ~pgUser,
   ~isHasuraEnabled,
+  // Where the effect cache is dumped to and uploaded from.
+  ~cacheDir: option<NodeJs.Path.t>=?,
   ~chainIdMode: ChainId.mode=Int32,
   // Decides how wide an address key is, both when the config's addresses are
   // encoded at initialize and when stored rows are grouped on resume.
@@ -1675,11 +1688,15 @@ let make = (
   ~isolated=false,
   ~onInitialize=?,
 ): Persistence.storage => {
-  let cacheDirPath = NodeJs.Path.resolve([
-    // Right at the project root
-    ".envio",
-    "cache",
-  ])
+  let cacheDirPath = switch cacheDir {
+  | Some(cacheDir) => cacheDir
+  | None =>
+    NodeJs.Path.resolve([
+      // Right at the project root
+      ".envio",
+      "cache",
+    ])
+  }
 
   // The metric label, the `storage` field on this backend's logs, and the
   // storage record's own name are all the same string.

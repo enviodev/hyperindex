@@ -296,6 +296,7 @@ impl PgClient {
             ssl: SslSetting::parse(&options.ssl).map_err(to_napi)?,
             max_connections: options.max_connections as usize,
             application_name: options.application_name,
+            connect_timeout: std::time::Duration::from_secs(30),
         })
         .map_err(to_napi)?;
         Ok(Self {

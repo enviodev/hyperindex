@@ -458,8 +458,11 @@ describe("Rows written and read back", () => {
           random->makeColumn(index)
         )
         // Mostly small batches, and now and then one past the point where the
-        // statement that binds a cell at a time splits into chunks.
-        let rowCount = random->chance(8) ? maxItemsPerChunk + random->below(60) : random->below(12)
+        // statement that binds a cell at a time splits into chunks. Never
+        // empty: a case writes the columns it counts toward coverage, and an
+        // empty one would count them having round-tripped nothing.
+        let rowCount =
+          random->chance(8) ? maxItemsPerChunk + random->below(60) : 1 + random->below(11)
         let derived = random->chance(20)
         let rows = Array.fromInitializer(~length=rowCount, index =>
           random->makeRow(columns, ~index)

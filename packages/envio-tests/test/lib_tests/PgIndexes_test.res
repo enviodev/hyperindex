@@ -80,6 +80,7 @@ Async.afterAll(async () => {
   let _ = await createdSchemas
   ->Array.map(pgSchema => sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`))
   ->Promise.all
+  await sql->Sql.close
 })
 
 let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEntities) => {

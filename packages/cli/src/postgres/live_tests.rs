@@ -42,6 +42,7 @@ fn client_with(ssl: SslSetting, host: &str, max_connections: usize) -> PgClient 
         ssl,
         max_connections,
         application_name: Some("envio-live-test".to_string()),
+        connect_timeout: std::time::Duration::from_secs(30),
     })
     .expect("the pool is built from a static configuration")
 }
@@ -1102,6 +1103,63 @@ async fn a_table_copies_out_to_a_file_and_back_in() {
                     "{\"note\": \"plain\"}".to_string()
                 ),
             ]
+        )
+    );
+}
+
+/// A transaction's connection goes back to the pool only once the transaction
+/// has been seen to end. One let go any other way — its commit failed while a
+/// statement still held it, or it was dropped with nothing sent — may still be
+/// inside that transaction, and the next caller handed it would be too.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_transaction_that_never_ended_does_not_hand_its_connection_on() {
+    let client = pinned_client();
+    let transaction = client.begin().await.unwrap();
+    transaction
+        .batch("SET LOCAL application_name = 'inside-an-open-transaction'")
+        .await
+        .unwrap();
+    drop(transaction);
+
+    let (rows, _) = client.query("SHOW application_name", &[]).await.unwrap();
+    let seen: String = rows.first().expect("one row").get(0);
+
+    assert_eq!(seen, "envio-live-test");
+}
+
+/// A dump that fails part way — the server erroring after rows have already
+/// streamed — must leave the file it was replacing as it was. A truncated TSV
+/// would load on the next start as a cache holding only its first rows.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_copy_that_fails_part_way_leaves_the_previous_file() {
+    let client = client();
+    let dir = std::env::temp_dir().join(format!("envio-copy-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cache.tsv");
+    std::fs::write(&path, "the previous dump\n").unwrap();
+
+    let failed = client
+        .copy_out(
+            "COPY (SELECT CASE WHEN i < 50000 THEN i ELSE 1 / (i - i) END \
+             FROM generate_series(1, 100000) AS i) TO STDOUT",
+            path.to_str().unwrap(),
+        )
+        .await
+        .err()
+        .map(|error| super::error::message_of(&error));
+
+    let left = std::fs::read_to_string(&path).unwrap();
+    let files = std::fs::read_dir(&dir).unwrap().count();
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    assert_eq!(
+        (failed, left.as_str(), files),
+        (
+            Some("division by zero".to_string()),
+            "the previous dump\n",
+            1
         )
     );
 }

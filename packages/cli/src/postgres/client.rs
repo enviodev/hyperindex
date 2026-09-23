@@ -70,6 +70,8 @@ pub struct PgConnectionOptions {
     pub ssl: SslSetting,
     pub max_connections: usize,
     pub application_name: Option<String>,
+    /// How long opening a connection may take, handshake included.
+    pub connect_timeout: std::time::Duration,
 }
 
 /// One column of a result, as the statement describes it.
@@ -90,10 +92,55 @@ pub struct PgClient {
 /// connection is behind an `Arc` and never a lock.
 #[derive(Clone)]
 pub struct Transaction {
-    connection: Arc<deadpool_postgres::Object>,
+    connection: Arc<Pinned>,
+}
+
+/// The connection a transaction runs on, and whether it may go back to the
+/// pool.
+///
+/// Only a transaction seen to end — its `COMMIT` or `ROLLBACK` answered — hands
+/// its connection back. Any other way of letting go leaves it possibly still
+/// inside the transaction, and the next caller to be handed it would run inside
+/// a stranger's: a failed commit, a clone still holding it when the ending
+/// statement failed, or a transaction dropped with nothing sent. Those detach it
+/// from the pool instead — one connection lost against statements landing
+/// somewhere they were never meant to. Deciding when the last holder lets go,
+/// rather than when `finish` runs, is what covers the clones.
+struct Pinned {
+    object: Option<deadpool_postgres::Object>,
+    ended: std::sync::atomic::AtomicBool,
+}
+
+impl std::ops::Deref for Pinned {
+    type Target = deadpool_postgres::Object;
+
+    fn deref(&self) -> &Self::Target {
+        self.object
+            .as_ref()
+            .expect("the connection is only taken out on drop")
+    }
+}
+
+impl Drop for Pinned {
+    fn drop(&mut self) {
+        if !self.ended.load(std::sync::atomic::Ordering::Acquire) {
+            if let Some(object) = self.object.take() {
+                let _ = deadpool_postgres::Object::take(object);
+            }
+        }
+    }
 }
 
 impl Transaction {
+    fn on(connection: deadpool_postgres::Object) -> Self {
+        Self {
+            connection: Arc::new(Pinned {
+                object: Some(connection),
+                ended: std::sync::atomic::AtomicBool::new(false),
+            }),
+        }
+    }
+
     pub async fn execute(&self, sql: &str, params: &[Param]) -> Result<u64> {
         execute_on(&self.connection, sql, params).await
     }
@@ -118,21 +165,11 @@ impl Transaction {
         self.finish("ROLLBACK").await
     }
 
-    /// Ends the transaction and lets the connection go.
-    ///
-    /// If ending it fails, the transaction may still be open on that connection
-    /// and nothing downstream would know: the next caller to be handed it would
-    /// run inside a stranger's transaction. So the connection is detached
-    /// instead of returned — one lost from the pool against statements landing
-    /// somewhere they were never meant to.
     async fn finish(self, statement: &str) -> Result<()> {
-        let outcome = self.connection.batch_execute(statement).await;
-        if outcome.is_err() {
-            if let Ok(connection) = Arc::try_unwrap(self.connection) {
-                let _ = deadpool_postgres::Object::take(connection);
-            }
-        }
-        outcome?;
+        self.connection.batch_execute(statement).await?;
+        self.connection
+            .ended
+            .store(true, std::sync::atomic::Ordering::Release);
         Ok(())
     }
 }
@@ -238,8 +275,13 @@ impl PgClient {
             Manager::from_config(config, connector, manager_config)
         };
 
+        // Only opening a connection is bounded. Waiting for a free slot when
+        // every connection is busy is the pool doing its job, and how long that
+        // takes is how long the statements ahead take.
         let pool = Pool::builder(manager)
             .max_size(options.max_connections.max(1))
+            .runtime(deadpool_postgres::Runtime::Tokio1)
+            .create_timeout(Some(options.connect_timeout))
             .build()
             .context("Failed building the Postgres connection pool")?;
 
@@ -288,9 +330,7 @@ impl PgClient {
     pub async fn begin(&self) -> Result<Transaction> {
         let connection = self.client().await?;
         connection.batch_execute("BEGIN").await?;
-        Ok(Transaction {
-            connection: Arc::new(connection),
-        })
+        Ok(Transaction::on(connection))
     }
 
     /// Runs a `COPY ... TO STDOUT` and writes what it produces to `path`.
@@ -298,7 +338,33 @@ impl PgClient {
     /// The rows never pass through JavaScript: the server streams them and this
     /// writes them out as they arrive, so a cache of any size costs one buffer
     /// rather than its own length in memory.
+    ///
+    /// They go to a file of their own beside `path`, which replaces it only once
+    /// the copy has finished: a copy the server gives up on part way would
+    /// otherwise leave a file holding its first rows, and the next start would
+    /// load that as the cache. The name is unique per call, so two dumps of the
+    /// same table cannot write into each other's.
     pub async fn copy_out(&self, sql: &str, path: &str) -> Result<()> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let partial = format!(
+            "{path}.{}.{}.partial",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let outcome = self.copy_out_into(sql, &partial).await;
+        let outcome = match outcome {
+            Ok(()) => tokio::fs::rename(&partial, path)
+                .await
+                .with_context(|| format!("Failed replacing {path}")),
+            Err(error) => Err(error),
+        };
+        if outcome.is_err() {
+            let _ = tokio::fs::remove_file(&partial).await;
+        }
+        outcome
+    }
+
+    async fn copy_out_into(&self, sql: &str, path: &str) -> Result<()> {
         let client = self.client().await?;
         let mut file = tokio::fs::File::create(path)
             .await
@@ -409,6 +475,52 @@ mod tests {
             SslSetting::parse("verify-ca").unwrap_err().to_string(),
             "`verify-ca` is not an SSL mode. Use one of false, true, require, allow, prefer, \
              verify-full."
+        );
+    }
+
+    /// A server that takes the connection and never answers it — a firewall
+    /// swallowing the handshake, a proxy with nothing behind it — has to end
+    /// in an error rather than an indexer waiting on it forever.
+    #[tokio::test]
+    async fn a_connection_that_never_opens_is_given_up_on() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let held = tokio::spawn(async move {
+            let mut accepted = Vec::new();
+            loop {
+                if let Ok((socket, _)) = listener.accept().await {
+                    accepted.push(socket);
+                }
+            }
+        });
+
+        let client = PgClient::connect(PgConnectionOptions {
+            host: "127.0.0.1".to_string(),
+            port,
+            user: "postgres".to_string(),
+            password: "unused".to_string(),
+            database: "unused".to_string(),
+            ssl: SslSetting::Disable,
+            max_connections: 1,
+            application_name: None,
+            connect_timeout: std::time::Duration::from_millis(300),
+        })
+        .unwrap();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.query("SELECT 1", &[]),
+        )
+        .await;
+        held.abort();
+
+        let reported = match outcome {
+            Err(_) => "still waiting after five seconds".to_string(),
+            Ok(Ok(_)) => "answered".to_string(),
+            Ok(Err(error)) => super::super::error::message_of(&error),
+        };
+        assert_eq!(
+            reported,
+            "Failed taking a Postgres connection from the pool: Timeout occurred while creating a new object"
         );
     }
 }

@@ -243,24 +243,27 @@ let run = async (
       ->Sql.query(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
       ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
 
-    // Which chain a change belongs to, for a table that has chains at all.
-    let chainIdOf = (entityConfig: Internal.entityConfig) =>
+    // Which chain a stored row belongs to, for a table that has chains at all.
+    // Read off the row rather than the change decoded from it: a delete keeps
+    // only its id and checkpoint, and two chains can share both.
+    let chainIdOfRow = (entityConfig: Internal.entityConfig) =>
       switch entityConfig.table->Table.getChainIdField {
       | None => _ => 0.
       | Some(field) =>
-        change =>
-          switch change {
-          | Change.Set({entity}) =>
-            entity
-            ->(Utils.magic: Internal.entity => dict<float>)
-            ->Utils.Dict.dangerouslyGetNonOption(field.fieldName)
-            ->Option.getOr(0.)
-          | Delete(_) => 0.
+        row =>
+          switch row
+          ->(Utils.magic: unknown => dict<unknown>)
+          ->Utils.Dict.dangerouslyGetNonOption(field->Table.getPgDbFieldName) {
+          // Text when the chain-id column is a bigint.
+          | Some(value) if typeof(value) === #string =>
+            value->(Utils.magic: unknown => string)->Float.fromString->Option.getOr(0.)
+          | Some(value) => value->(Utils.magic: unknown => float)
+          | None => 0.
           }
       }
 
     let queryEntityHistory = (entityConfig: Internal.entityConfig) => {
-      let chainIdOf = chainIdOf(entityConfig)
+      let chainIdOfRow = chainIdOfRow(entityConfig)
       sql
       ->Sql.query(
         PgStorage.makeLoadAllQuery(
@@ -271,8 +274,7 @@ let run = async (
       ->Promise.thenResolve(items => {
         // Rows aren't ordered by the query, and insert order isn't meaningful
         // since checkpointId is the source of truth. Sort for stable assertions.
-        items
-        ->S.parseOrThrow(
+        let changes = items->S.parseOrThrow(
           S.array(
             S.union([
               PgStorage.getEntityHistory(~entityConfig).setChangeSchema,
@@ -289,7 +291,12 @@ let run = async (
             ]),
           ),
         )
-        ->Array.toSorted((a, b) => {
+        changes
+        ->Array.mapWithIndex((change, index) => (
+          change,
+          chainIdOfRow(items->Array.getUnsafe(index)),
+        ))
+        ->Array.toSorted(((a, aChain), (b, bChain)) => {
           switch String.compare(
             a->Change.getEntityId->EntityId.toKey,
             b->Change.getEntityId->EntityId.toKey,
@@ -307,11 +314,12 @@ let run = async (
               // id and checkpoint, and nothing above tells those apart. The
               // statements that wrote them run together in one transaction, so
               // which landed first says nothing.
-              Float.compare(chainIdOf(a), chainIdOf(b))
+              Float.compare(aChain, bChain)
             }
           | order => order
           }
         })
+        ->Array.map(((change, _)) => change)
       })
     }
 

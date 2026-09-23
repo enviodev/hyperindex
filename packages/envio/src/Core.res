@@ -332,9 +332,11 @@ let loadAddon = () => {
     | Some(addon) => addon
     | None =>
       // Dev build fallback (cargo build on every run)
-      switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
-      | Some(addon) => addon
-      | None =>
+      // `null` rather than `undefined` when there is no dev build, which an
+      // `option` would read as `Some`.
+      switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => Null.t<addon>) {
+      | Value(addon) => addon
+      | Null =>
         let host = `${processPlatform}-${processArch}`
         let msg = if candidates->Array.length === 0 {
           `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
