@@ -6,6 +6,10 @@ use std::fmt::{self, Display};
 
 const ISSUES_URL: &str = "https://github.com/enviodev/hyperindex/issues";
 
+/// Subgraph mode ships under its own npm dist-tag (see `publish.yml`), so
+/// `envio@latest` would move a project off it.
+const UPGRADE_COMMAND: &str = "pnpm add -D envio@subgraph";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Finding {
     /// A feature we recognise and deliberately don't implement.
@@ -38,8 +42,9 @@ impl Display for Finding {
                 f,
                 "Envio Subgraph doesn't support {feature} yet.\n  \
                  Found in {location}.\n\
-                 First, make sure you're on the latest envio version — support may have landed:\n  \
-                 pnpm add -D envio@latest\n\
+                 First, make sure you're on the newest Envio Subgraph release — support may have \
+                 landed:\n  \
+                 {UPGRADE_COMMAND}\n\
                  If you're up to date and need this feature, please open an issue (existing\n\
                  issues welcome a 👍 — demand drives prioritization):\n  {ISSUES_URL}"
             ),
@@ -48,8 +53,8 @@ impl Display for Finding {
                 "Envio Subgraph doesn't know {thing}.\n  \
                  Found in {location}.\n\
                  This may be a feature newer than this envio version understands, or a typo.\n\
-                 First, make sure you're on the latest envio version:\n  \
-                 pnpm add -D envio@latest\n\
+                 First, make sure you're on the newest Envio Subgraph release:\n  \
+                 {UPGRADE_COMMAND}\n\
                  If you're up to date and this is a real subgraph feature, please open an\n\
                  issue so we can add it: {ISSUES_URL}"
             ),

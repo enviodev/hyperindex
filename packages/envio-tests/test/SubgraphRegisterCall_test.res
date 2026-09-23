@@ -80,8 +80,8 @@ class Factory extends ethereum.SmartContract {
 
 export function handlePairCreated(event: any): void {
   let factory = Factory.bind(event.address);
-  // Both calls land before the create, which is the shape the register pass
-  // used to refuse.
+  // Both calls land before the create: the register pass has to answer them
+  // before it knows what to register.
   let pair = factory.pairFor().toAddress();
   let symbol = factory.symbol().toString();
 

@@ -2,6 +2,7 @@ open Vitest
 
 // One case per §7 row that translation can reach. Runtime-access refusals live
 // in SubgraphRuntimeRefusal_test.res, where a mapping actually runs.
+
 // What `translate` answers when nothing was refused. A case that expects the
 // schema to be accepted asserts this, so an unrelated failure can't pass for
 // acceptance by merely not mentioning the word under test.
@@ -365,6 +366,41 @@ type Token @entity {
 })
 
 describe("subgraph translation: reporting", () => {
+  // Subgraph mode ships under its own npm dist-tag, so `latest` would move a
+  // subgraph project off it.
+  it("points an unsupported feature at the subgraph release", t => {
+    let message = translate(
+      ~manifest=manifestWith(`      callHandlers:
+        - function: approve(address,uint256)
+          handler: handleApprove`),
+      ~schema=baseSchema,
+    )
+    t.expect(message).toEqual(`Envio Subgraph doesn't support call handlers yet.
+  Found in data source "Token" → callHandlers → "handleApprove".
+First, make sure you're on the newest Envio Subgraph release — support may have landed:
+  pnpm add -D envio@subgraph
+If you're up to date and need this feature, please open an issue (existing
+issues welcome a 👍 — demand drives prioritization):
+  https://github.com/enviodev/hyperindex/issues`)
+  })
+
+  it("points an unknown thing at the subgraph release", t => {
+    let message = translate(
+      ~manifest=manifestWith(plainEventHandler)->String.replace(
+        "dataSources:",
+        "features:\n  - teleportation\ndataSources:",
+      ),
+      ~schema=baseSchema,
+    )
+    t.expect(message).toEqual(`Envio Subgraph doesn't know the feature "teleportation".
+  Found in features[0].
+This may be a feature newer than this envio version understands, or a typo.
+First, make sure you're on the newest Envio Subgraph release:
+  pnpm add -D envio@subgraph
+If you're up to date and this is a real subgraph feature, please open an
+issue so we can add it: https://github.com/enviodev/hyperindex/issues`)
+  })
+
   it("reports every finding in one run", t => {
     let manifest =
       manifestWith(`      callHandlers:

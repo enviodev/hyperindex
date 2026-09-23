@@ -148,9 +148,17 @@ describe("subgraph runtime", () => {
     });
   });
 
+  // The runtime writes its own copy of the translator's refusal text; the
+  // whole of it is pinned so the two can't drift apart.
   it("refuses event.transactionLogIndex", async () => {
     await expect(createTestIndexer().process(probe(1n))).rejects.toThrow(
-      /doesn't support event.transactionLogIndex yet/,
+      \`Envio Subgraph doesn't support event.transactionLogIndex yet.
+  Found in data source "Factory" → "Probe".
+First, make sure you're on the newest Envio Subgraph release — support may have landed:
+  pnpm add -D envio@subgraph
+If you're up to date and need this feature, please open an issue (existing
+issues welcome a 👍 — demand drives prioritization):
+  https://github.com/enviodev/hyperindex/issues\`,
     );
   });
 

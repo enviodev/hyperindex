@@ -5,6 +5,11 @@ project (`subgraph.yaml` + `schema.graphql` + AssemblyScript mappings +
 `abis/`), with HyperIndex underneath. Query-API differences (Hasura vs
 graph-node GraphQL) are out of scope.
 
+**Install.** Subgraph mode is published under its own npm dist-tag, so a
+subgraph project installs and upgrades with `pnpm add -D envio@subgraph` —
+`envio@latest` would move it off. Releases tagged `vX.Y.Z-subgraph[.N]` land
+there (`publish.yml`); every §7 error names the same command.
+
 **How it works, in one paragraph.** The CLI detects `subgraph.yaml`,
 translates the manifest into an envio config and the schema into an envio
 schema, and points the handler entry at a runtime that imports the user's
@@ -343,8 +348,8 @@ findings at once, not just the first.
 ```
 Envio Subgraph doesn't support <feature> yet.
   Found in <location, e.g. data source "Token" → callHandlers → "handleApprove">.
-First, make sure you're on the latest envio version — support may have landed:
-  pnpm add -D envio@latest
+First, make sure you're on the newest Envio Subgraph release — support may have landed:
+  pnpm add -D envio@subgraph
 If you're up to date and need this feature, please open an issue (existing
 issues welcome a 👍 — demand drives prioritization):
   https://github.com/enviodev/hyperindex/issues
@@ -357,8 +362,8 @@ a newer graph-ts API, or a typo). Nothing unknown is ever ignored:
 Envio Subgraph doesn't know <thing>.
   Found in <location>.
 This may be a feature newer than this envio version understands, or a typo.
-First, make sure you're on the latest envio version:
-  pnpm add -D envio@latest
+First, make sure you're on the newest Envio Subgraph release:
+  pnpm add -D envio@subgraph
 If you're up to date and this is a real subgraph feature, please open an
 issue so we can add it: https://github.com/enviodev/hyperindex/issues
 ```
