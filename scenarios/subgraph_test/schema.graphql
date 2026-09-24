@@ -1,4 +1,4 @@
-type Pair @entity(immutable: true) {
+type Pair @entity(immutable: false) {
   id: Bytes!
   token0: Bytes!
   token1: Bytes!

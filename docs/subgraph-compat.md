@@ -535,6 +535,12 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
 **D. End to end.** `scenarios/subgraph_test`: a real small subgraph project
 (e.g. gravatar) with factory + template + eth_call + block handler; run via
 `envio dev` path in CI; plus one fixture per §7 error asserting the message.
+Nightly (`.github/workflows/subgraph-nightly.yml`), two harnesses that need
+Docker and the network: `scenarios/subgraph_test/differential` indexes the
+scenario with graph-node and with envio over one anvil chain and diffs every
+stored field; `scenarios/subgraph_corpus` installs real subgraphs at pinned
+commits the way their authors do and indexes a window of blocks from their
+start.
 Additionally, add an **"Envio Subgraph"** tool to
 [open-indexer-benchmark](https://github.com/enviodev/open-indexer-benchmark)
 that runs the benchmark's existing Subgraph case unmodified on HyperIndex —

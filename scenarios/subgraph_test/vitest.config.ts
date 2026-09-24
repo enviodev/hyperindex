@@ -14,6 +14,8 @@ export default defineConfig({
     alias: [{ find: /^@graphprotocol\/graph-ts$/, replacement: shim }],
   },
   test: {
+    // differential/ runs against a live graph-node, from its own script.
+    include: ["test/**/*.test.ts"],
     pool: "forks",
     testTimeout: 60_000,
   },
