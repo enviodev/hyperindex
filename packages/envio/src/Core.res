@@ -177,6 +177,22 @@ let loadDevAddon: ({..}, string) => Null.t<addon> = %raw(`function(req, envioDir
 // `code`, and any other fields a diagnostic might rely on.
 let rethrow: JsExn.t => 'a = %raw(`function(e) { throw e }`)
 
+type packageJson = {version: string}
+let requirePackageJson: ({..}, string) => packageJson = %raw(`(req, p) => req(p)`)
+let devVersion = "0.0.1-dev"
+
+let isGlibc: unit => bool = %raw(`() => Boolean(process.report?.getReport().header.glibcVersionRuntime)`)
+
+@val external npmUserAgent: option<string> = "process.env.npm_config_user_agent"
+
+let addCommand = () =>
+  switch npmUserAgent {
+  | Some(ua) if ua->String.startsWith("pnpm/") => "pnpm add"
+  | Some(ua) if ua->String.startsWith("yarn/") => "yarn add"
+  | Some(ua) if ua->String.startsWith("bun/") => "bun add"
+  | _ => "npm install"
+  }
+
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
 
@@ -212,15 +228,32 @@ let loadAddon = () => {
   switch tryRequire(0) {
   | Some(addon) => addon
   | None =>
-    // Dev build fallback (cargo build on every run)
-    switch loadDevAddon(req, envioPackageDir)->Null.toOption {
+    let version = requirePackageJson(req, "../package.json").version
+    // Publishing stamps the real version, so only a monorepo checkout (or a
+    // `file:` link to one) can have a dev build to fall back to. Skipping it
+    // spares published installs a `pnpm list` spawn before the error below.
+    let devAddon = if version === devVersion {
+      loadDevAddon(req, envioPackageDir)->Null.toOption
+    } else {
+      None
+    }
+    switch devAddon {
     | Some(addon) => addon
     | None =>
       let host = `${processPlatform}-${processArch}`
-      let msg = if candidates->Array.length === 0 {
+      let msg = switch candidates {
+      | []
+        if processPlatform === "win32" => `envio doesn't run natively on Windows. Use WSL 2 instead: https://learn.microsoft.com/windows/wsl/install`
+      | [] =>
         `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
-      } else {
-        `Couldn't load the envio native addon for ${host}. Reinstall envio (ensure optional dependencies aren't skipped).`
+      | _ =>
+        let pkg = if processPlatform === "linux" && processArch === "x64" && !isGlibc() {
+          `envio-linux-x64-musl`
+        } else {
+          candidates->Array.getUnsafe(0)
+        }
+        `envio's native binary for ${host} isn't installed (package "${pkg}"). This happens when optional dependencies are skipped (--omit=optional, --no-optional) or the lockfile was generated on another platform.
+Reinstall dependencies, or add the package explicitly: ${addCommand()} ${pkg}@${version}`
       }
       JsError.throwWithMessage(msg)
     }
