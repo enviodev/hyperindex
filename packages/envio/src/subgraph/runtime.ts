@@ -7,15 +7,7 @@
  * replay loop reruns the mapping once what it asked for has landed.
  */
 
-import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -42,6 +34,7 @@ import {
 import { encodeArg, decodeArg, makeCallEffect, resetClients } from "./calls.ts";
 import { DIVIDE_HELPER, EVENT_CLASSES_EXPORT, RETAG_HELPER, integerDivision } from "./assemblyscript.ts";
 import { makeHostEffects } from "./hosts.ts";
+import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
@@ -169,6 +162,7 @@ function blockInterval(handler: BlockHandler): { every?: number; once?: boolean 
 
 async function loadMapping(
   root: string,
+  generated: string,
   mappingFile: string,
   scope: Scope,
 ): Promise<Record<string, any>> {
@@ -183,93 +177,13 @@ async function loadMapping(
     const message = exn instanceof Error ? exn.message : String(exn);
     // Only reachable when codegen couldn't run up front, so this reports why
     // rather than retrying: Node caches a failed resolution for the process.
-    if (/Cannot find (module|package)/.test(message) && message.includes("generated")) {
-      ensureGeneratedCode(root, { required: true });
+    if (message.includes(generated) && !existsSync(generated)) {
+      throw missingGeneratedCode(root, generated);
     }
     // An unknown named import fails at Node's ESM link step, before any Proxy
     // in the shim can see it — rewrap it with the mapping that caused it.
     throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}`);
   }
-}
-
-/**
- * `generated/` is usually gitignored, so it's built with the project's own
- * graph-cli — which makes the output identical to the user's normal workflow
- * by definition.
- */
-function ensureGeneratedCode(root: string, { required }: { required: boolean }) {
-  if (existsSync(path.join(root, "generated"))) return;
-
-  const graphCli = path.join(root, "node_modules", ".bin", "graph");
-  if (!existsSync(graphCli)) {
-    if (!required) return;
-    throw new Error(
-      'Envio Subgraph needs the project\'s generated code, but "generated/" is\n' +
-        "missing and @graphprotocol/graph-cli isn't installed.\n" +
-        "Install dependencies and try again:\n" +
-        "  pnpm install\n" +
-        "Or generate manually:\n" +
-        "  pnpm exec graph codegen",
-    );
-  }
-
-  try {
-    execFileSync(graphCli, ["codegen"], { cwd: root, stdio: "inherit" });
-  } catch {
-    throw new Error(
-      'Envio Subgraph ran `graph codegen` to build "generated/", but it failed —\n' +
-        "the error above comes from The Graph's own codegen, so fix it there and\n" +
-        "rerun. If `graph codegen` succeeds on its own but fails through envio,\n" +
-        "please open an issue: https://github.com/enviodev/hyperindex/issues",
-    );
-  }
-}
-
-/**
- * `graph build` compiles the mappings with `asc` against the real
- * `@graphprotocol/graph-ts`. That is the type check a subgraph project already
- * has, and running it in `envio dev` keeps the feedback loop the developer
- * knows — a type error reads the same here as it does on Graph Node.
- *
- * Only in dev, and only when something it reads has changed: it is an
- * AssemblyScript compile, not something to pay on every restart.
- */
-function typeCheckMappings(root: string) {
-  const graphCli = path.join(root, "node_modules", ".bin", "graph");
-  if (!existsSync(graphCli)) return;
-
-  const inputs = ["subgraph.yaml", "schema.graphql", "src", "abis"]
-    .map((entry) => path.join(root, entry))
-    .filter((entry) => existsSync(entry))
-    .map((entry) => fingerprint(entry))
-    .join("|");
-
-  const stamp = path.join(root, ".envio", "graph-build.stamp");
-  if (existsSync(stamp) && readFileSync(stamp, "utf8") === inputs) return;
-
-  try {
-    execFileSync(graphCli, ["build"], { cwd: root, stdio: "inherit" });
-  } catch {
-    throw new Error(
-      "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +
-        "failed — the error above comes from The Graph's own AssemblyScript\n" +
-        "compiler, so fix it there and rerun.",
-    );
-  }
-
-  mkdirSync(path.dirname(stamp), { recursive: true });
-  writeFileSync(stamp, inputs);
-}
-
-function fingerprint(entry: string): string {
-  const stats = statSync(entry);
-  if (!stats.isDirectory()) {
-    return `${entry}:${stats.mtimeMs}:${stats.size}`;
-  }
-  return readdirSync(entry)
-    .sort()
-    .map((child) => fingerprint(path.join(entry, child)))
-    .join(",");
 }
 
 type Effect = {
@@ -493,18 +407,22 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // Before any mapping is imported: Node caches a failed module resolution for
   // the life of the process, so generating after the import has already failed
   // wouldn't help.
-  ensureGeneratedCode(config.root, { required: false });
+  const sources = [...config.dataSources, ...config.templates];
+  const generated = generatedDir(
+    config.root,
+    sources.map((source) => source.mappingFile),
+  );
+  await ensureGeneratedCode(config.root, generated);
 
   if (config.isDev) {
-    typeCheckMappings(config.root);
+    await typeCheckMappings(config.root);
   }
 
-  const sources = [...config.dataSources, ...config.templates];
   const templateNames = new Set(config.templates.map((template) => template.name));
 
   for (const source of sources) {
     if (source.kind !== "contract") continue;
-    const mapping = await loadMapping(config.root, source.mappingFile, {
+    const mapping = await loadMapping(config.root, generated, source.mappingFile, {
       context: null,
       event: null,
       mode: "handler",

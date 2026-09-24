@@ -251,10 +251,20 @@ classes call `DataSource.create`. Consequences:
   package types (still in the project's dependencies) — exactly what a
   subgraph developer sees today. Our shim replaces graph-ts at runtime
   resolution only, never at type level.
-- **Codegen:** if `generated/` is missing (usually gitignored), `envio dev`
-  runs the project's own locally installed graph-cli (resolved from
-  `node_modules/.bin/graph`) — output is then identical to the user's normal
-  workflow by definition. Both failure modes get explicit messages:
+- **Codegen:** if the generated code is missing (usually gitignored), envio
+  runs the `codegen` command of the project's own graph-cli
+  (`node_modules/@graphprotocol/graph-cli`) — output is then identical to the
+  user's normal workflow by definition. It runs in-process on a worker thread
+  whose heap is sized to three quarters of the machine, since codegen over a
+  large ABI set outgrows Node's default heap. Two flags differ from a bare
+  `graph codegen`:
+  - `--output-dir` is where the mappings import `schema`/`templates` from, so
+    a project that runs `graph codegen -o src/types` gets its code there;
+  - `--skip-migrations`: migrations rewrite `subgraph.yaml` in place, and
+    envio only reads the manifest.
+
+  `envio dev`'s `graph build` type check runs the same way. The failure modes
+  get explicit messages:
 
   graph-cli not installed (or `node_modules` missing):
 
@@ -264,22 +274,30 @@ classes call `DataSource.create`. Consequences:
   Install dependencies and try again:
     pnpm install
   Or generate manually:
-    pnpm exec graph codegen
+    pnpm exec graph codegen --output-dir generated
   ```
 
-  `graph codegen` exits non-zero (its output shown verbatim above the tail):
+  `graph codegen` fails (its output shown verbatim above the tail):
 
   ```
-  Envio Subgraph ran `graph codegen` to build "generated/", but it failed —
-  the error above comes from The Graph's own codegen, so fix it there and
-  rerun. If `graph codegen` succeeds on its own but fails through envio,
-  please open an issue: https://github.com/enviodev/hyperindex/issues
+  Envio Subgraph ran `graph codegen` to build the generated code, but it
+  failed — the error above comes from The Graph's own codegen, so fix it
+  there and rerun. If `graph codegen` succeeds on its own but fails through
+  envio, please open an issue: https://github.com/enviodev/hyperindex/issues
+  ```
+
+  It runs out of memory even so:
+
+  ```
+  Envio Subgraph ran `graph codegen` with a 12288 MB heap, three
+  quarters of this machine's memory, and it ran out. Run it on a machine
+  with more memory, then start envio again.
   ```
 - **Conformance is tested two ways:** (a) golden fixtures — `generated/`
   outputs of real `graph codegen` across pinned graph-cli versions, executed
   against the shim in `envio-tests`, since users' local versions vary; (b) a
-  type-level test compiling the shim implementation against the real
-  graph-ts type declarations (`satisfies typeof import("@graphprotocol/graph-ts")`)
+  type-level walk of the shim against the real graph-ts type declarations
+  (`conformance.ts`)
   so the runtime surface can't drift from the types users compile against.
 
 Cost note: entity field access now goes through `TypedMap`/`Value` boxing —
