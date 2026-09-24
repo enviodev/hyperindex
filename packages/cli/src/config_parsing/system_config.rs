@@ -2440,7 +2440,7 @@ impl Event {
         let resolved = source
             .read_config_relative_file(abi_file_path)
             .context("Failed to get ABI relative to the config")?;
-        let fuel_abi = FuelAbi::parse_raw(resolved.path, abi_file_path.to_string(), resolved.raw)
+        let fuel_abi = FuelAbi::parse_raw(resolved.path, resolved.raw)
             .context("Failed to parse ABI".to_string())?;
 
         let mut events = vec![];

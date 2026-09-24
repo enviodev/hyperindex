@@ -27,6 +27,9 @@ module Registration = {
     kind: kind,
     // The LogData `rb` value as a decimal string; absent for other kinds.
     logId?: string,
+    // The contract's Fuel ABI, which LogData receipts are decoded against in
+    // Rust; absent for other kinds.
+    abi?: JSON.t,
   }
 
   let fromOnEventRegistrations = (
@@ -35,12 +38,12 @@ module Registration = {
     onEventRegistrations->Array.map(reg => {
       let eventConfig =
         reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig)
-      let (kind, logId) = switch eventConfig.kind {
-      | LogData({logId}) => (LogData, Some(logId))
-      | Mint => (Mint, None)
-      | Burn => (Burn, None)
-      | Transfer => (Transfer, None)
-      | Call => (Call, None)
+      let (kind, logId, abi) = switch eventConfig.kind {
+      | LogData({logId, abi}) => (LogData, Some(logId), Some(abi))
+      | Mint => (Mint, None, None)
+      | Burn => (Burn, None, None)
+      | Transfer => (Transfer, None, None)
+      | Call => (Call, None, None)
       }
       {
         index: reg.index,
@@ -50,6 +53,7 @@ module Registration = {
         startBlock: reg.startBlock,
         kind,
         ?logId,
+        ?abi,
       }
     })
 }
@@ -70,7 +74,8 @@ module EventItems = {
   }
 
   // One routed receipt with its kind-specific columns flattened: LogData
-  // carries `data` (decoded here in JS), Mint/Burn carry `val`/`subId`,
+  // carries `params` decoded against the ABI (a receipt its logged type
+  // rejects is dropped in Rust), Mint/Burn carry `val`/`subId`,
   // Transfer/TransferOut/Call carry `amount`/`assetId`/`to` (TransferOut's
   // wallet recipient normalised into `to`).
   type item = {
@@ -79,7 +84,7 @@ module EventItems = {
     txId: string,
     blockHeight: int,
     srcAddress: Address.t,
-    data?: string,
+    params?: Internal.eventParams,
     subId?: string,
     val?: bigint,
     amount?: bigint,
@@ -87,10 +92,22 @@ module EventItems = {
     to?: string,
   }
 
+  // The page's first LogData receipt a contract-bound registration's ABI
+  // rejected, with how many it rejected. The receipts themselves are dropped.
+  type rejectedLogData = {
+    onEventRegistrationIndex: int,
+    blockHeight: int,
+    receiptIndex: int,
+    txId: string,
+    dataLength: int,
+    count: int,
+  }
+
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
     items: array<item>,
+    rejectedLogData: array<rejectedLogData>,
   }
 }
 

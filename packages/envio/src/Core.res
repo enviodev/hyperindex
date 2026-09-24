@@ -76,6 +76,11 @@ type addon = {
   evmBlockFieldNames: unit => array<string>,
   svmBlockFieldNames: unit => array<string>,
   fuelBlockFieldNames: unit => array<string>,
+  decodeFuelLogDataForTest: (
+    ~abi: JSON.t,
+    ~logId: string,
+    ~data: Uint8Array.t,
+  ) => Null.t<Internal.eventParams>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"

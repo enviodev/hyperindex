@@ -32,11 +32,8 @@ impl FuelType {
             "u128" => "U128Log",
             "raw untyped ptr" => "RawUntypedPtrLog",
             "b256" => "B256Log",
-            "address" => "AddressLog",
-            "Vec" => "VecLog",
             "str" => "StrLog",
             type_field if type_field.starts_with("str[") => "StrLog",
-            "enum Option" => "OptionLog",
             type_field if type_field.starts_with("struct ") => type_field
                 .strip_prefix("struct ")
                 .and_then(|s| s.split("::").last())
@@ -65,10 +62,6 @@ pub struct FuelLog {
 pub struct FuelAbi {
     pub path_buf: PathBuf,
     pub path: String,
-    /// The ABI path relative to the project root, as referenced in config.yaml.
-    /// Used by codegen to emit portable import paths; `path_buf` is the absolute
-    /// resolved path used for file system access at parse time.
-    pub path_relative_to_root: String,
     pub raw: String,
     program: UnifiedProgramABI,
     logs: HashMap<String, FuelLog>,
@@ -225,7 +218,7 @@ impl FuelAbi {
                         //int ts/js
                         "u8" | "u16" | "u32" => Int.get_ok_expr(),
                         "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.get_ok_expr(),
-                        "b256" | "address" => String.get_ok_expr(),
+                        "b256" => String.get_ok_expr(),
                         "str" | "struct std::string::String" => String.get_ok_expr(),
                         type_field if type_field.starts_with("str[") => String.get_ok_expr(),
                         "struct std::vec::Vec" => Array(Box::new(GenericParam(
@@ -235,13 +228,6 @@ impl FuelAbi {
                         .get_ok_expr(),
                         // It's decoded as Uint8Array, but we don't have a schema for it yet
                         "struct std::bytes::Bytes" => Unknown.get_ok_expr(),
-                        //TODO: handle nested option since this would need to be flattened to
-                        //single level rescript option.
-                        "enum Option" => Option(Box::new(GenericParam(
-                            get_first_type_param()
-                                .context("Failed getting param for enum Option")?,
-                        )))
-                        .get_ok_expr(),
                         type_field if type_field.starts_with("struct ") => {
                             let record_fields = get_components_name_and_type_ident()
                                 .context(format!(
@@ -395,21 +381,17 @@ impl FuelAbi {
         Ok(logs_map)
     }
 
-    pub fn parse(path_buf: PathBuf, path_relative_to_root: String) -> Result<Self> {
+    pub fn parse(path_buf: PathBuf) -> Result<Self> {
         let path = path_buf
             .to_str()
             .context("The ABI file path is invalid Unicode")?
             .to_string();
         let raw = fs::read_to_string(&path_buf)
             .context(format!("Failed to read Fuel ABI file at \"{}\"", path))?;
-        Self::parse_raw(path_buf, path_relative_to_root, raw)
+        Self::parse_raw(path_buf, raw)
     }
 
-    pub fn parse_raw(
-        path_buf: PathBuf,
-        path_relative_to_root: String,
-        raw: String,
-    ) -> Result<Self> {
+    pub fn parse_raw(path_buf: PathBuf, raw: String) -> Result<Self> {
         let path = path_buf
             .to_str()
             .context("The ABI file path is invalid Unicode")?
@@ -430,7 +412,6 @@ impl FuelAbi {
         Ok(Self {
             path,
             path_buf,
-            path_relative_to_root,
             raw,
             program,
             logs,

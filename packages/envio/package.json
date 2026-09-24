@@ -47,11 +47,6 @@
   ],
   "dependencies": {
     "@elastic/ecs-pino-format": "1.4.0",
-    "@fuel-ts/crypto": "0.96.1",
-    "@fuel-ts/errors": "0.96.1",
-    "@fuel-ts/hasher": "0.96.1",
-    "@fuel-ts/math": "0.96.1",
-    "@fuel-ts/utils": "0.96.1",
     "bignumber.js": "9.3.1",
     "eventsource": "4.1.0",
     "express": "4.19.2",

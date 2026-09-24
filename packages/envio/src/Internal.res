@@ -491,7 +491,7 @@ type eventConfig = private {
 }
 
 type fuelEventKind =
-  | LogData({logId: string, decode: string => eventParams})
+  | LogData({logId: string, abi: JSON.t})
   | Mint
   | Burn
   | Transfer

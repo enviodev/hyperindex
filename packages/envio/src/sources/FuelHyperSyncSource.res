@@ -16,6 +16,9 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
   // Per source, so one rejected token is reported once rather than on every
   // height retry for the life of the process.
   let unauthorizedWarned = ref(false)
+  // Registration indexes already warned about undecodable LogData — a stale
+  // ABI rejects every receipt, so one line per event is enough.
+  let rejectedLogDataWarned = Utils.Set.make()
 
   let apiToken = apiToken->HyperSync.requireApiToken
 
@@ -106,6 +109,24 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
 
     let parsingTimeRef = Performance.now()
 
+    pageUnsafe.rejectedLogData->Array.forEach(rejected => {
+      if !(rejectedLogDataWarned->Utils.Set.has(rejected.onEventRegistrationIndex)) {
+        rejectedLogDataWarned->Utils.Set.add(rejected.onEventRegistrationIndex)->ignore
+        let eventConfig = (
+          onEventRegistrations->Array.getUnsafe(rejected.onEventRegistrationIndex)
+        ).eventConfig
+        logger->Logging.childWarn({
+          "msg": `Skipped ${eventConfig.contractName}.${eventConfig.name} LogData receipts whose data doesn't decode against the contract ABI. Check that the ABI matches the deployed contract.`,
+          "chainId": chainId,
+          "blockNumber": rejected.blockHeight,
+          "logIndex": rejected.receiptIndex,
+          "txId": rejected.txId,
+          "dataLength": rejected.dataLength,
+          "skippedInPage": rejected.count,
+        })
+      }
+    })
+
     let parsedQueueItems = pageUnsafe.items->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
@@ -116,24 +137,8 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
         )
 
       let params = switch eventConfig.kind {
-      | LogData({decode}) =>
-        // Kind-required columns are validated present in Rust before the item
-        // crosses the boundary.
-        let data = item.data->Option.getOr("")
-        try decode(data) catch {
-        | exn => {
-            let params = {
-              "chainId": chainId,
-              "blockNumber": item.blockHeight,
-              "logIndex": item.receiptIndex,
-            }
-            let logger = Logging.createChildFrom(~logger, ~params)
-            exn->ErrorHandling.mkLogAndRaise(
-              ~msg="Failed to decode Fuel LogData receipt, please double check your ABI.",
-              ~logger,
-            )
-          }
-        }
+      // Rust only routes a LogData receipt once its data decoded.
+      | LogData(_) => item.params->Option.getUnsafe
       | Mint | Burn =>
         (
           {
@@ -213,10 +218,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
       let timerRef = Performance.now()
       let height = try await client->FuelHyperSyncClient.getHeight catch {
       | exn =>
-        exn->HyperSync.rethrowLoggingUnauthorized(
-          ~warned=unauthorizedWarned,
-          ~product="HyperFuel",
-        )
+        exn->HyperSync.rethrowLoggingUnauthorized(~warned=unauthorizedWarned, ~product="HyperFuel")
       }
       let seconds = timerRef->Performance.secondsSince
       {height, requestStats: [{method: "getHeight", seconds}]}
