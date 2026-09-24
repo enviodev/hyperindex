@@ -42,7 +42,7 @@ import {
 import { encodeArg, decodeArg, makeCallEffect, resetClients } from "./calls.ts";
 import { DIVIDE_HELPER, EVENT_CLASSES_EXPORT, RETAG_HELPER, integerDivision } from "./assemblyscript.ts";
 import { makeHostEffects } from "./hosts.ts";
-import { unsupported } from "./errors.ts";
+import { unknown, unsupported } from "./errors.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
 
@@ -83,6 +83,8 @@ type SubgraphConfig = {
   dataSources: DataSource[];
   templates: DataSource[];
   declaresEthCalls: boolean;
+  /** The config's contract name for each data source and template. */
+  contractAccessors: Record<string, string>;
   root: string;
   rpcUrls: string[];
   isDev: boolean;
@@ -163,15 +165,6 @@ function blockInterval(handler: BlockHandler): { every?: number; once?: boolean 
   if (filter === "Once" || filter?.Once !== undefined) return { once: true };
   if (typeof filter?.Every === "number") return { every: filter.Every };
   return { every: 1 };
-}
-
-/**
- * envio capitalizes a contract name for the config it stores, so a data source
- * whose manifest name starts lowercase — `crvUSD` — is `CrvUSD` by the time the
- * runtime looks it up. Register under the name the config actually holds.
- */
-function contractName(name: string): string {
-  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 async function loadMapping(
@@ -461,7 +454,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // Reads the scope rather than closing over one context: register passes for
   // the items in a batch run concurrently, and this hook is process-wide.
   installRegisterHook((templateName, address) => {
-    currentScope().context.chain[templateName].add(address);
+    const accessor = config.contractAccessors[templateName];
+    if (accessor === undefined) throw unknown(`the template ${templateName}`, "a mapping handler");
+    currentScope().context.chain[accessor].add(address);
   });
 
   installCallHook((call) => {
@@ -492,6 +487,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     entityFields: config.entityFields ?? {},
     entityRefFields: config.entityRefFields ?? {},
     entityFieldTypes: config.entityFieldTypes ?? {},
+    entityAccessors: config.entityAccessors,
   };
 
   // Before any mapping is imported: Node caches a failed module resolution for
@@ -561,7 +557,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       });
 
       indexer.onEvent(
-        { contract: contractName(source.name), event: handler.name },
+        { contract: config.contractAccessors[source.name], event: handler.name },
         async ({ event, context }: any) => {
           if (skipPreload && context.isPreload) return;
           const graphEvent = makeEvent(event);
@@ -576,7 +572,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       // register mode, where writes and logs are no-ops and reads are null.
       if (templateNames.size > 0) {
         indexer.contractRegister(
-          { contract: contractName(source.name), event: handler.name },
+          { contract: config.contractAccessors[source.name], event: handler.name },
           async ({ event, context }: any) => {
             const graphEvent = makeEvent(event);
             await runRegisterRounds(makeScope(event, context, "register"), () => fn(graphEvent));

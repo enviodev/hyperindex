@@ -24,6 +24,7 @@ use crate::config_parsing::human_config::{
     BaseConfig, BytesType, ChainContract, GlobalContract, StartBlock,
 };
 use crate::utils::normalized_list::NormalizedList;
+use crate::utils::text::Capitalize;
 
 use errors::Report;
 use manifest::{DataSource, Manifest};
@@ -83,6 +84,10 @@ pub struct SubgraphRuntimeConfig {
     pub schema: SchemaTranslation,
     /// Project-relative directory the mapping files resolve against.
     pub root: String,
+    /// The name envio generated each accessor under, keyed by the name the
+    /// subgraph gives it — the only one its mappings know.
+    pub entity_accessors: BTreeMap<String, String>,
+    pub contract_accessors: BTreeMap<String, String>,
     /// `ENVIO_SUBGRAPH_RPC` flattened to plain URLs, in order. The shim's call
     /// effects use them as a viem fallback transport; empty means the mapping's
     /// first contract call raises the missing-RPC error.
@@ -470,11 +475,20 @@ pub fn translate(
         bytes_type: Some(BytesType::Uint8Array),
     };
 
+    let accessor = |name: &String| (name.clone(), name.capitalize());
+    let entity_accessors = schema.entity_fields.keys().map(accessor).collect();
+    let contract_accessors = manifest
+        .all_sources()
+        .map(|source| accessor(&source.name))
+        .collect();
+
     Ok(Translation {
         schema_text: schema.text.clone(),
         runtime: SubgraphRuntimeConfig {
             manifest,
             schema,
+            entity_accessors,
+            contract_accessors,
             root: root.to_string(),
             rpc_urls,
         },

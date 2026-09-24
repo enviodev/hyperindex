@@ -1048,8 +1048,9 @@ function toValue(value: unknown, kind?: string): Value {
 }
 
 function entityContext(entityType: string) {
-  const { context } = currentScope();
-  const table = context[entityType];
+  const { context, schema } = currentScope();
+  const accessor = schema.entityAccessors[entityType];
+  const table = accessor === undefined ? undefined : context[accessor];
   if (!table) {
     throw unknown(`the entity ${entityType}`, "a mapping handler");
   }
