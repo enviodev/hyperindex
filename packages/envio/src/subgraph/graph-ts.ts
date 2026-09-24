@@ -1474,7 +1474,7 @@ class EthereumCall {
 }
 
 /** One of an event's parameters, as the translator read it off the ABI. */
-export type EventInput = { name: string; key: string; type: string };
+export type EventInput = { name: string; key: string; type: string; indexed?: boolean };
 
 /** What every occurrence of one kind of event shares. */
 export type EventKind = {

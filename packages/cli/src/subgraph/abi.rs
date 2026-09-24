@@ -198,6 +198,10 @@ pub fn event_inputs(manifest_signature: &str, abi_json: Option<&str>) -> Vec<Eve
             name: abi_name(input).to_string(),
             key: decode_key(input, index),
             abi_type: solidity_type(input),
+            indexed: input
+                .get("indexed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         })
         .collect()
 }
@@ -272,11 +276,12 @@ mod tests {
         );
     }
 
-    fn input(name: &str, key: &str, abi_type: &str) -> EventInput {
+    fn input(name: &str, key: &str, abi_type: &str, indexed: bool) -> EventInput {
         EventInput {
             name: name.to_string(),
             key: key.to_string(),
             abi_type: abi_type.to_string(),
+            indexed,
         }
     }
 
@@ -284,7 +289,7 @@ mod tests {
     fn reads_the_inputs_of_a_unique_name() {
         assert_eq!(
             event_inputs("Approval(indexed address)", Some(ABI)),
-            vec![input("owner", "owner", "address")]
+            vec![input("owner", "owner", "address", true)]
         );
     }
 
@@ -297,10 +302,10 @@ mod tests {
                 Some(ABI)
             ),
             vec![
-                input("from", "from", "address"),
-                input("to", "to", "address"),
-                input("id", "id", "uint256"),
-                input("data", "data", "bytes"),
+                input("from", "from", "address", true),
+                input("to", "to", "address", true),
+                input("id", "id", "uint256", false),
+                input("data", "data", "bytes", false),
             ]
         );
     }
@@ -328,7 +333,10 @@ mod tests {
                 ),
             ),
             (
-                vec![input("", "_0", "address"), input("", "_1", "uint256")],
+                vec![
+                    input("", "_0", "address", true),
+                    input("", "_1", "uint256", false)
+                ],
                 "Paid(address indexed _0, uint256 _1)".to_string()
             )
         );

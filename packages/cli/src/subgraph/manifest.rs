@@ -234,6 +234,18 @@ pub struct EventInput {
     pub key: String,
     #[serde(rename = "type")]
     pub abi_type: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub indexed: bool,
+}
+
+impl EventInput {
+    /// Indexed as the keccak hash of its encoding, which can't be read back.
+    pub fn is_hashed_in_topic(&self) -> bool {
+        self.abi_type == "string"
+            || self.abi_type == "bytes"
+            || self.abi_type.ends_with(']')
+            || self.abi_type.starts_with('(')
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

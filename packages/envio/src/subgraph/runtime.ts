@@ -56,6 +56,8 @@ type EventHandler = {
   handler: string;
   receipt: boolean;
   inputs?: EventInput[];
+  /** `topic1`–`topic3`, keyed by position among the indexed parameters. */
+  topics?: Record<string, string[]>;
 };
 type BlockHandler = { handler: string; filter: { Every: number } | "Once" | any };
 type DataSource = {
@@ -152,6 +154,34 @@ function installResolveHook(root: string) {
   for (const [name, namespace] of Object.entries(assemblyScriptPrimitives)) {
     globals[name] ??= namespace;
   }
+}
+
+/**
+ * `topicN` narrows the Nth indexed parameter to the logs whose topic is one of
+ * the listed words; as a `where`, it narrows to that parameter's decoded
+ * values. The translator has refused a parameter hashed into its topic.
+ */
+function topicFilter(handler: EventHandler): { params: Record<string, unknown[]> } | undefined {
+  const topics = Object.entries(handler.topics ?? {});
+  if (topics.length === 0) return undefined;
+  const indexed = (handler.inputs ?? []).filter((input) => input.indexed);
+  const params: Record<string, unknown[]> = {};
+  for (const [position, words] of topics) {
+    const input = indexed[Number(position) - 1];
+    params[input.key] = words.map((word) => fromTopic(input.type, word));
+  }
+  return { params };
+}
+
+function fromTopic(type: string, topic: string): unknown {
+  const word = topic.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  if (type === "address") return `0x${word.slice(24)}`;
+  if (type === "bool") return BigInt(`0x${word}`) !== 0n;
+  // A fixed-size byte string is left-aligned in its word.
+  if (type.startsWith("bytes")) return `0x${word.slice(0, Number(type.slice(5)) * 2)}`;
+  const bits = Number(type.replace(/^u?int/, "") || 256);
+  const value = BigInt(`0x${word}`);
+  return type.startsWith("uint") ? BigInt.asUintN(bits, value) : BigInt.asIntN(bits, value);
 }
 
 function blockInterval(handler: BlockHandler): { every?: number; once?: boolean } {
@@ -475,8 +505,10 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         mappingExports: mapping,
       });
 
+      const where = topicFilter(handler);
+
       indexer.onEvent(
-        { contract: config.contractAccessors[source.name], event: handler.name },
+        { contract: config.contractAccessors[source.name], event: handler.name, where },
         async ({ event, context }: any) => {
           if (skipPreload && context.isPreload) return;
           const graphEvent = makeEvent(event);
@@ -491,7 +523,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       // register mode, where writes and logs are no-ops and reads are null.
       if (templateNames.size > 0) {
         indexer.contractRegister(
-          { contract: config.contractAccessors[source.name], event: handler.name },
+          { contract: config.contractAccessors[source.name], event: handler.name, where },
           async ({ event, context }: any) => {
             const graphEvent = makeEvent(event);
             await runRegisterRounds(makeScope(event, context, "register"), () => fn(graphEvent));
