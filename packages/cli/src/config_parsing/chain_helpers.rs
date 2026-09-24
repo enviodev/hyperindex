@@ -349,6 +349,8 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     PolygonZkevmTestnet = 1442,
 
+    Pulsechain = 369,
+
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
 
@@ -622,6 +624,7 @@ impl Network {
             | Network::StatusSepolia
             | Network::Tempo
             | Network::Tron
+            | Network::Pulsechain
             | Network::Robinhood => None,
         }
     }

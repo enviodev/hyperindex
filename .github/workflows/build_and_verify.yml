@@ -190,6 +190,22 @@ jobs:
       - name: Hypersync Health Test
         run: cargo test --features hypersync_health --test hypersync_health
 
+  # The Graph's networks registry vs the snapshot subgraph mode resolves
+  # `network:` through - non-blocking, external dependency
+  graph-networks-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    needs: authorize
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Compare with The Graph's networks registry
+        run: node packages/cli/scripts/sync-graph-networks.mjs --check
+
   # Template tests - verify envio templates can be initialized and built
   template-tests:
     runs-on: ubuntu-latest

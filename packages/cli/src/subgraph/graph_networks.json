@@ -1,0 +1,906 @@
+{
+  "abstract": {
+    "chainId": 2741,
+    "aliases": [
+      "evm-2741",
+      "abstract-mainnet"
+    ]
+  },
+  "abstract-testnet": {
+    "chainId": 11124,
+    "aliases": [
+      "evm-11124",
+      "abstract-sepolia"
+    ]
+  },
+  "anubis": {
+    "chainId": 6714,
+    "aliases": [
+      "evm-6714",
+      "anubis-mainnet"
+    ]
+  },
+  "apechain": {
+    "chainId": 33139,
+    "aliases": [
+      "evm-33139",
+      "apechain-mainnet"
+    ]
+  },
+  "apechain-curtis": {
+    "chainId": 33111,
+    "aliases": [
+      "apechain-testnet",
+      "evm-33111"
+    ]
+  },
+  "arbitrum-nova": {
+    "chainId": 42170,
+    "aliases": [
+      "evm-42170",
+      "arbnova",
+      "arb-nova",
+      "arbitrum-nova-mainnet"
+    ]
+  },
+  "arbitrum-one": {
+    "chainId": 42161,
+    "aliases": [
+      "arbone",
+      "arbitrum",
+      "evm-42161",
+      "arbitrum-one-mainnet"
+    ]
+  },
+  "arbitrum-sepolia": {
+    "chainId": 421614,
+    "aliases": [
+      "evm-421614",
+      "arb-sepolia",
+      "arbsepolia"
+    ]
+  },
+  "arc": {
+    "chainId": 5042,
+    "aliases": [
+      "evm-5042",
+      "arc-mainnet"
+    ]
+  },
+  "arc-testnet": {
+    "chainId": 5042002,
+    "aliases": [
+      "evm-5042002"
+    ]
+  },
+  "aurora": {
+    "chainId": 1313161554,
+    "aliases": [
+      "evm-1313161554",
+      "aurora-mainnet"
+    ]
+  },
+  "aurora-testnet": {
+    "chainId": 1313161555,
+    "aliases": [
+      "evm-1313161555"
+    ]
+  },
+  "autonomys": {
+    "chainId": 870,
+    "aliases": [
+      "evm-870",
+      "autonomys-mainnet"
+    ]
+  },
+  "autonomys-chronos": {
+    "chainId": 8700,
+    "aliases": [
+      "evm-8700"
+    ]
+  },
+  "avalanche": {
+    "chainId": 43114,
+    "aliases": [
+      "evm-43114",
+      "avalanche-mainnet"
+    ]
+  },
+  "base": {
+    "chainId": 8453,
+    "aliases": [
+      "evm-8453",
+      "base-mainnet",
+      "base-chain"
+    ]
+  },
+  "base-sepolia": {
+    "chainId": 84532,
+    "aliases": [
+      "evm-84532",
+      "base-testnet"
+    ]
+  },
+  "berachain": {
+    "chainId": 80094,
+    "aliases": [
+      "evm-80094",
+      "berachain-mainnet"
+    ]
+  },
+  "berachain-bepolia": {
+    "chainId": 80069,
+    "aliases": [
+      "evm-80069"
+    ]
+  },
+  "blast-mainnet": {
+    "chainId": 81457,
+    "aliases": [
+      "evm-81457",
+      "blast"
+    ]
+  },
+  "blast-testnet": {
+    "chainId": 168587773,
+    "aliases": [
+      "evm-168587773",
+      "blast-sepolia"
+    ]
+  },
+  "bnb-op": {
+    "chainId": 204,
+    "aliases": [
+      "evm-204",
+      "opbnb",
+      "bsc-op",
+      "bnb-op-mainnet"
+    ]
+  },
+  "boba": {
+    "chainId": 288,
+    "aliases": [
+      "evm-288",
+      "boba-mainnet"
+    ]
+  },
+  "boba-testnet": {
+    "chainId": 28882,
+    "aliases": [
+      "boba-sepolia"
+    ]
+  },
+  "botanix": {
+    "chainId": 3637,
+    "aliases": [
+      "evm-3637",
+      "botanix-mainnet"
+    ]
+  },
+  "botanix-testnet": {
+    "chainId": 3636,
+    "aliases": [
+      "spiderchain-testnet",
+      "spiderchain-testnet-v1",
+      "evm-3636"
+    ]
+  },
+  "bsc": {
+    "chainId": 56,
+    "aliases": [
+      "bnb",
+      "bnb-mainnet",
+      "bsc-mainnet",
+      "evm-56"
+    ]
+  },
+  "celo": {
+    "chainId": 42220,
+    "aliases": [
+      "evm-42220",
+      "celo-mainnet"
+    ]
+  },
+  "celo-sepolia": {
+    "chainId": 11142220,
+    "aliases": [
+      "evm-11142220"
+    ]
+  },
+  "chapel": {
+    "chainId": 97,
+    "aliases": [
+      "bnb-chapel",
+      "bnb-testnet",
+      "bsc-testnet"
+    ]
+  },
+  "chiliz": {
+    "chainId": 88888,
+    "aliases": [
+      "chiliz-mainnet",
+      "evm-88888"
+    ]
+  },
+  "chiliz-testnet": {
+    "chainId": 88882,
+    "aliases": [
+      "chiliz-spicy-testnet",
+      "evm-88882"
+    ]
+  },
+  "corn": {
+    "chainId": 21000000,
+    "aliases": [
+      "corn-maizenet",
+      "corn-mainnet"
+    ]
+  },
+  "corn-testnet": {
+    "chainId": 21000001,
+    "aliases": [
+      "corn-sepolia"
+    ]
+  },
+  "cronos": {
+    "chainId": 25,
+    "aliases": [
+      "evm-25",
+      "cronos-mainnet"
+    ]
+  },
+  "etherlink-mainnet": {
+    "chainId": 42793,
+    "aliases": [
+      "etherlink"
+    ]
+  },
+  "etherlink-shadownet": {
+    "chainId": 127823,
+    "aliases": [
+      "evm-127823"
+    ]
+  },
+  "fantom": {
+    "chainId": 250,
+    "aliases": [
+      "evm-250",
+      "fantom-mainnet",
+      "fantom-opera"
+    ]
+  },
+  "fantom-testnet": {
+    "chainId": 4002,
+    "aliases": [
+      "evm-4002"
+    ]
+  },
+  "fraxtal": {
+    "chainId": 252,
+    "aliases": [
+      "evm-252",
+      "fraxtal-mainnet"
+    ]
+  },
+  "fuji": {
+    "chainId": 43113,
+    "aliases": [
+      "evm-43113",
+      "avalanche-fuji"
+    ]
+  },
+  "fuse": {
+    "chainId": 122,
+    "aliases": [
+      "evm-122",
+      "fuse-mainnet"
+    ]
+  },
+  "fuse-testnet": {
+    "chainId": 12001,
+    "aliases": [
+      "evm-12001"
+    ]
+  },
+  "gnosis": {
+    "chainId": 100,
+    "aliases": [
+      "evm-100",
+      "gnosis-mainnet",
+      "xdai"
+    ]
+  },
+  "gnosis-chiado": {
+    "chainId": 10200,
+    "aliases": [
+      "chiado"
+    ]
+  },
+  "gravity-mainnet": {
+    "chainId": 1625,
+    "aliases": [
+      "gravity"
+    ]
+  },
+  "gravity-testnet": {
+    "chainId": 13505,
+    "aliases": [
+      "gravity-sepolia"
+    ]
+  },
+  "harmony": {
+    "chainId": 1666600000,
+    "aliases": [
+      "evm-1666600000",
+      "harmony-mainnet"
+    ]
+  },
+  "hashkeychain": {
+    "chainId": 177,
+    "aliases": [
+      "hashkeychain-mainnet",
+      "evm-177"
+    ]
+  },
+  "hashkeychain-sepolia": {
+    "chainId": 133,
+    "aliases": [
+      "hashkeychain-testnet",
+      "evm-133"
+    ]
+  },
+  "hemi": {
+    "chainId": 43111,
+    "aliases": [
+      "evm-43111",
+      "hemi-mainnet"
+    ]
+  },
+  "hemi-sepolia": {
+    "chainId": 743111,
+    "aliases": [
+      "evm-743111",
+      "hemi-testnet"
+    ]
+  },
+  "hoodi": {
+    "chainId": 560048,
+    "aliases": [
+      "evm-560048"
+    ]
+  },
+  "hyper-evm": {
+    "chainId": 999,
+    "aliases": [
+      "evm-999",
+      "hyper-evm-mainnet",
+      "hyperevm"
+    ]
+  },
+  "injective-evm": {
+    "chainId": 1776,
+    "aliases": [
+      "evm-1776",
+      "injective-evm-mainnet"
+    ]
+  },
+  "injective-evm-testnet": {
+    "chainId": 1439,
+    "aliases": [
+      "evm-1439"
+    ]
+  },
+  "ink": {
+    "chainId": 57073,
+    "aliases": [
+      "evm-57073",
+      "ink-mainnet"
+    ]
+  },
+  "ink-sepolia": {
+    "chainId": 763373,
+    "aliases": [
+      "evm-763373",
+      "ink-testnet"
+    ]
+  },
+  "iotex": {
+    "chainId": 4689,
+    "aliases": [
+      "evm-4689",
+      "iotex-mainnet"
+    ]
+  },
+  "iotex-testnet": {
+    "chainId": 4690,
+    "aliases": [
+      "evm-4690"
+    ]
+  },
+  "joc": {
+    "chainId": 81,
+    "aliases": [
+      "evm-81",
+      "joc-mainnet"
+    ]
+  },
+  "joc-testnet": {
+    "chainId": 10081,
+    "aliases": [
+      "evm-10081"
+    ]
+  },
+  "kaia": {
+    "chainId": 8217,
+    "aliases": [
+      "evm-8217",
+      "kaia-mainnet"
+    ]
+  },
+  "kaia-testnet": {
+    "chainId": 1001,
+    "aliases": [
+      "evm-1001"
+    ]
+  },
+  "katana": {
+    "chainId": 747474,
+    "aliases": [
+      "evm-747474",
+      "katana-mainnet"
+    ]
+  },
+  "katana-bokuto": {
+    "chainId": 737373,
+    "aliases": [
+      "evm-737373"
+    ]
+  },
+  "kava": {
+    "chainId": 2222,
+    "aliases": [
+      "kava-mainnet",
+      "evm-2222"
+    ]
+  },
+  "lens": {
+    "chainId": 232,
+    "aliases": [
+      "evm-232",
+      "lens-mainnet"
+    ]
+  },
+  "lens-testnet": {
+    "chainId": 37111,
+    "aliases": [
+      "evm-37111",
+      "lens-sepolia"
+    ]
+  },
+  "linea": {
+    "chainId": 59144,
+    "aliases": [
+      "evm-59144",
+      "linea-mainnet"
+    ]
+  },
+  "linea-sepolia": {
+    "chainId": 59141,
+    "aliases": [
+      "evm-59141",
+      "linea-testnet",
+      "lineasepolia"
+    ]
+  },
+  "lumia": {
+    "chainId": 994873017,
+    "aliases": [
+      "evm-994873017",
+      "lumia-mainnet"
+    ]
+  },
+  "mainnet": {
+    "chainId": 1,
+    "aliases": [
+      "ethereum",
+      "eth",
+      "eth-mainnet",
+      "evm-1"
+    ]
+  },
+  "manta": {
+    "chainId": 169,
+    "aliases": [
+      "evm-169",
+      "manta-mainnet"
+    ]
+  },
+  "matic": {
+    "chainId": 137,
+    "aliases": [
+      "polygon",
+      "matic-mainnet"
+    ]
+  },
+  "mbase": {
+    "chainId": 1287,
+    "aliases": [
+      "evm-1287",
+      "moonbase"
+    ]
+  },
+  "megaeth": {
+    "chainId": 4326,
+    "aliases": [
+      "evm-4326",
+      "megaeth-mainnet"
+    ]
+  },
+  "megaeth-timothy": {
+    "chainId": 6343,
+    "aliases": [
+      "evm-6343"
+    ]
+  },
+  "metis": {
+    "chainId": 1088,
+    "aliases": [
+      "metis-mainnet",
+      "metis-andromeda",
+      "metis-andromeda-mainnet",
+      "evm-1088"
+    ]
+  },
+  "mode-mainnet": {
+    "chainId": 34443,
+    "aliases": [
+      "evm-34443",
+      "mode"
+    ]
+  },
+  "mode-sepolia": {
+    "chainId": 919,
+    "aliases": [
+      "evm-919",
+      "mode-testnet"
+    ]
+  },
+  "monad": {
+    "chainId": 143,
+    "aliases": [
+      "evm-143",
+      "monad-mainnet"
+    ]
+  },
+  "monad-testnet": {
+    "chainId": 10143,
+    "aliases": [
+      "evm-10143"
+    ]
+  },
+  "moonbeam": {
+    "chainId": 1284,
+    "aliases": [
+      "evm-1284",
+      "mbeam",
+      "moonbeam-mainnet"
+    ]
+  },
+  "moonriver": {
+    "chainId": 1285,
+    "aliases": [
+      "evm-1285",
+      "mriver",
+      "moonriver-mainnet"
+    ]
+  },
+  "neox": {
+    "chainId": 47763,
+    "aliases": [
+      "evm-47763",
+      "neox-mainnet"
+    ]
+  },
+  "neox-testnet": {
+    "chainId": 12227332,
+    "aliases": [
+      "evm-12227332"
+    ]
+  },
+  "optimism": {
+    "chainId": 10,
+    "aliases": [
+      "evm-10",
+      "op-mainnet",
+      "optimism-mainnet"
+    ]
+  },
+  "optimism-sepolia": {
+    "chainId": 11155420,
+    "aliases": [
+      "op-sepolia",
+      "opsepolia"
+    ]
+  },
+  "peaq": {
+    "chainId": 3338,
+    "aliases": [
+      "evm-3338",
+      "peaq-mainnet"
+    ]
+  },
+  "polkadot-testnet": {
+    "chainId": 420420417,
+    "aliases": [
+      "evm-420420417"
+    ]
+  },
+  "polygon-amoy": {
+    "chainId": 80002,
+    "aliases": [
+      "amoy-testnet",
+      "amoy"
+    ]
+  },
+  "polygon-zkevm": {
+    "chainId": 1101,
+    "aliases": [
+      "evm-1101",
+      "polygon-zkevm-mainnet"
+    ]
+  },
+  "polygon-zkevm-cardona": {
+    "chainId": 2442,
+    "aliases": [
+      "polygon-cardona"
+    ]
+  },
+  "robinhood": {
+    "chainId": 4663,
+    "aliases": [
+      "evm-4663",
+      "robinhood-mainnet",
+      "robinhood-chain"
+    ]
+  },
+  "robinhood-sepolia": {
+    "chainId": 46630,
+    "aliases": [
+      "evm-46630",
+      "robinhood-testnet"
+    ]
+  },
+  "ronin": {
+    "chainId": 2020,
+    "aliases": [
+      "evm-2020",
+      "ronin-mainnet"
+    ]
+  },
+  "rootstock": {
+    "chainId": 30,
+    "aliases": [
+      "rootstock-mainnet"
+    ]
+  },
+  "rootstock-testnet": {
+    "chainId": 31,
+    "aliases": []
+  },
+  "scroll": {
+    "chainId": 534352,
+    "aliases": [
+      "evm-534352",
+      "scroll-mainnet"
+    ]
+  },
+  "scroll-sepolia": {
+    "chainId": 534351,
+    "aliases": [
+      "evm-534351",
+      "scroll-testnet"
+    ]
+  },
+  "sei-atlantic": {
+    "chainId": 1328,
+    "aliases": [
+      "sei-testnet",
+      "sei-atlantic2"
+    ]
+  },
+  "sei-mainnet": {
+    "chainId": 1329,
+    "aliases": [
+      "sei-evm-mainnet",
+      "sei"
+    ]
+  },
+  "sepolia": {
+    "chainId": 11155111,
+    "aliases": [
+      "evm-11155111"
+    ]
+  },
+  "soneium": {
+    "chainId": 1868,
+    "aliases": [
+      "evm-1868",
+      "soneium-mainnet"
+    ]
+  },
+  "soneium-testnet": {
+    "chainId": 1946,
+    "aliases": [
+      "soneium-minato-testnet",
+      "soneium-minato",
+      "minato"
+    ]
+  },
+  "sonic": {
+    "chainId": 146,
+    "aliases": [
+      "evm-146",
+      "sonic-mainnet"
+    ]
+  },
+  "sonic-testnet": {
+    "chainId": 14601,
+    "aliases": [
+      "evm-14601"
+    ]
+  },
+  "stable": {
+    "chainId": 988,
+    "aliases": [
+      "evm-988",
+      "stable-mainnet"
+    ]
+  },
+  "status-sepolia": {
+    "chainId": 1660990954,
+    "aliases": [
+      "status-testnet",
+      "evm-1660990954"
+    ]
+  },
+  "swellchain": {
+    "chainId": 1923,
+    "aliases": [
+      "evm-1923",
+      "swellchain-mainnet"
+    ]
+  },
+  "swellchain-sepolia": {
+    "chainId": 1924,
+    "aliases": [
+      "swellchain-testnet",
+      "swellchain-bepolia",
+      "evm-1924"
+    ]
+  },
+  "tempo": {
+    "chainId": 4217,
+    "aliases": [
+      "evm-4217",
+      "tempo-mainnet"
+    ]
+  },
+  "tempo-moderato": {
+    "chainId": 42431,
+    "aliases": [
+      "evm-42431"
+    ]
+  },
+  "tron-evm": {
+    "chainId": 728126428,
+    "aliases": [
+      "tronevm",
+      "tron-evm-mainnet",
+      "evm-728126428"
+    ]
+  },
+  "unichain": {
+    "chainId": 130,
+    "aliases": [
+      "evm-130",
+      "unichain-mainnet"
+    ]
+  },
+  "unichain-testnet": {
+    "chainId": 1301,
+    "aliases": [
+      "evm-1301",
+      "unichain-sepolia"
+    ]
+  },
+  "vana": {
+    "chainId": 1480,
+    "aliases": [
+      "evm-1480",
+      "vana-mainnet"
+    ]
+  },
+  "vana-moksha": {
+    "chainId": 14800,
+    "aliases": [
+      "vana-testnet",
+      "evm-14800"
+    ]
+  },
+  "viction": {
+    "chainId": 88,
+    "aliases": [
+      "evm-88",
+      "viction-mainnet"
+    ]
+  },
+  "worldchain": {
+    "chainId": 480,
+    "aliases": [
+      "evm-480",
+      "worldchain-mainnet"
+    ]
+  },
+  "xai": {
+    "chainId": 660279,
+    "aliases": [
+      "evm-660279",
+      "xai-mainnet"
+    ]
+  },
+  "xlayer-mainnet": {
+    "chainId": 196,
+    "aliases": [
+      "evm-196",
+      "xlayer"
+    ]
+  },
+  "xlayer-sepolia": {
+    "chainId": 195,
+    "aliases": [
+      "evm-195"
+    ]
+  },
+  "zetachain": {
+    "chainId": 7000,
+    "aliases": [
+      "evm-7000",
+      "zetachain-mainnet"
+    ]
+  },
+  "zilliqa": {
+    "chainId": 32769,
+    "aliases": [
+      "evm-32769",
+      "zilliqa-mainnet"
+    ]
+  },
+  "zilliqa-testnet": {
+    "chainId": 33101,
+    "aliases": [
+      "evm-33101"
+    ]
+  },
+  "zksync-era": {
+    "chainId": 324,
+    "aliases": [
+      "evm-324",
+      "zksync",
+      "zksync-era-mainnet"
+    ]
+  },
+  "zksync-era-sepolia": {
+    "chainId": 300,
+    "aliases": [
+      "evm-300",
+      "zksync-testnet",
+      "zksync-sepolia"
+    ]
+  },
+  "zora": {
+    "chainId": 7777777,
+    "aliases": [
+      "zora-mainnet"
+    ]
+  }
+}
