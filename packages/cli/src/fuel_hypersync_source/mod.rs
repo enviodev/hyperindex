@@ -405,7 +405,6 @@ mod tests {
     use super::selection::FuelEventKind;
     use super::*;
     use crate::address_store::test_support::{fuel_store, set_of};
-    use crate::param_value::ParamValue;
 
     #[test]
     fn convert_error_serializes_as_expected_json() {

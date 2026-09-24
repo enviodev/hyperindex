@@ -5,12 +5,13 @@ use fuel_abi_types::abi::program::ProgramABI;
 use fuel_abi_types::abi::unified_program::{
     UnifiedProgramABI, UnifiedTypeApplication, UnifiedTypeDeclaration,
 };
+use serde::Deserialize;
 
 use crate::param_value::ParamValue;
 
 /// A logged type resolved against its ABI, with every generic parameter
 /// substituted, so decoding is a plain walk over the tree.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum Coder {
     Unit,
     Bool,
@@ -41,8 +42,8 @@ enum Coder {
 pub struct LogDecoder(Coder);
 
 impl LogDecoder {
-    pub fn new(abi: serde_json::Value, log_id: &str) -> Result<Self> {
-        let program: ProgramABI = serde_json::from_value(abi).context("parse Fuel ABI")?;
+    pub fn new(abi: &serde_json::Value, log_id: &str) -> Result<Self> {
+        let program = ProgramABI::deserialize(abi).context("parse Fuel ABI")?;
         let program = UnifiedProgramABI::from_counterpart(&program)?;
         let logged = program
             .logged_types
@@ -164,18 +165,17 @@ fn utf8(bytes: &[u8]) -> ParamValue {
     ParamValue::Str(String::from_utf8_lossy(bytes).into_owned())
 }
 
+const MAX_ZERO_SIZED_VEC_LEN: usize = 1024;
+
 impl Coder {
-    /// The fewest bytes a value can encode to, which bounds how many elements
-    /// a length prefix can honestly claim.
-    fn min_size(&self) -> usize {
+    fn is_zero_sized(&self) -> bool {
         match self {
-            Coder::Unit => 0,
-            Coder::Bool => 1,
-            Coder::Num(n) | Coder::BigInt(n) | Coder::Hex(n) | Coder::StrArray(n) => *n,
-            Coder::Str | Coder::Bytes | Coder::RawSlice | Coder::Vec(_) | Coder::Enum(_) => 8,
-            Coder::Array(element, n) => element.min_size() * n,
-            Coder::Tuple(items) => items.iter().map(Coder::min_size).sum(),
-            Coder::Struct(fields) => fields.iter().map(|(_, c)| c.min_size()).sum(),
+            Coder::Unit => true,
+            Coder::StrArray(n) => *n == 0,
+            Coder::Array(element, n) => *n == 0 || element.is_zero_sized(),
+            Coder::Tuple(items) => items.iter().all(Coder::is_zero_sized),
+            Coder::Struct(fields) => fields.iter().all(|(_, c)| c.is_zero_sized()),
+            _ => false,
         }
     }
 
@@ -233,10 +233,15 @@ impl Coder {
             }
             Coder::Vec(element) => {
                 let len = take_len(buf)?;
+                // Log data is attacker-controlled (any contract can emit any
+                // `rb`). A garbage length over sized elements fails once the
+                // data runs out, but zero-sized elements consume nothing, so
+                // only a cap keeps their length from spinning or exhausting
+                // memory.
                 ensure!(
-                    len.saturating_mul(element.min_size()) <= buf.len(),
-                    "Vec length {len} exceeds the remaining {} bytes",
-                    buf.len()
+                    len <= MAX_ZERO_SIZED_VEC_LEN || !element.is_zero_sized(),
+                    "Vec of zero-sized elements claims {len} elements, more than the \
+                     {MAX_ZERO_SIZED_VEC_LEN} supported"
                 );
                 ParamValue::Arr(Self::decode_all(std::iter::repeat_n(&**element, len), buf)?)
             }
@@ -777,12 +782,47 @@ mod tests {
 
         #[test]
         fn decodes_every_shape((shape, (bytes, expected)) in shape_with_sample()) {
-            let decoder = LogDecoder::new(abi_logging(&shape), LOG_ID).unwrap();
-            prop_assert_eq!(decoder.decode(&bytes).unwrap(), expected);
-            for len in 0..bytes.len() {
-                prop_assert!(decoder.decode(&bytes[..len]).is_err(), "prefix of {} bytes decoded", len);
-            }
+            let decoder = LogDecoder::new(&abi_logging(&shape), LOG_ID).unwrap();
+            let decoded_prefixes: Vec<usize> = (0..bytes.len())
+                .filter(|len| decoder.decode(&bytes[..*len]).is_ok())
+                .collect();
+            prop_assert_eq!(
+                (decoder.decode(&bytes).ok(), decoded_prefixes),
+                (Some(expected), vec![])
+            );
         }
+
+        // Any contract can emit a LogData receipt with any `rb`, so a
+        // wildcard registration decodes attacker-controlled bytes: decoding
+        // them must always return.
+        #[test]
+        fn arbitrary_data_never_panics_or_hangs(
+            shape in shape(),
+            bytes in prop::collection::vec(any::<u8>(), 0..64),
+        ) {
+            let decoder = LogDecoder::new(&abi_logging(&shape), LOG_ID).unwrap();
+            let _ = decoder.decode(&bytes);
+        }
+    }
+
+    #[test]
+    fn rejects_a_garbage_vec_length() {
+        let decode_max_len = |element: Shape| {
+            LogDecoder::new(&abi_logging(&Shape::Vec(Box::new(element))), LOG_ID)
+                .unwrap()
+                .decode(&u64::MAX.to_be_bytes())
+                .unwrap_err()
+                .to_string()
+        };
+        assert_eq!(
+            (decode_max_len(Shape::U64), decode_max_len(Shape::Unit)),
+            (
+                "unexpected end of data: needed 8 bytes, 0 left".to_string(),
+                "Vec of zero-sized elements claims 18446744073709551615 elements, more than \
+                 the 1024 supported"
+                    .to_string(),
+            )
+        );
     }
 
     #[test]
@@ -798,7 +838,7 @@ mod tests {
         let failed: Vec<_> = log_ids
             .iter()
             .filter_map(|id| {
-                LogDecoder::new(abi.clone(), id)
+                LogDecoder::new(&abi, id)
                     .err()
                     .map(|e| format!("{id}: {e:#}"))
             })
@@ -808,7 +848,9 @@ mod tests {
 
     #[test]
     fn rejects_an_unknown_log_id() {
-        let err = LogDecoder::new(abi_logging(&Shape::U8), "1").err().unwrap();
+        let err = LogDecoder::new(&abi_logging(&Shape::U8), "1")
+            .err()
+            .unwrap();
         assert_eq!(
             err.to_string(),
             "Log type with logId '1' doesn't exist in the ABI"
@@ -817,9 +859,9 @@ mod tests {
 
     #[test]
     fn rejects_invalid_bool_and_enum_case() {
-        let bool_decoder = LogDecoder::new(abi_logging(&Shape::Bool), LOG_ID).unwrap();
+        let bool_decoder = LogDecoder::new(&abi_logging(&Shape::Bool), LOG_ID).unwrap();
         let option_decoder =
-            LogDecoder::new(abi_logging(&Shape::Option(Box::new(Shape::U8))), LOG_ID).unwrap();
+            LogDecoder::new(&abi_logging(&Shape::Option(Box::new(Shape::U8))), LOG_ID).unwrap();
         assert_eq!(
             (
                 bool_decoder.decode(&[2]).unwrap_err().to_string(),

@@ -176,7 +176,7 @@ impl SelectionBuilder {
                     let rb = log_id.parse::<u64>().with_context(|| {
                         format!("parse logId {} for event {}", log_id, reg.event_name)
                     })?;
-                    let abi = reg.abi.clone().with_context(|| {
+                    let abi = reg.abi.as_ref().with_context(|| {
                         format!("LogData registration {} is missing abi", reg.event_name)
                     })?;
                     let decoder = LogDecoder::new(abi, log_id).with_context(|| {
