@@ -62,14 +62,18 @@ impl LogDecoder {
 
     /// Decode a LogData receipt's data as a `ParamValue` tree. `None` when the
     /// logged type rejects the data: too few bytes, trailing bytes, an invalid
-    /// bool or enum case. Any contract can emit a receipt under any `rb`, so
+    /// bool or enum case, or more zero-sized values than the data can account
+    /// for. Any contract can emit a receipt under any `rb`, so
     /// data from outside the ABI's contract routinely lands here; the caller
     /// drops the receipt for this registration only, rather than failing the
     /// indexer on data it doesn't control.
     pub fn decode(&self, data: &[u8]) -> Option<ParamValue> {
-        let mut buf = data;
-        let value = self.0.decode(&mut buf)?;
-        buf.is_empty().then_some(value)
+        let mut input = Input {
+            buf: data,
+            zero_sized_budget: data.len() + ZERO_SIZED_BUDGET_SLACK,
+        };
+        let value = self.0.decode(&mut input)?;
+        input.buf.is_empty().then_some(value)
     }
 }
 
@@ -151,115 +155,126 @@ fn parse_len(field: &str, after: char) -> Result<usize> {
         .with_context(|| format!("parse the length of '{field}'"))
 }
 
-fn take<'a>(buf: &mut &'a [u8], len: usize) -> Option<&'a [u8]> {
-    let (head, tail) = buf.split_at_checked(len)?;
-    *buf = tail;
-    Some(head)
+/// The data left to decode, and how many more values may be decoded without
+/// consuming any of it.
+struct Input<'a> {
+    buf: &'a [u8],
+    zero_sized_budget: usize,
 }
 
-fn take_u64(buf: &mut &[u8]) -> Option<u64> {
-    Some(u64::from_be_bytes(take(buf, 8)?.try_into().ok()?))
-}
+impl<'a> Input<'a> {
+    fn take(&mut self, len: usize) -> Option<&'a [u8]> {
+        let (head, tail) = self.buf.split_at_checked(len)?;
+        self.buf = tail;
+        Some(head)
+    }
 
-fn take_len(buf: &mut &[u8]) -> Option<usize> {
-    usize::try_from(take_u64(buf)?).ok()
+    fn take_u64(&mut self) -> Option<u64> {
+        Some(u64::from_be_bytes(self.take(8)?.try_into().ok()?))
+    }
+
+    fn take_len(&mut self) -> Option<usize> {
+        usize::try_from(self.take_u64()?).ok()
+    }
 }
 
 fn utf8(bytes: &[u8]) -> ParamValue {
     ParamValue::Str(String::from_utf8_lossy(bytes).into_owned())
 }
 
-const MAX_ZERO_SIZED_VEC_LEN: usize = 1024;
+/// Every value decoded from sized data consumes bytes, so only values of
+/// zero-sized types (`()`, empty structs, `[(); N]`, ...) can outnumber the
+/// data. Log data is attacker-controlled (any contract can emit any `rb`), so
+/// a Vec length or an ABI array of them must not expand a short receipt into
+/// unbounded memory: they may number at most the data length plus this.
+/// Legitimate unit values are ABI-fixed fields or payloads behind an 8-byte
+/// enum tag, well within the bound.
+const ZERO_SIZED_BUDGET_SLACK: usize = 1024;
 
 impl Coder {
-    fn is_zero_sized(&self) -> bool {
-        match self {
-            Coder::Unit => true,
-            Coder::StrArray(n) => *n == 0,
-            Coder::Array(element, n) => *n == 0 || element.is_zero_sized(),
-            Coder::Tuple(items) => items.iter().all(Coder::is_zero_sized),
-            Coder::Struct(fields) => fields.iter().all(|(_, c)| c.is_zero_sized()),
-            _ => false,
-        }
-    }
-
     fn decode_all<'a>(
         coders: impl Iterator<Item = &'a Coder>,
-        buf: &mut &[u8],
+        input: &mut Input,
     ) -> Option<Vec<ParamValue>> {
-        coders.map(|c| c.decode(buf)).collect()
+        coders.map(|c| c.decode(input)).collect()
     }
 
-    fn decode(&self, buf: &mut &[u8]) -> Option<ParamValue> {
-        Some(match self {
+    fn decode(&self, input: &mut Input) -> Option<ParamValue> {
+        let remaining = input.buf.len();
+        let value = match self {
             Coder::Unit => ParamValue::Undefined,
-            Coder::Bool => match take(buf, 1)?[0] {
+            Coder::Bool => match input.take(1)?[0] {
                 0 => ParamValue::Bool(false),
                 1 => ParamValue::Bool(true),
                 _ => return None,
             },
             Coder::Num(n) => ParamValue::Num(
-                take(buf, *n)?
+                input
+                    .take(*n)?
                     .iter()
                     .fold(0u32, |acc, b| (acc << 8) | u32::from(*b))
                     .into(),
             ),
             Coder::BigInt(n) => ParamValue::BigInt {
                 sign_bit: false,
-                words: take(buf, *n)?
+                words: input
+                    .take(*n)?
                     .rchunks(8)
                     .map(|limb| u64::from_be_bytes(limb.try_into().unwrap()))
                     .collect(),
             },
             Coder::Hex(n) => {
-                ParamValue::Str(format!("0x{}", faster_hex::hex_string(take(buf, *n)?)))
+                ParamValue::Str(format!("0x{}", faster_hex::hex_string(input.take(*n)?)))
             }
-            Coder::StrArray(n) => utf8(take(buf, *n)?),
+            Coder::StrArray(n) => utf8(input.take(*n)?),
             Coder::Str => {
-                let len = take_len(buf)?;
-                utf8(take(buf, len)?)
+                let len = input.take_len()?;
+                utf8(input.take(len)?)
             }
             Coder::Bytes => {
-                let len = take_len(buf)?;
-                ParamValue::Bytes(take(buf, len)?.to_vec())
+                let len = input.take_len()?;
+                ParamValue::Bytes(input.take(len)?.to_vec())
             }
             Coder::RawSlice => {
-                let len = take_len(buf)?;
+                let len = input.take_len()?;
                 ParamValue::Arr(
-                    take(buf, len)?
+                    input
+                        .take(len)?
                         .iter()
                         .map(|b| ParamValue::Num(f64::from(*b)))
                         .collect(),
                 )
             }
-            Coder::Array(element, n) => {
-                ParamValue::Arr(Self::decode_all(std::iter::repeat_n(&**element, *n), buf)?)
-            }
+            Coder::Array(element, n) => ParamValue::Arr(Self::decode_all(
+                std::iter::repeat_n(&**element, *n),
+                input,
+            )?),
             Coder::Vec(element) => {
-                let len = take_len(buf)?;
-                // A garbage length over sized elements fails once the data
-                // runs out, but zero-sized elements consume nothing, so only a
-                // cap keeps their length from spinning or exhausting memory.
-                if len > MAX_ZERO_SIZED_VEC_LEN && element.is_zero_sized() {
-                    return None;
-                }
-                ParamValue::Arr(Self::decode_all(std::iter::repeat_n(&**element, len), buf)?)
+                let len = input.take_len()?;
+                ParamValue::Arr(Self::decode_all(
+                    std::iter::repeat_n(&**element, len),
+                    input,
+                )?)
             }
-            Coder::Tuple(items) => ParamValue::Arr(Self::decode_all(items.iter(), buf)?),
+            Coder::Tuple(items) => ParamValue::Arr(Self::decode_all(items.iter(), input)?),
             Coder::Struct(fields) => ParamValue::Obj(
                 fields
                     .iter()
-                    .map(|(name, c)| Some((name.clone(), c.decode(buf)?)))
+                    .map(|(name, c)| Some((name.clone(), c.decode(input)?)))
                     .collect::<Option<_>>()?,
             ),
             Coder::Enum(variants) => {
-                let (name, payload) = variants.get(usize::try_from(take_u64(buf)?).ok()?)?;
+                let (name, payload) = variants.get(usize::try_from(input.take_u64()?).ok()?)?;
                 ParamValue::Obj(vec![
                     ("case".to_string(), ParamValue::Str(name.clone())),
-                    ("payload".to_string(), payload.decode(buf)?),
+                    ("payload".to_string(), payload.decode(input)?),
                 ])
             }
-        })
+        };
+        if input.buf.len() == remaining {
+            input.zero_sized_budget = input.zero_sized_budget.checked_sub(1)?;
+        }
+        Some(value)
     }
 }
 
@@ -815,6 +830,44 @@ mod tests {
         assert_eq!(
             (decode_max_len(Shape::U64), decode_max_len(Shape::Unit)),
             (None, None)
+        );
+    }
+
+    #[test]
+    fn bounds_values_decoded_without_consuming_data() {
+        let decode = |shape: Shape, data: &[u8]| {
+            decoder(&abi_logging(&shape), LOG_ID)
+                .unwrap()
+                .decode(data)
+                .map(|value| match value {
+                    ParamValue::Arr(items) => items.len(),
+                    _ => unreachable!(),
+                })
+        };
+        let unit_array = |n| Shape::Array(Box::new(Shape::Unit), n);
+        // 5000 `None`s: one unit payload per 8-byte tag.
+        let nones: Vec<u8> = (5000u64.to_be_bytes().into_iter())
+            .chain((0..5000).flat_map(|_| 0u64.to_be_bytes()))
+            .collect();
+        assert_eq!(
+            (
+                decode(
+                    Shape::Vec(Box::new(unit_array(1_000_000))),
+                    &1u64.to_be_bytes()
+                ),
+                decode(
+                    Shape::Vec(Box::new(Shape::Tuple(vec![
+                        Shape::U8,
+                        unit_array(1_000_000)
+                    ]))),
+                    &[&1u64.to_be_bytes()[..], &[7]].concat()
+                ),
+                decode(
+                    Shape::Vec(Box::new(Shape::Option(Box::new(Shape::U32)))),
+                    &nones
+                ),
+            ),
+            (None, None, Some(5000))
         );
     }
 
