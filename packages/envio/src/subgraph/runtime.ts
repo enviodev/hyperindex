@@ -59,7 +59,8 @@ type EventHandler = {
   /** `topic1`–`topic3`, keyed by position among the indexed parameters. */
   topics?: Record<string, string[]>;
 };
-type BlockHandler = { handler: string; filter: { Every: number } | "Once" | any };
+/** As the translator serialises its `BlockFilter`. */
+type BlockHandler = { handler: string; filter: { every: number } | "once" };
 type DataSource = {
   kind: string;
   name: string;
@@ -182,13 +183,6 @@ function fromTopic(type: string, topic: string): unknown {
   const bits = Number(type.replace(/^u?int/, "") || 256);
   const value = BigInt(`0x${word}`);
   return type.startsWith("uint") ? BigInt.asUintN(bits, value) : BigInt.asIntN(bits, value);
-}
-
-function blockInterval(handler: BlockHandler): { every?: number; once?: boolean } {
-  const filter = handler.filter as any;
-  if (filter === "Once" || filter?.Once !== undefined) return { once: true };
-  if (typeof filter?.Every === "number") return { every: filter.Every };
-  return { every: 1 };
 }
 
 async function loadMapping(
@@ -535,16 +529,17 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     for (const handler of source.blockHandlers) {
       const fn = mapping[handler.handler];
       if (typeof fn !== "function") continue;
-      const interval = blockInterval(handler);
+      const start = source.startBlock ?? 0;
+      const blocks =
+        handler.filter === "once"
+          ? { _gte: start, _lte: start }
+          : { _gte: start, _every: handler.filter.every };
       indexer.onBlock(
         {
-          chain: source.chainId,
           name: `${source.name}_${handler.handler}`,
-          interval: interval.once ? undefined : interval.every,
-          ...(interval.once
-            ? { block: { _gte: source.startBlock ?? 0, _lte: source.startBlock ?? 0 } }
-            : {}),
-        } as any,
+          where: ({ chain }: { chain: { id: number } }) =>
+            chain.id === source.chainId && { block: { number: blocks } },
+        },
         async ({ block, context }: any) => {
           if (skipPreload && context.isPreload) return;
           const graphBlock = makeBlockHandlerBlock(
