@@ -369,7 +369,7 @@ mod tests {
             start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
-            abi: log_id.map(crate::fuel::log_decoder::test_abi),
+            abi: log_id.map(|id| crate::fuel::log_decoder::test_abi(id, "u8")),
         }
     }
 

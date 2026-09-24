@@ -74,8 +74,8 @@ module EventItems = {
   }
 
   // One routed receipt with its kind-specific columns flattened: LogData
-  // carries `params` decoded against the ABI (or `decodeError` when the data
-  // doesn't fit the logged type), Mint/Burn carry `val`/`subId`,
+  // carries `params` decoded against the ABI (a receipt its logged type
+  // rejects is dropped in Rust), Mint/Burn carry `val`/`subId`,
   // Transfer/TransferOut/Call carry `amount`/`assetId`/`to` (TransferOut's
   // wallet recipient normalised into `to`).
   type item = {
@@ -85,7 +85,6 @@ module EventItems = {
     blockHeight: int,
     srcAddress: Address.t,
     params?: Internal.eventParams,
-    decodeError?: string,
     subId?: string,
     val?: bigint,
     amount?: bigint,

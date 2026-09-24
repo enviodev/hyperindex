@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{bail, Context, Result};
 use fuel_abi_types::abi::program::ProgramABI;
 use fuel_abi_types::abi::unified_program::{
     UnifiedProgramABI, UnifiedTypeApplication, UnifiedTypeDeclaration,
@@ -57,9 +57,16 @@ impl LogDecoder {
         Ok(Self(coder))
     }
 
-    /// Trailing bytes are ignored.
-    pub fn decode(&self, data: &[u8]) -> Result<ParamValue> {
-        self.0.decode(&mut &data[..])
+    /// Decode a LogData receipt's data as a `ParamValue` tree. `None` when the
+    /// logged type rejects the data: too few bytes, trailing bytes, an invalid
+    /// bool or enum case. Any contract can emit a receipt under any `rb`, so
+    /// data from outside the ABI's contract routinely lands here; the caller
+    /// drops the receipt for this registration only, rather than failing the
+    /// indexer on data it doesn't control.
+    pub fn decode(&self, data: &[u8]) -> Option<ParamValue> {
+        let mut buf = data;
+        let value = self.0.decode(&mut buf)?;
+        buf.is_empty().then_some(value)
     }
 }
 
@@ -141,24 +148,18 @@ fn parse_len(field: &str, after: char) -> Result<usize> {
         .with_context(|| format!("parse the length of '{field}'"))
 }
 
-fn take<'a>(buf: &mut &'a [u8], len: usize) -> Result<&'a [u8]> {
-    ensure!(
-        buf.len() >= len,
-        "unexpected end of data: needed {len} bytes, {} left",
-        buf.len()
-    );
-    let (head, tail) = buf.split_at(len);
+fn take<'a>(buf: &mut &'a [u8], len: usize) -> Option<&'a [u8]> {
+    let (head, tail) = buf.split_at_checked(len)?;
     *buf = tail;
-    Ok(head)
+    Some(head)
 }
 
-fn take_u64(buf: &mut &[u8]) -> Result<u64> {
-    Ok(u64::from_be_bytes(take(buf, 8)?.try_into().unwrap()))
+fn take_u64(buf: &mut &[u8]) -> Option<u64> {
+    Some(u64::from_be_bytes(take(buf, 8)?.try_into().ok()?))
 }
 
-fn take_len(buf: &mut &[u8]) -> Result<usize> {
-    let len = take_u64(buf)?;
-    usize::try_from(len).with_context(|| format!("length {len} overflows"))
+fn take_len(buf: &mut &[u8]) -> Option<usize> {
+    usize::try_from(take_u64(buf)?).ok()
 }
 
 fn utf8(bytes: &[u8]) -> ParamValue {
@@ -182,17 +183,17 @@ impl Coder {
     fn decode_all<'a>(
         coders: impl Iterator<Item = &'a Coder>,
         buf: &mut &[u8],
-    ) -> Result<Vec<ParamValue>> {
+    ) -> Option<Vec<ParamValue>> {
         coders.map(|c| c.decode(buf)).collect()
     }
 
-    fn decode(&self, buf: &mut &[u8]) -> Result<ParamValue> {
-        Ok(match self {
+    fn decode(&self, buf: &mut &[u8]) -> Option<ParamValue> {
+        Some(match self {
             Coder::Unit => ParamValue::Undefined,
             Coder::Bool => match take(buf, 1)?[0] {
                 0 => ParamValue::Bool(false),
                 1 => ParamValue::Bool(true),
-                b => bail!("invalid bool value {b}"),
+                _ => return None,
             },
             Coder::Num(n) => ParamValue::Num(
                 take(buf, *n)?
@@ -233,36 +234,23 @@ impl Coder {
             }
             Coder::Vec(element) => {
                 let len = take_len(buf)?;
-                // Log data is attacker-controlled (any contract can emit any
-                // `rb`). A garbage length over sized elements fails once the
-                // data runs out, but zero-sized elements consume nothing, so
-                // only a cap keeps their length from spinning or exhausting
-                // memory.
-                ensure!(
-                    len <= MAX_ZERO_SIZED_VEC_LEN || !element.is_zero_sized(),
-                    "Vec of zero-sized elements claims {len} elements, more than the \
-                     {MAX_ZERO_SIZED_VEC_LEN} supported"
-                );
+                // A garbage length over sized elements fails once the data
+                // runs out, but zero-sized elements consume nothing, so only a
+                // cap keeps their length from spinning or exhausting memory.
+                if len > MAX_ZERO_SIZED_VEC_LEN && element.is_zero_sized() {
+                    return None;
+                }
                 ParamValue::Arr(Self::decode_all(std::iter::repeat_n(&**element, len), buf)?)
             }
             Coder::Tuple(items) => ParamValue::Arr(Self::decode_all(items.iter(), buf)?),
             Coder::Struct(fields) => ParamValue::Obj(
                 fields
                     .iter()
-                    .map(|(name, c)| Ok((name.clone(), c.decode(buf)?)))
-                    .collect::<Result<_>>()?,
+                    .map(|(name, c)| Some((name.clone(), c.decode(buf)?)))
+                    .collect::<Option<_>>()?,
             ),
             Coder::Enum(variants) => {
-                let case = take_u64(buf)?;
-                let (name, payload) = usize::try_from(case)
-                    .ok()
-                    .and_then(|i| variants.get(i))
-                    .with_context(|| {
-                        format!(
-                            "invalid enum case {case}, expected one of {} variants",
-                            variants.len()
-                        )
-                    })?;
+                let (name, payload) = variants.get(usize::try_from(take_u64(buf)?).ok()?)?;
                 ParamValue::Obj(vec![
                     ("case".to_string(), ParamValue::Str(name.clone())),
                     ("payload".to_string(), payload.decode(buf)?),
@@ -272,17 +260,17 @@ impl Coder {
     }
 }
 
-/// An ABI logging a `u8` under `log_id`.
+/// An ABI logging the primitive `logged` (e.g. `u8`) under `log_id`.
 #[cfg(test)]
-pub(crate) fn test_abi(log_id: &str) -> serde_json::Value {
+pub(crate) fn test_abi(log_id: &str, logged: &str) -> serde_json::Value {
     serde_json::json!({
         "programType": "contract",
         "specVersion": "1",
         "encodingVersion": "1",
-        "concreteTypes": [{ "type": "u8", "concreteTypeId": "u8" }],
+        "concreteTypes": [{ "type": logged, "concreteTypeId": logged }],
         "metadataTypes": [],
         "functions": [],
-        "loggedTypes": [{ "logId": log_id, "concreteTypeId": "u8" }],
+        "loggedTypes": [{ "logId": log_id, "concreteTypeId": logged }],
     })
 }
 
@@ -784,11 +772,16 @@ mod tests {
         fn decodes_every_shape((shape, (bytes, expected)) in shape_with_sample()) {
             let decoder = LogDecoder::new(&abi_logging(&shape), LOG_ID).unwrap();
             let decoded_prefixes: Vec<usize> = (0..bytes.len())
-                .filter(|len| decoder.decode(&bytes[..*len]).is_ok())
+                .filter(|len| decoder.decode(&bytes[..*len]).is_some())
                 .collect();
+            let with_trailing_byte = [bytes.as_slice(), &[0]].concat();
             prop_assert_eq!(
-                (decoder.decode(&bytes).ok(), decoded_prefixes),
-                (Some(expected), vec![])
+                (
+                    decoder.decode(&bytes),
+                    decoded_prefixes,
+                    decoder.decode(&with_trailing_byte),
+                ),
+                (Some(expected), vec![], None)
             );
         }
 
@@ -811,17 +804,10 @@ mod tests {
             LogDecoder::new(&abi_logging(&Shape::Vec(Box::new(element))), LOG_ID)
                 .unwrap()
                 .decode(&u64::MAX.to_be_bytes())
-                .unwrap_err()
-                .to_string()
         };
         assert_eq!(
             (decode_max_len(Shape::U64), decode_max_len(Shape::Unit)),
-            (
-                "unexpected end of data: needed 8 bytes, 0 left".to_string(),
-                "Vec of zero-sized elements claims 18446744073709551615 elements, more than \
-                 the 1024 supported"
-                    .to_string(),
-            )
+            (None, None)
         );
     }
 
@@ -864,16 +850,10 @@ mod tests {
             LogDecoder::new(&abi_logging(&Shape::Option(Box::new(Shape::U8))), LOG_ID).unwrap();
         assert_eq!(
             (
-                bool_decoder.decode(&[2]).unwrap_err().to_string(),
-                option_decoder
-                    .decode(&2u64.to_be_bytes())
-                    .unwrap_err()
-                    .to_string(),
+                bool_decoder.decode(&[2]),
+                option_decoder.decode(&2u64.to_be_bytes()),
             ),
-            (
-                "invalid bool value 2".to_string(),
-                "invalid enum case 2, expected one of 2 variants".to_string(),
-            )
+            (None, None)
         );
     }
 }

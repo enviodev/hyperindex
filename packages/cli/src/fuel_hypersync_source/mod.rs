@@ -150,9 +150,8 @@ pub struct EventItemsQuery {
 }
 
 /// One routed receipt. The receipt's kind-specific columns are flattened so
-/// JS builds params without a tagged receipt union: LogData carries `params`
-/// decoded against the contract ABI (or `decodeError` when its data doesn't
-/// fit the logged type), Mint/Burn carry `val`/`subId`,
+/// JS builds params without a tagged receipt union: LogData carries `params`,
+/// Mint/Burn carry `val`/`subId`,
 /// Transfer/TransferOut/Call carry `amount`/`assetId`/`to` — with
 /// TransferOut's wallet recipient normalised into `to`.
 #[napi(object)]
@@ -166,8 +165,9 @@ pub struct EventItem {
     /// the `BlockStore` returned alongside this response.
     pub block_height: i64,
     pub src_address: String,
+    /// The LogData receipt's data decoded against the registration's ABI. A
+    /// receipt its logged type rejects never becomes an item at all.
     pub params: Option<ParamValue>,
-    pub decode_error: Option<String>,
     pub sub_id: Option<String>,
     pub val: Option<BigInt>,
     pub amount: Option<BigInt>,
@@ -298,23 +298,23 @@ fn route_receipts(
             };
             let item = match &reg.kind {
                 RegistrationKind::LogData { decoder, .. } => {
-                    let (params, decode_error) =
-                        match receipt.data.as_deref().map(|data| decoder.decode(data)) {
-                            Some(Ok(params)) => (Some(params), None),
-                            Some(Err(e)) => (None, Some(format!("{e:#}"))),
-                            None => {
-                                push_unique(&mut missing, "receipt.data");
-                                (None, None)
-                            }
-                        };
+                    let Some(data) = &receipt.data else {
+                        push_unique(&mut missing, "receipt.data");
+                        continue;
+                    };
+                    // This registration's logged type rejected the data, so
+                    // there is nothing truthful to hand its handler. Another
+                    // registration matching the same `rb` decodes on its own.
+                    let Some(params) = decoder.decode(data) else {
+                        continue;
+                    };
                     EventItem {
                         on_event_registration_index: reg.index,
                         receipt_index: receipt.receipt_index,
                         tx_id: receipt.tx_id.clone(),
                         block_height: receipt.block_height,
                         src_address: src_address.clone(),
-                        params,
-                        decode_error,
+                        params: Some(params),
                         sub_id: None,
                         val: None,
                         amount: None,
@@ -329,7 +329,6 @@ fn route_receipts(
                     block_height: receipt.block_height,
                     src_address: src_address.clone(),
                     params: None,
-                    decode_error: None,
                     sub_id: require_hex(&receipt.sub_id, "receipt.subId", &mut missing),
                     val: require_u64(receipt.val, "receipt.val", &mut missing),
                     amount: None,
@@ -352,7 +351,6 @@ fn route_receipts(
                         block_height: receipt.block_height,
                         src_address: src_address.clone(),
                         params: None,
-                        decode_error: None,
                         sub_id: None,
                         val: None,
                         amount: require_u64(receipt.amount, "receipt.amount", &mut missing),
@@ -435,7 +433,7 @@ mod tests {
             start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
-            abi: log_id.map(crate::fuel::log_decoder::test_abi),
+            abi: log_id.map(|id| crate::fuel::log_decoder::test_abi(id, "u8")),
         }
     }
 
@@ -539,27 +537,27 @@ mod tests {
     }
 
     #[test]
-    fn decodes_log_data_against_the_registration_abi() {
+    fn log_data_its_abi_rejects_drops_only_that_registration() {
+        let mut logs_u64 = reg_input(1, "C", FuelEventKind::LogData, true, Some("7"));
+        logs_u64.abi = Some(crate::fuel::log_decoder::test_abi("7", "u64"));
         let (store, set, built) = build(
-            &[reg_input(0, "C", FuelEventKind::LogData, true, Some("7"))],
-            &[0],
+            &[
+                reg_input(0, "C", FuelEventKind::LogData, true, Some("7")),
+                logs_u64,
+            ],
+            &[0, 1],
             &[("C", &[])],
         );
-        let mut truncated = raw_receipt(6);
-        truncated.data = Some(vec![]);
-        let items = route(&store, &set, &built, vec![raw_receipt(6), truncated]).unwrap();
+        // One data byte: a u8 for registration 0, too short for 1's u64.
+        let mut empty = raw_receipt(6);
+        empty.data = Some(vec![]);
+        let items = route(&store, &set, &built, vec![raw_receipt(6), empty]).unwrap();
         assert_eq!(
             items
                 .into_iter()
-                .map(|i| (i.params, i.decode_error))
+                .map(|i| (i.on_event_registration_index, i.params))
                 .collect::<Vec<_>>(),
-            vec![
-                (Some(ParamValue::Num(1.0)), None),
-                (
-                    None,
-                    Some("unexpected end of data: needed 1 bytes, 0 left".to_string())
-                ),
-            ]
+            vec![(0, Some(ParamValue::Num(1.0)))]
         );
     }
 

@@ -41,7 +41,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
     ~selection: FetchState.selection,
     ~itemsTarget as _,
     ~retry,
-    ~logger,
+    ~logger as _,
   ) => {
     let totalTimeRef = Performance.now()
 
@@ -116,23 +116,8 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
         )
 
       let params = switch eventConfig.kind {
-      | LogData(_) =>
-        switch item.params {
-        | Some(params) => params
-        | None =>
-          let params = {
-            "chainId": chainId,
-            "blockNumber": item.blockHeight,
-            "logIndex": item.receiptIndex,
-          }
-          let logger = Logging.createChildFrom(~logger, ~params)
-          Utils.Error.make(
-            item.decodeError->Option.getOr("Missing decoded params"),
-          )->ErrorHandling.mkLogAndRaise(
-            ~msg="Failed to decode Fuel LogData receipt, please double check your ABI.",
-            ~logger,
-          )
-        }
+      // Rust only routes a LogData receipt once its data decoded.
+      | LogData(_) => item.params->Option.getUnsafe
       | Mint | Burn =>
         (
           {
