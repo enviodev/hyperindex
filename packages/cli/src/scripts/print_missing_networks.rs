@@ -1,4 +1,4 @@
-use crate::config_parsing::chain_helpers::{GraphNetwork, HypersyncChain, NetworkWithExplorer};
+use crate::config_parsing::chain_helpers::{HypersyncChain, NetworkWithExplorer};
 use anyhow::Result;
 use convert_case::{Case, Casing};
 use reqwest;
@@ -76,7 +76,6 @@ impl Diff {
                 let subenums = vec![
                     Some("HypersyncChain"),
                     NetworkWithExplorer::from_repr(chain_id).map(|_| "NetworkWithExplorer"),
-                    GraphNetwork::from_repr(chain_id).map(|_| "GraphNetwork"),
                 ]
                 .into_iter()
                 .flatten()

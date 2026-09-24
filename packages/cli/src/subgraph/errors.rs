@@ -62,6 +62,19 @@ impl Display for Finding {
     }
 }
 
+/// An error from envio's own schema and config checks, run over what the
+/// translation produced. Their messages speak about envio's config, so they are
+/// framed as a translation gap: something the subgraph didn't do wrong.
+pub fn envio_rejected_translation(error: anyhow::Error) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Envio Subgraph translated this subgraph, but envio can't index the result:\n  \
+         {error:#}\n\
+         First, make sure you're on the newest Envio Subgraph release:\n  \
+         {UPGRADE_COMMAND}\n\
+         If you're up to date, please open an issue with the message above: {ISSUES_URL}"
+    )
+}
+
 /// Findings accumulated across a whole translation, so a project learns about
 /// every problem in one run instead of one per attempt.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

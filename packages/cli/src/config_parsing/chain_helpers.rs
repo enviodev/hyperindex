@@ -7,7 +7,7 @@ use strum::IntoEnumIterator;
 use subenum::subenum;
 
 #[derive(strum::Display)]
-#[subenum(NetworkWithExplorer, HypersyncChain, GraphNetwork)]
+#[subenum(NetworkWithExplorer, HypersyncChain)]
 #[derive(
     Clone,
     Debug,
@@ -35,16 +35,15 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Amoy = 80002,
 
-    #[subenum(GraphNetwork)]
     ArbitrumGoerli = 421613,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     ArbitrumNova = 42170,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     ArbitrumOne = 42161,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     ArbitrumSepolia = 421614,
 
     #[subenum(NetworkWithExplorer)]
@@ -56,24 +55,23 @@ pub enum Network {
     #[subenum(HypersyncChain)]
     ArcTestnet = 5042002,
 
-    #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Aurora = 1313161554,
 
-    #[subenum(GraphNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     AuroraTestnet = 1313161555,
 
     AuroraTurbo = 1313161567,
 
-    #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Avalanche = 43114,
 
     #[subenum(NetworkWithExplorer)]
     B2Testnet = 1123,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Base = 8453,
 
-    #[subenum(GraphNetwork(serde(rename = "base-testnet")))]
     BaseGoerli = 84531,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -93,24 +91,20 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Boba = 288,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Bsc = 56,
 
-    #[subenum(
-        HypersyncChain,
-        NetworkWithExplorer,
-        GraphNetwork(serde(rename = "chapel"))
-    )]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     BscTestnet = 97,
 
     C1Milkomeda = 2001,
 
     Canto = 7700,
 
-    #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Celo = 42220,
 
-    #[subenum(GraphNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     CeloAlfajores = 44787,
 
     #[subenum(NetworkWithExplorer)]
@@ -137,7 +131,6 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     CitreaTestnet = 5115,
 
-    #[subenum(GraphNetwork)]
     Clover = 1023,
 
     #[subenum(NetworkWithExplorer)]
@@ -151,11 +144,7 @@ pub enum Network {
 
     Darwinia = 46,
 
-    #[subenum(
-        HypersyncChain,
-        NetworkWithExplorer,
-        GraphNetwork(serde(rename = "mainnet"))
-    )]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     EthereumMainnet = 1,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -164,10 +153,10 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     Evmos = 9001,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Fantom = 250,
 
-    #[subenum(GraphNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     FantomTestnet = 4002,
 
     #[subenum(NetworkWithExplorer)]
@@ -181,22 +170,21 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Fraxtal = 252,
 
-    #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Fuji = 43113,
 
-    #[subenum(GraphNetwork)]
     Fuse = 122,
 
     #[subenum(NetworkWithExplorer)]
     GaladrielDevnet = 696969,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Gnosis = 100,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     GnosisChiado = 10200,
 
-    #[subenum(NetworkWithExplorer, GraphNetwork)]
+    #[subenum(NetworkWithExplorer)]
     Goerli = 5,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -210,11 +198,7 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Hoodi = 560048,
 
-    #[subenum(
-        HypersyncChain,
-        NetworkWithExplorer,
-        GraphNetwork(serde(rename = "hyper-evm"))
-    )]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Hyperliquid = 999,
 
     IncoGentryTestnet = 9090,
@@ -287,13 +271,13 @@ pub enum Network {
     #[subenum(NetworkWithExplorer, HypersyncChain)]
     MonadTestnet = 10143,
 
-    #[subenum(NetworkWithExplorer, GraphNetwork(serde(rename = "mbase")))]
+    #[subenum(NetworkWithExplorer)]
     MoonbaseAlpha = 1287,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Moonbeam = 1284,
 
-    #[subenum(GraphNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Moonriver = 1285,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -304,7 +288,6 @@ pub enum Network {
 
     MosaicMatrix = 41454,
 
-    #[subenum(GraphNetwork)]
     Mumbai = 80001,
 
     #[subenum(NetworkWithExplorer)]
@@ -313,10 +296,9 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Opbnb = 204,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Optimism = 10,
 
-    #[subenum(GraphNetwork)]
     OptimismGoerli = 420,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -330,26 +312,23 @@ pub enum Network {
     #[subenum(HypersyncChain)]
     Plume = 98866,
 
-    #[subenum(GraphNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     PoaCore = 99,
 
-    #[subenum(GraphNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     PoaSokol = 77,
 
-    #[subenum(
-        HypersyncChain,
-        NetworkWithExplorer,
-        GraphNetwork(serde(rename = "matic"))
-    )]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Polygon = 137,
 
-    #[subenum(GraphNetwork, HypersyncChain, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     PolygonZkevm = 1101,
 
-    #[subenum(GraphNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     PolygonZkevmTestnet = 1442,
 
-    #[subenum(GraphNetwork)]
+    Pulsechain = 369,
+
     Rinkeby = 4,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -361,10 +340,10 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     Saakuru = 7225878,
 
-    #[subenum(GraphNetwork, HypersyncChain, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Scroll = 534352,
 
-    #[subenum(GraphNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     ScrollSepolia = 534351,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -377,7 +356,7 @@ pub enum Network {
 
     SentientTestnet = 1184075182,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Sepolia = 11155111,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -443,10 +422,9 @@ pub enum Network {
     #[subenum(HypersyncChain)]
     Zircuit = 48900,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     ZksyncEra = 324,
 
-    #[subenum(GraphNetwork)]
     ZksyncEraTestnet = 280,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -622,6 +600,7 @@ impl Network {
             | Network::StatusSepolia
             | Network::Tempo
             | Network::Tron
+            | Network::Pulsechain
             | Network::Robinhood => None,
         }
     }
@@ -657,11 +636,10 @@ pub fn get_max_reorg_depth_from_id(id: u64) -> Option<u32> {
 
 #[cfg(test)]
 mod test {
-    use super::{GraphNetwork, HypersyncChain};
+    use super::HypersyncChain;
     use crate::config_parsing::chain_helpers::Network;
     use itertools::Itertools;
     use pretty_assertions::assert_eq;
-    use serde::Deserialize;
     use strum::IntoEnumIterator;
 
     #[test]
@@ -702,72 +680,5 @@ mod test {
             "ethereum-mainnet".to_string(),
             Network::EthereumMainnet.to_string()
         );
-    }
-
-    #[test]
-    fn network_deserialize_graph() {
-        /*List of networks supported by graph found here:
-         * https://github.com/graphprotocol/graph-tooling/blob/main/packages/cli/src/protocols/index.ts#L94-L132
-         */
-        let networks = r#"[
-        "mainnet",
-        "rinkeby",
-        "goerli",
-        "poa-core",
-        "poa-sokol",
-        "gnosis",
-        "matic",
-        "mumbai",
-        "fantom",
-        "fantom-testnet",
-        "bsc",
-        "chapel",
-        "clover",
-        "avalanche",
-        "fuji",
-        "celo",
-        "celo-alfajores",
-        "fuse",
-        "moonbeam",
-        "moonriver",
-        "mbase",
-        "arbitrum-one",
-        "arbitrum-goerli",
-        "arbitrum-sepolia",
-        "optimism",
-        "optimism-goerli",
-        "aurora",
-        "aurora-testnet",
-        "base-testnet",
-        "base",
-        "zksync-era",
-        "zksync-era-testnet",
-        "sepolia",
-        "polygon-zkevm-testnet",
-        "polygon-zkevm",
-        "scroll-sepolia",
-        "scroll",
-        "hyper-evm"
-    ]"#;
-
-        let supported_graph_networks = serde_json::from_str::<Vec<String>>(networks)
-            .unwrap()
-            .into_iter()
-            .map(|s| {
-                GraphNetwork::deserialize(serde_json::Value::String(s.clone()))
-                    .unwrap_or_else(|_| panic!("Invalid graph network: {}", s))
-            })
-            .collect::<Vec<GraphNetwork>>();
-
-        let defined_networks = GraphNetwork::iter().collect::<Vec<_>>();
-
-        for n in defined_networks {
-            let included_in_supported_networks = supported_graph_networks.iter().any(|sn| &n == sn);
-            assert!(
-                included_in_supported_networks,
-                "expected {:?} to be included",
-                n
-            )
-        }
     }
 }

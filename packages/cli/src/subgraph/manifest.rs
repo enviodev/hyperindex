@@ -7,12 +7,13 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::str::FromStr;
+use std::sync::LazyLock;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
 use super::errors::Report;
-use crate::config_parsing::chain_helpers::{GraphNetwork, Network};
+use crate::config_parsing::chain_helpers::Network;
 
 /// Highest manifest version this translator understands (§1).
 pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 3, 0);
@@ -59,25 +60,41 @@ const NON_EVM_NETWORKS: &[(&str, &str)] = &[
     ("solana-mainnet-beta", "Solana"),
 ];
 
-/// Spellings that appear in subgraph.yaml but are not Graph's identifier.
-/// Mapped to the GraphNetwork serde name, not to Envio's kebab-case.
-const GRAPH_NETWORK_ALIASES: &[(&str, &str)] =
-    &[("ethereum", "mainnet"), ("hyperevm", "hyper-evm")];
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GraphRegistryNetwork {
+    chain_id: u64,
+    aliases: Vec<String>,
+}
 
-/// Graph's identifier first, then Envio's kebab-case so `hyperliquid` still
-/// works when someone writes our name.
+/// The EVM networks of The Graph's networks registry, by id: the names a
+/// subgraph.yaml's `network:` uses. `scripts/sync-graph-networks.mjs` refreshes
+/// the snapshot, and CI runs it to report drift.
+static GRAPH_NETWORKS: LazyLock<BTreeMap<String, GraphRegistryNetwork>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("graph_networks.json"))
+        .expect("graph_networks.json is the sync script's output")
+});
+
+/// Names other subgraph hosts give chains the registry doesn't list, mapped to
+/// Envio's name for the chain.
+const OTHER_HOST_NETWORKS: &[(&str, &str)] = &[("pulse", "pulsechain")];
+
+/// The registry's id or one of its aliases first, then Envio's kebab-case so
+/// `hyperliquid` still works when someone writes our name.
 fn network_to_chain_id(network: &str) -> Option<u64> {
-    let canonical = GRAPH_NETWORK_ALIASES
-        .iter()
-        .find(|(alias, _)| *alias == network)
-        .map(|(_, name)| *name)
-        .unwrap_or(network);
-    if let Ok(graph) =
-        serde_json::from_value::<GraphNetwork>(serde_json::Value::String(canonical.to_string()))
-    {
-        return Some(Network::from(graph).get_network_id());
+    let registered = GRAPH_NETWORKS.iter().find(|(id, registered)| {
+        *id == network || registered.aliases.iter().any(|alias| alias == network)
+    });
+    if let Some((_, registered)) = registered {
+        return Some(registered.chain_id);
     }
-    Network::from_str(network).ok().map(|n| n.get_network_id())
+    let envio_name = OTHER_HOST_NETWORKS
+        .iter()
+        .find(|(name, _)| *name == network)
+        .map_or(network, |(_, envio_name)| *envio_name);
+    Network::from_str(envio_name)
+        .ok()
+        .map(|n| n.get_network_id())
 }
 
 /// A YAML mapping being read, tracking which keys were consumed so the rest can
@@ -218,11 +235,34 @@ pub struct EventHandler {
     /// `topic1`/`topic2`/`topic3` values, keyed by indexed-parameter position.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<usize, Vec<String>>,
-    /// Each parameter's ABI type, keyed by the name envio decodes it under.
-    /// The manifest's own signature carries types without names, so it can't
-    /// be matched against decoded params; this is filled in from the ABI.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub params: BTreeMap<String, String>,
+    /// The event's parameters in ABI order, which is what `event.parameters`
+    /// indexes by. The manifest's own signature carries types without names,
+    /// so this is filled in from the ABI.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<EventInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventInput {
+    /// As the ABI spells it, empty when the ABI left it unnamed.
+    pub name: String,
+    /// What envio decodes it under: the name, or `_{index}` when there is none.
+    pub key: String,
+    #[serde(rename = "type")]
+    pub abi_type: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub indexed: bool,
+}
+
+impl EventInput {
+    /// Indexed as the keccak hash of its encoding, which can't be read back.
+    pub fn is_hashed_in_topic(&self) -> bool {
+        self.abi_type == "string"
+            || self.abi_type == "bytes"
+            || self.abi_type.ends_with(']')
+            || self.abi_type.starts_with('(')
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -584,7 +624,7 @@ fn parse_data_source(
                     handler,
                     receipt: false,
                     topics: BTreeMap::new(),
-                    params: BTreeMap::new(),
+                    inputs: Vec::new(),
                 });
             }
 
@@ -746,7 +786,7 @@ fn parse_event_handler(
         handler,
         receipt,
         topics,
-        params: BTreeMap::new(),
+        inputs: Vec::new(),
     })
 }
 
@@ -858,6 +898,9 @@ templates:
                 network_to_chain_id("hyperliquid"),
                 network_to_chain_id("ethereum-mainnet"),
                 network_to_chain_id("polygon"),
+                network_to_chain_id("apechain"),
+                network_to_chain_id("pulsechain"),
+                network_to_chain_id("pulse"),
                 network_to_chain_id("not-a-chain"),
             ],
             [
@@ -870,23 +913,26 @@ templates:
                 Some(999),
                 Some(1),
                 Some(137),
+                Some(33139),
+                Some(369),
+                Some(369),
                 None,
             ]
         );
     }
 
     #[test]
-    fn every_graph_network_variant_resolves() {
-        use strum::IntoEnumIterator;
-        let unresolved: Vec<_> = GraphNetwork::iter()
-            .filter_map(|network| {
-                let name = serde_json::to_value(network)
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_string))?;
-                network_to_chain_id(&name).is_none().then_some(name)
+    fn resolves_every_network_the_graph_registry_lists() {
+        let wrong: Vec<_> = GRAPH_NETWORKS
+            .iter()
+            .flat_map(|(id, network)| {
+                std::iter::once(id)
+                    .chain(&network.aliases)
+                    .map(move |name| (name.clone(), network.chain_id))
             })
+            .filter(|(name, chain_id)| network_to_chain_id(name) != Some(*chain_id))
             .collect();
-        assert_eq!(unresolved, Vec::<String>::new());
+        assert_eq!(wrong, Vec::<(String, u64)>::new());
     }
 
     #[test]

@@ -92,7 +92,7 @@ export function handlePing(event: any): void {
   if (nonce === 4) {
     let slot = token.try_slot(BigInt.fromI32(7));
     let probe = new Entity();
-    probe.setString("name", slot.reverted ? "reverted" : slot.value[0].toString());
+    probe.setString("name", slot.reverted ? "reverted" : slot.value[0].toBigInt().toString());
     probe.setBoolean("reverted", slot.reverted);
     store.set("Probe", "slot", probe);
     return;

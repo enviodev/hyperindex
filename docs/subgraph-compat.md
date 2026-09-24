@@ -13,8 +13,9 @@ there (`publish.yml`); every §7 error names the same command.
 **How it works, in one paragraph.** The CLI detects `subgraph.yaml`,
 translates the manifest into an envio config and the schema into an envio
 schema, and points the handler entry at a runtime that imports the user's
-mappings unchanged (AssemblyScript is a TypeScript subset — envio already
-loads TS via `tsx`). Only `@graphprotocol/graph-ts` is shimmed at runtime;
+mappings unchanged (AssemblyScript's syntax is TypeScript's; the addon turns
+each project file into the JavaScript that computes what `asc` would — §6a).
+Only `@graphprotocol/graph-ts` is shimmed at runtime;
 the project's `generated/` code — `graph codegen` output — executes as-is on
 top of the shim (§6a). Each manifest handler becomes an `indexer.onEvent` /
 `onBlock` / `contractRegister` wrapper that runs the mapping synchronously;
@@ -43,7 +44,7 @@ by name. Newer than 0.0.9 is a §7 error.
 | Feature | Mapping | Status |
 |---|---|---|
 | Data source (`address`, `abi`, `startBlock`, `endBlock`) | `contracts` + `chains[].contracts`, `start_block`/`end_block` | ✅ |
-| `network: mainnet` | `chains[].id` via name→id table | ✅ |
+| `network: mainnet` | `chains[].id` through a snapshot of The Graph's networks registry (ids and aliases; `scripts/sync-graph-networks.mjs`, drift reported in CI), then Envio's own chain names | ✅ |
 | Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper | ✅ |
 | `receipt: true` | scalars (`status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection` — all but `contractAddress` are HyperSync-only fields (§6b); `receipt.logs` → §7 error on access | ⚠️ |
 | Topic filters (1.2.0) | `where: { params: ... }` (arrays = OR), raw topic values decoded back to param values. Dynamic-typed indexed params (`string`/`bytes`/arrays/tuples) appear in topics as keccak hashes, which can't be decoded back to the values envio filters on → §7 error | ⚠️ |
@@ -120,7 +121,7 @@ query and is dropped; stored, it is an error.
 | API | Mapping |
 |---|---|
 | `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides. A relation is the related id under the field's own name in graph-ts and `<field>_id` in envio, renamed at the boundary |
-| Integer division | AssemblyScript divides two integers as integers and JavaScript doesn't, and the difference travels into ids and `Int` columns. Each `a / b` in a project file is rewritten as it loads, through the TypeScript the project already has, to a helper that truncates only when both operands really are integers |
+| Integer division | AssemblyScript divides two integers as integers and JavaScript doesn't, and the difference travels into ids and `Int` columns. Each `a / b` and `a /= b` in a project file is rewritten as it loads (§6a) to a helper that truncates only when both operands really are integers |
 | A handler the mapping doesn't export | skipped, as `graph build` does — it doesn't check either, and Aave's mainnet manifest names one its mappings renamed years ago |
 | A field the schema declares that nothing has set | graph-node's store returns every column, envio's returns what was written — the shim answers `null` rather than refusing, so a mapping's null check reads the same |
 | `Entity.load`, `store.get`, derived loaders | sync try-read; miss → suspend (§5) |
@@ -128,8 +129,10 @@ query and is dropped; stored, it is an error.
 | `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary |
 | `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` (log's index within its tx — envio has no per-tx log index) → §7 error on access |
 | `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it throws as the handler error (envio retries), so a flaky RPC never fabricates `reverted` data |
+| `ethereum.Value` | its own class, tagged with graph-ts' ABI `ValueKind` from the ABI type (event inputs, call outputs, `ethereum.decode`'s type string); accessors refuse another kind exactly as graph-ts' asserts do |
 | `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
+| RPC traffic | contract calls, `getBalance`/`hasCode` and the block-timestamp fallback share one client, which keeps at most 16 requests in flight and queues the rest — preload runs a batch's handlers at once, and unbounded that was one connection per call |
 | Block handler's `block.timestamp` | internal `getBlockTimestamp` effect, `cache: false`, suspend: calls are microtask-collected into one HyperSync range query (`fieldSelection: {block: [Number, Timestamp]}`) — the pattern proven in [all-contracts-indexer](https://github.com/enviodev/all-contracts-indexer/blob/main/src/handlers/onBlock.ts). Uncached on purpose: a block's timestamp is read exactly once, by that block's own handler invocation, so a persisted row per indexed block would be pure bloat with no reuse. In-memory memoization (which holds even with `cache: false`, §5) still covers what the bridge needs — replay rounds and the preload→execute transition reuse the fetched value |
 | `log.*` | `context.log`, buffered per replay round, flushed on success; `log.critical` throws (halts, as graph-node) |
 | `dataSource.create/createWithContext` | captured in register pass (below) |
@@ -234,19 +237,35 @@ contract bindings extend `ethereum.SmartContract` and go through
 classes call `DataSource.create`. Consequences:
 
 - **No `generated/*` shim.** The real `graph codegen` output is executed
-  directly through `tsx`; mappings' relative imports resolve from disk. The
-  resolve hook only swaps `@graphprotocol/graph-ts`; the runtime injects the
-  few AS builtin globals generated code uses (`changetype` = identity,
-  `assert`).
+  as written; mappings' relative imports resolve from disk. The resolve hook
+  only swaps `@graphprotocol/graph-ts`. Every project file loads through the
+  addon's AssemblyScript pass (`subgraph/assemblyscript.rs`, oxc) before any
+  other loader sees it: it strips types and decorators, routes `/` and `/=`
+  through an integer-aware helper, retags `changetype<Foo>(x)` onto the
+  generated class, and renames a `let` that redeclares a parameter (every
+  generated `try_` binding does). It emits an inline source map, so stack
+  traces name the mapping's own lines, and refuses — located — what it can't
+  rewrite faithfully. The runtime injects the few AS builtin globals generated
+  code uses (`changetype` = identity, `assert`).
 - **Type safety is byte-identical by construction.** Editor and `tsc` see
   the project's own `generated/` files and the *real* `@graphprotocol/graph-ts`
   package types (still in the project's dependencies) — exactly what a
   subgraph developer sees today. Our shim replaces graph-ts at runtime
   resolution only, never at type level.
-- **Codegen:** if `generated/` is missing (usually gitignored), `envio dev`
-  runs the project's own locally installed graph-cli (resolved from
-  `node_modules/.bin/graph`) — output is then identical to the user's normal
-  workflow by definition. Both failure modes get explicit messages:
+- **Codegen:** if the generated code is missing (usually gitignored), envio
+  runs the `codegen` command of the project's own graph-cli
+  (`node_modules/@graphprotocol/graph-cli`) — output is then identical to the
+  user's normal workflow by definition. It runs in-process on a worker thread
+  whose heap is sized to three quarters of the machine, since codegen over a
+  large ABI set outgrows Node's default heap. Two flags differ from a bare
+  `graph codegen`:
+  - `--output-dir` is where the mappings import `schema`/`templates` from, so
+    a project that runs `graph codegen -o src/types` gets its code there;
+  - `--skip-migrations`: migrations rewrite `subgraph.yaml` in place, and
+    envio only reads the manifest.
+
+  `envio dev`'s `graph build` type check runs the same way. The failure modes
+  get explicit messages:
 
   graph-cli not installed (or `node_modules` missing):
 
@@ -256,22 +275,30 @@ classes call `DataSource.create`. Consequences:
   Install dependencies and try again:
     pnpm install
   Or generate manually:
-    pnpm exec graph codegen
+    pnpm exec graph codegen --output-dir generated
   ```
 
-  `graph codegen` exits non-zero (its output shown verbatim above the tail):
+  `graph codegen` fails (its output shown verbatim above the tail):
 
   ```
-  Envio Subgraph ran `graph codegen` to build "generated/", but it failed —
-  the error above comes from The Graph's own codegen, so fix it there and
-  rerun. If `graph codegen` succeeds on its own but fails through envio,
-  please open an issue: https://github.com/enviodev/hyperindex/issues
+  Envio Subgraph ran `graph codegen` to build the generated code, but it
+  failed — the error above comes from The Graph's own codegen, so fix it
+  there and rerun. If `graph codegen` succeeds on its own but fails through
+  envio, please open an issue: https://github.com/enviodev/hyperindex/issues
+  ```
+
+  It runs out of memory even so:
+
+  ```
+  Envio Subgraph ran `graph codegen` with a 12288 MB heap, three
+  quarters of this machine's memory, and it ran out. Run it on a machine
+  with more memory, then start envio again.
   ```
 - **Conformance is tested two ways:** (a) golden fixtures — `generated/`
   outputs of real `graph codegen` across pinned graph-cli versions, executed
   against the shim in `envio-tests`, since users' local versions vary; (b) a
-  type-level test compiling the shim implementation against the real
-  graph-ts type declarations (`satisfies typeof import("@graphprotocol/graph-ts")`)
+  type-level walk of the shim against the real graph-ts type declarations
+  (`conformance.ts`)
   so the runtime surface can't drift from the types users compile against.
 
 Cost note: entity field access now goes through `TypedMap`/`Value` boxing —
@@ -487,8 +514,9 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
    around `runSync`; per-round log buffering.
 4. Tests: rung 1 with real mapping sources + golden `generated/` fixtures
    (real `graph codegen` output across pinned graph-cli versions) executed
-   through the shim; the `satisfies`-style type conformance check against
-   real graph-ts declarations; value-class unit tests against graph-ts
+   through the shim; the type conformance walk (`conformance.ts`) over every
+   export, static and instance member of the real graph-ts declarations, with
+   each remaining gap listed and asserted both ways; value-class unit tests against graph-ts
    fixtures; `try_` revert → `{reverted: true}` vs transport failure →
    handler error; `Timestamp` micros ↔ date round-trip through the store;
    `getBlockTimestamp` batching (one range query per round, and one fetch
@@ -507,6 +535,12 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
 **D. End to end.** `scenarios/subgraph_test`: a real small subgraph project
 (e.g. gravatar) with factory + template + eth_call + block handler; run via
 `envio dev` path in CI; plus one fixture per §7 error asserting the message.
+Nightly (`.github/workflows/subgraph-nightly.yml`), two harnesses that need
+Docker and the network: `scenarios/subgraph_test/differential` indexes the
+scenario with graph-node and with envio over one anvil chain and diffs every
+stored field; `scenarios/subgraph_corpus` installs real subgraphs at pinned
+commits the way their authors do and indexes a window of blocks from their
+start.
 Additionally, add an **"Envio Subgraph"** tool to
 [open-indexer-benchmark](https://github.com/enviodev/open-indexer-benchmark)
 that runs the benchmark's existing Subgraph case unmodified on HyperIndex —

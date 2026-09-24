@@ -150,19 +150,16 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
-  it("refuses a topic filter", t => {
-    translate(
+  it("accepts a topic filter on an address", t => {
+    let message = translate(
       ~schema=baseSchema,
       ~manifest=manifestWith(`      eventHandlers:
         - event: Transfer(indexed address,indexed address,uint256)
           handler: handleTransfer
           topic1:
             - "0x0000000000000000000000000000000000000000000000000000000000000001"`),
-    )->expectFindingHelper(
-      t,
-      ~headline="Envio Subgraph doesn't support topic filters on dynamically-typed indexed parameters yet.",
-      ~location=`data source "Token" → eventHandlers → "handleTransfer" → topic filters`,
     )
+    t.expect(message).toEqual(accepted)
   })
 
   it("carries GraphQL interfaces through", t => {
@@ -181,6 +178,79 @@ type Token implements Named @entity {
 `,
     )
     t.expect(message).toEqual(accepted)
+  })
+
+  it("accepts a list of booleans", t => {
+    let message = translate(
+      ~manifest=manifestWith(plainEventHandler),
+      ~schema=`
+type Token @entity {
+  id: ID!
+  flags: [Boolean!]!
+}
+`,
+    )
+    t.expect(message).toEqual(accepted)
+  })
+
+  // envio's store can't hold these; its own schema error would tell the user to
+  // change a schema graph-node accepts, and not say where.
+  it("refuses a list whose elements can be null", t => {
+    translate(
+      ~manifest=manifestWith(plainEventHandler),
+      ~schema=`
+type Token @entity {
+  id: ID!
+  grid: [[Int!]]!
+}
+`,
+    )->expectFindingHelper(
+      t,
+      ~headline="Envio Subgraph doesn't support lists whose elements can be null, like [String] yet.",
+      ~location="schema.graphql → Token.grid",
+    )
+  })
+
+  it("refuses a list of timestamps", t => {
+    translate(
+      ~manifest=manifestWith(plainEventHandler),
+      ~schema=`
+type Token @entity {
+  id: ID!
+  at: [Timestamp!]!
+}
+`,
+    )->expectFindingHelper(
+      t,
+      ~headline="Envio Subgraph doesn't support lists of Timestamp yet.",
+      ~location="schema.graphql → Token.at",
+    )
+  })
+
+  // What the translation doesn't anticipate still reaches envio's own checks;
+  // the message says so, and where to take it.
+  it("frames an error from envio's own checks", t => {
+    let message = translate(
+      ~manifest=manifestWith(plainEventHandler),
+      ~schema=`
+type pool @entity {
+  id: ID!
+}
+
+type Pool @entity {
+  id: ID!
+}
+`,
+    )
+    t.expect(
+      (
+        message->String.startsWith(
+          "Envio Subgraph translated this subgraph, but envio can't index the result:",
+        ),
+        message->String.includes("pnpm add -D envio@subgraph"),
+      ),
+      ~message,
+    ).toEqual((true, true))
   })
 
   it("refuses timeseries entities", t => {

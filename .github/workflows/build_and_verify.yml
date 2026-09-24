@@ -190,6 +190,22 @@ jobs:
       - name: Hypersync Health Test
         run: cargo test --features hypersync_health --test hypersync_health
 
+  # The Graph's networks registry vs the snapshot subgraph mode resolves
+  # `network:` through - non-blocking, external dependency
+  graph-networks-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    needs: authorize
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Compare with The Graph's networks registry
+        run: node packages/cli/scripts/sync-graph-networks.mjs --check
+
   # Template tests - verify envio templates can be initialized and built
   template-tests:
     runs-on: ubuntu-latest
@@ -260,6 +276,15 @@ jobs:
       - name: envio-tests (${{ matrix.storage }})
         working-directory: packages/envio-tests
         run: pnpm test
+        env:
+          ENVIO_TEST_STORAGE: ${{ matrix.storage }}
+
+      # The subgraph suite again with preload off, so every mapping replays as
+      # often as it can and must still produce the same store. The one test
+      # left out asserts preload's own batching, which this mode switches off.
+      - name: subgraph replay stress (${{ matrix.storage }})
+        working-directory: packages/envio-tests
+        run: pnpm test:replay-stress
         env:
           ENVIO_TEST_STORAGE: ${{ matrix.storage }}
 

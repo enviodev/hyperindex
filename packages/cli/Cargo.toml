@@ -17,6 +17,10 @@ alloy-json-abi = "1.5"
 alloy-dyn-abi = "1.5"
 bytes = "1.10"
 graphql-parser = "0.4.1"
+# Subgraph mappings are AssemblyScript loaded as JavaScript. Pinned: 0.129+
+# uses `if let` match guards, which rust-toolchain.toml's 1.94 doesn't have,
+# whatever its declared MSRV says.
+oxc = { version = "=0.128.0", features = ["ast_visit", "semantic", "transformer", "codegen"] }
 include_dir = "0.7.4"
 inquire = "0.6.1"
 pathdiff = "0.2.3"

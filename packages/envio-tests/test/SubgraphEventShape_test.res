@@ -71,6 +71,11 @@ export function handlePing(event: any): void {
 
   probe("receiptStatus", event.receipt.status.toString());
   probe("receiptGasUsed", event.receipt.gasUsed.toString());
+  probe("receiptBlockHash", event.receipt.blockHash.toHexString());
+  probe("receiptBlockNumber", event.receipt.blockNumber.toString());
+
+  let logType: string | null = event.logType;
+  probe("logType", logType === null ? "null" : logType);
 }
 `,
     ),
@@ -126,6 +131,9 @@ describe("the event graph-ts sees", () => {
       txFrom: await value("txFrom"),
       receiptStatus: await value("receiptStatus"),
       receiptGasUsed: await value("receiptGasUsed"),
+      receiptBlockHash: await value("receiptBlockHash"),
+      receiptBlockNumber: await value("receiptBlockNumber"),
+      logType: await value("logType"),
     }).toEqual({
       blockHash: "0xaa",
       blockAuthor: "0x2222222222222222222222222222222222222222",
@@ -138,6 +146,9 @@ describe("the event graph-ts sees", () => {
       txFrom: "0x3333333333333333333333333333333333333333",
       receiptStatus: "1",
       receiptGasUsed: "5",
+      receiptBlockHash: "0xaa",
+      receiptBlockNumber: "42",
+      logType: "null",
     });
   });
 });

@@ -8,7 +8,7 @@
  * is the fallback for whatever HyperSync couldn't answer.
  */
 
-import { createPublicClient, fallback, http } from "viem";
+import { rpcClient } from "./rpc.ts";
 
 const API_TOKEN_ENV_VAR = "ENVIO_API_TOKEN";
 
@@ -24,11 +24,9 @@ let pending = new Map<number, Map<number, Waiter[]>>();
 let flushScheduled = false;
 
 let rpcUrls: string[] = [];
-let client: ReturnType<typeof createPublicClient> | null = null;
 
 export function configureBlockTimestamps(urls: string[]) {
   rpcUrls = urls;
-  client = null;
   pending = new Map();
   flushScheduled = false;
 }
@@ -168,9 +166,6 @@ async function fromRpc(blockNumber: number): Promise<bigint> {
         `environment.`,
     );
   }
-  client ??= createPublicClient({
-    transport: fallback(rpcUrls.map((url) => http(url, { retryCount: 0 }))),
-  });
-  const block = await client.getBlock({ blockNumber: BigInt(blockNumber) });
+  const block = await rpcClient(rpcUrls).getBlock({ blockNumber: BigInt(blockNumber) });
   return block.timestamp;
 }

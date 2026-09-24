@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
-// Its own port: envio-tests runs a second stub RPC, and the two suites can be
-// in flight together.
-process.env.ENVIO_SUBGRAPH_RPC = "http://127.0.0.1:8602";
+// Its own port: envio-tests runs stub RPCs on 8601 and 8602, and the suites
+// can be in flight together.
+process.env.ENVIO_SUBGRAPH_RPC = "http://127.0.0.1:8603";
 
 const { createTestIndexer, TestHelpers } = await import("envio");
 
@@ -33,7 +33,7 @@ beforeAll(async () => {
       );
     });
   });
-  await new Promise<void>((resolve) => server.listen(8602, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(8603, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

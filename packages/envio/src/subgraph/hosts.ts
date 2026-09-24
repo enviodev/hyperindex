@@ -5,7 +5,7 @@
  * the sync bridge suspends the mapping until the answer lands.
  */
 
-import { createPublicClient, fallback, http } from "viem";
+import { rpcClient } from "./rpc.ts";
 import * as Sury from "rescript-schema";
 import { createEffect } from "../Envio.res.mjs";
 import { configureBlockTimestamps, requestBlockTimestamp } from "./blocks.ts";
@@ -32,15 +32,11 @@ export type HostEffects = ReturnType<typeof makeHostEffects>;
 export function makeHostEffects(rpcUrls: string[]) {
   configureBlockTimestamps(rpcUrls);
 
-  let client: ReturnType<typeof createPublicClient> | null = null;
   const clientOrThrow = (callSite: string) => {
     if (rpcUrls.length === 0) {
       throw new Error(missingRpcMessage(callSite));
     }
-    client ??= createPublicClient({
-      transport: fallback(rpcUrls.map((url) => http(url, { retryCount: 0 }))),
-    });
-    return client;
+    return rpcClient(rpcUrls);
   };
 
   const ipfsCat = createEffect(

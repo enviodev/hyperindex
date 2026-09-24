@@ -6,59 +6,12 @@
  * of its cache key, which is what makes a cached call safe to reuse.
  */
 
-import {
-  createPublicClient,
-  decodeFunctionResult,
-  encodeFunctionData,
-  fallback,
-  http,
-  parseAbiParameters,
-  type Abi,
-} from "viem";
+import { decodeFunctionResult, encodeFunctionData, parseAbiParameters, type Abi } from "viem";
 import * as Sury from "rescript-schema";
 import { createEffect } from "../Envio.res.mjs";
 import { missingRpcMessage } from "./errors.ts";
-
-export type ParsedSignature = {
-  name: string;
-  inputs: string;
-  outputs: string;
-};
-
-/**
- * graph codegen emits `"balanceOf(address):(uint256)"`. Types only, no names —
- * which is all `parseAbiParameters` needs.
- */
-export function parseSignature(signature: string): ParsedSignature {
-  const open = signature.indexOf("(");
-  if (open === -1) {
-    throw new Error(`Unreadable contract call signature "${signature}"`);
-  }
-  const name = signature.slice(0, open);
-
-  let depth = 0;
-  let close = -1;
-  for (let index = open; index < signature.length; index++) {
-    const char = signature[index];
-    if (char === "(") depth++;
-    if (char === ")") {
-      depth--;
-      if (depth === 0) {
-        close = index;
-        break;
-      }
-    }
-  }
-  if (close === -1) {
-    throw new Error(`Unreadable contract call signature "${signature}"`);
-  }
-
-  const inputs = signature.slice(open + 1, close);
-  const rest = signature.slice(close + 1).replace(/^:/, "");
-  const outputs = rest.startsWith("(") ? rest.slice(1, -1) : rest;
-
-  return { name, inputs, outputs };
-}
+import { rpcClient } from "./rpc.ts";
+import { parseSignature } from "./abi-types.ts";
 
 export function abiItemFor(signature: string): Abi {
   const { name, inputs, outputs } = parseSignature(signature);
@@ -106,27 +59,6 @@ export type CallOutput = {
   values: unknown[] | null;
 };
 
-let clients: Map<string, ReturnType<typeof createPublicClient>> = new Map();
-
-function clientFor(rpcUrls: string[]) {
-  const key = rpcUrls.join("|");
-  let client = clients.get(key);
-  if (!client) {
-    client = createPublicClient({
-      // Retrying is envio's job: a failed call becomes a handler error and
-      // the batch is retried with the effect's dedup still in place.
-      transport: fallback(rpcUrls.map((url) => http(url, { retryCount: 0 }))),
-    });
-    clients.set(key, client);
-  }
-  return client;
-}
-
-/** Reset between test indexers, which each bring their own endpoints. */
-export function resetClients() {
-  clients = new Map();
-}
-
 /**
  * BigInt and Bytes cross the effect boundary through Sury, which needs a
  * serialisable shape — so the call is described in plain JSON and the graph-ts
@@ -159,7 +91,7 @@ export function makeCallEffect(rpcUrls: string[]) {
 
       let result;
       try {
-        result = await clientFor(rpcUrls).call({
+        result = await rpcClient(rpcUrls).call({
           to: input.address as `0x${string}`,
           data,
           blockNumber: BigInt(input.blockNumber),

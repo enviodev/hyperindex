@@ -9,7 +9,8 @@
     "lint": "node scripts/lint-inputs.ts",
     "test": "node scripts/lint-inputs.ts && rescript && vitest run",
     "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs",
-    "check-subgraph-codegen": "bash test/fixtures/subgraph-codegen/check.sh"
+    "check-subgraph-codegen": "bash test/fixtures/subgraph-codegen/check.sh",
+    "test:replay-stress": "ENVIO_SUBGRAPH_SKIP_PRELOAD=1 vitest run test/Subgraph -t '^(?!.*batched HyperSync query)'"
   },
   "devDependencies": {
     "@rescript/runtime": "12.2.0",

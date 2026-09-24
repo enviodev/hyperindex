@@ -1,4 +1,4 @@
-specVersion: 0.0.5
+specVersion: 0.0.8
 description: A subgraph project run unchanged on HyperIndex.
 schema:
   file: ./schema.graphql

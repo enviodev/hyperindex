@@ -5,6 +5,7 @@
 //! the subgraph runtime that ships inside the `envio` package.
 
 pub mod abi;
+pub mod assemblyscript;
 pub mod errors;
 pub mod manifest;
 pub mod schema;
@@ -23,6 +24,7 @@ use crate::config_parsing::human_config::{
     BaseConfig, BytesType, ChainContract, GlobalContract, StartBlock,
 };
 use crate::utils::normalized_list::NormalizedList;
+use crate::utils::text::Capitalize;
 
 use errors::Report;
 use manifest::{DataSource, Manifest};
@@ -82,6 +84,10 @@ pub struct SubgraphRuntimeConfig {
     pub schema: SchemaTranslation,
     /// Project-relative directory the mapping files resolve against.
     pub root: String,
+    /// The name envio generated each accessor under, keyed by the name the
+    /// subgraph gives it — the only one its mappings know.
+    pub entity_accessors: BTreeMap<String, String>,
+    pub contract_accessors: BTreeMap<String, String>,
     /// `ENVIO_SUBGRAPH_RPC` flattened to plain URLs, in order. The shim's call
     /// effects use them as a viem fallback transport; empty means the mapping's
     /// first contract call raises the missing-RPC error.
@@ -221,7 +227,7 @@ fn contract_config(
         };
         *ordinal += 1;
         handler.name = unique.clone();
-        handler.params = abi::param_types(&handler.event, abi_json.as_deref());
+        handler.inputs = abi::event_inputs(&handler.event, abi_json.as_deref());
         // The generated config needs the same unique name whenever one was
         // minted, overloaded or not — two handlers can name the same event, and
         // the runtime registers under the name the config carries.
@@ -235,18 +241,29 @@ fn contract_config(
         .filter(|handler| !handler.name.is_empty())
         .zip(resolved)
         .map(|(handler, (event, name))| {
-            if !handler.topics.is_empty() {
-                // Dynamic-typed indexed params appear in topics as keccak
-                // hashes, which can't be decoded back to the values envio
-                // filters on. Reporting the whole filter is the honest
-                // conservative move until the ABI says otherwise.
-                report.unsupported(
-                    "topic filters on dynamically-typed indexed parameters",
-                    format!(
-                        "data source \"{}\" → eventHandlers → \"{}\" → topic filters",
-                        source.name, handler.handler
-                    ),
+            // The runtime turns each filter into a `where` on the indexed
+            // parameter it narrows — except one hashed into its topic, whose
+            // value envio can't match against.
+            let indexed: Vec<_> = handler.inputs.iter().filter(|input| input.indexed).collect();
+            for position in handler.topics.keys() {
+                let location = format!(
+                    "data source \"{}\" → eventHandlers → \"{}\" → topic{position}",
+                    source.name, handler.handler
                 );
+                match indexed.get(position - 1) {
+                    None => report.unknown(
+                        format!("which indexed parameter of \"{}\" topic{position} filters", handler.event),
+                        location,
+                    ),
+                    Some(input) if input.is_hashed_in_topic() => report.unsupported(
+                        format!(
+                            "topic filters on a {} indexed parameter, which the log carries only as a hash",
+                            input.abi_type
+                        ),
+                        location,
+                    ),
+                    Some(_) => {}
+                }
             }
             EventConfig {
                 event,
@@ -469,11 +486,20 @@ pub fn translate(
         bytes_type: Some(BytesType::Uint8Array),
     };
 
+    let accessor = |name: &String| (name.clone(), name.capitalize());
+    let entity_accessors = schema.entity_fields.keys().map(accessor).collect();
+    let contract_accessors = manifest
+        .all_sources()
+        .map(|source| accessor(&source.name))
+        .collect();
+
     Ok(Translation {
         schema_text: schema.text.clone(),
         runtime: SubgraphRuntimeConfig {
             manifest,
             schema,
+            entity_accessors,
+            contract_accessors,
             root: root.to_string(),
             rpc_urls,
         },
@@ -547,6 +573,45 @@ type Gravatar @entity {
   displayName: String!
 }
 "#;
+
+    // A static filter becomes the handler's `where`; one on a parameter the log
+    // carries only as a hash is refused, naming that topic and why.
+    #[test]
+    fn refuses_a_topic_filter_only_on_a_hashed_parameter() {
+        let manifest = MANIFEST.replace(
+            "        - event: NewGravatar(uint256,address,string,string)\n          handler: handleNewGravatar",
+            "        - event: Named(indexed string,indexed address)\n          handler: handleNamed\n          topic1: [\"0x01\"]\n          topic2: [\"0x02\"]",
+        );
+        let files = HashMap::from([(
+            "./abis/Gravity.json".to_string(),
+            r#"[{"type":"event","name":"Named","anonymous":false,"inputs":[
+              {"name":"label","type":"string","indexed":true},
+              {"name":"owner","type":"address","indexed":true}]}]"#
+                .to_string(),
+        )]);
+        let error = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &files,
+            &ambiguous(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            (
+                error.contains(
+                    "topic filters on a string indexed parameter, which the log carries only as a hash"
+                ),
+                error.contains("\"handleNamed\" → topic1"),
+                error.contains("topic2"),
+            ),
+            (true, true, false),
+            "{error}"
+        );
+    }
 
     #[test]
     fn maps_the_ethereum_network_alias_to_chain_1() {

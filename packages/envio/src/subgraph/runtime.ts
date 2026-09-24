@@ -7,19 +7,12 @@
  * replay loop reruns the mapping once what it asked for has landed.
  */
 
-import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { indexer } from "../Api.res.mjs";
+import { subgraphFileToJavascript } from "../Core.res.mjs";
 import { currentScope, runInScope, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
   Address,
@@ -32,35 +25,42 @@ import {
   installHosts,
   installRegisterHook,
   ethereum,
+  type EventInput,
+  type EventKind,
   json as jsonNamespace,
   makeBlockHandlerBlock,
-  valueToJs,
+  ethereumValueToJs,
 } from "./graph-ts.ts";
-import { encodeArg, decodeArg, makeCallEffect, resetClients } from "./calls.ts";
-import {
-  DIVIDE_HELPER,
-  RETAG_HELPER,
-  integerDivision,
-  loadTypeScript,
-  rewriteChangetype,
-  rewriteDivision,
-} from "./division.ts";
+import { encodeArg, decodeArg, makeCallEffect } from "./calls.ts";
+import { resetRpcClients } from "./rpc.ts";
+import { DIVIDE_HELPER, EVENT_CLASSES_EXPORT, RETAG_HELPER, integerDivision } from "./assemblyscript.ts";
 import { makeHostEffects } from "./hosts.ts";
-import { unsupported } from "./errors.ts";
+import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
+import { unknown, unsupported } from "./errors.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
 
 const jsonFromString = (line: string) => (jsonNamespace as any).fromString(line);
+
+/**
+ * Skips the preload pass, so every read a mapping makes misses and the handler
+ * replays as often as it possibly can. The replay-stress suite runs the whole
+ * subgraph suite this way: a mapping must produce the same store whether its
+ * reads were preloaded or not.
+ */
+const skipPreload = process.env.ENVIO_SUBGRAPH_SKIP_PRELOAD === "1";
 
 type EventHandler = {
   event: string;
   name: string;
   handler: string;
   receipt: boolean;
-  /** Each parameter's ABI type, keyed by the name envio decodes it under. */
-  params?: Record<string, string>;
+  inputs?: EventInput[];
+  /** `topic1`–`topic3`, keyed by position among the indexed parameters. */
+  topics?: Record<string, string[]>;
 };
-type BlockHandler = { handler: string; filter: { Every: number } | "Once" | any };
+/** As the translator serialises its `BlockFilter`. */
+type BlockHandler = { handler: string; filter: { every: number } | "once" };
 type DataSource = {
   kind: string;
   name: string;
@@ -80,6 +80,8 @@ type SubgraphConfig = {
   dataSources: DataSource[];
   templates: DataSource[];
   declaresEthCalls: boolean;
+  /** The config's contract name for each data source and template. */
+  contractAccessors: Record<string, string>;
   root: string;
   rpcUrls: string[];
   isDev: boolean;
@@ -89,16 +91,18 @@ let hooksInstalled = false;
 let projectRoot: string | null = null;
 
 /**
- * Mappings resolve `@graphprotocol/graph-ts` to the shim; everything else,
- * including the project's own `generated/`, resolves normally and runs as-is.
+ * Mappings resolve `@graphprotocol/graph-ts` to the shim. The project's own
+ * files — its mappings and `generated/` — are AssemblyScript, and load through
+ * the addon, which turns each into the JavaScript that computes what `asc`
+ * would (`subgraph/assemblyscript.rs`).
  */
 function installResolveHook(root: string) {
   projectRoot = pathToFileURL(path.resolve(root) + path.sep).href;
-  // Loaded here rather than from inside the hook: requiring a module while a
-  // load hook is on the stack re-enters the loader.
-  loadTypeScript(path.resolve(root));
   if (hooksInstalled) return;
   hooksInstalled = true;
+  // The addon's output carries an inline source map back to the mapping, so a
+  // stack trace names the line the developer wrote.
+  process.setSourceMapsEnabled(true);
 
   registerHooks({
     resolve(specifier: string, context: any, nextResolve: any) {
@@ -118,15 +122,24 @@ function installResolveHook(root: string) {
       }
       return resolved;
     },
+    // Taken over before any other loader sees the file: a TypeScript
+    // transpiler would refuse AssemblyScript it has no reason to accept, and
+    // would strip `changetype`'s type argument before it could be read.
     load(url: string, context: any, nextLoad: any) {
-      const loaded = nextLoad(url, context);
-      if (!projectRoot || !url.startsWith(projectRoot) || url.includes("/node_modules/")) {
-        return loaded;
+      if (
+        !projectRoot ||
+        !url.startsWith(projectRoot) ||
+        url.includes("/node_modules/") ||
+        !url.endsWith(".ts")
+      ) {
+        return nextLoad(url, context);
       }
-      const source = loaded?.source;
-      if (typeof source !== "string" && !(source instanceof Uint8Array)) return loaded;
-      const text = typeof source === "string" ? source : Buffer.from(source).toString("utf8");
-      return { ...loaded, source: rewriteChangetype(rewriteDivision(text)) };
+      const file = fileURLToPath(url);
+      return {
+        format: "module",
+        source: subgraphFileToJavascript(readFileSync(file, "utf8"), file),
+        shortCircuit: true,
+      };
     },
   });
 
@@ -144,273 +157,37 @@ function installResolveHook(root: string) {
   }
 }
 
-function blockInterval(handler: BlockHandler): { every?: number; once?: boolean } {
-  const filter = handler.filter as any;
-  if (filter === "Once" || filter?.Once !== undefined) return { once: true };
-  if (typeof filter?.Every === "number") return { every: filter.Every };
-  return { every: 1 };
-}
-
-const ADDRESS_HEX = /^0x[0-9a-fA-F]{40}$/;
-const ANY_HEX = /^0x[0-9a-fA-F]*$/;
-
-type Converter = (value: unknown) => unknown;
-
 /**
- * An ABI type as graph codegen types it. Anything that fits in 32 bits is an
- * `i32` in a mapping, and everything wider is a `BigInt` — which the value
- * alone can't tell you, since envio decodes every integer width as a bigint.
+ * `topicN` narrows the Nth indexed parameter to the logs whose topic is one of
+ * the listed words; as a `where`, it narrows to that parameter's decoded
+ * values. The translator has refused a parameter hashed into its topic.
  */
-const SMALL_INT = /^u?int(8|16|24|32)?$/;
-
-function converterForAbiType(abiType: string): Converter {
-  const type = abiType.trim();
-  if (type.endsWith("]")) {
-    const each = converterForAbiType(type.slice(0, type.lastIndexOf("[")));
-    return (v) => (Array.isArray(v) ? v.map(each) : v);
+function topicFilter(handler: EventHandler): { params: Record<string, unknown[]> } | undefined {
+  const topics = Object.entries(handler.topics ?? {});
+  if (topics.length === 0) return undefined;
+  const indexed = (handler.inputs ?? []).filter((input) => input.indexed);
+  const params: Record<string, unknown[]> = {};
+  for (const [position, words] of topics) {
+    const input = indexed[Number(position) - 1];
+    params[input.key] = words.map((word) => fromTopic(input.type, word));
   }
-  if (type === "address") return (v) => Address.fromString(v as string);
-  if (type === "bool") return (v) => v;
-  if (type === "string") return (v) => v;
-  if (type.startsWith("bytes")) return (v) => Bytes.fromHexString(v as string);
-  // `int`/`uint` with no width are 256-bit.
-  if (SMALL_INT.test(type) && type !== "int" && type !== "uint") {
-    return (v) => (typeof v === "bigint" ? Number(v) : v);
-  }
-  if (/^u?int/.test(type)) return (v) => new (GraphBigInt as any)(v as bigint);
-  return (v) => v;
+  return { params };
 }
 
-/** Falls back to the value's own shape for a type the signature didn't carry. */
-function converterForValue(value: unknown): Converter {
-  if (typeof value === "bigint") return (v) => new (GraphBigInt as any)(v as bigint);
-  if (typeof value === "string" && ADDRESS_HEX.test(value)) {
-    return (v) => Address.fromString(v as string);
-  }
-  if (typeof value === "string" && ANY_HEX.test(value)) {
-    return (v) => Bytes.fromHexString(v as string);
-  }
-  if (Array.isArray(value)) {
-    const each = value.length > 0 ? converterForValue(value[0]) : (v: unknown) => v;
-    return (v) => (v as unknown[]).map(each);
-  }
-  return (v) => v;
-}
-
-/**
- * An event's parameter types don't vary between occurrences, so the shape is
- * resolved once per event kind rather than per event.
- */
-function convertersFor(
-  cache: Map<string, Converter>,
-  source: Record<string, unknown>,
-  types: Map<string, string>,
-) {
-  for (const [name, value] of Object.entries(source)) {
-    if (cache.has(name)) continue;
-    const abiType = types.get(name);
-    if (abiType) {
-      cache.set(name, converterForAbiType(abiType));
-      continue;
-    }
-    // A null carries no shape, and `to` is null on a contract creation. Caching
-    // what it implies would pin the identity converter for every later event.
-    if (value === null || value === undefined) continue;
-    cache.set(name, converterForValue(value));
-  }
-  return cache;
-}
-
-function convertAll(
-  cache: Map<string, Converter>,
-  source: Record<string, unknown>,
-  types: Map<string, string>,
-) {
-  const converters = convertersFor(cache, source, types);
-  const out: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(source)) {
-    out[name] = (converters.get(name) ?? ((v: unknown) => v))(value);
-  }
-  return out;
-}
-
-/**
- * graph-ts' `ethereum.Block`, `Transaction` and `TransactionReceipt`, paired
- * with the name envio decodes each field under and the graph-ts type it has to
- * arrive as. The names diverge in both directions — graph-ts' `author` is
- * envio's `miner`, its `gasLimit` on a transaction is envio's `gas` — so a
- * mapping reading the graph-ts name gets `undefined` unless it's translated.
- */
-type ShapeField = [graphName: string, rawName: string, kind: "bytes" | "address" | "bigint"];
-
-const BLOCK_SHAPE: ShapeField[] = [
-  ["hash", "hash", "bytes"],
-  ["parentHash", "parentHash", "bytes"],
-  ["unclesHash", "sha3Uncles", "bytes"],
-  ["author", "miner", "address"],
-  ["stateRoot", "stateRoot", "bytes"],
-  ["transactionsRoot", "transactionsRoot", "bytes"],
-  ["receiptsRoot", "receiptsRoot", "bytes"],
-  ["number", "number", "bigint"],
-  ["gasUsed", "gasUsed", "bigint"],
-  ["gasLimit", "gasLimit", "bigint"],
-  ["timestamp", "timestamp", "bigint"],
-  ["difficulty", "difficulty", "bigint"],
-  ["totalDifficulty", "totalDifficulty", "bigint"],
-  ["size", "size", "bigint"],
-  ["baseFeePerGas", "baseFeePerGas", "bigint"],
-];
-
-const TRANSACTION_SHAPE: ShapeField[] = [
-  ["hash", "hash", "bytes"],
-  ["index", "transactionIndex", "bigint"],
-  ["from", "from", "address"],
-  ["to", "to", "address"],
-  ["value", "value", "bigint"],
-  ["gasLimit", "gas", "bigint"],
-  ["gasPrice", "gasPrice", "bigint"],
-  ["input", "input", "bytes"],
-  ["nonce", "nonce", "bigint"],
-];
-
-/** envio carries the receipt scalars on the transaction, not beside it. */
-const RECEIPT_SHAPE: ShapeField[] = [
-  ["transactionHash", "hash", "bytes"],
-  ["transactionIndex", "transactionIndex", "bigint"],
-  ["cumulativeGasUsed", "cumulativeGasUsed", "bigint"],
-  ["gasUsed", "gasUsed", "bigint"],
-  ["contractAddress", "contractAddress", "address"],
-  ["status", "status", "bigint"],
-  ["root", "root", "bytes"],
-  ["logsBloom", "logsBloom", "bytes"],
-];
-
-function graphValue(kind: ShapeField[2], value: unknown): unknown {
-  if (value === null || value === undefined) return null;
-  if (kind === "bytes") return Bytes.fromHexString(value as string);
-  if (kind === "address") return Address.fromString(value as string);
-  return new (GraphBigInt as any)(typeof value === "bigint" ? value : BigInt(value as number));
-}
-
-function shaped(fields: ShapeField[], raw: Record<string, unknown> | undefined) {
-  const out: Record<string, unknown> = {};
-  for (const [graphName, rawName, kind] of fields) {
-    out[graphName] = graphValue(kind, raw?.[rawName]);
-  }
-  return out;
-}
-
-/**
- * envio capitalizes a contract name for the config it stores, so a data source
- * whose manifest name starts lowercase — `crvUSD` — is `CrvUSD` by the time the
- * runtime looks it up. Register under the name the config actually holds.
- */
-function contractName(name: string): string {
-  return name.charAt(0).toUpperCase() + name.slice(1);
-}
-
-/**
- * The graph-ts `ethereum.Event` a mapping sees, built per event kind so the
- * refusals and conversions live on a prototype rather than being installed on
- * every event.
- *
- * Everything is deferred: a mapping that reads two parameters shouldn't pay to
- * convert the block, the transaction and the positional parameter list — and
- * envio runs each handler twice over the same payload, so anything eager is
- * paid twice.
- */
-function makeEventClass(
-  dataSourceName: string,
-  eventName: string,
-  declared: Map<string, string>,
-  hasReceipt: boolean,
-) {
-  const paramConverters = new Map<string, Converter>();
-
-  class SubgraphEvent {
-    _raw: any;
-    _address: any = undefined;
-    _logIndex: any = undefined;
-    _block: any = undefined;
-    _transaction: any = undefined;
-    _params: any = undefined;
-    _parameters: any = undefined;
-    _receipt: any = undefined;
-
-    constructor(raw: any) {
-      this._raw = raw;
-    }
-
-    get address() {
-      return (this._address ??= Address.fromString(this._raw.srcAddress));
-    }
-    get logIndex() {
-      return (this._logIndex ??= GraphBigInt.fromI32(this._raw.logIndex));
-    }
-    get block() {
-      return (this._block ??= shaped(BLOCK_SHAPE, this._raw.block));
-    }
-    get transaction() {
-      return (this._transaction ??= shaped(TRANSACTION_SHAPE, this._raw.transaction));
-    }
-    get receipt() {
-      if (!hasReceipt) return null;
-      return (this._receipt ??= Object.defineProperty(
-        shaped(RECEIPT_SHAPE, this._raw.transaction),
-        "logs",
-        {
-          get: () => {
-            throw unsupported(
-              "event.receipt.logs",
-              `data source "${dataSourceName}" -> "${eventName}"`,
-            );
-          },
-        },
-      ));
-    }
-    /** Read by name, the way a hand-written mapping does. */
-    get params() {
-      return (this._params ??= convertAll(paramConverters, this._raw.params ?? {}, declared));
-    }
-    /**
-     * Read positionally, the way `graph codegen`'s param classes do. Built off
-     * the converted params so an array or a bytes value carries the type the
-     * ABI declares rather than one guessed from its JS shape.
-     */
-    get parameters() {
-      return (this._parameters ??= Object.entries(this.params).map(([name, value]) => ({
-        name,
-        value: toEthereumValue(value),
-      })));
-    }
-    get transactionLogIndex(): never {
-      throw unsupported(
-        "event.transactionLogIndex",
-        `data source "${dataSourceName}" → "${eventName}"`,
-      );
-    }
-  }
-
-  return SubgraphEvent;
-}
-
-function toEthereumValue(value: unknown): any {
-  const V = (ethereum as any).Value;
-  if (value === null || value === undefined) return V.fromNull();
-  if (Array.isArray(value)) return V.fromArray(value.map(toEthereumValue));
-  if (value instanceof Address || value instanceof Bytes) return V.fromBytes(value);
-  if (value instanceof GraphBigInt) return V.fromBigInt(value);
-  if (typeof value === "bigint") return V.fromBigInt(new (GraphBigInt as any)(value));
-  if (typeof value === "boolean") return V.fromBoolean(value);
-  if (typeof value === "number") return V.fromI32(value);
-  if (typeof value === "string" && ANY_HEX.test(value)) {
-    return V.fromBytes(Bytes.fromHexString(value));
-  }
-  return V.fromString(String(value));
+function fromTopic(type: string, topic: string): unknown {
+  const word = topic.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  if (type === "address") return `0x${word.slice(24)}`;
+  if (type === "bool") return BigInt(`0x${word}`) !== 0n;
+  // A fixed-size byte string is left-aligned in its word.
+  if (type.startsWith("bytes")) return `0x${word.slice(0, Number(type.slice(5)) * 2)}`;
+  const bits = Number(type.replace(/^u?int/, "") || 256);
+  const value = BigInt(`0x${word}`);
+  return type.startsWith("uint") ? BigInt.asUintN(bits, value) : BigInt.asIntN(bits, value);
 }
 
 async function loadMapping(
   root: string,
+  generated: string,
   mappingFile: string,
   scope: Scope,
 ): Promise<Record<string, any>> {
@@ -425,93 +202,13 @@ async function loadMapping(
     const message = exn instanceof Error ? exn.message : String(exn);
     // Only reachable when codegen couldn't run up front, so this reports why
     // rather than retrying: Node caches a failed resolution for the process.
-    if (/Cannot find (module|package)/.test(message) && message.includes("generated")) {
-      ensureGeneratedCode(root, { required: true });
+    if (message.includes(generated) && !existsSync(generated)) {
+      throw missingGeneratedCode(root, generated);
     }
     // An unknown named import fails at Node's ESM link step, before any Proxy
     // in the shim can see it — rewrap it with the mapping that caused it.
     throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}`);
   }
-}
-
-/**
- * `generated/` is usually gitignored, so it's built with the project's own
- * graph-cli — which makes the output identical to the user's normal workflow
- * by definition.
- */
-function ensureGeneratedCode(root: string, { required }: { required: boolean }) {
-  if (existsSync(path.join(root, "generated"))) return;
-
-  const graphCli = path.join(root, "node_modules", ".bin", "graph");
-  if (!existsSync(graphCli)) {
-    if (!required) return;
-    throw new Error(
-      'Envio Subgraph needs the project\'s generated code, but "generated/" is\n' +
-        "missing and @graphprotocol/graph-cli isn't installed.\n" +
-        "Install dependencies and try again:\n" +
-        "  pnpm install\n" +
-        "Or generate manually:\n" +
-        "  pnpm exec graph codegen",
-    );
-  }
-
-  try {
-    execFileSync(graphCli, ["codegen"], { cwd: root, stdio: "inherit" });
-  } catch {
-    throw new Error(
-      'Envio Subgraph ran `graph codegen` to build "generated/", but it failed —\n' +
-        "the error above comes from The Graph's own codegen, so fix it there and\n" +
-        "rerun. If `graph codegen` succeeds on its own but fails through envio,\n" +
-        "please open an issue: https://github.com/enviodev/hyperindex/issues",
-    );
-  }
-}
-
-/**
- * `graph build` compiles the mappings with `asc` against the real
- * `@graphprotocol/graph-ts`. That is the type check a subgraph project already
- * has, and running it in `envio dev` keeps the feedback loop the developer
- * knows — a type error reads the same here as it does on Graph Node.
- *
- * Only in dev, and only when something it reads has changed: it is an
- * AssemblyScript compile, not something to pay on every restart.
- */
-function typeCheckMappings(root: string) {
-  const graphCli = path.join(root, "node_modules", ".bin", "graph");
-  if (!existsSync(graphCli)) return;
-
-  const inputs = ["subgraph.yaml", "schema.graphql", "src", "abis"]
-    .map((entry) => path.join(root, entry))
-    .filter((entry) => existsSync(entry))
-    .map((entry) => fingerprint(entry))
-    .join("|");
-
-  const stamp = path.join(root, ".envio", "graph-build.stamp");
-  if (existsSync(stamp) && readFileSync(stamp, "utf8") === inputs) return;
-
-  try {
-    execFileSync(graphCli, ["build"], { cwd: root, stdio: "inherit" });
-  } catch {
-    throw new Error(
-      "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +
-        "failed — the error above comes from The Graph's own AssemblyScript\n" +
-        "compiler, so fix it there and rerun.",
-    );
-  }
-
-  mkdirSync(path.dirname(stamp), { recursive: true });
-  writeFileSync(stamp, inputs);
-}
-
-function fingerprint(entry: string): string {
-  const stats = statSync(entry);
-  if (!stats.isDirectory()) {
-    return `${entry}:${stats.mtimeMs}:${stats.size}`;
-  }
-  return readdirSync(entry)
-    .sort()
-    .map((child) => fingerprint(path.join(entry, child)))
-    .join(",");
 }
 
 type Effect = {
@@ -639,7 +336,7 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
 
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook(config.root);
-  resetClients();
+  resetRpcClients();
 
   // One effect for every contract call: envio already batches and dedupes
   // effect calls in preload, and the block number in the input is what keeps
@@ -696,7 +393,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // Reads the scope rather than closing over one context: register passes for
   // the items in a batch run concurrently, and this hook is process-wide.
   installRegisterHook((templateName, address) => {
-    currentScope().context.chain[templateName].add(address);
+    const accessor = config.contractAccessors[templateName];
+    if (accessor === undefined) throw unknown(`the template ${templateName}`, "a mapping handler");
+    currentScope().context.chain[accessor].add(address);
   });
 
   installCallHook((call) => {
@@ -706,7 +405,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       chainId: currentScope().dataSource.chainId,
       address: call.contractAddress.toHexString(),
       signature: call.functionSignature,
-      args: call.functionParams.map((param: any) => encodeArg(valueToJs(param))),
+      args: call.functionParams.map((param: any) => encodeArg(ethereumValueToJs(param))),
       blockNumber: scope.blockNumber,
     });
     const raw = callSync(callEffect, encoded, `the contract call ${call.functionSignature}`);
@@ -727,23 +426,28 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     entityFields: config.entityFields ?? {},
     entityRefFields: config.entityRefFields ?? {},
     entityFieldTypes: config.entityFieldTypes ?? {},
+    entityAccessors: config.entityAccessors,
   };
 
   // Before any mapping is imported: Node caches a failed module resolution for
   // the life of the process, so generating after the import has already failed
   // wouldn't help.
-  ensureGeneratedCode(config.root, { required: false });
+  const sources = [...config.dataSources, ...config.templates];
+  const generated = generatedDir(
+    config.root,
+    sources.map((source) => source.mappingFile),
+  );
+  await ensureGeneratedCode(config.root, generated);
 
   if (config.isDev) {
-    typeCheckMappings(config.root);
+    await typeCheckMappings(config.root);
   }
 
-  const sources = [...config.dataSources, ...config.templates];
   const templateNames = new Set(config.templates.map((template) => template.name));
 
   for (const source of sources) {
     if (source.kind !== "contract") continue;
-    const mapping = await loadMapping(config.root, source.mappingFile, {
+    const mapping = await loadMapping(config.root, generated, source.mappingFile, {
       context: null,
       event: null,
       mode: "handler",
@@ -768,13 +472,15 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       // event it names never reaches.
       if (typeof fn !== "function") continue;
 
-      // Parameter shapes are fixed per event kind, not per data source.
-      const SubgraphEvent = makeEventClass(
-        source.name,
-        handler.name,
-        new Map(Object.entries(handler.params ?? {})),
-        handler.receipt ?? false,
-      );
+      const kind: EventKind = {
+        location: `data source "${source.name}" → "${handler.name}"`,
+        inputs: handler.inputs ?? [],
+        hasReceipt: handler.receipt ?? false,
+      };
+      // Built as the generated class the handler declares, when it declares
+      // one: its `params` getters are graph codegen's own.
+      const EventClass = mapping[EVENT_CLASSES_EXPORT]?.[handler.handler] ?? ethereum.Event;
+      const makeEvent = (event: unknown) => Reflect.construct(ethereum.Event, [event, kind], EventClass);
 
       const makeScope = (event: any, context: any, mode: Scope["mode"]): Scope => ({
         context,
@@ -793,10 +499,13 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         mappingExports: mapping,
       });
 
+      const where = topicFilter(handler);
+
       indexer.onEvent(
-        { contract: contractName(source.name), event: handler.name },
+        { contract: config.contractAccessors[source.name], event: handler.name, where },
         async ({ event, context }: any) => {
-          const graphEvent = new SubgraphEvent(event);
+          if (skipPreload && context.isPreload) return;
+          const graphEvent = makeEvent(event);
           await (context as any).runSync(() =>
             runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
           );
@@ -808,9 +517,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       // register mode, where writes and logs are no-ops and reads are null.
       if (templateNames.size > 0) {
         indexer.contractRegister(
-          { contract: contractName(source.name), event: handler.name },
+          { contract: config.contractAccessors[source.name], event: handler.name, where },
           async ({ event, context }: any) => {
-            const graphEvent = new SubgraphEvent(event);
+            const graphEvent = makeEvent(event);
             await runRegisterRounds(makeScope(event, context, "register"), () => fn(graphEvent));
           },
         );
@@ -820,17 +529,19 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     for (const handler of source.blockHandlers) {
       const fn = mapping[handler.handler];
       if (typeof fn !== "function") continue;
-      const interval = blockInterval(handler);
+      const start = source.startBlock ?? 0;
+      const blocks =
+        handler.filter === "once"
+          ? { _gte: start, _lte: start }
+          : { _gte: start, _every: handler.filter.every };
       indexer.onBlock(
         {
-          chain: source.chainId,
           name: `${source.name}_${handler.handler}`,
-          interval: interval.once ? undefined : interval.every,
-          ...(interval.once
-            ? { block: { _gte: source.startBlock ?? 0, _lte: source.startBlock ?? 0 } }
-            : {}),
-        } as any,
+          where: ({ chain }: { chain: { id: number } }) =>
+            chain.id === source.chainId && { block: { number: blocks } },
+        },
         async ({ block, context }: any) => {
+          if (skipPreload && context.isPreload) return;
           const graphBlock = makeBlockHandlerBlock(
             block.number,
             `data source "${source.name}" → "${handler.handler}"`,

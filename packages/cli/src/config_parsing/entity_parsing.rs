@@ -2063,12 +2063,9 @@ impl UserDefinedFieldType {
                             "The [{name}!]! field type requires an explicit @derivedFrom. Alternatively, check methods for referencing entities outlined in the docs. https://docs.envio.dev/docs/HyperIndex/schema#relationships-one-to-many-derivedfrom"
                         ))
                     }
-                    //TODO: add support for these types
-                    //currently we would need to use explicid casts in the queries to make these
-                    //work https://github.com/porsager/postgres/pull/392
-                    Self::Single(GqlScalar::Boolean) => {
-                        Err(anyhow!("Arrays of booleans are not yet supported."))
-                    }
+                    //TODO: add support for timestamps: postgres binds a Date array as a single
+                    //timestamptz, as it does a boolean array (see `Table.toSqlParams`)
+                    //https://github.com/porsager/postgres/pull/392
                     Self::Single(GqlScalar::Timestamp) => {
                         Err(anyhow!("Arrays of timestamps are not yet supported."))
                     }

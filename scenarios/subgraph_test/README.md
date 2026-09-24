@@ -23,3 +23,12 @@ dependency here.
 asks it to: `@graphprotocol/graph-ts` is AssemblyScript source, and its `u64`,
 `i32` and `usize` annotations are not TypeScript types. A subgraph project is
 type-checked by `asc`, through `graph build`.
+
+## Against graph-node
+
+`differential/run.sh` deploys this project, unchanged but for its factory
+address and start block, to a graph-node in Docker, drives the contracts behind
+its ABIs on a local anvil chain, indexes the same chain with envio over RPC, and
+diffs every stored field of every entity. It needs Docker and the network, so it
+runs nightly (`.github/workflows/subgraph-nightly.yml`) rather than per PR;
+`KEEP=1` leaves the containers and the work directory up for inspection.

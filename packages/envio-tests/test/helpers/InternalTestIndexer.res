@@ -22,6 +22,7 @@ type parsed = {
 @module("node:path") external pathDirname: string => string = "dirname"
 @module("node:url") external fileURLToPath: string => string = "fileURLToPath"
 @module("node:crypto") external randomUUID: unit => string = "randomUUID"
+@module("node:os") external osTmpdir: unit => string = "tmpdir"
 @val external importMetaUrl: string = "import.meta.url"
 
 // Vitest awaits a suite's callback while building the suite tree, so tests
@@ -107,6 +108,10 @@ let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array
 // Parses a subgraph project the way `envio dev` does inside one, with the
 // mappings written to disk so the manifest's `file:` paths resolve. `test` is
 // evaluated exactly as in `fromUserApi`.
+//
+// The project lives outside this repository, the way a user's does: inside
+// it, Node would resolve this package's own devDependencies from the mappings
+// and hide anything the runtime wrongly expects the project to install.
 let fromSubgraph = (
   ~env=?,
   ~files=?,
@@ -117,11 +122,11 @@ let fromSubgraph = (
 ): parsed => {
   let site = callSite()
   let root = pathJoin([
-    tmpDir,
-    `subgraph-${site->String.replaceRegExp(/[^a-zA-Z0-9]+/g, "-")}-${randomUUID()->String.slice(
-        ~start=0,
-        ~end=8,
-      )}`,
+    osTmpdir(),
+    `envio-subgraph-${site->String.replaceRegExp(
+        /[^a-zA-Z0-9]+/g,
+        "-",
+      )}-${randomUUID()->String.slice(~start=0, ~end=8)}`,
   ])
   mappings->Dict.forEachWithKey((source, relativePath) => {
     let dest = pathJoin([root, relativePath])

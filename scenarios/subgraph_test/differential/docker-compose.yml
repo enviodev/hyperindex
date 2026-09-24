@@ -1,0 +1,39 @@
+# graph-node indexing a local anvil chain, which envio indexes too.
+services:
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:stable
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--chain-id", "1"]
+    ports:
+      - "8545:8545"
+
+  ipfs:
+    image: ipfs/kubo:v0.34.1
+    ports:
+      - "5001:5001"
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: graph-node
+      POSTGRES_PASSWORD: let-me-in
+      POSTGRES_DB: graph-node
+      # graph-node refuses a database whose collation isn't C.
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+
+  graph-node:
+    image: graphprotocol/graph-node:v0.39.1
+    depends_on: [anvil, ipfs, postgres]
+    ports:
+      - "8000:8000"
+      - "8020:8020"
+      - "8030:8030"
+    environment:
+      postgres_host: postgres
+      postgres_user: graph-node
+      postgres_pass: let-me-in
+      postgres_db: graph-node
+      ipfs: ipfs:5001
+      ethereum: mainnet:http://anvil:8545
+      GRAPH_LOG: info
+      # anvil mines a block per transaction; poll it often.
+      ETHEREUM_POLLING_INTERVAL: "200"

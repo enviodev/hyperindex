@@ -14,6 +14,8 @@ export type SubgraphSchema = {
     string,
     Record<string, { kind: string; target?: string; derivedFrom?: string; list: boolean }>
   >;
+  /** The context accessor envio generated for each entity, by schema name. */
+  entityAccessors: Record<string, string>;
 };
 
 export type Scope = {
