@@ -99,7 +99,7 @@ let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
 let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
 
 // Runs `cargo build` on every invocation (like `cargo run`).
-let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
+let loadDevAddon: ({..}, string) => Null.t<addon> = %raw(`function(req, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;
   var fs = Nodefs;
@@ -213,7 +213,7 @@ let loadAddon = () => {
   | Some(addon) => addon
   | None =>
     // Dev build fallback (cargo build on every run)
-    switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
+    switch loadDevAddon(req, envioPackageDir)->Null.toOption {
     | Some(addon) => addon
     | None =>
       let host = `${processPlatform}-${processArch}`
