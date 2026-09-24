@@ -17,9 +17,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { registerHooks } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { indexer } from "../Api.res.mjs";
+import { subgraphFileToJavascript } from "../Core.res.mjs";
 import { currentScope, runInScope, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
   Address,
@@ -37,14 +38,7 @@ import {
   valueToJs,
 } from "./graph-ts.ts";
 import { encodeArg, decodeArg, makeCallEffect, resetClients } from "./calls.ts";
-import {
-  DIVIDE_HELPER,
-  RETAG_HELPER,
-  integerDivision,
-  loadTypeScript,
-  rewriteChangetype,
-  rewriteDivision,
-} from "./division.ts";
+import { DIVIDE_HELPER, RETAG_HELPER, integerDivision } from "./division.ts";
 import { makeHostEffects } from "./hosts.ts";
 import { unsupported } from "./errors.ts";
 
@@ -97,16 +91,18 @@ let hooksInstalled = false;
 let projectRoot: string | null = null;
 
 /**
- * Mappings resolve `@graphprotocol/graph-ts` to the shim; everything else,
- * including the project's own `generated/`, resolves normally and runs as-is.
+ * Mappings resolve `@graphprotocol/graph-ts` to the shim. The project's own
+ * files — its mappings and `generated/` — are AssemblyScript, and load through
+ * the addon, which turns each into the JavaScript that computes what `asc`
+ * would (`subgraph/assemblyscript.rs`).
  */
 function installResolveHook(root: string) {
   projectRoot = pathToFileURL(path.resolve(root) + path.sep).href;
-  // Loaded here rather than from inside the hook: requiring a module while a
-  // load hook is on the stack re-enters the loader.
-  loadTypeScript(path.resolve(root));
   if (hooksInstalled) return;
   hooksInstalled = true;
+  // The addon's output carries an inline source map back to the mapping, so a
+  // stack trace names the line the developer wrote.
+  process.setSourceMapsEnabled(true);
 
   registerHooks({
     resolve(specifier: string, context: any, nextResolve: any) {
@@ -126,15 +122,24 @@ function installResolveHook(root: string) {
       }
       return resolved;
     },
+    // Taken over before any other loader sees the file: a TypeScript
+    // transpiler would refuse AssemblyScript it has no reason to accept, and
+    // would strip `changetype`'s type argument before it could be read.
     load(url: string, context: any, nextLoad: any) {
-      const loaded = nextLoad(url, context);
-      if (!projectRoot || !url.startsWith(projectRoot) || url.includes("/node_modules/")) {
-        return loaded;
+      if (
+        !projectRoot ||
+        !url.startsWith(projectRoot) ||
+        url.includes("/node_modules/") ||
+        !url.endsWith(".ts")
+      ) {
+        return nextLoad(url, context);
       }
-      const source = loaded?.source;
-      if (typeof source !== "string" && !(source instanceof Uint8Array)) return loaded;
-      const text = typeof source === "string" ? source : Buffer.from(source).toString("utf8");
-      return { ...loaded, source: rewriteChangetype(rewriteDivision(text)) };
+      const file = fileURLToPath(url);
+      return {
+        format: "module",
+        source: subgraphFileToJavascript(readFileSync(file, "utf8"), file),
+        shortCircuit: true,
+      };
     },
   });
 

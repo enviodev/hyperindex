@@ -18,9 +18,6 @@ let fixture = relativePath =>
     "utf8",
   )
 
-@module("./fixtures/subgraph-codegen/retag.ts")
-external retagChangetypeCalls: string => string = "retagChangetypeCalls"
-
 let _ = InternalTestIndexer.fromSubgraph(
   ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8602")]),
   ~manifest=`
@@ -44,16 +41,22 @@ dataSources:
       abis:
         - name: Margin
           file: ./abis/Margin.json
+        - name: ERC20
+          file: ./abis/ERC20.json
       eventHandlers:
         - event: LogSetMarginRatio(uint256)
           handler: handleLogSetMarginRatio
       file: ./src/mapping.ts
 `,
   ~schema=fixture("schema.graphql"),
-  ~files=Dict.fromArray([("abis/Margin.json", fixture("abis/Margin.json"))]),
+  ~files=Dict.fromArray([
+    ("abis/Margin.json", fixture("abis/Margin.json")),
+    ("abis/ERC20.json", fixture("abis/ERC20.json")),
+  ]),
   ~mappings=Dict.fromArray([
     ("src/mapping.ts", fixture("src/mapping.ts")),
-    ("generated/Margin/Margin.ts", fixture("generated/Margin/Margin.ts")->retagChangetypeCalls),
+    ("generated/Margin/Margin.ts", fixture("generated/Margin/Margin.ts")),
+    ("generated/Margin/ERC20.ts", fixture("generated/Margin/ERC20.ts")),
     ("generated/schema.ts", fixture("generated/schema.ts")),
   ]),
   ~test=`
@@ -64,6 +67,9 @@ import { createTestIndexer } from "envio";
 const RATIO_SELECTOR = "0x4f3c1542";
 const RATIO_RESULT =
   "0x0000000000000000000000000000000000000000000000000000000000000064";
+const DECIMALS_SELECTOR = "0x313ce567";
+const DECIMALS_RESULT =
+  "0x0000000000000000000000000000000000000000000000000000000000000012";
 
 let server: Server;
 
@@ -78,6 +84,10 @@ beforeAll(async () => {
         res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: RATIO_RESULT }));
         return;
       }
+      if (request.method === "eth_call" && data.startsWith(DECIMALS_SELECTOR)) {
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: DECIMALS_RESULT }));
+        return;
+      }
       res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: "0x1" }));
     });
   });
@@ -89,7 +99,10 @@ afterAll(async () => {
 });
 
 describe("graph codegen goldens", () => {
-  it("runs generated getMarginRatio() including toTuple()", async (t) => {
+  // The ERC-20 binding redeclares its \`value\` parameter in every try_ call,
+  // legal AssemblyScript and a syntax error as JavaScript, and its getters
+  // are reached through changetype — both exactly as graph codegen wrote them.
+  it("runs generated bindings as graph codegen wrote them", async (t) => {
     const indexer = createTestIndexer();
     await indexer.process({
       chains: {
@@ -100,10 +113,10 @@ describe("graph codegen goldens", () => {
         },
       },
     });
-    t.expect(await indexer.Probe.getOrThrow("ratio")).toEqual({
-      id: "ratio",
-      name: "100",
-    });
+    t.expect(await indexer.Probe.getAll()).toEqual([
+      { id: "ratio", name: "100" },
+      { id: "decimals", name: "18" },
+    ]);
   });
 });
 `,

@@ -13,8 +13,9 @@ there (`publish.yml`); every §7 error names the same command.
 **How it works, in one paragraph.** The CLI detects `subgraph.yaml`,
 translates the manifest into an envio config and the schema into an envio
 schema, and points the handler entry at a runtime that imports the user's
-mappings unchanged (AssemblyScript is a TypeScript subset — envio already
-loads TS via `tsx`). Only `@graphprotocol/graph-ts` is shimmed at runtime;
+mappings unchanged (AssemblyScript's syntax is TypeScript's; the addon turns
+each project file into the JavaScript that computes what `asc` would — §6a).
+Only `@graphprotocol/graph-ts` is shimmed at runtime;
 the project's `generated/` code — `graph codegen` output — executes as-is on
 top of the shim (§6a). Each manifest handler becomes an `indexer.onEvent` /
 `onBlock` / `contractRegister` wrapper that runs the mapping synchronously;
@@ -120,7 +121,7 @@ query and is dropped; stored, it is an error.
 | API | Mapping |
 |---|---|
 | `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides. A relation is the related id under the field's own name in graph-ts and `<field>_id` in envio, renamed at the boundary |
-| Integer division | AssemblyScript divides two integers as integers and JavaScript doesn't, and the difference travels into ids and `Int` columns. Each `a / b` in a project file is rewritten as it loads, through the TypeScript the project already has, to a helper that truncates only when both operands really are integers |
+| Integer division | AssemblyScript divides two integers as integers and JavaScript doesn't, and the difference travels into ids and `Int` columns. Each `a / b` and `a /= b` in a project file is rewritten as it loads (§6a) to a helper that truncates only when both operands really are integers |
 | A handler the mapping doesn't export | skipped, as `graph build` does — it doesn't check either, and Aave's mainnet manifest names one its mappings renamed years ago |
 | A field the schema declares that nothing has set | graph-node's store returns every column, envio's returns what was written — the shim answers `null` rather than refusing, so a mapping's null check reads the same |
 | `Entity.load`, `store.get`, derived loaders | sync try-read; miss → suspend (§5) |
@@ -234,10 +235,16 @@ contract bindings extend `ethereum.SmartContract` and go through
 classes call `DataSource.create`. Consequences:
 
 - **No `generated/*` shim.** The real `graph codegen` output is executed
-  directly through `tsx`; mappings' relative imports resolve from disk. The
-  resolve hook only swaps `@graphprotocol/graph-ts`; the runtime injects the
-  few AS builtin globals generated code uses (`changetype` = identity,
-  `assert`).
+  as written; mappings' relative imports resolve from disk. The resolve hook
+  only swaps `@graphprotocol/graph-ts`. Every project file loads through the
+  addon's AssemblyScript pass (`subgraph/assemblyscript.rs`, oxc) before any
+  other loader sees it: it strips types and decorators, routes `/` and `/=`
+  through an integer-aware helper, retags `changetype<Foo>(x)` onto the
+  generated class, and renames a `let` that redeclares a parameter (every
+  generated `try_` binding does). It emits an inline source map, so stack
+  traces name the mapping's own lines, and refuses — located — what it can't
+  rewrite faithfully. The runtime injects the few AS builtin globals generated
+  code uses (`changetype` = identity, `assert`).
 - **Type safety is byte-identical by construction.** Editor and `tsc` see
   the project's own `generated/` files and the *real* `@graphprotocol/graph-ts`
   package types (still in the project's dependencies) — exactly what a

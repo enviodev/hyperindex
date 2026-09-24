@@ -105,6 +105,15 @@ pub fn from_user_api(
     })
 }
 
+/// A subgraph project's AssemblyScript file as the JavaScript that runs it.
+/// Called by the subgraph runtime's load hook for every file it imports from
+/// the project.
+#[napi_derive::napi]
+pub fn subgraph_file_to_javascript(source: String, path: String) -> napi::Result<String> {
+    crate::subgraph::assemblyscript::to_javascript(&source, std::path::Path::new(&path))
+        .map_err(|e| napi::Error::from_reason(format!("{e:#}")))
+}
+
 /// Parses a subgraph project the same way `from_user_api` parses an envio one:
 /// subgraph.yaml and its schema in memory, ABI bodies supplied through `files`,
 /// no process environment. The returned config carries the translated manifest

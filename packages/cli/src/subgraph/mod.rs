@@ -5,6 +5,7 @@
 //! the subgraph runtime that ships inside the `envio` package.
 
 pub mod abi;
+pub mod assemblyscript;
 pub mod errors;
 pub mod manifest;
 pub mod schema;

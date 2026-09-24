@@ -18,6 +18,8 @@ dataSources:
       abis:
         - name: Margin
           file: ./abis/Margin.json
+        - name: ERC20
+          file: ./abis/ERC20.json
       eventHandlers:
         - event: LogSetMarginRatio(uint256)
           handler: handleLogSetMarginRatio
