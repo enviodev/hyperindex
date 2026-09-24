@@ -142,6 +142,20 @@ fn is_list(wrappers: &[Wrapper]) -> bool {
     wrappers.contains(&Wrapper::List)
 }
 
+/// A list graph-node stores and envio's store can't, as the feature to report.
+fn unstorable_list(base: &str, wrappers: &[Wrapper]) -> Option<&'static str> {
+    let nullable_element = wrappers.iter().enumerate().any(|(index, wrapper)| {
+        *wrapper == Wrapper::List && wrappers.get(index + 1) != Some(&Wrapper::NonNull)
+    });
+    if nullable_element {
+        Some("lists whose elements can be null, like [String]")
+    } else if is_list(wrappers) && base == "Timestamp" {
+        Some("lists of Timestamp")
+    } else {
+        None
+    }
+}
+
 /// Field lines for one type, with the subgraph scalars mapped to what envio
 /// stores and the conversions the shim needs recorded against `owner`.
 fn render_fields(
@@ -216,6 +230,11 @@ fn render_fields(
                 "  {}: [{}!]! @derivedFrom(field: \"{}\")",
                 field.name, base, derived_field
             ));
+            continue;
+        }
+
+        if let Some(shape) = unstorable_list(&base, &wrappers) {
+            report.unsupported(shape, location.clone());
             continue;
         }
 

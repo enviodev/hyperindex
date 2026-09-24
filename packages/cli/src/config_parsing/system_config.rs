@@ -1513,12 +1513,14 @@ impl SystemConfig {
 
         let source = MemoryConfigSource::new(Some(&translation.schema_text), env, files, false);
         let human_config = HumanConfig::Evm(translation.human_config);
-        let schema = source.load_schema(
-            &None,
-            human_config.get_base_config().default_chain_scope(),
-            human_config.bytes_type(),
-        )?;
-        let mut config = Self::from_human_config_with_source(human_config, schema, &source)?;
+        let mut config = source
+            .load_schema(
+                &None,
+                human_config.get_base_config().default_chain_scope(),
+                human_config.bytes_type(),
+            )
+            .and_then(|schema| Self::from_human_config_with_source(human_config, schema, &source))
+            .map_err(crate::subgraph::errors::envio_rejected_translation)?;
         config.subgraph = Some(translation.runtime);
         Ok(config)
     }
