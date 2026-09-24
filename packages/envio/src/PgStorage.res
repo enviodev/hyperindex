@@ -602,7 +602,7 @@ let makeInsertValuesSetQuery = (
   ~itemsCount,
   ~chainIdMode: ChainId.mode=Int32,
 ) => {
-  let {quotedFieldNames, quotedNonPrimaryFieldNames} =
+  let {quotedFieldNames, quotedNonPrimaryFieldNames, booleanArrayColumnIndexes} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
   let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
@@ -620,6 +620,9 @@ let makeInsertValuesSetQuery = (
         placeholders := placeholders.contents ++ ","
       }
       placeholders := placeholders.contents ++ `$${(fieldIdx * itemsCount + idx)->Int.toString}`
+      if booleanArrayColumnIndexes->Array.includes(fieldIdx) {
+        placeholders := placeholders.contents ++ "::integer[]::boolean[]"
+      }
     }
     placeholders := placeholders.contents ++ ")"
   }
@@ -652,7 +655,7 @@ let makeTableBatchSetQuery = (
   ~itemSchema: S.t<'item>,
   ~chainIdMode: ChainId.mode=Int32,
 ) => {
-  let {dbSchema, hasArrayField, byteaColumnIndexes} =
+  let {dbSchema, hasArrayField, byteaColumnIndexes, booleanArrayColumnIndexes} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
   // Should move this to a better place
@@ -713,9 +716,25 @@ let makeTableBatchSetQuery = (
       ),
       "convertOrThrow": S.compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
-          serializer: Utils.Array.flatten->(
-            Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown
-          ),
+          serializer: columns => {
+            let columns = columns->(Utils.magic: unknown => array<array<Nullable.t<array<bool>>>>)
+            booleanArrayColumnIndexes->Array.forEach(index =>
+              columns->Array.setUnsafe(
+                index,
+                columns
+                ->Array.getUnsafe(index)
+                ->Array.map(
+                  value =>
+                    value
+                    ->Nullable.map(flags => flags->Array.map(flag => flag ? 1 : 0))
+                    ->(Utils.magic: Nullable.t<array<int>> => Nullable.t<array<bool>>),
+                ),
+              )
+            )
+            columns
+            ->Utils.Array.flatten
+            ->(Utils.magic: array<Nullable.t<array<bool>>> => unknown)
+          },
         }),
         ~input=Value,
         ~output=Unknown,

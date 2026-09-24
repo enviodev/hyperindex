@@ -454,6 +454,7 @@ type sqlParams<'entity> = {
   quotedNonPrimaryFieldNames: array<string>,
   arrayFieldTypes: array<string>,
   byteaColumnIndexes: array<int>,
+  booleanArrayColumnIndexes: array<int>,
   hasArrayField: bool,
 }
 
@@ -464,6 +465,10 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
   // Positions of the bytea columns among the unnest parameters, which the
   // caller binds as array literals (see `Utils.Bytes.toPgArrayLiteral`).
   let byteaColumnIndexes = []
+  // postgres binds a JS array of booleans as a single `boolean`, whatever the
+  // column (https://github.com/porsager/postgres/issues/471), so the VALUES
+  // insert binds these columns as integer arrays and casts them back.
+  let booleanArrayColumnIndexes = []
   let hasArrayField = ref(false)
 
   let dbSchema: S.t<dict<unknown>> = S.schema(s =>
@@ -499,6 +504,10 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
         | None => throw(NonExistingTableField(location))
         }
         switch field {
+        | Field({isArray: true, fieldType: Boolean}) => {
+            hasArrayField := true
+            booleanArrayColumnIndexes->Array.push(arrayFieldTypes->Array.length)->ignore
+          }
         | Field({isArray: true}) => hasArrayField := true
         | Field({fieldType: Bytea}) =>
           byteaColumnIndexes->Array.push(arrayFieldTypes->Array.length)->ignore
@@ -554,6 +563,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
     quotedNonPrimaryFieldNames,
     arrayFieldTypes,
     byteaColumnIndexes,
+    booleanArrayColumnIndexes,
     hasArrayField: hasArrayField.contents,
   }
 }

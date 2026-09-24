@@ -150,19 +150,16 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
-  it("refuses a topic filter", t => {
-    translate(
+  it("accepts a topic filter on an address", t => {
+    let message = translate(
       ~schema=baseSchema,
       ~manifest=manifestWith(`      eventHandlers:
         - event: Transfer(indexed address,indexed address,uint256)
           handler: handleTransfer
           topic1:
             - "0x0000000000000000000000000000000000000000000000000000000000000001"`),
-    )->expectFindingHelper(
-      t,
-      ~headline="Envio Subgraph doesn't support topic filters on dynamically-typed indexed parameters yet.",
-      ~location=`data source "Token" → eventHandlers → "handleTransfer" → topic filters`,
     )
+    t.expect(message).toEqual(accepted)
   })
 
   it("carries GraphQL interfaces through", t => {
@@ -177,6 +174,19 @@ interface Named {
 type Token implements Named @entity {
   id: ID!
   name: String!
+}
+`,
+    )
+    t.expect(message).toEqual(accepted)
+  })
+
+  it("accepts a list of booleans", t => {
+    let message = translate(
+      ~manifest=manifestWith(plainEventHandler),
+      ~schema=`
+type Token @entity {
+  id: ID!
+  flags: [Boolean!]!
 }
 `,
     )
