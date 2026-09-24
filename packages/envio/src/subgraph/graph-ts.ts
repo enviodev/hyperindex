@@ -1734,10 +1734,8 @@ const ethereumImpl = {
   getBalance(address: Address): BigInt_ {
     return BigInt_.fromString(hostsOrThrow().getBalance(address.toHexString()));
   },
-  // graph-ts declares a Wrapped, which carries its value on `inner` rather than
-  // on `value` the way a CallResult does.
-  hasCode(address: Address): { inner: boolean } {
-    return { inner: hostsOrThrow().hasCode(address.toHexString()) };
+  hasCode(address: Address): Wrapped<boolean> {
+    return new Wrapped(hostsOrThrow().hasCode(address.toHexString()));
   },
 };
 
