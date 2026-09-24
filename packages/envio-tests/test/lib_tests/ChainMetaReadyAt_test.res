@@ -43,7 +43,7 @@ describe("A chain metadata write", () => {
       ~enums=config.allEnums->Array.concat([
         EntityHistory.RowAction.config->Table.fromGenericEnumConfig,
       ]),
-      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~storedConfig=JSON.Encode.object(Dict.make()),
     )
     await storage.finalizeBackfill(
       ~entities=config.userEntities,

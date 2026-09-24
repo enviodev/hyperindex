@@ -1,6 +1,7 @@
 type method = [
   | #isInitialized
   | #initialize
+  | #readStoredConfig
   | #resumeInitialState
   | #dumpEffectCache
   | #loadOrThrow
@@ -13,7 +14,7 @@ type t = {
     "entities": array<Internal.entityConfig>,
     "chainConfigs": array<Config.chain>,
     "enums": array<Table.enumConfig<Table.enum>>,
-    "envioInfo": JSON.t,
+    "storedConfig": JSON.t,
   }>,
   resolveInitialize: Persistence.initialState => unit,
   resumeInitialStateCalls: array<bool>,
@@ -23,7 +24,15 @@ type t = {
   storage: Persistence.storage,
 }
 
-let make = (methods: array<method>, ~dbEntities=[]) => {
+// What a resume finds stored. The default matches a run whose stored config is
+// an empty object with no chains, as the tests here pass.
+let emptyStored: Config.stored = {
+  config: Some(JSON.Encode.object(Dict.make())),
+  chains: [],
+  contractMapping: ContractMapping.empty,
+}
+
+let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
       fn
@@ -77,34 +86,31 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
         ~entities=[],
         ~enums=[],
         ~contractMapping as _,
-        ~envioInfo,
+        ~storedConfig,
       ) => {
         initializeCalls
         ->Array.push({
           "entities": entities,
           "chainConfigs": chainConfigs,
           "enums": enums,
-          "envioInfo": envioInfo,
+          "storedConfig": storedConfig,
         })
         ->ignore
         Promise.make((resolve, _reject) => {
           initializeResolveFns->Array.push(resolve)->ignore
         })
       }),
+      readStoredConfig: implement(#readStoredConfig, () => Promise.resolve(stored)),
+      addChain: (~chainConfig as _, ~entities as _, ~contractMapping as _) =>
+        JsError.throwWithMessage("Not implemented"),
       resumeInitialState: implement(#resumeInitialState, (
         ~entities as _,
         ~chainIds as _,
-        ~throwIfIncompatible,
+        ~contractMapping as _,
       ) => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
           resumeInitialStateResolveFns->Array.push(resolve)->ignore
-        })->Promise.thenResolve((initialState: Persistence.initialState) => {
-          throwIfIncompatible(
-            ~storedEnvioInfo=initialState.envioInfo,
-            ~storedContractMapping=initialState.contractMapping,
-          )
-          initialState
         })
       }),
       dumpEffectCache: implement(#dumpEffectCache, () => {
@@ -169,7 +175,6 @@ let toPersistence = (storageMock: t, ~config: Config.t) => {
     storageStatus: Ready({
       cleanRun: false,
       contractMapping: config.contractMapping,
-      envioInfo: Some(JSON.Encode.object(Dict.make())),
       cache: Dict.make(),
       chains: [],
       reorgCheckpoints: [],

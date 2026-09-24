@@ -62,7 +62,8 @@ type rec t = {
   stop: unit => promise<unit>,
   // `~chains` resumes the same schema driving only those chains, the way
   // `envio start --chain` does. The chains left out keep their stored state.
-  restart: (~chains: array<ChainId.t>=?, unit) => promise<t>,
+  // `~config` resumes under an edited config.yaml, and later restarts keep it.
+  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, unit) => promise<t>,
   // Every line this run has logged so far, in order — the run's own and its
   // chains'. Only for a run started with `~captureLogs`.
   logs: unit => array<logEntry>,
@@ -123,7 +124,7 @@ let makeLogCapture = () => {
 // configs and every knob the yaml owns are decided by the caller.
 let run = async (
   ~config: Config.t,
-  ~resolveRegistrations: unit => promise<HandlerRegister.registrationsByChainId>,
+  ~resolveRegistrations: (~config: Config.t) => promise<HandlerRegister.registrationsByChainId>,
   ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
   ~targetBufferSize=?,
@@ -168,11 +169,11 @@ let run = async (
   }
 
   // The builder is only reachable here and from `restart`, so it takes just
-  // the flag that differs between them and reads the rest off this call.
-  let rec make = async (~reset, ~chains=?) => {
+  // what differs between them and reads the rest off this call.
+  let rec make = async (~reset, ~config as baseConfig, ~chains=?) => {
     let config = switch chains {
-    | Some(chainIds) => config->Config.isolate(~chainIds)
-    | None => config
+    | Some(chainIds) => baseConfig->Config.isolate(~chainIds)
+    | None => baseConfig
     }
     switch capture {
     | Some((logger, _)) => Logging.setLogger(logger)
@@ -213,18 +214,18 @@ let run = async (
     await persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,
       ~contractMapping=config.contractMapping,
-      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~storedConfig=config.storedConfig,
       ~resetCommand="envio dev -r",
       ~runCommand=Some("envio dev"),
       ~reset,
       ~lowercaseAddresses=config.lowercaseAddresses,
-      ~requireInitialized=config.isolated,
+      ~isolated=config.isolated,
     )
 
     // Same order as `Main.start`: storage is initialized - which is where a
     // `start_block: latest` chain reads its head - before handler modules load,
     // so a registration-time `chain.startBlock` sees the resolved block.
-    let registrationsByChainId = await resolveRegistrations()
+    let registrationsByChainId = await resolveRegistrations(~config)
     MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let state = IndexerState.makeFromDbState(
@@ -557,18 +558,18 @@ let run = async (
             "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",
           )
         },
-      restart: async (~chains=?, ()) => {
+      restart: async (~config=baseConfig, ~chains=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        await make(~reset=false, ~chains?)
+        await make(~reset=false, ~config, ~chains?)
       },
     }
   }
 
   let outcome = try {
-    let indexer = await make(~reset=true)
+    let indexer = await make(~reset=true, ~config)
     await body(indexer)
     None
   } catch {

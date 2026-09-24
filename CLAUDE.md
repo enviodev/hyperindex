@@ -41,7 +41,7 @@ printf '{"name":"envio-linux-x64","version":"0.0.1-dev","main":"envio.node"}\n' 
 
 ## Storage
 
-- No in-place migrations and no dynamic chain addition: on schema or config changes the user is expected to resync from scratch. Don't design or propose migration paths for existing deployments.
+- No in-place migrations: on schema or config changes the user is expected to resync from scratch. The one exception is a chain added to config.yaml, which `envio start --chain <id>` adds to an existing schema when it names only that chain (`Config.planResume`). Don't design or propose other migration paths for existing deployments.
 
 ## Testing and Development
 

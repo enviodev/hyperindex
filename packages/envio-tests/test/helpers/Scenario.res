@@ -240,7 +240,7 @@ let run = async (
 
   await IndexerRunner.run(
     ~config,
-    ~resolveRegistrations=() =>
+    ~resolveRegistrations=(~config) =>
       registration->HandlerRegister.useRegistration(async () => {
         switch (scenario.handlers, imported.contents) {
         | (Some(source), false) =>

@@ -47,7 +47,7 @@ describe("Finalizing a schema with no indexes", () => {
       ~enums=config.allEnums->Array.concat([
         EntityHistory.RowAction.config->Table.fromGenericEnumConfig,
       ]),
-      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~storedConfig=JSON.Encode.object(Dict.make()),
     )
 
     let path = `${NodeJs.Process.cwd()}/lib/envio-finalize-indexes-${Date.now()->Float.toString}.log`

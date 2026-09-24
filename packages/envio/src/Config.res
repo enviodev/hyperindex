@@ -64,6 +64,9 @@ type chain = {
   blockLag: int,
   contracts: array<contract>,
   sourceConfig: sourceConfig,
+  // This chain's entry of the public config without its runtime fields: what
+  // its `envio_chains` row records, and what a resume compares against.
+  storedConfig: JSON.t,
 }
 
 type sourceSync = {
@@ -147,6 +150,9 @@ type t = {
   // the schema alone: a cross-chain entity has rows any chain's reorg can
   // reach, so its checkpoints have to be comparable across chains.
   checkpointSequence: CheckpointSequence.t,
+  // The public config without its runtime fields or its chains, which each
+  // carry their own: what `envio_info` records.
+  storedConfig: JSON.t,
 }
 
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
@@ -666,6 +672,98 @@ let isolate = (config: t, ~chainIds: array<ChainId.t>) => {
   }
 }
 
+// Fields config.yaml owns that decide how the indexer reaches and paces a
+// chain, never what ends up indexed. They are read from config.yaml on every
+// start and never stored, so editing them needs no resync.
+let runtimeChainFields = ["rpcs", "hypersync", "blockLag"]
+
+// What the command decided rather than the project's files: `envio dev` vs
+// `envio start`, and which chains this process drives.
+let runtimeFields = ["isDev", "isolatedChains"]
+
+let ecosystemFields = ["evm", "fuel", "svm"]
+
+let stripRuntimeFields = (json: JSON.t): JSON.t => {
+  let cloned = json->JSON.stringify->JSON.parseOrThrow
+  switch cloned {
+  | Object(obj) => {
+      runtimeFields->Array.forEach(field => obj->Utils.Dict.deleteInPlace(field))
+      ecosystemFields->Array.forEach(ecosystem =>
+        switch obj->Dict.get(ecosystem) {
+        | Some(Object(ecosystemDict)) =>
+          switch ecosystemDict->Dict.get("chains") {
+          | Some(Object(chains)) =>
+            chains
+            ->Dict.valuesToArray
+            ->Array.forEach(chainJson =>
+              switch chainJson {
+              | Object(chain) =>
+                runtimeChainFields->Array.forEach(field => chain->Utils.Dict.deleteInPlace(field))
+              | _ => ()
+              }
+            )
+          | _ => ()
+          }
+        | _ => ()
+        }
+      )
+    }
+  | _ => ()
+  }
+  cloned
+}
+
+// The stored config the way storage keeps it: `envio_info` holds everything
+// but the chains, and each `envio_chains` row holds its own chain's entry, so
+// the chains a schema has are exactly the rows it has. Entries come back keyed
+// by the chain name the public config uses.
+let splitStoredConfig = (publicConfigJson: JSON.t): (JSON.t, dict<JSON.t>) => {
+  let global = publicConfigJson->stripRuntimeFields
+  let chains = Dict.make()
+  switch global {
+  | Object(obj) =>
+    ecosystemFields->Array.forEach(ecosystem =>
+      switch obj->Dict.get(ecosystem) {
+      | Some(Object(ecosystemDict)) =>
+        switch ecosystemDict->Dict.get("chains") {
+        | Some(Object(ecosystemChains)) =>
+          ecosystemChains->Dict.forEachWithKey((chain, name) => chains->Dict.set(name, chain))
+        | _ => ()
+        }
+        ecosystemDict->Utils.Dict.deleteInPlace("chains")
+      | _ => ()
+      }
+    )
+  | _ => ()
+  }
+  (global, chains)
+}
+
+// Puts chain entries back under the ecosystem's `chains`, keyed by chain id,
+// so a stored config and a current one diff as whole configs.
+let joinStoredConfig = (global: JSON.t, ~chains: array<(ChainId.t, JSON.t)>): JSON.t => {
+  let joined = global->JSON.stringify->JSON.parseOrThrow
+  switch joined {
+  | Object(obj) =>
+    ecosystemFields->Array.forEach(ecosystem =>
+      switch obj->Dict.get(ecosystem) {
+      | Some(Object(ecosystemDict)) =>
+        ecosystemDict->Dict.set(
+          "chains",
+          JSON.Object(
+            chains
+            ->Array.map(((chainId, chain)) => (chainId->ChainId.toString, chain))
+            ->Dict.fromArray,
+          ),
+        )
+      | _ => ()
+      }
+    )
+  | _ => ()
+  }
+  joined
+}
+
 let fromPublic = (publicConfigJson: JSON.t) => {
   let maxAddrInPartition = Env.maxAddrInPartition
   // Parse public config
@@ -897,6 +995,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     }
   }
 
+  let (storedConfig, storedChainConfigs) = publicConfigJson->splitStoredConfig
+
   // Build chains from JSON config (no more codegenChains)
   let chains =
     publicChainsConfig
@@ -1053,6 +1153,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         blockLag: publicChainConfig["blockLag"]->Option.getOr(0),
         contracts,
         sourceConfig,
+        storedConfig: storedChainConfigs->Dict.getUnsafe(chainName),
       }
     })
 
@@ -1141,6 +1242,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     userEntities,
     allEnums,
     checkpointSequence: CheckpointSequence.fromEntities(userEntities),
+    storedConfig,
   }
 
   switch publicConfig["isolatedChains"] {
@@ -1254,49 +1356,6 @@ let getPublicConfigJson = () =>
   | Some(json) => json
   | None => Core.getConfigJson()->JSON.parseOrThrow
   }
-
-// Drops source URLs from each chain so RPC/hypersync edits don't trigger
-// the resume-time compat check (and don't end up in `envio_info`). Also
-// drops `isDev`, which toggles between `envio dev` and `envio start` and
-// has no bearing on schema/indexing compatibility.
-let stripSensitiveData = (json: JSON.t): JSON.t => {
-  let cloned = json->JSON.stringify->JSON.parseOrThrow
-  let stripChains = (ecosystem: option<JSON.t>) =>
-    switch ecosystem {
-    | Some(Object(ecosystemDict)) =>
-      switch ecosystemDict->Dict.get("chains") {
-      | Some(Object(chains)) =>
-        chains
-        ->Dict.valuesToArray
-        ->Array.forEach(chainJson =>
-          switch chainJson {
-          | Object(chain) => {
-              chain->Utils.Dict.deleteInPlace("rpcs")
-              chain->Utils.Dict.deleteInPlace("hypersync")
-            }
-          | _ => ()
-          }
-        )
-      | _ => ()
-      }
-    | _ => ()
-    }
-  switch cloned {
-  | Object(obj) => {
-      obj->Utils.Dict.deleteInPlace("isDev")
-      obj->Utils.Dict.deleteInPlace("isolatedChains")
-      stripChains(obj->Dict.get("evm"))
-      stripChains(obj->Dict.get("fuel"))
-      stripChains(obj->Dict.get("svm"))
-    }
-  | _ => ()
-  }
-  cloned
-}
-
-// What the storage layer records as the config this schema was built from,
-// and checks a resuming run against.
-let envioInfo = () => getPublicConfigJson()->stripSensitiveData
 
 // Postgres jsonb doesn't preserve key order, so canonicalize with sorted
 // keys before string-comparing.
@@ -1451,23 +1510,72 @@ let throwIfIncompatible = (
   }
 }
 
-let throwIfResumeIncompatible = (
-  ~storedEnvioInfo: option<JSON.t>,
-  ~storedContractMapping: ContractMapping.t,
-  ~envioInfo: JSON.t,
+// What a storage holds of the config it was built from. `config` is `None`
+// for a storage an older envio built, which kept no such record.
+type stored = {
+  config: option<JSON.t>,
+  chains: array<(ChainId.t, JSON.t)>,
+  contractMapping: ContractMapping.t,
+}
+
+type resumePlan =
+  | Resume
+  // Configured since the storage was built, and the only chain its
+  // `envio start --chain` process drives.
+  | AddChain(chain)
+  | Incompatible(array<string>)
+
+// `current` is the global part of the running config, `chainConfigs` the
+// chains this process drives. An isolated process answers for the global part
+// and its own chains only: the ones it leaves out are checked, and added, by
+// the processes that drive them.
+let planResume = (
+  ~stored: stored,
+  ~current: JSON.t,
+  ~chainConfigs: array<chain>,
   ~contractMapping: ContractMapping.t,
+  ~isolated: bool,
+) =>
+  switch stored.config {
+  | None => Incompatible(["storage was initialized by an older envio version"])
+  | Some(storedGlobal) =>
+    let isStored = chainId => stored.chains->Array.some(((storedId, _)) => storedId == chainId)
+    let added = switch (isolated, chainConfigs) {
+    | (true, [chain]) if !isStored(chain.id) => Some(chain)
+    | _ => None
+    }
+    let isAdded = chainId => added->Option.mapOr(false, chain => chain.id == chainId)
+    let storedChains = isolated
+      ? stored.chains->Array.filter(((storedId, _)) =>
+          chainConfigs->Array.some(chain => chain.id == storedId)
+        )
+      : stored.chains
+    let changedPaths = diffPaths(
+      ~stored=storedGlobal->joinStoredConfig(~chains=storedChains),
+      ~current=current->joinStoredConfig(
+        ~chains=chainConfigs->Array.filterMap(chain =>
+          isAdded(chain.id) ? None : Some((chain.id, chain.storedConfig))
+        ),
+      ),
+    )
+    let changedPaths =
+      stored.contractMapping->ContractMapping.isEqual(contractMapping)
+        ? changedPaths
+        : changedPaths->Array.concat(["contracts"])
+    switch (changedPaths, added) {
+    | ([], None) => Resume
+    | ([], Some(chain)) => AddChain(chain)
+    | (changedPaths, _) => Incompatible(changedPaths)
+    }
+  }
+
+let throwIfResumeIncompatible = (
+  changedPaths,
+  ~current: JSON.t,
   ~resetCommand: string,
   ~runCommand: option<string>,
 ) => {
-  let changedPaths = switch storedEnvioInfo {
-  | None => ["storage was initialized by an older envio version"]
-  | Some(stored) => diffPaths(~stored, ~current=envioInfo)
-  }
-  let changedPaths =
-    storedContractMapping->ContractMapping.isEqual(contractMapping)
-      ? changedPaths
-      : changedPaths->Array.concat(["contracts"])
-  let hasClickhouse = switch envioInfo {
+  let hasClickhouse = switch current {
   | Object(d) =>
     switch d->Dict.get("storage") {
     | Some(Object(s)) => s->Dict.get("clickhouse") == Some(Boolean(true))
