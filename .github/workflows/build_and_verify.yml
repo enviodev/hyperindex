@@ -263,6 +263,15 @@ jobs:
         env:
           ENVIO_TEST_STORAGE: ${{ matrix.storage }}
 
+      # The subgraph suite again with preload off, so every mapping replays as
+      # often as it can and must still produce the same store. The one test
+      # left out asserts preload's own batching, which this mode switches off.
+      - name: subgraph replay stress (${{ matrix.storage }})
+        working-directory: packages/envio-tests
+        run: pnpm test:replay-stress
+        env:
+          ENVIO_TEST_STORAGE: ${{ matrix.storage }}
+
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@c2597273488aeda841dd1e891321952b51f7996f # v2.2.1
         if: failure() && github.event_name == 'push'

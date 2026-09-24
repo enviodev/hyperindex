@@ -16,6 +16,7 @@ chains:
           - event: Mint(address indexed to, uint256 value)
           - event: Burn(address indexed from, uint256 value)
           - event: Freeze(address indexed who)
+          - event: Thaw(address indexed who)
 `,
   ~schema=`
 type Account {
@@ -37,6 +38,7 @@ g.rounds = [];
 g.effectCalls = 0;
 g.caught = [];
 g.freezeRound = 0;
+g.thawRounds = [];
 
 const describeBalance = createEffect(
   {
@@ -114,6 +116,20 @@ indexer.onEvent({ contract: "Token", event: "Approval" }, async ({ context }) =>
     g.caught.push("suspend");
   }
   set({ id: "approval-should-not-land", balance: 1n });
+});
+
+indexer.onEvent({ contract: "Token", event: "Thaw" }, async ({ context }) => {
+  const ctx = context as any;
+  if (context.isPreload) {
+    return;
+  }
+  await ctx.runSync(() => {
+    try {
+      g.thawRounds.push(ctx.Account.getSync("thaw") === undefined ? "absent" : "present");
+    } catch (e) {
+      g.thawRounds.push("suspended");
+    }
+  });
 });
 
 indexer.onEvent({ contract: "Token", event: "Freeze" }, async ({ context }) => {
@@ -228,6 +244,21 @@ describe("sync context", () => {
 
     t.expect(g.caught).toEqual(["suspend"]);
     t.expect(await indexer.Account.get("approval-should-not-land")).toBe(undefined);
+  });
+
+  // A round that returns without the reads it asked for didn't finish: it is
+  // replayed, not taken as the handler's result.
+  it("replays a round that swallowed its suspend", async (t) => {
+    const indexer = createTestIndexer();
+    g.thawRounds = [];
+
+    await indexer.process({
+      chains: {
+        1: { simulate: [{ contract: "Token", event: "Thaw", params: { who: from } }] },
+      },
+    });
+
+    t.expect(g.thawRounds).toEqual(["suspended", "absent"]);
   });
 
   it("caps replay rounds", async (t) => {

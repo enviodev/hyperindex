@@ -28,9 +28,11 @@ type syncState = {
   // and the preload -> execute transition reuse them even when the in-memory
   // effect table drops the entry (`cache: false`).
   mutable memo: option<dict<Internal.effectOutput>>,
+  // Only while a synchronous round runs: its writes, held until it completes.
+  mutable writes: option<SyncWrites.t>,
 }
 
-let makeSyncState = () => {status: Active, pending: None, memo: None}
+let makeSyncState = () => {status: Active, pending: None, memo: None, writes: None}
 
 type contextParams = {
   item: Internal.item,
@@ -279,28 +281,52 @@ let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) 
     `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
   )
 
+let writeChange = (params: entityContextParams, change) => {
+  let scope = params->entityScope
+  switch params.sync.writes {
+  | Some(writes) => writes->SyncWrites.record(~entityConfig=params.entityConfig, ~scope, change)
+  | None =>
+    params.indexerState
+    ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
+    ->InMemoryTable.Entity.set(
+      ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointIdFor(~scope),
+      change,
+    )
+  }
+}
+
+let getRoundWrite = (params: entityContextParams, entityId) =>
+  switch params.sync.writes {
+  | Some(writes) => writes->SyncWrites.getById(~entityConfig=params.entityConfig, ~entityId)
+  | None => None
+  }
+
 let getSyncHandler = (params: entityContextParams, entityId: string) =>
-  switch LoadLayer.getByIdInMemory(
-    ~entityConfig=params.entityConfig,
-    ~scope=params->entityScope,
-    ~indexerState=params.indexerState,
-    ~entityId,
-  ) {
+  switch params->getRoundWrite(entityId) {
   | Some(entity) => entity
   | None =>
-    (params :> contextParams)->scheduleAndSuspend(
-      LoadLayer.loadById(
-        ~loadManager=params.loadManager,
-        ~persistence=params.persistence,
-        ~entityConfig=params.entityConfig,
-        ~scope=params->entityScope,
-        ~indexerState=params.indexerState,
-        ~shouldGroup=params.isPreload,
-        ~item=params.item,
-        ~ecosystem=params.config.ecosystem,
-        ~entityId,
-      ),
-    )
+    switch LoadLayer.getByIdInMemory(
+      ~entityConfig=params.entityConfig,
+      ~scope=params->entityScope,
+      ~indexerState=params.indexerState,
+      ~entityId,
+    ) {
+    | Some(entity) => entity
+    | None =>
+      (params :> contextParams)->scheduleAndSuspend(
+        LoadLayer.loadById(
+          ~loadManager=params.loadManager,
+          ~persistence=params.persistence,
+          ~entityConfig=params.entityConfig,
+          ~scope=params->entityScope,
+          ~indexerState=params.indexerState,
+          ~shouldGroup=params.isPreload,
+          ~item=params.item,
+          ~ecosystem=params.config.ecosystem,
+          ~entityId,
+        ),
+      )
+    }
   }
 
 let getWhereSyncHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
@@ -313,7 +339,11 @@ let getWhereSyncHandler = (params: entityContextParams, filter: dict<dict<unknow
     ~indexerState=params.indexerState,
     ~filter,
   ) {
-  | Some(entities) => entities
+  | Some(entities) =>
+    switch params.sync.writes {
+    | Some(writes) => writes->SyncWrites.overlayFilter(entities, ~entityConfig, ~filter)
+    | None => entities
+    }
   | None =>
     (params :> contextParams)->scheduleAndSuspend(
       LoadLayer.loadByParsedFilter(
@@ -333,18 +363,21 @@ let getWhereSyncHandler = (params: entityContextParams, filter: dict<dict<unknow
 
 // Never suspends: the in-memory table spans the whole batch, so a change only
 // counts as "in this block" when it was written at this handler's checkpoint.
-let getInBlockSyncHandler = (params: entityContextParams, entityId: string) => {
-  let inMemTable =
-    params.indexerState->InMemoryStore.getInMemTable(
-      ~entityConfig=params.entityConfig,
-      ~scope=params->entityScope,
-    )
-  switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
-  | Some(change) if change->Change.getCheckpointId == params.checkpointId =>
-    change->InMemoryTable.Entity.mapChangeToEntity
-  | _ => None
+let getInBlockSyncHandler = (params: entityContextParams, entityId: string) =>
+  switch params->getRoundWrite(entityId) {
+  | Some(entity) => entity
+  | None =>
+    let inMemTable =
+      params.indexerState->InMemoryStore.getInMemTable(
+        ~entityConfig=params.entityConfig,
+        ~scope=params->entityScope,
+      )
+    switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
+    | Some(change) if change->Change.getCheckpointId == params.checkpointId =>
+      change->InMemoryTable.Entity.mapChangeToEntity
+    | _ => None
+    }
   }
-}
 
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
@@ -355,8 +388,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     )
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
-    let scope = params->entityScope
-    let committedCheckpointId = params.indexerState->IndexerState.committedCheckpointIdFor(~scope)
 
     let set = params.isPreload
       ? noopSet
@@ -366,10 +397,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           (params :> contextParams)->checkStatusOrThrow(
             ~access=`context.${params.entityConfig.name}.set`,
           )
-          params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
-          ->InMemoryTable.Entity.set(
-            ~committedCheckpointId,
+          params->writeChange(
             Set({
               entityId: entity.id->EntityId.unsafeOfString,
               checkpointId: params.checkpointId,
@@ -495,10 +523,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           (params :> contextParams)->checkStatusOrThrow(
             ~access=`context.${params.entityConfig.name}.deleteUnsafe`,
           )
-          params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
-          ->InMemoryTable.Entity.set(
-            ~committedCheckpointId,
+          params->writeChange(
             Delete({
               entityId,
               checkpointId: params.checkpointId,
@@ -526,10 +551,23 @@ let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) =
   }
   params.sync.status = Active
   params.sync.pending = None
+  let writes = SyncWrites.make()
+  params.sync.writes = Some(writes)
 
   let suspended = switch fn() {
-  | () => false
+  | () =>
+    params.sync.writes = None
+    switch params.sync.status {
+    // The body caught the suspend and returned anyway, so it didn't see the
+    // reads it asked for: it is replayed like any other suspended round.
+    | Aborted(_) => true
+    | Active | Resolved =>
+      writes->SyncWrites.commit(~indexerState=params.indexerState)
+      false
+    }
   | exception exn =>
+    // Neither a suspended round nor a failed one keeps what it wrote.
+    params.sync.writes = None
     if exn->isSuspend {
       true
     } else {
@@ -547,31 +585,24 @@ let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) =
     }
   }
 
-  switch params.sync.pending {
-  | None => ()
-  | Some(pending) =>
+  if suspended {
+    // A round only suspends by scheduling the read it missed.
+    let pending = params.sync.pending->Option.getOr([])
     params.sync.pending = None
-    if suspended {
-      let errors = []
-      let _ = await pending
-      ->Array.map(promise =>
-        promise->Promise.catch(exn => {
-          errors->Array.push(exn)
-          Promise.resolve()
-        })
-      )
-      ->Promise.all
-      switch errors->Array.get(0) {
-      | Some(exn) => throw(exn)
-      | None => ()
-      }
-      await params->runSyncRound(fn, ~round=round + 1)
-    } else {
-      // The body swallowed the suspend and returned anyway. The scheduled ops
-      // are nobody's result now, but they must not surface as unhandled
-      // rejections.
-      pending->Array.forEach(promise => promise->Utils.Promise.silentCatch->ignore)
+    let errors = []
+    let _ = await pending
+    ->Array.map(promise =>
+      promise->Promise.catch(exn => {
+        errors->Array.push(exn)
+        Promise.resolve()
+      })
+    )
+    ->Promise.all
+    switch errors->Array.get(0) {
+    | Some(exn) => throw(exn)
+    | None => ()
     }
+    await params->runSyncRound(fn, ~round=round + 1)
   }
 }
 

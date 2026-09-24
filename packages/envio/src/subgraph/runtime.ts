@@ -52,6 +52,14 @@ const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
 
 const jsonFromString = (line: string) => (jsonNamespace as any).fromString(line);
 
+/**
+ * Skips the preload pass, so every read a mapping makes misses and the handler
+ * replays as often as it possibly can. The replay-stress suite runs the whole
+ * subgraph suite this way: a mapping must produce the same store whether its
+ * reads were preloaded or not.
+ */
+const skipPreload = process.env.ENVIO_SUBGRAPH_SKIP_PRELOAD === "1";
+
 type EventHandler = {
   event: string;
   name: string;
@@ -796,6 +804,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       indexer.onEvent(
         { contract: contractName(source.name), event: handler.name },
         async ({ event, context }: any) => {
+          if (skipPreload && context.isPreload) return;
           const graphEvent = new SubgraphEvent(event);
           await (context as any).runSync(() =>
             runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
@@ -831,6 +840,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             : {}),
         } as any,
         async ({ block, context }: any) => {
+          if (skipPreload && context.isPreload) return;
           const graphBlock = makeBlockHandlerBlock(
             block.number,
             `data source "${source.name}" → "${handler.handler}"`,
