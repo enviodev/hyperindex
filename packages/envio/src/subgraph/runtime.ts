@@ -31,7 +31,8 @@ import {
   makeBlockHandlerBlock,
   ethereumValueToJs,
 } from "./graph-ts.ts";
-import { encodeArg, decodeArg, makeCallEffect, resetClients } from "./calls.ts";
+import { encodeArg, decodeArg, makeCallEffect } from "./calls.ts";
+import { resetRpcClients } from "./rpc.ts";
 import { DIVIDE_HELPER, EVENT_CLASSES_EXPORT, RETAG_HELPER, integerDivision } from "./assemblyscript.ts";
 import { makeHostEffects } from "./hosts.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
@@ -311,7 +312,7 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
 
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook(config.root);
-  resetClients();
+  resetRpcClients();
 
   // One effect for every contract call: envio already batches and dedupes
   // effect calls in preload, and the block number in the input is what keeps

@@ -6,18 +6,11 @@
  * of its cache key, which is what makes a cached call safe to reuse.
  */
 
-import {
-  createPublicClient,
-  decodeFunctionResult,
-  encodeFunctionData,
-  fallback,
-  http,
-  parseAbiParameters,
-  type Abi,
-} from "viem";
+import { decodeFunctionResult, encodeFunctionData, parseAbiParameters, type Abi } from "viem";
 import * as Sury from "rescript-schema";
 import { createEffect } from "../Envio.res.mjs";
 import { missingRpcMessage } from "./errors.ts";
+import { rpcClient } from "./rpc.ts";
 
 export type ParsedSignature = {
   name: string;
@@ -106,27 +99,6 @@ export type CallOutput = {
   values: unknown[] | null;
 };
 
-let clients: Map<string, ReturnType<typeof createPublicClient>> = new Map();
-
-function clientFor(rpcUrls: string[]) {
-  const key = rpcUrls.join("|");
-  let client = clients.get(key);
-  if (!client) {
-    client = createPublicClient({
-      // Retrying is envio's job: a failed call becomes a handler error and
-      // the batch is retried with the effect's dedup still in place.
-      transport: fallback(rpcUrls.map((url) => http(url, { retryCount: 0 }))),
-    });
-    clients.set(key, client);
-  }
-  return client;
-}
-
-/** Reset between test indexers, which each bring their own endpoints. */
-export function resetClients() {
-  clients = new Map();
-}
-
 /**
  * BigInt and Bytes cross the effect boundary through Sury, which needs a
  * serialisable shape — so the call is described in plain JSON and the graph-ts
@@ -159,7 +131,7 @@ export function makeCallEffect(rpcUrls: string[]) {
 
       let result;
       try {
-        result = await clientFor(rpcUrls).call({
+        result = await rpcClient(rpcUrls).call({
           to: input.address as `0x${string}`,
           data,
           blockNumber: BigInt(input.blockNumber),
