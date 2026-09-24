@@ -85,10 +85,10 @@ describe("Isolated config", () => {
 
   it("Leaves the selection out of the stored fingerprint", t => {
     t.expect(
-      publicJson(~schema=perChainSchema, ~isolatedChains=[JSON.Encode.int(137)])
-      ->Config.stripSensitiveData
-      ->JSON.stringify,
-    ).toEqual(publicJson(~schema=perChainSchema)->Config.stripSensitiveData->JSON.stringify)
+      Config.fromPublic(
+        publicJson(~schema=perChainSchema, ~isolatedChains=[JSON.Encode.int(137)]),
+      ).storedConfig->JSON.stringify,
+    ).toEqual(Config.fromPublic(publicJson(~schema=perChainSchema)).storedConfig->JSON.stringify)
   })
 
   it("Rejects a chain the config doesn't declare", t => {

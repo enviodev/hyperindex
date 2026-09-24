@@ -270,11 +270,16 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
   }
 }
 
+let makeCreatePartitionQuery = (entityConfig: Internal.entityConfig, ~pgSchema, ~chainId) =>
+  `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${partitionTableName(
+      ~entityConfig,
+      ~chainId,
+    )}" PARTITION OF "${pgSchema}"."${entityConfig.table.tableName}" FOR VALUES IN (${chainId->ChainId.toString});`
+
 // Every table an entity needs: its own, one partition per chain when it's
-// per-chain, and its history table. The chain set is fixed for the life of a
-// schema — changing it fails the resume compat check against `envio_info` and
-// forces a resync — so every partition the entity will ever need is created
-// here, at init.
+// per-chain, and its history table. A chain the schema gains later gets its
+// partitions from `addChain`, which the resume compat check allows only for an
+// `envio start --chain` process naming it.
 //
 // History stays unpartitioned: it is only ever read by checkpoint, never by
 // chain, so partitioning it would route every write and prune nothing.
@@ -294,12 +299,7 @@ let makeCreateEntityTableQueries = (
     [
       entityConfig.table->createTable(~partitionByColumn=chainIdField->Table.getPgDbFieldName),
     ]->Array.concat(
-      chainIds->Array.map(chainId =>
-        `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${partitionTableName(
-            ~entityConfig,
-            ~chainId,
-          )}" PARTITION OF "${pgSchema}"."${entityConfig.table.tableName}" FOR VALUES IN (${chainId->ChainId.toString});`
-      ),
+      chainIds->Array.map(chainId => entityConfig->makeCreatePartitionQuery(~pgSchema, ~chainId)),
     )
   }->Array.concat([getEntityHistory(~entityConfig).table->createTable])
 }
@@ -1913,7 +1913,7 @@ let make = (
     ~entities=[],
     ~enums=[],
     ~contractMapping,
-    ~envioInfo,
+    ~storedConfig,
   ): Persistence.initialState => {
     // PG owns tables only for entities that opted into Postgres; the sink
     // picks its own out of the full list.
@@ -1978,7 +1978,7 @@ let make = (
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
       let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
-      await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
+      await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~storedConfig)
       await InternalTable.EnvioContracts.insert(
         sql,
         ~pgSchema,
@@ -2009,7 +2009,6 @@ let make = (
       cache,
       reorgCheckpoints: [],
       contractMapping,
-      envioInfo: Some(envioInfo),
       chains: chainConfigs->Array.mapWithIndex((
         chainConfig,
         idx,
@@ -2437,17 +2436,60 @@ let make = (
     }
   }
 
+  let readStoredConfig = async (): Config.stored => {
+    let (config, contractNames, chains) = await Promise.all3((
+      InternalTable.EnvioInfo.read(sql, ~pgSchema),
+      InternalTable.EnvioContracts.read(sql, ~pgSchema),
+      InternalTable.Chains.readStoredConfigs(sql, ~pgSchema),
+    ))
+    // All three join the schema in one transaction. Any one missing means an
+    // older envio wrote this schema, so treat the record as unreadable rather
+    // than decoding address rows against ids nothing assigned.
+    switch (config, contractNames, chains) {
+    | (Some(config), Some(contractNames), Some(chains)) => {
+        config: Some(config),
+        chains,
+        contractMapping: ContractMapping.fromStoredNames(contractNames),
+      }
+    | _ => {config: None, chains: [], contractMapping: ContractMapping.empty}
+    }
+  }
+
+  let addChain = async (~chainConfig: Config.chain, ~entities, ~contractMapping) => {
+    let partitionQueries =
+      entities
+      ->Array.filter((entityConfig: Internal.entityConfig) =>
+        entityConfig.storage.postgres && entityConfig.table->Table.getChainIdField->Option.isSome
+      )
+      ->Array.map(entityConfig =>
+        entityConfig->makeCreatePartitionQuery(~pgSchema, ~chainId=chainConfig.id)
+      )
+    let addressRows = chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping)
+    // No conflict clauses: two processes adding the same chain are two
+    // processes driving it, and the second one fails on a primary key instead
+    // of indexing alongside the first.
+    let _ = await sql->Postgres.beginSql(async sql => {
+      for idx in 0 to partitionQueries->Array.length - 1 {
+        await sql
+        ->Postgres.unsafe(partitionQueries->Array.getUnsafe(idx))
+        ->Utils.Promise.ignoreValue
+      }
+      if addressRows->Utils.Array.notEmpty {
+        await InternalTable.EnvioAddresses.insert(sql, ~pgSchema, ~rows=addressRows, ~chainIdMode)
+      }
+      switch InternalTable.Chains.makeInitialValuesQuery(~pgSchema, ~chainConfigs=[chainConfig]) {
+      | Some(query) => await sql->Postgres.unsafe(query)->Utils.Promise.ignoreValue
+      | None => ()
+      }
+    })
+  }
+
   let resumeInitialState = async (
     ~entities,
     ~chainIds,
-    ~throwIfIncompatible,
+    ~contractMapping,
   ): Persistence.initialState => {
-    let (
-      cache,
-      (chains, checkpointFrontier),
-      reorgCheckpoints,
-      (storedEnvioInfo, storedContractMapping),
-    ) = await Promise.all4((
+    let (cache, (chains, checkpointFrontier), reorgCheckpoints) = await Promise.all3((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -2491,21 +2533,7 @@ let make = (
           }>,
         >
       ),
-      Promise.all2((
-        InternalTable.EnvioInfo.read(sql, ~pgSchema),
-        InternalTable.EnvioContracts.read(sql, ~pgSchema),
-      ))->Promise.thenResolve(((info, names)) =>
-        // Both tables join the schema in one transaction. A missing mapping
-        // means an older envio wrote this schema, so treat the snapshot as
-        // unreadable rather than decoding address rows against ids nothing assigned.
-        switch (info, names) {
-        | (Some(info), Some(names)) => (Some(info), ContractMapping.fromStoredNames(names))
-        | _ => (None, ContractMapping.empty)
-        }
-      ),
     ))
-
-    throwIfIncompatible(~storedEnvioInfo, ~storedContractMapping)
 
     await reloadIndexCatalog()
 
@@ -2529,8 +2557,7 @@ let make = (
       cache,
       chains,
       checkpointFrontier,
-      contractMapping: storedContractMapping,
-      envioInfo: storedEnvioInfo,
+      contractMapping,
     }
   }
 
@@ -2687,6 +2714,8 @@ let make = (
     name: storageName,
     isInitialized,
     initialize,
+    readStoredConfig,
+    addChain,
     resumeInitialState,
     loadOrThrow,
     ensureQueryIndexes,

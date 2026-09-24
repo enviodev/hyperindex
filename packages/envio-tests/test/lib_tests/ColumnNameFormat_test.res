@@ -64,9 +64,7 @@ describe("Storage column naming (snake_case)", () => {
       snapshot1
       ->(Utils.magic: snapshot => Internal.entity)
       ->S.reverseConvertToJsonOrThrow(snapshotEntity.schema)
-    t.expect(json).toEqual(
-      %raw(`{ "id": "1", "transactionIndex": 5, "tokenOwner_id": "user-1" }`),
-    )
+    t.expect(json).toEqual(%raw(`{ "id": "1", "transactionIndex": 5, "tokenOwner_id": "user-1" }`))
   })
 
   it("creates the Postgres table with db column names", t => {
@@ -81,11 +79,8 @@ describe("Storage column naming (snake_case)", () => {
   })
 
   it("creates indexes with db column names", t => {
-    let definition =
-      PgStorage.getSchemaIndexes(~entities=[snapshotEntity])->Array.getUnsafe(0)
-    t.expect(
-      definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
-    ).toBe(
+    let definition = PgStorage.getSchemaIndexes(~entities=[snapshotEntity])->Array.getUnsafe(0)
+    t.expect(definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema")).toBe(
       `CREATE INDEX "${definition->IndexDefinition.name}" ON "test_schema"."Snapshot"("transaction_index");`,
     )
   })
@@ -97,7 +92,9 @@ describe("Storage column naming (snake_case)", () => {
       ~itemSchema=snapshotEntity.schema->S.toUnknown,
       ~isRawEvents=false,
     )
-    t.expect(query).toBe(`INSERT INTO "test_schema"."Snapshot" ("id", "transaction_index", "token_owner_id")
+    t.expect(
+      query,
+    ).toBe(`INSERT INTO "test_schema"."Snapshot" ("id", "transaction_index", "token_owner_id")
 SELECT * FROM unnest($1::TEXT[],$2::INTEGER[],$3::TEXT[])ON CONFLICT("id") DO UPDATE SET "transaction_index" = EXCLUDED."transaction_index","token_owner_id" = EXCLUDED."token_owner_id";`)
   })
 
@@ -108,9 +105,7 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[],$3::TEXT[])ON CONFLICT("id") DO UP
       ~itemSchema=snapshotEntity.schema->S.toUnknown,
     )
     let params = data["convertOrThrow"]([snapshot1->(Utils.magic: snapshot => unknown)])
-    t.expect(params->(Utils.magic: unknown => JSON.t)).toEqual(
-      %raw(`[["1"], [5], ["user-1"]]`),
-    )
+    t.expect(params->(Utils.magic: unknown => JSON.t)).toEqual(%raw(`[["1"], [5], ["user-1"]]`))
   })
 
   it("parses rows keyed by db column names into entities", t => {
@@ -133,7 +128,9 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[],$3::TEXT[])ON CONFLICT("id") DO UP
       ~itemSchema=entityHistory.setChangeSchema->S.toUnknown,
       ~itemsCount=1,
     )
-    t.expect(query).toBe(`INSERT INTO "test_schema"."envio_history_Snapshot" ("envio_change", "id", "transaction_index", "token_owner_id", "envio_checkpoint_id")
+    t.expect(
+      query,
+    ).toBe(`INSERT INTO "test_schema"."envio_history_Snapshot" ("envio_change", "id", "transaction_index", "token_owner_id", "envio_checkpoint_id")
 VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "envio_change" = EXCLUDED."envio_change","transaction_index" = EXCLUDED."transaction_index","token_owner_id" = EXCLUDED."token_owner_id";`)
   })
 
@@ -157,8 +154,8 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
     )
     t.expect({
       "postgres": pgQuery,
-      "clickhouse": ClickHouse.entitySpec(~entityConfig=tokenEntity).columns->Array.map(({name}) =>
-        name
+      "clickhouse": ClickHouse.entitySpec(~entityConfig=tokenEntity).columns->Array.map(
+        ({name}) => name,
       ),
     }).toEqual({
       "postgres": `CREATE TABLE IF NOT EXISTS "test_schema"."Token"("id" TEXT NOT NULL, "tokenId" INTEGER NOT NULL, PRIMARY KEY("id"));`,
@@ -216,7 +213,7 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
       ~pgDatabase=Env.Db.database,
       ~pgPassword=Env.Db.password,
       ~isHasuraEnabled=false,
-    ~ecosystem=Evm,
+      ~ecosystem=Evm,
     )
     let _ = await storage.initialize(
       ~contractMapping=config.contractMapping,
@@ -224,7 +221,7 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
       ~enums=config.allEnums->Array.concat([
         EntityHistory.RowAction.config->Table.fromGenericEnumConfig,
       ]),
-      ~envioInfo=JSON.Object(Dict.make()),
+      ~storedConfig=JSON.Object(Dict.make()),
     )
 
     await PgStorage.setOrThrow(

@@ -10,6 +10,7 @@ let makeChain = (~startBlock, ~endBlock=?, ~sources): Config.chain => {
   blockLag: 0,
   contracts: [],
   sourceConfig: Config.CustomSources(sources),
+  storedConfig: JSON.Encode.object(Dict.make()),
 }
 
 let resolveAll = (chains, ~getHeightRetryInterval=(~retry as _) => 1) =>
@@ -26,11 +27,7 @@ let errorMessageOf = async (resolving: promise<'a>) =>
 describe("StartBlockResolver", () => {
   Async.it("leaves a fixed start block alone, even one past its end_block", async t => {
     let mockSource = MockSource.make([], ~chainId=1)
-    let chain = makeChain(
-      ~startBlock=Config.Block(100),
-      ~endBlock=50,
-      ~sources=[mockSource.source],
-    )
+    let chain = makeChain(~startBlock=Config.Block(100), ~endBlock=50, ~sources=[mockSource.source])
 
     let resolved = await [chain]->resolveAll
 
@@ -100,18 +97,14 @@ describe("StartBlockResolver", () => {
       ~sourceFor=Source.Fallback,
       ~autoHeight=999,
     )
-    let chain = makeChain(
-      ~startBlock=Config.Latest,
-      ~sources=[primary.source, fallback.source],
-    )
+    let chain = makeChain(~startBlock=Config.Latest, ~sources=[primary.source, fallback.source])
 
-    let resolved =
-      await [chain]->StartBlockResolver.resolveAllOrThrow(
-        ~lowercaseAddresses=false,
-        ~getHeightRetryInterval=(~retry as _) => 1,
-        // The window the primary gets to itself before a fallback is recruited.
-        ~newBlockStallTimeout=1,
-      )
+    let resolved = await [chain]->StartBlockResolver.resolveAllOrThrow(
+      ~lowercaseAddresses=false,
+      ~getHeightRetryInterval=(~retry as _) => 1,
+      // The window the primary gets to itself before a fallback is recruited.
+      ~newBlockStallTimeout=1,
+    )
 
     t.expect((
       resolved->Array.map(c => c.startBlock),
@@ -163,13 +156,12 @@ describe("StartBlockResolver", () => {
     let realtimeOnly = MockSource.make([#getHeightOrThrow], ~chainId=1, ~sourceFor=Source.Realtime)
     let chain = makeChain(~startBlock=Config.Latest, ~sources=[realtimeOnly.source])
 
-    let error =
-      await [chain]
-      ->StartBlockResolver.resolveAllOrThrow(
-        ~lowercaseAddresses=false,
-        ~retry=StartBlockResolver.Once,
-      )
-      ->errorMessageOf
+    let error = await [chain]
+    ->StartBlockResolver.resolveAllOrThrow(
+      ~lowercaseAddresses=false,
+      ~retry=StartBlockResolver.Once,
+    )
+    ->errorMessageOf
 
     t.expect((error, realtimeOnly.getHeightOrThrowCalls->Array.length)).toEqual((
       Some("Invalid configuration, no data-source for historical sync provided"),
@@ -229,26 +221,29 @@ chains:
 `,
     ),
   ]->Array.forEach(((ecosystem, configYaml)) => {
-    Async.it(`resolves latest on ${ecosystem}`, async t => {
-      let {config} = InternalTestIndexer.fromUserApi(~configYaml)
-      let configChain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
-      let mockSource = MockSource.make(
-        [#getHeightOrThrow],
-        ~chainId=configChain.id->ChainId.toInt,
-        ~autoHeight=8888,
-      )
-      let chain = {
-        ...configChain,
-        sourceConfig: Config.CustomSources([mockSource.source]),
-      }
+    Async.it(
+      `resolves latest on ${ecosystem}`,
+      async t => {
+        let {config} = InternalTestIndexer.fromUserApi(~configYaml)
+        let configChain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+        let mockSource = MockSource.make(
+          [#getHeightOrThrow],
+          ~chainId=configChain.id->ChainId.toInt,
+          ~autoHeight=8888,
+        )
+        let chain = {
+          ...configChain,
+          sourceConfig: Config.CustomSources([mockSource.source]),
+        }
 
-      let resolved = await [chain]->resolveAll
+        let resolved = await [chain]->resolveAll
 
-      t.expect((
-        configChain.startBlock,
-        resolved->Array.map(c => c.startBlock),
-      )).toEqual((Config.Latest, [Config.Block(8888)]))
-    })
+        t.expect((configChain.startBlock, resolved->Array.map(c => c.startBlock))).toEqual((
+          Config.Latest,
+          [Config.Block(8888)],
+        ))
+      },
+    )
   })
 
   Async.it("throws a clear error when latest resolves past end_block", async t => {

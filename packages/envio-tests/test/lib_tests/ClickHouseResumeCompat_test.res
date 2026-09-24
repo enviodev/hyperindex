@@ -47,13 +47,12 @@ type Extra {
 `
 
 let init = async (~schema, ~pgSchema, ~reset) => {
-  let publicConfigJson = Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow
-  let config = Config.fromPublic(publicConfigJson)
+  let config = Config.fromPublic(Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow)
   let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
   await PgStorage.makePersistenceFromConfig(~config, ~storage)->Persistence.init(
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
-    ~envioInfo=publicConfigJson->Config.stripSensitiveData,
+    ~storedConfig=config.storedConfig,
     ~resetCommand="envio start -r",
     ~runCommand=Some("envio start"),
     ~reset,

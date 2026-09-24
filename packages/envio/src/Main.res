@@ -411,8 +411,6 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-// The RPC-stripped public config that the storage layer persists in
-// `envio_info` (on initialize) and validates against (on resume).
 let migrate = async (~reset) => {
   let config = Config.load()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
@@ -420,7 +418,7 @@ let migrate = async (~reset) => {
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
-    ~envioInfo=Config.envioInfo(),
+    ~storedConfig=config.storedConfig,
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
     ~lowercaseAddresses=config.lowercaseAddresses,
@@ -466,12 +464,7 @@ exception FatalError(exn)
     | None => PgStorage.makePersistenceFromConfig(~config)
     }
     setGlobalPersistence(persistence)
-    await persistence->Persistence.initForRun(
-      ~config,
-      ~reset,
-      ~isDevelopmentMode,
-      ~requireInitialized=config.isolated,
-    )
+    await persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode)
 
     // Loads user handler files, which register handler/contractRegister/where
     // state into the global `HandlerRegister` registry as a side effect; this

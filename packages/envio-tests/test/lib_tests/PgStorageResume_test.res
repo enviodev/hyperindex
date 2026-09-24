@@ -1,7 +1,7 @@
 open Vitest
 
 // What Postgres stored is what the compatibility check has to be handed: the
-// only thing binding the check to the storage is this call.
+// only thing binding the check to the storage is this read.
 let sql = PgStorage.makeClient()
 
 let config = TestConfig.make(
@@ -23,47 +23,39 @@ Async.afterAll(async () => {
 })
 
 describe("Resuming Postgres storage", () => {
-  Async.it("hands the stored config to the compatibility check and stops on its throw", async t => {
-    let storage = PgStorage.make(
-      ~sql,
-      ~pgHost=Env.Db.host,
-      ~pgSchema,
-      ~pgPort=Env.Db.port,
-      ~pgUser=Env.Db.user,
-      ~pgDatabase=Env.Db.database,
-      ~pgPassword=Env.Db.password,
-      ~isHasuraEnabled=false,
-      ~ecosystem=Evm,
-    )
-    let envioInfo = JSON.parseOrThrow(`{"name": "stored", "storage": {"clickhouse": false}}`)
-    let _ = await storage.initialize(
-      ~chainConfigs=config.chainMap->ChainMap.values,
-      ~contractMapping=config.contractMapping,
-      ~entities,
-      ~enums,
-      ~envioInfo,
-    )
-
-    let handed = []
-    let outcome = try {
-      let _ = await storage.resumeInitialState(
-        ~entities,
-        ~chainIds=config.chainMap->ChainMap.keys,
-        ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) => {
-          handed
-          ->Array.push((
-            storedEnvioInfo,
-            storedContractMapping->ContractMapping.isEqual(config.contractMapping),
-          ))
-          ->ignore
-          JsError.throwWithMessage("refused")
-        },
+  Async.it(
+    "reads back the config it was initialized with, each chain from its own row",
+    async t => {
+      let storage = PgStorage.make(
+        ~sql,
+        ~pgHost=Env.Db.host,
+        ~pgSchema,
+        ~pgPort=Env.Db.port,
+        ~pgUser=Env.Db.user,
+        ~pgDatabase=Env.Db.database,
+        ~pgPassword=Env.Db.password,
+        ~isHasuraEnabled=false,
+        ~ecosystem=Evm,
       )
-      "resumed"
-    } catch {
-    | JsExn(e) => e->JsExn.message->Option.getOr("")
-    }
+      let _ = await storage.initialize(
+        ~chainConfigs=config.chainMap->ChainMap.values,
+        ~contractMapping=config.contractMapping,
+        ~entities,
+        ~enums,
+        ~storedConfig=config.storedConfig,
+      )
 
-    t.expect((handed, outcome)).toEqual(([(Some(envioInfo), true)], "refused"))
-  })
+      t.expect(await storage.readStoredConfig()).toEqual(
+        (
+          {
+            config: Some(config.storedConfig),
+            chains: config.chainMap
+            ->ChainMap.values
+            ->Array.map(chain => (chain.id, chain.storedConfig)),
+            contractMapping: config.contractMapping,
+          }: Config.stored
+        ),
+      )
+    },
+  )
 })

@@ -9,13 +9,21 @@ let isIndex = true
 // initialized by an older envio that didn't have the table.
 let undefinedTableSqlState = "42P01"
 
+// And "undefined_column": a table an older envio created without a column
+// this one reads.
+let undefinedColumnSqlState = "42703"
+
 @get external getSqlStateCode: JsExn.t => option<string> = "code"
 
-let isUndefinedTable = exn =>
+let hasSqlState = (exn, sqlState) =>
   switch exn->JsExn.anyToExnInternal {
-  | JsExn(e) => e->getSqlStateCode === Some(undefinedTableSqlState)
+  | JsExn(e) => e->getSqlStateCode === Some(sqlState)
   | _ => false
   }
+
+let isUndefinedTable = exn => exn->hasSqlState(undefinedTableSqlState)
+
+let isUndefinedColumn = exn => exn->hasSqlState(undefinedColumnSqlState)
 
 // The array type an unnest binds a chain-id column to. Resolved from the
 // config's mode, so every internal query casts the parameter the same way the
@@ -188,6 +196,7 @@ module Chains = {
     | #ready_at
     | #_is_hyper_sync
     | #checkpoint_id
+    | #config
   ]
 
   let fields: array<field> = [
@@ -205,6 +214,7 @@ module Chains = {
     #events_processed,
     #_is_hyper_sync,
     #checkpoint_id,
+    #config,
   ]
 
   type metaFields = {
@@ -227,6 +237,7 @@ module Chains = {
     @as("progress_block_time") progressBlockTime: Null.t<Date.t>,
     @as("events_processed") numEventsProcessed: float,
     @as("checkpoint_id") checkpointId: Internal.checkpointId,
+    @as("config") config: string,
     ...metaFields,
   }
 
@@ -282,6 +293,10 @@ module Chains = {
       // resume has to continue the sequence even where no checkpoint row backs
       // it.
       mkField((#checkpoint_id: field :> string), UInt64, ~fieldSchema=S.bigint),
+      // The chain's entry of the config the schema was built with, as
+      // `Config.chain.storedConfig`. TEXT for the same byte-stable round trip
+      // as `envio_info`.
+      mkField((#config: field :> string), String, ~fieldSchema=S.string),
     ],
   )
 
@@ -301,6 +316,7 @@ module Chains = {
       isHyperSync: false,
       numEventsProcessed: 0.,
       checkpointId: Internal.initialCheckpointId,
+      config: chainConfig.storedConfig->JSON.stringify,
     }
   }
 
@@ -318,7 +334,10 @@ module Chains = {
           let value = initialValues->(Utils.magic: t => dict<unknown>)->Dict.get((field :> string))
           switch typeof(value) {
           | #object => "NULL"
-          | #string => `'${value->(Utils.magic: option<unknown> => string)}'`
+          | #string =>
+            `'${value
+              ->(Utils.magic: option<unknown> => string)
+              ->String.replaceAll("'", "''")}'`
           | #number => value->(Utils.magic: option<unknown> => int)->Int.toString
           | #bigint => value->(Utils.magic: option<unknown> => bigint)->BigInt.toString
           | #boolean => value->(Utils.magic: option<unknown> => bool) ? "true" : "false"
@@ -405,6 +424,21 @@ WHERE "${(#id: field :> string)}" = $2
 "${(#checkpoint_id: field :> string)}"::TEXT as "checkpointId"
 FROM "${pgSchema}"."${table.tableName}";`
   }
+
+  // `None` for a table an older envio created without the column.
+  let readStoredConfigs = async (sql, ~pgSchema): option<array<(ChainId.t, JSON.t)>> =>
+    switch await sql->Postgres.unsafe(
+      `SELECT "${(#id: field :> string)}" as "id", "${(#config: field :> string)}" as "config"
+FROM "${pgSchema}"."${table.tableName}";`,
+    ) {
+    | rows =>
+      Some(
+        rows
+        ->(Utils.magic: unknown => array<{"id": ChainId.t, "config": string}>)
+        ->Array.map(row => (row["id"]->ChainId.normalizeOrThrow, row["config"]->JSON.parseOrThrow)),
+      )
+    | exception exn if isUndefinedTable(exn) || isUndefinedColumn(exn) => None
+    }
 
   // Addresses are read as plain rows rather than aggregated per chain with
   // json_agg: a single chain's aggregate can exceed V8's max string length
@@ -555,6 +589,10 @@ module EnvioInfo = {
   // column has a fixed default of 1 plus a primary key, so the table can
   // hold at most one row; `write` upserts on conflict.
   //
+  // `config` is `Config.t.storedConfig`: everything but the chains, whose
+  // entries live on their own `envio_chains` rows. So adding a chain never
+  // rewrites this row, and the chains a schema has are exactly its rows.
+  //
   // `config` is TEXT (not JSONB) so the round-trip is byte-stable: jsonb
   // re-serializes numbers/escapes which made the diff produce false
   // positives on harmless format differences.
@@ -580,11 +618,11 @@ module EnvioInfo = {
   // Upsert keyed on the fixed id so the table stays a singleton even if
   // `initialize` runs against a non-empty schema (shouldn't happen, but
   // protects against a partially-applied prior run).
-  let write = (sql, ~pgSchema, ~envioInfo: JSON.t) => {
+  let write = (sql, ~pgSchema, ~storedConfig: JSON.t) => {
     sql
     ->Postgres.preparedUnsafe(
       `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "config") VALUES (1, $1) ON CONFLICT ("id") DO UPDATE SET "config" = EXCLUDED."config";`,
-      [envioInfo->JSON.stringify]->(Utils.magic: array<string> => unknown),
+      [storedConfig->JSON.stringify]->(Utils.magic: array<string> => unknown),
     )
     ->Utils.Promise.ignoreValue
   }

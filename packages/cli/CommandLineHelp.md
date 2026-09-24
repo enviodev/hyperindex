@@ -380,7 +380,7 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
 * `--chain <CHAIN_ID>` — Index only this chain, leaving the others to their own `envio start --chain` processes. Repeat the flag for several chains.
 
-   Only needed to place chains yourself. Requires a per-chain schema, migrated for every chain before any process starts, and a separate `ENVIO_INDEXER_PORT` per process.
+   Only needed to place chains yourself. Requires a per-chain schema, migrated before any process starts, and a separate `ENVIO_INDEXER_PORT` per process. A chain added to config.yaml after the migration joins the database when its process names only that chain.
 
 
 
