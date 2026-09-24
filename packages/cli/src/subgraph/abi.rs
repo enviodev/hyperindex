@@ -6,11 +6,9 @@
 //! unique name needs. An overloaded name isn't unique, so that one has to be
 //! spelled out in the human-readable form envio parses.
 
-use std::collections::BTreeMap;
-
 use serde_json::Value;
 
-use super::errors::Report;
+use super::{errors::Report, manifest::EventInput};
 
 /// The parameter types a manifest signature declares, in order, each paired
 /// with whether it is indexed. Indexing is part of what identifies an overload:
@@ -87,6 +85,23 @@ fn solidity_type(input: &Value) -> String {
     format!("({components}){}", &raw["tuple".len()..])
 }
 
+fn abi_name(input: &Value) -> &str {
+    input
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+/// What envio decodes a parameter under. An unnamed one is `_{index}` whether
+/// envio reads the ABI itself or the signature spelled out below, so the
+/// runtime finds it under one name either way.
+fn decode_key(input: &Value, index: usize) -> String {
+    match abi_name(input) {
+        "" => format!("_{index}"),
+        name => name.to_string(),
+    }
+}
+
 fn human_readable(name: &str, inputs: &[Value]) -> String {
     let params: Vec<String> = inputs
         .iter()
@@ -97,12 +112,7 @@ fn human_readable(name: &str, inputs: &[Value]) -> String {
                 .get("indexed")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let param_name = input
-                .get("name")
-                .and_then(Value::as_str)
-                .filter(|name| !name.is_empty())
-                .map(|name| name.to_string())
-                .unwrap_or_else(|| format!("arg{index}"));
+            let param_name = decode_key(input, index);
             if indexed {
                 format!("{ty} indexed {param_name}")
             } else {
@@ -176,22 +186,18 @@ fn matching_entry(manifest_signature: &str, abi_json: Option<&str>) -> Option<Va
     })
 }
 
-/// Each parameter's ABI type, keyed by the name envio decodes it under.
-pub fn param_types(manifest_signature: &str, abi_json: Option<&str>) -> BTreeMap<String, String> {
+/// The event's parameters in ABI order.
+pub fn event_inputs(manifest_signature: &str, abi_json: Option<&str>) -> Vec<EventInput> {
     let Some(entry) = matching_entry(manifest_signature, abi_json) else {
-        return BTreeMap::new();
+        return Vec::new();
     };
     inputs_of(&entry)
         .iter()
         .enumerate()
-        .map(|(index, input)| {
-            let name = input
-                .get("name")
-                .and_then(Value::as_str)
-                .filter(|name| !name.is_empty())
-                .map(|name| name.to_string())
-                .unwrap_or_else(|| format!("arg{index}"));
-            (name, solidity_type(input))
+        .map(|(index, input)| EventInput {
+            name: abi_name(input).to_string(),
+            key: decode_key(input, index),
+            abi_type: solidity_type(input),
         })
         .collect()
 }
@@ -266,27 +272,65 @@ mod tests {
         );
     }
 
-    #[test]
-    fn reads_param_types_for_a_unique_name() {
-        assert_eq!(
-            param_types("Approval(indexed address)", Some(ABI)),
-            BTreeMap::from([("owner".to_string(), "address".to_string())])
-        );
+    fn input(name: &str, key: &str, abi_type: &str) -> EventInput {
+        EventInput {
+            name: name.to_string(),
+            key: key.to_string(),
+            abi_type: abi_type.to_string(),
+        }
     }
 
     #[test]
-    fn reads_param_types_of_the_matching_overload() {
+    fn reads_the_inputs_of_a_unique_name() {
         assert_eq!(
-            param_types(
+            event_inputs("Approval(indexed address)", Some(ABI)),
+            vec![input("owner", "owner", "address")]
+        );
+    }
+
+    // ABI order, not name order: `event.parameters[i]` indexes by it.
+    #[test]
+    fn reads_the_inputs_of_the_matching_overload_in_abi_order() {
+        assert_eq!(
+            event_inputs(
                 "Transfer(indexed address,indexed address,uint256,bytes)",
                 Some(ABI)
             ),
-            BTreeMap::from([
-                ("from".to_string(), "address".to_string()),
-                ("to".to_string(), "address".to_string()),
-                ("id".to_string(), "uint256".to_string()),
-                ("data".to_string(), "bytes".to_string()),
-            ])
+            vec![
+                input("from", "from", "address"),
+                input("to", "to", "address"),
+                input("id", "id", "uint256"),
+                input("data", "data", "bytes"),
+            ]
+        );
+    }
+
+    // envio decodes an unnamed parameter as `_{index}` when it reads the ABI
+    // itself; spelling out an overload has to name it the same way, or the
+    // runtime looks for it under a name nothing decoded.
+    #[test]
+    fn keys_an_unnamed_input_the_way_envio_decodes_it() {
+        const UNNAMED: &str = r#"[
+          {"type":"event","name":"Paid","anonymous":false,"inputs":[
+            {"name":"","type":"address","indexed":true},{"name":"","type":"uint256","indexed":false}]},
+          {"type":"event","name":"Paid","anonymous":false,"inputs":[
+            {"name":"","type":"address","indexed":true}]}
+        ]"#;
+        let mut report = Report::new();
+        assert_eq!(
+            (
+                event_inputs("Paid(indexed address,uint256)", Some(UNNAMED)),
+                resolve_event(
+                    "Paid(indexed address,uint256)",
+                    Some(UNNAMED),
+                    "data source \"Pay\"",
+                    &mut report
+                ),
+            ),
+            (
+                vec![input("", "_0", "address"), input("", "_1", "uint256")],
+                "Paid(address indexed _0, uint256 _1)".to_string()
+            )
         );
     }
 

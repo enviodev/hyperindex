@@ -129,6 +129,7 @@ query and is dropped; stored, it is an error.
 | `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary |
 | `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` (log's index within its tx — envio has no per-tx log index) → §7 error on access |
 | `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it throws as the handler error (envio retries), so a flaky RPC never fabricates `reverted` data |
+| `ethereum.Value` | its own class, tagged with graph-ts' ABI `ValueKind` from the ABI type (event inputs, call outputs, `ethereum.decode`'s type string); accessors refuse another kind exactly as graph-ts' asserts do |
 | `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
 | Block handler's `block.timestamp` | internal `getBlockTimestamp` effect, `cache: false`, suspend: calls are microtask-collected into one HyperSync range query (`fieldSelection: {block: [Number, Timestamp]}`) — the pattern proven in [all-contracts-indexer](https://github.com/enviodev/all-contracts-indexer/blob/main/src/handlers/onBlock.ts). Uncached on purpose: a block's timestamp is read exactly once, by that block's own handler invocation, so a persisted row per indexed block would be pure bloat with no reuse. In-memory memoization (which holds even with `cache: false`, §5) still covers what the bridge needs — replay rounds and the preload→execute transition reuse the fetched value |
@@ -494,8 +495,9 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
    around `runSync`; per-round log buffering.
 4. Tests: rung 1 with real mapping sources + golden `generated/` fixtures
    (real `graph codegen` output across pinned graph-cli versions) executed
-   through the shim; the `satisfies`-style type conformance check against
-   real graph-ts declarations; value-class unit tests against graph-ts
+   through the shim; the type conformance walk (`conformance.ts`) over every
+   export, static and instance member of the real graph-ts declarations, with
+   each remaining gap listed and asserted both ways; value-class unit tests against graph-ts
    fixtures; `try_` revert → `{reverted: true}` vs transport failure →
    handler error; `Timestamp` micros ↔ date round-trip through the store;
    `getBlockTimestamp` batching (one range query per round, and one fetch

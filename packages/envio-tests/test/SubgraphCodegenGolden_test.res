@@ -20,43 +20,19 @@ let fixture = relativePath =>
 
 let _ = InternalTestIndexer.fromSubgraph(
   ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8602")]),
-  ~manifest=`
-specVersion: 0.0.2
-schema:
-  file: ./schema.graphql
-dataSources:
-  - kind: ethereum/contract
-    name: Margin
-    network: ethereum
-    source:
-      address: "0x1111111111111111111111111111111111111111"
-      abi: Margin
-      startBlock: 0
-    mapping:
-      kind: ethereum/events
-      apiVersion: 0.0.7
-      language: wasm/assemblyscript
-      entities:
-        - Probe
-      abis:
-        - name: Margin
-          file: ./abis/Margin.json
-        - name: ERC20
-          file: ./abis/ERC20.json
-      eventHandlers:
-        - event: LogSetMarginRatio(uint256)
-          handler: handleLogSetMarginRatio
-      file: ./src/mapping.ts
-`,
+  ~manifest=fixture("subgraph.yaml"),
   ~schema=fixture("schema.graphql"),
   ~files=Dict.fromArray([
-    ("abis/Margin.json", fixture("abis/Margin.json")),
-    ("abis/ERC20.json", fixture("abis/ERC20.json")),
+    ("./abis/Margin.json", fixture("abis/Margin.json")),
+    ("./abis/ERC20.json", fixture("abis/ERC20.json")),
+    ("./abis/Registry.json", fixture("abis/Registry.json")),
   ]),
   ~mappings=Dict.fromArray([
     ("src/mapping.ts", fixture("src/mapping.ts")),
+    ("src/registry.ts", fixture("src/registry.ts")),
     ("generated/Margin/Margin.ts", fixture("generated/Margin/Margin.ts")),
     ("generated/Margin/ERC20.ts", fixture("generated/Margin/ERC20.ts")),
+    ("generated/Registry/Registry.ts", fixture("generated/Registry/Registry.ts")),
     ("generated/schema.ts", fixture("generated/schema.ts")),
   ]),
   ~test=`
@@ -109,6 +85,17 @@ describe("graph codegen goldens", () => {
         1: {
           simulate: [
             { contract: "Margin", event: "LogSetMarginRatio", params: { marginRatio: 1n } },
+            {
+              contract: "Registry",
+              event: "Registered",
+              params: {
+                members: [
+                  "0x00000000000000000000000000000000000000aa",
+                  "0x00000000000000000000000000000000000000bb",
+                ],
+                _1: 7n,
+              },
+            },
           ],
         },
       },
@@ -116,6 +103,9 @@ describe("graph codegen goldens", () => {
     t.expect(await indexer.Probe.getAll()).toEqual([
       { id: "ratio", name: "100" },
       { id: "decimals", name: "18" },
+      { id: "members", name: "0x00000000000000000000000000000000000000bb/7" },
+      { id: "parameters", name: "2" },
+      { id: "kinds", name: "8,0,4|9,0,7" },
     ]);
   });
 });

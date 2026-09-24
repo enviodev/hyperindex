@@ -222,7 +222,7 @@ fn contract_config(
         };
         *ordinal += 1;
         handler.name = unique.clone();
-        handler.params = abi::param_types(&handler.event, abi_json.as_deref());
+        handler.inputs = abi::event_inputs(&handler.event, abi_json.as_deref());
         // The generated config needs the same unique name whenever one was
         // minted, overloaded or not — two handlers can name the same event, and
         // the runtime registers under the name the config carries.

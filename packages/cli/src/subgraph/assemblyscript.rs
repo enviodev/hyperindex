@@ -39,6 +39,47 @@ use oxc::{
 
 pub const DIVIDE_HELPER: &str = "__envio_idiv";
 pub const RETAG_HELPER: &str = "__envio_retag";
+pub const EVENT_CLASSES_EXPORT: &str = "__envio_event_classes";
+
+/// `export function handleTransfer(event: Transfer)` names, in a type, the
+/// generated class graph-node would hand it — the class whose `params` getters
+/// codegen wrote. Types don't survive into JavaScript, so each exported
+/// function's first-parameter class is also exported as a value, keyed by the
+/// function's name, for the runtime to build the event as that class.
+fn event_classes_export(program: &Program<'_>, classes: &HashSet<String>) -> Option<String> {
+    let entries: Vec<String> = program
+        .body
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::ExportNamedDeclaration(export) => match &export.declaration {
+                Some(Declaration::FunctionDeclaration(func)) => Some(func),
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter_map(|func| {
+            let name = func.id.as_ref()?.name;
+            let annotation = func.params.items.first()?.type_annotation.as_ref()?;
+            match &annotation.type_annotation {
+                TSType::TSTypeReference(reference) => match &reference.type_name {
+                    TSTypeName::IdentifierReference(class)
+                        if classes.contains(class.name.as_str()) =>
+                    {
+                        Some(format!("{name}: {}", class.name))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        })
+        .collect();
+    (!entries.is_empty()).then(|| {
+        format!(
+            "export const {EVENT_CLASSES_EXPORT} = {{ {} }};",
+            entries.join(", ")
+        )
+    })
+}
 
 /// The JavaScript to run for one AssemblyScript file, with an inline source map
 /// back to the original so a mapping's stack trace names its own lines.
@@ -59,6 +100,11 @@ pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
     rewrite.visit_program(&mut program);
     if let Some((span, message)) = rewrite.refused {
         return Err(anyhow!("{}: {message}", location(path, source, span)));
+    }
+    if let Some(export) = event_classes_export(&program, &rewrite.classes) {
+        let export = allocator.alloc_str(&export);
+        let appended = Parser::new(&allocator, export, SourceType::ts()).parse();
+        program.body.extend(appended.program.body);
     }
 
     let scoping = SemanticBuilder::new()
@@ -454,6 +500,32 @@ export function f(value, n) {
             "src/mapping.ts:4:9: Envio Subgraph can't load this mapping: it declares a name \
              that an earlier local in the same function already took over from a parameter. \
              Rename one of them."
+        );
+    }
+
+    // Only a class the module can reach at runtime: the block handler's
+    // `ethereum.Block` is a qualified type, and `helper`'s `i32` no class.
+    #[test]
+    fn exports_the_class_each_handler_declares_for_its_event() {
+        assert_eq!(
+            js("import { ethereum } from \"@graphprotocol/graph-ts\";
+import { Transfer, Approval } from \"../generated/Token/Token\";
+export function handleTransfer(event: Transfer): void {}
+export function handleApproval(event: Approval): void {}
+export function handleBlock(block: ethereum.Block): void {}
+export function helper(n: i32): i32 { return n; }"),
+            "import { Transfer, Approval } from \"../generated/Token/Token\";
+export function handleTransfer(event) {}
+export function handleApproval(event) {}
+export function handleBlock(block) {}
+export function helper(n) {
+\treturn n;
+}
+export const __envio_event_classes = {
+\thandleTransfer: Transfer,
+\thandleApproval: Approval
+};
+"
         );
     }
 

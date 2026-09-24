@@ -24,3 +24,23 @@ dataSources:
         - event: LogSetMarginRatio(uint256)
           handler: handleLogSetMarginRatio
       file: ./src/mapping.ts
+  - kind: ethereum/contract
+    name: Registry
+    network: mainnet
+    source:
+      address: "0x2222222222222222222222222222222222222222"
+      abi: Registry
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Probe
+      abis:
+        - name: Registry
+          file: ./abis/Registry.json
+      eventHandlers:
+        - event: Registered(address[],uint256)
+          handler: handleRegistered
+      file: ./src/registry.ts

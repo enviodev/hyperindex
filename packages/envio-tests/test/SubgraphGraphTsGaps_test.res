@@ -44,7 +44,7 @@ type Result @entity {
     (
       "src/probe.ts",
       `
-import { BigDecimal, BigInt, Bytes, Entity, EthereumUtils, store, typeConversion } from "@graphprotocol/graph-ts";
+import { BigDecimal, BigInt, Bytes, Entity, EthereumUtils, json, JSONValue, Result, store, typeConversion, Wrapped } from "@graphprotocol/graph-ts";
 
 function probe(id: string, value: string): void {
   let result = new Entity();
@@ -84,6 +84,23 @@ export function handlePing(event: any): void {
     BigDecimal.fromString("1").div(BigDecimal.fromString("3")).toString(),
   );
 
+  // The \`json\` number parsers read a decimal string, not a JSONValue.
+  probe(
+    "jsonNumbers",
+    [
+      json.toBigInt("-12345678901234567890").toString(),
+      json.toI64("-42").toString(),
+      json.toU64("42").toString(),
+      json.toF64("1.5").toString(),
+    ].join(","),
+  );
+
+  let parsed: Result<JSONValue, boolean> = json.try_fromString("{");
+  probe(
+    "wrapped",
+    [new Wrapped<boolean>(true).inner.toString(), parsed.isError.toString()].join(","),
+  );
+
   probe(
     "create2",
     EthereumUtils.getCreate2Address(
@@ -120,6 +137,8 @@ describe("the graph-ts surface", () => {
       smallQuotient: await value("smallQuotient"),
       thirds: await value("thirds"),
       create2: await value("create2"),
+      jsonNumbers: await value("jsonNumbers"),
+      wrapped: await value("wrapped"),
     }).toEqual({
       bigIntToString: "255",
       bigIntToHex: "0xff",
@@ -130,6 +149,8 @@ describe("the graph-ts surface", () => {
       // Cross-checked against viem's own getCreate2Address, which shares no
       // code with the shim's.
       create2: "0x4f2009bbb6b8238db8d2f37112e85902d5155077",
+      jsonNumbers: "-12345678901234567890,-42,42,1.5",
+      wrapped: "true,true",
     });
   });
 });

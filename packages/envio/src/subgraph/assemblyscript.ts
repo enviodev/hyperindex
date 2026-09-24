@@ -1,11 +1,13 @@
 /**
- * The runtime half of `subgraph/assemblyscript.rs`, which rewrites every `/` in
- * a mapping into a call to `DIVIDE_HELPER` and every `changetype<Foo>(x)` into
- * one to `RETAG_HELPER`. The names are shared with that file.
+ * The runtime half of `packages/cli/src/subgraph/assemblyscript.rs`, which
+ * rewrites every `/` in a mapping into a call to `DIVIDE_HELPER`, every
+ * `changetype<Foo>(x)` into one to `RETAG_HELPER`, and exports each handler's
+ * event class as `EVENT_CLASSES_EXPORT`. The names are shared with that file.
  */
 
 export const DIVIDE_HELPER = "__envio_idiv";
 export const RETAG_HELPER = "__envio_retag";
+export const EVENT_CLASSES_EXPORT = "__envio_event_classes";
 
 /**
  * AssemblyScript divides two integers as integers; this truncates only when
