@@ -32,11 +32,8 @@ impl FuelType {
             "u128" => "U128Log",
             "raw untyped ptr" => "RawUntypedPtrLog",
             "b256" => "B256Log",
-            "address" => "AddressLog",
-            "Vec" => "VecLog",
             "str" => "StrLog",
             type_field if type_field.starts_with("str[") => "StrLog",
-            "enum Option" => "OptionLog",
             type_field if type_field.starts_with("struct ") => type_field
                 .strip_prefix("struct ")
                 .and_then(|s| s.split("::").last())
@@ -221,7 +218,7 @@ impl FuelAbi {
                         //int ts/js
                         "u8" | "u16" | "u32" => Int.get_ok_expr(),
                         "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.get_ok_expr(),
-                        "b256" | "address" => String.get_ok_expr(),
+                        "b256" => String.get_ok_expr(),
                         "str" | "struct std::string::String" => String.get_ok_expr(),
                         type_field if type_field.starts_with("str[") => String.get_ok_expr(),
                         "struct std::vec::Vec" => Array(Box::new(GenericParam(
@@ -231,13 +228,6 @@ impl FuelAbi {
                         .get_ok_expr(),
                         // It's decoded as Uint8Array, but we don't have a schema for it yet
                         "struct std::bytes::Bytes" => Unknown.get_ok_expr(),
-                        //TODO: handle nested option since this would need to be flattened to
-                        //single level rescript option.
-                        "enum Option" => Option(Box::new(GenericParam(
-                            get_first_type_param()
-                                .context("Failed getting param for enum Option")?,
-                        )))
-                        .get_ok_expr(),
                         type_field if type_field.starts_with("struct ") => {
                             let record_fields = get_components_name_and_type_ident()
                                 .context(format!(

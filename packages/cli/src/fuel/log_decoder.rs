@@ -39,12 +39,15 @@ enum Coder {
     Enum(Vec<(String, Coder)>),
 }
 
+pub fn parse_abi(abi: &serde_json::Value) -> Result<UnifiedProgramABI> {
+    let program = ProgramABI::deserialize(abi).context("parse Fuel ABI")?;
+    Ok(UnifiedProgramABI::from_counterpart(&program)?)
+}
+
 pub struct LogDecoder(Coder);
 
 impl LogDecoder {
-    pub fn new(abi: &serde_json::Value, log_id: &str) -> Result<Self> {
-        let program = ProgramABI::deserialize(abi).context("parse Fuel ABI")?;
-        let program = UnifiedProgramABI::from_counterpart(&program)?;
+    pub fn new(program: &UnifiedProgramABI, log_id: &str) -> Result<Self> {
         let logged = program
             .logged_types
             .iter()
@@ -572,6 +575,10 @@ mod tests {
 
     const LOG_ID: &str = "4242";
 
+    fn decoder(abi: &serde_json::Value, log_id: &str) -> Result<LogDecoder> {
+        LogDecoder::new(&parse_abi(abi)?, log_id)
+    }
+
     fn abi_logging(shape: &Shape) -> serde_json::Value {
         let mut builder = AbiBuilder::default();
         let logged = builder.add(shape).concrete;
@@ -770,7 +777,7 @@ mod tests {
 
         #[test]
         fn decodes_every_shape((shape, (bytes, expected)) in shape_with_sample()) {
-            let decoder = LogDecoder::new(&abi_logging(&shape), LOG_ID).unwrap();
+            let decoder = decoder(&abi_logging(&shape), LOG_ID).unwrap();
             let decoded_prefixes: Vec<usize> = (0..bytes.len())
                 .filter(|len| decoder.decode(&bytes[..*len]).is_some())
                 .collect();
@@ -793,7 +800,7 @@ mod tests {
             shape in shape(),
             bytes in prop::collection::vec(any::<u8>(), 0..64),
         ) {
-            let decoder = LogDecoder::new(&abi_logging(&shape), LOG_ID).unwrap();
+            let decoder = decoder(&abi_logging(&shape), LOG_ID).unwrap();
             let _ = decoder.decode(&bytes);
         }
     }
@@ -801,7 +808,7 @@ mod tests {
     #[test]
     fn rejects_a_garbage_vec_length() {
         let decode_max_len = |element: Shape| {
-            LogDecoder::new(&abi_logging(&Shape::Vec(Box::new(element))), LOG_ID)
+            decoder(&abi_logging(&Shape::Vec(Box::new(element))), LOG_ID)
                 .unwrap()
                 .decode(&u64::MAX.to_be_bytes())
         };
@@ -823,20 +830,14 @@ mod tests {
             .collect();
         let failed: Vec<_> = log_ids
             .iter()
-            .filter_map(|id| {
-                LogDecoder::new(&abi, id)
-                    .err()
-                    .map(|e| format!("{id}: {e:#}"))
-            })
+            .filter_map(|id| decoder(&abi, id).err().map(|e| format!("{id}: {e:#}")))
             .collect();
         assert_eq!(failed, Vec::<String>::new());
     }
 
     #[test]
     fn rejects_an_unknown_log_id() {
-        let err = LogDecoder::new(&abi_logging(&Shape::U8), "1")
-            .err()
-            .unwrap();
+        let err = decoder(&abi_logging(&Shape::U8), "1").err().unwrap();
         assert_eq!(
             err.to_string(),
             "Log type with logId '1' doesn't exist in the ABI"
@@ -845,9 +846,9 @@ mod tests {
 
     #[test]
     fn rejects_invalid_bool_and_enum_case() {
-        let bool_decoder = LogDecoder::new(&abi_logging(&Shape::Bool), LOG_ID).unwrap();
+        let bool_decoder = decoder(&abi_logging(&Shape::Bool), LOG_ID).unwrap();
         let option_decoder =
-            LogDecoder::new(&abi_logging(&Shape::Option(Box::new(Shape::U8))), LOG_ID).unwrap();
+            decoder(&abi_logging(&Shape::Option(Box::new(Shape::U8))), LOG_ID).unwrap();
         assert_eq!(
             (
                 bool_decoder.decode(&[2]),

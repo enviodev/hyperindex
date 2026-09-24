@@ -92,10 +92,22 @@ module EventItems = {
     to?: string,
   }
 
+  // The page's first LogData receipt a contract-bound registration's ABI
+  // rejected, with how many it rejected. The receipts themselves are dropped.
+  type rejectedLogData = {
+    onEventRegistrationIndex: int,
+    blockHeight: int,
+    receiptIndex: int,
+    txId: string,
+    dataLength: int,
+    count: int,
+  }
+
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
     items: array<item>,
+    rejectedLogData: array<rejectedLogData>,
   }
 }
 

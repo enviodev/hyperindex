@@ -1,4 +1,6 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use hyperfuel_client::format::{Hash, Hex};
@@ -6,7 +8,8 @@ use hyperfuel_client::net_types;
 use napi_derive::napi;
 
 use crate::address_store::{AddressSet, Emitter, StoreInner};
-use crate::fuel::log_decoder::LogDecoder;
+use crate::fuel::log_decoder::{parse_abi, LogDecoder};
+use fuel_abi_types::abi::unified_program::UnifiedProgramABI;
 
 // FuelVM receipt type codes.
 const RECEIPT_CALL: u8 = 0;
@@ -38,7 +41,7 @@ pub enum FuelEventKind {
 /// one — the invalid states the napi input's `kind`+`log_id`+`abi` fields
 /// could express are resolved once, at construction.
 pub(crate) enum RegistrationKind {
-    LogData { rb: u64, decoder: LogDecoder },
+    LogData { rb: u64, decoder: Arc<LogDecoder> },
     Mint,
     Burn,
     Transfer,
@@ -167,6 +170,10 @@ impl SelectionBuilder {
         store: &StoreInner,
     ) -> Result<Self> {
         let mut map = HashMap::new();
+        // Every LogData registration carries its contract's whole ABI; parse
+        // each distinct one once and share a decoder per logged type.
+        let mut programs: Vec<(&serde_json::Value, UnifiedProgramABI)> = Vec::new();
+        let mut decoders: HashMap<(usize, &str), Arc<LogDecoder>> = HashMap::new();
         for reg in registrations {
             let kind = match reg.kind {
                 FuelEventKind::LogData => {
@@ -179,9 +186,29 @@ impl SelectionBuilder {
                     let abi = reg.abi.as_ref().with_context(|| {
                         format!("LogData registration {} is missing abi", reg.event_name)
                     })?;
-                    let decoder = LogDecoder::new(abi, log_id).with_context(|| {
-                        format!("build the LogData decoder for event {}", reg.event_name)
-                    })?;
+                    let program_idx = match programs.iter().position(|(seen, _)| *seen == abi) {
+                        Some(idx) => idx,
+                        None => {
+                            let program = parse_abi(abi).with_context(|| {
+                                format!("parse the ABI of contract {}", reg.contract_name)
+                            })?;
+                            programs.push((abi, program));
+                            programs.len() - 1
+                        }
+                    };
+                    let decoder = match decoders.entry((program_idx, log_id.as_str())) {
+                        Entry::Occupied(entry) => entry.get().clone(),
+                        Entry::Vacant(entry) => {
+                            let decoder = LogDecoder::new(&programs[program_idx].1, log_id)
+                                .with_context(|| {
+                                    format!(
+                                        "build the LogData decoder for event {}",
+                                        reg.event_name
+                                    )
+                                })?;
+                            entry.insert(Arc::new(decoder)).clone()
+                        }
+                    };
                     RegistrationKind::LogData { rb, decoder }
                 }
                 FuelEventKind::Call => {
@@ -647,6 +674,31 @@ mod tests {
         .err()
         .unwrap();
         assert!(format!("{err:#}").contains("missing logId"));
+    }
+
+    #[test]
+    fn registrations_logging_the_same_type_of_one_abi_share_a_decoder() {
+        let (store, _set) = addresses(&[("C1", &[]), ("C2", &[])]);
+        let builder = SelectionBuilder::from_registrations(
+            &[
+                reg(0, "C1", FuelEventKind::LogData, false, Some("1")),
+                reg(1, "C2", FuelEventKind::LogData, true, Some("1")),
+                reg(2, "C1", FuelEventKind::LogData, false, Some("2")),
+            ],
+            &store.handle().read().unwrap(),
+        )
+        .unwrap();
+        let decoder = |index: i64| match &builder.registrations[&index].kind {
+            RegistrationKind::LogData { decoder, .. } => decoder.clone(),
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            (
+                std::sync::Arc::ptr_eq(&decoder(0), &decoder(1)),
+                std::sync::Arc::ptr_eq(&decoder(0), &decoder(2)),
+            ),
+            (true, false)
+        );
     }
 
     #[test]

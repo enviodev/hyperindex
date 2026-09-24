@@ -1,5 +1,6 @@
 type logsQueryPage = {
   items: array<FuelHyperSyncClient.EventItems.item>,
+  rejectedLogData: array<FuelHyperSyncClient.EventItems.rejectedLogData>,
   // Blocks referenced by `items`, one per height.
   nextBlock: int,
   archiveHeight: int,
@@ -72,6 +73,7 @@ module GetLogs = {
     }
     {
       items: res.items,
+      rejectedLogData: res.rejectedLogData,
       nextBlock: res.nextBlock,
       archiveHeight: res.archiveHeight->Option.getOr(0), // TODO: FIXME: Shouldn't have a default here
       blockStore,
