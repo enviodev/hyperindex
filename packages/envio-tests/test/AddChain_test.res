@@ -11,13 +11,13 @@ type Counter {
 }
 `
 
-let chainYaml = (chainId, ~contract="Token") =>
+let chainYaml = (chainId, ~contract="Token", ~startBlock="1") =>
   `
   - id: ${chainId->Int.toString}
     rpc:
       url: https://rpc${chainId->Int.toString}.example.test
       for: sync
-    start_block: 1
+    start_block: ${startBlock}
     contracts:
       - name: ${contract}
         address: "0x0000000000000000000000000000000000000001"
@@ -69,15 +69,24 @@ let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~items) =
   await indexer.waitUntilIdle()
 }
 
-// The edited config.yaml, with chain 1 answered by the source the deployed run
-// already drives and every other chain by a fresh one.
-let edited = (scenario: Scenario.t, ~source1: MockSource.t) => {
+// The edited config.yaml, with the chains the deployed run already drives
+// answered by their own sources and every other chain by a fresh one.
+// `~autoHeight` answers a fresh chain's height during startup, before a test
+// body could, for a `latest` start block to resolve against.
+let edited = (
+  scenario: Scenario.t,
+  ~deployedSources: array<(int, MockSource.t)>,
+  ~autoHeight=?,
+) => {
   let sources =
     scenario.config.chainMap
     ->ChainMap.keys
     ->Array.map(chainId => {
       let chain = chainId->ChainId.toInt
-      (chain, chain === 1 ? source1 : MockSource.make(Scenario.defaultMethods, ~chainId=chain))
+      switch deployedSources->Array.find(((deployed, _)) => deployed === chain) {
+      | Some(deployed) => deployed
+      | None => (chain, MockSource.make(Scenario.defaultMethods, ~chainId=chain, ~autoHeight?))
+      }
     })
   (scenario.config->Scenario.withMockSources(~sources), sources)
 }
@@ -94,6 +103,17 @@ let chainRows = async (indexer: IndexerRunner.t) => {
     `SELECT "id", "progress_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (row["id"]->ChainId.toString, row["progress_block"]))
+}
+
+let startBlocks = async (indexer: IndexerRunner.t) => {
+  let {sql, pgSchema} = indexer.pg
+  let rows: array<{
+    "id": ChainId.t,
+    "start_block": int,
+  }> = await sql->Postgres.unsafe(
+    `SELECT "id", "start_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
+  )
+  rows->Array.map(row => (row["id"]->ChainId.toString, row["start_block"]))
 }
 
 let counterPartitions = async (indexer: IndexerRunner.t) => {
@@ -139,10 +159,11 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
   deployed->Scenario.it(
     "Adds the chain and indexes it, leaving the deployed chain as it was",
     ~sources=[{chain: 1}],
+    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])
 
-      let (config, sources) = withChain137->edited(~source1=source(1))
+      let (config, sources) = withChain137->edited(~deployedSources=[(1, source(1))])
       let added = await indexer.restart(~config, ~chains=[ChainId.fromInt(137)], ())
       await catchUp(~indexer=added, ~source=sources->sourceOf(137), ~items=[bump(10n)])
 
@@ -158,13 +179,22 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
           (await resumed.queryAddresses())->Array.map(
             row => (row.chainId->ChainId.toString, row.contractName),
           ),
+          resumed.logs()->Array.filter(entry => entry.msg->String.startsWith("Adding the chain")),
         ),
-        ~message="Chain 137 gets a row, a partition and its config addresses, and indexes into them. Chain 1 keeps what it had",
+        ~message="Chain 137 gets a row, a partition and its config addresses, and indexes into them. Chain 1 keeps what it had, and the operator is told once",
       ).toEqual((
         [{id: "total", count: 1n, chainId: 1}, {id: "total", count: 10n, chainId: 137}],
         [("1", 100), ("137", 100)],
         ["Counter$1", "Counter$137"],
         [("1", "Token"), ("137", "Token")],
+        [
+          (
+            {
+              msg: "Adding the chain to the existing indexer storage...",
+              params: dict{"chainId": JSON.Encode.int(137)},
+            }: IndexerRunner.logEntry
+          ),
+        ],
       ))
     },
   )
@@ -175,7 +205,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])
 
-      let (config, _) = withChain137->edited(~source1=source(1))
+      let (config, _) = withChain137->edited(~deployedSources=[(1, source(1))])
       let resumed = await indexer.restart(~config, ~chains=[ChainId.fromInt(1)], ())
 
       t.expect(
@@ -190,7 +220,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[])
-      let (config, _) = withChain137->edited(~source1=source(1))
+      let (config, _) = withChain137->edited(~deployedSources=[(1, source(1))])
 
       t.expect(await refusal(() => indexer.restart(~config, ()))).toBe(
         incompatible(~paths=["evm.chains.137"]),
@@ -222,7 +252,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       )
 
       let refused = async (scenario, ~chains) => {
-        let (config, _) = scenario->edited(~source1=source(1))
+        let (config, _) = scenario->edited(~deployedSources=[(1, source(1))])
         await refusal(() => indexer.restart(~config, ~chains, ()))
       }
 
@@ -235,6 +265,99 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
         incompatible(~paths=["entities[1]"]),
         incompatible(~paths=["evm.chains.10", "evm.chains.137"]),
       ))
+    },
+  )
+
+  deployed->Scenario.it(
+    "Resumes every chain in one process once the added chain is there",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      await catchUp(~indexer, ~source=source(1), ~items=[])
+      let (config, sources) = withChain137->edited(~deployedSources=[(1, source(1))])
+      let added = await indexer.restart(~config, ~chains=[ChainId.fromInt(137)], ())
+      await catchUp(~indexer=added, ~source=sources->sourceOf(137), ~items=[])
+
+      let unsplit = await added.restart()
+
+      t.expect(await chainRows(unsplit)).toEqual([("1", 100), ("137", 100)])
+    },
+  )
+
+  deployed->Scenario.it(
+    "Resolves an added chain's latest start block against its head",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      await catchUp(~indexer, ~source=source(1), ~items=[])
+      let (config, _) =
+        Scenario.make(
+          ~schema,
+          ~configYaml=configYaml(~chains=[chainYaml(1), chainYaml(137, ~startBlock="latest")]),
+        )->edited(~deployedSources=[(1, source(1))], ~autoHeight=500)
+
+      let added = await indexer.restart(~config, ~chains=[ChainId.fromInt(137)], ())
+
+      t.expect(await startBlocks(added)).toEqual([("1", 1), ("137", 500)])
+    },
+  )
+
+  withChain137->Scenario.it(
+    "Leaves a chain's edited settings to that chain's own process",
+    ~sources=[{chain: 1}, {chain: 137}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      [source(1), source(137)]->Array.forEach(
+        source => {
+          source.resolveGetHeightOrThrow(100)
+          source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+        },
+      )
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+
+      let (config, _) =
+        Scenario.make(
+          ~schema,
+          ~configYaml=configYaml(~chains=[chainYaml(1), chainYaml(137, ~startBlock="2")]),
+        )->edited(~deployedSources=[(1, source(1)), (137, source(137))])
+      let chain1 = await indexer.restart(~config, ~chains=[ChainId.fromInt(1)], ())
+      let chain1Rows = await chainRows(chain1)
+
+      t.expect(
+        (chain1Rows, await refusal(() => chain1.restart(~chains=[ChainId.fromInt(137)], ()))),
+        ~message="Chain 1's process resumes, and chain 137's own process is the one to refuse",
+      ).toEqual(([("1", 100), ("137", 100)], incompatible(~paths=["evm.chains.137.startBlock"])))
+    },
+  )
+
+  deployed->Scenario.it(
+    "Reports a database from before chains kept their own config as built by an older envio",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      await catchUp(~indexer, ~source=source(1), ~items=[])
+      await indexer.stop()
+      let {sql, pgSchema} = indexer.pg
+      let _ = await sql->Postgres.unsafe(
+        `ALTER TABLE "${pgSchema}"."envio_chains" DROP COLUMN "config";`,
+      )
+
+      t.expect(await refusal(() => indexer.restart(~chains=[ChainId.fromInt(1)], ()))).toBe(
+        incompatible(~paths=["storage was initialized by an older envio version"]),
+      )
+    },
+  )
+
+  deployed->Scenario.it(
+    "Asks for a set-up database before any --chain process starts",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      await catchUp(~indexer, ~source=source(1), ~items=[])
+      await indexer.stop()
+      let {sql, pgSchema} = indexer.pg
+      let _ = await sql->Postgres.unsafe(`DROP SCHEMA "${pgSchema}" CASCADE;`)
+
+      t.expect(await refusal(() => indexer.restart(~chains=[ChainId.fromInt(1)], ()))).toBe(
+        "`envio start --chain` needs a database that is already set up. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+      )
     },
   )
 })

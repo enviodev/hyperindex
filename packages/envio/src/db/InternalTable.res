@@ -425,7 +425,7 @@ WHERE "${(#id: field :> string)}" = $2
 FROM "${pgSchema}"."${table.tableName}";`
   }
 
-  // `None` for a table an older envio created without the column.
+  // `None` for a schema an older envio built without the column.
   let readStoredConfigs = async (sql, ~pgSchema): option<array<(ChainId.t, JSON.t)>> =>
     switch await sql->Postgres.unsafe(
       `SELECT "${(#id: field :> string)}" as "id", "${(#config: field :> string)}" as "config"
