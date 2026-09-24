@@ -92,14 +92,17 @@ fn abi_name(input: &Value) -> &str {
         .unwrap_or_default()
 }
 
-/// What envio decodes a parameter under. An unnamed one is `_{index}` whether
-/// envio reads the ABI itself or the signature spelled out below, so the
-/// runtime finds it under one name either way.
+/// What envio decodes a parameter under — whether envio reads the ABI itself or
+/// the signature spelled out below, so the runtime finds it under one name.
 fn decode_key(input: &Value, index: usize) -> String {
-    match abi_name(input) {
-        "" => format!("_{index}"),
-        name => name.to_string(),
-    }
+    crate::evm::abi::event_param_key(abi_name(input), index)
+}
+
+fn is_indexed(input: &Value) -> bool {
+    input
+        .get("indexed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn human_readable(name: &str, inputs: &[Value]) -> String {
@@ -108,10 +111,7 @@ fn human_readable(name: &str, inputs: &[Value]) -> String {
         .enumerate()
         .map(|(index, input)| {
             let ty = solidity_type(input);
-            let indexed = input
-                .get("indexed")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            let indexed = is_indexed(input);
             let param_name = decode_key(input, index);
             if indexed {
                 format!("{ty} indexed {param_name}")
@@ -176,12 +176,7 @@ fn matching_entry(manifest_signature: &str, abi_json: Option<&str>) -> Option<Va
                 .iter()
                 .zip(wanted.iter())
                 .all(|(input, (ty, indexed))| {
-                    &solidity_type(input) == ty
-                        && input
-                            .get("indexed")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                            == *indexed
+                    &solidity_type(input) == ty && is_indexed(input) == *indexed
                 })
     })
 }
@@ -198,10 +193,7 @@ pub fn event_inputs(manifest_signature: &str, abi_json: Option<&str>) -> Vec<Eve
             name: abi_name(input).to_string(),
             key: decode_key(input, index),
             abi_type: solidity_type(input),
-            indexed: input
-                .get("indexed")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+            indexed: is_indexed(input),
         })
         .collect()
 }

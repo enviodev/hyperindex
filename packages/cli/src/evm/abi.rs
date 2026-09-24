@@ -227,6 +227,16 @@ fn explain(source: Option<&str>, text: &str, err: &serde_json::Error) -> anyhow:
     )
 }
 
+/// The name an event parameter is decoded under: its own, or `_{index}` when the
+/// ABI leaves it unnamed.
+pub fn event_param_key(name: &str, index: usize) -> String {
+    if name.is_empty() {
+        format!("_{index}")
+    } else {
+        name.to_string()
+    }
+}
+
 /// Reads an ABI, filling in what its writer left out. `source` names the file
 /// it came from, and is what an unreadable entry is reported against; an ABI
 /// with no file behind it passes `None`.

@@ -11,47 +11,7 @@ import * as Sury from "rescript-schema";
 import { createEffect } from "../Envio.res.mjs";
 import { missingRpcMessage } from "./errors.ts";
 import { rpcClient } from "./rpc.ts";
-
-export type ParsedSignature = {
-  name: string;
-  inputs: string;
-  outputs: string;
-};
-
-/**
- * graph codegen emits `"balanceOf(address):(uint256)"`. Types only, no names —
- * which is all `parseAbiParameters` needs.
- */
-export function parseSignature(signature: string): ParsedSignature {
-  const open = signature.indexOf("(");
-  if (open === -1) {
-    throw new Error(`Unreadable contract call signature "${signature}"`);
-  }
-  const name = signature.slice(0, open);
-
-  let depth = 0;
-  let close = -1;
-  for (let index = open; index < signature.length; index++) {
-    const char = signature[index];
-    if (char === "(") depth++;
-    if (char === ")") {
-      depth--;
-      if (depth === 0) {
-        close = index;
-        break;
-      }
-    }
-  }
-  if (close === -1) {
-    throw new Error(`Unreadable contract call signature "${signature}"`);
-  }
-
-  const inputs = signature.slice(open + 1, close);
-  const rest = signature.slice(close + 1).replace(/^:/, "");
-  const outputs = rest.startsWith("(") ? rest.slice(1, -1) : rest;
-
-  return { name, inputs, outputs };
-}
+import { parseSignature } from "./abi-types.ts";
 
 export function abiItemFor(signature: string): Abi {
   const { name, inputs, outputs } = parseSignature(signature);

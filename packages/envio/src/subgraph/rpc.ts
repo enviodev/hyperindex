@@ -13,23 +13,27 @@ import { createPublicClient, fallback, http, type Transport } from "viem";
 
 const MAX_IN_FLIGHT = 16;
 
-let inFlight = 0;
-const queued: (() => void)[] = [];
-
-async function bounded<T>(request: () => Promise<T>): Promise<T> {
-  if (inFlight < MAX_IN_FLIGHT) inFlight++;
-  // A finishing request hands its slot straight over.
-  else await new Promise<void>((resolve) => queued.push(resolve));
-  try {
-    return await request();
-  } finally {
-    const next = queued.shift();
-    if (next) next();
-    else inFlight--;
-  }
+/** Runs at most `MAX_IN_FLIGHT` requests at once, queueing the rest. */
+function gate() {
+  let inFlight = 0;
+  const queued: (() => void)[] = [];
+  return async <T>(request: () => Promise<T>): Promise<T> => {
+    if (inFlight < MAX_IN_FLIGHT) inFlight++;
+    // A finishing request hands its slot straight over.
+    else await new Promise<void>((resolve) => queued.push(resolve));
+    try {
+      return await request();
+    } finally {
+      const next = queued.shift();
+      if (next) next();
+      else inFlight--;
+    }
+  };
 }
 
+/** Bounded per set of endpoints, so one chain's slow RPC can't stall another's. */
 function boundedTransport(transport: Transport): Transport {
+  const bounded = gate();
   return (options) => {
     const inner = transport(options);
     return {
@@ -39,7 +43,7 @@ function boundedTransport(transport: Transport): Transport {
   };
 }
 
-let clients = new Map<string, ReturnType<typeof createPublicClient>>();
+const clients = new Map<string, ReturnType<typeof createPublicClient>>();
 
 export function rpcClient(rpcUrls: string[]) {
   const key = rpcUrls.join("|");
@@ -57,5 +61,5 @@ export function rpcClient(rpcUrls: string[]) {
 
 /** Reset between test indexers, which each bring their own endpoints. */
 export function resetRpcClients() {
-  clients = new Map();
+  clients.clear();
 }

@@ -2517,14 +2517,8 @@ impl Event {
             .iter()
             .enumerate()
             .map(|(i, param)| {
-                let param_name = param.name.clone();
-                let name = if param_name.is_empty() {
-                    format!("_{}", i)
-                } else {
-                    param_name
-                };
                 EventParam::try_from_alloy(param).map(|mut ep| {
-                    ep.name = name;
+                    ep.name = crate::evm::abi::event_param_key(&param.name, i);
                     ep
                 })
             })

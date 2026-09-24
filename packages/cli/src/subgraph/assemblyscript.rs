@@ -12,7 +12,9 @@
 //!   sets the prototype.
 //! - A `let` may redeclare a parameter: generated `try_` bindings do
 //!   `let value = result.value` in a function taking `value`. JavaScript refuses
-//!   it, so the local is renamed from its declaration on.
+//!   it of `let` and allows it of `var`, which reads the parameter until the
+//!   declaration and the local after it — as AssemblyScript does, having no
+//!   closures to tell the two bindings apart.
 //! - Decorators are compiler hints (`@inline`), not runtime code.
 //!
 //! It fails loudly: a mapping that can't be rewritten can't be trusted to
@@ -60,17 +62,8 @@ fn event_classes_export(program: &Program<'_>, classes: &HashSet<String>) -> Opt
         .filter_map(|func| {
             let name = func.id.as_ref()?.name;
             let annotation = func.params.items.first()?.type_annotation.as_ref()?;
-            match &annotation.type_annotation {
-                TSType::TSTypeReference(reference) => match &reference.type_name {
-                    TSTypeName::IdentifierReference(class)
-                        if classes.contains(class.name.as_str()) =>
-                    {
-                        Some(format!("{name}: {}", class.name))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            }
+            let class = class_ref(&annotation.type_annotation, classes)?;
+            Some(format!("{name}: {}", class.name))
         })
         .collect();
     (!entries.is_empty()).then(|| {
@@ -79,6 +72,22 @@ fn event_classes_export(program: &Program<'_>, classes: &HashSet<String>) -> Opt
             entries.join(", ")
         )
     })
+}
+
+/// The class a type names, when it is one of `classes`.
+fn class_ref<'b>(
+    ty: &'b TSType<'_>,
+    classes: &HashSet<String>,
+) -> Option<&'b IdentifierReference<'b>> {
+    let TSType::TSTypeReference(reference) = ty else {
+        return None;
+    };
+    match &reference.type_name {
+        TSTypeName::IdentifierReference(class) if classes.contains(class.name.as_str()) => {
+            Some(class)
+        }
+        _ => None,
+    }
 }
 
 /// The JavaScript to run for one AssemblyScript file, with an inline source map
@@ -94,7 +103,6 @@ pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
     let mut rewrite = Rewrite {
         ast: AstBuilder::new(&allocator),
         classes: value_bindings(&program),
-        renames: Vec::new(),
         refused: None,
     };
     rewrite.visit_program(&mut program);
@@ -125,10 +133,9 @@ pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
         .build(&program);
     let map = printed
         .map
-        .map(|mut map| {
-            map.set_source_contents(vec![Some(source)]);
-            format!("//# sourceMappingURL={}\n", map.to_data_url())
-        })
+        // Mappings only: the source is on disk, and embedding it would double
+        // every generated binding's size for the stack traces that use the map.
+        .map(|map| format!("//# sourceMappingURL={}\n", map.to_data_url()))
         .unwrap_or_default();
     Ok(format!("{}{map}", printed.code))
 }
@@ -138,9 +145,6 @@ struct Rewrite<'a> {
     /// Names bound to a value at module level — classes and imports. Only these
     /// can be `changetype`'s target at runtime: `changetype<i32>` has no class.
     classes: HashSet<String>,
-    /// Parameters a local has taken the name of, innermost last: the name, and
-    /// what the local answers to instead.
-    renames: Vec<(String, String)>,
     refused: Option<(Span, &'static str)>,
 }
 
@@ -173,17 +177,8 @@ impl<'a> Rewrite<'a> {
         if callee.name != "changetype" || call.arguments.len() != 1 {
             return None;
         }
-        match call.type_arguments.as_ref()?.params.first()? {
-            TSType::TSTypeReference(reference) => match &reference.type_name {
-                TSTypeName::IdentifierReference(name)
-                    if self.classes.contains(name.name.as_str()) =>
-                {
-                    Some((name.span, name.name.to_string()))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
+        let class = class_ref(call.type_arguments.as_ref()?.params.first()?, &self.classes)?;
+        Some((class.span, class.name.to_string()))
     }
 }
 
@@ -193,27 +188,6 @@ fn is_pure(expr: &Expression<'_>) -> bool {
         Expression::StaticMemberExpression(member) => is_pure(&member.object),
         _ => false,
     }
-}
-
-/// The lexical declarations `statement` makes under one of `params`' names.
-fn shadowing(statement: &Statement<'_>, params: &[String]) -> Vec<String> {
-    let Statement::VariableDeclaration(decl) = statement else {
-        return Vec::new();
-    };
-    if !decl.kind.is_lexical() {
-        return Vec::new();
-    }
-    decl.declarations
-        .iter()
-        .filter_map(|declarator| match &declarator.id {
-            BindingPattern::BindingIdentifier(id)
-                if params.iter().any(|param| id.name == param.as_str()) =>
-            {
-                Some(id.name.to_string())
-            }
-            _ => None,
-        })
-        .collect()
 }
 
 impl<'a> VisitMut<'a> for Rewrite<'a> {
@@ -259,74 +233,30 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
         }
     }
 
-    fn visit_identifier_reference(&mut self, id: &mut IdentifierReference<'a>) {
-        let renamed = self
-            .renames
-            .iter()
-            .rev()
-            .find(|(from, _)| id.name == from.as_str());
-        if let Some((_, to)) = renamed {
-            id.name = self.ast.ident(to);
-        }
-    }
-
-    // A renamed local is renamed for the rest of its function, nested blocks
-    // included; one of them declaring the name again would need block scoping
-    // to tell the two apart, so it is refused rather than guessed at.
-    fn visit_binding_identifier(&mut self, id: &mut BindingIdentifier<'a>) {
-        if self
-            .renames
-            .iter()
-            .any(|(from, _)| id.name == from.as_str())
-        {
-            self.refused.get_or_insert((
-                id.span,
-                "Envio Subgraph can't load this mapping: it declares a name that an \
-                 earlier local in the same function already took over from a parameter. \
-                 Rename one of them.",
-            ));
-        }
-    }
-
-    fn visit_function(&mut self, func: &mut Function<'a>, _flags: ScopeFlags) {
-        let params: Vec<String> = func
+    fn visit_function(&mut self, func: &mut Function<'a>, flags: ScopeFlags) {
+        walk_mut::walk_function(self, func, flags);
+        let params: Vec<&str> = func
             .params
             .items
             .iter()
             .filter_map(|param| match &param.pattern {
-                BindingPattern::BindingIdentifier(id) => Some(id.name.to_string()),
+                BindingPattern::BindingIdentifier(id) => Some(id.name.as_str()),
                 _ => None,
             })
             .collect();
-        // A parameter hides any rename an enclosing function made of its name.
-        let outer = std::mem::take(&mut self.renames);
-        self.renames = outer
-            .iter()
-            .filter(|(from, _)| !params.contains(from))
-            .cloned()
-            .collect();
-
-        self.visit_formal_parameters(&mut func.params);
-        if let Some(body) = func.body.as_mut() {
-            for statement in body.statements.iter_mut() {
-                let taken = shadowing(statement, &params);
-                // Its own initializer still reads the parameter, so a rename
-                // starts once the declaring statement has been visited.
-                self.visit_statement(statement);
-                if let Statement::VariableDeclaration(decl) = statement {
-                    for declarator in decl.declarations.iter_mut() {
-                        if let BindingPattern::BindingIdentifier(id) = &mut declarator.id {
-                            if taken.iter().any(|name| id.name == name.as_str()) {
-                                let to = format!("{}__local", id.name);
-                                self.renames.push((id.name.to_string(), to.clone()));
-                                id.name = self.ast.ident(&to);
-                            }
-                        }
-                    }
+        let Some(body) = func.body.as_mut() else {
+            return;
+        };
+        for statement in body.statements.iter_mut() {
+            if let Statement::VariableDeclaration(decl) = statement {
+                let redeclares = decl.declarations.iter().any(|declarator| {
+                    matches!(&declarator.id, BindingPattern::BindingIdentifier(id) if params.contains(&id.name.as_str()))
+                });
+                if decl.kind.is_lexical() && redeclares {
+                    decl.kind = VariableDeclarationKind::Var;
                 }
             }
         }
-        self.renames = outer;
     }
 
     fn visit_decorators(&mut self, decorators: &mut ArenaVec<'a, Decorator<'a>>) {
@@ -458,7 +388,7 @@ export function f(value, n) {
     // What `graph codegen` emits for every call returning a value named like a
     // parameter — `try_transfer(to, value)` on any ERC-20.
     #[test]
-    fn renames_a_local_that_redeclares_a_parameter() {
+    fn declares_a_local_that_redeclares_a_parameter_with_var() {
         assert_eq!(
             js("export class Token {
   try_transfer(to: Address, value: BigInt): CallResult<boolean> {
@@ -476,30 +406,35 @@ export function f(value, n) {
 \t\tif (result.reverted) {
 \t\t\treturn new CallResult();
 \t\t}
-\t\tlet value__local = result.value;
-\t\treturn CallResult.fromValue(value__local[0].toBoolean());
+\t\tvar value = result.value;
+\t\treturn CallResult.fromValue(value[0].toBoolean());
 \t}
 }
 "
         );
     }
 
+    // A nested block still shadows the way AssemblyScript scopes it.
     #[test]
-    fn refuses_a_block_that_redeclares_a_renamed_local() {
+    fn keeps_a_nested_redeclaration_block_scoped() {
         assert_eq!(
-            refusal(
-                "function f(value: i32): i32 {
+            js("function f(value: i32): i32 {
   let value = 1;
   if (value > 0) {
     let value = 2;
     return value;
   }
   return value;
-}"
-            ),
-            "src/mapping.ts:4:9: Envio Subgraph can't load this mapping: it declares a name \
-             that an earlier local in the same function already took over from a parameter. \
-             Rename one of them."
+}"),
+            "function f(value) {
+\tvar value = 1;
+\tif (value > 0) {
+\t\tlet value = 2;
+\t\treturn value;
+\t}
+\treturn value;
+}
+"
         );
     }
 

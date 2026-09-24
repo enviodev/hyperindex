@@ -31,8 +31,9 @@ function asGraphNode(row: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-const byId = (rows: Record<string, unknown>[]) =>
-  rows.map(asGraphNode).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+// Both sides in one order: graph-node sorts ids by its own collation.
+const sortById = (rows: Record<string, unknown>[]) =>
+  [...rows].sort((a, b) => String(a.id).localeCompare(String(b.id)));
 
 describe("the scenario on graph-node and on envio", () => {
   it("stores the same entities", async () => {
@@ -47,18 +48,17 @@ describe("the scenario on graph-node and on envio", () => {
     const indexer = createTestIndexer();
     await indexer.process({ chains: { 1: { startBlock: 0, endBlock } } });
 
-    // graph-node sorts its ids as strings too, but by their own collation.
     const graphNode = Object.fromEntries(
       Object.entries(data as Record<string, Record<string, unknown>[]>).map(([name, rows]) => [
         name,
-        [...rows].sort((a, b) => String(a.id).localeCompare(String(b.id))),
+        sortById(rows),
       ]),
     );
     expect({
-      pairs: byId(await indexer.Pair.getAll()),
-      pairMetadatas: byId(await indexer.PairMetadata.getAll()),
-      swaps: byId(await indexer.Swap.getAll()),
-      ticks: byId(await indexer.Tick.getAll()),
+      pairs: sortById((await indexer.Pair.getAll()).map(asGraphNode)),
+      pairMetadatas: sortById((await indexer.PairMetadata.getAll()).map(asGraphNode)),
+      swaps: sortById((await indexer.Swap.getAll()).map(asGraphNode)),
+      ticks: sortById((await indexer.Tick.getAll()).map(asGraphNode)),
     }).toEqual(graphNode);
   });
 });

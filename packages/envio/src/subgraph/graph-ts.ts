@@ -14,6 +14,7 @@ import BigNumber from "bignumber.js";
 import { keccak256 as viemKeccak256, toHex, hexToBytes, decodeAbiParameters, parseAbiParameters } from "viem";
 import { currentScope } from "./scope.ts";
 import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-enums.ts";
+import { parseSignature, splitTypes } from "./abi-types.ts";
 import {
   PROTOTYPE_PASSTHROUGH,
   refusedGetter,
@@ -555,88 +556,88 @@ export class Value {
   ) {}
 
   static fromString(value: string): Value {
-    return new this(ValueKind.STRING, value);
+    return new Value(ValueKind.STRING, value);
   }
   static fromI32(value: number): Value {
-    return new this(ValueKind.INT, value);
+    return new Value(ValueKind.INT, value);
   }
   static fromI64(value: bigint): Value {
-    return new this(ValueKind.INT8, value);
+    return new Value(ValueKind.INT8, value);
   }
   static fromBigInt(value: BigInt_): Value {
-    return new this(ValueKind.BIGINT, value);
+    return new Value(ValueKind.BIGINT, value);
   }
   static fromBigDecimal(value: BigDecimal): Value {
-    return new this(ValueKind.BIGDECIMAL, value);
+    return new Value(ValueKind.BIGDECIMAL, value);
   }
   static fromBoolean(value: boolean): Value {
-    return new this(ValueKind.BOOL, value);
+    return new Value(ValueKind.BOOL, value);
   }
   static fromBytes(value: Bytes): Value {
-    return new this(ValueKind.BYTES, value);
+    return new Value(ValueKind.BYTES, value);
   }
   static fromAddress(value: Address): Value {
-    return new this(ValueKind.BYTES, value);
+    return new Value(ValueKind.BYTES, value);
   }
   static fromTimestamp(value: bigint): Value {
-    return new this(ValueKind.TIMESTAMP, value);
+    return new Value(ValueKind.TIMESTAMP, value);
   }
   static fromNull(): Value {
-    return new this(ValueKind.NULL, null);
+    return new Value(ValueKind.NULL, null);
   }
   static fromArray(values: Value[]): Value {
-    return new this(ValueKind.ARRAY, values);
+    return new Value(ValueKind.ARRAY, values);
   }
   static fromStringArray(values: string[]): Value {
-    return this.fromArray(values.map((value) => this.fromString(value)));
+    return Value.fromArray(values.map(Value.fromString));
   }
   static fromBytesArray(values: Bytes[]): Value {
-    return this.fromArray(values.map((value) => this.fromBytes(value)));
+    return Value.fromArray(values.map(Value.fromBytes));
   }
   static fromBigIntArray(values: BigInt_[]): Value {
-    return this.fromArray(values.map((value) => this.fromBigInt(value)));
+    return Value.fromArray(values.map(Value.fromBigInt));
   }
   static fromBigDecimalArray(values: BigDecimal[]): Value {
-    return this.fromArray(values.map((value) => this.fromBigDecimal(value)));
+    return Value.fromArray(values.map(Value.fromBigDecimal));
   }
   static fromBooleanArray(values: boolean[]): Value {
-    return this.fromArray(values.map((value) => this.fromBoolean(value)));
+    return Value.fromArray(values.map(Value.fromBoolean));
   }
   static fromI32Array(values: number[]): Value {
-    return this.fromArray(values.map((value) => this.fromI32(value)));
+    return Value.fromArray(values.map(Value.fromI32));
   }
   static fromI64Array(values: bigint[]): Value {
-    return this.fromArray(values.map((value) => this.fromI64(value)));
+    return Value.fromArray(values.map(Value.fromI64));
   }
   static fromAddressArray(values: Address[]): Value {
-    return this.fromArray(values.map((value) => this.fromAddress(value)));
+    return Value.fromArray(values.map(Value.fromAddress));
   }
   static fromMatrix(values: Value[][]): Value {
-    return this.fromArray(values.map((value) => this.fromArray(value)));
+    return Value.fromArray(values.map(Value.fromArray));
   }
   static fromStringMatrix(values: string[][]): Value {
-    return this.fromMatrix(values.map((row) => row.map((value) => this.fromString(value))));
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromString)));
   }
   static fromBytesMatrix(values: Bytes[][]): Value {
-    return this.fromMatrix(values.map((row) => row.map((value) => this.fromBytes(value))));
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromBytes)));
   }
   static fromAddressMatrix(values: Address[][]): Value {
-    return this.fromMatrix(values.map((row) => row.map((value) => this.fromAddress(value))));
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromAddress)));
   }
   static fromBigIntMatrix(values: BigInt_[][]): Value {
-    return this.fromMatrix(values.map((row) => row.map((value) => this.fromBigInt(value))));
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromBigInt)));
   }
   static fromBooleanMatrix(values: boolean[][]): Value {
-    return this.fromMatrix(values.map((row) => row.map((value) => this.fromBoolean(value))));
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromBoolean)));
   }
   static fromI32Matrix(values: number[][]): Value {
-    return this.fromMatrix(values.map((row) => row.map((value) => this.fromI32(value))));
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromI32)));
   }
   static fromI64Matrix(values: bigint[][]): Value {
-    return this.fromMatrix(values.map((row) => row.map((value) => this.fromI64(value))));
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromI64)));
   }
   static fromTimestampMatrix(values: bigint[][]): Value {
-    return this.fromMatrix(values.map((row) => row.map((value) => this.fromTimestamp(value))));
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromTimestamp)));
   }
 
   // The accessors are deliberately lenient about kind: envio stores a
@@ -1150,21 +1151,15 @@ export class EthereumValue {
   static fromFixedSizedArray(values: EthereumValue[]): EthereumValue {
     return new EthereumValue(EthereumValueKind.FIXED_ARRAY, values);
   }
-  static fromTuple(values: EthereumTuple): EthereumValue {
+  static fromTuple(values: EthereumValue[]): EthereumValue {
     return new EthereumValue(
       EthereumValueKind.TUPLE,
       values instanceof EthereumTuple ? values : EthereumTuple.from(values),
     );
   }
-  static fromMatrix(values: EthereumValue[][]): EthereumValue {
-    return EthereumValue.fromArray(values.map((row) => EthereumValue.fromArray(row)));
-  }
-  static fromTupleArray(values: EthereumTuple[]): EthereumValue {
-    return EthereumValue.fromArray(values.map(EthereumValue.fromTuple));
-  }
-  static fromTupleMatrix(values: EthereumTuple[][]): EthereumValue {
-    return EthereumValue.fromArray(values.map(EthereumValue.fromTupleArray));
-  }
+  static fromMatrix = arrayOf(EthereumValue.fromArray);
+  static fromTupleArray = arrayOf(EthereumValue.fromTuple);
+  static fromTupleMatrix = arrayOf(EthereumValue.fromTupleArray);
   static fromBooleanArray = arrayOf(EthereumValue.fromBoolean);
   static fromBytesArray = arrayOf(EthereumValue.fromBytes);
   static fromFixedBytesArray = arrayOf(EthereumValue.fromFixedBytes);
@@ -1350,7 +1345,7 @@ function callContract(
   const call = new SmartContractCall(
     contract._name,
     contract._address,
-    functionSignature.split("(")[0],
+    parseSignature(functionSignature).name,
     functionSignature,
     params,
   );
@@ -1358,8 +1353,8 @@ function callContract(
   // a revert, it's "not resolved yet".
   const result = callHook(call);
   const values = () => {
-    const outputs = tupleComponents(functionSignature.slice(functionSignature.indexOf("):") + 2));
-    return (result.value ?? []).map((raw, index) => ethereumValueFor(outputs[index], raw));
+    const outputs = outputConverters(functionSignature);
+    return (result.value ?? []).map((raw, index) => outputs[index](raw));
   };
   if (isTry) {
     return result.reverted ? new CallResult(true, null) : CallResult.fromValue(values());
@@ -1369,6 +1364,10 @@ function callContract(
   }
   return values();
 }
+
+const outputConverters = memoised((signature) =>
+  splitTypes(parseSignature(signature).outputs).map(ethereumConverter),
+);
 
 /** An `ethereum.Value` as the plain JS an ABI encoder takes. */
 export function ethereumValueToJs(value: EthereumValue): unknown {
@@ -1556,72 +1555,78 @@ function shaped<T extends object>(
   return into;
 }
 
-/** `(address,(uint256,bytes))` → `["address", "(uint256,bytes)"]`. */
-function tupleComponents(type: string): string[] {
-  const inner = type.slice(1, type.lastIndexOf(")"));
-  const components: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let index = 0; index < inner.length; index++) {
-    const char = inner[index];
-    if (char === "(") depth++;
-    else if (char === ")") depth--;
-    else if (char === "," && depth === 0) {
-      components.push(inner.slice(start, index));
-      start = index + 1;
+type Converter<T> = (raw: unknown) => T;
+
+/**
+ * Converters are compiled once per ABI type string or signature: every event
+ * parameter and call output goes through one on every handler run, and a
+ * replayed handler runs again.
+ */
+function memoised<V>(compile: (key: string) => V): (key: string) => V {
+  const compiled = new Map<string, V>();
+  return (key) => {
+    let value = compiled.get(key);
+    if (value === undefined) {
+      value = compile(key);
+      compiled.set(key, value);
     }
-  }
-  if (inner.length > 0) components.push(inner.slice(start));
-  return components;
+    return value;
+  };
 }
+
+const tupleComponents = (type: string) => splitTypes(type.slice(1, type.lastIndexOf(")")));
 
 /**
  * A decoded ABI value as the `ethereum.Value` graph-node would hand the
  * mapping, typed by the ABI rather than by its JS shape: a `string` holding
  * `0x…` is still a string.
  */
-function ethereumValueFor(type: string, raw: unknown): EthereumValue {
-  const fixedArray = type.match(/\[\d+\]$/);
+const ethereumConverter: (type: string) => Converter<EthereumValue> = memoised((type) => {
   if (type.endsWith("]")) {
-    const element = type.slice(0, type.lastIndexOf("["));
-    const values = (raw as unknown[]).map((value) => ethereumValueFor(element, value));
-    return fixedArray ? EthereumValue.fromFixedSizedArray(values) : EthereumValue.fromArray(values);
+    const element = ethereumConverter(type.slice(0, type.lastIndexOf("[")));
+    const wrap = /\[\d+\]$/.test(type) ? EthereumValue.fromFixedSizedArray : EthereumValue.fromArray;
+    return (raw) => wrap((raw as unknown[]).map((value) => element(value)));
   }
   if (type.startsWith("(")) {
-    return EthereumValue.fromTuple(
-      EthereumTuple.from(
-        tupleComponents(type).map((component, index) =>
-          ethereumValueFor(component, (raw as unknown[])[index]),
-        ),
-      ),
-    );
+    const components = tupleComponents(type).map(ethereumConverter);
+    return (raw) =>
+      EthereumValue.fromTuple(components.map((component, index) => component((raw as unknown[])[index])));
   }
-  if (type === "address") return EthereumValue.fromAddress(Address.fromString(raw as string));
-  if (type === "bool") return EthereumValue.fromBoolean(raw as boolean);
-  if (type === "string") return EthereumValue.fromString(raw as string);
-  if (type === "bytes") return EthereumValue.fromBytes(Bytes.fromHexString(raw as string));
-  if (type.startsWith("bytes")) return EthereumValue.fromFixedBytes(Bytes.fromHexString(raw as string));
+  if (type === "address") return (raw) => EthereumValue.fromAddress(Address.fromString(raw as string));
+  if (type === "bool") return (raw) => EthereumValue.fromBoolean(raw as boolean);
+  if (type === "string") return (raw) => EthereumValue.fromString(raw as string);
+  if (type === "bytes") return (raw) => EthereumValue.fromBytes(Bytes.fromHexString(raw as string));
+  if (type.startsWith("bytes")) {
+    return (raw) => EthereumValue.fromFixedBytes(Bytes.fromHexString(raw as string));
+  }
   // viem decodes the narrow integer types to numbers.
-  const int = new BigInt_(BigInt(raw as bigint | number | string));
-  return type.startsWith("uint") ? EthereumValue.fromUnsignedBigInt(int) : EthereumValue.fromSignedBigInt(int);
-}
+  const fromInt = type.startsWith("uint") ? EthereumValue.fromUnsignedBigInt : EthereumValue.fromSignedBigInt;
+  return (raw) => fromInt(new BigInt_(BigInt(raw as bigint | number | string)));
+});
 
 /** Anything that fits in 32 bits is an `i32` in a mapping; wider is a BigInt. */
 const SMALL_INT = /^u?int(8|16|24|32)$/;
 
 /** A decoded ABI value as the graph-ts type `graph codegen` would give it. */
-function graphValueFor(type: string, raw: unknown): unknown {
-  if (raw === null || raw === undefined) return raw;
+const graphConverter: (type: string) => Converter<unknown> = memoised((type) => {
+  const convert = graphValue(type);
+  return (raw) => (raw === null || raw === undefined ? raw : convert(raw));
+});
+
+function graphValue(type: string): Converter<unknown> {
   if (type.endsWith("]")) {
-    const element = type.slice(0, type.lastIndexOf("["));
-    return (raw as unknown[]).map((value) => graphValueFor(element, value));
+    const element = graphConverter(type.slice(0, type.lastIndexOf("[")));
+    return (raw) => (raw as unknown[]).map((value) => element(value));
   }
-  if (type.startsWith("(")) return ethereumValueFor(type, raw).toTuple();
-  if (type === "address") return Address.fromString(raw as string);
-  if (type === "bool" || type === "string") return raw;
-  if (type.startsWith("bytes")) return Bytes.fromHexString(raw as string);
-  if (SMALL_INT.test(type)) return Number(raw);
-  return new BigInt_(raw as bigint);
+  if (type.startsWith("(")) {
+    const tuple = ethereumConverter(type);
+    return (raw) => tuple(raw).toTuple();
+  }
+  if (type === "address") return (raw) => Address.fromString(raw as string);
+  if (type === "bool" || type === "string") return (raw) => raw;
+  if (type.startsWith("bytes")) return (raw) => Bytes.fromHexString(raw as string);
+  if (SMALL_INT.test(type)) return (raw) => Number(raw);
+  return (raw) => new BigInt_(raw as bigint);
 }
 
 /**
@@ -1675,7 +1680,7 @@ class EthereumEvent {
   get parameters(): EthereumEventParam[] {
     return (this._parameters ??= this._kind.inputs.map(
       (input) =>
-        new EthereumEventParam(input.name, ethereumValueFor(input.type, this._raw.params?.[input.key])),
+        new EthereumEventParam(input.name, ethereumConverter(input.type)(this._raw.params?.[input.key])),
     ));
   }
   /**
@@ -1687,7 +1692,7 @@ class EthereumEvent {
     if (this._params) return this._params;
     const params: Record<string, unknown> = {};
     this._kind.inputs.forEach((input, index) => {
-      params[input.name || `param${index}`] = graphValueFor(input.type, this._raw.params?.[input.key]);
+      params[input.name || `param${index}`] = graphConverter(input.type)(this._raw.params?.[input.key]);
     });
     return (this._params = params);
   }
@@ -1723,7 +1728,7 @@ const ethereumImpl = {
         parseAbiParameters(types),
         data.toHexString() as `0x${string}`,
       );
-      return ethereumValueFor(types, decoded[0]);
+      return ethereumConverter(types)(decoded[0]);
     } catch {
       return null;
     }

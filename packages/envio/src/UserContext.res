@@ -285,13 +285,7 @@ let writeChange = (params: entityContextParams, change) => {
   let scope = params->entityScope
   switch params.sync.writes {
   | Some(writes) => writes->SyncWrites.record(~entityConfig=params.entityConfig, ~scope, change)
-  | None =>
-    params.indexerState
-    ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
-    ->InMemoryTable.Entity.set(
-      ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointIdFor(~scope),
-      change,
-    )
+  | None => params.indexerState->SyncWrites.write(~entityConfig=params.entityConfig, ~scope, change)
   }
 }
 

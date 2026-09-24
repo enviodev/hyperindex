@@ -58,12 +58,31 @@ function runGraphCli(packageDir: string, command: string, argv: string[]): Promi
   });
 }
 
-function outOfMemory(command: string): Error {
-  return new Error(
-    `Envio Subgraph ran \`graph ${command}\` with a ${HEAP_MB} MB heap, three\n` +
-      "quarters of this machine's memory, and it ran out. Run it on a machine\n" +
-      "with more memory, then start envio again.",
-  );
+/**
+ * Migrations are skipped: they rewrite the developer's `subgraph.yaml` in
+ * place, and envio reads a manifest, it doesn't maintain one.
+ */
+async function runOrThrow(
+  graphCli: string,
+  root: string,
+  command: string,
+  outputDir: string,
+  failure: string,
+): Promise<void> {
+  const outcome = await runGraphCli(graphCli, command, [
+    path.resolve(root, "subgraph.yaml"),
+    "--output-dir",
+    outputDir,
+    "--skip-migrations",
+  ]);
+  if (outcome === "outOfMemory") {
+    throw new Error(
+      `Envio Subgraph ran \`graph ${command}\` with a ${HEAP_MB} MB heap, three\n` +
+        "quarters of this machine's memory, and it ran out. Run it on a machine\n" +
+        "with more memory, then start envio again.",
+    );
+  }
+  if (outcome === "failed") throw new Error(failure);
 }
 
 const RELATIVE_IMPORT = /\bfrom\s*["'](\.\.?\/[^"']+)["']/g;
@@ -104,26 +123,18 @@ export function missingGeneratedCode(root: string, dir: string): Error {
   );
 }
 
-/**
- * The generated code is usually gitignored, so it's built when missing.
- * Migrations are skipped: they rewrite the developer's `subgraph.yaml` in
- * place, and envio reads a manifest, it doesn't maintain one.
- */
+/** The generated code is usually gitignored, so it's built when missing. */
 export async function ensureGeneratedCode(root: string, dir: string): Promise<void> {
   if (existsSync(dir)) return;
   const graphCli = graphCliPackage(root);
   // Reported when a mapping fails to import it, naming that mapping.
   if (!graphCli) return;
 
-  const outcome = await runGraphCli(graphCli, "codegen", [
-    path.resolve(root, "subgraph.yaml"),
-    "--output-dir",
+  await runOrThrow(
+    graphCli,
+    root,
+    "codegen",
     dir,
-    "--skip-migrations",
-  ]);
-  if (outcome === "ok") return;
-  if (outcome === "outOfMemory") throw outOfMemory("codegen");
-  throw new Error(
     "Envio Subgraph ran `graph codegen` to build the generated code, but it\n" +
       "failed — the error above comes from The Graph's own codegen, so fix it\n" +
       "there and rerun. If `graph codegen` succeeds on its own but fails through\n" +
@@ -153,20 +164,15 @@ export async function typeCheckMappings(root: string): Promise<void> {
   const stamp = path.join(root, ".envio", "graph-build.stamp");
   if (existsSync(stamp) && readFileSync(stamp, "utf8") === inputs) return;
 
-  const outcome = await runGraphCli(graphCli, "build", [
-    path.resolve(root, "subgraph.yaml"),
-    "--output-dir",
+  await runOrThrow(
+    graphCli,
+    root,
+    "build",
     path.resolve(root, "build"),
-    "--skip-migrations",
-  ]);
-  if (outcome !== "ok") {
-    if (outcome === "outOfMemory") throw outOfMemory("build");
-    throw new Error(
-      "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +
-        "failed — the error above comes from The Graph's own AssemblyScript\n" +
-        "compiler, so fix it there and rerun.",
-    );
-  }
+    "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +
+      "failed — the error above comes from The Graph's own AssemblyScript\n" +
+      "compiler, so fix it there and rerun.",
+  );
 
   mkdirSync(path.dirname(stamp), { recursive: true });
   writeFileSync(stamp, inputs);
