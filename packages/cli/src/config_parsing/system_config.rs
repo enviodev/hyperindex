@@ -2,7 +2,8 @@ use super::{
     chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{
         schema_source_label, ClickHouseEntityStorage, DefaultChainScope, Entity, EntityColumn,
-        GqlScalar, GraphQLEnum, Schema, MAX_PG_IDENTIFIER_LENGTH, RESERVED_CHAIN_ID_FIELD_NAMES,
+        GqlScalar, GraphQLEnum, Schema, Validation, MAX_PG_IDENTIFIER_LENGTH,
+        RESERVED_CHAIN_ID_FIELD_NAMES,
     },
     env_interpolation::interpolate_config_variables,
     human_config::{
@@ -15,6 +16,7 @@ use super::{
         svm, BytesType, HumanConfig,
     },
     hypersync_endpoints,
+    materialization::{self, Materialization},
     validation::{self, validate_names_valid_rescript},
 };
 use crate::clickhouse::ch_type;
@@ -25,7 +27,7 @@ use crate::{
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     project_paths::{path_utils, ParsedProjectPaths},
     type_schema::TypeIdent,
-    utils::unique_hashmap,
+    utils::{text, unique_hashmap},
 };
 use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
 use anyhow::{anyhow, Context, Result};
@@ -75,12 +77,19 @@ trait ConfigSource {
     fn project_paths(&self) -> &ParsedProjectPaths;
     fn is_rescript(&self) -> bool;
     fn env_var(&mut self, name: &str) -> Option<String>;
+    /// A project can go without schema.graphql, but only by saying so: its
+    /// tables may come from `tables:`, or it may have handlers that only call
+    /// effects, and `tables:` with nothing under it says the second out loud.
+    /// Otherwise an absent file is a renamed or misplaced one. A path the
+    /// config names explicitly always has to exist.
+    ///
     /// `default_scope` reaches the parser because directive column references
     /// resolve as the schema is built, and whether an entity has an appended
     /// chain-id column to resolve against depends on it.
     fn load_schema(
         &self,
         configured_path: &Option<String>,
+        declares_tables: bool,
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
     ) -> Result<Schema>;
@@ -120,14 +129,35 @@ impl ConfigSource for FilesystemConfigSource<'_> {
     fn load_schema(
         &self,
         configured_path: &Option<String>,
+        declares_tables: bool,
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
     ) -> Result<Schema> {
+        if configured_path.is_none() {
+            let default_path = path_utils::get_config_path_relative_to_root(
+                self.project_paths,
+                PathBuf::from(DEFAULT_SCHEMA_PATH),
+            )
+            .context("Failed creating a relative path to schema")?;
+            if !default_path.exists() {
+                if declares_tables {
+                    return Ok(Schema::empty());
+                }
+                return Err(anyhow!(
+                    "No {DEFAULT_SCHEMA_PATH} next to config.yaml, and config.yaml declares no \
+                     `tables`, so this indexer has no entities to write. If the file moved, point \
+                     `schema:` at it in config.yaml. If the indexer really has none - handlers \
+                     that only call effects or register contracts - say so with an empty \
+                     `tables:` in config.yaml."
+                ));
+            }
+        }
         Schema::parse_from_file(
             self.project_paths,
             configured_path,
             default_scope,
             bytes_type,
+            validation_for(declares_tables),
         )
         .context("Parsing schema file for config")
     }
@@ -205,6 +235,7 @@ impl ConfigSource for MemoryConfigSource<'_> {
     fn load_schema(
         &self,
         configured_path: &Option<String>,
+        declares_tables: bool,
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
     ) -> Result<Schema> {
@@ -217,6 +248,7 @@ impl ConfigSource for MemoryConfigSource<'_> {
                 default_scope,
                 bytes_type,
                 &schema_source_label(configured_path),
+                validation_for(declares_tables),
             ),
             _ => Ok(Schema::empty()),
         }
@@ -224,6 +256,16 @@ impl ConfigSource for MemoryConfigSource<'_> {
 
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
         self.read_virtual_file(path)
+    }
+}
+
+/// The generated tables join the schema after it is parsed, so a config that
+/// declares any waits for them before checking what its relations point at.
+fn validation_for(declares_tables: bool) -> Validation {
+    if declares_tables {
+        Validation::Deferred
+    } else {
+        Validation::Now
     }
 }
 
@@ -341,6 +383,11 @@ pub struct SystemConfig {
     // Project uses ReScript when a rescript.json sits at the project root —
     // file existence is the source of truth; no explicit flag in config.yaml.
     pub is_rescript: bool,
+    // Write plans compiled from `tables`. One per (table, event, union branch).
+    pub materializations: Vec<Materialization>,
+    // How each declared table is named and written, keyed by table name. An
+    // entity absent from the map is one from schema.graphql, which handlers own.
+    pub entity_access: HashMap<String, materialization::EntityAccess>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -438,6 +485,44 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         }
     }
 
+    // A directive that names one backend turns the others off, and with no
+    // `default: true` there is nothing that says which way the config leans —
+    // so an entity naming a strict subset has to say so outright. Asking for a
+    // Postgres index must not quietly stop the table reaching ClickHouse.
+    // Only for tables declared in config.yaml: the rule would reject
+    // schema.graphql files that have been valid since before it existed.
+    if !postgres_default && !clickhouse_default {
+        let both_enabled = storage.postgres.is_some() && storage.clickhouse.is_some();
+        let partial: Vec<String> = if both_enabled {
+            entities
+                .iter()
+                .filter(|e| e.materialized && e.has_storage_directive())
+                .filter_map(|e| match (e.postgres.is_some(), e.clickhouse.is_some()) {
+                    (true, false) => {
+                        Some(format!("  - `{}` says postgres, not clickhouse", e.name))
+                    }
+                    (false, true) => {
+                        Some(format!("  - `{}` says clickhouse, not postgres", e.name))
+                    }
+                    _ => None,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !partial.is_empty() {
+            return Err(anyhow!(
+                "Schema validation failed:\n\nBoth storage backends are enabled and neither is \
+                 `default: true`, so leaving one out of a table's storage would turn it off \
+                 silently:\n{}\n\nFixes:\n  - Name both, under the table's `storage:` in \
+                 config.yaml:\n      storage:\n        postgres: true\n        clickhouse: \
+                 false\n  - Or set `default: true` on one backend under `storage:` in \
+                 config.yaml, and leave the storage off the tables that should follow it.",
+                partial.join("\n")
+            ));
+        }
+    }
+
     let unsupported: Vec<(&str, &'static str)> = entities
         .iter()
         .flat_map(|e| {
@@ -467,6 +552,31 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
          config.yaml:\n{listed}\n\nFixes:\n  - Remove the unsupported storage from @storage on \
          these entities, or enable it under `storage:` in config.yaml."
     ))
+}
+
+/// A `_sum` adds to the row's current value, so it reads the row back before
+/// writing it. ClickHouse is write-only from a handler's point of view, so a
+/// table that lands only there would throw on its first matching event.
+fn validate_reducers_can_read_back(config: &SystemConfig) -> anyhow::Result<()> {
+    for materialization in &config.materializations {
+        if !materialization.reads_back() {
+            continue;
+        }
+        let Some(entity) = config.schema.entities.get(&materialization.table) else {
+            continue;
+        };
+        if is_stored_in_postgres(entity, &config.storage) {
+            continue;
+        }
+        return Err(anyhow!(
+            "`tables.{}` adds up a value with `_sum`, which reads the row back before writing it, \
+             but the table isn't stored in postgres — and ClickHouse can't be read from. Add \
+             `postgres: true` to the table's `storage`, or select the value with `_value` instead \
+             of adding it up.",
+            materialization.table
+        ));
+    }
+    Ok(())
 }
 
 /// Whether an entity ends up in Postgres, mirroring how `EntityJson.storage` is
@@ -949,6 +1059,15 @@ impl SystemConfig {
         self.schema.entities.get(entity_name)
     }
 
+    /// What code calls an entity and who writes it. Everything not declared in
+    /// `tables` is an ordinary entity handlers own.
+    pub fn entity_access(&self, entity_name: &str) -> materialization::EntityAccess {
+        match self.entity_access.get(entity_name) {
+            Some(access) => access.clone(),
+            None => materialization::EntityAccess::handlers(entity_name),
+        }
+    }
+
     pub fn get_entities(&self) -> Vec<&Entity> {
         let mut entities: Vec<&Entity> = self.schema.entities.values().collect();
         //For consistent templating in alphabetical order
@@ -1027,22 +1146,31 @@ impl SystemConfig {
 
         let base_config = human_config.get_base_config();
         let default_scope = base_config.default_chain_scope();
+        let human_config_bytes_type = human_config.bytes_type();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
-        validate_entity_storage(&storage, &schema)?;
-        validate_relationship_storage(&storage, &schema)?;
-        validate_cross_chain_directives(default_scope, &schema)?;
-        validate_chain_id_field_names(&schema, default_scope)?;
-        validate_cross_chain_relationships(&schema, default_scope)?;
-        validate_internal_relationships(&schema)?;
-        validate_clickhouse_nullable_arrays(&storage, &schema)?;
-
-        validate_db_column_names(&storage, &schema)?;
-        validate_clickhouse_sorting_key_scalars(&storage, &schema)?;
-
+        if let HumanConfig::Evm(EvmConfig {
+            tables: Some(tables),
+            ..
+        }) = &human_config
+        {
+            materialization::validate_table_names(tables)?;
+            // An empty `tables` declares nothing, so it has no row identity to
+            // get wrong — it is only there to say the indexer has no entities.
+            if default_scope.is_cross_chain_by_default() && !tables.0.is_empty() {
+                return Err(anyhow!(
+                    "`tables` needs `disable_default_cross_chain: true` at the top of \
+                     config.yaml. Without it a table keeps one row per id shared by every chain, \
+                     so the same id on two chains overwrites itself — for a token indexer that \
+                     silently merges balances. Add:\n\n    disable_default_cross_chain: \
+                     true\n\nand set `cross_chain: true` on any table that really is the same \
+                     across chains."
+                ));
+            }
+        }
         let final_project_paths = source.project_paths().clone();
         let is_rescript = source.is_rescript();
 
-        match human_config {
+        let built: Result<SystemConfig> = match human_config {
             HumanConfig::Evm(ref evm_config) => {
                 validation::validate_deserialized_config_yaml(evm_config)?;
 
@@ -1116,7 +1244,7 @@ impl SystemConfig {
                             None => {
                                 //Validate that there is a global contract for the given contract if
                                 //there is no config
-                                if !contracts.contains_key(&contract.name) {
+                                if !contracts.contains_key(&text::to_code_name(&contract.name)) {
                                     Err(anyhow!(
                                         "Failed to parse contract '{}' for the network '{}'. If \
                                          you use a global contract definition, please verify that \
@@ -1138,7 +1266,7 @@ impl SystemConfig {
                         .iter()
                         .cloned()
                         .map(|c| ChainContract {
-                            name: c.name,
+                            name: text::to_code_name(&c.name),
                             addresses: c.address.into(),
                             start_block: c.start_block,
                         })
@@ -1196,6 +1324,8 @@ impl SystemConfig {
                     handlers: base_config.handlers.clone(),
                     human_config,
                     is_rescript,
+                    materializations: vec![],
+                    entity_access: HashMap::new(),
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
@@ -1265,7 +1395,7 @@ impl SystemConfig {
                             None => {
                                 //Validate that there is a global contract for the given contract if
                                 //there is no local_contract_config
-                                if !contracts.contains_key(&contract.name) {
+                                if !contracts.contains_key(&text::to_code_name(&contract.name)) {
                                     Err(anyhow!(
                                         "Failed to parse contract '{}' for the network '{}'. If \
                                          you use a global contract definition, please verify that \
@@ -1301,7 +1431,7 @@ impl SystemConfig {
                         .iter()
                         .cloned()
                         .map(|c| ChainContract {
-                            name: c.name,
+                            name: text::to_code_name(&c.name),
                             addresses: c.address.into(),
                             start_block: c.start_block,
                         })
@@ -1345,6 +1475,8 @@ impl SystemConfig {
                     handlers: base_config.handlers.clone(),
                     human_config,
                     is_rescript,
+                    materializations: vec![],
+                    entity_access: HashMap::new(),
                 })
             }
             HumanConfig::Svm(ref svm_config) => {
@@ -1459,9 +1591,103 @@ impl SystemConfig {
                     handlers: svm_config.base.handlers.clone(),
                     human_config,
                     is_rescript,
+                    materializations: vec![],
+                    entity_access: HashMap::new(),
                 })
             }
+        };
+        let mut config = built?;
+
+        // Compiled here, after the contracts are built: a materialized table's
+        // types come from the events it reads. The tables it declares become
+        // entities, so every schema validation below sees them too.
+        let tables = match &config.human_config {
+            HumanConfig::Evm(evm_config) => evm_config.tables.clone(),
+            _ => None,
+        };
+        if let Some(tables) = tables {
+            let contracts: BTreeMap<String, &Contract> = config
+                .contracts
+                .iter()
+                .map(|(name, contract)| (name.clone(), contract))
+                .collect();
+            let compiled = materialization::compile(
+                &tables,
+                &contracts,
+                &config.schema,
+                if config.lowercase_addresses {
+                    materialization::AddressCase::Lowercase
+                } else {
+                    materialization::AddressCase::Checksum
+                },
+                config.chain_id_mode,
+            )
+            .context("Failed compiling `tables`")?;
+            config.schema = config
+                .schema
+                .extended_with(&compiled.sdl, default_scope, human_config_bytes_type)
+                .context("Failed adding the tables from config.yaml to the schema")?;
+            config.materializations = compiled.materializations;
+            config.entity_access = compiled.entity_access.into_iter().collect();
+
+            // Fetch demand lands on the events the tables actually read, so an
+            // event no table touches keeps whatever selection it already had.
+            let global_selection = config.field_selection.clone();
+            for (event_ref, demand) in compiled.field_demand.0 {
+                let (contract_name, event_name) = (event_ref.contract, event_ref.event);
+                // Whether the fields this event can ask for are limited to what
+                // RPC can serve depends on the chains this contract is on, not
+                // on some other contract's chain having an RPC source.
+                let has_rpc_src = match &config.human_config {
+                    HumanConfig::Evm(evm_config) => evm_config.chains.iter().any(|chain| {
+                        evm_chain_has_rpc_src(chain)
+                            && chain.contracts.as_ref().is_some_and(|contracts| {
+                                contracts
+                                    .iter()
+                                    .any(|contract| contract.name == contract_name)
+                            })
+                    }),
+                    _ => false,
+                };
+                let contract = config.contracts.get_mut(&contract_name).ok_or_else(|| {
+                    anyhow!("Contract `{contract_name}` went missing while planning fetches")
+                })?;
+                let event = contract
+                    .events
+                    .iter_mut()
+                    .find(|event| event.name == event_name)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Event `{event_name}` went missing from `{contract_name}` while \
+                             planning fetches"
+                        )
+                    })?;
+                let base = event
+                    .field_selection
+                    .as_ref()
+                    .unwrap_or(&global_selection)
+                    .clone();
+                event.field_selection = Some(
+                    base.with_added(&demand.block, &demand.transaction, has_rpc_src)
+                        .with_context(|| {
+                            format!("Failed selecting fields for `{contract_name}.{event_name}`")
+                        })?,
+                );
+            }
         }
+
+        validate_entity_storage(&config.storage, &config.schema)?;
+        validate_relationship_storage(&config.storage, &config.schema)?;
+        validate_db_column_names(&config.storage, &config.schema)?;
+        validate_clickhouse_sorting_key_scalars(&config.storage, &config.schema)?;
+        validate_cross_chain_directives(default_scope, &config.schema)?;
+        validate_chain_id_field_names(&config.schema, default_scope)?;
+        validate_cross_chain_relationships(&config.schema, default_scope)?;
+        validate_internal_relationships(&config.schema)?;
+        validate_clickhouse_nullable_arrays(&config.storage, &config.schema)?;
+        validate_reducers_can_read_back(&config)?;
+
+        Ok(config)
     }
 
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
@@ -1546,10 +1772,13 @@ impl SystemConfig {
             }
         };
 
+        let declares_tables =
+            matches!(&human_config, HumanConfig::Evm(evm) if evm.tables.is_some());
         let base_config = human_config.get_base_config();
         let default_scope = base_config.default_chain_scope();
         let schema = source.load_schema(
             &base_config.schema,
+            declares_tables,
             default_scope,
             human_config.bytes_type(),
         )?;
@@ -2135,6 +2364,9 @@ impl Contract {
         events: Vec<Event>,
         abi: Abi,
     ) -> Result<Self> {
+        // config.yaml may spell the name however it likes; from here on there is
+        // one spelling, the one handlers and generated modules use.
+        let name = text::to_code_name(&name);
         // Every ecosystem builds its contracts through here, unlike
         // `validate_deserialized_config_yaml`, which only sees EVM configs. Svm
         // is the exception: it generates no ReScript, and its program and
@@ -2703,6 +2935,63 @@ impl FieldSelection {
             .collect();
 
         Self::new(transaction_fields, block_fields)
+    }
+
+    /// Add the block/transaction fields a materialized table reads, so the
+    /// source fetches them. Names are the camelCase ones config.yaml uses.
+    pub fn with_added(
+        &self,
+        block_fields: &std::collections::BTreeSet<String>,
+        transaction_fields: &std::collections::BTreeSet<String>,
+        has_rpc_src: bool,
+    ) -> Result<Self> {
+        use human_config::evm::{BlockField, TransactionField};
+        use strum::IntoEnumIterator;
+
+        // Resolve names to the config enums and reuse the same validation an
+        // explicit `field_selection` goes through, RPC availability included.
+        let block_fields = block_fields
+            .iter()
+            .map(|name| {
+                BlockField::iter()
+                    .find(|field| &field.to_string() == name)
+                    .ok_or_else(|| anyhow!("Unknown block field {name}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let transaction_fields = transaction_fields
+            .iter()
+            .map(|name| {
+                TransactionField::iter()
+                    .find(|field| &field.to_string() == name)
+                    .ok_or_else(|| anyhow!("Unknown transaction field {name}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let added = Self::try_from_config_field_selection(
+            human_config::evm::FieldSelection {
+                block_fields: Some(block_fields),
+                transaction_fields: Some(transaction_fields),
+            },
+            has_rpc_src,
+        )?;
+
+        let mut selection = self.clone();
+        for field in added.block_fields {
+            if !selection.block_fields.iter().any(|f| f.name == field.name) {
+                selection.block_fields.push(field);
+            }
+        }
+        for field in added.transaction_fields {
+            if !selection
+                .transaction_fields
+                .iter()
+                .any(|f| f.name == field.name)
+            {
+                selection.transaction_fields.push(field);
+            }
+        }
+        selection.block_fields.sort();
+        selection.transaction_fields.sort();
+        Ok(selection)
     }
 
     pub fn try_from_config_field_selection(
@@ -3466,7 +3755,15 @@ chains:
                 postgres,
                 clickhouse: clickhouse.map(ClickHouseEntityStorage::Enabled),
                 cross_chain: false,
+                materialized: true,
                 internal: false,
+            }
+        }
+
+        fn hand_written(entity: Entity) -> Entity {
+            Entity {
+                materialized: false,
+                ..entity
             }
         }
 
@@ -3503,13 +3800,28 @@ chains:
             assert!(validate_entity_storage(&postgres_only(), &schema).is_ok());
         }
 
+        // With no `default: true`, an entity that names one backend has to name
+        // the other too — otherwise the omission silently turns it off.
         #[test]
         fn multi_storage_all_annotated_ok() {
             let schema = make_schema(vec![
-                entity("Transfer", Some(true), None),
-                entity("Snapshot", None, Some(true)),
+                entity("Transfer", Some(true), Some(false)),
+                entity("Snapshot", Some(false), Some(true)),
                 entity("Audit", Some(true), Some(true)),
             ]);
+            assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
+        }
+
+        #[test]
+        fn multi_storage_partial_directive_rejected() {
+            let schema = make_schema(vec![entity("Transfer", Some(true), None)]);
+            assert!(validate_entity_storage(&multi(false, false), &schema).is_err());
+            // A stated default says which way the config leans, so a directive
+            // that overrides it is a deliberate act rather than an omission.
+            assert!(validate_entity_storage(&multi(true, false), &schema).is_ok());
+            // A hand-written entity keeps the behaviour it had before the rule
+            // existed, whether or not the config also declares `tables`.
+            let schema = make_schema(vec![hand_written(entity("Transfer", Some(true), None))]);
             assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
         }
 
@@ -4696,5 +5008,78 @@ type Foo {
                 } if url == "https://solana.hypersync.xyz"
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod schema_file_test {
+    use super::SystemConfig;
+    use crate::project_paths::ParsedProjectPaths;
+    use tempdir::TempDir;
+
+    const CONFIG: &str = r#"
+name: no-schema
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+"#;
+
+    fn parse_project(files: &[(&str, &str)]) -> anyhow::Result<SystemConfig> {
+        let dir = TempDir::new("envio_schema_file").expect("tempdir");
+        for (name, contents) in files {
+            std::fs::write(dir.path().join(name), contents).expect("write");
+        }
+        let paths = ParsedProjectPaths::new(dir.path().to_str().expect("utf8 path"), "config.yaml")
+            .expect("project paths");
+        SystemConfig::parse_from_project_files(&paths)
+    }
+
+    // An absent default file is usually a renamed or misplaced one, so it has
+    // to be an error rather than an indexer that silently writes nothing.
+    #[test]
+    fn rejects_an_absent_default_schema() {
+        let error = format!(
+            "{:#}",
+            parse_project(&[("config.yaml", CONFIG)]).expect_err("a missing schema must be caught")
+        );
+        assert!(error.contains("declares no `tables`"), "{error}");
+    }
+
+    // An indexer whose handlers only call effects or register contracts has no
+    // entities to declare, and an empty `tables` is how it says so.
+    #[test]
+    fn treats_an_empty_tables_as_no_entities() {
+        let config = parse_project(&[("config.yaml", &format!("{CONFIG}tables: []\n"))])
+            .expect("config that declares no entities on purpose");
+        assert!(config.get_entities().is_empty());
+    }
+
+    // A path the config names explicitly is a claim that the file exists, so a
+    // typo there must still fail loudly rather than silently drop every entity.
+    #[test]
+    fn still_requires_a_schema_the_config_names() {
+        let config = format!("{CONFIG}schema: ./missing.graphql\n");
+        let error = format!(
+            "{:#}",
+            parse_project(&[("config.yaml", &config)]).expect_err("named schema must exist")
+        );
+        assert!(error.contains("missing.graphql"), "{error}");
+    }
+
+    #[test]
+    fn reads_the_default_schema_when_it_is_there() {
+        let config = parse_project(&[
+            ("config.yaml", CONFIG),
+            ("schema.graphql", "type Account { id: ID! }"),
+        ])
+        .expect("config with a schema");
+        assert_eq!(config.get_entity_names(), vec!["Account".to_string()]);
     }
 }

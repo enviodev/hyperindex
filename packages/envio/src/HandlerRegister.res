@@ -59,59 +59,6 @@ let withRegistration = (fn: activeRegistration => unit) => {
   }
 }
 
-// Idempotent: handlers register once (import-cached), so the first call builds
-// the registration and every later call reuses it. `config` must be the full
-// chain set — registrations resolve for all its chains here, and
-// `finishRegistration` later narrows to whatever config it's given.
-let startRegistration = (~config: Config.t) => {
-  switch getActiveRegistration() {
-  | Some(_) => ()
-  | None =>
-    let r = {
-      config,
-      registrationsByChainId: Dict.make(),
-      finished: false,
-    }
-    EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
-    // Replay pre-registered callbacks in source (FIFO) order, then clear. For
-    // multiple handlers on one event this replay order is the dispatch order, so
-    // it must not reverse (which `Array.pop` would).
-    let queued = preRegistered->Array.copy
-    preRegistered->Array.splice(~start=0, ~remove=preRegistered->Array.length, ~insert=[])
-    queued->Array.forEach(fn => fn(r))
-  }
-}
-
-// A registration a caller owns, rather than the single implicit one
-// `startRegistration` installs. Tests run several indexers in one process, each
-// with its own config, and handlers must register against the config they were
-// written for.
-type registration = activeRegistration
-
-let makeRegistration = (~config: Config.t): registration => {
-  config,
-  registrationsByChainId: Dict.make(),
-  finished: false,
-}
-
-// Makes `registration` the target of `indexer.onEvent` & co. for the duration
-// of `fn`, restoring whatever was active before — so one caller's handlers
-// never land in another's registration. Concurrent scopes would still clobber
-// each other: the pointer they swap is process-global.
-let useRegistration = async (registration: registration, fn) => {
-  let previous = EnvioGlobal.value.activeRegistration
-  EnvioGlobal.value.activeRegistration = Some(registration->(Utils.magic: registration => unknown))
-  let restore = () => EnvioGlobal.value.activeRegistration = previous
-  switch await fn() {
-  | result =>
-    restore()
-    result
-  | exception exn =>
-    restore()
-    throw(exn)
-  }
-}
-
 let getChainRegistrations = (r: activeRegistration, ~chainId: ChainId.t): chainRegistrations => {
   let key = chainId->ChainId.toString
   switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
@@ -293,8 +240,12 @@ let addOnEventRegistration = (
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
   ~eventOptions: option<Internal.eventOptions<JSON.t>>,
+  // A materialized table binds to its contract's addresses, so on a chain where
+  // that contract has none it reads every address instead — binding to an empty
+  // set would fetch nothing and leave the table silently empty.
+  ~wildcardWhenUnbound=false,
 ) => {
-  let isWildcard = eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
+  let optedOutOfBinding = eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
   let where = eventOptions->Option.flatMap(v => v.where)
   // The inline selection doesn't vary by chain: resolve it once here and share
   // the one value (and its sets) across every chain's registration.
@@ -348,6 +299,9 @@ let addOnEventRegistration = (
           }
         | _ => ()
         }
+        let isWildcard =
+          optedOutOfBinding ||
+            (wildcardWhenUnbound && contract.addresses->Utils.Array.isEmpty)
         let reg = buildOnEventRegistrationWith(
           ~config=registration.config,
           ~chainId=chainConfig.id,
@@ -389,6 +343,85 @@ let addOnEventRegistration = (
           )}.`,
       )
     }
+  }
+}
+
+// Materialized tables are written by handlers of their own, registered before
+// any user handler so their lower registration index puts their item first on a
+// log — a handler reading a materialized table then sees the current event's
+// contribution.
+let registerMaterializers = (r: activeRegistration) =>
+  Materialization.buildHandlers(r.config)->Array.forEach(({
+    contractName,
+    eventName,
+    wildcard,
+    handler,
+  }) =>
+    r->addOnEventRegistration(
+      ~contractName,
+      ~eventName,
+      ~handler=Some(handler),
+      ~contractRegister=None,
+      ~eventOptions=wildcard ? Some({wildcard: true}) : None,
+      ~wildcardWhenUnbound=true,
+    )
+  )
+
+// Idempotent: handlers register once (import-cached), so the first call builds
+// the registration and every later call reuses it. `config` must be the full
+// chain set — registrations resolve for all its chains here, and
+// `finishRegistration` later narrows to whatever config it's given.
+let startRegistration = (~config: Config.t) => {
+  switch getActiveRegistration() {
+  | Some(_) => ()
+  | None =>
+    let r = {
+      config,
+      registrationsByChainId: Dict.make(),
+      finished: false,
+    }
+    EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
+    r->registerMaterializers
+    // Replay pre-registered callbacks in source (FIFO) order, then clear. For
+    // multiple handlers on one event this replay order is the dispatch order, so
+    // it must not reverse (which `Array.pop` would).
+    let queued = preRegistered->Array.copy
+    preRegistered->Array.splice(~start=0, ~remove=preRegistered->Array.length, ~insert=[])
+    queued->Array.forEach(fn => fn(r))
+  }
+}
+
+// A registration a caller owns, rather than the single implicit one
+// `startRegistration` installs. Tests run several indexers in one process, each
+// with its own config, and handlers must register against the config they were
+// written for.
+type registration = activeRegistration
+
+let makeRegistration = (~config: Config.t): registration => {
+  let r = {
+    config,
+    registrationsByChainId: Dict.make(),
+    finished: false,
+  }
+  r->registerMaterializers
+  r
+}
+
+// Makes `registration` the target of `indexer.onEvent` & co. for the duration
+// of `fn`, restoring whatever was active before — so one caller's handlers
+// never land in another's registration. Concurrent scopes would still clobber
+// each other: the pointer they swap is process-global.
+let useRegistration = async (registration: registration, fn) => {
+  let previous = EnvioGlobal.value.activeRegistration
+  EnvioGlobal.value.activeRegistration = Some(registration->(Utils.magic: registration => unknown))
+  let restore = () => EnvioGlobal.value.activeRegistration = previous
+  switch await fn() {
+  | result =>
+    restore()
+    result
+  | exception exn =>
+    restore()
+    throw(exn)
   }
 }
 

@@ -39,6 +39,15 @@ enum TypeDef<'a> {
     Enum,
 }
 
+/// When a schema's cross-references are checked. A config declaring `tables`
+/// merges the generated definitions in before anything is validated, so a
+/// relation on either side can name a type the other one declares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Validation {
+    Now,
+    Deferred,
+}
+
 impl Schema {
     pub fn empty() -> Self {
         Schema {
@@ -61,6 +70,14 @@ impl Schema {
         enums: Vec<GraphQLEnum>,
         bytes_type: BytesType,
     ) -> anyhow::Result<Self> {
+        Self::assembled(entities, enums, bytes_type)?.validate()
+    }
+
+    fn assembled(
+        entities: Vec<Entity>,
+        enums: Vec<GraphQLEnum>,
+        bytes_type: BytesType,
+    ) -> anyhow::Result<Self> {
         let entities = unique_hashmap::from_vec_no_duplicates(
             entities.into_iter().map(|e| (e.name.clone(), e)).collect(),
         )
@@ -70,20 +87,66 @@ impl Schema {
         )
         .context("Found enums with duplicate names")?;
 
-        Self {
+        Ok(Self {
             entities,
             enums,
             bytes_type,
-        }
-        .validate()
+        })
     }
 
+    #[cfg(test)]
     fn from_document(
         document: Document<String>,
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
         source: &str,
     ) -> anyhow::Result<Self> {
+        Self::from_document_with(document, default_scope, bytes_type, source, Validation::Now)
+    }
+
+    fn from_document_with(
+        document: Document<String>,
+        default_scope: DefaultChainScope,
+        bytes_type: BytesType,
+        source: &str,
+        validation: Validation,
+    ) -> anyhow::Result<Self> {
+        let (entities, enums) = Self::definitions_from_document(document, default_scope, source)?;
+        match validation {
+            Validation::Now => Self::new(entities, enums, bytes_type),
+            Validation::Deferred => Self::assembled(entities, enums, bytes_type),
+        }
+    }
+
+    /// Parse `sdl` and validate it together with this schema, so a generated
+    /// table may reference an entity the user wrote and vice versa. The parsed
+    /// definitions go first, keeping the merged order stable.
+    pub fn extended_with(
+        &self,
+        sdl: &str,
+        default_scope: DefaultChainScope,
+        bytes_type: BytesType,
+    ) -> anyhow::Result<Self> {
+        if sdl.trim().is_empty() {
+            return self.clone().validate();
+        }
+        let document = graphql_parser::parse_schema::<String>(sdl)
+            .context("Failed to parse the generated schema as a document")?;
+        let (mut entities, mut enums) =
+            Self::definitions_from_document(document, default_scope, "config.yaml")?;
+        for entity in &mut entities {
+            entity.materialized = true;
+        }
+        entities.extend(self.entities.values().cloned());
+        enums.extend(self.enums.values().cloned());
+        Self::new(entities, enums, bytes_type)
+    }
+
+    fn definitions_from_document(
+        document: Document<String>,
+        default_scope: DefaultChainScope,
+        source: &str,
+    ) -> anyhow::Result<(Vec<Entity>, Vec<GraphQLEnum>)> {
         let entities = document
             .definitions
             .iter()
@@ -113,7 +176,7 @@ impl Schema {
             .collect::<anyhow::Result<Vec<GraphQLEnum>>>()
             .context("Failed constructing enums in schema from document")?;
 
-        Self::new(entities, enums, bytes_type)
+        Ok((entities, enums))
     }
 
     pub fn parse_from_file(
@@ -121,6 +184,7 @@ impl Schema {
         maybe_custom_path: &Option<String>,
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
+        validation: Validation,
     ) -> anyhow::Result<Self> {
         let configured_path = schema_source_label(maybe_custom_path);
 
@@ -145,7 +209,13 @@ impl Schema {
             .map(|relative| relative.display().to_string())
             .unwrap_or(configured_path);
 
-        Self::from_string_at(&schema_string, default_scope, bytes_type, &source)
+        Self::from_string_at(
+            &schema_string,
+            default_scope,
+            bytes_type,
+            &source,
+            validation,
+        )
     }
 
     pub fn from_string(
@@ -158,6 +228,7 @@ impl Schema {
             default_scope,
             bytes_type,
             DEFAULT_SCHEMA_PATH,
+            Validation::Now,
         )
     }
 
@@ -166,6 +237,7 @@ impl Schema {
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
         source: &str,
+        validation: Validation,
     ) -> anyhow::Result<Self> {
         // graphql_parser counts a comment line's `\r` and its `\n` as two line
         // breaks, so a CRLF schema with comments reports positions past where
@@ -178,10 +250,10 @@ impl Schema {
         let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
             .context("Failed to parse schema as document")?;
 
-        Self::from_document(schema_doc, default_scope, bytes_type, source)
+        Self::from_document_with(schema_doc, default_scope, bytes_type, source, validation)
     }
 
-    fn validate(self) -> anyhow::Result<Self> {
+    pub fn validate(self) -> anyhow::Result<Self> {
         self.check_schema_for_reserved_words()?
             .check_duplicate_naming_between_enums_and_entities()?
             .check_capitalized_entity_name_collisions()?
@@ -239,9 +311,14 @@ impl Schema {
     // capitalized name, so entities whose names differ only by the first
     // letter's case (e.g. `user` and `User`) would map to the same accessor
     // and silently shadow each other at runtime.
+    // A table from `tables` is exempt: the compiler checks the code names it
+    // really uses before it gets here.
     fn check_capitalized_entity_name_collisions(self) -> anyhow::Result<Self> {
         let mut by_capitalized: HashMap<String, Vec<String>> = HashMap::new();
-        for name in self.entities.keys() {
+        for (name, entity) in &self.entities {
+            if entity.materialized {
+                continue;
+            }
             by_capitalized
                 .entry(name.capitalize())
                 .or_default()
@@ -898,6 +975,10 @@ pub struct Entity {
     // `@crossChain` on the entity. Only meaningful when the config sets
     // `disable_default_cross_chain: true`; otherwise codegen rejects it.
     pub cross_chain: bool,
+    // Declared under `tables` in config.yaml rather than written by hand in
+    // schema.graphql. Validations that would break a schema that has been valid
+    // since before `tables` existed apply to these only.
+    pub materialized: bool,
     // `@internal` on the entity: stored and usable in handlers as normal, but
     // never exposed through the GraphQL API (no Hasura tracking).
     pub internal: bool,
@@ -987,6 +1068,7 @@ impl Entity {
             postgres,
             clickhouse,
             cross_chain,
+            materialized: false,
             internal,
         })
     }
@@ -2127,11 +2209,12 @@ impl UserDefinedFieldType {
             DynSolType::Tuple(_) => Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Json)))),
             DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
                 match inner.as_ref() {
-                    DynSolType::Tuple(_) => {
+                    // A nested array has no column shape of its own, so it
+                    // flows through as JSON like a tuple does — the handler
+                    // assigns the decoded value directly and the row stores it
+                    // without inventing per-dimension columns.
+                    DynSolType::Tuple(_) | DynSolType::Array(_) | DynSolType::FixedArray(_, _) => {
                         Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Json))))
-                    }
-                    DynSolType::Array(_) | DynSolType::FixedArray(_, _) => {
-                        Err(anyhow!("Unhandled contract import type 'array of array'"))
                     }
                     // Primitive-element arrays map to `[Scalar!]!`.
                     DynSolType::Bool
