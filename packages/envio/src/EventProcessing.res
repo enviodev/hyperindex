@@ -51,7 +51,7 @@ let runEventHandlerOrThrow = async (
       isPreload: false,
       chains,
       config,
-      isResolved: false,
+      sync: UserContext.makeSyncState(),
     }
     await handler(
       (
@@ -61,7 +61,7 @@ let runEventHandlerOrThrow = async (
         }: Internal.handlerArgs
       ),
     )
-    contextParams.isResolved = true
+    contextParams.sync.status = Resolved
   } catch {
   | exn =>
     throw(
@@ -102,7 +102,7 @@ let runHandlerOrThrow = async (
         isPreload: false,
         chains,
         config,
-        isResolved: false,
+        sync: UserContext.makeSyncState(),
       }
       await handler(
         Ecosystem.makeOnBlockArgs(
@@ -111,7 +111,7 @@ let runHandlerOrThrow = async (
           ~context=UserContext.getHandlerContext(contextParams),
         ),
       )
-      contextParams.isResolved = true
+      contextParams.sync.status = Resolved
     } catch {
     | exn =>
       throw(
@@ -186,7 +186,7 @@ let preloadBatchOrThrow = async (
                   checkpointId,
                   isPreload: true,
                   chains,
-                  isResolved: false,
+                  sync: UserContext.makeSyncState(),
                   config,
                 }),
               })
@@ -221,7 +221,7 @@ let preloadBatchOrThrow = async (
                   checkpointId,
                   isPreload: true,
                   chains,
-                  isResolved: false,
+                  sync: UserContext.makeSyncState(),
                   config,
                 }),
               )

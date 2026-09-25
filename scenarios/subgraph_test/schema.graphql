@@ -1,0 +1,26 @@
+type Pair @entity(immutable: true) {
+  id: Bytes!
+  token0: Bytes!
+  token1: Bytes!
+  name: String!
+  swaps: [Swap!]! @derivedFrom(field: "pair")
+  metadata: PairMetadata @derivedFrom(field: "pair")
+}
+
+type PairMetadata @entity(immutable: false) {
+  id: ID!
+  pair: Pair!
+  label: String!
+}
+
+type Swap @entity(immutable: false) {
+  id: ID!
+  pair: Pair!
+  sender: Bytes!
+  amount: BigInt!
+}
+
+type Tick @entity(immutable: false) {
+  id: ID!
+  height: BigInt!
+}

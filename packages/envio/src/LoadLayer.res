@@ -332,6 +332,44 @@ let loadEffect = (
   )
 }
 
+// Keying an _in walks every value, so it's computed once and handed on rather
+// than recomputed by each reader. Before answering "not in memory", the rows
+// already loaded for other filters are checked: they may cover this one.
+let indexFilter = (inMemTable, ~filter, ~table) => {
+  let filterKey = filter->EntityFilter.toString(~table)
+  if !(inMemTable->InMemoryTable.Entity.hasIndex)(filterKey) {
+    inMemTable->InMemoryTable.Entity.tryIndexFromLoadedValues(~filter, ~table)
+  }
+  filterKey
+}
+
+// A recorded absence is an answer too: `Some(None)` means the entity is known
+// not to exist, so no load is needed to say so.
+let getByIdInMemory = (
+  ~entityConfig: Internal.entityConfig,
+  ~scope,
+  ~indexerState,
+  ~entityId: string,
+) => {
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
+  inMemTable.latestEntityChangeById->Dict.has(entityId)
+    ? Some((inMemTable->InMemoryTable.Entity.getUnsafe)(entityId))
+    : None
+}
+
+let getByFilterInMemory = (
+  ~entityConfig: Internal.entityConfig,
+  ~scope,
+  ~indexerState,
+  ~filter: EntityFilter.t,
+) => {
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
+  let filterKey = inMemTable->indexFilter(~filter, ~table=entityConfig.table)
+  (inMemTable->InMemoryTable.Entity.hasIndex)(filterKey)
+    ? Some((inMemTable->InMemoryTable.Entity.getUnsafeOnIndex)(filterKey))
+    : None
+}
+
 let loadByParsedFilter = (
   ~loadManager,
   ~persistence: Persistence.t,
@@ -425,13 +463,7 @@ let loadByParsedFilter = (
     )
   }
 
-  // Keying an _in walks every value, so it's computed once here and handed to
-  // the load manager rather than recomputed by the hasher.
-  let filterKey = filter->EntityFilter.toString(~table=entityConfig.table)
-
-  if !(inMemTable->InMemoryTable.Entity.hasIndex)(filterKey) {
-    inMemTable->InMemoryTable.Entity.tryIndexFromLoadedValues(~filter, ~table=entityConfig.table)
-  }
+  let filterKey = inMemTable->indexFilter(~filter, ~table=entityConfig.table)
 
   loadManager->LoadManager.call(
     ~key,

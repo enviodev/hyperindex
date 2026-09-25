@@ -210,7 +210,11 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Hoodi = 560048,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    #[subenum(
+        HypersyncChain,
+        NetworkWithExplorer,
+        GraphNetwork(serde(rename = "hyper-evm"))
+    )]
     Hyperliquid = 999,
 
     IncoGentryTestnet = 9090,
@@ -742,7 +746,8 @@ mod test {
         "polygon-zkevm-testnet",
         "polygon-zkevm",
         "scroll-sepolia",
-        "scroll"
+        "scroll",
+        "hyper-evm"
     ]"#;
 
         let supported_graph_networks = serde_json::from_str::<Vec<String>>(networks)

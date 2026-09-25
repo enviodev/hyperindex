@@ -1,0 +1,4 @@
+type Probe @entity(immutable: false) {
+  id: ID!
+  name: String!
+}

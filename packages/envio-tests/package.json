@@ -8,7 +8,8 @@
     "watch": "rescript watch",
     "lint": "node scripts/lint-inputs.ts",
     "test": "node scripts/lint-inputs.ts && rescript && vitest run",
-    "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs"
+    "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs",
+    "check-subgraph-codegen": "bash test/fixtures/subgraph-codegen/check.sh"
   },
   "devDependencies": {
     "@rescript/runtime": "12.2.0",

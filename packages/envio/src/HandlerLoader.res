@@ -77,18 +77,30 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 // `HandlerRegister.finishRegistration`. This loads the user handler files
 // (populating the global `HandlerRegister` registry as a side effect) and
 // returns the resulting per-chain registrations.
+// The subgraph runtime lives in this package but is never exported: it's
+// reached only from here, when the resolved config carries a translated
+// manifest.
+let registerSubgraph: (JSON.t, ~isDev: bool) => promise<unit> = %raw(`(subgraph, isDev) =>
+  import("./subgraph/runtime.ts").then((m) => m.registerSubgraph({ ...subgraph, isDev }))`)
+
 let registerAllHandlers = async (~config: Config.t): HandlerRegister.registrationsByChainId => {
   HandlerRegister.startRegistration(~config)
 
-  // Auto-load all .js files from src/handlers directory
-  await autoLoadFromSrcHandlers(~handlers=config.handlers)
+  switch config.subgraph {
+  // A subgraph project's `src/` holds AssemblyScript mappings, not envio
+  // handlers, so the usual auto-load would import them without a scope.
+  | Some(subgraph) => await registerSubgraph(subgraph, ~isDev=config.isDev)
+  | None =>
+    // Auto-load all .js files from src/handlers directory
+    await autoLoadFromSrcHandlers(~handlers=config.handlers)
 
-  // Load contract-specific handlers
-  let _ = await config.contractHandlers
-  ->Array.map(({name, handler}) => {
-    registerContractHandlers(~contractName=name, ~handler)
-  })
-  ->Promise.all
+    // Load contract-specific handlers
+    let _ = await config.contractHandlers
+    ->Array.map(({name, handler}) => {
+      registerContractHandlers(~contractName=name, ~handler)
+    })
+    ->Promise.all
+  }
 
   HandlerRegister.finishRegistration(~config)
 }
