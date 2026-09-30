@@ -16,7 +16,7 @@ use hypersync_client_solana::decode::{
 
 use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
 use crate::config_parsing::system_config::arg_type_to_field_type;
-use crate::param_value::ParamValue;
+use crate::js_value::{Emit, Sink};
 
 /// A program's nominal types, shared by every instruction of the program.
 pub(crate) type DefinedTypes = BTreeMap<String, SvmFieldType>;
@@ -68,64 +68,79 @@ impl ArgsSchema {
         })
     }
 
-    /// Decode an instruction's data into its args as a `ParamValue` tree, wide
-    /// integers as bigint. `None` when the layout rejects the data: too few
-    /// bytes, trailing bytes, an unknown enum tag. Real on-chain calls drift
-    /// from layouts in small ways (a program upgrade that kept its
-    /// discriminator, a hand-rolled wrapper), and one bad row must not kill the
-    /// worker, so the caller drops the instruction for this layout only.
-    ///
-    /// The upstream decoder renders wide integers as decimal JSON strings and
-    /// leaves the bigint conversion to the consumer; the output is re-walked
-    /// against the field types to make that conversion.
-    pub(crate) fn decode(&self, data: &[u8]) -> Option<ParamValue> {
+    /// Decode an instruction's data into its args. `None` when the layout
+    /// rejects the data: too few bytes, trailing bytes, an unknown enum tag.
+    /// Real on-chain calls drift from layouts in small ways (a program upgrade
+    /// that kept its discriminator, a hand-rolled wrapper), and one bad row
+    /// must not kill the worker, so the caller drops the instruction for this
+    /// layout only.
+    pub(crate) fn decode(self: &Arc<Self>, data: &[u8]) -> Option<InstructionArgs> {
         let mut buf = data.get(self.prefix_len..)?;
-        let mut out = Vec::with_capacity(self.fields.len());
-        for field in &self.fields {
-            let value = decode_field(&field.ty, &self.defined_types, &mut buf).ok()?;
-            out.push((
-                field.name.clone(),
-                value_to_param(value, &field.ty, &self.defined_types)?,
-            ));
-        }
+        let values = self
+            .fields
+            .iter()
+            .map(|field| decode_field(&field.ty, &self.defined_types, &mut buf).ok())
+            .collect::<Option<_>>()?;
         if !buf.is_empty() {
             return None;
         }
-        Some(ParamValue::Obj(out))
+        let args = InstructionArgs {
+            schema: self.clone(),
+            values,
+        };
+        args.is_valid().then_some(args)
     }
 }
 
-/// Convert a decoded args object into a `ParamValue` tree, guided by the
-/// schema's field types — the only way to tell a wide-integer decimal string
-/// from a Pubkey or a genuine `string` field. `None` on any shape mismatch,
-/// which the caller treats like a decode failure.
-fn args_to_param(
-    args: serde_json::Value,
+/// Instruction args their layout accepted, as the upstream decoder's JSON,
+/// one value per field.
+///
+/// The upstream decoder renders wide integers as decimal strings and u8
+/// sequences three different ways, so the JS values are emitted by walking
+/// the JSON against the field types — the only way to tell a wide-integer
+/// decimal string from a Pubkey or a genuine `string` field.
+#[derive(Clone)]
+pub struct InstructionArgs {
+    schema: Arc<ArgsSchema>,
+    values: Arc<[serde_json::Value]>,
+}
+
+impl Emit for InstructionArgs {
+    fn emit<S: Sink>(&self, sink: &mut S) -> Option<S::Value> {
+        let mut obj = sink.obj()?;
+        for (field, value) in self.schema.fields.iter().zip(self.values.iter()) {
+            let value = emit_value(value, &field.ty, &self.schema.defined_types, sink)?;
+            sink.set(&mut obj, &field.name, value)?;
+        }
+        Some(sink.end_obj(obj))
+    }
+}
+
+/// `None` on any shape mismatch, which `decode` treats like a decode failure.
+fn emit_struct<S: Sink>(
+    value: &serde_json::Value,
     fields: &[UpstreamNamedField],
-    defined_types: &BTreeMap<String, SvmFieldType>,
-) -> Option<ParamValue> {
-    let serde_json::Value::Object(mut obj) = args else {
-        return None;
-    };
-    let mut out = Vec::with_capacity(fields.len());
+    defined_types: &DefinedTypes,
+    sink: &mut S,
+) -> Option<S::Value> {
+    let values = value.as_object()?;
+    let mut obj = sink.obj()?;
     for field in fields {
-        let value = obj.remove(&field.name)?;
-        out.push((
-            field.name.clone(),
-            value_to_param(value, &field.ty, defined_types)?,
-        ));
+        let value = emit_value(values.get(&field.name)?, &field.ty, defined_types, sink)?;
+        sink.set(&mut obj, &field.name, value)?;
     }
-    Some(ParamValue::Obj(out))
+    Some(sink.end_obj(obj))
 }
 
-fn value_to_param(
-    value: serde_json::Value,
+fn emit_value<S: Sink>(
+    value: &serde_json::Value,
     ty: &SvmFieldType,
-    defined_types: &BTreeMap<String, SvmFieldType>,
-) -> Option<ParamValue> {
+    defined_types: &DefinedTypes,
+    sink: &mut S,
+) -> Option<S::Value> {
     use serde_json::Value;
-    Some(match ty {
-        SvmFieldType::Bool => ParamValue::Bool(value.as_bool()?),
+    match ty {
+        SvmFieldType::Bool => sink.bool(value.as_bool()?),
         SvmFieldType::U8
         | SvmFieldType::U16
         | SvmFieldType::U32
@@ -140,17 +155,19 @@ fn value_to_param(
         // send. Behind an `option` the ambiguity is unreachable: `None` is
         // `Null` too, and there a non-finite float reads as absent.
         | SvmFieldType::F32
-        | SvmFieldType::F64 => ParamValue::Num(value.as_f64()?),
+        | SvmFieldType::F64 => sink.num(value.as_f64()?),
         SvmFieldType::U64 | SvmFieldType::U128 => {
-            ParamValue::from_u128(value.as_str()?.parse().ok()?)
+            let value: u128 = value.as_str()?.parse().ok()?;
+            sink.bigint(false, &words(value))
         }
         SvmFieldType::I64 | SvmFieldType::I128 => {
-            ParamValue::from_i128(value.as_str()?.parse().ok()?)
+            let value: i128 = value.as_str()?.parse().ok()?;
+            sink.bigint(value < 0, &words(value.unsigned_abs()))
         }
-        SvmFieldType::String | SvmFieldType::Pubkey => ParamValue::Str(value.as_str()?.to_string()),
+        SvmFieldType::String | SvmFieldType::Pubkey => sink.str(value.as_str()?),
         SvmFieldType::Option(inner) => match value {
-            Value::Null => ParamValue::Null,
-            value => value_to_param(value, inner, defined_types)?,
+            Value::Null => sink.null(),
+            value => emit_value(value, inner, defined_types, sink),
         },
         // Every u8 sequence reaches handlers as raw bytes. The upstream decoder
         // renders them three ways: `bytes` as `0x` hex, `[u8; 32]` as base58
@@ -158,81 +175,87 @@ fn value_to_param(
         // `pubkey`, so a 32-byte array is a hash, root or seed), and any other
         // `vec<u8>` / `[u8; N]` as a number array.
         SvmFieldType::Bytes => {
-            ParamValue::Bytes(crate::hex::decode_prefixed(value.as_str()?, "bytes").ok()?)
+            sink.bytes(&crate::hex::decode_prefixed(value.as_str()?, "bytes").ok()?)
         }
         SvmFieldType::Array { ty, len } if matches!(**ty, SvmFieldType::U8) && *len == 32 => {
-            let bytes = bs58::decode(value.as_str()?).into_vec().ok()?;
-            if bytes.len() != 32 {
+            let mut bytes = [0u8; 32];
+            let len = bs58::decode(value.as_str()?).onto(&mut bytes).ok()?;
+            if len != 32 {
                 return None;
             }
-            ParamValue::Bytes(bytes)
+            sink.bytes(&bytes)
         }
         SvmFieldType::Vec(ty) | SvmFieldType::Array { ty, .. }
             if matches!(**ty, SvmFieldType::U8) =>
         {
-            let Value::Array(items) = value else {
-                return None;
-            };
-            ParamValue::Bytes(
-                items
-                    .into_iter()
-                    .map(|item| u8::try_from(item.as_u64()?).ok())
-                    .collect::<Option<_>>()?,
-            )
+            let bytes: Vec<u8> = value
+                .as_array()?
+                .iter()
+                .map(|item| u8::try_from(item.as_u64()?).ok())
+                .collect::<Option<_>>()?;
+            sink.bytes(&bytes)
         }
         SvmFieldType::Vec(inner) | SvmFieldType::Array { ty: inner, .. } => {
-            let Value::Array(items) = value else {
-                return None;
-            };
-            ParamValue::Arr(
-                items
-                    .into_iter()
-                    .map(|item| value_to_param(item, inner, defined_types))
-                    .collect::<Option<_>>()?,
-            )
+            let items = value.as_array()?;
+            let mut arr = sink.arr(items.len())?;
+            for item in items {
+                let item = emit_value(item, inner, defined_types, sink)?;
+                sink.push(&mut arr, item)?;
+            }
+            Some(sink.end_arr(arr))
         }
-        SvmFieldType::Struct(fields) => args_to_param(value, fields, defined_types)?,
+        SvmFieldType::Struct(fields) => emit_struct(value, fields, defined_types, sink),
         SvmFieldType::Enum(variants) => {
             // Upstream renders every variant externally tagged, `{ Name: <body> }`.
             // A variant without fields (unit, or a struct variant with an empty
             // field list - the wire format is identical) collapses to its bare
             // name so handlers compare it as a string.
-            let Value::Object(obj) = value else {
-                return None;
-            };
-            let (name, body) = obj.into_iter().next()?;
-            let variant = variants.iter().find(|v| v.name == name)?;
+            let (name, body) = value.as_object()?.iter().next()?;
+            let variant = variants.iter().find(|v| &v.name == name)?;
             match variant.fields.as_deref() {
-                None | Some([]) => ParamValue::Str(name),
+                None | Some([]) => sink.str(name),
                 Some(fields) => {
-                    let body = args_to_param(body, fields, defined_types)?;
-                    ParamValue::Obj(vec![(name, body)])
+                    let body = emit_struct(body, fields, defined_types, sink)?;
+                    let mut obj = sink.obj()?;
+                    sink.set(&mut obj, name, body)?;
+                    Some(sink.end_obj(obj))
                 }
             }
         }
         SvmFieldType::Defined(name) => {
-            value_to_param(value, defined_types.get(name)?, defined_types)?
+            emit_value(value, defined_types.get(name)?, defined_types, sink)
         }
-    })
+    }
+}
+
+/// `value` as little-endian 64-bit words.
+fn words(value: u128) -> [u64; 2] {
+    [value as u64, (value >> 64) as u64]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::js_value::test_value::JsValue;
 
-    fn schema_of(args_json: &str, defined_types_json: &str) -> ArgsSchema {
-        let args: Vec<ArgDef> = serde_json::from_str(args_json).unwrap();
-        let defined_types = parse_defined_types(Some(defined_types_json)).unwrap();
-        ArgsSchema::new(1, &args, Arc::new(defined_types)).unwrap()
+    struct Schema(Arc<ArgsSchema>);
+
+    impl Schema {
+        fn decode(&self, data: &[u8]) -> Option<JsValue> {
+            self.0.decode(data).map(|args| JsValue::of(&args))
+        }
     }
 
-    fn obj(entries: Vec<(&str, ParamValue)>) -> ParamValue {
-        ParamValue::Obj(
-            entries
-                .into_iter()
-                .map(|(name, value)| (name.to_string(), value))
-                .collect(),
-        )
+    fn schema_of(args_json: &str, defined_types_json: &str) -> Schema {
+        let args: Vec<ArgDef> = serde_json::from_str(args_json).unwrap();
+        let defined_types = parse_defined_types(Some(defined_types_json)).unwrap();
+        Schema(Arc::new(
+            ArgsSchema::new(1, &args, Arc::new(defined_types)).unwrap(),
+        ))
+    }
+
+    fn obj(entries: Vec<(&str, JsValue)>) -> JsValue {
+        JsValue::obj(entries)
     }
 
     // https://github.com/enviodev/hyperindex/issues/1606 follow-up: wide
@@ -256,10 +279,10 @@ mod tests {
         assert_eq!(
             schema.decode(&data),
             Some(obj(vec![
-                ("maxU64", ParamValue::from_u128(u128::from(u64::MAX))),
-                ("maxU128", ParamValue::from_u128(u128::MAX)),
-                ("negI64", ParamValue::from_i128(-2)),
-                ("negI128", ParamValue::from_i128(-(1i128 << 100))),
+                ("maxU64", JsValue::uint(u128::from(u64::MAX))),
+                ("maxU128", JsValue::uint(u128::MAX)),
+                ("negI64", JsValue::int(-2)),
+                ("negI128", JsValue::int(-(1i128 << 100))),
             ]))
         );
     }
@@ -282,8 +305,8 @@ mod tests {
         assert_eq!(
             schema.decode(&data),
             Some(obj(vec![
-                ("payload", ParamValue::Bytes(vec![0xde, 0xad, 0x00])),
-                ("empty", ParamValue::Bytes(vec![])),
+                ("payload", JsValue::Bytes(vec![0xde, 0xad, 0x00])),
+                ("empty", JsValue::Bytes(vec![])),
             ]))
         );
     }
@@ -315,16 +338,13 @@ mod tests {
         assert_eq!(
             schema.decode(&data),
             Some(obj(vec![
-                ("vec", ParamValue::Bytes(vec![0xff, 0x00])),
-                ("fixed", ParamValue::Bytes(vec![1, 2, 3, 4])),
-                (
-                    "nested",
-                    ParamValue::Arr(vec![ParamValue::Bytes(vec![9, 8])])
-                ),
-                ("hash", ParamValue::Bytes(vec![0xab; 32])),
+                ("vec", JsValue::Bytes(vec![0xff, 0x00])),
+                ("fixed", JsValue::Bytes(vec![1, 2, 3, 4])),
+                ("nested", JsValue::Arr(vec![JsValue::Bytes(vec![9, 8])])),
+                ("hash", JsValue::Bytes(vec![0xab; 32])),
                 (
                     "notBytes",
-                    ParamValue::Arr(vec![ParamValue::Num(7.0), ParamValue::Num(8.0)])
+                    JsValue::Arr(vec![JsValue::Num(7.0), JsValue::Num(8.0)])
                 ),
             ]))
         );
@@ -368,31 +388,28 @@ mod tests {
         assert_eq!(
             schema.decode(&data),
             Some(obj(vec![
-                ("absent", ParamValue::Null),
-                ("present", ParamValue::from_u128(7)),
+                ("absent", JsValue::Null),
+                ("present", JsValue::uint(7)),
                 (
                     "amounts",
-                    ParamValue::Arr(vec![
-                        ParamValue::from_u128(1),
-                        ParamValue::from_u128(u128::from(u64::MAX)),
-                    ])
+                    JsValue::Arr(vec![JsValue::uint(1), JsValue::uint(u128::from(u64::MAX)),])
                 ),
                 (
                     "pair",
                     obj(vec![
-                        ("label", ParamValue::Str("hi".to_string())),
-                        ("amount", ParamValue::from_u128(3)),
+                        ("label", JsValue::Str("hi".to_string())),
+                        ("amount", JsValue::uint(3)),
                     ])
                 ),
                 (
                     "mode",
                     obj(vec![(
                         "Out",
-                        obj(vec![("limit", ParamValue::from_u128(1u128 << 63))])
+                        obj(vec![("limit", JsValue::uint(1u128 << 63))])
                     )])
                 ),
-                ("tag", ParamValue::Str("In".to_string())),
-                ("empty", ParamValue::Str("Empty".to_string())),
+                ("tag", JsValue::Str("In".to_string())),
+                ("empty", JsValue::Str("Empty".to_string())),
             ]))
         );
     }
@@ -402,12 +419,14 @@ mod tests {
     fn a_zero_length_prefix_decodes_the_whole_data() {
         let args: Vec<ArgDef> =
             serde_json::from_str(r#"[{"name":"text","type":"string"}]"#).unwrap();
-        let schema = ArgsSchema::new(0, &args, Arc::new(DefinedTypes::new())).unwrap();
+        let schema = Schema(Arc::new(
+            ArgsSchema::new(0, &args, Arc::new(DefinedTypes::new())).unwrap(),
+        ));
         let mut data = 5u32.to_le_bytes().to_vec();
         data.extend_from_slice(b"hello");
         assert_eq!(
             schema.decode(&data),
-            Some(obj(vec![("text", ParamValue::Str("hello".to_string()))]))
+            Some(obj(vec![("text", JsValue::Str("hello".to_string()))]))
         );
     }
 
@@ -425,7 +444,7 @@ mod tests {
                 schema.decode(&payload(f64::INFINITY)),
                 schema.decode(&payload(1.5)),
             ),
-            (None, None, Some(obj(vec![("ratio", ParamValue::Num(1.5))])))
+            (None, None, Some(obj(vec![("ratio", JsValue::Num(1.5))])))
         );
     }
 
@@ -458,11 +477,7 @@ mod tests {
                 schema.decode(&trailing),
                 schema.decode(&exact)
             ),
-            (
-                None,
-                None,
-                Some(obj(vec![("amount", ParamValue::from_u128(1))]))
-            )
+            (None, None, Some(obj(vec![("amount", JsValue::uint(1))])))
         );
     }
 }

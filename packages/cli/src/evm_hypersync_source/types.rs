@@ -1,4 +1,6 @@
-use alloy_dyn_abi::DynSolValue;
+use std::sync::Arc;
+
+use alloy_dyn_abi::{DecodedEvent, DynSolValue};
 use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use hypersync_client::{
@@ -7,6 +9,8 @@ use hypersync_client::{
 };
 use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
+
+use crate::js_value::{Emit, Sink};
 
 /// Evm log object
 ///
@@ -146,14 +150,6 @@ pub struct Block {
     pub send_count: Option<String>,
     pub send_root: Option<String>,
     pub mix_hash: Option<String>,
-}
-
-fn encode_prefix_hex(bytes: &[u8]) -> String {
-    if bytes.is_empty() {
-        return "0x".into();
-    }
-
-    format!("0x{}", faster_hex::hex_string(bytes))
 }
 
 pub(crate) fn map_address_string(
@@ -318,80 +314,96 @@ pub struct OnEventRegistrationInput {
     pub transaction_fields: Vec<crate::evm_hypersync_source::query::TransactionField>,
 }
 
-pub use crate::param_value::ParamValue;
+/// A decoded event's params, emitted as one object keyed by param name in
+/// declaration order, whether each came from a topic or the body.
+pub struct EventParams {
+    pub params: Arc<[ParamMeta]>,
+    pub decoded: DecodedEvent,
+    pub checksummed_addresses: bool,
+}
 
-pub fn sol_value_to_param(
-    val: DynSolValue,
-    components: Option<&[ParamMeta]>,
-    checksummed: bool,
-) -> ParamValue {
-    match (val, components) {
-        (DynSolValue::Tuple(vals), Some(comps)) => {
-            let fields = vals
-                .into_iter()
-                .zip(comps.iter())
-                .map(|(v, c)| {
-                    let value = sol_value_to_param(v, c.components.as_deref(), checksummed);
-                    (c.name.clone(), value)
-                })
-                .collect();
-            ParamValue::Obj(fields)
+impl Emit for EventParams {
+    fn emit<S: Sink>(&self, sink: &mut S) -> Option<S::Value> {
+        let mut indexed = self.decoded.indexed.iter();
+        let mut body = self.decoded.body.iter();
+        let mut obj = sink.obj()?;
+        for param in self.params.iter() {
+            let value = if param.indexed {
+                indexed.next()
+            } else {
+                body.next()
+            }?;
+            let value = emit_sol_value(
+                value,
+                param.components.as_deref(),
+                self.checksummed_addresses,
+                sink,
+            )?;
+            sink.set(&mut obj, &param.name, value)?;
         }
-        (DynSolValue::Array(vals), Some(comps)) => ParamValue::Arr(
-            vals.into_iter()
-                .map(|v| sol_value_to_param(v, Some(comps), checksummed))
-                .collect(),
-        ),
-        (DynSolValue::FixedArray(vals), Some(comps)) => ParamValue::Arr(
-            vals.into_iter()
-                .map(|v| sol_value_to_param(v, Some(comps), checksummed))
-                .collect(),
-        ),
-        (val, _) => sol_value_to_leaf(val, checksummed),
+        Some(sink.end_obj(obj))
     }
 }
 
-fn sol_value_to_leaf(val: DynSolValue, checksummed: bool) -> ParamValue {
-    match val {
-        DynSolValue::Bool(b) => ParamValue::Bool(b),
-        DynSolValue::Int(v, _) => {
-            let (sign, abs) = v.into_sign_and_abs();
-            ParamValue::BigInt {
-                sign_bit: sign.is_negative(),
-                words: abs.into_limbs().to_vec(),
-            }
+/// A tuple with `components` becomes an object keyed by component name; an
+/// array passes them on to its elements. Without them a tuple is an array.
+fn emit_sol_value<S: Sink>(
+    value: &DynSolValue,
+    components: Option<&[ParamMeta]>,
+    checksummed_addresses: bool,
+    sink: &mut S,
+) -> Option<S::Value> {
+    let seq = |values: &[DynSolValue], components, sink: &mut S| {
+        let mut arr = sink.arr(values.len())?;
+        for value in values {
+            let value = emit_sol_value(value, components, checksummed_addresses, sink)?;
+            sink.push(&mut arr, value)?;
         }
-        DynSolValue::Uint(v, _) => ParamValue::BigInt {
-            sign_bit: false,
-            words: v.into_limbs().to_vec(),
+        Some(sink.end_arr(arr))
+    };
+    match value {
+        DynSolValue::Tuple(values) => match components {
+            Some(components) => {
+                let mut obj = sink.obj()?;
+                for (value, component) in values.iter().zip(components) {
+                    let value = emit_sol_value(
+                        value,
+                        component.components.as_deref(),
+                        checksummed_addresses,
+                        sink,
+                    )?;
+                    sink.set(&mut obj, &component.name, value)?;
+                }
+                Some(sink.end_obj(obj))
+            }
+            None => seq(values, None, sink),
         },
-        DynSolValue::FixedBytes(bytes, _) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
-        DynSolValue::Address(addr) => {
-            if checksummed {
-                ParamValue::Str(addr.to_checksum(None))
-            } else {
-                ParamValue::Str(encode_prefix_hex(addr.as_slice()))
-            }
+        DynSolValue::Array(values) | DynSolValue::FixedArray(values) => {
+            seq(values, components, sink)
         }
-        DynSolValue::Function(bytes) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
-        DynSolValue::Bytes(bytes) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
-        DynSolValue::String(s) => ParamValue::Str(s),
-        DynSolValue::Array(vals) => ParamValue::Arr(
-            vals.into_iter()
-                .map(|v| sol_value_to_leaf(v, checksummed))
-                .collect(),
-        ),
-        DynSolValue::FixedArray(vals) => ParamValue::Arr(
-            vals.into_iter()
-                .map(|v| sol_value_to_leaf(v, checksummed))
-                .collect(),
-        ),
-        DynSolValue::Tuple(vals) => ParamValue::Arr(
-            vals.into_iter()
-                .map(|v| sol_value_to_leaf(v, checksummed))
-                .collect(),
-        ),
+        DynSolValue::Bool(value) => sink.bool(*value),
+        DynSolValue::Int(value, _) => {
+            let (sign, magnitude) = value.into_sign_and_abs();
+            sink.bigint(sign.is_negative(), magnitude.as_limbs())
+        }
+        DynSolValue::Uint(value, _) => sink.bigint(false, value.as_limbs()),
+        DynSolValue::Address(address) if checksummed_addresses => emit_checksummed(address, sink),
+        DynSolValue::Address(address) => sink.hex(address.as_slice()),
+        DynSolValue::FixedBytes(word, _) => sink.hex(word.as_slice()),
+        DynSolValue::Function(function) => sink.hex(function.as_slice()),
+        DynSolValue::Bytes(bytes) => sink.hex(bytes),
+        DynSolValue::String(value) => sink.str(value),
     }
+}
+
+// Kept out of `emit_sol_value` so the checksum buffer doesn't grow the frame
+// of every recursive step.
+#[inline(never)]
+fn emit_checksummed<S: Sink>(
+    address: &alloy_primitives::Address,
+    sink: &mut S,
+) -> Option<S::Value> {
+    sink.str(address.to_checksum_buffer(None).as_str())
 }
 
 fn convert_bigint_unsigned(v: U256) -> BigInt {

@@ -27,8 +27,10 @@ use hypersync_solana_net_types::query::SolanaQuery;
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
+use crate::js_value::ToJs;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
+use borsh_decoder::InstructionArgs;
 use config::SvmClientConfig;
 use query::SvmQuery;
 use selection::{route_instruction, SelectionBuilder, SvmProgramInput};
@@ -383,7 +385,7 @@ pub struct LogItem {
 /// One routed instruction. Carries everything JS needs to build the handler
 /// payload; the parent transaction and block are materialised from the
 /// per-chain stores at batch prep.
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct EventItem {
     /// The registration this instruction routed to, as passed to the client
     /// constructor. Instructions that route nowhere never cross the boundary.
@@ -400,13 +402,13 @@ pub struct EventItem {
     /// Borsh-decoded args as a JS value tree (wide integers as bigint);
     /// `Some` exactly when the routed registration selected `args`. An
     /// instruction its layout rejects never becomes an item at all.
-    pub args: Option<crate::param_value::ParamValue>,
+    pub args: Option<ToJs<InstructionArgs>>,
     /// Logs scoped to this instruction; `Some` only when the routed
     /// registration selected `fields.log`.
     pub logs: Option<Vec<LogItem>>,
 }
 
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct EventItemsResponse {
     pub next_slot: i64,
     /// The page's lean block headers, one per slot; used for reorg detection
@@ -533,7 +535,10 @@ fn build_event_items(
                     accounts: instr.account_arguments.clone(),
                     data: instr.data.clone().into(),
                     is_inner: instr.is_inner,
-                    args: decoded.clone().filter(|_| reg.selects_args),
+                    args: decoded
+                        .as_ref()
+                        .filter(|_| reg.selects_args)
+                        .map(|args| ToJs(args.clone())),
                     logs: if !reg.log_columns.is_empty() {
                         logs.as_deref()
                             .map(|logs| project_logs(logs, &reg.log_columns))
@@ -612,7 +617,7 @@ pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
 mod tests {
     use super::*;
     use crate::address_store::test_support::{set_of, svm_store};
-    use crate::param_value::ParamValue;
+    use crate::js_value::test_value::JsValue;
     use query::{InstructionSelection, SvmQuery};
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
@@ -873,15 +878,20 @@ mod tests {
         }
     }
 
-    fn decoded_args(items: &[EventItem]) -> Vec<(i64, Option<ParamValue>)> {
+    fn decoded_args(items: &[EventItem]) -> Vec<(i64, Option<JsValue>)> {
         items
             .iter()
-            .map(|item| (item.on_event_registration_index, item.args.clone()))
+            .map(|item| {
+                (
+                    item.on_event_registration_index,
+                    item.args.as_ref().map(|args| JsValue::of(&args.0)),
+                )
+            })
             .collect()
     }
 
-    fn amount(value: u128) -> ParamValue {
-        ParamValue::Obj(vec![("amount".to_string(), ParamValue::from_u128(value))])
+    fn amount(value: u128) -> JsValue {
+        JsValue::obj([("amount", JsValue::uint(value))])
     }
 
     const AMOUNT: &str = r#"[{"name":"amount","type":"u64"}]"#;
@@ -1168,10 +1178,7 @@ mod tests {
                 (0, Some(amount(1))),
                 (
                     1,
-                    Some(ParamValue::Obj(vec![(
-                        "raw".to_string(),
-                        ParamValue::Bytes(vec![0x21, 0x01])
-                    )]))
+                    Some(JsValue::obj([("raw", JsValue::Bytes(vec![0x21, 0x01]))]))
                 ),
             ]
         );
@@ -1278,7 +1285,7 @@ mod tests {
                 .map(|item| (
                     item.transaction_index,
                     item.on_event_registration_index,
-                    item.args.clone()
+                    item.args.as_ref().map(|args| JsValue::of(&args.0))
                 ))
                 .collect::<Vec<_>>(),
             vec![
@@ -1287,9 +1294,9 @@ mod tests {
                 (
                     8,
                     1,
-                    Some(ParamValue::Obj(vec![
-                        ("amount".to_string(), ParamValue::from_u128(1)),
-                        ("minOut".to_string(), ParamValue::from_u128(2)),
+                    Some(JsValue::obj([
+                        ("amount", JsValue::uint(1u64)),
+                        ("minOut", JsValue::uint(2u64)),
                     ]))
                 ),
                 (8, 2, None),

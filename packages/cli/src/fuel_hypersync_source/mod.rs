@@ -10,8 +10,9 @@ mod types;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_store::{BlockStore, FuelBlockRow};
-use crate::fuel::log_decoder::{parse_abi, DecodedLog, LogDecoder};
+use crate::fuel::log_decoder::DecodedLog;
 use crate::hex::decode_prefixed;
+use crate::js_value::ToJs;
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
@@ -133,21 +134,6 @@ impl FuelHyperSyncClient {
     }
 }
 
-/// Decodes one LogData payload with the decoder routing uses, so JS tests can
-/// pin the values handlers receive without a HyperFuel source. `None` when the
-/// logged type rejects the data.
-#[allow(dead_code)]
-#[napi]
-pub fn decode_fuel_log_data_for_test(
-    abi: serde_json::Value,
-    log_id: String,
-    data: napi::bindgen_prelude::Uint8Array,
-) -> napi::Result<Option<DecodedLog>> {
-    let program = parse_abi(&abi).map_err(map_err)?;
-    let decoder = LogDecoder::new(&program, &log_id).map_err(map_err)?;
-    Ok(decoder.decode(&std::sync::Arc::from(&data[..])))
-}
-
 /// The whole per-query input for `get_event_items`: the block range and the
 /// partition's registration selection (by index). The partition's addresses
 /// arrive separately, as the `AddressSet` handle. Receipt selections, field
@@ -170,7 +156,7 @@ pub struct EventItemsQuery {
 /// Mint/Burn carry `val`/`subId`,
 /// Transfer/TransferOut/Call carry `amount`/`assetId`/`to` — with
 /// TransferOut's wallet recipient normalised into `to`.
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct EventItem {
     /// The registration this receipt routed to, as passed to the client
     /// constructor. Receipts that route nowhere never cross the boundary.
@@ -184,7 +170,7 @@ pub struct EventItem {
     /// The LogData receipt's data, validated against the registration's ABI
     /// and decoded into JS values as it crosses. A receipt its logged type
     /// rejects never becomes an item at all.
-    pub params: Option<DecodedLog>,
+    pub params: Option<ToJs<DecodedLog>>,
     pub sub_id: Option<String>,
     pub val: Option<BigInt>,
     pub amount: Option<BigInt>,
@@ -192,7 +178,7 @@ pub struct EventItem {
     pub to: Option<String>,
 }
 
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
@@ -367,7 +353,7 @@ fn route_receipts(
                         tx_id: receipt.tx_id.clone(),
                         block_height: receipt.block_height,
                         src_address: src_address.clone(),
-                        params: Some(params),
+                        params: Some(ToJs(params)),
                         sub_id: None,
                         val: None,
                         amount: None,
@@ -456,6 +442,7 @@ mod tests {
     use super::selection::FuelEventKind;
     use super::*;
     use crate::address_store::test_support::{fuel_store, set_of};
+    use crate::js_value::test_value::JsValue;
 
     #[test]
     fn convert_error_serializes_as_expected_json() {
@@ -611,10 +598,10 @@ mod tests {
                 .into_iter()
                 .map(|i| (
                     i.on_event_registration_index,
-                    i.params.map(|p| p.to_param_value())
+                    i.params.map(|p| JsValue::of(&p.0))
                 ))
                 .collect::<Vec<_>>(),
-            vec![(0, Some(crate::param_value::ParamValue::Num(1.0)))]
+            vec![(0, Some(JsValue::Num(1.0)))]
         );
     }
 

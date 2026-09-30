@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use alloy_dyn_abi::{DecodedEvent, DynSolEvent, DynSolType};
+use alloy_dyn_abi::{DynSolEvent, DynSolType};
 use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
@@ -9,9 +9,7 @@ use hypersync_client::simple_types;
 
 use crate::address_store::{AddressStore, Emitter, SetCache, StoreInner};
 use crate::evm_hypersync_source::selection::TopicSelectionInput;
-use crate::evm_hypersync_source::types::{
-    sol_value_to_param, Log, OnEventRegistrationInput, ParamMeta, ParamValue,
-};
+use crate::evm_hypersync_source::types::{EventParams, Log, OnEventRegistrationInput, ParamMeta};
 
 /// One topic position's constraint, resolved from a registration's `where`.
 enum TopicConstraint {
@@ -139,7 +137,7 @@ struct OnEventRegistration {
     /// Earliest block this registration accepts; `None` is unrestricted.
     start_block: Option<i64>,
     topic_filters: TopicFilters,
-    params: Vec<ParamMeta>,
+    params: Arc<[ParamMeta]>,
     decoder: DynSolEvent,
 }
 
@@ -168,7 +166,7 @@ impl OnEventRegistration {
             start_block: ep.start_block,
             topic_filters: TopicFilters::parse(&ep.topic_selections)
                 .context("parse topic filters")?,
-            params: ep.params.clone(),
+            params: ep.params.clone().into(),
             decoder: build_event_decoder(**sighash, &ep.params).context("build decoder")?,
         })
     }
@@ -366,7 +364,7 @@ impl SelectionDecoder {
     ///
     /// Same-signature registrations may declare different indexed/body splits,
     /// and the log's bytes need not be valid under every declaration — a match
-    /// that fails to decode (or to name its params) just contributes no item.
+    /// that fails to decode just contributes no item.
     /// A decode failure is benign whether or not a sibling in the selection
     /// happens to decode: a wildcard registration routinely fetches foreign
     /// same-signature logs whose indexed split its own declaration can't read,
@@ -413,13 +411,14 @@ impl SelectionDecoder {
                     .map(|t| t.as_ref().unwrap().into()),
                 data,
             );
-            let fields = decoded.ok().and_then(|decoded| {
-                apply_names(decoded, &reg.params, self.checksummed_addresses).ok()
-            });
-            if let Some(fields) = fields {
+            if let Ok(decoded) = decoded {
                 routed.push(RoutedEvent {
                     index: reg.index,
-                    params: ParamValue::Obj(fields),
+                    params: EventParams {
+                        params: reg.params.clone(),
+                        decoded,
+                        checksummed_addresses: self.checksummed_addresses,
+                    },
                 });
             }
         }
@@ -429,32 +428,7 @@ impl SelectionDecoder {
 
 pub(crate) struct RoutedEvent {
     pub index: i64,
-    pub params: ParamValue,
-}
-
-fn apply_names(
-    decoded: DecodedEvent,
-    params: &[ParamMeta],
-    checksummed_addresses: bool,
-) -> Result<Vec<(String, ParamValue)>> {
-    let mut indexed = decoded.indexed.into_iter();
-    let mut body = decoded.body.into_iter();
-    params
-        .iter()
-        .map(|param| {
-            let sol_value = if param.indexed {
-                indexed.next().context("indexed param out of bounds")?
-            } else {
-                body.next().context("body param out of bounds")?
-            };
-            let value = sol_value_to_param(
-                sol_value,
-                param.components.as_deref(),
-                checksummed_addresses,
-            );
-            Ok((param.name.clone(), value))
-        })
-        .collect()
+    pub params: EventParams,
 }
 
 /// Build the positional decoder for one registration. The decoder's topic0 is
@@ -483,6 +457,7 @@ mod tests {
     use super::*;
     use crate::address_store::test_support::evm_store;
     use crate::address_store::Owners;
+    use crate::js_value::test_value::JsValue;
 
     const VALID_SIGHASH: &str =
         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -723,18 +698,19 @@ mod tests {
             .pop()
             .expect("renamed event must decode under its real sighash");
 
-        assert_eq!(routed.index, 7);
-        match routed.params {
-            ParamValue::Obj(fields) => match fields.as_slice() {
-                [(owner, ParamValue::Str(owner_hex)), (value, ParamValue::BigInt { .. })]
-                    if owner == "owner" && value == "value" =>
-                {
-                    assert_eq!(owner_hex, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-                }
-                _ => panic!("unexpected decoded fields"),
-            },
-            _ => panic!("expected an object of params"),
-        }
+        assert_eq!(
+            (routed.index, JsValue::of(&routed.params)),
+            (
+                7,
+                JsValue::obj([
+                    (
+                        "owner",
+                        JsValue::str("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                    ),
+                    ("value", JsValue::uint(42u64)),
+                ])
+            )
+        );
     }
 
     #[test]
@@ -1281,23 +1257,21 @@ mod tests {
         // Both declarations decode this log (same word-sized types either
         // way), each reading the topic/body split its own registration
         // declared.
-        let values: Vec<(i64, Vec<String>)> = routed
+        let values: Vec<(i64, JsValue)> = routed
             .iter()
-            .map(|r| {
-                let fields = match &r.params {
-                    ParamValue::Obj(fields) => {
-                        fields.iter().map(|(name, _)| name.clone()).collect()
-                    }
-                    _ => panic!("expected an object of params"),
-                };
-                (r.index, fields)
-            })
+            .map(|r| (r.index, JsValue::of(&r.params)))
             .collect();
         assert_eq!(
             values,
             vec![
-                (0, vec!["a".to_string(), "b".to_string()]),
-                (1, vec!["a".to_string(), "b".to_string()]),
+                (
+                    0,
+                    JsValue::obj([("a", JsValue::uint(7u64)), ("b", JsValue::uint(8u64))])
+                ),
+                (
+                    1,
+                    JsValue::obj([("a", JsValue::uint(8u64)), ("b", JsValue::uint(7u64))])
+                ),
             ]
         );
     }

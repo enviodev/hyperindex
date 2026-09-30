@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
@@ -7,12 +6,9 @@ use fuel_abi_types::abi::program::ProgramABI;
 use fuel_abi_types::abi::unified_program::{
     UnifiedProgramABI, UnifiedTypeApplication, UnifiedTypeDeclaration,
 };
-use napi::bindgen_prelude::{FromNapiValue, ToNapiValue, Uint8Array};
-use napi::{check_status, sys};
 use serde::Deserialize;
 
-#[cfg(test)]
-use crate::param_value::ParamValue;
+use crate::js_value::{Emit, Sink};
 
 /// A logged type resolved against its ABI, with every generic parameter
 /// substituted, so decoding is a plain walk over the tree.
@@ -38,9 +34,7 @@ enum Coder {
     Array(Box<Coder>, usize),
     Vec(Box<Coder>),
     Tuple(Vec<Coder>),
-    /// Field names are NUL-terminated once here, for napi's named-property
-    /// path.
-    Struct(Vec<(CString, Coder)>),
+    Struct(Vec<(String, Coder)>),
     /// Decoded to `{case, payload}`, with an `undefined` payload for unit
     /// variants — the shape the generated ReScript variants are tagged on.
     Enum(Vec<(String, Coder)>),
@@ -76,38 +70,23 @@ impl LogDecoder {
     /// for this registration only, rather than failing the indexer on data
     /// it doesn't control.
     pub fn decode(&self, data: &Arc<[u8]>) -> Option<DecodedLog> {
-        walk(&self.0, data, &mut Validate)?;
-        Some(DecodedLog {
+        let log = DecodedLog {
             coder: self.0.clone(),
             data: data.clone(),
-        })
+        };
+        log.is_valid().then_some(log)
     }
 }
 
-/// LogData its logged type accepted. The JS values are built straight from
-/// the bytes when it crosses to JS, so no intermediate tree is allocated and
-/// freed per receipt.
+/// LogData its logged type accepted, emitted to JS straight from the bytes.
 pub struct DecodedLog {
     coder: Arc<Coder>,
     data: Arc<[u8]>,
 }
 
-impl FromNapiValue for DecodedLog {
-    unsafe fn from_napi_value(_env: sys::napi_env, _val: sys::napi_value) -> napi::Result<Self> {
-        Err(napi::Error::from_reason(
-            "DecodedLog is decode-only; it cannot be constructed from JS",
-        ))
-    }
-}
-
-impl ToNapiValue for DecodedLog {
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let mut js = Js { env, error: None };
-        walk(&val.coder, &val.data, &mut js).ok_or_else(|| {
-            js.error.take().unwrap_or_else(|| {
-                napi::Error::from_reason("Fuel LogData stopped decoding after it validated")
-            })
-        })
+impl Emit for DecodedLog {
+    fn emit<S: Sink>(&self, sink: &mut S) -> Option<S::Value> {
+        walk(&self.coder, &self.data, sink)
     }
 }
 
@@ -171,16 +150,7 @@ fn resolve(
                 .with_context(|| format!("{field} is missing its element type"))?;
             Coder::Array(Box::new(element), parse_len(field, ';')?)
         }
-        _ if field.starts_with("struct ") => Coder::Struct(
-            components()?
-                .into_iter()
-                .map(|(name, c)| {
-                    let key = CString::new(name)
-                        .with_context(|| format!("{field} has a field name containing NUL"))?;
-                    Ok((key, c))
-                })
-                .collect::<Result<_>>()?,
-        ),
+        _ if field.starts_with("struct ") => Coder::Struct(components()?),
         _ if field.starts_with("enum ") => Coder::Enum(components()?),
         _ if field.starts_with('(') => {
             Coder::Tuple(components()?.into_iter().map(|(_, c)| c).collect())
@@ -231,337 +201,100 @@ impl<'a> Input<'a> {
 const ZERO_SIZED_BUDGET_SLACK: usize = 1024;
 
 /// Decodes all of `data`, rejecting trailing bytes.
-fn walk<B: Build>(coder: &Coder, data: &[u8], build: &mut B) -> Option<B::Value> {
+fn walk<S: Sink>(coder: &Coder, data: &[u8], sink: &mut S) -> Option<S::Value> {
     let mut input = Input {
         buf: data,
         zero_sized_budget: data.len() + ZERO_SIZED_BUDGET_SLACK,
     };
-    let value = coder.decode(&mut input, build)?;
+    let value = coder.decode(&mut input, sink)?;
     input.buf.is_empty().then_some(value)
 }
 
-/// What a decode walk produces. Every method returns `None` to stop the walk:
-/// `Validate` never does, so a `None` from it is always the data's fault.
-trait Build {
-    type Value;
-    type Arr;
-    type Obj;
-    fn undefined(&mut self) -> Option<Self::Value>;
-    fn bool(&mut self, value: bool) -> Option<Self::Value>;
-    fn num(&mut self, value: u32) -> Option<Self::Value>;
-    /// A big-endian unsigned integer of 8, 16 or 32 bytes.
-    fn bigint(&mut self, bytes: &[u8]) -> Option<Self::Value>;
-    fn hex(&mut self, bytes: &[u8]) -> Option<Self::Value>;
-    fn str(&mut self, bytes: &[u8]) -> Option<Self::Value>;
-    fn bytes(&mut self, bytes: &[u8]) -> Option<Self::Value>;
-    fn arr(&mut self, len: usize) -> Option<Self::Arr>;
-    fn push(&mut self, arr: &mut Self::Arr, value: Self::Value) -> Option<()>;
-    fn end_arr(&mut self, arr: Self::Arr) -> Self::Value;
-    fn obj(&mut self) -> Option<Self::Obj>;
-    fn set(&mut self, obj: &mut Self::Obj, key: &CStr, value: Self::Value) -> Option<()>;
-    fn end_obj(&mut self, obj: Self::Obj) -> Self::Value;
-}
-
 impl Coder {
-    fn decode_seq<'a, B: Build>(
+    fn decode_seq<'a, S: Sink>(
         coders: impl Iterator<Item = &'a Coder>,
         len: usize,
         input: &mut Input,
-        build: &mut B,
-    ) -> Option<B::Value> {
-        let mut arr = build.arr(len)?;
+        sink: &mut S,
+    ) -> Option<S::Value> {
+        let mut arr = sink.arr(len)?;
         for coder in coders {
-            let value = coder.decode(input, build)?;
-            build.push(&mut arr, value)?;
+            let value = coder.decode(input, sink)?;
+            sink.push(&mut arr, value)?;
         }
-        Some(build.end_arr(arr))
+        Some(sink.end_arr(arr))
     }
 
-    fn decode<B: Build>(&self, input: &mut Input, build: &mut B) -> Option<B::Value> {
+    fn decode<S: Sink>(&self, input: &mut Input, sink: &mut S) -> Option<S::Value> {
         let remaining = input.buf.len();
         let value = match self {
-            Coder::Unit => build.undefined()?,
+            Coder::Unit => sink.undefined()?,
             Coder::Bool => match input.take(1)?[0] {
-                0 => build.bool(false)?,
-                1 => build.bool(true)?,
+                0 => sink.bool(false)?,
+                1 => sink.bool(true)?,
                 _ => return None,
             },
             Coder::Num(n) => {
                 let bytes = input.take(*n)?;
-                build.num(bytes.iter().fold(0, |acc, b| (acc << 8) | u32::from(*b)))?
+                sink.num(bytes.iter().fold(0.0, |acc, b| acc * 256.0 + f64::from(*b)))?
             }
-            Coder::BigInt(n) => build.bigint(input.take(*n)?)?,
-            Coder::Hex(n) => build.hex(input.take(*n)?)?,
-            Coder::StrArray(n) => build.str(input.take(*n)?)?,
+            Coder::BigInt(n) => {
+                let mut words = [0u64; 4];
+                for (word, limb) in words.iter_mut().zip(input.take(*n)?.rchunks_exact(8)) {
+                    *word = u64::from_be_bytes(limb.try_into().ok()?);
+                }
+                sink.bigint(false, &words[..n / 8])?
+            }
+            Coder::Hex(n) => sink.hex(input.take(*n)?)?,
+            Coder::StrArray(n) => sink.str(&String::from_utf8_lossy(input.take(*n)?))?,
             Coder::Str => {
                 let len = input.take_len()?;
-                build.str(input.take(len)?)?
+                sink.str(&String::from_utf8_lossy(input.take(len)?))?
             }
             Coder::Bytes => {
                 let len = input.take_len()?;
-                build.bytes(input.take(len)?)?
+                sink.bytes(input.take(len)?)?
             }
             Coder::RawSlice => {
                 let len = input.take_len()?;
                 let bytes = input.take(len)?;
-                let mut arr = build.arr(len)?;
+                let mut arr = sink.arr(len)?;
                 for byte in bytes {
-                    let value = build.num(u32::from(*byte))?;
-                    build.push(&mut arr, value)?;
+                    let value = sink.num(f64::from(*byte))?;
+                    sink.push(&mut arr, value)?;
                 }
-                build.end_arr(arr)
+                sink.end_arr(arr)
             }
             Coder::Array(element, n) => {
-                Self::decode_seq(std::iter::repeat_n(&**element, *n), *n, input, build)?
+                Self::decode_seq(std::iter::repeat_n(&**element, *n), *n, input, sink)?
             }
             Coder::Vec(element) => {
                 let len = input.take_len()?;
-                Self::decode_seq(std::iter::repeat_n(&**element, len), len, input, build)?
+                Self::decode_seq(std::iter::repeat_n(&**element, len), len, input, sink)?
             }
-            Coder::Tuple(items) => Self::decode_seq(items.iter(), items.len(), input, build)?,
+            Coder::Tuple(items) => Self::decode_seq(items.iter(), items.len(), input, sink)?,
             Coder::Struct(fields) => {
-                let mut obj = build.obj()?;
+                let mut obj = sink.obj()?;
                 for (key, coder) in fields {
-                    let value = coder.decode(input, build)?;
-                    build.set(&mut obj, key, value)?;
+                    let value = coder.decode(input, sink)?;
+                    sink.set(&mut obj, key, value)?;
                 }
-                build.end_obj(obj)
+                sink.end_obj(obj)
             }
             Coder::Enum(variants) => {
                 let (name, payload) = variants.get(usize::try_from(input.take_u64()?).ok()?)?;
-                let case = build.str(name.as_bytes())?;
-                let payload = payload.decode(input, build)?;
-                let mut obj = build.obj()?;
-                build.set(&mut obj, c"case", case)?;
-                build.set(&mut obj, c"payload", payload)?;
-                build.end_obj(obj)
+                let case = sink.str(name)?;
+                let payload = payload.decode(input, sink)?;
+                let mut obj = sink.obj()?;
+                sink.set(&mut obj, "case", case)?;
+                sink.set(&mut obj, "payload", payload)?;
+                sink.end_obj(obj)
             }
         };
         if input.buf.len() == remaining {
             input.zero_sized_budget = input.zero_sized_budget.checked_sub(1)?;
         }
         Some(value)
-    }
-}
-
-/// Walks the data without building anything: routing's accept/reject check.
-struct Validate;
-
-impl Build for Validate {
-    type Value = ();
-    type Arr = ();
-    type Obj = ();
-    fn undefined(&mut self) -> Option<()> {
-        Some(())
-    }
-    fn bool(&mut self, _: bool) -> Option<()> {
-        Some(())
-    }
-    fn num(&mut self, _: u32) -> Option<()> {
-        Some(())
-    }
-    fn bigint(&mut self, _: &[u8]) -> Option<()> {
-        Some(())
-    }
-    fn hex(&mut self, _: &[u8]) -> Option<()> {
-        Some(())
-    }
-    fn str(&mut self, _: &[u8]) -> Option<()> {
-        Some(())
-    }
-    fn bytes(&mut self, _: &[u8]) -> Option<()> {
-        Some(())
-    }
-    fn arr(&mut self, _: usize) -> Option<()> {
-        Some(())
-    }
-    fn push(&mut self, _: &mut (), _: ()) -> Option<()> {
-        Some(())
-    }
-    fn end_arr(&mut self, _: ()) {}
-    fn obj(&mut self) -> Option<()> {
-        Some(())
-    }
-    fn set(&mut self, _: &mut (), _: &CStr, _: ()) -> Option<()> {
-        Some(())
-    }
-    fn end_obj(&mut self, _: ()) {}
-}
-
-/// Builds JS values in place. Only ever run on data `Validate` accepted, so
-/// a `None` means a napi call failed, with its error in `error`.
-struct Js {
-    env: sys::napi_env,
-    error: Option<napi::Error>,
-}
-
-impl Js {
-    fn ok<T>(&mut self, result: napi::Result<T>) -> Option<T> {
-        result.map_err(|e| self.error = Some(e)).ok()
-    }
-
-    fn new_value(
-        &mut self,
-        create: impl FnOnce(sys::napi_env, *mut sys::napi_value) -> sys::napi_status,
-    ) -> Option<sys::napi_value> {
-        let mut value = std::ptr::null_mut();
-        let status = create(self.env, &mut value);
-        self.ok(check_status!(status)).map(|()| value)
-    }
-}
-
-// SAFETY (all `unsafe` below): `env` is the live env `DecodedLog::to_napi_value`
-// was called with, and every pointer passed to napi outlives the call.
-impl Build for Js {
-    type Value = sys::napi_value;
-    type Arr = (sys::napi_value, u32);
-    type Obj = sys::napi_value;
-
-    fn undefined(&mut self) -> Option<sys::napi_value> {
-        self.new_value(|env, out| unsafe { sys::napi_get_undefined(env, out) })
-    }
-    fn bool(&mut self, value: bool) -> Option<sys::napi_value> {
-        self.new_value(|env, out| unsafe { sys::napi_get_boolean(env, value, out) })
-    }
-    fn num(&mut self, value: u32) -> Option<sys::napi_value> {
-        self.new_value(|env, out| unsafe { sys::napi_create_uint32(env, value, out) })
-    }
-    fn bigint(&mut self, bytes: &[u8]) -> Option<sys::napi_value> {
-        if let Ok(word) = <[u8; 8]>::try_from(bytes) {
-            let word = u64::from_be_bytes(word);
-            return self
-                .new_value(|env, out| unsafe { sys::napi_create_bigint_uint64(env, word, out) });
-        }
-        let mut words = [0u64; 4];
-        for (word, limb) in words.iter_mut().zip(bytes.rchunks(8)) {
-            *word = u64::from_be_bytes(limb.try_into().unwrap());
-        }
-        let count = bytes.len() / 8;
-        self.new_value(|env, out| unsafe {
-            sys::napi_create_bigint_words(env, 0, count, words.as_ptr(), out)
-        })
-    }
-    fn hex(&mut self, bytes: &[u8]) -> Option<sys::napi_value> {
-        let hex = format!("0x{}", faster_hex::hex_string(bytes));
-        self.str(hex.as_bytes())
-    }
-    fn str(&mut self, bytes: &[u8]) -> Option<sys::napi_value> {
-        let text = String::from_utf8_lossy(bytes);
-        self.new_value(|env, out| unsafe {
-            sys::napi_create_string_utf8(env, text.as_ptr().cast(), text.len() as isize, out)
-        })
-    }
-    fn bytes(&mut self, bytes: &[u8]) -> Option<sys::napi_value> {
-        let array = Uint8Array::from(bytes.to_vec());
-        let result = unsafe { Uint8Array::to_napi_value(self.env, array) };
-        self.ok(result)
-    }
-    fn arr(&mut self, len: usize) -> Option<(sys::napi_value, u32)> {
-        let arr = self
-            .new_value(|env, out| unsafe { sys::napi_create_array_with_length(env, len, out) })?;
-        Some((arr, 0))
-    }
-    fn push(&mut self, arr: &mut (sys::napi_value, u32), value: sys::napi_value) -> Option<()> {
-        let status = unsafe { sys::napi_set_element(self.env, arr.0, arr.1, value) };
-        arr.1 += 1;
-        self.ok(check_status!(status))
-    }
-    fn end_arr(&mut self, arr: (sys::napi_value, u32)) -> sys::napi_value {
-        arr.0
-    }
-    fn obj(&mut self) -> Option<sys::napi_value> {
-        self.new_value(|env, out| unsafe { sys::napi_create_object(env, out) })
-    }
-    fn set(&mut self, obj: &mut sys::napi_value, key: &CStr, value: sys::napi_value) -> Option<()> {
-        let status = unsafe { sys::napi_set_named_property(self.env, *obj, key.as_ptr(), value) };
-        self.ok(check_status!(status))
-    }
-    fn end_obj(&mut self, obj: sys::napi_value) -> sys::napi_value {
-        obj
-    }
-}
-
-/// Builds the `ParamValue` tree the JS values mirror, so Rust tests can
-/// assert decoded shapes.
-#[cfg(test)]
-struct Tree;
-
-#[cfg(test)]
-impl Build for Tree {
-    type Value = ParamValue;
-    type Arr = Vec<ParamValue>;
-    type Obj = Vec<(String, ParamValue)>;
-    fn undefined(&mut self) -> Option<ParamValue> {
-        Some(ParamValue::Undefined)
-    }
-    fn bool(&mut self, value: bool) -> Option<ParamValue> {
-        Some(ParamValue::Bool(value))
-    }
-    fn num(&mut self, value: u32) -> Option<ParamValue> {
-        Some(ParamValue::Num(value.into()))
-    }
-    fn bigint(&mut self, bytes: &[u8]) -> Option<ParamValue> {
-        let words = bytes
-            .rchunks(8)
-            .map(|limb| u64::from_be_bytes(limb.try_into().unwrap()))
-            .collect();
-        Some(ParamValue::BigInt {
-            sign_bit: false,
-            words,
-        })
-    }
-    fn hex(&mut self, bytes: &[u8]) -> Option<ParamValue> {
-        Some(ParamValue::Str(format!(
-            "0x{}",
-            faster_hex::hex_string(bytes)
-        )))
-    }
-    fn str(&mut self, bytes: &[u8]) -> Option<ParamValue> {
-        Some(ParamValue::Str(String::from_utf8_lossy(bytes).into_owned()))
-    }
-    fn bytes(&mut self, bytes: &[u8]) -> Option<ParamValue> {
-        Some(ParamValue::Bytes(bytes.to_vec()))
-    }
-    fn arr(&mut self, _: usize) -> Option<Vec<ParamValue>> {
-        Some(Vec::new())
-    }
-    fn push(&mut self, arr: &mut Vec<ParamValue>, value: ParamValue) -> Option<()> {
-        arr.push(value);
-        Some(())
-    }
-    fn end_arr(&mut self, arr: Vec<ParamValue>) -> ParamValue {
-        ParamValue::Arr(arr)
-    }
-    fn obj(&mut self) -> Option<Vec<(String, ParamValue)>> {
-        Some(Vec::new())
-    }
-    fn set(
-        &mut self,
-        obj: &mut Vec<(String, ParamValue)>,
-        key: &CStr,
-        value: ParamValue,
-    ) -> Option<()> {
-        obj.push((key.to_str().unwrap().to_string(), value));
-        Some(())
-    }
-    fn end_obj(&mut self, obj: Vec<(String, ParamValue)>) -> ParamValue {
-        ParamValue::Obj(obj)
-    }
-}
-
-#[cfg(test)]
-impl DecodedLog {
-    pub(crate) fn to_param_value(&self) -> ParamValue {
-        walk(&self.coder, &self.data, &mut Tree).unwrap()
-    }
-}
-
-#[cfg(test)]
-impl LogDecoder {
-    /// `decode` as the `ParamValue` tree its JS values mirror.
-    pub(crate) fn decode_tree(&self, data: &[u8]) -> Option<ParamValue> {
-        self.decode(&Arc::from(data))
-            .map(|log| log.to_param_value())
     }
 }
 
@@ -582,9 +315,16 @@ pub(crate) fn test_abi(log_id: &str, logged: &str) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::js_value::test_value::JsValue;
     use proptest::prelude::*;
     use ruint::aliases::U256;
     use serde_json::json;
+
+    impl LogDecoder {
+        fn decode_tree(&self, data: &[u8]) -> Option<JsValue> {
+            self.decode(&Arc::from(data)).map(|log| JsValue::of(&log))
+        }
+    }
 
     #[derive(Debug, Clone)]
     enum Shape {
@@ -896,10 +636,10 @@ mod tests {
     }
 
     /// An encoded value alongside the JS value it must decode to.
-    type Sample = (Vec<u8>, ParamValue);
+    type Sample = (Vec<u8>, JsValue);
 
-    fn obj(entries: Vec<(String, ParamValue)>) -> ParamValue {
-        ParamValue::Obj(entries)
+    fn obj(entries: Vec<(String, JsValue)>) -> JsValue {
+        JsValue::Obj(entries)
     }
 
     fn enum_value(case: usize, name: String, (bytes, payload): Sample) -> Sample {
@@ -908,13 +648,13 @@ mod tests {
         (
             encoded,
             obj(vec![
-                ("case".into(), ParamValue::Str(name)),
+                ("case".into(), JsValue::Str(name)),
                 ("payload".into(), payload),
             ]),
         )
     }
 
-    fn concat(samples: Vec<Sample>) -> (Vec<u8>, Vec<ParamValue>) {
+    fn concat(samples: Vec<Sample>) -> (Vec<u8>, Vec<JsValue>) {
         samples
             .into_iter()
             .fold((vec![], vec![]), |(mut bytes, mut values), (b, v)| {
@@ -933,17 +673,13 @@ mod tests {
     }
 
     fn uint(bytes: Vec<u8>) -> Sample {
-        let value = U256::from_be_slice(&bytes);
-        let expected = ParamValue::BigInt {
-            sign_bit: false,
-            words: value.as_limbs()[..bytes.len() / 8].to_vec(),
-        };
+        let expected = JsValue::uint(U256::from_be_slice(&bytes));
         (bytes, expected)
     }
 
     fn hex(bytes: Vec<u8>) -> Sample {
         let expected = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-        (bytes, ParamValue::Str(format!("0x{expected}")))
+        (bytes, JsValue::Str(format!("0x{expected}")))
     }
 
     fn fields(
@@ -967,12 +703,12 @@ mod tests {
             let value = bytes
                 .iter()
                 .fold(0f64, |acc, b| acc * 256.0 + f64::from(*b));
-            (bytes, ParamValue::Num(value))
+            (bytes, JsValue::Num(value))
         };
         match shape.clone() {
-            Shape::Unit => Just((vec![], ParamValue::Undefined)).boxed(),
+            Shape::Unit => Just((vec![], JsValue::Undefined)).boxed(),
             Shape::Bool => any::<bool>()
-                .prop_map(|b| (vec![b as u8], ParamValue::Bool(b)))
+                .prop_map(|b| (vec![b as u8], JsValue::Bool(b)))
                 .boxed(),
             Shape::U8 => any::<[u8; 1]>().prop_map(move |b| num(b.to_vec())).boxed(),
             Shape::U16 => any::<[u8; 2]>().prop_map(move |b| num(b.to_vec())).boxed(),
@@ -985,47 +721,43 @@ mod tests {
             Shape::StrArray(n) => prop::collection::vec(0x20u8..0x7f, n)
                 .prop_map(|b| {
                     let s = String::from_utf8(b.clone()).unwrap();
-                    (b, ParamValue::Str(s))
+                    (b, JsValue::Str(s))
                 })
                 .boxed(),
             Shape::Str | Shape::String => any::<String>()
-                .prop_map(|s| (length_prefixed(s.len(), s.bytes()), ParamValue::Str(s)))
+                .prop_map(|s| (length_prefixed(s.len(), s.bytes()), JsValue::Str(s)))
                 .boxed(),
             Shape::Bytes => prop::collection::vec(any::<u8>(), 0..8)
-                .prop_map(|b| (length_prefixed(b.len(), b.clone()), ParamValue::Bytes(b)))
+                .prop_map(|b| (length_prefixed(b.len(), b.clone()), JsValue::Bytes(b)))
                 .boxed(),
             Shape::RawSlice => prop::collection::vec(any::<u8>(), 0..8)
                 .prop_map(|b| {
-                    let values = b.iter().map(|x| ParamValue::Num(f64::from(*x))).collect();
-                    (length_prefixed(b.len(), b), ParamValue::Arr(values))
+                    let values = b.iter().map(|x| JsValue::Num(f64::from(*x))).collect();
+                    (length_prefixed(b.len(), b), JsValue::Arr(values))
                 })
                 .boxed(),
             Shape::Array(element, n) => prop::collection::vec(sample(&element), n)
                 .prop_map(|samples| {
                     let (bytes, values) = concat(samples);
-                    (bytes, ParamValue::Arr(values))
+                    (bytes, JsValue::Arr(values))
                 })
                 .boxed(),
             Shape::Vec(element) => prop::collection::vec(sample(&element), 0..4)
                 .prop_map(|samples| {
                     let len = samples.len();
                     let (bytes, values) = concat(samples);
-                    (length_prefixed(len, bytes), ParamValue::Arr(values))
+                    (length_prefixed(len, bytes), JsValue::Arr(values))
                 })
                 .boxed(),
             Shape::Option(some) => prop_oneof![
-                Just(enum_value(
-                    0,
-                    "None".into(),
-                    (vec![], ParamValue::Undefined)
-                )),
+                Just(enum_value(0, "None".into(), (vec![], JsValue::Undefined))),
                 sample(&some).prop_map(|s| enum_value(1, "Some".into(), s)),
             ]
             .boxed(),
             Shape::Tuple(items) => fields(&items, |_| String::new())
                 .prop_map(|samples| {
                     let (bytes, values) = concat(samples.into_iter().map(|(_, s)| s).collect());
-                    (bytes, ParamValue::Arr(values))
+                    (bytes, JsValue::Arr(values))
                 })
                 .boxed(),
             Shape::Struct(shapes) => fields(&shapes, |i| format!("f{i}"))
@@ -1057,7 +789,7 @@ mod tests {
                         bytes,
                         obj(vec![
                             ("value".into(), value),
-                            ("list".into(), ParamValue::Arr(list)),
+                            ("list".into(), JsValue::Arr(list)),
                         ]),
                     )
                 })
@@ -1127,7 +859,7 @@ mod tests {
                 .unwrap()
                 .decode_tree(data)
                 .map(|value| match value {
-                    ParamValue::Arr(items) => items.len(),
+                    JsValue::Arr(items) => items.len(),
                     _ => unreachable!(),
                 })
         };
