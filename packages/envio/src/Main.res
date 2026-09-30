@@ -418,7 +418,7 @@ let migrate = async (~reset) => {
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
-    ~storedConfig=config.storedConfig,
+    ~envioInfo=config.envioInfo,
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
     ~lowercaseAddresses=config.lowercaseAddresses,

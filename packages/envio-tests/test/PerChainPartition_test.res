@@ -111,32 +111,6 @@ describe("Per-chain entity partition DDL", () => {
   })
 })
 
-describe("A dropped chain can't reach an existing schema", () => {
-  // Chain 137 is last in the yaml, so cutting it off drops exactly that chain.
-  let singleChainConfig = InternalTestIndexer.fromUserApi(
-    ~configYaml=configYaml->String.split("  - id: 137")->Array.get(0)->Option.getOrThrow,
-    ~schema,
-  ).config
-
-  it("Reports a dropped chain as an incompatible config change", t => {
-    t.expect(
-      Config.planResume(
-        ~stored={
-          config: Some(config.storedConfig),
-          chains: config.chainMap
-          ->ChainMap.values
-          ->Array.map(chain => (chain.id, chain.storedConfig)),
-          contractMapping: config.contractMapping,
-        },
-        ~current=singleChainConfig.storedConfig,
-        ~chainConfigs=singleChainConfig.chainMap->ChainMap.values,
-        ~contractMapping=singleChainConfig.contractMapping,
-        ~isolated=false,
-      ),
-    ).toEqual(Config.Incompatible(["evm.chains.137"]))
-  })
-})
-
 type counterRow = {
   id: string,
   count: bigint,

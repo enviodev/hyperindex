@@ -95,7 +95,7 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEnt
     ~contractMapping=config.contractMapping,
     ~entities,
     ~enums,
-    ~storedConfig=JSON.Encode.object(Dict.make()),
+    ~envioInfo=JSON.Encode.object(Dict.make()),
   )
   for idx in 0 to fixtures->Array.length - 1 {
     let _ = await sql->Postgres.unsafe(fixtures->Array.getUnsafe(idx))

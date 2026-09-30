@@ -30,7 +30,7 @@ let initRun = (~isolated, ~announceResume=true) =>
   makePersistence()->Persistence.init(
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
-    ~storedConfig=config.storedConfig,
+    ~envioInfo=JSON.Encode.object(Dict.make()),
     ~resetCommand="envio dev -r",
     ~runCommand=Some("envio dev"),
     ~lowercaseAddresses=config.lowercaseAddresses,

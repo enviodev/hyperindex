@@ -110,15 +110,15 @@ type storage = {
   // and we can skip initialization
   isInitialized: unit => promise<bool>,
   // Should initialize the storage so we can start interacting with it
-  // Eg create connection, schema, tables, etc. `storedConfig` and each chain's
-  // own are opaque JSON persisted in the same transaction, so a fresh schema
-  // always carries the config it was built from — storage doesn't interpret it.
+  // Eg create connection, schema, tables, etc. `envioInfo` is opaque JSON
+  // persisted as part of the same transaction so a fresh schema always
+  // carries a matching row — storage doesn't interpret it.
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
     ~contractMapping: ContractMapping.t,
-    ~storedConfig: JSON.t,
+    ~envioInfo: JSON.t,
   ) => promise<initialState>,
   // Read before anything is resumed, so a config the stored one rules out is
   // reported as such rather than as a sink tripping over tables it never
@@ -268,7 +268,7 @@ let init = {
     persistence,
     ~chainConfigs: array<Config.chain>,
     ~contractMapping,
-    ~storedConfig,
+    ~envioInfo,
     ~resetCommand,
     ~runCommand,
     ~reset=false,
@@ -319,7 +319,7 @@ let init = {
             ~enums=persistence.allEnums,
             ~chainConfigs,
             ~contractMapping,
-            ~storedConfig,
+            ~envioInfo,
           )
           Logging.info(`The indexer storage is ready. Starting indexing!`)
           persistence.storageStatus = Ready(initialState)
@@ -336,16 +336,17 @@ let init = {
           let stored = await persistence.storage.readStoredConfig()
           switch Config.planResume(
             ~stored,
-            ~current=storedConfig,
+            ~current=envioInfo,
             ~chainConfigs,
             ~contractMapping,
+            ~lowercaseAddresses,
             ~isolated,
           ) {
           | Resume => ()
           | Incompatible(changedPaths) =>
             Config.throwIfResumeIncompatible(
               changedPaths,
-              ~current=storedConfig,
+              ~current=envioInfo,
               ~resetCommand,
               ~runCommand,
             )
@@ -402,7 +403,7 @@ let initForRun = (persistence, ~config: Config.t, ~reset, ~isDevelopmentMode) =>
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
-    ~storedConfig=config.storedConfig,
+    ~envioInfo=config.envioInfo,
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
     ~lowercaseAddresses=config.lowercaseAddresses,

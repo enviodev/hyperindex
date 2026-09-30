@@ -87,8 +87,8 @@ describe("Isolated config", () => {
     t.expect(
       Config.fromPublic(
         publicJson(~schema=perChainSchema, ~isolatedChains=[JSON.Encode.int(137)]),
-      ).storedConfig->JSON.stringify,
-    ).toEqual(Config.fromPublic(publicJson(~schema=perChainSchema)).storedConfig->JSON.stringify)
+      ).envioInfo->JSON.stringify,
+    ).toEqual(Config.fromPublic(publicJson(~schema=perChainSchema)).envioInfo->JSON.stringify)
   })
 
   it("Rejects a chain the config doesn't declare", t => {

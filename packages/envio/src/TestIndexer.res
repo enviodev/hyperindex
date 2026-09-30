@@ -572,7 +572,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     ~entities as _=?,
     ~enums as _=?,
     ~contractMapping as _,
-    ~storedConfig as _,
+    ~envioInfo as _,
   ) =>
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",

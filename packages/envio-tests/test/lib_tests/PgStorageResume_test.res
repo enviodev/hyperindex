@@ -34,8 +34,18 @@ let makeStorage = () => {
 }
 
 let storedOf = (chains: array<Config.chain>): Config.stored => {
-  config: Some(config.storedConfig),
-  chains: chains->Array.map(chain => (chain.id, chain.storedConfig)),
+  envioInfo: Some(config.envioInfo),
+  chains: chains->Array.map((chain): Config.storedChain => {
+    id: chain.id,
+    ecosystem: (chain.ecosystem :> string),
+    startBlock: chain->Config.startBlockOrThrow,
+    endBlock: chain.endBlock,
+    maxReorgDepth: chain.maxReorgDepth,
+    configAddresses: chain->ChainState.configStorageRows(
+      ~ecosystem=chain.ecosystem,
+      ~contractMapping=config.contractMapping,
+    ),
+  }),
   contractMapping: config.contractMapping,
 }
 
@@ -58,7 +68,7 @@ describe("Resuming Postgres storage", () => {
         ~contractMapping=config.contractMapping,
         ~entities,
         ~enums,
-        ~storedConfig=config.storedConfig,
+        ~envioInfo=config.envioInfo,
       )
 
       t.expect(await storage.readStoredConfig()).toEqual(config.chainMap->ChainMap.values->storedOf)
@@ -74,7 +84,7 @@ describe("Resuming Postgres storage", () => {
       ~contractMapping=config.contractMapping,
       ~entities,
       ~enums,
-      ~storedConfig=config.storedConfig,
+      ~envioInfo=config.envioInfo,
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     let add = async () =>

@@ -1913,7 +1913,7 @@ let make = (
     ~entities=[],
     ~enums=[],
     ~contractMapping,
-    ~storedConfig,
+    ~envioInfo,
   ): Persistence.initialState => {
     // PG owns tables only for entities that opted into Postgres; the sink
     // picks its own out of the full list.
@@ -1978,7 +1978,7 @@ let make = (
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
       let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
-      await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~storedConfig)
+      await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
       await InternalTable.EnvioContracts.insert(
         sql,
         ~pgSchema,
@@ -2437,21 +2437,20 @@ let make = (
   }
 
   let readStoredConfig = async (): Config.stored => {
-    let (config, contractNames, chains) = await Promise.all3((
+    let (envioInfo, contractNames) = await Promise.all2((
       InternalTable.EnvioInfo.read(sql, ~pgSchema),
       InternalTable.EnvioContracts.read(sql, ~pgSchema),
-      InternalTable.Chains.readStoredConfigs(sql, ~pgSchema),
     ))
-    // All three join the schema in one transaction. Any one missing means an
-    // older envio wrote this schema, so treat the record as unreadable rather
-    // than decoding address rows against ids nothing assigned.
-    switch (config, contractNames, chains) {
-    | (Some(config), Some(contractNames), Some(chains)) => {
-        config: Some(config),
-        chains,
+    // Both tables join the schema in one transaction. A missing mapping means
+    // an older envio wrote this schema, so treat the record as unreadable
+    // rather than decoding address rows against ids nothing assigned.
+    switch (envioInfo, contractNames) {
+    | (Some(envioInfo), Some(contractNames)) => {
+        envioInfo: Some(envioInfo),
+        chains: await InternalTable.Chains.readStoredChains(sql, ~pgSchema),
         contractMapping: ContractMapping.fromStoredNames(contractNames),
       }
-    | _ => {config: None, chains: [], contractMapping: ContractMapping.empty}
+    | _ => {envioInfo: None, chains: [], contractMapping: ContractMapping.empty}
     }
   }
 

@@ -214,7 +214,7 @@ let run = async (
     await persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,
       ~contractMapping=config.contractMapping,
-      ~storedConfig=config.storedConfig,
+      ~envioInfo=config.envioInfo,
       ~resetCommand="envio dev -r",
       ~runCommand=Some("envio dev"),
       ~reset,

@@ -56,7 +56,7 @@ let setup = async () => {
     ~contractMapping,
     ~entities=config.userEntities,
     ~enums,
-    ~storedConfig=JSON.Encode.object(Dict.make()),
+    ~envioInfo=JSON.Encode.object(Dict.make()),
   )
   (storage, pgSchema)
 }
@@ -64,17 +64,15 @@ let setup = async () => {
 let address = index => Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(index)
 
 let configAddress =
-  (
-    (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.getUnsafe(0)
-  ).addresses->Array.getUnsafe(0)
+  ((config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.getUnsafe(0)).addresses
+  ->Array.getUnsafe(0)
 
 let row = (~address: Address.t, ~contractName, ~registrationBlock): AddressRows.row => {
   {
     chainId,
-    address: Core.getAddon().encodeAddresses(
-      ~ecosystem="evm",
-      ~addresses=[address],
-    )->Array.getUnsafe(0),
+    address: Core.getAddon()
+    .encodeAddresses(~ecosystem="evm", ~addresses=[address])
+    ->Array.getUnsafe(0),
     contractId: contractMapping->ContractMapping.idOfOrThrow(contractName),
     registrationBlock,
   }
@@ -117,11 +115,8 @@ describe("envio_addresses", () => {
       ~pgSchema,
       ~keys=[
         sharedForNftFactory->AddressRows.keyOf,
-        row(
-          ~address=address(2),
-          ~contractName="NftFactory",
-          ~registrationBlock=20,
-        )->AddressRows.keyOf,
+        row(~address=address(2), ~contractName="NftFactory", ~registrationBlock=20)
+        ->AddressRows.keyOf,
       ],
     )
 
@@ -149,7 +144,7 @@ describe("envio_addresses", () => {
       await persistence->Persistence.init(
         ~chainConfigs=config.chainMap->ChainMap.values,
         ~contractMapping=config.contractMapping,
-        ~storedConfig=JSON.Encode.object(Dict.make()),
+        ~envioInfo=JSON.Encode.object(Dict.make()),
         ~resetCommand="envio local db-migrate setup",
         ~runCommand=None,
       )
@@ -160,7 +155,7 @@ describe("envio_addresses", () => {
     }
     t.expect(
       message->String.includes("storage was initialized by an older envio version"),
-      ~message,
+      ~message=message,
     ).toBe(true)
   })
 
@@ -181,6 +176,9 @@ describe("envio_addresses", () => {
     t.expect(
       (await storedRows(~pgSchema))->Array.filter(((_, _, block)) => block !== -1),
       ~message="the address is stored once per contract, however often it is written",
-    ).toEqual([(address(1), "Gravatar", 10), (address(1), "NftFactory", 10)])
+    ).toEqual([
+      (address(1), "Gravatar", 10),
+      (address(1), "NftFactory", 10),
+    ])
   })
 })

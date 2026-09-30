@@ -14,7 +14,7 @@ type t = {
     "entities": array<Internal.entityConfig>,
     "chainConfigs": array<Config.chain>,
     "enums": array<Table.enumConfig<Table.enum>>,
-    "storedConfig": JSON.t,
+    "envioInfo": JSON.t,
   }>,
   resolveInitialize: Persistence.initialState => unit,
   resumeInitialStateCalls: array<bool>,
@@ -24,10 +24,9 @@ type t = {
   storage: Persistence.storage,
 }
 
-// What a resume finds stored. The default matches a run whose stored config is
-// an empty object with no chains, as the tests here pass.
+// What a resume finds stored: by default, a storage an empty config built.
 let emptyStored: Config.stored = {
-  config: Some(JSON.Encode.object(Dict.make())),
+  envioInfo: Some(JSON.Encode.object(Dict.make())),
   chains: [],
   contractMapping: ContractMapping.empty,
 }
@@ -86,14 +85,14 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
         ~entities=[],
         ~enums=[],
         ~contractMapping as _,
-        ~storedConfig,
+        ~envioInfo,
       ) => {
         initializeCalls
         ->Array.push({
           "entities": entities,
           "chainConfigs": chainConfigs,
           "enums": enums,
-          "storedConfig": storedConfig,
+          "envioInfo": envioInfo,
         })
         ->ignore
         Promise.make((resolve, _reject) => {

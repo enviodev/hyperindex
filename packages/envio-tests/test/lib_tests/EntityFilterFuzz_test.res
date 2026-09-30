@@ -201,7 +201,7 @@ describe("EntityFilter matcher against Postgres", () => {
       ~enums=config.allEnums->Array.concat([
         EntityHistory.RowAction.config->Table.fromGenericEnumConfig,
       ]),
-      ~storedConfig=JSON.Object(Dict.make()),
+      ~envioInfo=JSON.Object(Dict.make()),
     )
 
     let mismatches = []

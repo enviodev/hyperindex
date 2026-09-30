@@ -52,7 +52,7 @@ let init = async (~schema, ~pgSchema, ~reset) => {
   await PgStorage.makePersistenceFromConfig(~config, ~storage)->Persistence.init(
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
-    ~storedConfig=config.storedConfig,
+    ~envioInfo=config.envioInfo,
     ~resetCommand="envio start -r",
     ~runCommand=Some("envio start"),
     ~reset,
