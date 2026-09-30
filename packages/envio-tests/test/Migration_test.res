@@ -4,7 +4,8 @@ open Vitest
 // was built. The one migration applied in place is a chain added under
 // `envio start --chain`; every other change to what the database holds is
 // refused and needs a resync. What config.yaml owns but the database doesn't —
-// sources, block lag, a contract's start block — is read on every start.
+// sources, block lag, a contract's start block — is read on every start. A
+// migration the indexer learns to apply flips its case here from `Refused`.
 
 let schema = `
 type Counter {

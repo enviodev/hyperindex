@@ -1,8 +1,3 @@
-// What a restart makes of a deployment whose config.yaml or schema changed
-// since the database was built. Each case deploys one config, indexes it,
-// restarts under another, and states the outcome — so a migration the indexer
-// learns to apply is one more case whose outcome flips from `Refused`.
-
 type outcome =
   // The restart went ahead, and the database holds these chains afterwards.
   | Resumed(array<int>)

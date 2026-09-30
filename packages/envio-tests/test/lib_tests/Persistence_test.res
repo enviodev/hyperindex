@@ -213,7 +213,7 @@ Although it should load effect caches metadata.`,
     ).toEqual((1, 0, 1))
   })
 
-  // Drive a single resume whose payload carries `~storedEnvioInfo`, then
+  // Drive a single resume against a storage holding `~storedEnvioInfo`, then
   // capture whatever Persistence.init throws.
   let resumeWith = async (
     ~storedEnvioInfo: option<JSON.t>,

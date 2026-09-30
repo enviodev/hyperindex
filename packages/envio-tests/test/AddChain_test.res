@@ -214,7 +214,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       let _ = await sql->Postgres.unsafe(`DROP SCHEMA "${pgSchema}" CASCADE;`)
 
       let outcome = switch await indexer.restart(~chains=[ChainId.fromInt(1)], ()) {
-      | _ => Migration.Resumed([1])
+      | restarted => Migration.Resumed(await Migration.storedChainIds(restarted))
       | exception JsExn(e) => Migration.outcomeOfRefusal(e->JsExn.message->Option.getOr(""))
       }
 

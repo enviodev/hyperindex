@@ -1305,9 +1305,9 @@ let rec canonicalJson = (json: JSON.t): JSON.t =>
 // `current`, restricted to the highest-priority top-level tier with any
 // diff. Tiers in order: version → name → storage → ecosystem
 // (evm/fuel/svm, and the chains a resume puts beside them) → entities →
-// other top-level keys. The first tier
-// containing a diff is the only one rendered; lower tiers are silenced
-// so a single noisy section doesn't bury the actionable change.
+// other top-level keys. The first tier containing a diff is the only one
+// rendered; lower tiers are silenced so a single noisy section doesn't bury
+// the actionable change.
 let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
   let canonEq = (a: JSON.t, b: JSON.t) =>
     JSON.stringify(canonicalJson(a)) === JSON.stringify(canonicalJson(b))

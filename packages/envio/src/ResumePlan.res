@@ -1,7 +1,3 @@
-// Decides what a resume does with a config edited since the storage was built:
-// carry on, add the chain an `envio start --chain` process names, or refuse
-// with the config paths it can't migrate.
-
 // A chain as its storage holds it: what its `envio_chains` row keeps of its
 // config, and the addresses the config declared for it.
 type storedChain = {
