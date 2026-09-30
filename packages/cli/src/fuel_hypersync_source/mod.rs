@@ -337,13 +337,11 @@ fn route_receipts(
                         push_unique(&mut missing, "receipt.data");
                         continue;
                     };
-                    // This registration's logged type rejected the data, so
-                    // there is nothing truthful to hand its handler. Another
-                    // registration matching the same `rb` decodes on its own.
-                    // A wildcard sees other contracts' data under its `rb`
-                    // routinely; a contract-bound registration failing on its
-                    // own contract's data usually means a stale ABI, so that
-                    // is reported rather than dropped silently.
+                    // Dropped for this registration only; others on the same
+                    // `rb` decode on their own. A wildcard sees other
+                    // contracts' data under its `rb` routinely, but a
+                    // contract-bound rejection usually means a stale ABI, so
+                    // that one is reported.
                     let Some(params) = decoder.decode(data) else {
                         if !reg.is_wildcard {
                             match rejected

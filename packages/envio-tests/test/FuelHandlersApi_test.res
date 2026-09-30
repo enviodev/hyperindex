@@ -17,7 +17,13 @@ chains:
           - name: ClearGreeting
 `
 
-let check = handlers => InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~files, ~handlers, ~configYaml)->ignore
+let check = handlers =>
+  InternalTestIndexer.fromUserApi(
+    ~schema=ApiTypesFixtures.schema,
+    ~files,
+    ~handlers,
+    ~configYaml,
+  )->ignore
 
 describe("Fuel API types", () => {
   it("resolves config-bound Fuel chain/contract name and id unions", _ =>
@@ -306,4 +312,52 @@ expectType<TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">>(true);
       message,
     ).toBe(`The fields option of the "NewGreeting" event registration on contract "Greeter" is not supported on Fuel. Select the fields in your config instead.`)
   })
+})
+
+describe("Fuel B512 log", () => {
+  // B512 is a struct of two b256 in the ABI, but decodes to one 0x hex string.
+  let b512Abi = `{
+    "programType": "contract",
+    "specVersion": "1",
+    "encodingVersion": "1",
+    "concreteTypes": [
+      {"type": "b256", "concreteTypeId": "b256"},
+      {"type": "struct std::b512::B512", "concreteTypeId": "b512", "metadataTypeId": 0}
+    ],
+    "metadataTypes": [
+      {"type": "struct std::b512::B512", "metadataTypeId": 0, "components": [{"name": "bits", "typeId": 1}]},
+      {"type": "[_; 2]", "metadataTypeId": 1, "components": [{"name": "__array_element", "typeId": "b256"}]}
+    ],
+    "functions": [],
+    "loggedTypes": [{"logId": "1", "concreteTypeId": "b512"}],
+    "messagesTypes": [],
+    "configurables": []
+  }`
+
+  it("types the params as the hex string they decode to", _ =>
+    InternalTestIndexer.fromUserApi(
+      ~schema=ApiTypesFixtures.schema,
+      ~files=dict{"abis/signer-abi.json": b512Abi},
+      ~configYaml=`
+name: fuel-b512
+ecosystem: fuel
+chains:
+  - id: 0
+    start_block: 0
+    contracts:
+      - name: Signer
+        address: 0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b
+        abi_file_path: abis/signer-abi.json
+        events:
+          - name: Signature
+            logId: "1"
+`,
+      ~handlers=`
+import type { FuelEvent } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+expectType<TypeEqual<FuelEvent<"Signer", "Signature">["params"], string>>(true);
+`,
+    )->ignore
+  )
 })

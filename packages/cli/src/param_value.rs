@@ -1,6 +1,7 @@
 use std::ffi::CString;
 
 use napi::bindgen_prelude::{BigInt, FromNapiValue, Null, ToNapiValue, Uint8Array};
+use napi::check_status;
 
 /// A decoded parameter tree crossing the napi boundary as real JS values, so
 /// wide integers arrive as `bigint` instead of decimal strings.
@@ -65,18 +66,17 @@ impl ToNapiValue for ParamValue {
             ParamValue::Arr(items) => Vec::<ParamValue>::to_napi_value(raw_env, items),
             ParamValue::Obj(entries) => {
                 let mut obj = std::ptr::null_mut();
-                assert_eq!(
-                    napi::sys::napi_create_object(raw_env, &mut obj),
-                    napi::sys::Status::napi_ok
-                );
+                check_status!(napi::sys::napi_create_object(raw_env, &mut obj))?;
                 for (key, val) in entries {
                     let js_val = ParamValue::to_napi_value(raw_env, val)?;
                     let c_key = CString::new(key)
                         .map_err(|_| napi::Error::from_reason("invalid param name"))?;
-                    assert_eq!(
-                        napi::sys::napi_set_named_property(raw_env, obj, c_key.as_ptr(), js_val),
-                        napi::sys::Status::napi_ok,
-                    );
+                    check_status!(napi::sys::napi_set_named_property(
+                        raw_env,
+                        obj,
+                        c_key.as_ptr(),
+                        js_val
+                    ))?;
                 }
                 Ok(obj)
             }
