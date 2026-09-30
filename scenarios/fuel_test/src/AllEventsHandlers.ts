@@ -18,9 +18,6 @@ type AssertSchemaType<Target, Schema> = TypeEqual<
 
 const SExtra = {
   void: S.schema(undefined) as S.Schema<undefined, undefined>,
-  hex: S.refine(S.string, (value, s) => {
-    if (!value.startsWith("0x")) s.fail("Expected a 0x-prefixed hex string");
-  }) as S.Schema<`0x${string}`, string>,
   swayOptional: <T>(schema: S.Schema<T>) =>
     S.union([
       {
@@ -95,7 +92,7 @@ indexer.onEvent({ contract: "AllEvents", event: "U64Log" },async ({ event }) => 
   expectType<AssertSchemaType<typeof event.params, typeof u64LogSchema>>(true);
 });
 
-const b256LogSchema = SExtra.hex;
+const b256LogSchema = S.string as S.Schema<`0x${string}`, string>;
 indexer.onEvent({ contract: "AllEvents", event: "B256Log" },async ({ event }) => {
   S.assertOrThrow(event.params, b256LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof b256LogSchema>>(true);
