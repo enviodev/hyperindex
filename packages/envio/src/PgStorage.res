@@ -2436,7 +2436,7 @@ let make = (
     }
   }
 
-  let readStoredConfig = async (): Config.stored => {
+  let readStoredConfig = async (): ResumePlan.stored => {
     let (envioInfo, contractNames) = await Promise.all2((
       InternalTable.EnvioInfo.read(sql, ~pgSchema),
       InternalTable.EnvioContracts.read(sql, ~pgSchema),

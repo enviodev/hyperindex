@@ -1304,7 +1304,8 @@ let rec canonicalJson = (json: JSON.t): JSON.t =>
 // Returns dotted leaf paths (`a.b[i].c`) where `stored` differs from
 // `current`, restricted to the highest-priority top-level tier with any
 // diff. Tiers in order: version → name → storage → ecosystem
-// (evm/fuel/svm) → entities → other top-level keys. The first tier
+// (evm/fuel/svm, and the chains a resume puts beside them) → entities →
+// other top-level keys. The first tier
 // containing a diff is the only one rendered; lower tiers are silenced
 // so a single noisy section doesn't bury the actionable change.
 let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
@@ -1374,7 +1375,7 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
       ["chainIdMode"],
       ["name"],
       ["storage"],
-      ["evm", "fuel", "svm"],
+      ["evm", "fuel", "svm", "chains"],
       ["entities"],
     ]
     let firstHit = tiers->Array.reduce(None, (acc, tier) =>
@@ -1436,206 +1437,6 @@ let throwIfIncompatible = (
         )}# delete all indexed data and start over${option3}`,
     )
   }
-}
-
-// A chain as its storage holds it: what its `envio_chains` row keeps of its
-// config, and the addresses the config declared for it.
-type storedChain = {
-  id: ChainId.t,
-  ecosystem: string,
-  startBlock: int,
-  endBlock: option<int>,
-  maxReorgDepth: int,
-  configAddresses: array<AddressRows.row>,
-}
-
-// What a storage holds of the config it was built from. `envioInfo` is `None`
-// for a storage an older envio built, which kept no such record.
-type stored = {
-  envioInfo: option<JSON.t>,
-  chains: array<storedChain>,
-  contractMapping: ContractMapping.t,
-}
-
-type resumePlan =
-  | Resume
-  // Configured since the storage was built, and the only chain its
-  // `envio start --chain` process drives.
-  | AddChain(chain)
-  | Incompatible(array<string>)
-
-// The part of a chain's config its storage keeps, shaped so a stored chain and
-// a configured one diff by path: `evm.chains.137.endBlock`,
-// `evm.chains.137.contracts.Token.addresses.0x…`.
-let chainEntry = (
-  ~startBlock: option<int>,
-  ~endBlock: option<int>,
-  ~maxReorgDepth: int,
-  ~addresses: array<(string, string)>,
-) => {
-  let contracts = Dict.make()
-  addresses->Array.forEach(((contractName, address)) => {
-    let contractAddresses = switch contracts->Dict.get(contractName) {
-    | Some(contractAddresses) => contractAddresses
-    | None =>
-      let contractAddresses = Dict.make()
-      contracts->Dict.set(contractName, contractAddresses)
-      contractAddresses
-    }
-    contractAddresses->Dict.set(address, JSON.Boolean(true))
-  })
-  let entry = dict{
-    "maxReorgDepth": JSON.Number(maxReorgDepth->Int.toFloat),
-    "contracts": JSON.Object(
-      contracts->Dict.mapValues(contractAddresses => JSON.Object(
-        dict{"addresses": JSON.Object(contractAddresses)},
-      )),
-    ),
-  }
-  startBlock->Option.forEach(startBlock =>
-    entry->Dict.set("startBlock", JSON.Number(startBlock->Int.toFloat))
-  )
-  endBlock->Option.forEach(endBlock =>
-    entry->Dict.set("endBlock", JSON.Number(endBlock->Int.toFloat))
-  )
-  JSON.Object(entry)
-}
-
-// Puts chain entries under their ecosystem's `chains`, keyed by chain id, so a
-// stored config and a configured one diff as whole configs.
-let withChains = (envioInfo: JSON.t, ~chains: array<(string, ChainId.t, JSON.t)>): JSON.t => {
-  let joined = envioInfo->JSON.stringify->JSON.parseOrThrow
-  switch joined {
-  | Object(obj) =>
-    // Present even when empty, so a chain only one side has diffs as that
-    // chain rather than as the whole `chains` key.
-    ecosystemFields->Array.forEach(ecosystem =>
-      switch obj->Dict.get(ecosystem) {
-      | Some(Object(ecosystemDict)) => ecosystemDict->Dict.set("chains", JSON.Object(Dict.make()))
-      | _ => ()
-      }
-    )
-    chains->Array.forEach(((ecosystem, chainId, entry)) => {
-      let ecosystemDict = switch obj->Dict.get(ecosystem) {
-      | Some(Object(ecosystemDict)) => ecosystemDict
-      | _ =>
-        let ecosystemDict = Dict.make()
-        obj->Dict.set(ecosystem, JSON.Object(ecosystemDict))
-        ecosystemDict
-      }
-      let chainsDict = switch ecosystemDict->Dict.get("chains") {
-      | Some(Object(chainsDict)) => chainsDict
-      | _ =>
-        let chainsDict = Dict.make()
-        ecosystemDict->Dict.set("chains", JSON.Object(chainsDict))
-        chainsDict
-      }
-      chainsDict->Dict.set(chainId->ChainId.toString, entry)
-    })
-  | _ => ()
-  }
-  joined
-}
-
-// `current` is the running config's `envioInfo`, `chainConfigs` the chains
-// this process drives. An isolated process answers for `envioInfo` and its own
-// chains only: the ones it leaves out are checked, and added, by the processes
-// that drive them.
-let planResume = (
-  ~stored: stored,
-  ~current: JSON.t,
-  ~chainConfigs: array<chain>,
-  ~contractMapping: ContractMapping.t,
-  ~lowercaseAddresses: bool,
-  ~isolated: bool,
-) =>
-  switch stored.envioInfo {
-  | None => Incompatible(["storage was initialized by an older envio version"])
-  | Some(storedEnvioInfo) =>
-    let storedChainOf = chainId => stored.chains->Array.find(chain => chain.id == chainId)
-    let added = switch (isolated, chainConfigs) {
-    | (true, [chain]) if storedChainOf(chain.id)->Option.isNone => Some(chain)
-    | _ => None
-    }
-    let storedChains = isolated
-      ? stored.chains->Array.filter(storedChain =>
-          chainConfigs->Array.some(chain => chain.id == storedChain.id)
-        )
-      : stored.chains
-    let storedEntries = storedChains->Array.map(storedChain => {
-      let addresses =
-        storedChain.configAddresses
-        ->AddressRows.render(~ecosystem=storedChain.ecosystem, ~shouldChecksum=!lowercaseAddresses)
-        ->Array.mapWithIndex((address, idx) => (
-          stored.contractMapping->ContractMapping.nameOfOrThrow(
-            (storedChain.configAddresses->Array.getUnsafe(idx)).contractId,
-          ),
-          address->Address.toString,
-        ))
-      (
-        storedChain.ecosystem,
-        storedChain.id,
-        chainEntry(
-          ~startBlock=Some(storedChain.startBlock),
-          ~endBlock=storedChain.endBlock,
-          ~maxReorgDepth=storedChain.maxReorgDepth,
-          ~addresses,
-        ),
-      )
-    })
-    let currentEntries = chainConfigs->Array.filterMap(chain =>
-      switch added {
-      | Some(added) if added.id == chain.id => None
-      | _ =>
-        Some((
-          (chain.ecosystem :> string),
-          chain.id,
-          chainEntry(
-            // `latest` is whatever it resolved to when the chain was first
-            // stored, so it matches any stored block.
-            ~startBlock=switch chain.startBlock {
-            | Block(startBlock) => Some(startBlock)
-            | Latest => storedChainOf(chain.id)->Option.map(storedChain => storedChain.startBlock)
-            },
-            ~endBlock=chain.endBlock,
-            ~maxReorgDepth=chain.maxReorgDepth,
-            ~addresses=chain.contracts->Array.flatMap(contract =>
-              contract.addresses->Array.map(address => (contract.name, address->Address.toString))
-            ),
-          ),
-        ))
-      }
-    )
-    let changedPaths = diffPaths(
-      ~stored=storedEnvioInfo->withChains(~chains=storedEntries),
-      ~current=current->withChains(~chains=currentEntries),
-    )
-    let changedPaths =
-      stored.contractMapping->ContractMapping.isEqual(contractMapping)
-        ? changedPaths
-        : changedPaths->Array.concat(["contracts"])
-    switch (changedPaths, added) {
-    | ([], None) => Resume
-    | ([], Some(chain)) => AddChain(chain)
-    | (changedPaths, _) => Incompatible(changedPaths)
-    }
-  }
-
-let throwIfResumeIncompatible = (
-  changedPaths,
-  ~current: JSON.t,
-  ~resetCommand: string,
-  ~runCommand: option<string>,
-) => {
-  let hasClickhouse = switch current {
-  | Object(d) =>
-    switch d->Dict.get("storage") {
-    | Some(Object(s)) => s->Dict.get("clickhouse") == Some(Boolean(true))
-    | _ => false
-    }
-  | _ => false
-  }
-  throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
 }
 
 // The returned value is a pure function of the JSON: it holds only event

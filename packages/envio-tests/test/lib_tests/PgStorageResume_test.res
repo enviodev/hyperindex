@@ -33,9 +33,9 @@ let makeStorage = () => {
   )
 }
 
-let storedOf = (chains: array<Config.chain>): Config.stored => {
+let storedOf = (chains: array<Config.chain>): ResumePlan.stored => {
   envioInfo: Some(config.envioInfo),
-  chains: chains->Array.map((chain): Config.storedChain => {
+  chains: chains->Array.map((chain): ResumePlan.storedChain => {
     id: chain.id,
     ecosystem: (chain.ecosystem :> string),
     startBlock: chain->Config.startBlockOrThrow,

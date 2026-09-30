@@ -393,7 +393,7 @@ WHERE "${(#id: field :> string)}" = $2
     checkpointId: string,
   }
 
-  let readStoredChains = async (sql, ~pgSchema): array<Config.storedChain> => {
+  let readStoredChains = async (sql, ~pgSchema): array<ResumePlan.storedChain> => {
     let (rows, configAddressRows) = await Promise.all2((
       sql
       ->Postgres.unsafe(
@@ -426,7 +426,7 @@ FROM "${pgSchema}"."${table.tableName}";`,
         addressRow,
       )
     )
-    rows->Array.map((row): Config.storedChain => {
+    rows->Array.map((row): ResumePlan.storedChain => {
       let id = row["id"]->ChainId.normalizeOrThrow
       {
         id,

@@ -102,42 +102,42 @@ describe("Resuming a chain against the stored config", () => {
     "Refuses a changed start block",
     ~deployed,
     ~edited=deployment(~chains=[chain(1, ~startBlock="2")]),
-    ~expected=Refused(["evm.chains.1.startBlock"]),
+    ~expected=Refused(["chains.1.startBlock"]),
   )
 
   Migration.it(
     "Refuses an added end block",
     ~deployed,
     ~edited=deployment(~chains=[chain(1, ~endBlock=1000)]),
-    ~expected=Refused(["evm.chains.1.endBlock"]),
+    ~expected=Refused(["chains.1.endBlock"]),
   )
 
   Migration.it(
     "Refuses a changed end block",
     ~deployed=deployment(~chains=[chain(1, ~endBlock=1000)]),
     ~edited=deployment(~chains=[chain(1, ~endBlock=2000)]),
-    ~expected=Refused(["evm.chains.1.endBlock"]),
+    ~expected=Refused(["chains.1.endBlock"]),
   )
 
   Migration.it(
     "Refuses a changed max reorg depth",
     ~deployed,
     ~edited=deployment(~chains=[chain(1, ~maxReorgDepth=10)]),
-    ~expected=Refused(["evm.chains.1.maxReorgDepth"]),
+    ~expected=Refused(["chains.1.maxReorgDepth"]),
   )
 
   Migration.it(
     "Refuses an added address, naming it",
     ~deployed,
     ~edited=deployment(~chains=[chain(1, ~addresses=[address(1), address(2)])]),
-    ~expected=Refused([`evm.chains.1.contracts.Token.addresses.${address(2)}`]),
+    ~expected=Refused([`chains.1.contracts.Token.addresses.${address(2)}`]),
   )
 
   Migration.it(
     "Refuses a removed address, naming it",
     ~deployed=deployment(~chains=[chain(1, ~addresses=[address(1), address(2)])]),
     ~edited=deployment(~chains=[chain(1)]),
-    ~expected=Refused([`evm.chains.1.contracts.Token.addresses.${address(2)}`]),
+    ~expected=Refused([`chains.1.contracts.Token.addresses.${address(2)}`]),
   )
 
   Migration.it(
@@ -178,7 +178,7 @@ describe("Changing the chains of a deployment", () => {
     "Refuses a new chain in a run that doesn't name it alone",
     ~deployed,
     ~edited=withChain137,
-    ~expected=Refused(["evm.chains.137"]),
+    ~expected=Refused(["chains.137"]),
   )
 
   Migration.it(
@@ -186,7 +186,7 @@ describe("Changing the chains of a deployment", () => {
     ~deployed,
     ~edited=deployment(~chains=[chain(1), chain(10), chain(137)]),
     ~chains=[10, 137],
-    ~expected=Refused(["evm.chains.10", "evm.chains.137"]),
+    ~expected=Refused(["chains.10", "chains.137"]),
   )
 
   Migration.it(
@@ -215,7 +215,7 @@ describe("Changing the chains of a deployment", () => {
     "Refuses a dropped chain",
     ~deployed=withChain137,
     ~edited=deployed,
-    ~expected=Refused(["evm.chains.137"]),
+    ~expected=Refused(["chains.137"]),
   )
 
   // A process answers for its own chains: the one whose settings changed is
@@ -235,6 +235,6 @@ describe("Changing the chains of a deployment", () => {
     ~deployed=withChain137,
     ~edited=with137Moved,
     ~chains=[137],
-    ~expected=Refused(["evm.chains.137.startBlock"]),
+    ~expected=Refused(["chains.137.startBlock"]),
   )
 })

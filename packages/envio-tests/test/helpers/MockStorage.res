@@ -25,7 +25,7 @@ type t = {
 }
 
 // What a resume finds stored: by default, a storage an empty config built.
-let emptyStored: Config.stored = {
+let emptyStored: ResumePlan.stored = {
   envioInfo: Some(JSON.Encode.object(Dict.make())),
   chains: [],
   contractMapping: ContractMapping.empty,

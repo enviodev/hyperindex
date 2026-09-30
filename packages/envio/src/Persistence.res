@@ -123,7 +123,7 @@ type storage = {
   // Read before anything is resumed, so a config the stored one rules out is
   // reported as such rather than as a sink tripping over tables it never
   // created.
-  readStoredConfig: unit => promise<Config.stored>,
+  readStoredConfig: unit => promise<ResumePlan.stored>,
   // Brings an initialized storage a chain it doesn't have yet: its row, its
   // partitions and its config addresses, as `initialize` would have created
   // them. The chains already there are left untouched.
@@ -334,9 +334,9 @@ let init = {
           let logResume = announceResume ? Logging.info : Logging.trace
           logResume(`Found existing indexer storage. Resuming indexing state...`)
           let stored = await persistence.storage.readStoredConfig()
-          switch Config.planResume(
+          switch ResumePlan.make(
             ~stored,
-            ~current=envioInfo,
+            ~envioInfo,
             ~chainConfigs,
             ~contractMapping,
             ~lowercaseAddresses,
@@ -344,12 +344,7 @@ let init = {
           ) {
           | Resume => ()
           | Incompatible(changedPaths) =>
-            Config.throwIfResumeIncompatible(
-              changedPaths,
-              ~current=envioInfo,
-              ~resetCommand,
-              ~runCommand,
-            )
+            ResumePlan.throwIfIncompatible(changedPaths, ~envioInfo, ~resetCommand, ~runCommand)
           | AddChain(chainConfig) =>
             Logging.info({
               "msg": `Adding the chain to the existing indexer storage...`,
