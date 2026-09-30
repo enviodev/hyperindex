@@ -19,6 +19,7 @@ pub enum ParamValue {
     Arr(Vec<ParamValue>),
     Obj(Vec<(String, ParamValue)>),
     Null,
+    #[cfg(test)]
     Undefined,
 }
 
@@ -81,6 +82,7 @@ impl ToNapiValue for ParamValue {
                 Ok(obj)
             }
             ParamValue::Null => Null::to_napi_value(raw_env, Null),
+            #[cfg(test)]
             ParamValue::Undefined => <()>::to_napi_value(raw_env, ()),
         }
     }

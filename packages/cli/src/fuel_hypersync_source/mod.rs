@@ -10,9 +10,8 @@ mod types;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_store::{BlockStore, FuelBlockRow};
-use crate::fuel::log_decoder::{parse_abi, LogDecoder};
+use crate::fuel::log_decoder::{parse_abi, DecodedLog, LogDecoder};
 use crate::hex::decode_prefixed;
-use crate::param_value::ParamValue;
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
@@ -143,10 +142,10 @@ pub fn decode_fuel_log_data_for_test(
     abi: serde_json::Value,
     log_id: String,
     data: napi::bindgen_prelude::Uint8Array,
-) -> napi::Result<Option<ParamValue>> {
+) -> napi::Result<Option<DecodedLog>> {
     let program = parse_abi(&abi).map_err(map_err)?;
     let decoder = LogDecoder::new(&program, &log_id).map_err(map_err)?;
-    Ok(decoder.decode(&data))
+    Ok(decoder.decode(&std::sync::Arc::from(&data[..])))
 }
 
 /// The whole per-query input for `get_event_items`: the block range and the
@@ -182,9 +181,10 @@ pub struct EventItem {
     /// the `BlockStore` returned alongside this response.
     pub block_height: i64,
     pub src_address: String,
-    /// The LogData receipt's data decoded against the registration's ABI. A
-    /// receipt its logged type rejects never becomes an item at all.
-    pub params: Option<ParamValue>,
+    /// The LogData receipt's data, validated against the registration's ABI
+    /// and decoded into JS values as it crosses. A receipt its logged type
+    /// rejects never becomes an item at all.
+    pub params: Option<DecodedLog>,
     pub sub_id: Option<String>,
     pub val: Option<BigInt>,
     pub amount: Option<BigInt>,
@@ -497,7 +497,7 @@ mod tests {
             tx_id: "0xtx".to_string(),
             block_height: 42,
             receipt_type,
-            data: Some(vec![0x01]),
+            data: Some(vec![0x01].into()),
             rb: Some(7),
             val: Some(100),
             sub_id: Some("0xsub".to_string()),
@@ -604,14 +604,17 @@ mod tests {
         );
         // One data byte: a u8 for registration 0, too short for 1's u64.
         let mut empty = raw_receipt(6);
-        empty.data = Some(vec![]);
+        empty.data = Some(Vec::new().into());
         let items = route(&store, &set, &built, vec![raw_receipt(6), empty]).unwrap();
         assert_eq!(
             items
                 .into_iter()
-                .map(|i| (i.on_event_registration_index, i.params))
+                .map(|i| (
+                    i.on_event_registration_index,
+                    i.params.map(|p| p.to_param_value())
+                ))
                 .collect::<Vec<_>>(),
-            vec![(0, Some(ParamValue::Num(1.0)))]
+            vec![(0, Some(crate::param_value::ParamValue::Num(1.0)))]
         );
     }
 

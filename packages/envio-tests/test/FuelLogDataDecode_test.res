@@ -26,6 +26,11 @@ describe("Fuel LogData decoding", () => {
       decode("7417129983252335614", Array.concat(u64(2), u32(1))),
       decode("3525891009499019808", Array.concat(u32(11), Array.concat(u64(1), u32(32)))),
       decode("15402277555065905665", Array.concat(u64(2), Array.concat(u64(69), u64(23)))),
+      // u256 2^64 + 7: the limbs of a wider-than-u64 bigint.
+      decode(
+        "1970142151624111756",
+        Array.make(~length=23, 0)->Array.concat([1])->Array.concat(u64(7)),
+      ),
       decode("14832741149864513620", Array.concat(u64(1), [40])),
       decode("8961848586872524460", Array.make(~length=31, 0)->Array.concat([1])),
       decode("11132648958528852192", Array.concat(u64(4), [97, 98, 99, 100])),
@@ -39,6 +44,7 @@ describe("Fuel LogData decoding", () => {
       {"case": "Failed", "payload": {"reason": 1}}->toUnknown,
       {"f1": 11, "f2": {"case": "Some", "payload": 32}}->toUnknown,
       [69n, 23n]->toUnknown,
+      18446744073709551623n->toUnknown,
       Uint8Array.fromArray([40])->toUnknown,
       "0x0000000000000000000000000000000000000000000000000000000000000001"->toUnknown,
       "abcd"->toUnknown,
