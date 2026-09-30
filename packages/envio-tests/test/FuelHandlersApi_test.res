@@ -61,13 +61,13 @@ expectType<TypeEqual<NewGreeting["block"]["id"], string>>(true);
 expectType<TypeEqual<NewGreeting["block"]["time"], number>>(true);
 expectType<TypeEqual<NewGreeting["transaction"]["id"], string>>(true);
 
-// Log params decode to the ABI's Sway struct shapes.
-expectType<TypeEqual<NewGreeting["params"]["user"]["bits"], string>>(true);
+// Log params decode to the ABI's Sway struct shapes; b256 to a 0x hex string.
+expectType<TypeEqual<NewGreeting["params"]["user"]["bits"], \`0x\${string}\`>>(true);
 expectType<TypeEqual<NewGreeting["params"]["greeting"]["value"], string>>(true);
 
 type ClearGreeting = FuelEvent<"Greeter", "ClearGreeting">;
 expectType<TypeEqual<ClearGreeting["eventName"], "ClearGreeting">>(true);
-expectType<TypeEqual<ClearGreeting["params"]["user"]["bits"], string>>(true);
+expectType<TypeEqual<ClearGreeting["params"]["user"]["bits"], \`0x\${string}\`>>(true);
 `)
   )
 
@@ -356,7 +356,7 @@ chains:
 import type { FuelEvent } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
-expectType<TypeEqual<FuelEvent<"Signer", "Signature">["params"], string>>(true);
+expectType<TypeEqual<FuelEvent<"Signer", "Signature">["params"], \`0x\${string}\`>>(true);
 `,
     )->ignore
   )

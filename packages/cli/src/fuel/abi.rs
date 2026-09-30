@@ -218,7 +218,7 @@ impl FuelAbi {
                         //int ts/js
                         "u8" | "u16" | "u32" => Int.get_ok_expr(),
                         "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.get_ok_expr(),
-                        "b256" | "struct std::b512::B512" => String.get_ok_expr(),
+                        "b256" | "struct std::b512::B512" => Hex.get_ok_expr(),
                         "str" | "struct std::string::String" => String.get_ok_expr(),
                         type_field if type_field.starts_with("str[") => String.get_ok_expr(),
                         "struct std::vec::Vec" => Array(Box::new(GenericParam(
