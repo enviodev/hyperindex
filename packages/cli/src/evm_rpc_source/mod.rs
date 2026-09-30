@@ -19,10 +19,10 @@ use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
-    encode_address, EventParams, Log as DecoderLog, OnEventRegistrationInput,
+    encode_address, Log as DecoderLog, OnEventRegistrationInput,
 };
 use crate::evm_hypersync_source::EventItem;
-use crate::js_value::ToJs;
+use crate::js_value::JsTape;
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
@@ -79,7 +79,7 @@ impl RawLog {
         &self,
         src_address: String,
         on_event_registration_index: i64,
-        params: EventParams,
+        params: JsTape,
     ) -> anyhow::Result<EventItem> {
         let to_i64 = |hex: &str| -> anyhow::Result<i64> {
             parse_hex_u64(hex)?
@@ -92,7 +92,7 @@ impl RawLog {
             log_index: to_i64(&self.log_index).context("log.logIndex")?,
             src_address,
             on_event_registration_index,
-            params: ToJs(params),
+            params,
         })
     }
 

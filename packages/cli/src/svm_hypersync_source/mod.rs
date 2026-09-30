@@ -27,10 +27,9 @@ use hypersync_solana_net_types::query::SolanaQuery;
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
-use crate::js_value::ToJs;
+use crate::js_value::JsTape;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
-use borsh_decoder::InstructionArgs;
 use config::SvmClientConfig;
 use query::SvmQuery;
 use selection::{route_instruction, SelectionBuilder, SvmProgramInput};
@@ -399,10 +398,10 @@ pub struct EventItem {
     /// registration selected them.
     pub data: Uint8Array,
     pub is_inner: bool,
-    /// Borsh-decoded args as a JS value tree (wide integers as bigint);
-    /// `Some` exactly when the routed registration selected `args`. An
+    /// Borsh-decoded args (wide integers as bigint); `Some` exactly when the
+    /// routed registration selected `args`. An
     /// instruction its layout rejects never becomes an item at all.
-    pub args: Option<ToJs<InstructionArgs>>,
+    pub args: Option<JsTape>,
     /// Logs scoped to this instruction; `Some` only when the routed
     /// registration selected `fields.log`.
     pub logs: Option<Vec<LogItem>>,
@@ -535,10 +534,7 @@ fn build_event_items(
                     accounts: instr.account_arguments.clone(),
                     data: instr.data.clone().into(),
                     is_inner: instr.is_inner,
-                    args: decoded
-                        .as_ref()
-                        .filter(|_| reg.selects_args)
-                        .map(|args| ToJs(args.clone())),
+                    args: decoded.as_ref().filter(|_| reg.selects_args).cloned(),
                     logs: if !reg.log_columns.is_empty() {
                         logs.as_deref()
                             .map(|logs| project_logs(logs, &reg.log_columns))
@@ -884,7 +880,7 @@ mod tests {
             .map(|item| {
                 (
                     item.on_event_registration_index,
-                    item.args.as_ref().map(|args| JsValue::of(&args.0)),
+                    item.args.as_ref().map(JsValue::of),
                 )
             })
             .collect()
@@ -1285,7 +1281,7 @@ mod tests {
                 .map(|item| (
                     item.transaction_index,
                     item.on_event_registration_index,
-                    item.args.as_ref().map(|args| JsValue::of(&args.0))
+                    item.args.as_ref().map(JsValue::of)
                 ))
                 .collect::<Vec<_>>(),
             vec![

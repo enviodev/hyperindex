@@ -1,246 +1,346 @@
-use napi::bindgen_prelude::{ToNapiValue, Uint8Array};
+use napi::bindgen_prelude::ToNapiValue;
 use napi::{check_status, sys};
 
-/// A decoded value that crosses to JS by emitting itself into a `Sink`, so
-/// the JS values are built straight from the decoder's own representation
-/// with no intermediate tree allocated and freed per item.
-pub trait Emit {
-    fn emit<S: Sink>(&self, sink: &mut S) -> Option<S::Value>;
+/// A JS value recorded as a flat byte tape. Decoders write it on the worker
+/// thread, where every conversion (hex, checksums, base58, bigint limbs)
+/// happens; crossing to JS replays it on the main thread as one sequential
+/// read, so that thread does nothing but create the JS values.
+///
+/// Arrays and objects are written as their length followed by their
+/// elements; an object's elements are key-value pairs, key first.
+#[derive(Clone, Default)]
+pub struct JsTape(Vec<u8>);
 
-    /// Whether `emit` succeeds, checked without building anything: the
-    /// routing-time accept/reject for decoders whose output is only fully
-    /// validated by walking it.
-    fn is_valid(&self) -> bool {
-        self.emit(&mut Validate).is_some()
-    }
-}
+const UNDEFINED: u8 = 0;
+const NULL: u8 = 1;
+const FALSE: u8 = 2;
+const TRUE: u8 = 3;
+const NUM: u8 = 4;
+const BIGINT: u8 = 5;
+const STR: u8 = 6;
+const BYTES: u8 = 7;
+const ARR: u8 = 8;
+const OBJ: u8 = 9;
 
-/// Where an `Emit` walk writes. Every method returns `None` to stop the walk:
-/// `Validate` never does, so a `None` from it is always the data's fault.
-pub trait Sink {
-    type Value;
-    type Arr;
-    type Obj;
-    fn undefined(&mut self) -> Option<Self::Value>;
-    fn null(&mut self) -> Option<Self::Value>;
-    fn bool(&mut self, value: bool) -> Option<Self::Value>;
-    fn num(&mut self, value: f64) -> Option<Self::Value>;
-    /// `words` is the magnitude as little-endian 64-bit words.
-    fn bigint(&mut self, negative: bool, words: &[u64]) -> Option<Self::Value>;
-    fn str(&mut self, value: &str) -> Option<Self::Value>;
-    /// `bytes` as a `0x`-prefixed lowercase hex string.
-    fn hex(&mut self, bytes: &[u8]) -> Option<Self::Value>;
-    /// `bytes` as a `Uint8Array`.
-    fn bytes(&mut self, bytes: &[u8]) -> Option<Self::Value>;
-    fn arr(&mut self, len: usize) -> Option<Self::Arr>;
-    fn push(&mut self, arr: &mut Self::Arr, value: Self::Value) -> Option<()>;
-    fn end_arr(&mut self, arr: Self::Arr) -> Self::Value;
-    fn obj(&mut self) -> Option<Self::Obj>;
-    fn set(&mut self, obj: &mut Self::Obj, key: &str, value: Self::Value) -> Option<()>;
-    fn end_obj(&mut self, obj: Self::Obj) -> Self::Value;
-}
+/// A key NUL-terminated in the tape, so the replay can hand napi a pointer
+/// straight into it; a key holding a NUL itself is length-prefixed instead.
+const NAMED_KEY: u8 = 0;
+const STR_KEY: u8 = 1;
 
-/// Crosses the napi boundary as the JS value `T` emits.
-pub struct ToJs<T>(pub T);
+/// Magnitudes wider than 256 bits don't occur in any ecosystem's ABI.
+const MAX_BIGINT_WORDS: usize = 4;
 
-impl<T: Emit> ToNapiValue for ToJs<T> {
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let mut js = JsSink { env, error: None };
-        val.0.emit(&mut js).ok_or_else(|| {
-            js.error.take().unwrap_or_else(|| {
-                napi::Error::from_reason("a decoded value stopped emitting after it validated")
-            })
-        })
-    }
-}
-
-/// Walks a value without building anything.
-struct Validate;
-
-impl Sink for Validate {
-    type Value = ();
-    type Arr = ();
-    type Obj = ();
-    fn undefined(&mut self) -> Option<()> {
-        Some(())
-    }
-    fn null(&mut self) -> Option<()> {
-        Some(())
-    }
-    fn bool(&mut self, _: bool) -> Option<()> {
-        Some(())
-    }
-    fn num(&mut self, _: f64) -> Option<()> {
-        Some(())
-    }
-    fn bigint(&mut self, _: bool, _: &[u64]) -> Option<()> {
-        Some(())
-    }
-    fn str(&mut self, _: &str) -> Option<()> {
-        Some(())
-    }
-    fn hex(&mut self, _: &[u8]) -> Option<()> {
-        Some(())
-    }
-    fn bytes(&mut self, _: &[u8]) -> Option<()> {
-        Some(())
-    }
-    fn arr(&mut self, _: usize) -> Option<()> {
-        Some(())
-    }
-    fn push(&mut self, _: &mut (), _: ()) -> Option<()> {
-        Some(())
-    }
-    fn end_arr(&mut self, _: ()) {}
-    fn obj(&mut self) -> Option<()> {
-        Some(())
-    }
-    fn set(&mut self, _: &mut (), _: &str, _: ()) -> Option<()> {
-        Some(())
-    }
-    fn end_obj(&mut self, _: ()) {}
-}
-
-/// Builds JS values in place. A `None` means a napi call failed, with its
-/// error in `error`.
-struct JsSink {
-    env: sys::napi_env,
-    error: Option<napi::Error>,
-}
-
-/// Hex strings up to this many bytes (a B512's included) are built on the
-/// stack.
-const HEX_BUF: usize = 160;
-
-/// Keys shorter than this are NUL-terminated on the stack. Kept small: the
-/// buffer is zeroed once per property set.
-const KEY_BUF: usize = 64;
-
-impl JsSink {
-    fn ok<T>(&mut self, result: napi::Result<T>) -> Option<T> {
-        result.map_err(|e| self.error = Some(e)).ok()
+impl JsTape {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    fn new_value(
-        &mut self,
-        create: impl FnOnce(sys::napi_env, *mut sys::napi_value) -> sys::napi_status,
-    ) -> Option<sys::napi_value> {
-        let mut value = std::ptr::null_mut();
-        let status = create(self.env, &mut value);
-        self.ok(check_status!(status)).map(|()| value)
+    fn tag(&mut self, tag: u8) {
+        self.0.push(tag);
     }
-}
 
-// SAFETY (all `unsafe` below): `env` is the live env `ToJs::to_napi_value`
-// was called with, and every pointer passed to napi outlives the call.
-impl Sink for JsSink {
-    type Value = sys::napi_value;
-    type Arr = (sys::napi_value, u32);
-    type Obj = sys::napi_value;
+    fn u64(&mut self, value: u64) {
+        self.0.extend_from_slice(&value.to_le_bytes());
+    }
 
-    fn undefined(&mut self) -> Option<sys::napi_value> {
-        self.new_value(|env, out| unsafe { sys::napi_get_undefined(env, out) })
+    fn len_prefixed(&mut self, tag: u8, bytes: &[u8]) {
+        self.tag(tag);
+        self.u64(bytes.len() as u64);
+        self.0.extend_from_slice(bytes);
     }
-    fn null(&mut self) -> Option<sys::napi_value> {
-        self.new_value(|env, out| unsafe { sys::napi_get_null(env, out) })
+
+    pub fn undefined(&mut self) {
+        self.tag(UNDEFINED);
     }
-    fn bool(&mut self, value: bool) -> Option<sys::napi_value> {
-        self.new_value(|env, out| unsafe { sys::napi_get_boolean(env, value, out) })
+
+    pub fn null(&mut self) {
+        self.tag(NULL);
     }
-    fn num(&mut self, value: f64) -> Option<sys::napi_value> {
-        self.new_value(|env, out| unsafe { sys::napi_create_double(env, value, out) })
+
+    pub fn bool(&mut self, value: bool) {
+        self.tag(if value { TRUE } else { FALSE });
     }
-    fn bigint(&mut self, negative: bool, words: &[u64]) -> Option<sys::napi_value> {
+
+    pub fn num(&mut self, value: f64) {
+        self.tag(NUM);
+        self.0.extend_from_slice(&value.to_le_bytes());
+    }
+
+    /// `words` is the magnitude as little-endian 64-bit words, at most four.
+    pub fn bigint(&mut self, negative: bool, words: &[u64]) {
         let len = words.iter().rposition(|w| *w != 0).map_or(0, |i| i + 1);
-        let words = &words[..len];
-        match (negative, words) {
-            (false, []) => {
-                self.new_value(|env, out| unsafe { sys::napi_create_bigint_uint64(env, 0, out) })
-            }
-            (false, [word]) => self
-                .new_value(|env, out| unsafe { sys::napi_create_bigint_uint64(env, *word, out) }),
-            _ => self.new_value(|env, out| unsafe {
-                sys::napi_create_bigint_words(
-                    env,
-                    i32::from(negative),
-                    words.len(),
-                    words.as_ptr(),
-                    out,
-                )
-            }),
+        assert!(len <= MAX_BIGINT_WORDS, "bigint wider than 256 bits");
+        self.tag(BIGINT);
+        self.0.push(u8::from(negative));
+        self.0.push(len as u8);
+        for word in &words[..len] {
+            self.u64(*word);
         }
     }
-    fn str(&mut self, value: &str) -> Option<sys::napi_value> {
-        self.new_value(|env, out| unsafe {
-            sys::napi_create_string_utf8(env, value.as_ptr().cast(), value.len() as isize, out)
+
+    pub fn str(&mut self, value: &str) {
+        self.len_prefixed(STR, value.as_bytes());
+    }
+
+    /// `bytes` as a `0x`-prefixed lowercase hex string.
+    pub fn hex(&mut self, bytes: &[u8]) {
+        self.tag(STR);
+        self.u64(2 + 2 * bytes.len() as u64);
+        let start = self.0.len();
+        self.0.resize(start + 2 + 2 * bytes.len(), 0);
+        self.0[start..start + 2].copy_from_slice(b"0x");
+        faster_hex::hex_encode(bytes, &mut self.0[start + 2..])
+            .expect("the buffer is sized for the hex");
+    }
+
+    /// `bytes` as a `Uint8Array`.
+    pub fn bytes(&mut self, bytes: &[u8]) {
+        self.len_prefixed(BYTES, bytes);
+    }
+
+    /// An array of the `len` values written next.
+    pub fn arr(&mut self, len: usize) {
+        self.tag(ARR);
+        self.u64(len as u64);
+    }
+
+    /// An object of the `len` key-value pairs written next.
+    pub fn obj(&mut self, len: usize) {
+        self.tag(OBJ);
+        self.u64(len as u64);
+    }
+
+    /// The key of the object entry whose value is written next.
+    pub fn key(&mut self, key: &str) {
+        if key.as_bytes().contains(&0) {
+            self.len_prefixed(STR_KEY, key.as_bytes());
+        } else {
+            self.len_prefixed(NAMED_KEY, key.as_bytes());
+            self.0.push(0);
+        }
+    }
+
+    fn read(&self) -> Reader<'_> {
+        Reader(&self.0)
+    }
+}
+
+/// One value's or key's worth of tape.
+enum Token<'a> {
+    Undefined,
+    Null,
+    Bool(bool),
+    Num(f64),
+    BigInt {
+        negative: bool,
+        words: [u64; MAX_BIGINT_WORDS],
+        len: usize,
+    },
+    Str(&'a [u8]),
+    Bytes(&'a [u8]),
+    Arr(usize),
+    Obj(usize),
+}
+
+enum Key<'a> {
+    /// The key's bytes followed by their NUL terminator.
+    Named(&'a [u8]),
+    Str(&'a [u8]),
+}
+
+struct Reader<'a>(&'a [u8]);
+
+fn corrupt() -> napi::Error {
+    napi::Error::from_reason("a JS value tape ended early or holds an unknown tag")
+}
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, len: usize) -> napi::Result<&'a [u8]> {
+        let (head, tail) = self.0.split_at_checked(len).ok_or_else(corrupt)?;
+        self.0 = tail;
+        Ok(head)
+    }
+
+    fn byte(&mut self) -> napi::Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn u64(&mut self) -> napi::Result<u64> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+    }
+
+    fn len(&mut self) -> napi::Result<usize> {
+        usize::try_from(self.u64()?).map_err(|_| corrupt())
+    }
+
+    fn token(&mut self) -> napi::Result<Token<'a>> {
+        Ok(match self.byte()? {
+            UNDEFINED => Token::Undefined,
+            NULL => Token::Null,
+            FALSE => Token::Bool(false),
+            TRUE => Token::Bool(true),
+            NUM => Token::Num(f64::from_bits(self.u64()?)),
+            BIGINT => {
+                let negative = self.byte()? != 0;
+                let len = usize::from(self.byte()?);
+                let mut words = [0; MAX_BIGINT_WORDS];
+                for word in words.get_mut(..len).ok_or_else(corrupt)? {
+                    *word = self.u64()?;
+                }
+                Token::BigInt {
+                    negative,
+                    words,
+                    len,
+                }
+            }
+            STR => {
+                let len = self.len()?;
+                Token::Str(self.take(len)?)
+            }
+            BYTES => {
+                let len = self.len()?;
+                Token::Bytes(self.take(len)?)
+            }
+            ARR => Token::Arr(self.len()?),
+            OBJ => Token::Obj(self.len()?),
+            _ => return Err(corrupt()),
         })
     }
-    // Inlined, the stack buffer lands in the frame of every recursive decode
-    // step that could reach it, which measurably slows the whole walk.
-    #[inline(never)]
-    fn hex(&mut self, bytes: &[u8]) -> Option<sys::napi_value> {
-        let len = 2 + bytes.len() * 2;
-        let mut stack = [0u8; HEX_BUF];
-        let mut heap = Vec::new();
-        let buf = if len <= HEX_BUF {
-            &mut stack[..len]
-        } else {
-            heap.resize(len, 0);
-            &mut heap[..]
-        };
-        buf[..2].copy_from_slice(b"0x");
-        faster_hex::hex_encode(bytes, &mut buf[2..]).ok()?;
-        self.str(std::str::from_utf8(buf).ok()?)
+
+    fn key(&mut self) -> napi::Result<Key<'a>> {
+        let tag = self.byte()?;
+        let len = self.len()?;
+        Ok(match tag {
+            NAMED_KEY => Key::Named(self.take(len + 1)?),
+            STR_KEY => Key::Str(self.take(len)?),
+            _ => return Err(corrupt()),
+        })
     }
-    fn bytes(&mut self, bytes: &[u8]) -> Option<sys::napi_value> {
-        let array = Uint8Array::from(bytes.to_vec());
-        let result = unsafe { Uint8Array::to_napi_value(self.env, array) };
-        self.ok(result)
+}
+
+impl ToNapiValue for JsTape {
+    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
+        let mut reader = val.read();
+        let value = Replay { env }.value(&mut reader)?;
+        match reader.0 {
+            [] => Ok(value),
+            _ => Err(corrupt()),
+        }
     }
-    fn arr(&mut self, len: usize) -> Option<(sys::napi_value, u32)> {
-        let arr = self
-            .new_value(|env, out| unsafe { sys::napi_create_array_with_length(env, len, out) })?;
-        Some((arr, 0))
+}
+
+struct Replay {
+    env: sys::napi_env,
+}
+
+// SAFETY (all `unsafe` below): `env` is the live env `to_napi_value` was
+// called with, and every pointer passed to napi outlives the call.
+impl Replay {
+    fn new_value(
+        &self,
+        create: impl FnOnce(sys::napi_env, *mut sys::napi_value) -> sys::napi_status,
+    ) -> napi::Result<sys::napi_value> {
+        let mut value = std::ptr::null_mut();
+        check_status!(create(self.env, &mut value))?;
+        Ok(value)
     }
-    fn push(&mut self, arr: &mut (sys::napi_value, u32), value: sys::napi_value) -> Option<()> {
-        let status = unsafe { sys::napi_set_element(self.env, arr.0, arr.1, value) };
-        arr.1 += 1;
-        self.ok(check_status!(status))
+
+    fn str(&self, bytes: &[u8]) -> napi::Result<sys::napi_value> {
+        self.new_value(|env, out| unsafe {
+            sys::napi_create_string_utf8(env, bytes.as_ptr().cast(), bytes.len() as isize, out)
+        })
     }
-    fn end_arr(&mut self, arr: (sys::napi_value, u32)) -> sys::napi_value {
-        arr.0
-    }
-    fn obj(&mut self) -> Option<sys::napi_value> {
-        self.new_value(|env, out| unsafe { sys::napi_create_object(env, out) })
-    }
-    /// V8 interns the keys `napi_set_named_property` takes, which makes it
-    /// the fastest way to set a property; it wants a NUL-terminated key, so
-    /// a key that doesn't fit the stack buffer or holds a NUL goes through a
-    /// JS string instead.
-    fn set(&mut self, obj: &mut sys::napi_value, key: &str, value: sys::napi_value) -> Option<()> {
-        let obj = *obj;
-        let mut buf = [0u8; KEY_BUF];
-        let status = if key.len() < KEY_BUF && !key.as_bytes().contains(&0) {
-            buf[..key.len()].copy_from_slice(key.as_bytes());
-            unsafe { sys::napi_set_named_property(self.env, obj, buf.as_ptr().cast(), value) }
-        } else {
-            let key = self.str(key)?;
-            unsafe { sys::napi_set_property(self.env, obj, key, value) }
-        };
-        self.ok(check_status!(status))
-    }
-    fn end_obj(&mut self, obj: sys::napi_value) -> sys::napi_value {
-        obj
+
+    fn value(&self, reader: &mut Reader) -> napi::Result<sys::napi_value> {
+        match reader.token()? {
+            Token::Undefined => {
+                self.new_value(|env, out| unsafe { sys::napi_get_undefined(env, out) })
+            }
+            Token::Null => self.new_value(|env, out| unsafe { sys::napi_get_null(env, out) }),
+            Token::Bool(value) => {
+                self.new_value(|env, out| unsafe { sys::napi_get_boolean(env, value, out) })
+            }
+            Token::Num(value) => {
+                self.new_value(|env, out| unsafe { sys::napi_create_double(env, value, out) })
+            }
+            Token::BigInt {
+                negative: false,
+                words,
+                len: 0 | 1,
+            } => self.new_value(|env, out| unsafe {
+                sys::napi_create_bigint_uint64(env, words[0], out)
+            }),
+            Token::BigInt {
+                negative,
+                words,
+                len,
+            } => self.new_value(|env, out| unsafe {
+                sys::napi_create_bigint_words(env, i32::from(negative), len, words.as_ptr(), out)
+            }),
+            Token::Str(bytes) => self.str(bytes),
+            Token::Bytes(bytes) => {
+                let mut data = std::ptr::null_mut();
+                let buffer = self.new_value(|env, out| unsafe {
+                    sys::napi_create_arraybuffer(env, bytes.len(), &mut data, out)
+                })?;
+                if !bytes.is_empty() {
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(bytes.as_ptr(), data.cast(), bytes.len())
+                    };
+                }
+                self.new_value(|env, out| unsafe {
+                    sys::napi_create_typedarray(
+                        env,
+                        sys::TypedarrayType::uint8_array,
+                        bytes.len(),
+                        buffer,
+                        0,
+                        out,
+                    )
+                })
+            }
+            Token::Arr(len) => {
+                let arr = self.new_value(|env, out| unsafe {
+                    sys::napi_create_array_with_length(env, len, out)
+                })?;
+                for index in 0..len {
+                    let item = self.value(reader)?;
+                    let index = u32::try_from(index).map_err(|_| corrupt())?;
+                    check_status!(unsafe { sys::napi_set_element(self.env, arr, index, item) })?;
+                }
+                Ok(arr)
+            }
+            Token::Obj(len) => {
+                let obj =
+                    self.new_value(|env, out| unsafe { sys::napi_create_object(env, out) })?;
+                for _ in 0..len {
+                    let key = reader.key()?;
+                    let value = self.value(reader)?;
+                    // `napi_set_named_property` is the fastest way to set a
+                    // property: V8 interns the NUL-terminated key.
+                    check_status!(match key {
+                        Key::Named(key) => unsafe {
+                            sys::napi_set_named_property(self.env, obj, key.as_ptr().cast(), value)
+                        },
+                        Key::Str(key) => {
+                            let key = self.str(key)?;
+                            unsafe { sys::napi_set_property(self.env, obj, key, value) }
+                        }
+                    })?;
+                }
+                Ok(obj)
+            }
+        }
     }
 }
 
 #[cfg(test)]
 pub(crate) mod test_value {
-    use super::{Emit, Sink};
+    use super::{JsTape, Key, Reader, Token};
     use ruint::aliases::U256;
     use ruint::UintTryFrom;
 
-    /// The JS value an `Emit` produces, for Rust tests to assert on.
+    /// The JS value a tape replays to, for Rust tests to assert on.
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) enum JsValue {
         Undefined,
@@ -255,8 +355,43 @@ pub(crate) mod test_value {
     }
 
     impl JsValue {
-        pub(crate) fn of(value: &impl Emit) -> Self {
-            value.emit(&mut Tree).expect("emit a test value")
+        pub(crate) fn of(tape: &JsTape) -> Self {
+            let mut reader = tape.read();
+            let value = Self::read(&mut reader);
+            assert!(reader.0.is_empty(), "the tape holds more than one value");
+            value
+        }
+
+        fn read(reader: &mut Reader) -> Self {
+            let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
+            match reader.token().unwrap() {
+                Token::Undefined => JsValue::Undefined,
+                Token::Null => JsValue::Null,
+                Token::Bool(value) => JsValue::Bool(value),
+                Token::Num(value) => JsValue::Num(value),
+                Token::BigInt {
+                    negative,
+                    words,
+                    len,
+                } => JsValue::BigInt {
+                    negative,
+                    magnitude: U256::from_limbs_slice(&words[..len]),
+                },
+                Token::Str(bytes) => JsValue::Str(text(bytes)),
+                Token::Bytes(bytes) => JsValue::Bytes(bytes.to_vec()),
+                Token::Arr(len) => JsValue::Arr((0..len).map(|_| Self::read(reader)).collect()),
+                Token::Obj(len) => JsValue::Obj(
+                    (0..len)
+                        .map(|_| {
+                            let key = match reader.key().unwrap() {
+                                Key::Named(key) => text(&key[..key.len() - 1]),
+                                Key::Str(key) => text(key),
+                            };
+                            (key, Self::read(reader))
+                        })
+                        .collect(),
+                ),
+            }
         }
 
         pub(crate) fn uint<T>(value: T) -> Self
@@ -289,64 +424,60 @@ pub(crate) mod test_value {
             )
         }
     }
+}
 
-    struct Tree;
+#[cfg(test)]
+mod tests {
+    use super::test_value::JsValue;
+    use super::JsTape;
+    use ruint::aliases::U256;
 
-    impl Sink for Tree {
-        type Value = JsValue;
-        type Arr = Vec<JsValue>;
-        type Obj = Vec<(String, JsValue)>;
-        fn undefined(&mut self) -> Option<JsValue> {
-            Some(JsValue::Undefined)
-        }
-        fn null(&mut self) -> Option<JsValue> {
-            Some(JsValue::Null)
-        }
-        fn bool(&mut self, value: bool) -> Option<JsValue> {
-            Some(JsValue::Bool(value))
-        }
-        fn num(&mut self, value: f64) -> Option<JsValue> {
-            Some(JsValue::Num(value))
-        }
-        fn bigint(&mut self, negative: bool, words: &[u64]) -> Option<JsValue> {
-            Some(JsValue::BigInt {
-                negative,
-                magnitude: U256::checked_from_limbs_slice(words)?,
-            })
-        }
-        fn str(&mut self, value: &str) -> Option<JsValue> {
-            Some(JsValue::str(value))
-        }
-        fn hex(&mut self, bytes: &[u8]) -> Option<JsValue> {
-            Some(JsValue::Str(format!("0x{}", faster_hex::hex_string(bytes))))
-        }
-        fn bytes(&mut self, bytes: &[u8]) -> Option<JsValue> {
-            Some(JsValue::Bytes(bytes.to_vec()))
-        }
-        fn arr(&mut self, len: usize) -> Option<Vec<JsValue>> {
-            Some(Vec::with_capacity(len))
-        }
-        fn push(&mut self, arr: &mut Vec<JsValue>, value: JsValue) -> Option<()> {
-            arr.push(value);
-            Some(())
-        }
-        fn end_arr(&mut self, arr: Vec<JsValue>) -> JsValue {
-            JsValue::Arr(arr)
-        }
-        fn obj(&mut self) -> Option<Vec<(String, JsValue)>> {
-            Some(Vec::new())
-        }
-        fn set(
-            &mut self,
-            obj: &mut Vec<(String, JsValue)>,
-            key: &str,
-            value: JsValue,
-        ) -> Option<()> {
-            obj.push((key.to_string(), value));
-            Some(())
-        }
-        fn end_obj(&mut self, obj: Vec<(String, JsValue)>) -> JsValue {
-            JsValue::Obj(obj)
-        }
+    #[test]
+    fn reads_back_every_kind_of_value_it_records() {
+        let mut tape = JsTape::new();
+        tape.obj(3);
+        tape.key("scalars");
+        tape.arr(6);
+        tape.undefined();
+        tape.null();
+        tape.bool(true);
+        tape.num(-1.5);
+        tape.bigint(false, &[7, 0, 0, 0]);
+        tape.bigint(true, &[1, 2]);
+        tape.key("a\0b");
+        tape.arr(3);
+        tape.str("é");
+        tape.hex(&[0xab, 0x01]);
+        tape.bytes(&[]);
+        tape.key("");
+        tape.obj(0);
+        assert_eq!(
+            JsValue::of(&tape),
+            JsValue::obj([
+                (
+                    "scalars",
+                    JsValue::Arr(vec![
+                        JsValue::Undefined,
+                        JsValue::Null,
+                        JsValue::Bool(true),
+                        JsValue::Num(-1.5),
+                        JsValue::uint(7u64),
+                        JsValue::BigInt {
+                            negative: true,
+                            magnitude: U256::from_limbs([1, 2, 0, 0]),
+                        },
+                    ])
+                ),
+                (
+                    "a\0b",
+                    JsValue::Arr(vec![
+                        JsValue::str("é"),
+                        JsValue::str("0xab01"),
+                        JsValue::Bytes(vec![]),
+                    ])
+                ),
+                ("", JsValue::Obj(vec![])),
+            ])
+        );
     }
 }

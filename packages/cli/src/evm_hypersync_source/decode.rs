@@ -9,7 +9,10 @@ use hypersync_client::simple_types;
 
 use crate::address_store::{AddressStore, Emitter, SetCache, StoreInner};
 use crate::evm_hypersync_source::selection::TopicSelectionInput;
-use crate::evm_hypersync_source::types::{EventParams, Log, OnEventRegistrationInput, ParamMeta};
+use crate::evm_hypersync_source::types::{
+    event_params_tape, Log, OnEventRegistrationInput, ParamMeta,
+};
+use crate::js_value::JsTape;
 
 /// One topic position's constraint, resolved from a registration's `where`.
 enum TopicConstraint {
@@ -137,7 +140,7 @@ struct OnEventRegistration {
     /// Earliest block this registration accepts; `None` is unrestricted.
     start_block: Option<i64>,
     topic_filters: TopicFilters,
-    params: Arc<[ParamMeta]>,
+    params: Vec<ParamMeta>,
     decoder: DynSolEvent,
 }
 
@@ -166,7 +169,7 @@ impl OnEventRegistration {
             start_block: ep.start_block,
             topic_filters: TopicFilters::parse(&ep.topic_selections)
                 .context("parse topic filters")?,
-            params: ep.params.clone().into(),
+            params: ep.params.clone(),
             decoder: build_event_decoder(**sighash, &ep.params).context("build decoder")?,
         })
     }
@@ -411,14 +414,13 @@ impl SelectionDecoder {
                     .map(|t| t.as_ref().unwrap().into()),
                 data,
             );
-            if let Ok(decoded) = decoded {
+            let params = decoded.ok().and_then(|decoded| {
+                event_params_tape(&decoded, &reg.params, self.checksummed_addresses)
+            });
+            if let Some(params) = params {
                 routed.push(RoutedEvent {
                     index: reg.index,
-                    params: EventParams {
-                        params: reg.params.clone(),
-                        decoded,
-                        checksummed_addresses: self.checksummed_addresses,
-                    },
+                    params,
                 });
             }
         }
@@ -428,7 +430,7 @@ impl SelectionDecoder {
 
 pub(crate) struct RoutedEvent {
     pub index: i64,
-    pub params: EventParams,
+    pub params: JsTape,
 }
 
 /// Build the positional decoder for one registration. The decoder's topic0 is

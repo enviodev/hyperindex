@@ -17,12 +17,12 @@ pub(crate) mod query;
 pub(crate) mod selection;
 pub(crate) mod types;
 
-use crate::js_value::ToJs;
+use crate::js_value::JsTape;
 use config::ClientConfig;
 use decode::{Decoder, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
-use types::{encode_address, Block, EventParams, OnEventRegistrationInput, RollbackGuard};
+use types::{encode_address, Block, OnEventRegistrationInput, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -375,7 +375,7 @@ pub struct EventItem {
     /// The registration this log routed to, as passed to the client
     /// constructor. Logs that route nowhere never cross the boundary.
     pub on_event_registration_index: i64,
-    pub params: ToJs<EventParams>,
+    pub params: JsTape,
 }
 
 /// The always-needed block fields, surfaced per block number so the consumer can
@@ -507,7 +507,7 @@ fn process_response(
                     block_number: flat.block_number,
                     transaction_index: flat.transaction_index,
                     on_event_registration_index: routed.index,
-                    params: ToJs(routed.params),
+                    params: routed.params,
                 });
             }
         }

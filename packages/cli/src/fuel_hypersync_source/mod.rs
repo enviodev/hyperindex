@@ -10,9 +10,8 @@ mod types;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_store::{BlockStore, FuelBlockRow};
-use crate::fuel::log_decoder::DecodedLog;
 use crate::hex::decode_prefixed;
-use crate::js_value::ToJs;
+use crate::js_value::JsTape;
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
@@ -167,10 +166,9 @@ pub struct EventItem {
     /// the `BlockStore` returned alongside this response.
     pub block_height: i64,
     pub src_address: String,
-    /// The LogData receipt's data, validated against the registration's ABI
-    /// and decoded into JS values as it crosses. A receipt its logged type
-    /// rejects never becomes an item at all.
-    pub params: Option<ToJs<DecodedLog>>,
+    /// The LogData receipt's data decoded with the registration's ABI. A
+    /// receipt its logged type rejects never becomes an item at all.
+    pub params: Option<JsTape>,
     pub sub_id: Option<String>,
     pub val: Option<BigInt>,
     pub amount: Option<BigInt>,
@@ -353,7 +351,7 @@ fn route_receipts(
                         tx_id: receipt.tx_id.clone(),
                         block_height: receipt.block_height,
                         src_address: src_address.clone(),
-                        params: Some(ToJs(params)),
+                        params: Some(params),
                         sub_id: None,
                         val: None,
                         amount: None,
@@ -484,7 +482,7 @@ mod tests {
             tx_id: "0xtx".to_string(),
             block_height: 42,
             receipt_type,
-            data: Some(vec![0x01].into()),
+            data: Some(vec![0x01]),
             rb: Some(7),
             val: Some(100),
             sub_id: Some("0xsub".to_string()),
@@ -591,14 +589,14 @@ mod tests {
         );
         // One data byte: a u8 for registration 0, too short for 1's u64.
         let mut empty = raw_receipt(6);
-        empty.data = Some(Vec::new().into());
+        empty.data = Some(Vec::new());
         let items = route(&store, &set, &built, vec![raw_receipt(6), empty]).unwrap();
         assert_eq!(
             items
                 .into_iter()
                 .map(|i| (
                     i.on_event_registration_index,
-                    i.params.map(|p| JsValue::of(&p.0))
+                    i.params.map(|p| JsValue::of(&p))
                 ))
                 .collect::<Vec<_>>(),
             vec![(0, Some(JsValue::Num(1.0)))]

@@ -8,7 +8,7 @@ use fuel_abi_types::abi::unified_program::{
 };
 use serde::Deserialize;
 
-use crate::js_value::{Emit, Sink};
+use crate::js_value::JsTape;
 
 /// A logged type resolved against its ABI, with every generic parameter
 /// substituted, so decoding is a plain walk over the tree.
@@ -62,31 +62,21 @@ impl LogDecoder {
         Ok(Self(Arc::new(coder)))
     }
 
-    /// Check a LogData receipt's data against the logged type. `None` when it
+    /// Decode a LogData receipt's data as the logged type. `None` when it
     /// rejects the data: too few bytes, trailing bytes, an invalid bool or
     /// enum case, or more zero-sized values than the data can account for.
     /// Any contract can emit a receipt under any `rb`, so data from outside
     /// the ABI's contract routinely lands here; the caller drops the receipt
     /// for this registration only, rather than failing the indexer on data
     /// it doesn't control.
-    pub fn decode(&self, data: &Arc<[u8]>) -> Option<DecodedLog> {
-        let log = DecodedLog {
-            coder: self.0.clone(),
-            data: data.clone(),
+    pub fn decode(&self, data: &[u8]) -> Option<JsTape> {
+        let mut input = Input {
+            buf: data,
+            zero_sized_budget: data.len() + ZERO_SIZED_BUDGET_SLACK,
         };
-        log.is_valid().then_some(log)
-    }
-}
-
-/// LogData its logged type accepted, emitted to JS straight from the bytes.
-pub struct DecodedLog {
-    coder: Arc<Coder>,
-    data: Arc<[u8]>,
-}
-
-impl Emit for DecodedLog {
-    fn emit<S: Sink>(&self, sink: &mut S) -> Option<S::Value> {
-        walk(&self.coder, &self.data, sink)
+        let mut tape = JsTape::new();
+        self.0.decode(&mut input, &mut tape)?;
+        input.buf.is_empty().then_some(tape)
     }
 }
 
@@ -200,101 +190,86 @@ impl<'a> Input<'a> {
 /// enum tag, well within the bound.
 const ZERO_SIZED_BUDGET_SLACK: usize = 1024;
 
-/// Decodes all of `data`, rejecting trailing bytes.
-fn walk<S: Sink>(coder: &Coder, data: &[u8], sink: &mut S) -> Option<S::Value> {
-    let mut input = Input {
-        buf: data,
-        zero_sized_budget: data.len() + ZERO_SIZED_BUDGET_SLACK,
-    };
-    let value = coder.decode(&mut input, sink)?;
-    input.buf.is_empty().then_some(value)
-}
-
 impl Coder {
-    fn decode_seq<'a, S: Sink>(
+    fn decode_seq<'a>(
         coders: impl Iterator<Item = &'a Coder>,
         len: usize,
         input: &mut Input,
-        sink: &mut S,
-    ) -> Option<S::Value> {
-        let mut arr = sink.arr(len)?;
+        tape: &mut JsTape,
+    ) -> Option<()> {
+        tape.arr(len);
         for coder in coders {
-            let value = coder.decode(input, sink)?;
-            sink.push(&mut arr, value)?;
+            coder.decode(input, tape)?;
         }
-        Some(sink.end_arr(arr))
+        Some(())
     }
 
-    fn decode<S: Sink>(&self, input: &mut Input, sink: &mut S) -> Option<S::Value> {
+    fn decode(&self, input: &mut Input, tape: &mut JsTape) -> Option<()> {
         let remaining = input.buf.len();
-        let value = match self {
-            Coder::Unit => sink.undefined()?,
+        match self {
+            Coder::Unit => tape.undefined(),
             Coder::Bool => match input.take(1)?[0] {
-                0 => sink.bool(false)?,
-                1 => sink.bool(true)?,
+                0 => tape.bool(false),
+                1 => tape.bool(true),
                 _ => return None,
             },
             Coder::Num(n) => {
                 let bytes = input.take(*n)?;
-                sink.num(bytes.iter().fold(0.0, |acc, b| acc * 256.0 + f64::from(*b)))?
+                tape.num(bytes.iter().fold(0.0, |acc, b| acc * 256.0 + f64::from(*b)))
             }
             Coder::BigInt(n) => {
                 let mut words = [0u64; 4];
                 for (word, limb) in words.iter_mut().zip(input.take(*n)?.rchunks_exact(8)) {
                     *word = u64::from_be_bytes(limb.try_into().ok()?);
                 }
-                sink.bigint(false, &words[..n / 8])?
+                tape.bigint(false, &words)
             }
-            Coder::Hex(n) => sink.hex(input.take(*n)?)?,
-            Coder::StrArray(n) => sink.str(&String::from_utf8_lossy(input.take(*n)?))?,
+            Coder::Hex(n) => tape.hex(input.take(*n)?),
+            Coder::StrArray(n) => tape.str(&String::from_utf8_lossy(input.take(*n)?)),
             Coder::Str => {
                 let len = input.take_len()?;
-                sink.str(&String::from_utf8_lossy(input.take(len)?))?
+                tape.str(&String::from_utf8_lossy(input.take(len)?))
             }
             Coder::Bytes => {
                 let len = input.take_len()?;
-                sink.bytes(input.take(len)?)?
+                tape.bytes(input.take(len)?)
             }
             Coder::RawSlice => {
                 let len = input.take_len()?;
                 let bytes = input.take(len)?;
-                let mut arr = sink.arr(len)?;
+                tape.arr(len);
                 for byte in bytes {
-                    let value = sink.num(f64::from(*byte))?;
-                    sink.push(&mut arr, value)?;
+                    tape.num(f64::from(*byte));
                 }
-                sink.end_arr(arr)
             }
             Coder::Array(element, n) => {
-                Self::decode_seq(std::iter::repeat_n(&**element, *n), *n, input, sink)?
+                Self::decode_seq(std::iter::repeat_n(&**element, *n), *n, input, tape)?
             }
             Coder::Vec(element) => {
                 let len = input.take_len()?;
-                Self::decode_seq(std::iter::repeat_n(&**element, len), len, input, sink)?
+                Self::decode_seq(std::iter::repeat_n(&**element, len), len, input, tape)?
             }
-            Coder::Tuple(items) => Self::decode_seq(items.iter(), items.len(), input, sink)?,
+            Coder::Tuple(items) => Self::decode_seq(items.iter(), items.len(), input, tape)?,
             Coder::Struct(fields) => {
-                let mut obj = sink.obj()?;
+                tape.obj(fields.len());
                 for (key, coder) in fields {
-                    let value = coder.decode(input, sink)?;
-                    sink.set(&mut obj, key, value)?;
+                    tape.key(key);
+                    coder.decode(input, tape)?;
                 }
-                sink.end_obj(obj)
             }
             Coder::Enum(variants) => {
                 let (name, payload) = variants.get(usize::try_from(input.take_u64()?).ok()?)?;
-                let case = sink.str(name)?;
-                let payload = payload.decode(input, sink)?;
-                let mut obj = sink.obj()?;
-                sink.set(&mut obj, "case", case)?;
-                sink.set(&mut obj, "payload", payload)?;
-                sink.end_obj(obj)
+                tape.obj(2);
+                tape.key("case");
+                tape.str(name);
+                tape.key("payload");
+                payload.decode(input, tape)?;
             }
-        };
+        }
         if input.buf.len() == remaining {
             input.zero_sized_budget = input.zero_sized_budget.checked_sub(1)?;
         }
-        Some(value)
+        Some(())
     }
 }
 
@@ -322,7 +297,7 @@ mod tests {
 
     impl LogDecoder {
         fn decode_tree(&self, data: &[u8]) -> Option<JsValue> {
-            self.decode(&Arc::from(data)).map(|log| JsValue::of(&log))
+            self.decode(data).map(|tape| JsValue::of(&tape))
         }
     }
 

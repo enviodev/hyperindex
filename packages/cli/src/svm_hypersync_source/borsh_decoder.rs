@@ -11,12 +11,12 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use hypersync_client_solana::decode::{
-    decode_field, FieldType as SvmFieldType, NamedField as UpstreamNamedField,
+    FieldType as SvmFieldType, NamedField as UpstreamNamedField,
 };
 
 use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
 use crate::config_parsing::system_config::arg_type_to_field_type;
-use crate::js_value::{Emit, Sink};
+use crate::js_value::JsTape;
 
 /// A program's nominal types, shared by every instruction of the program.
 pub(crate) type DefinedTypes = BTreeMap<String, SvmFieldType>;
@@ -69,163 +69,173 @@ impl ArgsSchema {
     }
 
     /// Decode an instruction's data into its args. `None` when the layout
-    /// rejects the data: too few bytes, trailing bytes, an unknown enum tag.
-    /// Real on-chain calls drift from layouts in small ways (a program upgrade
-    /// that kept its discriminator, a hand-rolled wrapper), and one bad row
-    /// must not kill the worker, so the caller drops the instruction for this
-    /// layout only.
-    pub(crate) fn decode(self: &Arc<Self>, data: &[u8]) -> Option<InstructionArgs> {
-        let mut buf = data.get(self.prefix_len..)?;
-        let values = self
-            .fields
-            .iter()
-            .map(|field| decode_field(&field.ty, &self.defined_types, &mut buf).ok())
-            .collect::<Option<_>>()?;
-        if !buf.is_empty() {
-            return None;
-        }
-        let args = InstructionArgs {
-            schema: self.clone(),
-            values,
+    /// rejects the data: too few bytes, trailing bytes, an invalid bool,
+    /// option or enum tag, invalid UTF-8, a non-finite float, or more
+    /// zero-sized values than the data can account for. Real on-chain calls
+    /// drift from layouts in small ways (a program upgrade that kept its
+    /// discriminator, a hand-rolled wrapper), and one bad row must not kill
+    /// the worker, so the caller drops the instruction for this layout only.
+    pub(crate) fn decode(&self, data: &[u8]) -> Option<JsTape> {
+        let buf = data.get(self.prefix_len..)?;
+        let mut input = Input {
+            buf,
+            zero_sized_budget: buf.len() + ZERO_SIZED_BUDGET_SLACK,
         };
-        args.is_valid().then_some(args)
+        let mut tape = JsTape::new();
+        write_struct(&self.fields, &self.defined_types, &mut input, &mut tape)?;
+        input.buf.is_empty().then_some(tape)
     }
 }
 
-/// Instruction args their layout accepted, as the upstream decoder's JSON,
-/// one value per field.
-///
-/// The upstream decoder renders wide integers as decimal strings and u8
-/// sequences three different ways, so the JS values are emitted by walking
-/// the JSON against the field types — the only way to tell a wide-integer
-/// decimal string from a Pubkey or a genuine `string` field.
-#[derive(Clone)]
-pub struct InstructionArgs {
-    schema: Arc<ArgsSchema>,
-    values: Arc<[serde_json::Value]>,
+/// The data left to decode, and how many more values may be decoded without
+/// consuming any of it.
+struct Input<'a> {
+    buf: &'a [u8],
+    zero_sized_budget: usize,
 }
 
-impl Emit for InstructionArgs {
-    fn emit<S: Sink>(&self, sink: &mut S) -> Option<S::Value> {
-        let mut obj = sink.obj()?;
-        for (field, value) in self.schema.fields.iter().zip(self.values.iter()) {
-            let value = emit_value(value, &field.ty, &self.schema.defined_types, sink)?;
-            sink.set(&mut obj, &field.name, value)?;
-        }
-        Some(sink.end_obj(obj))
+impl<'a> Input<'a> {
+    fn take(&mut self, len: usize) -> Option<&'a [u8]> {
+        let (head, tail) = self.buf.split_at_checked(len)?;
+        self.buf = tail;
+        Some(head)
+    }
+
+    fn array<const N: usize>(&mut self) -> Option<[u8; N]> {
+        self.take(N)?.try_into().ok()
+    }
+
+    fn byte(&mut self) -> Option<u8> {
+        Some(self.take(1)?[0])
+    }
+
+    fn len(&mut self) -> Option<usize> {
+        usize::try_from(u32::from_le_bytes(self.array()?)).ok()
     }
 }
 
-/// `None` on any shape mismatch, which `decode` treats like a decode failure.
-fn emit_struct<S: Sink>(
-    value: &serde_json::Value,
+/// Only values of zero-sized types (an empty struct, a zero-length array)
+/// can outnumber the data. Instruction data is attacker-controlled (any
+/// caller can hit a matching discriminator), so a `vec` of them must not
+/// expand a few bytes into unbounded memory: they may number at most the
+/// data length plus this.
+const ZERO_SIZED_BUDGET_SLACK: usize = 1024;
+
+fn write_struct(
     fields: &[UpstreamNamedField],
     defined_types: &DefinedTypes,
-    sink: &mut S,
-) -> Option<S::Value> {
-    let values = value.as_object()?;
-    let mut obj = sink.obj()?;
+    input: &mut Input,
+    tape: &mut JsTape,
+) -> Option<()> {
+    tape.obj(fields.len());
     for field in fields {
-        let value = emit_value(values.get(&field.name)?, &field.ty, defined_types, sink)?;
-        sink.set(&mut obj, &field.name, value)?;
+        tape.key(&field.name);
+        write_value(&field.ty, defined_types, input, tape)?;
     }
-    Some(sink.end_obj(obj))
+    Some(())
 }
 
-fn emit_value<S: Sink>(
-    value: &serde_json::Value,
+fn write_value(
     ty: &SvmFieldType,
     defined_types: &DefinedTypes,
-    sink: &mut S,
-) -> Option<S::Value> {
-    use serde_json::Value;
+    input: &mut Input,
+    tape: &mut JsTape,
+) -> Option<()> {
+    let remaining = input.buf.len();
     match ty {
-        SvmFieldType::Bool => sink.bool(value.as_bool()?),
-        SvmFieldType::U8
-        | SvmFieldType::U16
-        | SvmFieldType::U32
-        | SvmFieldType::I8
-        | SvmFieldType::I16
-        | SvmFieldType::I32
-        // Borsh refuses to serialize a NaN, so one on the wire says the bytes
-        // are not the float this layout claims and the instruction is dropped
-        // like any other layout mismatch. The upstream decoder renders every
-        // non-finite float as `Null`, which `as_f64` rejects; that takes a
-        // legitimate infinity with it, which no Solana program is known to
-        // send. Behind an `option` the ambiguity is unreachable: `None` is
-        // `Null` too, and there a non-finite float reads as absent.
-        | SvmFieldType::F32
-        | SvmFieldType::F64 => sink.num(value.as_f64()?),
-        SvmFieldType::U64 | SvmFieldType::U128 => {
-            let value: u128 = value.as_str()?.parse().ok()?;
-            sink.bigint(false, &words(value))
-        }
-        SvmFieldType::I64 | SvmFieldType::I128 => {
-            let value: i128 = value.as_str()?.parse().ok()?;
-            sink.bigint(value < 0, &words(value.unsigned_abs()))
-        }
-        SvmFieldType::String | SvmFieldType::Pubkey => sink.str(value.as_str()?),
-        SvmFieldType::Option(inner) => match value {
-            Value::Null => sink.null(),
-            value => emit_value(value, inner, defined_types, sink),
+        SvmFieldType::Bool => match input.byte()? {
+            0 => tape.bool(false),
+            1 => tape.bool(true),
+            _ => return None,
         },
-        // Every u8 sequence reaches handlers as raw bytes. The upstream decoder
-        // renders them three ways: `bytes` as `0x` hex, `[u8; 32]` as base58
-        // on the assumption it is a pubkey (a schema declares a real pubkey as
-        // `pubkey`, so a 32-byte array is a hash, root or seed), and any other
-        // `vec<u8>` / `[u8; N]` as a number array.
+        SvmFieldType::U8 => tape.num(f64::from(input.byte()?)),
+        SvmFieldType::U16 => tape.num(f64::from(u16::from_le_bytes(input.array()?))),
+        SvmFieldType::U32 => tape.num(f64::from(u32::from_le_bytes(input.array()?))),
+        SvmFieldType::I8 => tape.num(f64::from(i8::from_le_bytes(input.array()?))),
+        SvmFieldType::I16 => tape.num(f64::from(i16::from_le_bytes(input.array()?))),
+        SvmFieldType::I32 => tape.num(f64::from(i32::from_le_bytes(input.array()?))),
+        // Borsh refuses to serialize a NaN, so one on the wire says the bytes
+        // are not the float this layout claims. No Solana program is known to
+        // send an infinity, so non-finite floats are rejected together.
+        SvmFieldType::F32 => tape.num(finite(f64::from(f32::from_le_bytes(input.array()?)))?),
+        SvmFieldType::F64 => tape.num(finite(f64::from_le_bytes(input.array()?))?),
+        SvmFieldType::U64 => tape.bigint(false, &[u64::from_le_bytes(input.array()?)]),
+        SvmFieldType::U128 => tape.bigint(false, &words(u128::from_le_bytes(input.array()?))),
+        SvmFieldType::I64 => {
+            let value = i64::from_le_bytes(input.array()?);
+            tape.bigint(value < 0, &[value.unsigned_abs()]);
+        }
+        SvmFieldType::I128 => {
+            let value = i128::from_le_bytes(input.array()?);
+            tape.bigint(value < 0, &words(value.unsigned_abs()));
+        }
+        SvmFieldType::String => {
+            let len = input.len()?;
+            tape.str(std::str::from_utf8(input.take(len)?).ok()?);
+        }
+        SvmFieldType::Pubkey => {
+            let mut base58 = [0u8; 44];
+            let len = bs58::encode(input.take(32)?).onto(&mut base58[..]).ok()?;
+            tape.str(std::str::from_utf8(&base58[..len]).ok()?);
+        }
+        SvmFieldType::Option(inner) => match input.byte()? {
+            0 => tape.null(),
+            1 => write_value(inner, defined_types, input, tape)?,
+            _ => return None,
+        },
+        // Every u8 sequence reaches handlers as raw bytes: a schema declares a
+        // real pubkey as `pubkey`, so a `[u8; 32]` is a hash, root or seed.
         SvmFieldType::Bytes => {
-            sink.bytes(&crate::hex::decode_prefixed(value.as_str()?, "bytes").ok()?)
+            let len = input.len()?;
+            tape.bytes(input.take(len)?);
         }
-        SvmFieldType::Array { ty, len } if matches!(**ty, SvmFieldType::U8) && *len == 32 => {
-            let mut bytes = [0u8; 32];
-            let len = bs58::decode(value.as_str()?).onto(&mut bytes).ok()?;
-            if len != 32 {
-                return None;
+        SvmFieldType::Vec(ty) if matches!(**ty, SvmFieldType::U8) => {
+            let len = input.len()?;
+            tape.bytes(input.take(len)?);
+        }
+        SvmFieldType::Array { ty, len } if matches!(**ty, SvmFieldType::U8) => {
+            tape.bytes(input.take(*len)?);
+        }
+        SvmFieldType::Vec(inner) => {
+            let len = input.len()?;
+            tape.arr(len);
+            for _ in 0..len {
+                write_value(inner, defined_types, input, tape)?;
             }
-            sink.bytes(&bytes)
         }
-        SvmFieldType::Vec(ty) | SvmFieldType::Array { ty, .. }
-            if matches!(**ty, SvmFieldType::U8) =>
-        {
-            let bytes: Vec<u8> = value
-                .as_array()?
-                .iter()
-                .map(|item| u8::try_from(item.as_u64()?).ok())
-                .collect::<Option<_>>()?;
-            sink.bytes(&bytes)
-        }
-        SvmFieldType::Vec(inner) | SvmFieldType::Array { ty: inner, .. } => {
-            let items = value.as_array()?;
-            let mut arr = sink.arr(items.len())?;
-            for item in items {
-                let item = emit_value(item, inner, defined_types, sink)?;
-                sink.push(&mut arr, item)?;
+        SvmFieldType::Array { ty: inner, len } => {
+            tape.arr(*len);
+            for _ in 0..*len {
+                write_value(inner, defined_types, input, tape)?;
             }
-            Some(sink.end_arr(arr))
         }
-        SvmFieldType::Struct(fields) => emit_struct(value, fields, defined_types, sink),
+        SvmFieldType::Struct(fields) => write_struct(fields, defined_types, input, tape)?,
+        // A variant without fields (unit, or a struct variant with an empty
+        // field list - the wire format is identical) is its bare name, so
+        // handlers compare it as a string; one with fields is `{ Name: body }`.
         SvmFieldType::Enum(variants) => {
-            // Upstream renders every variant externally tagged, `{ Name: <body> }`.
-            // A variant without fields (unit, or a struct variant with an empty
-            // field list - the wire format is identical) collapses to its bare
-            // name so handlers compare it as a string.
-            let (name, body) = value.as_object()?.iter().next()?;
-            let variant = variants.iter().find(|v| &v.name == name)?;
+            let variant = variants.get(usize::from(input.byte()?))?;
             match variant.fields.as_deref() {
-                None | Some([]) => sink.str(name),
+                None | Some([]) => tape.str(&variant.name),
                 Some(fields) => {
-                    let body = emit_struct(body, fields, defined_types, sink)?;
-                    let mut obj = sink.obj()?;
-                    sink.set(&mut obj, name, body)?;
-                    Some(sink.end_obj(obj))
+                    tape.obj(1);
+                    tape.key(&variant.name);
+                    write_struct(fields, defined_types, input, tape)?;
                 }
             }
         }
         SvmFieldType::Defined(name) => {
-            emit_value(value, defined_types.get(name)?, defined_types, sink)
+            write_value(defined_types.get(name)?, defined_types, input, tape)?
         }
     }
+    if input.buf.len() == remaining {
+        input.zero_sized_budget = input.zero_sized_budget.checked_sub(1)?;
+    }
+    Some(())
+}
+
+fn finite(value: f64) -> Option<f64> {
+    value.is_finite().then_some(value)
 }
 
 /// `value` as little-endian 64-bit words.
@@ -238,20 +248,18 @@ mod tests {
     use super::*;
     use crate::js_value::test_value::JsValue;
 
-    struct Schema(Arc<ArgsSchema>);
+    struct Schema(ArgsSchema);
 
     impl Schema {
         fn decode(&self, data: &[u8]) -> Option<JsValue> {
-            self.0.decode(data).map(|args| JsValue::of(&args))
+            self.0.decode(data).map(|tape| JsValue::of(&tape))
         }
     }
 
     fn schema_of(args_json: &str, defined_types_json: &str) -> Schema {
         let args: Vec<ArgDef> = serde_json::from_str(args_json).unwrap();
         let defined_types = parse_defined_types(Some(defined_types_json)).unwrap();
-        Schema(Arc::new(
-            ArgsSchema::new(1, &args, Arc::new(defined_types)).unwrap(),
-        ))
+        Schema(ArgsSchema::new(1, &args, Arc::new(defined_types)).unwrap())
     }
 
     fn obj(entries: Vec<(&str, JsValue)>) -> JsValue {
@@ -419,9 +427,7 @@ mod tests {
     fn a_zero_length_prefix_decodes_the_whole_data() {
         let args: Vec<ArgDef> =
             serde_json::from_str(r#"[{"name":"text","type":"string"}]"#).unwrap();
-        let schema = Schema(Arc::new(
-            ArgsSchema::new(0, &args, Arc::new(DefinedTypes::new())).unwrap(),
-        ));
+        let schema = Schema(ArgsSchema::new(0, &args, Arc::new(DefinedTypes::new())).unwrap());
         let mut data = 5u32.to_le_bytes().to_vec();
         data.extend_from_slice(b"hello");
         assert_eq!(
@@ -478,6 +484,45 @@ mod tests {
                 schema.decode(&exact)
             ),
             (None, None, Some(obj(vec![("amount", JsValue::uint(1))])))
+        );
+    }
+
+    // A few bytes claiming u32::MAX empty structs used to spin the upstream
+    // decoder until the process ran out of memory.
+    #[test]
+    fn bounds_values_decoded_without_consuming_data() {
+        let schema = schema_of(r#"[{"name":"xs","type":{"vec":{"struct":[]}}}]"#, "{}");
+        let claiming = |len: u32| {
+            let mut data = vec![0x01];
+            data.extend_from_slice(&len.to_le_bytes());
+            data
+        };
+        assert_eq!(
+            (
+                schema.decode(&claiming(u32::MAX)),
+                schema.decode(&claiming(2)),
+            ),
+            (
+                None,
+                Some(obj(vec![(
+                    "xs",
+                    JsValue::Arr(vec![JsValue::Obj(vec![]), JsValue::Obj(vec![])])
+                )]))
+            )
+        );
+    }
+
+    #[test]
+    fn a_non_finite_float_behind_an_option_is_rejected() {
+        let schema = schema_of(r#"[{"name":"ratio","type":{"option":"f64"}}]"#, "{}");
+        let some = |value: f64| {
+            let mut data = vec![0x01, 0x01];
+            data.extend_from_slice(&value.to_le_bytes());
+            data
+        };
+        assert_eq!(
+            (schema.decode(&some(f64::NAN)), schema.decode(&[0x01, 0x00]),),
+            (None, Some(obj(vec![("ratio", JsValue::Null)])))
         );
     }
 }
