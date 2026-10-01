@@ -18,10 +18,21 @@ const ENS_RAINBOW = "https://api.ensrainbow.io/v1/heal/";
 
 const nullableString = Sury.union([Sury.string, null]);
 
+/** A stalled gateway would hold the whole batch, which waits on the mapping. */
+const GATEWAY_TIMEOUT_MS = 30_000;
+
+/**
+ * Only "the gateway doesn't have it" is an answer, and a cached one; anything
+ * else — a timeout, a 5xx, a rate limit — throws, so envio retries the batch
+ * instead of caching a null for good.
+ */
 async function fetchBase64(url: string): Promise<string | null> {
-  const response = await fetch(url);
-  if (!response.ok) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS) });
+  if (response.status === 404) {
     return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Envio Subgraph's fetch of ${url} failed: ${response.status} ${response.statusText}`);
   }
   const buffer = new Uint8Array(await response.arrayBuffer());
   return Buffer.from(buffer).toString("base64");

@@ -140,7 +140,11 @@ fn candidates(name: &str, abi_json: Option<&str>) -> Vec<Value> {
     let Ok(abi) = serde_json::from_str::<Value>(abi_json) else {
         return vec![];
     };
-    let Some(entries) = abi.as_array() else {
+    // A build artifact nests the ABI under `abi`.
+    let Some(entries) = abi
+        .as_array()
+        .or_else(|| abi.get("abi").and_then(Value::as_array))
+    else {
         return vec![];
     };
     entries
@@ -275,6 +279,17 @@ mod tests {
             abi_type: abi_type.to_string(),
             indexed,
         }
+    }
+
+    // Truffle and Hardhat write `{"contractName": …, "abi": [...]}`, which
+    // envio's own ABI parser reads too.
+    #[test]
+    fn reads_the_inputs_from_a_build_artifact() {
+        let artifact = format!(r#"{{"contractName":"Token","abi":{ABI}}}"#);
+        assert_eq!(
+            event_inputs("Approval(indexed address)", Some(&artifact)),
+            vec![input("owner", "owner", "address", true)]
+        );
     }
 
     #[test]

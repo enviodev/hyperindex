@@ -202,6 +202,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # The script comes from the pull request.
+          persist-credentials: false
 
       - name: Compare with The Graph's networks registry
         run: node packages/cli/scripts/sync-graph-networks.mjs --check

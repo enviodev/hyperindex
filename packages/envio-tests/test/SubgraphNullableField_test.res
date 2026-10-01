@@ -51,6 +51,12 @@ type Domain @entity {
 import { Entity, store, Value } from "@graphprotocol/graph-ts";
 
 export function handleNewOwner(event: any): void {
+  if (event.params.nonce.toI32() == 2) {
+    let domain = store.get("Domain", "d1")!;
+    domain.nickname;
+    return;
+  }
+
   let created = new Entity();
   created.setString("owner", "0xowner");
   created.setBoolean("seen", false);
@@ -105,10 +111,15 @@ describe("a declared field nothing has set", () => {
     await expect(
       createTestIndexer().process({
         chains: {
-          1: { simulate: [{ contract: "Registry", event: "NewOwner", params: { nonce: 2n } }] },
+          1: {
+            simulate: [
+              { contract: "Registry", event: "NewOwner", params: { nonce: 1n } },
+              { contract: "Registry", event: "NewOwner", params: { nonce: 2n } },
+            ],
+          },
         },
       }),
-    ).resolves.toBeDefined();
+    ).rejects.toThrow("nickname");
   });
 });
 `,
