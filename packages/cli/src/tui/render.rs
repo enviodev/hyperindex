@@ -385,11 +385,17 @@ const FOLDED: [Layout; 3] = [
 const MIN_BAR: usize = 12;
 const MIN_FOLDED_BAR: usize = 8;
 
-/// Columns as wide as their widest value, one space apart, with the bar
-/// taking what's left, so the rows always end at the right edge however the
-/// columns change. When the bar would get too short, the least important
-/// detail goes first, and past that each chain folds onto two lines.
-fn chain_rows(state: &State, inner: usize, palette: Palette) -> Vec<Line<'static>> {
+/// Columns as wide as their widest value, one space apart. The bar ends at
+/// `bar_end`, so it stays put however the columns after it change, and
+/// shrinks short of it only to keep those columns on screen. When the bar
+/// would get too short, the least important detail goes first, and past
+/// that each chain folds onto two lines.
+fn chain_rows(
+    state: &State,
+    inner: usize,
+    bar_end: Option<usize>,
+    palette: Palette,
+) -> Vec<Line<'static>> {
     let chains = &state.chains;
     let unit = if state.info.ecosystem == "svm" {
         "slots"
@@ -436,9 +442,13 @@ fn chain_rows(state: &State, inner: usize, palette: Palette) -> Vec<Line<'static
         }
     };
 
+    let fit = |starts_at: usize, layout: Layout| {
+        let room = inner.saturating_sub(starts_at + after_bar(layout));
+        bar_end.map_or(room, |end| end.saturating_sub(starts_at).min(room))
+    };
     let one_line = ONE_LINE.into_iter().find_map(|layout| {
-        let room = inner.saturating_sub(name_width + 1 + after_bar(layout));
-        (room >= MIN_BAR).then(|| progress(layout, room))
+        let bar_width = fit(name_width + 1, layout);
+        (bar_width >= MIN_BAR).then(|| progress(layout, bar_width))
     });
     if let Some(progress) = one_line {
         return chains
@@ -454,10 +464,10 @@ fn chain_rows(state: &State, inner: usize, palette: Palette) -> Vec<Line<'static
     // they'd read as belonging to the next chain.
     let layout = FOLDED
         .into_iter()
-        .find(|layout| inner.saturating_sub(after_bar(*layout)) >= MIN_FOLDED_BAR)
+        .find(|layout| fit(0, *layout) >= MIN_FOLDED_BAR)
         .unwrap_or(FOLDED[FOLDED.len() - 1]);
     // Too narrow for a bar that shows anything, the percentage says it alone.
-    let bar_width = match inner.saturating_sub(after_bar(layout)) {
+    let bar_width = match fit(0, layout) {
         room if room >= MIN_FOLDED_BAR / 2 => room,
         _ => 0,
     };
@@ -736,10 +746,15 @@ pub fn frame(
     let margin = if width >= 30 { 2 } else { 0 };
     let inner = width.saturating_sub(margin * 2).max(1);
 
-    let rows = chain_rows(state, inner, palette);
     let title = fit_title(&state.info, inner, palette);
-    let logo: Vec<Line<'static>> = if inner >= logo::width() + 2 {
-        let center = (inner - logo::width()) / 2;
+    let logo_at = (inner >= logo::width() + 2).then(|| (inner - logo::width()) / 2);
+    let rows = chain_rows(
+        state,
+        inner,
+        logo_at.map(|column| column + logo::V_POINT + 1),
+        palette,
+    );
+    let logo: Vec<Line<'static>> = if let Some(center) = logo_at {
         logo::lines(tick, |color| palette.rgb(color))
             .into_iter()
             .map(|line| indent(line, center))
@@ -1077,16 +1092,16 @@ mod tests {
         assert_ne!(logo_at(0), logo_at(10));
     }
 
-    // Catching up changes how wide the blocks and events columns are, which
-    // must not move the logo or the rows' right edge mid-run.
+    // The bars end under the point of the logo's V, wherever the columns
+    // after them run to, so catching up never moves the logo or the bars.
     #[test]
-    fn keeps_the_logo_and_the_rows_right_edge_in_place_as_columns_change() {
+    fn ends_the_bars_under_the_logos_v() {
         let all_synced = state(
             &[synced(ethereum(), None), synced(base(), None)],
             Messages::Loading,
         );
         let layout = |state: &State, width: u16| {
-            let lines: Vec<String> = frame(
+            let lines: Vec<Vec<char>> = frame(
                 state,
                 NOW,
                 0,
@@ -1097,26 +1112,28 @@ mod tests {
                 },
             )
             .iter()
-            .map(Line::to_string)
+            .map(|line| line.to_string().chars().collect())
             .collect();
-            let logo_column = lines[2].len() - lines[2].trim_start().len();
-            let row_widths: Vec<usize> = lines
+            let logo_column = lines[2].iter().position(|c| *c != ' ').unwrap();
+            let bar_ends: Vec<usize> = lines
                 .iter()
-                .filter(|line| line.contains('━') || line.contains('─'))
-                .map(|line| Line::raw(line.as_str()).width())
+                .filter_map(|line| line.iter().rposition(|c| *c == '━' || *c == '─'))
+                .map(|last| last + 1)
                 .collect();
-            (logo_column, row_widths)
+            (logo_column, bar_ends)
         };
         assert_eq!(
             [
                 layout(&syncing(), 160),
                 layout(&all_synced, 160),
+                layout(&syncing(), 100),
                 layout(&syncing(), 56),
             ],
             [
-                (67, vec![158, 158, 158]),
-                (67, vec![158, 158]),
-                (15, vec![54, 54, 54]),
+                (67, vec![82, 82, 82]),
+                (67, vec![82, 82]),
+                (37, vec![52, 52, 52]),
+                (15, vec![17, 17, 17]),
             ]
         );
     }

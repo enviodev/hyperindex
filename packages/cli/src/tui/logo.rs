@@ -28,6 +28,9 @@ const GRADIENT: [(u8, u8, u8); 3] = [(0xFF, 0x82, 0x67), (0xFF, 0xA1, 0x52), (0x
 /// Ticks for the colours to flow once across the wordmark and back.
 const FLOW_TICKS: f64 = 40.;
 
+/// The cell under the point of the V.
+pub const V_POINT: usize = 14;
+
 pub fn width() -> usize {
     BITMAP[0].len() / 2
 }
@@ -122,6 +125,15 @@ mod tests {
             ),
             (expected, vec![26, 26, 26])
         );
+    }
+
+    #[test]
+    fn points_at_the_middle_of_the_vs_bottom() {
+        // The V spans pixel columns 22 to 36, between the N and the I.
+        let bottom: Vec<usize> = (22..37)
+            .filter(|column| BITMAP[BITMAP.len() - 1].as_bytes()[*column] == b'#')
+            .collect();
+        assert_eq!(bottom[bottom.len() / 2] / 2, V_POINT);
     }
 
     #[test]

@@ -252,7 +252,7 @@
 <rect x="370" y="128" width="10" height="4" fill="#cccccc"/>
 <rect x="380" y="128" width="10" height="4" fill="#cccccc"/>
 <rect x="390" y="128" width="10" height="4" fill="#cccccc"/>
-<rect x="400" y="128" width="10" height="4" fill="#cccccc"/>
+<rect x="400" y="129" width="10" height="2" fill="#cccccc"/>
 <rect x="410" y="129" width="10" height="2" fill="#cccccc"/>
 <rect x="420" y="129" width="10" height="2" fill="#cccccc"/>
 <rect x="430" y="129" width="10" height="2" fill="#cccccc"/>
@@ -264,43 +264,41 @@
 <rect x="490" y="129" width="10" height="2" fill="#cccccc"/>
 <rect x="500" y="129" width="10" height="2" fill="#cccccc"/>
 <rect x="510" y="129" width="10" height="2" fill="#cccccc"/>
-<rect x="520" y="129" width="10" height="2" fill="#cccccc"/>
-<rect x="530" y="129" width="10" height="2" fill="#cccccc"/>
-<text x="550" y="135" fill="#cccccc">6</text>
-<text x="560" y="135" fill="#cccccc">2</text>
-<text x="570" y="135" fill="#cccccc">%</text>
-<text x="590" y="135" fill="#cccccc">1</text>
-<text x="600" y="135" fill="#cccccc">6</text>
-<text x="610" y="135" fill="#cccccc">,</text>
-<text x="620" y="135" fill="#cccccc">8</text>
-<text x="630" y="135" fill="#cccccc">2</text>
+<text x="530" y="135" fill="#cccccc">6</text>
+<text x="540" y="135" fill="#cccccc">2</text>
+<text x="550" y="135" fill="#cccccc">%</text>
+<text x="570" y="135" fill="#cccccc">1</text>
+<text x="580" y="135" fill="#cccccc">6</text>
+<text x="590" y="135" fill="#cccccc">,</text>
+<text x="600" y="135" fill="#cccccc">8</text>
+<text x="610" y="135" fill="#cccccc">2</text>
+<text x="620" y="135" fill="#cccccc">0</text>
+<text x="630" y="135" fill="#cccccc">,</text>
 <text x="640" y="135" fill="#cccccc">0</text>
-<text x="650" y="135" fill="#cccccc">,</text>
+<text x="650" y="135" fill="#cccccc">0</text>
 <text x="660" y="135" fill="#cccccc">0</text>
-<text x="670" y="135" fill="#cccccc">0</text>
-<text x="680" y="135" fill="#cccccc">0</text>
-<text x="690" y="135" fill="#cccccc">/</text>
-<text x="700" y="135" fill="#cccccc">2</text>
-<text x="710" y="135" fill="#cccccc">1</text>
-<text x="720" y="135" fill="#cccccc">.</text>
-<text x="730" y="135" fill="#cccccc">0</text>
-<text x="740" y="135" fill="#cccccc">M</text>
-<text x="760" y="135" fill="#cccccc">b</text>
-<text x="770" y="135" fill="#cccccc">l</text>
-<text x="780" y="135" fill="#cccccc">o</text>
-<text x="790" y="135" fill="#cccccc">c</text>
-<text x="800" y="135" fill="#cccccc">k</text>
-<text x="810" y="135" fill="#cccccc">s</text>
-<text x="870" y="135" fill="#cccccc">1</text>
-<text x="880" y="135" fill="#cccccc">.</text>
-<text x="890" y="135" fill="#cccccc">2</text>
-<text x="900" y="135" fill="#cccccc">M</text>
+<text x="670" y="135" fill="#cccccc">/</text>
+<text x="680" y="135" fill="#cccccc">2</text>
+<text x="690" y="135" fill="#cccccc">1</text>
+<text x="700" y="135" fill="#cccccc">.</text>
+<text x="710" y="135" fill="#cccccc">0</text>
+<text x="720" y="135" fill="#cccccc">M</text>
+<text x="740" y="135" fill="#cccccc">b</text>
+<text x="750" y="135" fill="#cccccc">l</text>
+<text x="760" y="135" fill="#cccccc">o</text>
+<text x="770" y="135" fill="#cccccc">c</text>
+<text x="780" y="135" fill="#cccccc">k</text>
+<text x="790" y="135" fill="#cccccc">s</text>
+<text x="850" y="135" fill="#cccccc">1</text>
+<text x="860" y="135" fill="#cccccc">.</text>
+<text x="870" y="135" fill="#cccccc">2</text>
+<text x="880" y="135" fill="#cccccc">M</text>
+<text x="900" y="135" fill="#cccccc">e</text>
+<text x="910" y="135" fill="#cccccc">v</text>
 <text x="920" y="135" fill="#cccccc">e</text>
-<text x="930" y="135" fill="#cccccc">v</text>
-<text x="940" y="135" fill="#cccccc">e</text>
-<text x="950" y="135" fill="#cccccc">n</text>
-<text x="960" y="135" fill="#cccccc">t</text>
-<text x="970" y="135" fill="#cccccc">s</text>
+<text x="930" y="135" fill="#cccccc">n</text>
+<text x="940" y="135" fill="#cccccc">t</text>
+<text x="950" y="135" fill="#cccccc">s</text>
 <text x="20" y="155" fill="#cccccc" font-weight="bold">B</text>
 <text x="30" y="155" fill="#cccccc" font-weight="bold">a</text>
 <text x="40" y="155" fill="#cccccc" font-weight="bold">s</text>
@@ -340,37 +338,35 @@
 <rect x="490" y="148" width="10" height="4" fill="#cccccc"/>
 <rect x="500" y="148" width="10" height="4" fill="#cccccc"/>
 <rect x="510" y="148" width="10" height="4" fill="#cccccc"/>
-<rect x="520" y="148" width="10" height="4" fill="#cccccc"/>
-<rect x="530" y="148" width="10" height="4" fill="#cccccc"/>
-<text x="560" y="155" fill="#cccccc">✓</text>
-<text x="590" y="155" fill="#cccccc">a</text>
-<text x="600" y="155" fill="#cccccc">t</text>
-<text x="620" y="155" fill="#cccccc">h</text>
-<text x="630" y="155" fill="#cccccc">e</text>
-<text x="640" y="155" fill="#cccccc">a</text>
-<text x="650" y="155" fill="#cccccc">d</text>
-<text x="670" y="155" fill="#cccccc">2</text>
-<text x="680" y="155" fill="#cccccc">4</text>
-<text x="690" y="155" fill="#cccccc">,</text>
-<text x="700" y="155" fill="#cccccc">1</text>
-<text x="710" y="155" fill="#cccccc">1</text>
-<text x="720" y="155" fill="#cccccc">8</text>
-<text x="730" y="155" fill="#cccccc">,</text>
-<text x="740" y="155" fill="#cccccc">9</text>
-<text x="750" y="155" fill="#cccccc">0</text>
-<text x="760" y="155" fill="#cccccc">3</text>
-<text x="850" y="155" fill="#cccccc">9</text>
-<text x="860" y="155" fill="#cccccc">0</text>
-<text x="870" y="155" fill="#cccccc">3</text>
-<text x="880" y="155" fill="#cccccc">.</text>
-<text x="890" y="155" fill="#cccccc">4</text>
-<text x="900" y="155" fill="#cccccc">K</text>
+<text x="540" y="155" fill="#cccccc">✓</text>
+<text x="570" y="155" fill="#cccccc">a</text>
+<text x="580" y="155" fill="#cccccc">t</text>
+<text x="600" y="155" fill="#cccccc">h</text>
+<text x="610" y="155" fill="#cccccc">e</text>
+<text x="620" y="155" fill="#cccccc">a</text>
+<text x="630" y="155" fill="#cccccc">d</text>
+<text x="650" y="155" fill="#cccccc">2</text>
+<text x="660" y="155" fill="#cccccc">4</text>
+<text x="670" y="155" fill="#cccccc">,</text>
+<text x="680" y="155" fill="#cccccc">1</text>
+<text x="690" y="155" fill="#cccccc">1</text>
+<text x="700" y="155" fill="#cccccc">8</text>
+<text x="710" y="155" fill="#cccccc">,</text>
+<text x="720" y="155" fill="#cccccc">9</text>
+<text x="730" y="155" fill="#cccccc">0</text>
+<text x="740" y="155" fill="#cccccc">3</text>
+<text x="830" y="155" fill="#cccccc">9</text>
+<text x="840" y="155" fill="#cccccc">0</text>
+<text x="850" y="155" fill="#cccccc">3</text>
+<text x="860" y="155" fill="#cccccc">.</text>
+<text x="870" y="155" fill="#cccccc">4</text>
+<text x="880" y="155" fill="#cccccc">K</text>
+<text x="900" y="155" fill="#cccccc">e</text>
+<text x="910" y="155" fill="#cccccc">v</text>
 <text x="920" y="155" fill="#cccccc">e</text>
-<text x="930" y="155" fill="#cccccc">v</text>
-<text x="940" y="155" fill="#cccccc">e</text>
-<text x="950" y="155" fill="#cccccc">n</text>
-<text x="960" y="155" fill="#cccccc">t</text>
-<text x="970" y="155" fill="#cccccc">s</text>
+<text x="930" y="155" fill="#cccccc">n</text>
+<text x="940" y="155" fill="#cccccc">t</text>
+<text x="950" y="155" fill="#cccccc">s</text>
 <text x="20" y="175" fill="#cccccc" font-weight="bold">A</text>
 <text x="30" y="175" fill="#cccccc" font-weight="bold">r</text>
 <text x="40" y="175" fill="#cccccc" font-weight="bold">b</text>
@@ -418,47 +414,45 @@
 <rect x="490" y="169" width="10" height="2" fill="#cccccc"/>
 <rect x="500" y="169" width="10" height="2" fill="#cccccc"/>
 <rect x="510" y="169" width="10" height="2" fill="#cccccc"/>
-<rect x="520" y="169" width="10" height="2" fill="#cccccc"/>
-<rect x="530" y="169" width="10" height="2" fill="#cccccc"/>
-<text x="550" y="175" fill="#cccccc">2</text>
-<text x="560" y="175" fill="#cccccc">8</text>
-<text x="570" y="175" fill="#cccccc">%</text>
-<text x="590" y="175" fill="#cccccc">1</text>
-<text x="600" y="175" fill="#cccccc">2</text>
-<text x="610" y="175" fill="#cccccc">0</text>
-<text x="620" y="175" fill="#cccccc">,</text>
-<text x="630" y="175" fill="#cccccc">3</text>
-<text x="640" y="175" fill="#cccccc">4</text>
-<text x="650" y="175" fill="#cccccc">4</text>
-<text x="660" y="175" fill="#cccccc">,</text>
-<text x="670" y="175" fill="#cccccc">3</text>
-<text x="680" y="175" fill="#cccccc">6</text>
-<text x="690" y="175" fill="#cccccc">4</text>
-<text x="700" y="175" fill="#cccccc">/</text>
-<text x="710" y="175" fill="#cccccc">3</text>
-<text x="720" y="175" fill="#cccccc">0</text>
-<text x="730" y="175" fill="#cccccc">1</text>
-<text x="740" y="175" fill="#cccccc">.</text>
-<text x="750" y="175" fill="#cccccc">2</text>
-<text x="760" y="175" fill="#cccccc">M</text>
-<text x="780" y="175" fill="#cccccc">b</text>
-<text x="790" y="175" fill="#cccccc">l</text>
-<text x="800" y="175" fill="#cccccc">o</text>
-<text x="810" y="175" fill="#cccccc">c</text>
-<text x="820" y="175" fill="#cccccc">k</text>
-<text x="830" y="175" fill="#cccccc">s</text>
-<text x="850" y="175" fill="#cccccc">3</text>
-<text x="860" y="175" fill="#cccccc">7</text>
-<text x="870" y="175" fill="#cccccc">2</text>
-<text x="880" y="175" fill="#cccccc">.</text>
-<text x="890" y="175" fill="#cccccc">7</text>
-<text x="900" y="175" fill="#cccccc">K</text>
+<text x="530" y="175" fill="#cccccc">2</text>
+<text x="540" y="175" fill="#cccccc">8</text>
+<text x="550" y="175" fill="#cccccc">%</text>
+<text x="570" y="175" fill="#cccccc">1</text>
+<text x="580" y="175" fill="#cccccc">2</text>
+<text x="590" y="175" fill="#cccccc">0</text>
+<text x="600" y="175" fill="#cccccc">,</text>
+<text x="610" y="175" fill="#cccccc">3</text>
+<text x="620" y="175" fill="#cccccc">4</text>
+<text x="630" y="175" fill="#cccccc">4</text>
+<text x="640" y="175" fill="#cccccc">,</text>
+<text x="650" y="175" fill="#cccccc">3</text>
+<text x="660" y="175" fill="#cccccc">6</text>
+<text x="670" y="175" fill="#cccccc">4</text>
+<text x="680" y="175" fill="#cccccc">/</text>
+<text x="690" y="175" fill="#cccccc">3</text>
+<text x="700" y="175" fill="#cccccc">0</text>
+<text x="710" y="175" fill="#cccccc">1</text>
+<text x="720" y="175" fill="#cccccc">.</text>
+<text x="730" y="175" fill="#cccccc">2</text>
+<text x="740" y="175" fill="#cccccc">M</text>
+<text x="760" y="175" fill="#cccccc">b</text>
+<text x="770" y="175" fill="#cccccc">l</text>
+<text x="780" y="175" fill="#cccccc">o</text>
+<text x="790" y="175" fill="#cccccc">c</text>
+<text x="800" y="175" fill="#cccccc">k</text>
+<text x="810" y="175" fill="#cccccc">s</text>
+<text x="830" y="175" fill="#cccccc">3</text>
+<text x="840" y="175" fill="#cccccc">7</text>
+<text x="850" y="175" fill="#cccccc">2</text>
+<text x="860" y="175" fill="#cccccc">.</text>
+<text x="870" y="175" fill="#cccccc">7</text>
+<text x="880" y="175" fill="#cccccc">K</text>
+<text x="900" y="175" fill="#cccccc">e</text>
+<text x="910" y="175" fill="#cccccc">v</text>
 <text x="920" y="175" fill="#cccccc">e</text>
-<text x="930" y="175" fill="#cccccc">v</text>
-<text x="940" y="175" fill="#cccccc">e</text>
-<text x="950" y="175" fill="#cccccc">n</text>
-<text x="960" y="175" fill="#cccccc">t</text>
-<text x="970" y="175" fill="#cccccc">s</text>
+<text x="930" y="175" fill="#cccccc">n</text>
+<text x="940" y="175" fill="#cccccc">t</text>
+<text x="950" y="175" fill="#cccccc">s</text>
 <circle cx="27" cy="203" r="1.4" fill="#cccccc"/>
 <circle cx="27" cy="207" r="1.4" fill="#cccccc"/>
 <circle cx="27" cy="212" r="1.4" fill="#cccccc"/>

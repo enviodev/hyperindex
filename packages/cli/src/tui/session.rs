@@ -277,7 +277,7 @@ mod tests {
     const TITLE: [&str; 2] = ["  envio", ""];
 
     const STATUS: [&str; 5] = [
-        "  Chain 1 ━━━━━━━━━━━━━━━━━━━━━━━  ✓  at end 100 42 events",
+        "  Chain 1 ━━━━━━━━━━━━━━━━━━━━━━  ✓  at end 100 42 events",
         "",
         "  ✓ synced in 3s · 42 events",
         "",
