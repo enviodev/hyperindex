@@ -66,6 +66,15 @@ impl Palette {
             ColorLevel::None => Color::Reset,
         }
     }
+    /// The brand's coral to gold. The 16 colours have no orange, so a basic
+    /// terminal gets the 256-colour codes, which practically every terminal
+    /// reporting as basic understands anyway.
+    pub fn brand(self, rgb: (u8, u8, u8)) -> Color {
+        match self.level {
+            ColorLevel::Basic => Color::Indexed(ansi256(rgb.0, rgb.1, rgb.2)),
+            _ => self.rgb(rgb),
+        }
+    }
     fn named(self, color: Color) -> Color {
         match self.level {
             ColorLevel::None => Color::Reset,
@@ -332,7 +341,10 @@ fn bar(chain: &Chain, width: usize, palette: Palette) -> Spans {
     let mut spans: Spans = (0..lit)
         .map(|i| {
             let position = i as f64 / (width.max(2) - 1) as f64;
-            span("━", Style::new().fg(palette.rgb(logo::gradient(position))))
+            span(
+                "━",
+                Style::new().fg(palette.brand(logo::gradient(position))),
+            )
         })
         .collect();
     // Without colour, fetched blocks would look processed.
@@ -755,7 +767,7 @@ pub fn frame(
         palette,
     );
     let logo: Vec<Line<'static>> = if let Some(center) = logo_at {
-        logo::lines(tick, |color| palette.rgb(color))
+        logo::lines(tick, |color| palette.brand(color))
             .into_iter()
             .map(|line| indent(line, center))
             .chain([Line::default()])
@@ -1188,6 +1200,29 @@ mod tests {
                 Color::Reset
             ]
         );
+    }
+
+    // The 16 colours have no orange, so the brand gradient would collapse to
+    // bright yellow: it takes the 256-colour codes the Ansi256 level uses.
+    #[test]
+    fn draws_the_brand_gradient_in_256_colours_on_a_basic_terminal() {
+        let colours = |level| {
+            let mut colours: Vec<Color> = frame(&syncing(), NOW, 0, 100, 40, Palette { level })
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .filter(|span| !SPINNER.contains(&span.content.as_ref()))
+                .filter(|span| {
+                    span.content
+                        .chars()
+                        .any(|c| ('\u{2801}'..='\u{28FF}').contains(&c) || c == '━')
+                })
+                .filter_map(|span| span.style.fg)
+                .collect();
+            colours.sort_by_key(|colour| format!("{colour:?}"));
+            colours.dedup();
+            colours
+        };
+        assert_eq!(colours(ColorLevel::Basic), colours(ColorLevel::Ansi256));
     }
 
     #[test]
