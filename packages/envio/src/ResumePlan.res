@@ -154,7 +154,7 @@ let make = (
     }
   }
 
-let throwIfIncompatible = (
+let incompatibleMessage = (
   changedPaths,
   ~envioInfo: JSON.t,
   ~resetCommand: string,
@@ -168,5 +168,5 @@ let throwIfIncompatible = (
     }
   | _ => false
   }
-  Config.throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
+  Config.incompatibleMessage(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
 }

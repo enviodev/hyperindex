@@ -1,7 +1,7 @@
 open Vitest
 
-// What Postgres stored is what the compatibility check has to be handed: the
-// only thing binding the check to the storage is this read.
+// Two processes racing to add the same chain can't be lined up from outside,
+// so this one case drives the storage directly.
 let sql = PgStorage.makeClient()
 
 let config = TestConfig.make(
@@ -59,22 +59,6 @@ Async.afterAll(async () => {
 })
 
 describe("Resuming Postgres storage", () => {
-  Async.it(
-    "reads back the config it was initialized with, each chain from its own row",
-    async t => {
-      let storage = makeStorage()
-      let _ = await storage.initialize(
-        ~chainConfigs=config.chainMap->ChainMap.values,
-        ~contractMapping=config.contractMapping,
-        ~entities,
-        ~enums,
-        ~envioInfo=config.envioInfo,
-      )
-
-      t.expect(await storage.readStoredConfig()).toEqual(config.chainMap->ChainMap.values->storedOf)
-    },
-  )
-
   // Two `envio start --chain` processes naming the same new chain can both
   // plan to add it. Only one may: the other would index the chain alongside it.
   Async.it("adds a chain once, failing a second add of it that runs at the same time", async t => {

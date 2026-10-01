@@ -1405,38 +1405,34 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
   acc
 }
 
-// Throws an `incompatible config` error listing each path in `changedPaths`,
-// plus the remediation options. `~resetCommand` is rendered as-is for
-// option 2 (the wipe-and-redo). `~runCommand` controls option 3 (parallel
-// indexer recipe): when `None`, option 3 is omitted — the migrate flow
-// uses this because running a second indexer doesn't apply.
-// `~hasClickhouse` adds the extra env line so users running both
-// Postgres and Clickhouse get a complete override.
-let throwIfIncompatible = (
+// The `incompatible config` error listing each path in `changedPaths`, plus
+// the remediation options. `~resetCommand` is rendered as-is for option 2
+// (the wipe-and-redo). `~runCommand` controls option 3 (parallel indexer
+// recipe): when `None`, option 3 is omitted — the migrate flow uses this
+// because running a second indexer doesn't apply. `~hasClickhouse` adds the
+// extra env line so users running both Postgres and Clickhouse get a complete
+// override.
+let incompatibleMessage = (
   changedPaths: array<string>,
   ~resetCommand: string,
   ~runCommand: option<string>,
   ~hasClickhouse: bool,
 ) => {
-  if changedPaths->Array.length > 0 {
-    let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
-    let option1 = "Revert the changes above"
-    let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
-    let col = Math.Int.max(String.length(option1), String.length(resetCommand)) + 2
-    let option3 = switch runCommand {
-    | None => ""
-    | Some(cmd) =>
-      let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
-      `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
-    }
-    JsError.throwWithMessage(
-      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(
-          col,
-        )}# resume indexing where it left off\n  2. ${resetCommand->padTo(
-          col,
-        )}# delete all indexed data and start over${option3}`,
-    )
+  let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
+  let option1 = "Revert the changes above"
+  let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
+  let col = Math.Int.max(String.length(option1), String.length(resetCommand)) + 2
+  let option3 = switch runCommand {
+  | None => ""
+  | Some(cmd) =>
+    let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
+    `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
   }
+  `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(
+      col,
+    )}# resume indexing where it left off\n  2. ${resetCommand->padTo(
+      col,
+    )}# delete all indexed data and start over${option3}`
 }
 
 // The returned value is a pure function of the JSON: it holds only event

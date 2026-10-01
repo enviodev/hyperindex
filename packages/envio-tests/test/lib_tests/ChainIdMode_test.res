@@ -17,7 +17,8 @@ ${chains}
 `,
   ).config
 
-let evmChain = (~id, ~rpc="https://rpc.example.test") => `  - id: ${id}
+let evmChain = (~id, ~rpc="https://rpc.example.test") =>
+  `  - id: ${id}
     rpc: ${rpc}
     start_block: 0`
 
@@ -70,14 +71,10 @@ describe("ChainIdMode resolution", () => {
 
   it("parses wide chain ids losslessly through the public config", t => {
     t.expect(
-      [tronConfig, multichainConfig, maxSafeConfig]->Array.map(config =>
-        config.chainMap->ChainMap.keys->Array.map(ChainId.toString)
+      [tronConfig, multichainConfig, maxSafeConfig]->Array.map(
+        config => config.chainMap->ChainMap.keys->Array.map(ChainId.toString),
       ),
-    ).toEqual([
-      ["2494104990", "3448148188"],
-      ["1", "4503599627370496"],
-      ["9007199254740991"],
-    ])
+    ).toEqual([["2494104990", "3448148188"], ["1", "4503599627370496"], ["9007199254740991"]])
   })
 
   it("rejects a chain id above Number.MAX_SAFE_INTEGER", t => {
@@ -114,7 +111,10 @@ describe("ChainIdMode resolution", () => {
 
   it("resolves the mode from the widest chain, not the first one", t => {
     t.expect(
-      parse(~name="wide-second", ~chains=evmChain(~id="1") ++ "\n" ++ evmChain(~id="2147483648")).chainIdMode,
+      parse(
+        ~name="wide-second",
+        ~chains=evmChain(~id="1") ++ "\n" ++ evmChain(~id="2147483648"),
+      ).chainIdMode,
     ).toEqual(ChainId.Int64)
   })
 })
@@ -158,11 +158,7 @@ describe("ChainIdMode Postgres schema", () => {
   })
 
   it("widens every chain-id column to BIGINT in Int64 mode", t => {
-    t.expect((
-      tronConfig->chainsDdl,
-      tronConfig->addressesDdl,
-      tronConfig->rawEventsDdl,
-    )).toEqual((
+    t.expect((tronConfig->chainsDdl, tronConfig->addressesDdl, tronConfig->rawEventsDdl)).toEqual((
       maxInt32Config->chainsDdl->String.replace(`"id" INTEGER`, `"id" BIGINT`),
       maxInt32Config->addressesDdl->String.replace(`"chain_id" INTEGER`, `"chain_id" BIGINT`),
       maxInt32Config->rawEventsDdl->String.replace(`"chain_id" INTEGER`, `"chain_id" BIGINT`),
@@ -230,12 +226,13 @@ describe("ChainId runtime representation", () => {
 
   it("rejects values that can't be a chain id", t => {
     t.expect(
-      ["-1", "1.5", "9007199254740992", "abc"]->Array.map(value =>
-        try {
-          value->ChainId.normalizeOrThrow->ChainId.toString
-        } catch {
-        | _ => "rejected"
-        }
+      ["-1", "1.5", "9007199254740992", "abc"]->Array.map(
+        value =>
+          try {
+            value->ChainId.normalizeOrThrow->ChainId.toString
+          } catch {
+          | _ => "rejected"
+          },
       ),
     ).toEqual(["rejected", "rejected", "rejected", "rejected"])
   })
@@ -267,11 +264,10 @@ describe("ChainIdMode generated ReScript surface", () => {
   it("uses ChainId.t when only a skipped chain is wide", t => {
     // Skipped chains still get a `chainId` case, so `#2494104990` would be an
     // out-of-range int polyvariant if the mode ignored them.
-    let code =
-      Core.fromUserApi(
-        ~schema,
-        ~withIndexerTypes=true,
-        `
+    let code = Core.fromUserApi(
+      ~schema,
+      ~withIndexerTypes=true,
+      `
 name: skipped-wide-rescript
 chains:
   - id: 1
@@ -282,7 +278,7 @@ chains:
     rpc: https://rpc.example.test
     start_block: 0
 `,
-      ).indexerCode->Null.getOrThrow
+    ).indexerCode->Null.getOrThrow
     t.expect((
       code->String.includes("type chainId = ChainId.t"),
       code->String.includes("#2494104990"),
@@ -307,7 +303,7 @@ describe("ChainIdMode generated TypeScript surface", () => {
       ~schema,
       ~configYaml=`
 name: wide-ts-api
-${"chains:\n" ++ evmChain(~id="2494104990") ++ "\n" ++ evmChain(~id="3448148188")}
+${"chains:\n"}${evmChain(~id="2494104990")}${"\n"}${evmChain(~id="3448148188")}
 `,
       ~handlers=`
 import type { EvmChainId } from "envio";
@@ -327,7 +323,7 @@ describe("ChainIdMode generated handler context", () => {
       ~schema,
       ~configYaml=`
 name: wide-handler-context
-${"chains:\n" ++ evmChain(~id="2494104990")}
+${"chains:\n"}${evmChain(~id="2494104990")}
 `,
       ~handlers=`
 import { expectType, type TypeEqual } from "ts-expect";
@@ -352,21 +348,19 @@ describe("ChainIdMode compat check", () => {
   })
 
   it("fails the resume with the standard incompatible-config message", t => {
-    t->toThrowErrorEqual(
-      () =>
-        Config.throwIfIncompatible(
-          ["chainIdMode"],
-          ~resetCommand="envio local db-migrate setup",
-          ~runCommand=None,
-          ~hasClickhouse=false,
-        ),
-      `The following config changes are incompatible with the existing indexer data:
+    t.expect(
+      Config.incompatibleMessage(
+        ["chainIdMode"],
+        ~resetCommand="envio local db-migrate setup",
+        ~runCommand=None,
+        ~hasClickhouse=false,
+      ),
+    ).toBe(`The following config changes are incompatible with the existing indexer data:
 
     - chainIdMode
 
 Pick one:
   1. Revert the changes above      # resume indexing where it left off
-  2. envio local db-migrate setup  # delete all indexed data and start over`,
-    )
+  2. envio local db-migrate setup  # delete all indexed data and start over`)
   })
 })

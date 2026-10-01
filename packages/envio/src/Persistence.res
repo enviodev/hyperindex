@@ -245,6 +245,10 @@ type t = {
 
 exception StorageError({message: string, reason: exn})
 
+// A start the operator has to act on, not a failure: what it says is all they
+// need, so it's printed once, without a stack trace.
+exception Refused(string)
+
 let make = (
   ~userEntities,
   // TODO: Should only pass userEnums and create internal config in runtime
@@ -301,8 +305,10 @@ let init = {
         persistence.storageStatus = Initializing(promise)
         if reset || !(await persistence.storage.isInitialized()) {
           if isolated {
-            JsError.throwWithMessage(
-              "`envio start --chain` needs a database that is already set up. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+            throw(
+              Refused(
+                "`envio start --chain` needs a database that is already set up. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+              ),
             )
           }
           Logging.info(`Initializing the indexer storage...`)
@@ -344,7 +350,16 @@ let init = {
           ) {
           | Resume => ()
           | Incompatible(changedPaths) =>
-            ResumePlan.throwIfIncompatible(changedPaths, ~envioInfo, ~resetCommand, ~runCommand)
+            throw(
+              Refused(
+                ResumePlan.incompatibleMessage(
+                  changedPaths,
+                  ~envioInfo,
+                  ~resetCommand,
+                  ~runCommand,
+                ),
+              ),
+            )
           | AddChain(chainConfig) =>
             Logging.info({
               "msg": `Adding the chain to the existing indexer storage...`,
@@ -383,6 +398,7 @@ let init = {
         resolveRef.contents()
       }
     } catch {
+    | Refused(message) => JsError.throwWithMessage(message)
     | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
     }
   }
