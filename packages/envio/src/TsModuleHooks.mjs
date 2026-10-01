@@ -6,7 +6,7 @@ import { dirname, join, parse as parsePath } from "node:path";
 const TS_EXTENSION = /\.([cm]?)tsx?$/;
 const JS_EXTENSION = /\.([cm]?)jsx?$/;
 const TS_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
-const EXTENSIONLESS_CANDIDATES = [...TS_EXTENSIONS, ".js", ".jsx", ".mjs", ".cjs"];
+const EXTENSIONLESS_CANDIDATES = [...TS_EXTENSIONS, ".js", ".mjs", ".cjs"];
 const RELATIVE_SPECIFIER = /^\.{1,2}\//;
 
 const isFile = (path) => {
