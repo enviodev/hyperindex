@@ -220,6 +220,11 @@ impl State {
             self.samples.pop_front();
         }
         self.samples.push_back((now, self.total_events()));
+        // Measured from the last sample before events started moving; two
+        // stay so a stall still reads as zero.
+        while self.samples.len() > 2 && self.samples[0].1 == self.samples[1].1 {
+            self.samples.pop_front();
+        }
     }
 
     pub fn total_events(&self) -> f64 {
@@ -582,6 +587,23 @@ mod tests {
         state.update(&[at(7000.)], 70_000.);
         // The first sample fell out of the window: 6000 events over 60s.
         assert_eq!(state.events_per_second(), Some(100.));
+    }
+
+    // Startup takes a while before the first batch lands, and averaging
+    // those idle seconds in would understate the rate for the whole first
+    // minute.
+    #[test]
+    fn measures_events_per_second_from_the_first_events() {
+        let at = |events| TuiChain {
+            num_events_processed: events,
+            ..chain_metrics()
+        };
+        let mut state = state(&[at(0.)], 0.);
+        state.update(&[at(0.)], 1_000.);
+        state.update(&[at(0.)], 2_000.);
+        state.update(&[at(500.)], 3_000.);
+        state.update(&[at(1500.)], 4_000.);
+        assert_eq!(state.events_per_second(), Some(750.));
     }
 
     #[test]
