@@ -1,9 +1,8 @@
 /**
  * CLI Subprocess Tests
  *
- * Drives the real envio binary against a fixture project that has only a
- * config.yaml and a schema.graphql — both commands parse the project files
- * directly, so no codegen step is needed.
+ * Drives the real envio binary against fixture projects that have no codegen
+ * output — every command here parses the project files directly.
  */
 
 import { describe, it, expect } from "vitest";
@@ -17,9 +16,9 @@ const PROJECT_DIR = path.join(config.rootDir, "packages/e2e-tests/fixtures/cli-p
 // indexing into while the suite runs in parallel.
 const PG_SCHEMA = `envio_test_${Date.now()}_${process.pid}_dbmigrate`;
 
-const runEnvio = (args: string[], env?: Record<string, string>) =>
+const runEnvio = (args: string[], env?: Record<string, string>, cwd = PROJECT_DIR) =>
   runCommand(config.envioCommand, [...config.envioArgs, ...args], {
-    cwd: PROJECT_DIR,
+    cwd,
     timeout: 30_000,
     env,
   });
@@ -57,5 +56,21 @@ describe("envio local db-migrate", () => {
     const result = await runEnvio(["local", "db-migrate", "down"], dbEnv);
 
     expect(result.exitCode, result.stderr).toBe(0);
+  });
+});
+
+describe("TypeScript handler errors", () => {
+  it("name the handler's TypeScript source line", async () => {
+    const result = await runEnvio(
+      ["start"],
+      {
+        ENVIO_PG_PORT: String(config.pgPort),
+        ENVIO_PG_SCHEMA: `envio_test_${Date.now()}_${process.pid}_tshandler`,
+        ENVIO_HASURA: "false",
+      },
+      path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-handler-project")
+    );
+
+    expect(`${result.stdout}${result.stderr}`).toMatch(/Throwing\.ts:9:/);
   });
 });

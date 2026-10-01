@@ -56,6 +56,9 @@ export const register = (transformTs) => {
     );
   }
 
+  // Node ignores the inline source maps below unless this is on.
+  module.setSourceMapsSupport(true);
+
   module.registerHooks({
     resolve(specifier, context, nextResolve) {
       try {
