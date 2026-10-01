@@ -29,33 +29,26 @@ impl Size {
     }
 }
 
-/// The rows a terminal grown taller since `drawn` added.
-fn added_rows(drawn: Size, size: Size) -> usize {
-    match (drawn.rows_above_cursor(), size.rows_above_cursor()) {
-        (Some(before), Some(after)) => after.saturating_sub(before),
-        _ => 0,
-    }
-}
-
-/// The display, pinned to the bottom of the terminal below its output. It
-/// only ever moves the cursor relative to where it left it, so it never has
-/// to ask the terminal where that is, and printed lines scroll off the top
-/// the way any output does, into the terminal's own scrollback.
+/// The display, pinned to the bottom of the terminal with the output right
+/// above it. It moves the cursor relative to where it left it, so it never
+/// has to ask the terminal where that is, and printed lines scroll off the
+/// top the way any output does, into the terminal's own scrollback.
 ///
-/// The cursor rests on the bottom row, below the frame, and the display owns
-/// the rows above it: blank padding, then the frame. A terminal narrowing
+/// The cursor rests on the bottom row, below the frame. A terminal narrowing
 /// rewraps the frame onto more rows, which it makes room for by pushing
-/// what's above off the top; anchored at the bottom, those are the padding
-/// and the logs, while a frame higher up would lose its own top rows to the
-/// scrollback, where no redraw can erase them.
+/// what's above off the top; anchored at the bottom, that's the output,
+/// while a frame higher up would lose its own top rows to the scrollback,
+/// where no redraw can erase them.
 pub struct Session<W: Write> {
     out: W,
     palette: Palette,
     /// The frame on screen, kept to erase it and to skip redrawing it as is.
     drawn: Vec<Line<'static>>,
     drawn_size: Option<Size>,
-    /// Rows the display owns above the cursor: padding, then the frame.
-    owned: usize,
+    /// Blank rows at the top of the screen, from taking it on the first draw
+    /// or from the frame shrinking, which output takes before it scrolls, so
+    /// none of them reach the scrollback.
+    blank: usize,
 }
 
 impl<W: Write> Session<W> {
@@ -65,50 +58,21 @@ impl<W: Write> Session<W> {
             palette,
             drawn: Vec::new(),
             drawn_size: None,
-            owned: 0,
+            blank: 0,
         }
     }
 
-    /// The rows above the cursor the display owns at `size`: a narrower
-    /// terminal may have rewrapped the frame's lines onto more of them, and a
-    /// taller one has more rows to pin it to the bottom of.
-    fn owned_at(&self, size: Size) -> usize {
-        let Some(drawn) = self.drawn_size else {
-            return 0;
-        };
-        let padding = self.owned - self.drawn.len();
-        let frame: usize = if size.width < drawn.width {
-            self.drawn
+    /// The rows the frame on screen takes at `size`: a narrower terminal may
+    /// have rewrapped its lines onto more of them.
+    fn drawn_rows(&self, size: Size) -> usize {
+        match self.drawn_size {
+            Some(drawn) if size.width < drawn.width => self
+                .drawn
                 .iter()
                 .map(|line| line.width().div_ceil(size.width.max(1) as usize).max(1))
-                .sum()
-        } else {
-            self.drawn.len()
-        };
-        (padding + frame + added_rows(drawn, size))
-            .min(size.rows_above_cursor().unwrap_or(usize::MAX))
-    }
-
-    /// Takes the screen on the first draw, scrolling what was on it into the
-    /// scrollback, then moves the cursor to the top of the rows the display
-    /// owns and clears from there.
-    fn erase(&self, buf: &mut Vec<u8>, size: Size) -> usize {
-        let pin = match self.drawn_size {
-            None => size.rows_above_cursor().unwrap_or(0),
-            // Onto the rows a taller terminal added, so it stays at the bottom.
-            Some(drawn) => added_rows(drawn, size),
-        };
-        buf.extend(b"\r\n".repeat(pin));
-        let owned = match self.drawn_size {
-            None => pin,
-            Some(_) => self.owned_at(size),
-        };
-        buf.push(b'\r');
-        if owned > 0 {
-            buf.extend(format!("\x1b[{owned}A").as_bytes());
+                .sum(),
+            _ => self.drawn.len(),
         }
-        buf.extend(b"\x1b[J");
-        owned
     }
 
     fn frame(&self, state: &State, now: f64, tick: usize, size: Size) -> Vec<Line<'static>> {
@@ -146,37 +110,79 @@ impl<W: Write> Session<W> {
 
     /// Prints `printed` above the display and redraws it, as one synchronized
     /// update so terminals that support it never show the display erased.
-    /// Padded down to the bottom of the rows it owned unless `unpinned`.
+    /// With `last`, the blank rows at the top go, so the shell carries on
+    /// right below the frame.
     fn draw(
         &mut self,
         printed: Option<&str>,
         lines: Vec<Line<'static>>,
         size: Size,
-        unpinned: bool,
+        last: bool,
     ) -> io::Result<()> {
         let mut buf = BEGIN_SYNCHRONIZED_UPDATE.to_vec();
-        let mut owned = self.erase(&mut buf, size);
+        let pinned = size.rows_above_cursor();
+        match (self.drawn_size, pinned) {
+            // Takes the screen, scrolling what was on it into the scrollback.
+            (None, Some(rows)) => {
+                buf.extend(b"\r\n".repeat(rows));
+                self.blank = rows;
+            }
+            // The terminal may have moved what's at the top of the screen.
+            (Some(drawn), _) if drawn != size => self.blank = 0,
+            _ => {}
+        }
+        let drawn_rows = self.drawn_rows(size);
+        buf.push(b'\r');
+        if drawn_rows > 0 {
+            buf.extend(format!("\x1b[{drawn_rows}A").as_bytes());
+        }
+        buf.extend(b"\x1b[J");
+
+        // Everything above moves down onto rows the frame no longer needs,
+        // or up into blank ones, so the output stays right above the frame.
+        let rows_needed = printed.map_or(0, |text| rows(text, size.width)) + lines.len();
+        if let Some(height) = pinned {
+            let (top, bottom) = (format!("\x1b[{height}A"), format!("\x1b[{height}B"));
+            let start = if rows_needed < drawn_rows {
+                let spare = drawn_rows - rows_needed;
+                buf.extend(format!("{top}\x1b[{spare}L").as_bytes());
+                self.blank += spare;
+                rows_needed
+            } else {
+                let taken = (rows_needed - drawn_rows).min(self.blank);
+                if taken > 0 {
+                    buf.extend(format!("{top}\x1b[{taken}M").as_bytes());
+                    self.blank -= taken;
+                }
+                drawn_rows + taken
+            };
+            // From the bottom row, which is also where a terminal grown
+            // taller since the last draw pins the frame back to.
+            buf.extend(format!("{bottom}\r").as_bytes());
+            if start > 0 {
+                buf.extend(format!("\x1b[{start}A").as_bytes());
+            }
+        }
+
         if let Some(text) = printed {
             buf.extend(text.replace('\n', "\r\n").as_bytes());
             buf.extend(b"\x1b[0m\r\n");
-            owned = owned.saturating_sub(rows(text, size.width));
         }
-        let owned = if unpinned {
-            lines.len()
-        } else {
-            owned.max(lines.len())
-        };
-        buf.extend(b"\r\n".repeat(owned - lines.len()));
         for line in &lines {
             encode(&mut buf, line);
             buf.extend(b"\r\n");
+        }
+        if let (true, Some(height), blank @ 1..) = (last, pinned, self.blank) {
+            buf.extend(
+                format!("\x1b[{height}A\x1b[{blank}M\x1b[{height}B\r\x1b[{blank}A").as_bytes(),
+            );
+            self.blank = 0;
         }
         buf.extend(END_SYNCHRONIZED_UPDATE);
         self.out.write_all(&buf)?;
         self.out.flush()?;
         self.drawn = lines;
         self.drawn_size = Some(size);
-        self.owned = owned;
         Ok(())
     }
 
@@ -399,15 +405,15 @@ mod tests {
             .collect()
     }
 
-    /// `above` and the frame then `below` it, pinned to the bottom of a
-    /// `SIZE` screen with blank rows between, after what scrolled off.
+    /// After what scrolled off, blank rows, then `above`, the frame and
+    /// `below` it, pinned to the bottom of a `SIZE` screen.
     fn pinned(scrolled: &[&str], above: &[&str], below: &[&str]) -> Vec<String> {
         let blank = SIZE.height as usize - 1 - above.len() - frame().len() - below.len();
         scrolled
             .iter()
-            .chain(above)
             .map(|line| line.to_string())
             .chain(std::iter::repeat_n(String::new(), blank))
+            .chain(above.iter().map(|line| line.to_string()))
             .chain(frame())
             .chain(below.iter().map(|line| line.to_string()))
             .collect()
@@ -597,8 +603,9 @@ mod tests {
         session
             .render(Some("\x1b[31mERROR\x1b[39m: boom"), &state(), 0., 0, SIZE)
             .unwrap();
+        let row = SIZE.height - 1 - frame().len() as u16 - 1;
         let parser = emulator.parser.lock().unwrap();
-        let cell = |col| parser.screen().cell(0, col).unwrap().fgcolor();
+        let cell = |col| parser.screen().cell(row, col).unwrap().fgcolor();
         assert_eq!(
             (cell(0), cell(5)),
             (vt100::Color::Idx(1), vt100::Color::Default)
