@@ -92,24 +92,25 @@ pub struct Chain {
 /// Chain ids name networks only on EVM.
 fn chain_name(ecosystem: &str, chain_id: &str) -> Option<String> {
     use crate::config_parsing::chain_helpers::Network;
-    let network = Network::from_network_id(chain_id.parse().ok()?).ok()?;
     if ecosystem != "evm" {
         return None;
     }
-    Some(match network {
-        Network::EthereumMainnet => "Ethereum".to_string(),
-        network => network
-            .to_string()
-            .split('-')
-            .map(|word| {
-                let mut chars = word.chars();
-                chars.next().map_or(String::new(), |first| {
-                    first.to_uppercase().chain(chars).collect()
+    Some(
+        match Network::from_network_id(chain_id.parse().ok()?).ok()? {
+            Network::EthereumMainnet => "Ethereum".to_string(),
+            network => network
+                .to_string()
+                .split('-')
+                .map(|word| {
+                    let mut chars = word.chars();
+                    chars.next().map_or(String::new(), |first| {
+                        first.to_uppercase().chain(chars).collect()
+                    })
                 })
-            })
-            .collect::<Vec<_>>()
-            .join(" "),
-    })
+                .collect::<Vec<_>>()
+                .join(" "),
+        },
+    )
 }
 
 impl Chain {

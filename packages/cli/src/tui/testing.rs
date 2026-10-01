@@ -2,6 +2,7 @@
 //! the screen as text, for a line diff, and as an SVG, for a reviewer to look
 //! at in the pull request.
 
+use super::logo;
 use super::render::{ColorLevel, Palette};
 use super::session::{Session, Size};
 use std::{
@@ -138,9 +139,7 @@ impl Emulator {
                 if let Some(dots) = braille {
                     // Braille and line glyphs as shapes, the way terminals
                     // that draw them themselves show them.
-                    const DOTS: [[u32; 2]; 4] =
-                        [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
-                    for (dy, bits) in DOTS.iter().enumerate() {
+                    for (dy, bits) in logo::DOTS.iter().enumerate() {
                         for (dx, bit) in bits.iter().enumerate() {
                             if (dots - 0x2800) & bit != 0 {
                                 let _ = writeln!(

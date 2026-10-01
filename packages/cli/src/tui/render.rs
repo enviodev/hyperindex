@@ -266,6 +266,7 @@ fn percentage(chain: &Chain, palette: Palette) -> Spans {
 enum Blocks {
     WithUnit,
     Plain,
+    /// Without the "at head" or "searching" in front.
     Tight,
 }
 
@@ -277,32 +278,26 @@ fn blocks(chain: &Chain, form: Blocks, unit: &str, palette: Palette) -> Spans {
             span(format::compact(chain.to_block as f64), palette.dim()),
         ]
     };
+    let label = |text: &str, rest: Spans| match form {
+        Blocks::Tight => rest,
+        _ => [vec![span(text, palette.dim())], rest].concat(),
+    };
     match chain.progress {
         Progress::Synced {
             latest_processed_block,
             ..
-        } => {
-            let block = span(
+        } => label(
+            if chain.end_block.is_some() {
+                "at end "
+            } else {
+                "at head "
+            },
+            vec![span(
                 format::number(latest_processed_block.max(chain.start_block) as f64),
                 palette.text(),
-            );
-            if form == Blocks::Tight {
-                vec![block]
-            } else {
-                let at = if chain.end_block.is_some() {
-                    "at end "
-                } else {
-                    "at head "
-                };
-                vec![span(at, palette.dim()), block]
-            }
-        }
-        Progress::SearchingForEvents if form != Blocks::Tight => [
-            vec![span("searching ", palette.dim())],
-            of(chain.buffer_block),
-        ]
-        .concat(),
-        Progress::SearchingForEvents => of(chain.buffer_block),
+            )],
+        ),
+        Progress::SearchingForEvents => label("searching ", of(chain.buffer_block)),
         Progress::Syncing { .. } if form == Blocks::WithUnit => [
             of(chain.progress_block),
             vec![span(format!(" {unit}"), palette.faint())],
@@ -351,19 +346,51 @@ fn bar(chain: &Chain, width: usize, palette: Palette) -> Spans {
     spans
 }
 
+#[derive(Clone, Copy)]
+struct Layout {
+    blocks: Blocks,
+    events: bool,
+}
+
+/// From the most detailed down: the blocks' unit goes first, then the events.
+const ONE_LINE: [Layout; 3] = [
+    Layout {
+        blocks: Blocks::WithUnit,
+        events: true,
+    },
+    Layout {
+        blocks: Blocks::Plain,
+        events: true,
+    },
+    Layout {
+        blocks: Blocks::Plain,
+        events: false,
+    },
+];
+const FOLDED: [Layout; 3] = [
+    Layout {
+        blocks: Blocks::Plain,
+        events: true,
+    },
+    Layout {
+        blocks: Blocks::Plain,
+        events: false,
+    },
+    Layout {
+        blocks: Blocks::Tight,
+        events: false,
+    },
+];
+
 const MIN_BAR: usize = 12;
 const MAX_BAR: usize = 40;
 const MIN_FOLDED_BAR: usize = 8;
 
 /// Columns as wide as their widest value, one space apart, with the bar
 /// taking what's left. When it would get too short, the least important
-/// detail goes first: the blocks' unit, then the events, then each chain
-/// folds onto two lines.
+/// detail goes first, and past that each chain folds onto two lines.
 fn chain_rows(state: &State, inner: usize, palette: Palette) -> Vec<Line<'static>> {
     let chains = &state.chains;
-    if chains.is_empty() {
-        return vec![];
-    }
     let unit = if state.info.ecosystem == "svm" {
         "slots"
     } else {
@@ -376,107 +403,68 @@ fn chain_rows(state: &State, inner: usize, palette: Palette) -> Vec<Line<'static
             .max()
             .unwrap_or(0)
     };
-    let name = |chain: &Chain| chain_name(chain, palette);
-    let pct = |chain: &Chain| percentage(chain, palette);
-    let events = |chain: &Chain| events(chain, palette);
-    let name_width = widest(&name);
-    let pct_width = widest(&pct).max(3);
-    let pct_cell = |chain: &Chain| {
-        let align = match chain.progress {
-            Progress::Syncing { .. } => Align::Right,
-            _ => Align::Center,
-        };
-        pad(pct(chain), pct_width, align)
+    let name_width = widest(&|chain| chain_name(chain, palette));
+    let pct_width = widest(&|chain| percentage(chain, palette)).max(3);
+    let events_width = widest(&|chain| events(chain, palette));
+    let blocks_width =
+        |layout: Layout| widest(&|chain| blocks(chain, layout.blocks, unit, palette));
+    // Everything right of the bar.
+    let after_bar = |layout: Layout| {
+        1 + pct_width + 1 + blocks_width(layout) + if layout.events { 1 + events_width } else { 0 }
     };
-    let fixed = |form: Blocks, with_events: bool| {
-        let blocks_width = widest(&|chain| blocks(chain, form, unit, palette));
-        let events_width = if with_events { 1 + widest(&events) } else { 0 };
-        (
-            blocks_width,
-            events_width,
-            1 + pct_width + 1 + blocks_width + events_width,
-        )
-    };
-    let cells = |chain: &Chain, bar_width, form, blocks_width, with_events: bool, events_width| {
-        let mut cells = vec![
-            pct_cell(chain),
-            pad(
-                blocks(chain, form, unit, palette),
+    let progress = |layout: Layout, bar_width: usize| {
+        let blocks_width = blocks_width(layout);
+        move |chain: &Chain| {
+            let align = match chain.progress {
+                Progress::Syncing { .. } => Align::Right,
+                _ => Align::Center,
+            };
+            let mut cells = Vec::with_capacity(4);
+            if bar_width > 0 {
+                cells.push(bar(chain, bar_width, palette));
+            }
+            cells.push(pad(percentage(chain, palette), pct_width, align));
+            cells.push(pad(
+                blocks(chain, layout.blocks, unit, palette),
                 blocks_width,
                 Align::Left,
-            ),
-        ];
-        if bar_width > 0 {
-            cells.insert(0, bar(chain, bar_width, palette));
+            ));
+            if layout.events {
+                cells.push(pad(events(chain, palette), events_width, Align::Right));
+            }
+            cells
         }
-        if with_events {
-            cells.push(pad(events(chain), events_width - 1, Align::Right));
-        }
-        cells
     };
 
-    for (form, with_events) in [
-        (Blocks::WithUnit, true),
-        (Blocks::Plain, true),
-        (Blocks::Plain, false),
-    ] {
-        let (blocks_width, events_width, fixed) = fixed(form, with_events);
-        let room = inner.saturating_sub(name_width + 1 + fixed);
-        if room < MIN_BAR {
-            continue;
-        }
-        let bar_width = room.min(MAX_BAR);
+    let one_line = ONE_LINE.into_iter().find_map(|layout| {
+        let room = inner.saturating_sub(name_width + 1 + after_bar(layout));
+        (room >= MIN_BAR).then(|| progress(layout, room.min(MAX_BAR)))
+    });
+    if let Some(progress) = one_line {
         return chains
             .iter()
             .map(|chain| {
-                let mut row_cells = vec![pad(name(chain), name_width, Align::Left)];
-                row_cells.extend(cells(
-                    chain,
-                    bar_width,
-                    form,
-                    blocks_width,
-                    with_events,
-                    events_width,
-                ));
-                row(row_cells)
+                let name = pad(chain_name(chain, palette), name_width, Align::Left);
+                row([vec![name], progress(chain)].concat())
             })
             .collect();
     }
 
     // Events only stay when they fit beside the bar: on a line of their own
     // they'd read as belonging to the next chain.
-    let folded = [
-        (Blocks::Plain, true),
-        (Blocks::Plain, false),
-        (Blocks::Tight, false),
-    ];
-    let (form, with_events) = folded
+    let layout = FOLDED
         .into_iter()
-        .find(|(form, with_events)| {
-            inner.saturating_sub(fixed(*form, *with_events).2) >= MIN_FOLDED_BAR
-        })
-        .unwrap_or((Blocks::Tight, false));
-    let (blocks_width, events_width, fixed) = fixed(form, with_events);
+        .find(|layout| inner.saturating_sub(after_bar(*layout)) >= MIN_FOLDED_BAR)
+        .unwrap_or(FOLDED[FOLDED.len() - 1]);
     // Too narrow for a bar that shows anything, the percentage says it alone.
-    let bar_width = match inner.saturating_sub(fixed) {
+    let bar_width = match inner.saturating_sub(after_bar(layout)) {
         room if room >= MIN_FOLDED_BAR / 2 => room,
         _ => 0,
     };
+    let progress = progress(layout, bar_width);
     chains
         .iter()
-        .flat_map(|chain| {
-            [
-                Line::from(name(chain)),
-                row(cells(
-                    chain,
-                    bar_width,
-                    form,
-                    blocks_width,
-                    with_events,
-                    events_width,
-                )),
-            ]
-        })
+        .flat_map(|chain| [Line::from(chain_name(chain, palette)), row(progress(chain))])
         .collect()
 }
 
@@ -549,7 +537,7 @@ fn summary(
     } else {
         [status, totals]
             .into_iter()
-            .flat_map(|part| wrap_words(part, inner, 0))
+            .flat_map(|part| wrap_words(part, inner, 0, 0))
             .collect()
     }
 }
@@ -620,7 +608,8 @@ fn links(info: &TuiInfo, inner: usize, palette: Palette) -> Vec<Line<'static>> {
 }
 
 fn notices(state: &State, inner: usize, palette: Palette) -> Vec<Line<'static>> {
-    let mut notices: Vec<Vec<Spans>> = Vec::new();
+    // Each notice is a marked headline, then any detail under its text.
+    let mut notices: Vec<(Spans, Option<Spans>)> = Vec::new();
     if let Some((time_ms, reset_in_ms)) = state.rate_limit() {
         let limited: Vec<String> = state
             .chains
@@ -649,42 +638,51 @@ fn notices(state: &State, inner: usize, palette: Palette) -> Vec<Line<'static>> 
                 palette.dim(),
             ));
         }
-        notices.push(vec![
+        notices.push((
             headline,
-            vec![
-                span("  Raise the limit with an API token: ", palette.dim()),
+            Some(vec![
+                span("Raise the limit with an API token: ", palette.dim()),
                 span("https://envio.dev/app/api-tokens", palette.link()),
-            ],
-        ]);
+            ]),
+        ));
     }
     match &state.messages {
         Messages::Loading => {}
         Messages::Loaded(messages) => {
             for message in messages {
-                notices.push(vec![vec![
-                    span("● ", Style::new().fg(palette.message(&message.color))),
-                    span(message.content.clone(), palette.text()),
-                ]]);
+                notices.push((
+                    vec![
+                        span("● ", Style::new().fg(palette.message(&message.color))),
+                        span(message.content.clone(), palette.text()),
+                    ],
+                    None,
+                ));
             }
         }
-        Messages::Failed => notices.push(vec![vec![
-            span("▲ ", palette.red()),
-            span("Failed to load messages from envio server", palette.text()),
-        ]]),
+        Messages::Failed => notices.push((
+            vec![
+                span("▲ ", palette.red()),
+                span("Failed to load messages from envio server", palette.text()),
+            ],
+            None,
+        )),
     }
+    const UNDER_TEXT: usize = 2;
     notices
         .into_iter()
-        .flatten()
-        .flat_map(|spans| wrap_words(spans, inner, 2))
+        .flat_map(|(headline, detail)| {
+            let mut lines = wrap_words(headline, inner, 0, UNDER_TEXT);
+            if let Some(detail) = detail {
+                lines.extend(wrap_words(detail, inner, UNDER_TEXT, UNDER_TEXT));
+            }
+            lines
+        })
         .collect()
 }
 
-/// Breaks between words, continuing each line `indent` columns in, under the
-/// text that follows a notice's marker.
-fn wrap_words(spans: Spans, width: usize, indent: usize) -> Vec<Line<'static>> {
-    let lead = spans.first().map_or(0, |span| {
-        span.content.len() - span.content.trim_start_matches(' ').len()
-    });
+/// Breaks between words, starting the first line `first` columns in and the
+/// rest `indent` columns in.
+fn wrap_words(spans: Spans, width: usize, first: usize, indent: usize) -> Vec<Line<'static>> {
     let mut words: Vec<(String, Style, bool)> = Vec::new();
     let mut spaced = false;
     for span in spans {
@@ -697,15 +695,21 @@ fn wrap_words(spans: Spans, width: usize, indent: usize) -> Vec<Line<'static>> {
         }
     }
     let mut lines = Vec::new();
-    let mut line: Spans = vec![Span::raw(" ".repeat(lead))];
-    let mut used = lead;
+    let margin = |by: usize| -> Spans {
+        (by > 0)
+            .then(|| Span::raw(" ".repeat(by)))
+            .into_iter()
+            .collect()
+    };
+    let mut line = margin(first);
+    let mut used = first;
     let mut empty = true;
     for (word, style, spaced) in words {
         let word_width = Span::raw(word.as_str()).width();
         let gap = usize::from(spaced && !empty);
         if !empty && used + gap + word_width > width {
             lines.push(Line::from(std::mem::take(&mut line)));
-            line = vec![Span::raw(" ".repeat(indent))];
+            line = margin(indent);
             used = indent;
         } else if gap > 0 {
             line.push(Span::raw(" "));
@@ -744,14 +748,10 @@ pub fn frame(
         .unwrap_or(0)
         .min(inner);
     let logo: Vec<Line<'static>> = if inner >= logo::width() + 2 {
-        let indent = content_width.saturating_sub(logo::width()) / 2;
+        let center = content_width.saturating_sub(logo::width()) / 2;
         logo::lines(tick, |color| palette.rgb(color))
             .into_iter()
-            .map(|line| {
-                let mut spans = vec![Span::raw(" ".repeat(indent))];
-                spans.extend(line.spans);
-                Line::from(spans)
-            })
+            .map(|line| indent(line, center))
             .chain([Line::default()])
             .collect()
     } else {
@@ -772,29 +772,32 @@ pub fn frame(
         body.extend(notices);
     }
 
-    let lay_out = |sections: Vec<Line<'static>>| {
-        let indented = sections
-            .into_iter()
-            .map(|line| {
-                if margin == 0 || line.spans.is_empty() {
-                    return line;
-                }
-                let mut spans = vec![Span::raw(" ".repeat(margin))];
-                spans.extend(line.spans);
-                Line::from(spans)
-            })
-            .collect();
-        wrap(indented, width)
+    let lay_out = |lines: Vec<Line<'static>>| {
+        wrap(
+            lines.into_iter().map(|line| indent(line, margin)).collect(),
+            width,
+        )
     };
-    let head = vec![title, Line::default()];
-    let full = lay_out([head.clone(), logo, body.clone()].concat());
-    let mut lines = if full.len() <= height {
-        full
+    let (head, logo, body) = (
+        lay_out(vec![title, Line::default()]),
+        lay_out(logo),
+        lay_out(body),
+    );
+    let fits = head.len() + logo.len() + body.len() <= height;
+    let mut lines = if fits {
+        [head, logo, body].concat()
     } else {
-        lay_out([head, body].concat())
+        [head, body].concat()
     };
     lines.truncate(height);
     lines
+}
+
+fn indent(line: Line<'static>, by: usize) -> Line<'static> {
+    if by == 0 || line.spans.is_empty() {
+        return line;
+    }
+    Line::from([vec![Span::raw(" ".repeat(by))], line.spans].concat())
 }
 
 /// Breaks lines at the terminal width, so the line count is the height the
@@ -1144,6 +1147,7 @@ mod tests {
                 Span::raw(" · 9s slower"),
             ],
             14,
+            0,
             2,
         )
         .iter()
