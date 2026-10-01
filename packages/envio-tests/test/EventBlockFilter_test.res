@@ -1,0 +1,443 @@
+open Vitest
+
+// Tests for the per-event `startBlock` extracted from `where.block` on the
+// `onEvent` filter. The parser lives in `LogSelection.parseWhereOrThrow`
+// and composes the ecosystem-specific `onEventBlockFilterSchema` (strips
+// `block.number` on EVM, `block.height` on Fuel) with the shared
+// `eventBlockRangeSchema` (strict, `_gte`-only). These tests drive the parser
+// directly so we don't have to bring up a full indexer.
+//
+// The canonical ERC-20 Transfer sighash is used as a valid topic0 — the
+// parser requires a sighash but the content doesn't matter for these cases.
+
+let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+type parsed = {startBlock: option<int>, filterByAddresses: bool}
+
+let parse = (~eventFilters: option<JSON.t>, ~probeChainId, ~onEventBlockFilterSchema) => {
+  let p = LogSelection.parseWhereOrThrow(
+    ~where=eventFilters,
+    ~sighash=transferSighash,
+    ~params=["from", "to"],
+    ~contractName="ERC20",
+    ~chainId=probeChainId,
+    ~onEventBlockFilterSchema,
+  )
+  {startBlock: p.resolvedWhere.startBlock, filterByAddresses: p.filterByAddresses}
+}
+
+let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1->ChainId.fromInt) =>
+  parse(
+    ~eventFilters,
+    ~probeChainId,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+  )
+
+let parseFuel = (~eventFilters: option<JSON.t>, ~probeChainId=1->ChainId.fromInt) =>
+  parse(
+    ~eventFilters,
+    ~probeChainId,
+    ~onEventBlockFilterSchema=Fuel.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+  )
+
+describe("eventBlockRangeSchema (strict, _gte-only)", () => {
+  it("parses a lone _gte", t => {
+    let parsed = %raw(`{_gte: 10}`)->S.parseOrThrow(LogSelection.eventBlockRangeSchema)
+    t.expect(parsed).toEqual(({_gte: Some(10)}: LogSelection.eventBlockRange))
+  })
+
+  it("rejects _lte (use onBlock for ranges)", t => {
+    t.expect(
+      () => %raw(`{_gte: 10, _lte: 100}`)->S.parseOrThrow(LogSelection.eventBlockRangeSchema),
+    ).toThrow()
+  })
+
+  it("rejects _every (use onBlock for stride)", t => {
+    t.expect(
+      () => %raw(`{_gte: 10, _every: 5}`)->S.parseOrThrow(LogSelection.eventBlockRangeSchema),
+    ).toThrow()
+  })
+
+  it("rejects typos (_gt)", t => {
+    t.expect(() => %raw(`{_gt: 10}`)->S.parseOrThrow(LogSelection.eventBlockRangeSchema)).toThrow()
+  })
+
+  it("accepts an empty object (no startBlock)", t => {
+    let parsed = %raw(`{}`)->S.parseOrThrow(LogSelection.eventBlockRangeSchema)
+    t.expect(parsed).toEqual(({_gte: None}: LogSelection.eventBlockRange))
+  })
+})
+
+describe("parseWhereOrThrow — static `where` with block filter (EVM)", () => {
+  it("extracts startBlock from a bare block filter", t => {
+    let {startBlock, filterByAddresses} = parseEvm(
+      ~eventFilters=Some(%raw(`{block: {number: {_gte: 1000}}}`)),
+    )
+    t.expect((startBlock, filterByAddresses)).toEqual((Some(1000), false))
+  })
+
+  it("extracts startBlock alongside params (combined filter)", t => {
+    let {startBlock} = parseEvm(
+      ~eventFilters=Some(
+        %raw(`{block: {number: {_gte: 2000}}, params: {from: "0x0000000000000000000000000000000000000000"}}`),
+      ),
+    )
+    t.expect(startBlock).toEqual(Some(2000))
+  })
+
+  it("returns None when `where` has no block filter", t => {
+    let {startBlock} = parseEvm(
+      ~eventFilters=Some(%raw(`{params: {from: "0x0000000000000000000000000000000000000000"}}`)),
+    )
+    t.expect(startBlock).toEqual(None)
+  })
+
+  it("returns None when `where` is `{block: {}}` (no number field)", t => {
+    let {startBlock} = parseEvm(~eventFilters=Some(%raw(`{block: {}}`)))
+    t.expect(startBlock).toEqual(None)
+  })
+
+  it("returns None when `block.number: {}` (no _gte)", t => {
+    let {startBlock} = parseEvm(~eventFilters=Some(%raw(`{block: {number: {}}}`)))
+    t.expect(startBlock).toEqual(None)
+  })
+
+  it("returns None when `eventFilters` is None (no where option)", t => {
+    let {startBlock} = parseEvm(~eventFilters=None)
+    t.expect(startBlock).toEqual(None)
+  })
+
+  it("rejects `_lte` on event filters with a helpful message", t => {
+    t->toThrowErrorEqual(
+      () => parseEvm(~eventFilters=Some(%raw(`{block: {number: {_gte: 10, _lte: 200}}}`)))->ignore,
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at root. Reason: Encountered disallowed excess key \"_lte\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
+  })
+
+  it("rejects `_every` on event filters", t => {
+    t->toThrowErrorEqual(
+      () => parseEvm(~eventFilters=Some(%raw(`{block: {number: {_gte: 10, _every: 5}}}`)))->ignore,
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at root. Reason: Encountered disallowed excess key \"_every\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
+  })
+
+  it("rejects unknown top-level keys (typo catches)", t => {
+    t->toThrowErrorEqual(
+      () => parseEvm(~eventFilters=Some(%raw(`{blocks: {number: {_gte: 10}}}`)))->ignore,
+      `Invalid where configuration. Unknown field "blocks". Indexed parameter filters must be nested under \`params\` and block-range filters under \`block\``,
+    )
+  })
+
+  it("rejects unknown fields inside `block` (typo catches)", t => {
+    t->toThrowErrorEqual(
+      () => parseEvm(~eventFilters=Some(%raw(`{block: {numbre: {_gte: 10}}}`)))->ignore,
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at [\"block\"]. Reason: Encountered disallowed excess key \"numbre\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
+  })
+})
+
+describe("parseWhereOrThrow — dynamic `where` callback (EVM)", () => {
+  it("extracts startBlock from the probe result for the configured chain", t => {
+    // The callback is evaluated once at build time against `probeChainId`
+    // so the probe exercises the branch this event config is built for.
+    let whereFn = %raw(`({chain}) => ({
+      block: {number: {_gte: chain.id === 137 ? 5000 : 1000}},
+      params: {from: "0x0000000000000000000000000000000000000000"},
+    })`)
+    let {startBlock: startBlockChain137} = parseEvm(
+      ~eventFilters=Some(whereFn),
+      ~probeChainId=137->ChainId.fromInt,
+    )
+    let {startBlock: startBlockChain1} = parseEvm(
+      ~eventFilters=Some(whereFn),
+      ~probeChainId=1->ChainId.fromInt,
+    )
+    t.expect((startBlockChain137, startBlockChain1)).toEqual((Some(5000), Some(1000)))
+  })
+
+  it("returns None when the callback returns `false` for this chain", t => {
+    let whereFn = %raw(`({chain}) => chain.id === 137 ? {block: {number: {_gte: 5000}}} : false`)
+    let {startBlock} = parseEvm(~eventFilters=Some(whereFn), ~probeChainId=1->ChainId.fromInt)
+    t.expect(startBlock).toEqual(None)
+  })
+
+  it("returns None when the callback returns `true`", t => {
+    let whereFn = %raw(`({chain: _chain}) => true`)
+    let {startBlock} = parseEvm(~eventFilters=Some(whereFn))
+    t.expect(startBlock).toEqual(None)
+  })
+})
+
+describe("parseWhereOrThrow — Fuel block.height", () => {
+  it("extracts startBlock from `block.height._gte`", t => {
+    let {startBlock} = parseFuel(~eventFilters=Some(%raw(`{block: {height: {_gte: 42}}}`)))
+    t.expect(startBlock).toEqual(Some(42))
+  })
+
+  it("Fuel rejects `block.number` — the block filter is keyed by height", t => {
+    t->toThrowErrorEqual(
+      () => parseFuel(~eventFilters=Some(%raw(`{block: {number: {_gte: 42}}}`)))->ignore,
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at [\"block\"]. Reason: Encountered disallowed excess key \"number\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
+  })
+})
+
+// The public `where` a handler writes carries `block` alongside `params`, and
+// its runtime encoding is what `parseWhereOrThrow` reads. Asserted through the
+// user API rather than a generated ReScript record: `~handlers` is type-checked
+// against the config's generated `indexer` types, so a `block` sibling that the
+// types did not allow fails here, and `~registerHandlers` then runs the module
+// so the resolved `startBlock` proves the encoding round-trips.
+let registered = InternalTestIndexer.fromUserApi(
+  ~registerHandlers=true,
+  ~configYaml=`
+name: event-block-filter
+contracts:
+  - name: EventFiltersTest
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 amount)
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: EventFiltersTest
+        address: "0x1111111111111111111111111111111111111111"
+`,
+  ~schema=`
+type Noop {
+  id: ID!
+}
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+// params and block together
+indexer.onEvent(
+  {
+    contract: "EventFiltersTest",
+    event: "Transfer",
+    where: {
+      params: { from: "0x0000000000000000000000000000000000000000" },
+      block: { number: { _gte: 1000 } },
+    },
+  },
+  async () => {},
+);
+
+// block alone
+indexer.onEvent(
+  {
+    contract: "EventFiltersTest",
+    event: "Transfer",
+    where: { block: { number: { _gte: 2500 } } },
+  },
+  async () => {},
+);
+`,
+)
+
+describe("Public onEvent `where` — block filter alongside params", () => {
+  let startBlocks = () =>
+    (registered.registrations()->Dict.getUnsafe("1")).onEventRegistrations
+    ->Array.filter(reg => reg.eventConfig.name === "Transfer")
+    ->Array.map(reg =>
+      (
+        reg->(Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration)
+      ).resolvedWhere.startBlock
+    )
+
+  it("resolves the start block from `where.block`, with and without params", t => {
+    t.expect(startBlocks()).toEqual([Some(1000), Some(2500)])
+  })
+})
+
+// Integration: the full `buildEvmEventConfig` path sees the `block` filter
+// and writes it to `eventConfig.startBlock`, overriding the contract-level
+// value. This is the seam that `FetchState` reads when partitioning —
+// unit-testing it here avoids a full-indexer bring-up while still proving
+// the override semantics.
+describe("EventConfigBuilder — where.block.number._gte overrides contract startBlock", () => {
+  let transferParams: array<EventConfigBuilder.paramMeta> = [
+    {name: "from", abiType: "address", indexed: true},
+    {name: "to", abiType: "address", indexed: true},
+    {name: "value", abiType: "uint256", indexed: false},
+  ]
+
+  let build = (~eventFilters: option<JSON.t>, ~startBlock: option<int>=?) =>
+    EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+        ~contractName="ERC20",
+        ~eventName="Transfer",
+        ~sighash=transferSighash,
+        ~params=transferParams,
+      ),
+      ~isWildcard=true,
+      ~handler=None,
+      ~contractRegister=None,
+      ~where=eventFilters,
+      ~chainId=1->ChainId.fromInt,
+      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+      ~startBlock?,
+    )
+
+  it("promotes `where.block.number._gte` to eventConfig.startBlock", t => {
+    let ec = build(~eventFilters=Some(%raw(`{block: {number: {_gte: 1000}}}`)))
+    t.expect(ec.startBlock).toEqual(Some(1000))
+  })
+
+  it("overrides the contract-level startBlock when where.block is present", t => {
+    let ec = build(~eventFilters=Some(%raw(`{block: {number: {_gte: 1500}}}`)), ~startBlock=100)
+    t.expect(ec.startBlock).toEqual(Some(1500))
+  })
+
+  // Guard against a regression to `max(contract, where)` semantics: the
+  // where-derived value must win even when it's LOWER than the config
+  // value, so users can widen an event below its contract's start_block
+  // without touching config.yaml.
+  it("overrides even when contract-level startBlock is larger than where.block", t => {
+    let ec = build(~eventFilters=Some(%raw(`{block: {number: {_gte: 1500}}}`)), ~startBlock=7000)
+    t.expect(ec.startBlock).toEqual(Some(1500))
+  })
+
+  it("falls back to the contract-level startBlock when where.block is absent", t => {
+    let ec = build(
+      ~eventFilters=Some(%raw(`{params: {from: "0x0000000000000000000000000000000000000000"}}`)),
+      ~startBlock=100,
+    )
+    t.expect(ec.startBlock).toEqual(Some(100))
+  })
+
+  it("leaves startBlock as None when neither is provided", t => {
+    let ec = build(~eventFilters=None)
+    t.expect(ec.startBlock).toEqual(None)
+  })
+
+  it("dynamic where callback — per-chain startBlock wins over contract value", t => {
+    let whereFn = %raw(`({chain}) => ({block: {number: {_gte: chain.id === 137 ? 5000 : 250}}})`)
+    let chain137 = EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+        ~contractName="ERC20",
+        ~eventName="Transfer",
+        ~sighash=transferSighash,
+        ~params=transferParams,
+      ),
+      ~isWildcard=true,
+      ~handler=None,
+      ~contractRegister=None,
+      ~where=Some(whereFn),
+      ~chainId=137->ChainId.fromInt,
+      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+      ~startBlock=1,
+    )
+    let chain1 = EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+        ~contractName="ERC20",
+        ~eventName="Transfer",
+        ~sighash=transferSighash,
+        ~params=transferParams,
+      ),
+      ~isWildcard=true,
+      ~handler=None,
+      ~contractRegister=None,
+      ~where=Some(whereFn),
+      ~chainId=1->ChainId.fromInt,
+      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+      ~startBlock=1,
+    )
+    t.expect((chain137.startBlock, chain1.startBlock)).toEqual((Some(5000), Some(250)))
+  })
+})
+
+// End-to-end through FetchState: the per-event `startBlock` (derived from
+// `where.block.number._gte`) must drive the first query's `fromBlock` so
+// the fetcher doesn't over-fetch (asking for blocks before the filter)
+// or under-fetch (skipping past it). Observe the query the scheduler
+// would hand to the source, not the internal FetchState fields, so the
+// test survives any internal refactor as long as the fetcher contract
+// holds.
+describe("FetchState — where.block._gte drives the first query's fromBlock", () => {
+  let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+
+  let buildEvmTransfer = (~startBlock: option<int>) =>
+    EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+        ~contractName="ERC20",
+        ~eventName="Transfer",
+        ~sighash=transferSighash,
+        ~params=[
+          {name: "from", abiType: "address", indexed: true},
+          {name: "to", abiType: "address", indexed: true},
+          {name: "value", abiType: "uint256", indexed: false},
+        ],
+      ),
+      ~isWildcard=false,
+      ~handler=None,
+      ~contractRegister=None,
+      ~where=Some(%raw(`{block: {number: {_gte: 5000}}}`)),
+      ~chainId=1->ChainId.fromInt,
+      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+      ~startBlock?,
+    )
+
+  let makeFetchState = (~contractStartBlock: option<int>) => {
+    let onEventRegistrations = [
+      (buildEvmTransfer(~startBlock=contractStartBlock) :> Internal.onEventRegistration),
+    ]
+    let addresses = [
+      {
+        Internal.address: mockAddress,
+        contractName: "ERC20",
+        registrationBlock: -1,
+      },
+    ]
+    FetchState.make(
+      ~onEventRegistrations,
+      ~addressStore=TestAddresses.makeStore(~onEventRegistrations),
+      ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=3,
+      ~maxOnBlockBufferSize=5000,
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=10000,
+    )
+  }
+
+  // Pull the first query the scheduler would dispatch. `updateKnownHeight`
+  // is needed so `getNextQuery` sees a non-zero head.
+  let firstQuery = (fetchState: FetchState.t) =>
+    switch fetchState
+    ->FetchState.updateKnownHeight(~knownHeight=10000)
+    ->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=10000.) {
+    | Ready([q]) => q
+    | Ready(qs) =>
+      JsError.throwWithMessage(`Expected a single query, got ${qs->Array.length->Int.toString}`)
+    | WaitingForNewBlock => JsError.throwWithMessage("Unexpected WaitingForNewBlock")
+    | NothingToQuery => JsError.throwWithMessage("Unexpected NothingToQuery")
+    }
+
+  it("first query fromBlock equals where.block._gte (no over- or under-fetching)", t => {
+    let q = firstQuery(makeFetchState(~contractStartBlock=None))
+    t.expect((q.fromBlock, q.toBlock)).toEqual((5000, None))
+  })
+
+  it("where.block._gte overrides a smaller contract-level startBlock", t => {
+    // Contract-level startBlock (from `config.yaml`) is 100; the where
+    // filter bumps it to 5000 — the first query must start at 5000, not
+    // 100, so we don't waste a fetch on blocks 100–4999.
+    let q = firstQuery(makeFetchState(~contractStartBlock=Some(100)))
+    t.expect(q.fromBlock).toEqual(5000)
+  })
+
+  // Guard against a regression to `max(contract, where)` semantics: the
+  // where-derived value must win even when it's LOWER than the config
+  // value. A `max` implementation would start at 7000 and miss events
+  // on blocks 5000–6999 that the user explicitly opted into.
+  it("where.block._gte overrides a larger contract-level startBlock", t => {
+    let q = firstQuery(makeFetchState(~contractStartBlock=Some(7000)))
+    t.expect(q.fromBlock).toEqual(5000)
+  })
+})

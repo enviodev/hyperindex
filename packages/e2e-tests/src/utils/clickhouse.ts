@@ -39,7 +39,7 @@ export async function queryClickHouse<T = unknown>(sql: string): Promise<T> {
 /**
  * Check if ClickHouse is reachable by hitting its ping endpoint.
  */
-async function isClickHouseReachable(): Promise<boolean> {
+export async function isClickHouseReachable(): Promise<boolean> {
   try {
     const response = await fetch(`${config.clickhouseUrl}/ping`, {
       signal: AbortSignal.timeout(2000),

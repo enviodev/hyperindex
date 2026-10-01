@@ -5,9 +5,11 @@ use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
 use napi_derive::napi;
 
-use crate::address_store::{AddressSet, StoreInner};
+use crate::address_store::{AddressSet, Emitter, StoreInner};
+use crate::fuel::log_decoder::{parse_abi, LogDecoder};
+use fuel_abi_types::abi::unified_program::UnifiedProgramABI;
 
-// FuelVM receipt type codes (see FuelSDK.receiptType on the JS side).
+// FuelVM receipt type codes.
 const RECEIPT_CALL: u8 = 0;
 const RECEIPT_LOG_DATA: u8 = 6;
 const RECEIPT_TRANSFER: u8 = 7;
@@ -32,13 +34,12 @@ pub enum FuelEventKind {
 }
 
 /// Internal per-registration kind. Unlike the `FuelEventKind` boundary enum,
-/// the `LogData` variant carries its parsed `rb`, so a LogData registration
-/// can't exist without one and no other kind can carry a stray rb — the
-/// invalid states the napi input's `kind`+`log_id` pair could express are
-/// resolved once, at construction.
-#[derive(Clone, Copy)]
+/// the `LogData` variant carries its parsed `rb` and decoder, so a LogData
+/// registration can't exist without them and no other kind can carry a stray
+/// one — the invalid states the napi input's `kind`+`log_id`+`abi` fields
+/// could express are resolved once, at construction.
 pub(crate) enum RegistrationKind {
-    LogData { rb: u64 },
+    LogData { rb: u64, decoder: LogDecoder },
     Mint,
     Burn,
     Transfer,
@@ -75,6 +76,9 @@ pub struct FuelOnEventRegistrationInput {
     /// The LogData `rb` value as a decimal string (u64). Required for
     /// `LogData`, ignored otherwise.
     pub log_id: Option<String>,
+    /// The contract's Fuel ABI JSON, which LogData `data` is decoded against.
+    /// Required for `LogData`, ignored otherwise.
+    pub abi: Option<serde_json::Value>,
 }
 
 pub(crate) struct Registration {
@@ -87,15 +91,6 @@ pub(crate) struct Registration {
     /// Earliest block height this registration accepts; `None` is unrestricted.
     pub start_block: Option<i64>,
     pub kind: RegistrationKind,
-}
-
-/// The emitter facts a receipt's owner gate reads: the root contract id's store
-/// key (its 32 raw bytes), the contract this partition's set says owns it, and
-/// the receipt's block height.
-pub(crate) struct ReceiptAddress<'a> {
-    pub key: &'a [u8],
-    pub contract_name: Option<&'a str>,
-    pub block_height: i64,
 }
 
 impl Registration {
@@ -111,21 +106,24 @@ impl Registration {
         &self,
         receipt_type: u8,
         rb: Option<u64>,
-        address: &ReceiptAddress,
+        address: &Emitter,
         force_wildcard: bool,
         store: &StoreInner,
     ) -> bool {
-        let kind_matches = match self.kind {
-            RegistrationKind::LogData { rb: reg_rb } => {
-                receipt_type == RECEIPT_LOG_DATA && rb == Some(reg_rb)
+        let kind_matches = match &self.kind {
+            RegistrationKind::LogData { rb: reg_rb, .. } => {
+                receipt_type == RECEIPT_LOG_DATA && rb == Some(*reg_rb)
             }
             kind => kind.receipt_types().contains(&receipt_type),
         };
         kind_matches
-            && crate::registration_start_block::has_started(self.start_block, address.block_height)
-            && (self.is_wildcard
-                || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
-                    && store.is_indexed_at(address.key, self.contract_idx, address.block_height)))
+            && address.matches_registration(
+                store,
+                self.contract_idx,
+                self.is_wildcard,
+                self.start_block,
+                force_wildcard,
+            )
     }
 }
 
@@ -170,6 +168,9 @@ impl SelectionBuilder {
         store: &StoreInner,
     ) -> Result<Self> {
         let mut map = HashMap::new();
+        // Every LogData registration carries its contract's whole ABI; parse
+        // each distinct one once.
+        let mut programs: Vec<(&serde_json::Value, UnifiedProgramABI)> = Vec::new();
         for reg in registrations {
             let kind = match reg.kind {
                 FuelEventKind::LogData => {
@@ -179,7 +180,24 @@ impl SelectionBuilder {
                     let rb = log_id.parse::<u64>().with_context(|| {
                         format!("parse logId {} for event {}", log_id, reg.event_name)
                     })?;
-                    RegistrationKind::LogData { rb }
+                    let abi = reg.abi.as_ref().with_context(|| {
+                        format!("LogData registration {} is missing abi", reg.event_name)
+                    })?;
+                    let program_idx = match programs.iter().position(|(seen, _)| *seen == abi) {
+                        Some(idx) => idx,
+                        None => {
+                            let program = parse_abi(abi).with_context(|| {
+                                format!("parse the ABI of contract {}", reg.contract_name)
+                            })?;
+                            programs.push((abi, program));
+                            programs.len() - 1
+                        }
+                    };
+                    let decoder =
+                        LogDecoder::new(&programs[program_idx].1, log_id).with_context(|| {
+                            format!("build the LogData decoder for event {}", reg.event_name)
+                        })?;
+                    RegistrationKind::LogData { rb, decoder }
                 }
                 FuelEventKind::Call => {
                     anyhow::ensure!(
@@ -245,7 +263,7 @@ impl SelectionBuilder {
                 .get(id)
                 .with_context(|| format!("Unknown registration index {id} in query selection"))?;
             registrations.push(reg.clone());
-            match reg.kind {
+            match &reg.kind {
                 RegistrationKind::LogData { .. } => needs_log_data = true,
                 RegistrationKind::Mint | RegistrationKind::Burn => needs_supply = true,
                 RegistrationKind::Transfer => needs_transfer = true,
@@ -257,13 +275,13 @@ impl SelectionBuilder {
             // alone (`force_wildcard`); dropping them from the query instead
             // would mean never fetching the contract at all.
             let address_free = reg.is_wildcard || client_filtered.applies(&reg.contract_name);
-            match (reg.kind, address_free) {
-                (RegistrationKind::LogData { rb }, true) => push_unique(&mut wildcard_rbs, rb),
-                (RegistrationKind::LogData { rb }, false) => push_unique(
+            match (&reg.kind, address_free) {
+                (RegistrationKind::LogData { rb, .. }, true) => push_unique(&mut wildcard_rbs, *rb),
+                (RegistrationKind::LogData { rb, .. }, false) => push_unique(
                     rbs_by_contract
                         .entry(reg.contract_name.as_str())
                         .or_default(),
-                    rb,
+                    *rb,
                 ),
                 (kind, true) => {
                     for &receipt_type in kind.receipt_types() {
@@ -345,7 +363,7 @@ impl SelectionBuilder {
 mod tests {
     use super::*;
     use crate::address_store::test_support::{fuel_store, set_of};
-    use crate::address_store::AddressStore;
+    use crate::address_store::{AddressStore, Owners};
 
     const ADDR_1: &str = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1";
     const ADDR_2: &str = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde2";
@@ -366,6 +384,7 @@ mod tests {
             start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
+            abi: log_id.map(|id| crate::fuel::log_decoder::test_abi(id, "u8")),
         }
     }
 
@@ -383,22 +402,22 @@ mod tests {
         Hash::decode_hex(address).unwrap()
     }
 
-    /// A receipt emitter that the partition's set claims for `contract_name`.
-    fn emitter<'a>(set: &'a AddressSet, key: &'a Hash) -> ReceiptAddress<'a> {
-        ReceiptAddress {
+    /// A receipt emitter with the contracts the partition's set claims it for.
+    fn emitter<'a>(set: &'a AddressSet, key: &'a Hash) -> Emitter<'a> {
+        Emitter {
             key: &key[..],
-            contract_name: set.cache().owner_of(&key[..]),
-            block_height: 0,
+            owners: set.cache().owners_of(&key[..]),
+            block: 0,
         }
     }
 
     /// An emitter no contract owns.
     const UNOWNED_KEY: [u8; 32] = [0xff; 32];
-    fn unowned() -> ReceiptAddress<'static> {
-        ReceiptAddress {
+    fn unowned() -> Emitter<'static> {
+        Emitter {
             key: &UNOWNED_KEY,
-            contract_name: None,
-            block_height: 0,
+            owners: Owners::default(),
+            block: 0,
         }
     }
 
@@ -467,7 +486,7 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(set.cache().owner_of(&key_of(ADDR_3)[..]), Some("C2"));
+        assert!(set.cache().owns(&key_of(ADDR_3)[..], 1));
     }
 
     #[test]
@@ -551,10 +570,10 @@ mod tests {
             c1_reg.matches(
                 RECEIPT_MINT,
                 None,
-                &ReceiptAddress {
+                &Emitter {
                     key: &key[..],
-                    contract_name: None,
-                    block_height: 0,
+                    owners: Owners::default(),
+                    block: 0,
                 },
                 true,
                 &address_store,
@@ -662,7 +681,7 @@ mod tests {
             .unwrap();
         let address_store = store.handle();
         let address_store = address_store.read().unwrap();
-        let route = |address: &ReceiptAddress| -> Vec<i64> {
+        let route = |address: &Emitter| -> Vec<i64> {
             built
                 .registrations
                 .iter()
@@ -685,7 +704,8 @@ mod tests {
             name: "Owned".to_string(),
             start_block: None,
             depends_on_addresses: true,
-        }]);
+        }])
+        .unwrap();
         store.register_seed(vec![crate::address_store::AddressRegistration {
             address: ADDR_1.to_string(),
             contract_name: "Owned".to_string(),
@@ -701,10 +721,10 @@ mod tests {
         let address_store = store.handle();
         let address_store = address_store.read().unwrap();
         let owned_key = key_of(ADDR_1);
-        let at = |block_height| ReceiptAddress {
+        let at = |block| Emitter {
             key: &owned_key[..],
-            contract_name: Some("Owned"),
-            block_height,
+            owners: Owners::single(0),
+            block,
         };
         let reg = &built.registrations[0];
         assert_eq!(
@@ -736,11 +756,11 @@ mod tests {
         let address_store = store.handle();
         let address_store = address_store.read().unwrap();
         let owned_key = key_of(ADDR_1);
-        let at = |block_height| {
-            let address = ReceiptAddress {
+        let at = |block| {
+            let address = Emitter {
                 key: &owned_key[..],
-                contract_name: Some("Owned"),
-                block_height,
+                owners: Owners::single(0),
+                block,
             };
             built
                 .registrations

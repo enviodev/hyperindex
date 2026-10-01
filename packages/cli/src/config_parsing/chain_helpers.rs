@@ -51,6 +51,9 @@ pub enum Network {
     ArbitrumTestnet = 421611,
 
     #[subenum(HypersyncChain)]
+    Arc = 5042,
+
+    #[subenum(HypersyncChain)]
     ArcTestnet = 5042002,
 
     #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
@@ -155,7 +158,7 @@ pub enum Network {
     )]
     EthereumMainnet = 1,
 
-    #[subenum(HypersyncChain)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Etherlink = 42793,
 
     #[subenum(NetworkWithExplorer)]
@@ -221,7 +224,10 @@ pub enum Network {
     #[subenum(HypersyncChain)]
     Katana = 747474,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    // HyperSync no longer serves Kroma (255.hypersync.xyz refuses
+    // connections and it's gone from active_chains), so it's not a
+    // HypersyncChain. Still resolvable via explorer.
+    #[subenum(NetworkWithExplorer)]
     Kroma = 255,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -374,6 +380,9 @@ pub enum Network {
     ShimmerEvm = 148,
 
     #[subenum(HypersyncChain)]
+    Somnia = 5031,
+
+    #[subenum(HypersyncChain)]
     Soneium = 1868,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -384,6 +393,9 @@ pub enum Network {
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Sophon = 50104,
+
+    #[subenum(HypersyncChain)]
+    StablesKinshipGrass = 988,
 
     StatusSepolia = 1660990954,
 
@@ -577,6 +589,7 @@ impl Network {
             | Network::MorphTestnet
             | Network::Tangle
             | Network::Fraxtal
+            | Network::Somnia
             | Network::Soneium
             | Network::Ink
             | Network::Metall2
@@ -589,6 +602,7 @@ impl Network {
             | Network::XdcTestnet
             | Network::Abstract
             | Network::Ab
+            | Network::Arc
             | Network::ArcTestnet
             | Network::Hyperliquid
             | Network::PharosDevnet
@@ -604,6 +618,7 @@ impl Network {
             | Network::Injective
             | Network::Megaeth
             | Network::SeiTestnet
+            | Network::StablesKinshipGrass
             | Network::StatusSepolia
             | Network::Tempo
             | Network::Tron
@@ -659,6 +674,28 @@ mod test {
         assert_eq!(
             networks_sorted, networks,
             "Networks should be defined in alphabetical order (sorry to be picky)"
+        );
+    }
+
+    #[test]
+    fn arc_mainnet_is_supported_by_hypersync() {
+        assert_eq!(
+            (
+                Network::from_network_id(5042).unwrap().to_string(),
+                HypersyncChain::from_repr(5042).is_some()
+            ),
+            ("arc".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn somnia_is_supported_by_hypersync() {
+        assert_eq!(
+            (
+                Network::from_network_id(5031).unwrap().to_string(),
+                HypersyncChain::from_repr(5031).is_some()
+            ),
+            ("somnia".to_string(), true)
         );
     }
 

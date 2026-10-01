@@ -46,6 +46,8 @@ let makeSources = (
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
   ~addressStore,
+  ~blockStore,
+  ~transactionStore,
 ) => {
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
@@ -73,6 +75,8 @@ let makeSources = (
       onEventRegistrations,
       lowercaseAddresses,
       addressStore,
+      blockStore,
+      transactionStore,
       ?ws,
       ?headers,
     })

@@ -3,7 +3,18 @@
 
 type t
 
-let configAddresses: Config.chain => array<Internal.indexingAddress>
+let configStorageRows: (
+  Config.chain,
+  ~ecosystem: Ecosystem.name,
+  ~contractMapping: ContractMapping.t,
+) => array<AddressRows.row>
+
+let seedConfigAddresses: (
+  AddressRows.Table.t,
+  ~chainConfigs: array<Config.chain>,
+  ~ecosystem: Ecosystem.name,
+  ~contractMapping: ContractMapping.t,
+) => unit
 
 let make: (
   ~chainConfig: Config.chain,
@@ -11,25 +22,22 @@ let make: (
   ~onEventRegistrations: array<Internal.onEventRegistration>=?,
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
-  ~reorgDetection: ReorgDetection.t,
   ~committedProgressBlockNumber: int,
+  ~committedProgressBlockTime: option<int>=?,
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
+  ~shouldRollbackOnReorg: bool,
+  ~maxReorgDepth: int,
+  ~isInReorgThreshold: bool=?,
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
   ~transactionStore: TransactionStore.t=?,
   ~chainDensity: option<float>=?,
   ~blockStore: BlockStore.t=?,
+  ~shouldChecksum: bool=?,
   ~reorgThresholdReadyTolerance: int=?,
   ~perChainEntities: array<Internal.entityConfig>=?,
   ~logger: Pino.t,
-) => t
-
-let makeFromConfig: (
-  Config.chain,
-  ~config: Config.t,
-  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
-  ~knownHeight: int,
 ) => t
 
 let makeFromDbState: (
@@ -39,20 +47,31 @@ let makeFromDbState: (
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~config: Config.t,
+  ~contractMapping: ContractMapping.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~reducedPollingInterval: int=?,
 ) => t
 
 // Accessors.
 let logger: t => Pino.t
+let blockStore: t => BlockStore.t
+let transactionStore: t => TransactionStore.t
+let shouldChecksum: t => bool
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
 let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
-let reorgDetection: t => ReorgDetection.t
+let shouldRollbackOnReorg: t => bool
+// Reorg-scan reads over the chain's block store, for the rollback flow.
+let getReorgThresholdBlockNumbersBelow: (t, ~blockNumber: int) => array<int>
+let getLatestValidScannedBlock: (
+  t,
+  ~blockStore: BlockStore.t,
+  ~blockNumbers: array<int>,
+) => option<int>
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
-let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
+let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
 let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
@@ -102,12 +121,17 @@ let dispatch: (
 // Views.
 let toMetrics: t => Metrics.chainMetrics
 let toChainMetadata: t => InternalTable.Chains.metaFields
-let toChainBeforeBatch: t => Batch.chainBeforeBatch
+let toChainBeforeBatch: (t, ~isRealtime: bool) => Batch.chainBeforeBatch
+let isReadyToEnterReorgThreshold: t => bool
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
+type finished = EndBlock(int) | Backfill(int)
+let takeFinished: t => option<finished>
+let reorgThresholdLiftsCeiling: t => bool
+let reorgThresholdEntryMessage: string
 let hasProcessedToEndblock: t => bool
-let isDurablyCaughtUp: t => bool
+let hasCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
 let isActivelyIndexing: t => bool
 let isReady: t => bool
@@ -120,25 +144,23 @@ let handleQueryResult: (
   ~query: FetchState.query,
   ~newItems: array<Internal.item>,
   ~newRegistrations: array<AddressStore.registration>,
-  ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
+  ~latestFetchedBlock: int,
   ~knownHeight: int,
-  ~transactionStore: option<TransactionStore.t>,
-  ~blockStore: option<BlockStore.t>,
 ) => unit
-let materializeBatchItems: (
-  t,
-  ~items: array<Internal.item>,
-  ~ecosystem: Ecosystem.name,
-) => promise<unit>
+let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
 let materializePageItems: (
   ~items: array<Internal.item>,
-  ~transactionStore: option<TransactionStore.t>,
-  ~blockStore: option<BlockStore.t>,
-  ~ecosystem: Ecosystem.name,
+  ~transactionStore: TransactionStore.t,
+  ~blockStore: BlockStore.t,
+  ~shouldChecksum: bool,
 ) => promise<unit>
+// Merges the page's blocks into the chain's store as it checks them: the check
+// is the merge's own conflict report, so a page that passes is already applied.
+// Its transactions are a separate page, merged by the caller once this returns
+// no reorg.
 let registerReorgGuard: (
   t,
-  ~blockHashes: array<ReorgDetection.blockData>,
+  ~blockStore: BlockStore.t,
   ~knownHeight: int,
 ) => ReorgDetection.reorgResult
 let prepareReorg: (t, ~eventsProcessedDiff: option<float>) => unit
@@ -146,13 +168,23 @@ let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
+let isInReorgThreshold: t => bool
+let shouldSaveHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit
-let rollback: (
-  t,
-  ~newProgressBlockNumber: option<int>,
-  ~eventsProcessedDiff: option<float>,
-  ~rollbackTargetBlockNumber: int,
-  ~isReorgChain: bool,
-) => unit
+// What a rollback's progress diff says about one chain: the block its surviving
+// checkpoints put it back to, and the events the deleted ones carried away. One
+// record because one diff row yields both — they are never known separately.
+type progressDiff = {blockNumber: int, eventsProcessed: float}
+
+// Where a rollback leaves one chain.
+type rolledBackTo =
+  | RecomputedProgress(progressDiff)
+  // The reorg chain with no checkpoint left at or below the target, so only the
+  // fork block says where it goes.
+  | ForkBlock(int)
+  // A chain this rollback doesn't reach.
+  | Untouched
+
+let rollback: (t, ~rolledBackTo: rolledBackTo) => array<AddressRows.key>

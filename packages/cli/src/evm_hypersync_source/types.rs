@@ -1,14 +1,14 @@
-use std::ffi::CString;
-
-use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Signed, U256};
+use alloy_dyn_abi::{DecodedEvent, DynSolValue};
+use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use hypersync_client::{
     format::{self, FixedSizeData, Hex},
     net_types, simple_types,
 };
-use napi::bindgen_prelude::{BigInt, FromNapiValue, ToNapiValue};
+use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
+
+use crate::js_value::JsTape;
 
 /// Evm log object
 ///
@@ -148,14 +148,6 @@ pub struct Block {
     pub send_count: Option<String>,
     pub send_root: Option<String>,
     pub mix_hash: Option<String>,
-}
-
-fn encode_prefix_hex(bytes: &[u8]) -> String {
-    if bytes.is_empty() {
-        return "0x".into();
-    }
-
-    format!("0x{}", faster_hex::hex_string(bytes))
 }
 
 pub(crate) fn map_address_string(
@@ -320,126 +312,84 @@ pub struct OnEventRegistrationInput {
     pub transaction_fields: Vec<crate::evm_hypersync_source::query::TransactionField>,
 }
 
-pub enum ParamValue {
-    Bool(bool),
-    BigInt(BigInt),
-    Str(String),
-    Arr(Vec<ParamValue>),
-    Obj(Vec<(String, ParamValue)>),
-}
-
-impl FromNapiValue for ParamValue {
-    unsafe fn from_napi_value(
-        _env: napi::sys::napi_env,
-        _val: napi::sys::napi_value,
-    ) -> napi::Result<Self> {
-        Err(napi::Error::from_reason(
-            "ParamValue is decode-only; it cannot be constructed from JS",
-        ))
+/// A decoded event's params as one object keyed by param name in declaration
+/// order, whether each came from a topic or the body. `None` when the decoded
+/// values don't line up with `params`.
+pub(crate) fn event_params_tape(
+    decoded: &DecodedEvent,
+    params: &[ParamMeta],
+    checksummed_addresses: bool,
+) -> Option<JsTape> {
+    let mut indexed = decoded.indexed.iter();
+    let mut body = decoded.body.iter();
+    let mut tape = JsTape::new();
+    tape.obj(params.len());
+    for param in params {
+        let value = if param.indexed {
+            indexed.next()
+        } else {
+            body.next()
+        }?;
+        tape.key(&param.name);
+        write_sol_value(
+            &mut tape,
+            value,
+            param.components.as_deref(),
+            checksummed_addresses,
+        );
     }
+    Some(tape)
 }
 
-impl ToNapiValue for ParamValue {
-    unsafe fn to_napi_value(
-        raw_env: napi::sys::napi_env,
-        val: Self,
-    ) -> napi::Result<napi::sys::napi_value> {
-        match val {
-            ParamValue::Bool(v) => bool::to_napi_value(raw_env, v),
-            ParamValue::BigInt(v) => BigInt::to_napi_value(raw_env, v),
-            ParamValue::Str(v) => String::to_napi_value(raw_env, v),
-            ParamValue::Arr(items) => Vec::<ParamValue>::to_napi_value(raw_env, items),
-            ParamValue::Obj(entries) => {
-                let mut obj = std::ptr::null_mut();
-                assert_eq!(
-                    napi::sys::napi_create_object(raw_env, &mut obj),
-                    napi::sys::Status::napi_ok
-                );
-                for (key, val) in entries {
-                    let js_val = ParamValue::to_napi_value(raw_env, val)?;
-                    let c_key = CString::new(key)
-                        .map_err(|_| napi::Error::from_reason("invalid param name"))?;
-                    assert_eq!(
-                        napi::sys::napi_set_named_property(raw_env, obj, c_key.as_ptr(), js_val),
-                        napi::sys::Status::napi_ok,
+/// A tuple with `components` becomes an object keyed by component name; an
+/// array passes them on to its elements. Without them a tuple is an array.
+fn write_sol_value(
+    tape: &mut JsTape,
+    value: &DynSolValue,
+    components: Option<&[ParamMeta]>,
+    checksummed_addresses: bool,
+) {
+    match value {
+        DynSolValue::Tuple(values) => match components {
+            Some(components) => {
+                tape.obj(values.len().min(components.len()));
+                for (value, component) in values.iter().zip(components) {
+                    tape.key(&component.name);
+                    write_sol_value(
+                        tape,
+                        value,
+                        component.components.as_deref(),
+                        checksummed_addresses,
                     );
                 }
-                Ok(obj)
+            }
+            None => {
+                tape.arr(values.len());
+                for value in values {
+                    write_sol_value(tape, value, None, checksummed_addresses);
+                }
+            }
+        },
+        DynSolValue::Array(values) | DynSolValue::FixedArray(values) => {
+            tape.arr(values.len());
+            for value in values {
+                write_sol_value(tape, value, components, checksummed_addresses);
             }
         }
-    }
-}
-
-pub fn sol_value_to_param(
-    val: DynSolValue,
-    components: Option<&[ParamMeta]>,
-    checksummed: bool,
-) -> ParamValue {
-    match (val, components) {
-        (DynSolValue::Tuple(vals), Some(comps)) => {
-            let fields = vals
-                .into_iter()
-                .zip(comps.iter())
-                .map(|(v, c)| {
-                    let value = sol_value_to_param(v, c.components.as_deref(), checksummed);
-                    (c.name.clone(), value)
-                })
-                .collect();
-            ParamValue::Obj(fields)
+        DynSolValue::Bool(value) => tape.bool(*value),
+        DynSolValue::Int(value, _) => {
+            let (sign, magnitude) = value.into_sign_and_abs();
+            tape.bigint(sign.is_negative(), magnitude.as_limbs());
         }
-        (DynSolValue::Array(vals), Some(comps)) => ParamValue::Arr(
-            vals.into_iter()
-                .map(|v| sol_value_to_param(v, Some(comps), checksummed))
-                .collect(),
-        ),
-        (DynSolValue::FixedArray(vals), Some(comps)) => ParamValue::Arr(
-            vals.into_iter()
-                .map(|v| sol_value_to_param(v, Some(comps), checksummed))
-                .collect(),
-        ),
-        (val, _) => sol_value_to_leaf(val, checksummed),
-    }
-}
-
-fn sol_value_to_leaf(val: DynSolValue, checksummed: bool) -> ParamValue {
-    match val {
-        DynSolValue::Bool(b) => ParamValue::Bool(b),
-        DynSolValue::Int(v, _) => ParamValue::BigInt(convert_bigint_signed(v)),
-        DynSolValue::Uint(v, _) => ParamValue::BigInt(convert_bigint_unsigned(v)),
-        DynSolValue::FixedBytes(bytes, _) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
-        DynSolValue::Address(addr) => {
-            if checksummed {
-                ParamValue::Str(addr.to_checksum(None))
-            } else {
-                ParamValue::Str(encode_prefix_hex(addr.as_slice()))
-            }
+        DynSolValue::Uint(value, _) => tape.bigint(false, value.as_limbs()),
+        DynSolValue::Address(address) if checksummed_addresses => {
+            tape.str(address.to_checksum_buffer(None).as_str())
         }
-        DynSolValue::Function(bytes) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
-        DynSolValue::Bytes(bytes) => ParamValue::Str(encode_prefix_hex(bytes.as_slice())),
-        DynSolValue::String(s) => ParamValue::Str(s),
-        DynSolValue::Array(vals) => ParamValue::Arr(
-            vals.into_iter()
-                .map(|v| sol_value_to_leaf(v, checksummed))
-                .collect(),
-        ),
-        DynSolValue::FixedArray(vals) => ParamValue::Arr(
-            vals.into_iter()
-                .map(|v| sol_value_to_leaf(v, checksummed))
-                .collect(),
-        ),
-        DynSolValue::Tuple(vals) => ParamValue::Arr(
-            vals.into_iter()
-                .map(|v| sol_value_to_leaf(v, checksummed))
-                .collect(),
-        ),
-    }
-}
-
-fn convert_bigint_signed(v: Signed<256, 4>) -> BigInt {
-    let (sign, abs) = v.into_sign_and_abs();
-    BigInt {
-        sign_bit: sign.is_negative(),
-        words: abs.into_limbs().to_vec(),
+        DynSolValue::Address(address) => tape.hex(address.as_slice()),
+        DynSolValue::FixedBytes(word, _) => tape.hex(word.as_slice()),
+        DynSolValue::Function(function) => tape.hex(function.as_slice()),
+        DynSolValue::Bytes(bytes) => tape.hex(bytes),
+        DynSolValue::String(value) => tape.str(value),
     }
 }
 

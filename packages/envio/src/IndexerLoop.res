@@ -45,6 +45,8 @@ let start = (state: IndexerState.t) => {
     launch(state, () => FinalizeBackfill.repairSchemaIndexes(state))
   }
 
+  state->IndexerState.bindScheduleProcessing(scheduleProcessing)
+
   scheduleFetch()
   scheduleProcessing()
 }

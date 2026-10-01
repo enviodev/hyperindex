@@ -1,4 +1,4 @@
-use crate::utils::dotenv::{self, EnvMap};
+use crate::utils::project_env::ProjectEnv;
 use anyhow::Context;
 use bollard::models::{
     ContainerCreateBody, EndpointSettings, HealthConfig, HostConfig, Mount, MountTypeEnum,
@@ -281,20 +281,9 @@ impl ClickHouseUrl {
 
 impl EnvConfig {
     fn from_project(project_root: &Path) -> Self {
-        let dotenv = match dotenv::from_path(project_root.join(".env")) {
-            Ok(map) => Some(map),
-            Err(dotenv::Error::Io(_, _)) => None,
-            Err(err) => {
-                println!("Warning: Failed loading .env file with unexpected error: {err}");
-                None
-            }
-        };
+        let env = ProjectEnv::new(project_root);
 
-        let var_opt = |name: &str| -> Option<String> {
-            std::env::var(name)
-                .ok()
-                .or_else(|| dotenv.as_ref().and_then(|m: &EnvMap| m.var(name).ok()))
-        };
+        let var_opt = |name: &str| -> Option<String> { env.var(name) };
         let var = |name: &str, default: &str| -> String {
             var_opt(name).unwrap_or_else(|| default.to_string())
         };

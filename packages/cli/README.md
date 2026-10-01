@@ -69,7 +69,7 @@ A few things already running in production:
 
 **Multichain indexing**
 - Index EVM, SVM, and Fuel blockchains from a single indexer
-- 70+ EVM chains with native HyperSync support, plus any EVM chain via RPC
+- 79+ EVM chains with first-class HyperSync support, plus any EVM chain via RPC
 - Real-time indexing with reorg handling built in
 
 **Developer experience**
@@ -129,7 +129,7 @@ HyperSync can also be used directly for custom data pipelines in Python, Rust, N
 
 ## Supported networks
 
-HyperIndex supports any EVM-compatible L1, L2, or L3, plus Fuel and Solana (experimental). 70+ chains have native HyperSync support for maximum speed. For any EVM chain not on the HyperSync list, RPC-based indexing works out of the box.
+HyperIndex supports any EVM-compatible L1, L2, or L3, plus Fuel and Solana (beta). 79+ chains have first-class HyperSync support for maximum speed. For any EVM chain not on the HyperSync list, RPC-based indexing works out of the box. Solana indexing runs on HyperSync for Solana, with instruction-level handlers and IDL-aware decoding.
 
 [Full network list →](https://docs.envio.dev/docs/HyperIndex/supported-networks)
 

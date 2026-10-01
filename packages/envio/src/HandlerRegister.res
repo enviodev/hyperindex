@@ -82,6 +82,36 @@ let startRegistration = (~config: Config.t) => {
   }
 }
 
+// A registration a caller owns, rather than the single implicit one
+// `startRegistration` installs. Tests run several indexers in one process, each
+// with its own config, and handlers must register against the config they were
+// written for.
+type registration = activeRegistration
+
+let makeRegistration = (~config: Config.t): registration => {
+  config,
+  registrationsByChainId: Dict.make(),
+  finished: false,
+}
+
+// Makes `registration` the target of `indexer.onEvent` & co. for the duration
+// of `fn`, restoring whatever was active before — so one caller's handlers
+// never land in another's registration. Concurrent scopes would still clobber
+// each other: the pointer they swap is process-global.
+let useRegistration = async (registration: registration, fn) => {
+  let previous = EnvioGlobal.value.activeRegistration
+  EnvioGlobal.value.activeRegistration = Some(registration->(Utils.magic: registration => unknown))
+  let restore = () => EnvioGlobal.value.activeRegistration = previous
+  switch await fn() {
+  | result =>
+    restore()
+    result
+  | exception exn =>
+    restore()
+    throw(exn)
+  }
+}
+
 let getChainRegistrations = (r: activeRegistration, ~chainId: ChainId.t): chainRegistrations => {
   let key = chainId->ChainId.toString
   switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
@@ -104,6 +134,7 @@ let buildOnEventRegistrationWith = (
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
   ~where: option<JSON.t>,
+  ~fieldSelection: option<Internal.fieldSelection>,
   ~startBlock=?,
 ): Internal.onEventRegistration => {
   switch config.ecosystem.name {
@@ -123,6 +154,8 @@ let buildOnEventRegistrationWith = (
       ~isWildcard,
       ~handler,
       ~contractRegister,
+      ~where,
+      ~fieldSelection?,
       ~startBlock?,
     ) :> Internal.onEventRegistration)
   | Evm =>
@@ -134,6 +167,7 @@ let buildOnEventRegistrationWith = (
       ~where,
       ~chainId,
       ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
+      ~fieldSelection?,
       ~startBlock?,
     ) :> Internal.onEventRegistration)
   }
@@ -163,6 +197,19 @@ let sameEventAndFilter = (
   | Fuel | Svm => true
   }
 
+// The merged registration keeps `base`'s handler and slot, picks up the
+// contractRegister from `other`, and carries the union of what both callbacks
+// read. Relies on `onEventRegistration` having an optional field so the spread
+// stays a runtime spread and keeps `other`'s ecosystem-only fields.
+let mergeInto = (
+  base: Internal.onEventRegistration,
+  ~other: Internal.onEventRegistration,
+): Internal.onEventRegistration => {
+  ...base,
+  contractRegister: other.contractRegister,
+  fieldSelection: Internal.unionFieldSelection(base.fieldSelection, other.fieldSelection),
+}
+
 // Merge each contractRegister into a matching handler registration (either
 // registration order; the merged registration takes the handler's slot so
 // dispatch order follows handler registration order). Two handlers (or two
@@ -188,7 +235,7 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
         merged :=
           merged.contents
           ->Array.filterWithIndex((_, j) => j !== i)
-          ->Array.concat([{...reg, contractRegister: target.contractRegister}])
+          ->Array.concat([reg->mergeInto(~other=target)])
       }
     } else {
       // A contractRegister merges into a matching handler registration,
@@ -202,7 +249,7 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
       | i =>
         let target = merged.contents->Array.getUnsafe(i)
         let next = merged.contents->Array.copy
-        next->Array.setUnsafe(i, {...target, contractRegister: reg.contractRegister})
+        next->Array.setUnsafe(i, target->mergeInto(~other=reg))
         merged := next
       }
     }
@@ -249,6 +296,29 @@ let addOnEventRegistration = (
 ) => {
   let isWildcard = eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
   let where = eventOptions->Option.flatMap(v => v.where)
+  // The inline selection doesn't vary by chain: resolve it once here and share
+  // the one value (and its sets) across every chain's registration.
+  let fieldSelection = switch eventOptions->Option.flatMap(v => v.fields) {
+  | None => None
+  | Some(fields) =>
+    switch registration.config.ecosystem.name {
+    | Evm =>
+      Some(
+        EventConfigBuilder.resolveInlineFieldSelection(
+          fields,
+          ~contractName,
+          ~eventName,
+          ~enableRawEvents=registration.config.enableRawEvents,
+        ),
+      )
+    | Svm =>
+      Some(EventConfigBuilder.resolveSvmInlineFieldSelection(fields, ~contractName, ~eventName))
+    | Fuel =>
+      JsError.throwWithMessage(
+        `The fields option of the "${eventName}" event registration on contract "${contractName}" is not supported on Fuel. Select the fields in your config instead.`,
+      )
+    }
+  }
   let matched = ref(false)
   registration.config.chainMap
   ->ChainMap.values
@@ -260,6 +330,24 @@ let addOnEventRegistration = (
       | None => ()
       | Some(eventConfig) =>
         matched := true
+        switch (registration.config.ecosystem.name, fieldSelection) {
+        | (Svm, Some(fieldSelection)) if fieldSelection.instructionFields->Utils.Set.has("args") =>
+          let svmEventConfig =
+            eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+          // An empty layout is still a layout: it decodes to `{}` and filters
+          // out the calls that carry a payload. Only an absent one has nothing
+          // to decode.
+          let declaresArgs = switch svmEventConfig.args {
+          | JSON.Array(_) => true
+          | _ => false
+          }
+          if !declaresArgs {
+            JsError.throwWithMessage(
+              `Invalid "args" field in the fields.instruction option of the "${eventName}" instruction on program "${contractName}". The instruction attaches no args layout in config.yaml, so there is nothing to decode. Remove "args" from the selection, or give the instruction an \`args\` layout — \`args: []\` if it takes none.`,
+            )
+          }
+        | _ => ()
+        }
         let reg = buildOnEventRegistrationWith(
           ~config=registration.config,
           ~chainId=chainConfig.id,
@@ -268,6 +356,7 @@ let addOnEventRegistration = (
           ~handler,
           ~contractRegister,
           ~where,
+          ~fieldSelection,
           ~startBlock=?contract.startBlock,
         )
         (registration->getChainRegistrations(~chainId=chainConfig.id)).onEventRegistrations
@@ -283,17 +372,18 @@ let addOnEventRegistration = (
   if !matched.contents {
     let (contractNames, eventNames) = registration->describeConfigured(~contractName)
     let listOr = (names, empty) =>
-      names->Utils.Array.isEmpty ? empty : names->Array.joinUnsafe(", ")
+      names->Utils.Array.isEmpty ? empty : names->Utils.Array.quotedJoin
+    let {contractNoun, eventNoun} = registration.config.ecosystem
     if eventNames->Utils.Array.isEmpty {
       JsError.throwWithMessage(
-        `Contract "${contractName}" is not configured on any chain, so its handler for "${eventName}" would never run. Add it to your config, or remove the registration. Configured contracts: ${listOr(
+        `${contractNoun->Utils.String.capitalize} "${contractName}" is not configured on any chain, so its handler for "${eventName}" would never run. Add it to your config, or remove the registration. Configured ${contractNoun}s: ${listOr(
             contractNames,
             "none",
           )}.`,
       )
     } else {
       JsError.throwWithMessage(
-        `Event "${eventName}" is not configured on contract "${contractName}", so its handler would never run. Add it to your config, or remove the registration. Configured events on "${contractName}": ${listOr(
+        `${eventNoun->Utils.String.capitalize} "${eventName}" is not configured on ${contractNoun} "${contractName}", so its handler would never run. Add it to your config, or remove the registration. Configured ${eventNoun}s on "${contractName}": ${listOr(
             eventNames,
             "none",
           )}.`,
@@ -397,6 +487,7 @@ let getSimulateOnEventRegistrations = (
         ~handler=None,
         ~contractRegister=None,
         ~where=None,
+        ~fieldSelection=None,
       ),
     ]
   }
@@ -452,6 +543,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
                       ~handler=None,
                       ~contractRegister=None,
                       ~where=None,
+                      ~fieldSelection=None,
                       ~startBlock=?contract.startBlock,
                     ),
                   )
@@ -668,9 +760,13 @@ let registerOnBlock = (
 
       if shouldRegister {
         matchedAny := true
-        if range._gte->Option.getOr(chainConfig.startBlock) < chainConfig.startBlock {
+        // Off the same object the predicate above was handed, not off
+        // `chainConfig`: that one still says whatever config.yaml said, and for
+        // `start_block: latest` the resolved head only lives in persisted state.
+        let chainStartBlock = (chainObj->(Utils.magic: unknown => {"startBlock": int}))["startBlock"]
+        if range._gte->Option.getOr(chainStartBlock) < chainStartBlock {
           JsError.throwWithMessage(
-            `The start block for onBlock handler "${name}" is less than the chain start block (${chainConfig.startBlock->Int.toString}). This is not supported yet.`,
+            `The start block for onBlock handler "${name}" is less than the chain start block (${chainStartBlock->Int.toString}). This is not supported yet.`,
           )
         }
         switch chainConfig.endBlock {

@@ -176,12 +176,6 @@ type onEventOptions<'eventIdentity, 'where> = {
   where?: 'where,
 }
 
-/** Options for `indexer.onInstruction` (SVM). */
-type onInstructionOptions<'eventIdentity, 'where> = {
-  instruction: 'eventIdentity,
-  where?: 'where,
-}
-
 module Enums = {
   module AccountType = {
     type t =

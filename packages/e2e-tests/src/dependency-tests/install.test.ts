@@ -183,7 +183,7 @@ describe("Isolated dependency e2e", () => {
 
       await waitForOutput(
         indexerProcess,
-        "All chains are caught up to end blocks",
+        "Indexed to the end block",
         120_000
       );
 

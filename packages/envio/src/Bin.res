@@ -51,23 +51,30 @@ let applyEnv = (env: dict<JSON.t>) =>
 
 let run = async args => {
   try {
-    switch (await Core.runCli(args))->Null.toOption {
-    // Rust-only command (codegen / init / stop / docker / metrics / help /
-    // version / scripts) — nothing for JS to do, exit cleanly.
-    | None => ()
-    | Some(json) =>
-      switch decodeCommand(json->JSON.parseOrThrow) {
-      | Start({reset, cwd, env, config}) =>
-        Config.prime(config)
-        processChdir(cwd)
-        applyEnv(env)
-        await Main.start(~reset)
-      | Migrate({reset, config}) =>
-        Config.prime(config)
-        await Main.migrate(~reset)
-      | DropSchema({config}) =>
-        Config.prime(config)
-        await Main.dropSchema()
+    if Worker.isEnabled {
+      Worker.bindToSupervisor()
+      // Its working directory, its environment and the chains it drives all came
+      // with the fork, so a worker starts the same way every other process does.
+      await Main.start()
+    } else {
+      switch (await Core.runCli(args))->Null.toOption {
+      // Rust-only command (codegen / init / stop / docker / metrics / help /
+      // version / scripts) — nothing for JS to do, exit cleanly.
+      | None => ()
+      | Some(json) =>
+        switch decodeCommand(json->JSON.parseOrThrow) {
+        | Start({reset, cwd, env, config}) =>
+          Config.prime(config)
+          processChdir(cwd)
+          applyEnv(env)
+          await Main.start(~reset)
+        | Migrate({reset, config}) =>
+          Config.prime(config)
+          await Main.migrate(~reset)
+        | DropSchema({config}) =>
+          Config.prime(config)
+          await Main.dropSchema()
+        }
       }
     }
   } catch {

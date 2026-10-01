@@ -1,0 +1,179 @@
+type method = [
+  | #isInitialized
+  | #initialize
+  | #resumeInitialState
+  | #dumpEffectCache
+  | #loadOrThrow
+]
+
+type t = {
+  isInitializedCalls: array<bool>,
+  resolveIsInitialized: bool => unit,
+  initializeCalls: array<{
+    "entities": array<Internal.entityConfig>,
+    "chainConfigs": array<Config.chain>,
+    "enums": array<Table.enumConfig<Table.enum>>,
+    "envioInfo": JSON.t,
+  }>,
+  resolveInitialize: Persistence.initialState => unit,
+  resumeInitialStateCalls: array<bool>,
+  resolveLoadInitialState: Persistence.initialState => unit,
+  loadOrThrowCalls: array<{"filter": dict<dict<unknown>>, "tableName": string}>,
+  dumpEffectCacheCalls: ref<int>,
+  storage: Persistence.storage,
+}
+
+let make = (methods: array<method>, ~dbEntities=[]) => {
+  let implement = (method: method, fn) => {
+    if methods->Array.includes(method) {
+      fn
+    } else {
+      (() => JsError.throwWithMessage(`storage.${(method :> string)} not implemented`))->Obj.magic
+    }
+  }
+
+  let implementBody = (method: method, fn) => {
+    if methods->Array.includes(method) {
+      fn()
+    } else {
+      JsError.throwWithMessage(`storage.${(method :> string)} not implemented`)
+    }
+  }
+
+  let isInitializedCalls = []
+  let initializeCalls = []
+  let isInitializedResolveFns = []
+  let initializeResolveFns = []
+  let loadOrThrowCalls = []
+  let dumpEffectCacheCalls = ref(0)
+  let resumeInitialStateCalls = []
+  let resumeInitialStateResolveFns = []
+
+  {
+    isInitializedCalls,
+    initializeCalls,
+    loadOrThrowCalls,
+    dumpEffectCacheCalls,
+    resumeInitialStateCalls,
+    resolveLoadInitialState: (initialState: Persistence.initialState) => {
+      resumeInitialStateResolveFns->Array.forEach(resolve => resolve(initialState))
+    },
+    resolveIsInitialized: bool => {
+      isInitializedResolveFns->Array.forEach(resolve => resolve(bool))
+    },
+    resolveInitialize: (initialState: Persistence.initialState) => {
+      initializeResolveFns->Array.forEach(resolve => resolve(initialState))
+    },
+    storage: {
+      name: "mock",
+      isInitialized: implement(#isInitialized, () => {
+        isInitializedCalls->Array.push(true)->ignore
+        Promise.make((resolve, _reject) => {
+          isInitializedResolveFns->Array.push(resolve)->ignore
+        })
+      }),
+      initialize: implement(#initialize, (
+        ~chainConfigs=[],
+        ~entities=[],
+        ~enums=[],
+        ~contractMapping as _,
+        ~envioInfo,
+      ) => {
+        initializeCalls
+        ->Array.push({
+          "entities": entities,
+          "chainConfigs": chainConfigs,
+          "enums": enums,
+          "envioInfo": envioInfo,
+        })
+        ->ignore
+        Promise.make((resolve, _reject) => {
+          initializeResolveFns->Array.push(resolve)->ignore
+        })
+      }),
+      resumeInitialState: implement(#resumeInitialState, (
+        ~entities as _,
+        ~chainIds as _,
+        ~throwIfIncompatible,
+      ) => {
+        resumeInitialStateCalls->Array.push(true)->ignore
+        Promise.make((resolve, _reject) => {
+          resumeInitialStateResolveFns->Array.push(resolve)->ignore
+        })->Promise.thenResolve((initialState: Persistence.initialState) => {
+          throwIfIncompatible(
+            ~storedEnvioInfo=initialState.envioInfo,
+            ~storedContractMapping=initialState.contractMapping,
+          )
+          initialState
+        })
+      }),
+      dumpEffectCache: implement(#dumpEffectCache, () => {
+        dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
+        Promise.resolve()
+      }),
+      loadOrThrow: (~filter, ~table: Table.table) => {
+        implementBody(#loadOrThrow, () => {
+          loadOrThrowCalls
+          ->Array.push({
+            "filter": filter->EntityFilter.entries,
+            "tableName": table.tableName,
+          })
+          ->ignore
+          let rows = switch dbEntities->Array.find(((entityConfig: Internal.entityConfig, _)) =>
+            entityConfig.table.tableName === table.tableName
+          ) {
+          | Some((_, rows)) =>
+            let matcher = filter->EntityFilter.makeMatcher(~table)
+            rows->Array.filter(row => matcher(row->(Utils.magic: 'entity => Internal.entity)))
+          | None => []
+          }
+          Promise.resolve(rows->(Utils.magic: array<'entity> => array<unknown>))
+        })
+      },
+      ensureQueryIndexes: (~entityConfig as _, ~scope as _, ~filters as _) => Promise.resolve(),
+      ensureSchemaIndexes: (~entities as _, ~chainIds as _) => Promise.resolve(),
+      finalizeBackfill: (~entities as _, ~chainIds as _, ~readyAt as _) => Promise.resolve(),
+      reset: () => JsError.throwWithMessage("Not implemented"),
+      setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
+      pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
+      pruneStaleEntityHistory: async (
+        ~entityName as _,
+        ~entityIndex as _,
+        ~chainIdColumn as _,
+        ~safeCheckpoints as _,
+      ) => (),
+      getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
+        JsError.throwWithMessage("Not implemented"),
+      getRollbackProgressDiff: (~floors as _) => JsError.throwWithMessage("Not implemented"),
+      getRollbackData: (~entityConfig as _, ~floors as _) =>
+        JsError.throwWithMessage("Not implemented"),
+      writeBatch: (
+        ~batch as _,
+        ~rollback as _,
+        ~config as _,
+        ~allEntities as _,
+        ~updatedEffectsCache as _,
+        ~updatedEntities as _,
+        ~registeredAddresses as _,
+        ~chainMetaData as _,
+        ~onWrite as _,
+      ) => JsError.throwWithMessage("Not implemented"),
+      close: () => Promise.resolve(),
+    },
+  }
+}
+
+let toPersistence = (storageMock: t, ~config: Config.t) => {
+  {
+    ...PgStorage.makePersistenceFromConfig(~config, ~storage=storageMock.storage),
+    storageStatus: Ready({
+      cleanRun: false,
+      contractMapping: config.contractMapping,
+      envioInfo: Some(JSON.Encode.object(Dict.make())),
+      cache: Dict.make(),
+      chains: [],
+      reorgCheckpoints: [],
+      checkpointFrontier: Frontier.empty(),
+    }),
+  }
+}

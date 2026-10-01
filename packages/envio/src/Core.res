@@ -10,7 +10,10 @@ type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
+type clickHouseSinkCtor
 type addressStoreCtor
+// Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
+type mockHyperSyncServerCtor
 type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
@@ -33,6 +36,7 @@ type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   transformTs: (~filename: string, ~source: string) => transformTsResult,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
+  isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
   @as("EvmHyperSyncClient")
@@ -49,6 +53,26 @@ type addon = {
   blockStore: blockStoreCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
+  @as("ClickHouseSink")
+  clickHouseSink: clickHouseSinkCtor,
+  @as("MockHyperSyncServer")
+  mockHyperSyncServer: mockHyperSyncServerCtor,
+  encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
+  renderAddresses: (
+    ~ecosystem: string,
+    ~shouldChecksum: bool,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: array<int>,
+  ) => array<Address.t>,
+  renderContractAddresses: (
+    ~ecosystem: string,
+    ~shouldChecksum: bool,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: array<int>,
+    ~contractIds: array<int>,
+    ~contractId: int,
+  ) => array<Address.t>,
+  canonicalContractNames: array<string> => array<string>,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).
   evmTransactionFieldNames: unit => array<string>,
@@ -57,6 +81,7 @@ type addon = {
   // must match the Rust ordinals).
   evmBlockFieldNames: unit => array<string>,
   svmBlockFieldNames: unit => array<string>,
+  fuelBlockFieldNames: unit => array<string>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"
@@ -80,10 +105,14 @@ let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
 let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
 
 // Runs `cargo build` on every invocation (like `cargo run`).
-let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
+let loadDevAddon: ({..}, string) => Null.t<addon> = %raw(`function(req, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;
   var fs = Nodefs;
+
+  // Vitest test.env points workers at the addon globalSetup already built.
+  var preBuilt = process.env.ENVIO_DEV_ADDON;
+  if (preBuilt && fs.existsSync(preBuilt)) return req(preBuilt);
 
   var repoRoot = null;
   var dir = path.resolve(envioDir);
@@ -143,12 +172,32 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
     fs.copyFileSync(srcPath, nodePath);
   }
 
+  // Forked workers inherit this, so only the first process in a run pays for
+  // the cargo build (and they don't contend over the cargo lock).
+  process.env.ENVIO_DEV_ADDON = nodePath;
+
   return req(nodePath);
 }`)
 
 // Native `throw` so we can re-raise a caught JS error preserving its stack,
 // `code`, and any other fields a diagnostic might rely on.
 let rethrow: JsExn.t => 'a = %raw(`function(e) { throw e }`)
+
+type packageJson = {version: string}
+let requirePackageJson: ({..}, string) => packageJson = %raw(`(req, p) => req(p)`)
+let devVersion = "0.0.1-dev"
+
+let isGlibc: unit => bool = %raw(`() => Boolean(process.report?.getReport().header.glibcVersionRuntime)`)
+
+@val external npmUserAgent: option<string> = "process.env.npm_config_user_agent"
+
+let addCommand = () =>
+  switch npmUserAgent {
+  | Some(ua) if ua->String.startsWith("pnpm/") => "pnpm add"
+  | Some(ua) if ua->String.startsWith("yarn/") => "yarn add"
+  | Some(ua) if ua->String.startsWith("bun/") => "bun add"
+  | _ => "npm install"
+  }
 
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
@@ -185,15 +234,32 @@ let loadAddon = () => {
   switch tryRequire(0) {
   | Some(addon) => addon
   | None =>
-    // Dev build fallback (cargo build on every run)
-    switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => option<addon>) {
+    let version = requirePackageJson(req, "../package.json").version
+    // Publishing stamps the real version, so only a monorepo checkout (or a
+    // `file:` link to one) can have a dev build to fall back to. Skipping it
+    // spares published installs a `pnpm list` spawn before the error below.
+    let devAddon = if version === devVersion {
+      loadDevAddon(req, envioPackageDir)->Null.toOption
+    } else {
+      None
+    }
+    switch devAddon {
     | Some(addon) => addon
     | None =>
       let host = `${processPlatform}-${processArch}`
-      let msg = if candidates->Array.length === 0 {
+      let msg = switch candidates {
+      | []
+        if processPlatform === "win32" => `envio doesn't run natively on Windows. Use WSL 2 instead: https://learn.microsoft.com/windows/wsl/install`
+      | [] =>
         `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
-      } else {
-        `Couldn't load the envio native addon for ${host}. Reinstall envio (ensure optional dependencies aren't skipped).`
+      | _ =>
+        let pkg = if processPlatform === "linux" && processArch === "x64" && !isGlibc() {
+          `envio-linux-x64-musl`
+        } else {
+          candidates->Array.getUnsafe(0)
+        }
+        `envio's native binary for ${host} isn't installed (package "${pkg}"). This happens when optional dependencies are skipped (--omit=optional, --no-optional) or the lockfile was generated on another platform.
+Reinstall dependencies, or add the package explicitly: ${addCommand()} ${pkg}@${version}`
       }
       JsError.throwWithMessage(msg)
     }

@@ -1,0 +1,264 @@
+// Address-store scaffolding for the fetch-state tests. `makeStore` mirrors what
+// `ChainState.makeInternal` does in production: one store per chain, built from
+// that chain's registrations, holding every address the chain indexes.
+
+// The contract mapping a chain's store is built from — every contract the
+// config declares, under the ids their names canonicalize to.
+let contractMapping = (
+  ~onEventRegistrations: array<Internal.onEventRegistration>=[],
+  // Config contracts the chain has no events for. Registering an address for a
+  // name outside the store's contracts throws, so a test exercising the
+  // no-events path declares it here.
+  ~configContractNames: array<string>=[],
+) =>
+  ContractMapping.make(
+    ~names=onEventRegistrations
+    ->Array.map(reg => reg.eventConfig.contractName)
+    ->Array.concat(configContractNames),
+  )
+
+// Registrations in the columnar form the store seeds from: keys encoded by the
+// Rust codec, contract ids resolved by `contractId`.
+let rowsOf = (
+  ~addresses: array<Internal.indexingAddress>,
+  ~contractId: string => int,
+  ~ecosystem: Ecosystem.name,
+): AddressRows.seedRows => {
+  let keys = Core.getAddon().encodeAddresses(
+    ~ecosystem=(ecosystem :> string),
+    ~addresses=addresses->Array.map(a => a.address),
+  )
+  addresses
+  ->Array.mapWithIndex((a, idx): AddressRows.row => {
+    // The seed form is per-chain, so any chain id serves — `seedRowsOf` drops it.
+    chainId: ChainId.fromInt(0),
+    address: keys->Array.getUnsafe(idx),
+    contractId: contractId(a.contractName),
+    registrationBlock: a.registrationBlock,
+  })
+  ->AddressRows.seedRowsOf
+}
+
+// Plain registrations in the columnar form `FetchState.make` seeds from,
+// resolved against the same contract list `makeStore` builds its store from.
+let addressRows = (
+  ~addresses: array<Internal.indexingAddress>,
+  ~onEventRegistrations: array<Internal.onEventRegistration>=[],
+  ~configContractNames: array<string>=[],
+  ~ecosystem: Ecosystem.name=Evm,
+): AddressRows.seedRows => {
+  let contractMapping = contractMapping(~onEventRegistrations, ~configContractNames)
+  rowsOf(
+    ~addresses,
+    ~contractId=name =>
+      contractMapping->ContractMapping.idOfOrThrow(name, ~context=" registered by a test address"),
+    ~ecosystem,
+  )
+}
+
+// A store over `contracts` holding `addresses` as config addresses, seeded
+// through `seedRows` - the only way in the store has for an address the
+// database already holds.
+let storeOf = (
+  ~contracts: array<AddressStore.contract>,
+  ~addresses: array<Internal.indexingAddress>=[],
+  ~ecosystem: Ecosystem.name=Evm,
+) => {
+  let store = AddressStore.make(~ecosystem, ~contracts)
+  let _ =
+    store->AddressStore.seedRows(
+      rowsOf(
+        ~addresses,
+        // A row's contract id is its contract's position in the store's own list.
+        ~contractId=name =>
+          switch contracts->Array.findIndex(c => c.name === name) {
+          | -1 =>
+            JsError.throwWithMessage(`Contract "${name}" isn't among the test store's contracts`)
+          | idx => idx
+          },
+        ~ecosystem,
+      ),
+    )
+  store
+}
+
+// A store built from a chain's registrations, the way `ChainState.makeInternal`
+// does. A test that builds a fetch state over the store leaves `addresses`
+// empty and lets `FetchState.make` do the seeding.
+let makeStore = (
+  ~onEventRegistrations: array<Internal.onEventRegistration>=[],
+  ~addresses: array<Internal.indexingAddress>=[],
+  ~ecosystem: Ecosystem.name=Evm,
+  ~configContractNames: array<string>=[],
+) =>
+  storeOf(
+    ~contracts=AddressStore.contractsOf(
+      ~onEventRegistrations,
+      ~contractMapping=contractMapping(~onEventRegistrations, ~configContractNames),
+    ),
+    ~addresses,
+    ~ecosystem,
+  )
+
+// The store's own spelling of an address. Fixtures are written with the
+// checksummed mock addresses, so an expected value compared against a store
+// read goes through here.
+let canonical = (addresses: array<Address.t>) =>
+  addresses->Array.map(a => a->Address.toString->String.toLowerCase->Address.unsafeFromString)
+
+// A real `AddressSet` is a Rust handle: it carries no own properties, so two of
+// them always compare equal. Expected-value fixtures need something `toEqual`
+// compares by contents instead, so `setOf` hands back a double whose addresses
+// live in an own enumerable property and whose methods are non-enumerable.
+//
+// Assertions run both sides through `partition`/`query`/`fetchState`/`nextQuery`
+// below, which turn a real handle into the same shape.
+//
+// A fixture that stands in for state the fetch state will go on to *operate* on
+// (merge, split, roll back) must pass `~store` instead: those operations resolve
+// each address against the store that owns it, so only a real set of that store
+// behaves like production.
+//
+// The owning contract name isn't cosmetic either — the fetch state groups and
+// splits partitions by it (`countFor`, `contractNames`), so a fixture whose
+// addresses belong to another contract than it claims takes a different path.
+let fakeSetOf: (~contractName: string=?, array<Address.t>) => AddressSet.t = %raw(`
+function (contractName, addresses) {
+  var owner = contractName === undefined ? "Gravatar" : contractName;
+  return makeFakeSet(
+    addresses.map(function (address) { return {address: address, contractName: owner} })
+  );
+}`)
+
+// A real set over exactly these addresses, composed from the operations
+// production narrows a set with: the chain's contract sets merged, then sliced
+// down to the addresses asked for. An address several contracts index appears
+// once per owner, as it does in a partition that holds all of them.
+let realSetOf = (store: AddressStore.t, wanted: array<Address.t>) => {
+  let wanted = canonical(wanted)
+  let all =
+    store
+    ->AddressStore.contractCounts
+    ->Array.reduce(store->AddressStore.emptySet, (acc, {contractName}) =>
+      acc->AddressSet.merge(store->AddressStore.makeSet(~contractName))
+    )
+  all
+  ->AddressSet.addressesForTest
+  ->Array.reduceWithIndex(store->AddressStore.emptySet, (acc, address, idx) =>
+    wanted->Array.includes(address)
+      ? acc->AddressSet.merge(all->AddressSet.slice(~offset=idx, ~limit=Some(1)))
+      : acc
+  )
+}
+
+let setOf = (~store: option<AddressStore.t>=?, ~contractName=?, addresses) =>
+  switch store {
+  | Some(store) => store->realSetOf(addresses)
+  | None => fakeSetOf(~contractName?, addresses)
+  }
+
+%%raw(`
+function makeFakeSet(unordered) {
+  // The store spells an address canonically (lowercase hex); fixtures are
+  // written with the checksummed mock addresses, so normalise here and both
+  // sides of a comparison meet.
+  unordered = unordered.map(function (e) {
+    return {address: e.address.toLowerCase(), contractName: e.contractName};
+  });
+  // Set order: fixtures are all config addresses, so they share an effective
+  // start block and order by address alone. Applied to both sides of an
+  // assertion, so a partition's contents compare regardless of how the fixture
+  // listed them; the ordering rule itself is asserted in AddressStore_test.
+  var entries = unordered.slice().sort(function (a, b) {
+    return a.address < b.address ? -1 : 1;
+  });
+  // Enumerable, so vitest compares two of these by the addresses they hold.
+  var set = {addressList: entries.map(function (e) { return e.address })};
+  var methods = {
+    addressesForTest: function () { return set.addressList },
+    size: function () { return entries.length },
+    contractNames: function () {
+      var names = [];
+      entries.forEach(function (e) {
+        if (!names.includes(e.contractName)) names.push(e.contractName);
+      });
+      return names;
+    },
+    countFor: function (name) {
+      return entries.filter(function (e) { return e.contractName === name }).length;
+    },
+    filterByContracts: function (names) {
+      return makeFakeSet(entries.filter(function (e) { return names.includes(e.contractName) }));
+    },
+    filterByRegistrationBlock: function () {
+      throw new Error(
+        "A fixture set doesn't know its registration blocks. Build it with ~store so rollback prunes it like production does."
+      );
+    },
+    slice: function (offset, limit) {
+      return makeFakeSet(entries.slice(offset, limit === undefined ? undefined : offset + limit));
+    },
+    merge: function (other) {
+      if (other.__entries === undefined) {
+        throw new Error(
+          "Can't merge a fixture set with a real one. Build the fixture with ~store so both belong to the same address store."
+        );
+      }
+      var merged = entries.slice();
+      other.__entries.forEach(function (e) {
+        if (!merged.some(function (m) { return m.address === e.address })) merged.push(e);
+      });
+      return makeFakeSet(merged);
+    },
+    startBlockGroups: function () { return [{startBlock: 0, count: entries.length}] },
+  };
+  var descriptors = {__entries: {value: entries}};
+  Object.keys(methods).forEach(function (key) { descriptors[key] = {value: methods[key]} });
+  Object.defineProperties(set, descriptors);
+  return set;
+}`)
+
+// A real handle in the same shape, so both sides of an assertion compare by
+// the addresses they hold rather than by handle identity.
+let comparable: AddressSet.t => AddressSet.t = %raw(`function (set) {
+  if (!(set instanceof Object) || typeof set.addressesForTest !== "function") return set;
+  if (set.__entries !== undefined) return set;
+  var entries = [];
+  set.contractNames().forEach(function (contractName) {
+    set.filterByContracts([contractName]).addressesForTest().forEach(function (address) {
+      entries.push({address: address, contractName: contractName});
+    });
+  });
+  // Set order, not per-contract order.
+  var order = set.addressesForTest();
+  entries.sort(function (a, b) { return order.indexOf(a.address) - order.indexOf(b.address) });
+  return makeFakeSet(entries);
+}`)
+
+let partition = (p: FetchState.partition): FetchState.partition => {
+  ...p,
+  addresses: p.addresses->comparable,
+}
+
+let partitions = (optimizedPartitions: FetchState.OptimizedPartitions.t) => {
+  ...optimizedPartitions,
+  entities: optimizedPartitions.entities->Utils.Dict.mapValues(partition),
+}
+
+let query = (q: FetchState.query): FetchState.query => {
+  ...q,
+  addresses: q.addresses->comparable,
+}
+
+let fetchState = (fs: FetchState.t): FetchState.t => {
+  ...fs,
+  optimizedPartitions: partitions(fs.optimizedPartitions),
+}
+
+let queries = (qs: array<FetchState.query>) => qs->Array.map(query)
+
+let nextQuery = (result: FetchState.nextQuery) =>
+  switch result {
+  | Ready(qs) => FetchState.Ready(queries(qs))
+  | other => other
+  }

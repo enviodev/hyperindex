@@ -157,9 +157,9 @@ let preloadBatchOrThrow = async (
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
     let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpointIdx)
-    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpointIdx)
+    let checkpointItemsCount = batch.checkpointItemsCount->Array.getUnsafe(checkpointIdx)
 
-    for idx in 0 to checkpointEventsProcessed - 1 {
+    for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
       | Event(_) =>
@@ -233,7 +233,7 @@ let preloadBatchOrThrow = async (
       }
     }
 
-    itemIdx := itemIdx.contents + checkpointEventsProcessed
+    itemIdx := itemIdx.contents + checkpointItemsCount
   }
 
   let _ = await Promise.all(promises)
@@ -251,9 +251,9 @@ let runBatchHandlersOrThrow = async (
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
     let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpointIdx)
-    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpointIdx)
+    let checkpointItemsCount = batch.checkpointItemsCount->Array.getUnsafe(checkpointIdx)
 
-    for idx in 0 to checkpointEventsProcessed - 1 {
+    for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
 
       await runHandlerOrThrow(
@@ -266,7 +266,7 @@ let runBatchHandlersOrThrow = async (
         ~chains,
       )
     }
-    itemIdx := itemIdx.contents + checkpointEventsProcessed
+    itemIdx := itemIdx.contents + checkpointItemsCount
   }
 }
 
@@ -300,15 +300,11 @@ type logPartitionInfo = {
 // for the batch's store-backed (HyperSync) items and write them onto the
 // payloads, so handlers read plain objects. A batch can span chains, each with
 // its own stores and field masks, so group items by chain before materialising.
-let materializeBatchEvents = async (
-  batch: Batch.t,
-  ~chainStates: dict<ChainState.t>,
-  ~ecosystem,
-) => {
+let materializeBatchEvents = async (batch: Batch.t, ~chainStates: dict<ChainState.t>) => {
   switch chainStates->Dict.valuesToArray {
   // Single-chain indexers (the common case): every item belongs to the one
   // chain, so skip the per-chain grouping and its allocations.
-  | [cs] => await cs->ChainState.materializeBatchItems(~items=batch.items, ~ecosystem)
+  | [cs] => await cs->ChainState.materializeBatchItems(~items=batch.items)
   | _ =>
     let itemsByChain: dict<array<Internal.item>> = Dict.make()
     batch.items->Array.forEach(item => {
@@ -323,7 +319,7 @@ let materializeBatchEvents = async (
     ->Dict.toArray
     ->Array.map(async ((chainId, items)) => {
       let cs = chainStates->Dict.getUnsafe(chainId)
-      await cs->ChainState.materializeBatchItems(~items, ~ecosystem)
+      await cs->ChainState.materializeBatchItems(~items)
     })
     ->Promise.all
   }
@@ -359,7 +355,7 @@ let processEventBatch = async (
     if batch.items->Utils.Array.notEmpty {
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
-      await materializeBatchEvents(batch, ~chainStates, ~ecosystem=config.ecosystem.name)
+      await materializeBatchEvents(batch, ~chainStates)
       await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
     }
 

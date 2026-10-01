@@ -98,7 +98,7 @@ external afterEach: (unit => unit) => unit = "afterEach"
 // Async Module
 // ============================================================================
 
-type options = {retry?: int}
+type options = {retry?: int, timeout?: int}
 
 module Async = {
   @module("vitest")
@@ -169,3 +169,26 @@ let messageOfThrown: (unit => 'a) => option<string> = %raw(`function (fn) {
 // happens to equal the placeholder.
 let toThrowErrorEqual = (t: testContext, fn: unit => 'a, ~message=?, expected: string) =>
   t.expect(fn->messageOfThrown, ~message?).toEqual(Some(expected))
+
+// ============================================================================
+// Fake timers
+// ============================================================================
+
+module Vi = {
+  @module("vitest") @scope("vi")
+  external useFakeTimers: unit => unit = "useFakeTimers"
+
+  @module("vitest") @scope("vi")
+  external useRealTimers: unit => unit = "useRealTimers"
+
+  // Runs every timer that comes due within the window, awaiting the
+  // microtasks each one queues before moving on.
+  @module("vitest") @scope("vi")
+  external advanceTimersByTimeAsync: int => promise<unit> = "advanceTimersByTimeAsync"
+
+  @module("vitest") @scope("vi")
+  external getTimerCount: unit => int = "getTimerCount"
+
+  @module("vitest") @scope("vi")
+  external clearAllTimers: unit => unit = "clearAllTimers"
+}

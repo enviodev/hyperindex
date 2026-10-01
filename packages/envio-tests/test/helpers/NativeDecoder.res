@@ -1,0 +1,104 @@
+// The fixed address every crafted log is emitted from; register it for a
+// contract via `~ownedBy` to route logs to that contract's non-wildcard
+// registrations.
+let mockAddress = "0x000000000000000000000000000000000000abcd"
+
+// Decodes logs through the production path: feed crafted logs to a mock
+// eth_getLogs endpoint and let EvmRpcClient route+decode them with the shared
+// DecoderCore. Returns only the routed items, each carrying its registration
+// id and flat decoded params.
+let decodeLogs = async (
+  ~eventRegistrations: array<HyperSyncClient.Registration.input>,
+  ~logs: array<(array<string>, string)>,
+  // Contract that owns `mockAddress`, if any. Without one the emitter is
+  // unregistered and only wildcard registrations route.
+  ~ownedBy: option<string>=?,
+): array<EvmEventItem.t> => {
+  // logIndex must be unique per log within the block — the client dedups a
+  // page's items by (blockNumber, logIndex).
+  let logJsons =
+    logs->Array.mapWithIndex(((topics, data), i) => JSON.Object(
+      Dict.fromArray([
+        ("address", JSON.String(mockAddress)),
+        ("topics", JSON.Array(topics->Array.map(t => JSON.String(t)))),
+        ("data", JSON.String(data)),
+        ("blockNumber", JSON.String("0x1")),
+        ("transactionHash", JSON.String("0xabababababababababababababababababababababababababababababababab")),
+        ("transactionIndex", JSON.String("0x0")),
+        ("blockHash", JSON.String("0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0")),
+        ("logIndex", JSON.String(`0x${i->Int.toString(~radix=16)}`)),
+        ("removed", JSON.Boolean(false)),
+      ]),
+    ))
+  await MockRpcServer.withScenario(
+    ~name="native decoder logs",
+    ~calls=[
+      MockRpcServer.expectCall(~method="eth_getLogs", ~reply=RpcResult(JSON.Array(logJsons))),
+      // The client reads the range's last block for its reorg observation,
+      // whatever the field selection is.
+      MockRpcServer.expectCall(
+        ~method="eth_getBlockByNumber",
+        ~reply=RpcResult(
+          JSON.Object(
+            Dict.fromArray([
+              ("number", JSON.String("0x0")),
+              ("timestamp", JSON.String("0x0")),
+              ("hash", JSON.String("0x" ++ "b0"->String.repeat(32))),
+              ("parentHash", JSON.String("0x" ++ "00"->String.repeat(32))),
+            ]),
+          ),
+        ),
+      ),
+    ],
+    async mock => {
+      // One entry per contract, not per registration: two events on one
+      // contract are still one contract, and the store keys its ids on that.
+      let contractNames =
+        ContractMapping.make(
+          ~names=eventRegistrations->Array.map(reg => reg.contractName),
+        )->ContractMapping.names
+      let addressStore = TestAddresses.storeOf(
+        ~contracts=contractNames->Array.map((name): AddressStore.contract => {
+          name,
+          startBlock: None,
+          dependsOnAddresses: true,
+        }),
+        ~addresses=switch ownedBy {
+        | None => []
+        | Some(contractName) => [
+            {
+              address: mockAddress->Address.unsafeFromString,
+              contractName,
+              registrationBlock: -1,
+            },
+          ]
+        },
+      )
+      let addressSet = switch ownedBy {
+      | None => addressStore->AddressStore.emptySet
+      | Some(contractName) => addressStore->AddressStore.makeSet(~contractName)
+      }
+      let client = EvmRpcClient.make(
+        ~url=mock.url,
+        ~checksumAddresses=false,
+        ~syncConfig=EvmChain.getSyncConfig({}),
+        ~eventRegistrations,
+        ~addressStore,
+      )
+      let (result, _, _) = await client.getNextPage(
+        {
+          fromBlock: 0,
+          toBlockCeiling: 0,
+          partitionId: "0",
+          registrationIndexes: eventRegistrations->Array.map(reg => reg.index),
+          clientFilteredContracts: None,
+          retry: 0,
+        },
+        addressSet,
+        BlockStore.make(~ecosystem=Ecosystem.Evm),
+        TransactionStore.make(~ecosystem=Ecosystem.Evm),
+      )
+      result.items
+    },
+  )
+}

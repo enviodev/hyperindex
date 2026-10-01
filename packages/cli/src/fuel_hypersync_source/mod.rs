@@ -8,14 +8,14 @@ mod config;
 mod selection;
 mod types;
 
-use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
+use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
+use crate::block_store::{BlockStore, FuelBlockRow};
+use crate::hex::decode_prefixed;
+use crate::js_value::JsTape;
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
-use selection::{
-    BuiltSelection, FuelOnEventRegistrationInput, ReceiptAddress, RegistrationKind,
-    SelectionBuilder,
-};
+use selection::{BuiltSelection, FuelOnEventRegistrationInput, RegistrationKind, SelectionBuilder};
 use types::{convert_response, Block, ConvertError, RawReceipt};
 
 #[napi]
@@ -70,7 +70,7 @@ impl FuelHyperSyncClient {
         &self,
         params: EventItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<EventItemsResponse> {
+    ) -> napi::Result<(EventItemsResponse, BlockStore)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.clone().unwrap_or_default(),
         );
@@ -89,11 +89,28 @@ impl FuelHyperSyncClient {
             .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         let raw = convert_response(res).map_err(convert_error_to_napi)?;
 
+        // The page's raw blocks, keyed by height — merged into the per-chain
+        // store where their ids drive reorg detection and materialisation.
+        let block_store = BlockStore::new_fuel();
+        let rows = raw
+            .blocks
+            .iter()
+            .map(|b| {
+                Ok(FuelBlockRow {
+                    height: u64::try_from(b.height).context("block.height negative")?,
+                    id: Some(decode_prefixed(&b.id, "block.id")?),
+                    time: Some(b.time),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(map_err)?;
+        block_store.insert_fuel_block_rows(rows);
+
         // Materialise the set's cache before taking the store guard: `cache()`
         // lazily initialises by reading the same lock, and a writer queued
         // between the two reads would deadlock the pair.
         let set_cache = address_set.cache().clone();
-        let items = {
+        let (items, rejected_log_data) = {
             let store = self.address_store.read().unwrap();
             route_receipts(
                 raw.receipts,
@@ -106,12 +123,13 @@ impl FuelHyperSyncClient {
             .map_err(convert_error_to_napi)?
         };
 
-        Ok(EventItemsResponse {
+        let response = EventItemsResponse {
             archive_height: raw.archive_height,
             next_block: raw.next_block,
-            blocks: raw.blocks,
             items,
-        })
+            rejected_log_data,
+        };
+        Ok((response, block_store))
     }
 }
 
@@ -133,22 +151,24 @@ pub struct EventItemsQuery {
 }
 
 /// One routed receipt. The receipt's kind-specific columns are flattened so
-/// JS builds params without a tagged receipt union: LogData carries `data`
-/// (decoded in JS against the contract ABI), Mint/Burn carry `val`/`subId`,
+/// JS builds params without a tagged receipt union: LogData carries `params`,
+/// Mint/Burn carry `val`/`subId`,
 /// Transfer/TransferOut/Call carry `amount`/`assetId`/`to` — with
 /// TransferOut's wallet recipient normalised into `to`.
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct EventItem {
     /// The registration this receipt routed to, as passed to the client
     /// constructor. Receipts that route nowhere never cross the boundary.
     pub on_event_registration_index: i64,
     pub receipt_index: i64,
     pub tx_id: String,
-    /// Height of the block this receipt belongs to. The block itself is
-    /// carried once, deduplicated, in `EventItemsResponse.blocks`.
+    /// Height of the block this receipt belongs to. The block itself stays in
+    /// the `BlockStore` returned alongside this response.
     pub block_height: i64,
     pub src_address: String,
-    pub data: Option<String>,
+    /// The LogData receipt's data decoded with the registration's ABI. A
+    /// receipt its logged type rejects never becomes an item at all.
+    pub params: Option<JsTape>,
     pub sub_id: Option<String>,
     pub val: Option<BigInt>,
     pub amount: Option<BigInt>,
@@ -156,14 +176,26 @@ pub struct EventItem {
     pub to: Option<String>,
 }
 
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    /// The page's blocks, one per height. Items reference them by
-    /// `block_height`; presence for every routed item is validated here.
-    pub blocks: Vec<Block>,
     pub items: Vec<EventItem>,
+    pub rejected_log_data: Vec<RejectedLogData>,
+}
+
+/// The first LogData receipt in the page that a contract-bound registration's
+/// ABI couldn't decode, with how many it rejected in the page. The receipts
+/// are dropped; this only lets JS warn about a likely stale ABI.
+#[napi(object)]
+#[derive(Debug, PartialEq)]
+pub struct RejectedLogData {
+    pub on_event_registration_index: i64,
+    pub block_height: i64,
+    pub receipt_index: i64,
+    pub tx_id: String,
+    pub data_length: i64,
+    pub count: i64,
 }
 
 fn build_query(
@@ -225,7 +257,9 @@ fn push_unique(missing: &mut Vec<String>, name: &str) {
 /// and flattens the kind-specific columns onto the items. A receipt without a
 /// `root_contract_id` (no contract context for `srcAddress`) is dropped, as is
 /// one that routes to no registration. Kind-required columns the source
-/// omitted surface as `MissingFields` — never as garbage params.
+/// omitted surface as `MissingFields` — never as garbage params. LogData a
+/// contract-bound registration's ABI rejects is dropped and reported
+/// alongside the items.
 fn route_receipts(
     receipts: Vec<RawReceipt>,
     blocks: &[Block],
@@ -233,10 +267,11 @@ fn route_receipts(
     set_cache: &SetCache,
     client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
     address_store: &StoreInner,
-) -> Result<Vec<EventItem>, ConvertError> {
+) -> Result<(Vec<EventItem>, Vec<RejectedLogData>), ConvertError> {
     let present_block_heights: HashSet<i64> = blocks.iter().map(|b| b.height).collect();
     let mut items = Vec::with_capacity(receipts.len());
     let mut missing: Vec<String> = Vec::new();
+    let mut rejected: Vec<RejectedLogData> = Vec::new();
 
     for receipt in receipts {
         let src_address = match &receipt.root_contract_id {
@@ -247,10 +282,10 @@ fn route_receipts(
         // receipt only reaches wildcard registrations.
         let contract_id = Hash::decode_hex(&src_address).ok();
         let key: &[u8] = contract_id.as_deref().map_or(&[], |bytes| &bytes[..]);
-        let address = ReceiptAddress {
+        let address = Emitter {
             key,
-            contract_name: set_cache.owner_of(key),
-            block_height: receipt.block_height,
+            owners: set_cache.owners_of(key),
+            block: receipt.block_height,
         };
 
         for reg in &built.registrations {
@@ -280,27 +315,57 @@ fn route_receipts(
                 }
                 value.map(BigInt::from)
             };
-            let item = match reg.kind {
-                RegistrationKind::LogData { .. } => EventItem {
-                    on_event_registration_index: reg.index,
-                    receipt_index: receipt.receipt_index,
-                    tx_id: receipt.tx_id.clone(),
-                    block_height: receipt.block_height,
-                    src_address: src_address.clone(),
-                    data: require_hex(&receipt.data, "receipt.data", &mut missing),
-                    sub_id: None,
-                    val: None,
-                    amount: None,
-                    asset_id: None,
-                    to: None,
-                },
+            let item = match &reg.kind {
+                RegistrationKind::LogData { decoder, .. } => {
+                    let Some(data) = &receipt.data else {
+                        push_unique(&mut missing, "receipt.data");
+                        continue;
+                    };
+                    // Dropped for this registration only; others on the same
+                    // `rb` decode on their own. A wildcard sees other
+                    // contracts' data under its `rb` routinely, but a
+                    // contract-bound rejection usually means a stale ABI, so
+                    // that one is reported.
+                    let Some(params) = decoder.decode(data) else {
+                        if !reg.is_wildcard {
+                            match rejected
+                                .iter_mut()
+                                .find(|r| r.on_event_registration_index == reg.index)
+                            {
+                                Some(report) => report.count += 1,
+                                None => rejected.push(RejectedLogData {
+                                    on_event_registration_index: reg.index,
+                                    block_height: receipt.block_height,
+                                    receipt_index: receipt.receipt_index,
+                                    tx_id: receipt.tx_id.clone(),
+                                    data_length: data.len() as i64,
+                                    count: 1,
+                                }),
+                            }
+                        }
+                        continue;
+                    };
+                    EventItem {
+                        on_event_registration_index: reg.index,
+                        receipt_index: receipt.receipt_index,
+                        tx_id: receipt.tx_id.clone(),
+                        block_height: receipt.block_height,
+                        src_address: src_address.clone(),
+                        params: Some(params),
+                        sub_id: None,
+                        val: None,
+                        amount: None,
+                        asset_id: None,
+                        to: None,
+                    }
+                }
                 RegistrationKind::Mint | RegistrationKind::Burn => EventItem {
                     on_event_registration_index: reg.index,
                     receipt_index: receipt.receipt_index,
                     tx_id: receipt.tx_id.clone(),
                     block_height: receipt.block_height,
                     src_address: src_address.clone(),
-                    data: None,
+                    params: None,
                     sub_id: require_hex(&receipt.sub_id, "receipt.subId", &mut missing),
                     val: require_u64(receipt.val, "receipt.val", &mut missing),
                     amount: None,
@@ -322,7 +387,7 @@ fn route_receipts(
                         tx_id: receipt.tx_id.clone(),
                         block_height: receipt.block_height,
                         src_address: src_address.clone(),
-                        data: None,
+                        params: None,
                         sub_id: None,
                         val: None,
                         amount: require_u64(receipt.amount, "receipt.amount", &mut missing),
@@ -338,7 +403,7 @@ fn route_receipts(
     if !missing.is_empty() {
         return Err(ConvertError::MissingFields(missing));
     }
-    Ok(items)
+    Ok((items, rejected))
 }
 
 /// The client embeds a `{:?}` debug dump in its error message; keep only the
@@ -375,6 +440,7 @@ mod tests {
     use super::selection::FuelEventKind;
     use super::*;
     use crate::address_store::test_support::{fuel_store, set_of};
+    use crate::js_value::test_value::JsValue;
 
     #[test]
     fn convert_error_serializes_as_expected_json() {
@@ -405,6 +471,7 @@ mod tests {
             start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
+            abi: log_id.map(|id| crate::fuel::log_decoder::test_abi(id, "u8")),
         }
     }
 
@@ -415,7 +482,7 @@ mod tests {
             tx_id: "0xtx".to_string(),
             block_height: 42,
             receipt_type,
-            data: Some("0x01".to_string()),
+            data: Some(vec![0x01]),
             rb: Some(7),
             val: Some(100),
             sub_id: Some("0xsub".to_string()),
@@ -468,6 +535,7 @@ mod tests {
             &Default::default(),
             &address_store,
         )
+        .map(|(items, _)| items)
     }
 
     #[test]
@@ -504,6 +572,81 @@ mod tests {
                 .map(|i| i.on_event_registration_index)
                 .collect::<Vec<_>>(),
             vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn log_data_its_abi_rejects_drops_only_that_registration() {
+        let mut logs_u64 = reg_input(1, "C", FuelEventKind::LogData, true, Some("7"));
+        logs_u64.abi = Some(crate::fuel::log_decoder::test_abi("7", "u64"));
+        let (store, set, built) = build(
+            &[
+                reg_input(0, "C", FuelEventKind::LogData, true, Some("7")),
+                logs_u64,
+            ],
+            &[0, 1],
+            &[("C", &[])],
+        );
+        // One data byte: a u8 for registration 0, too short for 1's u64.
+        let mut empty = raw_receipt(6);
+        empty.data = Some(Vec::new());
+        let items = route(&store, &set, &built, vec![raw_receipt(6), empty]).unwrap();
+        assert_eq!(
+            items
+                .into_iter()
+                .map(|i| (
+                    i.on_event_registration_index,
+                    i.params.map(|p| JsValue::of(&p))
+                ))
+                .collect::<Vec<_>>(),
+            vec![(0, Some(JsValue::Num(1.0)))]
+        );
+    }
+
+    #[test]
+    fn reports_log_data_only_a_contract_bound_registration_rejects() {
+        let logs_u64 = |index, contract_name, is_wildcard| {
+            let mut reg = reg_input(
+                index,
+                contract_name,
+                FuelEventKind::LogData,
+                is_wildcard,
+                Some("7"),
+            );
+            reg.abi = Some(crate::fuel::log_decoder::test_abi("7", "u64"));
+            reg
+        };
+        let (store, set, built) = build(
+            &[logs_u64(0, "W", true), logs_u64(1, "C", false)],
+            &[0, 1],
+            &[("W", &[]), ("C", &[ADDR])],
+        );
+        let address_store = store.handle();
+        let address_store = address_store.read().unwrap();
+        // One data byte each — too short for a u64 — so both registrations
+        // reject both receipts; only the contract-bound one is reported.
+        let (items, rejected) = route_receipts(
+            vec![raw_receipt(6), raw_receipt(6)],
+            &[block_42()],
+            &built,
+            set.cache(),
+            &Default::default(),
+            &address_store,
+        )
+        .unwrap();
+        assert_eq!(
+            (items.len(), rejected),
+            (
+                0,
+                vec![RejectedLogData {
+                    on_event_registration_index: 1,
+                    block_height: 42,
+                    receipt_index: 3,
+                    tx_id: "0xtx".to_string(),
+                    data_length: 1,
+                    count: 2,
+                }]
+            )
         );
     }
 

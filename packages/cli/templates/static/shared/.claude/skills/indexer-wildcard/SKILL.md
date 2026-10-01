@@ -33,7 +33,12 @@ Pass `wildcard: true` in the options object to `indexer.onEvent`. Use `event.src
 
 ```ts
 indexer.onEvent(
-  { contract: "ERC20", event: "Transfer", wildcard: true },
+  {
+    contract: "ERC20",
+    event: "Transfer",
+    wildcard: true,
+    fields: { transaction: ["hash"] },
+  },
   async ({ event, context }) => {
     const tokenAddress = event.srcAddress; // The actual contract address
     const id = `${event.transaction.hash}-${event.logIndex}`;

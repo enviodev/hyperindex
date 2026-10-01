@@ -8,32 +8,84 @@ type blockRangeFetchStats = {
 }
 
 // A single backend request a source method actually made (cache/dedup hits
-// aren't requests), with the time it took. SourceManager aggregates these
-// per (source, method) into the envio_source_request_* metrics.
-type requestStat = {method: string, seconds: float}
+// aren't requests), with the time it took and how much it brought back.
+// SourceManager aggregates these per (source, method) into the
+// envio_source_request_* and envio_source_response_* metrics.
+type requestStat = RequestStat.t = {method: string, seconds: float, responseBlocks?: int}
+
+// Native clients wrap a failure of a multi-request operation in a structured
+// payload, so the source can still return timings when SourceManager retries
+// it. `cause` carries the inner message as a plain error, ready for logging.
+type nativeRequestFailure = {
+  cause: exn,
+  message: option<string>,
+  requestStats: array<requestStat>,
+}
+
+// Prefix marking a napi error reason as a structured native-failure envelope.
+// Keep in sync with `request_stats.rs` `NATIVE_FAILURE_PREFIX`.
+let nativeFailurePrefix = "ENVIO_NATIVE_FAILURE:"
+
+// The envelope `request_stats.rs` writes after the prefix.
+type nativeFailurePayload = {message: string, requestStats: array<requestStat>}
+
+let nativeFailurePayloadSchema = S.schema(s => {
+  message: s.matches(S.string),
+  requestStats: s.matches(
+    S.array(
+      S.schema(s => {
+        method: s.matches(S.string),
+        seconds: s.matches(S.float),
+      }),
+    ),
+  ),
+})
+
+let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
+  let originalMessage = switch exn->JsExn.anyToExnInternal {
+  | JsExn(jsExn) => jsExn->JsExn.message
+  | _ => None
+  }
+  // Only a reason carrying our prefix is one of our envelopes; anything else
+  // keeps its original message and cause untouched.
+  let decoded = switch originalMessage {
+  | Some(message) if message->String.startsWith(nativeFailurePrefix) =>
+    try Some(
+      message
+      ->String.slice(~start=nativeFailurePrefix->String.length, ~end=message->String.length)
+      ->JSON.parseOrThrow
+      ->S.parseOrThrow(nativeFailurePayloadSchema),
+    ) catch {
+    | _ => None
+    }
+  | _ => None
+  }
+  switch decoded {
+  | Some({message, requestStats}) => {
+      cause: JsError.make(message)->(Utils.magic: JsError.t => exn),
+      message: Some(message),
+      requestStats,
+    }
+  | None => {cause: exn, message: originalMessage, requestStats: []}
+  }
+}
 
 /**
 Thes response returned from a block range fetch
 */
 type blockRangeFetchResponse = {
   knownHeight: int,
-  // Best-effort (blockNumber, blockHash) pairs observed while fetching this range.
-  // Used by reorg detection; gaps are OK, no extra requests are made to fill them.
-  // Duplicates with the same block number are allowed — registerReorgGuard treats
-  // a within-array hash mismatch on the same block number as a reorg.
-  blockHashes: array<ReorgDetection.blockData>,
   parsedQueueItems: array<Internal.item>,
   // Page of transactions for this response's items, keyed by (blockNumber,
   // transactionIndex); merged into the chain's store on apply. `None` for
-  // sources that keep the transaction inline on the payload (RPC/Fuel/Simulate).
+  // sources that keep the transaction inline on the payload (Fuel/Simulate).
   transactionStore: option<TransactionStore.t>,
-  // Page of blocks for this response's items, keyed by block number; merged into
-  // the chain's store on apply. `None` for sources that keep the block fully
-  // inline on the payload (RPC/Fuel/Simulate).
-  blockStore: option<BlockStore.t>,
-  fromBlockQueried: int,
+  // Page of blocks observed while fetching this range, keyed by block number;
+  // merged into the chain's store on apply, where its hashes drive reorg
+  // detection. A source that keeps the block inline on the payload (Simulate)
+  // contributes hash-only rows built from the block hashes it saw.
+  blockStore: BlockStore.t,
   latestFetchedBlockNumber: int,
-  latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
   requestStats: array<requestStat>,
 }
@@ -41,25 +93,114 @@ type blockRangeFetchResponse = {
 type getHeightResponse = {height: int, requestStats: array<requestStat>}
 
 type getBlockHashesResponse = {
-  result: result<array<ReorgDetection.blockDataWithTimestamp>, exn>,
+  result: result<BlockStore.t, exn>,
   requestStats: array<requestStat>,
 }
+
+exception InconsistentResponse({
+  method: string,
+  blockNumber: option<int>,
+  storedHash: option<string>,
+  receivedHash: option<string>,
+  missingBlockNumbers: array<int>,
+})
+
+// The queried block hasn't reached the backend instance that served the
+// request. Load-balanced backends drift from each other around the head, so
+// this is expected there and resolves by retrying — SourceManager owns the
+// backoff and the decision to fail over, identically for every ecosystem.
+// Carries the timings of the requests the failed operation did make, so a
+// retried request still counts towards the source's metrics.
+exception SourceBehindHead({blockNumber: int, requestStats: array<requestStat>})
 
 type getItemsRetry =
   | WithSuggestedToBlock({toBlock: int})
   | WithBackoff({message: string, backoffMillis: int})
   | ImpossibleForTheQuery({message: string})
 
-exception RateLimited({resetMs: int})
+type rateLimited = {resetMs: int, requestStats: array<requestStat>}
+exception RateLimited(rateLimited)
 
+// The two failures that can follow requests carry their timings, so a page
+// that ends in a retry still counts towards the source's metrics — the same
+// contract `RateLimited` and `SourceBehindHead` keep.
 type getItemsError =
   | UnsupportedSelection({message: string})
-  | FailedGettingFieldSelection({exn: exn, blockNumber: int, logIndex: int, message: string})
-  | FailedGettingItems({exn: exn, attemptedToBlock: int, retry: getItemsRetry})
+  | FailedGettingFieldSelection({
+      // The cause, where the source has one beyond `message`.
+      exn?: exn,
+      blockNumber: int,
+      message: string,
+      requestStats: array<requestStat>,
+    })
+  | FailedGettingItems({
+      // The cause, where the source has one beyond the retry's own message.
+      exn?: exn,
+      attemptedToBlock: int,
+      retry: getItemsRetry,
+      requestStats: array<requestStat>,
+    })
 
 exception GetItemsError(getItemsError)
 
+let getItemsErrorRequestStats = (error: getItemsError) =>
+  switch error {
+  // Raised before anything is requested.
+  | UnsupportedSelection(_) => []
+  | FailedGettingFieldSelection({requestStats}) | FailedGettingItems({requestStats}) => requestStats
+  }
+
 type sourceFor = Sync | Fallback | Realtime
+
+// Why a height subscription's connection ended. Closed, so a consumer decides
+// what a failure means by matching on it rather than by recognising a string,
+// and so every transport describes an outage in the same words.
+type heightSubscriptionDownReason =
+  // Ended cleanly after serving long enough to have been worth making: a load
+  // balancer moving a connection, and routine.
+  | Rotated
+  // Ended cleanly without having served: a server dropping connections it
+  // ought to be keeping.
+  | Closed
+  // Delivered nothing at all for a whole staleness window.
+  | Stale
+  // Sent frames the transport could not read. Alone among these it never heals
+  // on its own, which is why consumers tell an operator about it.
+  | Unreadable
+  // No connection was established to begin with.
+  | ConnectFailed
+  // The provider refused the subscription.
+  | SubscribeRejected
+  // The socket itself reported an error.
+  | TransportError
+  // Refused with an HTTP status, which is the whole of what an SSE stream is
+  // told about a refusal.
+  | Http(int)
+  // The consumer gave the source up. Not an outage, but the connection is gone
+  // and a count that omitted it would leave the source looking connected.
+  | Unsubscribed
+
+// Bounded, so it is safe as a metric label. Whatever the provider said about
+// one failure belongs in `detail` and in a log line, never here.
+let downReasonLabel = reason =>
+  switch reason {
+  | Rotated => "rotated"
+  | Closed => "closed"
+  | Stale => "stale"
+  | Unreadable => "unreadable"
+  | ConnectFailed => "connect-failed"
+  | SubscribeRejected => "subscribe-rejected"
+  | TransportError => "error"
+  | Http(code) => `http-${code->Int.toString}`
+  | Unsubscribed => "unsubscribed"
+  }
+
+// Connection state of a height subscription, reported by every transport.
+// `Down` repeats on each failed retry while the stream stays broken, and `Live`
+// fires on every (re)connect, so consumers must treat both as idempotent.
+// `detail` is whatever the provider said for this one failure — an error
+// message, or the frame nobody could read.
+type heightSubscriptionStatus = Live | Down({reason: heightSubscriptionDownReason, detail?: string})
 
 type t = {
   name: string,
@@ -77,6 +218,13 @@ type t = {
     // straight to its Rust client, which builds the query's address filter from
     // it and gates every returned item against the chain-wide store.
     ~addressSet: AddressSet.t,
+    // Return a header for every block in the range, not only the ones an item
+    // landed on. The progress block's timestamp is what measures how far behind
+    // chain time the indexer is, and at the head that block often carries no
+    // item of its own. Only set once the chain is at the head, where the range
+    // is a handful of blocks; over a backfill range it would be a header per
+    // block for no gain.
+    ~includeAllBlocks: bool,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
@@ -91,8 +239,16 @@ type t = {
     ~retry: int,
     ~logger: Pino.t,
   ) => promise<blockRangeFetchResponse>,
-  createHeightSubscription?: (~onHeight: int => unit) => unit => unit,
-  // Invoked by SourceManager once a rollback target is known so the source can
-  // drop any state that may now point at an orphaned chain (e.g. RPC block cache).
-  onReorg?: (~rollbackTargetBlock: int) => unit,
+  createHeightSubscription?: (
+    ~onHeight: int => unit,
+    ~onStatus: heightSubscriptionStatus => unit,
+  ) => unit => unit,
+  // Invoked when a reorg or an internally inconsistent response means what the
+  // source is holding may describe an orphaned chain — for RPC, the reads still
+  // in flight, which anything asking afterwards would otherwise join. The
+  // stores are rolled back separately; this is only about what the source
+  // itself carries. Deliberately takes no rollback target: the deepest reorged
+  // block isn't known until the depth search runs, and that search reads back
+  // through this very state.
+  onReorg?: unit => unit,
 }

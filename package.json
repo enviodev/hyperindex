@@ -5,7 +5,8 @@
   "scripts": {
     "test:templates": "pnpm --filter e2e-tests test:templates",
     "test:e2e": "pnpm --filter e2e-tests test:e2e",
-    "test": "(cd packages/envio-tests && pnpm test) && for d in test_codegen fuel_test svm_test e2e_test; do echo \"=== scenarios/$d ===\" && (cd \"scenarios/$d\" && pnpm exec envio codegen && pnpm test) || exit 1; done"
+    "test:cli": "pnpm --filter e2e-tests test:cli",
+    "test": "(cd packages/envio-tests && pnpm test) && pnpm test:cli && for d in test_codegen fuel_test svm_test cross_chain_test e2e_test; do echo \"=== scenarios/$d ===\" && (cd \"scenarios/$d\" && pnpm exec envio codegen && pnpm test) || exit 1; done"
   },
   "devDependencies": {},
   "pnpm": {

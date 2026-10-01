@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=./node_modules/envio/svm.schema.json
+name: solana-usdc-transfers
+description: Every USDC transfer through the SPL Token program on Solana.
+ecosystem: svm
+chains:
+  - id: solana
+    # Use `latest` to start at the chain head instead.
+    start_slot: 445000000
+programs:
+  - name: SplToken
+    program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+    # idl: ./idls/my-program.json # You can also use your Codama/Anchor IDL directly
+    instructions:
+      - name: transfer
+        discriminator: "0x03"
+        accounts: [source, destination, authority]
+        args:
+          - name: amount
+            type: u64
+      - name: transferChecked
+        discriminator: "0x0c"
+        accounts: [source, mint, destination, authority]
+        args:
+          - name: amount
+            type: u64
+          - name: decimals
+            type: u8

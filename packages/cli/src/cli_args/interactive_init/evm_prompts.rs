@@ -350,11 +350,8 @@ impl LocalImportArgs {
             env::current_dir().unwrap_or_default()
         ))?;
 
-        let abi = match serde_json::from_str::<AbiOrNestedAbi>(&abi_file).context(format!(
-            "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted \
-             correctly or contact the team.",
-            abi_path
-        ))? {
+        let source = abi_path.display().to_string();
+        let abi = match crate::evm::abi::parse(Some(&source), &abi_file)? {
             AbiOrNestedAbi::Abi(abi) => abi,
             AbiOrNestedAbi::NestedAbi { abi } => abi,
         };

@@ -360,7 +360,7 @@ mod tests {
         let (_store, set) = addresses(&[("C", &[ADDR])]);
         let built = builder.build(&[0, 1], &set, &Default::default()).unwrap();
         assert_eq!(
-            (built.log_selections, set.cache().owner_of(&ADDR_BYTES),),
+            (built.log_selections, set.cache().owns(&ADDR_BYTES, 0),),
             (
                 vec![BuiltLogSelection {
                     addresses: vec![ADDR.to_string()],
@@ -371,7 +371,7 @@ mod tests {
                         vec![],
                     ],
                 }],
-                Some("C"),
+                true,
             )
         );
     }

@@ -11,10 +11,16 @@ type effectRateLimitState = {
 // toMetrics.
 type effectStats
 
+type cacheEntry = {
+  output: Internal.effectOutput,
+  chainId: ChainId.t,
+  checkpointId: Internal.checkpointId,
+}
+
 type effectCacheInMemTable = {
   mutable idsToStore: array<string>,
   mutable invalidationsCount: int,
-  mutable dict: dict<Change.t<Internal.effectOutput>>,
+  mutable dict: dict<cacheEntry>,
   mutable changesCount: float,
   effect: Internal.effect,
   scope: Internal.chainScope,

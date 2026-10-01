@@ -1,0 +1,12 @@
+type Transfer {
+  id: ID!
+  amount: BigInt!
+  source: String!
+  destination: String!
+  signer: String!
+  txSignature: String!
+  slot: Int!
+  timestamp: Int!
+  "False for a plain `transfer`, whose mint the handler resolves from token balances."
+  checked: Boolean!
+}

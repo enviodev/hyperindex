@@ -42,14 +42,13 @@ let transferEventRegistration: HyperSyncClient.Registration.input = {
 // The chain's address index, with USDC registered for ERC20 from block 0 —
 // the client builds the query's address filter from a set of it and gates every
 // returned log against it.
-let addressStore = AddressStore.make(
-  ~ecosystem=Ecosystem.Evm,
-  ~shouldChecksum=false,
-  ~contracts=[{name: "ERC20", startBlock: None, dependsOnAddresses: true}, {name: "Unrelated", startBlock: None, dependsOnAddresses: true}],
+let addressStore = TestAddresses.storeOf(
+  ~contracts=[
+    {name: "ERC20", startBlock: None, dependsOnAddresses: true},
+    {name: "Unrelated", startBlock: None, dependsOnAddresses: true},
+  ],
+  ~addresses=[{address: usdcAddress, contractName: "ERC20", registrationBlock: -1}],
 )
-let _ = addressStore->AddressStore.seedBatch([
-  {address: usdcAddress, contractName: "ERC20", registrationBlock: -1},
-])
 let usdcSet = addressStore->AddressStore.makeSet(~contractName="ERC20")
 
 let makeClient = (~eventRegistrations) =>
@@ -80,7 +79,7 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
 }
 
 describe("HyperSync client getEventItems (live)", () => {
-  Async.it("returns decoded event items for a real block range", async t => {
+  Async.itWithOptions("returns decoded event items for a real block range", {retry: 3}, async t => {
     let client = makeClient(~eventRegistrations=[transferEventRegistration])
     let res = await runQuery(~client)
 
@@ -118,14 +117,14 @@ describe("HyperSync client getEventItems (live)", () => {
       })
   })
 
-  Async.it("getHeight returns a height past the queried range", async t => {
+  Async.itWithOptions("getHeight returns a height past the queried range", {retry: 3}, async t => {
     let client = makeClient(~eventRegistrations=[transferEventRegistration])
     let height = await client.getHeight()
 
     t.expect(height > toBlock).toEqual(true)
   })
 
-  Async.it("drops items whose topic0 doesn't match any registered sig", async t => {
+  Async.itWithOptions("drops items whose topic0 doesn't match any registered sig", {retry: 3}, async t => {
     // A wildcard registration whose topic0 is the Transfer sighash, so the
     // query fetches Transfer logs, but the decoder is only registered for an
     // unrelated 1-topic signature — every fetched log routes nowhere.
@@ -157,33 +156,46 @@ describe("HyperSync client getEventItems (live)", () => {
   })
 })
 
-describe("HyperSync client getHeight with corrupted token", () => {
-  // A corrupted token makes the server reply 401, so getHeight throws. The error
-  // must keep matching EvmHyperSyncSource.isUnauthorizedError, otherwise
-  // getHeightOrThrow's block-forever guard silently stops working.
-  Async.it(
-    "is detected by EvmHyperSyncSource.isUnauthorizedError",
-    async t => {
-      let client = HyperSyncClient.make(
-        ~url="https://eth.hypersync.xyz",
-        ~apiToken="this-is-a-corrupted-token",
-        ~httpReqTimeoutMillis=5000,
-        ~eventRegistrations=[],
-        ~enableChecksumAddresses=false,
-        ~addressStore,
-      )
+describe("HyperSync client with corrupted token", () => {
+  let makeCorruptedTokenClient = () =>
+    HyperSyncClient.make(
+      ~url="https://eth.hypersync.xyz",
+      ~apiToken="this-is-a-corrupted-token",
+      ~httpReqTimeoutMillis=5000,
+      ~eventRegistrations=[transferEventRegistration],
+      ~enableChecksumAddresses=false,
+      ~addressStore,
+    )
 
+  Async.it(
+    "getHeight doesn't validate the token",
+    async t => {
+      // The edge deliberately stopped rejecting malformed tokens on /height and
+      // the height SSE endpoints, so a token issue can't stall an indexer that
+      // only polls the height. If that ever regresses, getHeightOrThrow reports
+      // the 401 once and then retries it forever.
+      let height = await makeCorruptedTokenClient().getHeight()
+
+      t.expect(height > 0).toEqual(true)
+    },
+  )
+
+  Async.it(
+    "query error is detected by HyperSync.isUnauthorizedError",
+    async t => {
+      // The query endpoint still replies 401. Feed that real server error
+      // through isUnauthorizedError so the check can't silently drift away from
+      // the message shape the client produces for a 401.
       let detected = try {
-        let _ = await client.getHeight()
+        let _ = await runQuery(~client=makeCorruptedTokenClient())
         false
       } catch {
-      | JsExn(e) => e->JsExn.message->Option.getOr("")->EvmHyperSyncSource.isUnauthorizedError
+      | JsExn(e) => e->JsExn.message->Option.getOr("")->HyperSync.isUnauthorizedError
       | _ => false
       }
 
       t.expect(detected).toEqual(true)
     },
-    ~timeout=60000,
   )
 })
 

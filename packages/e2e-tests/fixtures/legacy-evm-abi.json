@@ -1,0 +1,18 @@
+[
+  {"inputs": [], "payable": false, "stateMutability": "nonpayable", "type": "constructor", "signature": "constructor"},
+  {"inputs": [], "payable": false, "stateMutability": "nonpayable", "type": "constructor", "signature": "constructor"},
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "name": "from", "type": "address"},
+      {"indexed": true, "name": "to", "type": "address"},
+      {"indexed": false, "name": "amount", "type": "uint256"}
+    ],
+    "name": "Transfer",
+    "type": "event",
+    "signature": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  },
+  {"type": "event", "name": "Failure", "inputs": [{"name": "action", "type": "string"}]},
+  {"name": "admin", "outputs": [{"name": "", "type": "address"}], "stateMutability": "view", "constant": true, "payable": false},
+  {"type": "function", "name": "renounce", "stateMutability": "nonpayable"}
+]

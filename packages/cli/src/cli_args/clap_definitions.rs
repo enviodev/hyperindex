@@ -143,6 +143,14 @@ pub struct StartArgs {
     ///Clear your database and restart indexing from scratch
     #[arg(short = 'r', long, action)]
     pub restart: bool,
+
+    ///Index only this chain, leaving the others to their own `envio start --chain` processes.
+    ///Repeat the flag for several chains.
+    ///
+    ///Only needed to place chains yourself. Requires a per-chain schema, migrated for every
+    ///chain before any process starts, and a separate `ENVIO_INDEXER_PORT` per process.
+    #[arg(long = "chain", value_name = "CHAIN_ID")]
+    pub chains: Vec<u64>,
 }
 
 #[derive(Debug, Args)]

@@ -3,8 +3,9 @@ use std::sync::Mutex;
 
 /// The sync-tuning knobs a `RpcSource` resolves in `EvmChain.getSyncConfig`
 /// (ReScript's `Config.sourceSync`) and passes in at construction, minus the
-/// fields (`fallbackStallTimeout`, `pollingInterval`) that stay JS-side
-/// scheduling concerns unrelated to paging.
+/// fields that are not paging concerns: `fallbackStallTimeout` and
+/// `pollingInterval` stay JS-side scheduling, and `queryTimeoutMillis` bounds
+/// each request in the client rather than the range a page asks for.
 #[derive(Clone, Copy)]
 pub struct SyncConfig {
     pub initial_block_interval: u64,
@@ -12,7 +13,6 @@ pub struct SyncConfig {
     pub acceleration_additive: u64,
     pub interval_ceiling: u64,
     pub backoff_millis: u64,
-    pub query_timeout_millis: u64,
 }
 
 /// Per-partition adaptive block interval (AIMD), keyed by partition id. The
@@ -74,10 +74,15 @@ impl IntervalState {
     }
 
     /// A provider reported a structural, source-wide cap — tighten (never
-    /// loosen) the ceiling and return the resulting value.
-    pub fn tighten_source_max(&self, current_source_max: u64, interval: u64) -> u64 {
-        let capped = current_source_max.min(interval);
-        *self.source_max.lock().unwrap() = Some(capped);
+    /// loosen) the ceiling and return the resulting value. The current ceiling
+    /// is read under the same lock that writes it: partitions fail
+    /// concurrently, and one holding a copy read before another's write would
+    /// otherwise raise a cap that was just lowered. `ceiling` is only the
+    /// configured default, for when nothing has capped the source yet.
+    pub fn tighten_source_max(&self, ceiling: u64, interval: u64) -> u64 {
+        let mut source_max = self.source_max.lock().unwrap();
+        let capped = source_max.unwrap_or(ceiling).min(interval);
+        *source_max = Some(capped);
         capped
     }
 }
@@ -99,7 +104,6 @@ mod tests {
             acceleration_additive: 500,
             interval_ceiling: 10_000,
             backoff_millis: 2_000,
-            query_timeout_millis: 20_000,
         }
     }
 
@@ -125,10 +129,31 @@ mod tests {
         let state = IntervalState::new();
         let cfg = test_config();
         state.grow("0", 9_800, &cfg, 10_000);
-        assert_eq!(state.suggested_interval("0", &cfg).0, 10_000);
-
+        let capped = state.suggested_interval("0", &cfg).0;
         state.grow("0", 9_400, &cfg, 10_000);
-        assert_eq!(state.suggested_interval("0", &cfg).0, 9_900);
+        assert_eq!(
+            (capped, state.suggested_interval("0", &cfg).0),
+            (10_000, 9_900)
+        );
+    }
+
+    #[test]
+    fn tighten_source_max_never_loosens_under_a_stale_read() {
+        // Partitions of one chain fail concurrently, so both read the ceiling
+        // before either wrote. The later write must not raise a cap the earlier
+        // one already lowered — the caller's copy is stale by then.
+        let state = IntervalState::new();
+        let cfg = test_config();
+        let (_, first_read) = state.suggested_interval("a", &cfg);
+        let (_, second_read) = state.suggested_interval("b", &cfg);
+        state.tighten_source_max(first_read, 1_000);
+        assert_eq!(
+            (
+                state.tighten_source_max(second_read, 5_000),
+                state.suggested_interval("a", &cfg).1
+            ),
+            (1_000, 1_000)
+        );
     }
 
     #[test]

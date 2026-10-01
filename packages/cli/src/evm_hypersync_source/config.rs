@@ -7,6 +7,7 @@ pub struct ClientConfig {
     pub url: String,
     pub api_token: String,
     pub http_req_timeout_millis: Option<i64>,
+    /// Defaults to no retries — see the `From` impl.
     pub max_num_retries: Option<i64>,
     pub retry_backoff_ms: Option<i64>,
     pub retry_base_ms: Option<i64>,
@@ -39,10 +40,15 @@ impl From<ClientConfig> for hypersync_client::ClientConfig {
                 .http_req_timeout_millis
                 .filter(|v| *v >= 0)
                 .map_or(Cfg::default_http_req_timeout_millis(), |v| v as u64),
+            // Retries belong to the indexer, not the binary client. Every
+            // failure the client would swallow — a rate limit above all — has
+            // to reach SourceManager, which backs off, surfaces the throttling
+            // in the TUI and can fail over to another source; none of that can
+            // happen while a retry loop sleeps inside a single napi call.
             max_num_retries: config
                 .max_num_retries
-                .filter(|v| *v >= 0)
-                .map_or(Cfg::default_max_num_retries(), |v| v as usize),
+                .and_then(|v| usize::try_from(v).ok())
+                .unwrap_or(0),
             retry_backoff_ms: config
                 .retry_backoff_ms
                 .filter(|v| *v >= 0)
