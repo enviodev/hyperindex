@@ -1,8 +1,9 @@
 use crate::{
     clap_definitions::{ConfigSubcommand, JsonSchema, MetricsSubcommand, Script, SkillsSubcommand},
-    cli_args::clap_definitions::{CommandLineArgs, CommandType},
+    cli_args::clap_definitions::{CommandLineArgs, CommandType, ProjectPaths},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
+    constants::project_paths::DEFAULT_CONFIG_PATH,
     docker_env,
     project_paths::ParsedProjectPaths,
     scripts,
@@ -55,6 +56,39 @@ pub enum Command {
 /// Returns `None` for commands that finish entirely in Rust. The NAPI shim
 /// forwards that to JS as `null` so the host exits cleanly.
 pub async fn execute(
+    command_line_args: CommandLineArgs,
+    envio_package_dir: Option<&str>,
+) -> Result<Option<Command>> {
+    let project_flags = project_flags(&command_line_args.project_paths);
+    let command = execute_command(command_line_args, envio_package_dir).await?;
+    Ok(command.map(|command| command.with_project_flags(project_flags)))
+}
+
+/// The flags the operator gave to find the project, which every command the
+/// runtime prints for them to run next has to repeat.
+fn project_flags(project_paths: &ProjectPaths) -> String {
+    let directory = project_paths
+        .directory
+        .iter()
+        .map(|directory| format!("-d {directory}"));
+    let config = (project_paths.config != DEFAULT_CONFIG_PATH)
+        .then(|| format!("--config {}", project_paths.config));
+    directory.chain(config).collect::<Vec<_>>().join(" ")
+}
+
+impl Command {
+    fn with_project_flags(mut self, project_flags: String) -> Self {
+        if !project_flags.is_empty() {
+            let (Command::Start { config, .. }
+            | Command::Migrate { config, .. }
+            | Command::DropSchema { config }) = &mut self;
+            config["projectFlags"] = project_flags.into();
+        }
+        self
+    }
+}
+
+async fn execute_command(
     command_line_args: CommandLineArgs,
     envio_package_dir: Option<&str>,
 ) -> Result<Option<Command>> {
@@ -397,6 +431,51 @@ chains:
              separate processes can't share a checkpoint sequence. Every entity in this schema is \
              cross-chain, because config.yaml doesn't set `disable_default_cross_chain: true`. Set \
              it, then run every chain in its own process."
+        );
+    }
+}
+
+#[cfg(test)]
+mod project_flags_tests {
+    use super::{execute, Command};
+    use crate::cli_args::clap_definitions::CommandLineArgs;
+    use clap::Parser;
+
+    async fn project_flags(args: &[&str]) -> serde_json::Value {
+        let command = execute(CommandLineArgs::parse_from(args), None)
+            .await
+            .expect("the command should run")
+            .expect("the command should hand work to the runtime");
+        match command {
+            Command::Migrate { config, .. } => config["projectFlags"].clone(),
+            other => panic!("expected a migration, got {other:?}"),
+        }
+    }
+
+    // The runtime prints commands for the operator to run next, and they have to
+    // find the same project the operator's own command did.
+    #[tokio::test]
+    async fn carries_the_flags_that_locate_the_project() {
+        let directory = format!("{}/../../scenarios/split_test", env!("CARGO_MANIFEST_DIR"));
+        assert_eq!(
+            (
+                project_flags(&["envio", "local", "db-migrate", "up", "-d", &directory]).await,
+                project_flags(&[
+                    "envio",
+                    "local",
+                    "db-migrate",
+                    "up",
+                    "-d",
+                    &directory,
+                    "--config",
+                    "config.head.yaml",
+                ])
+                .await,
+            ),
+            (
+                serde_json::json!(format!("-d {directory}")),
+                serde_json::json!(format!("-d {directory} --config config.head.yaml")),
+            )
         );
     }
 }

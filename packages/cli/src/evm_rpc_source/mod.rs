@@ -19,9 +19,10 @@ use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
-    encode_address, Log as DecoderLog, OnEventRegistrationInput, ParamValue,
+    encode_address, Log as DecoderLog, OnEventRegistrationInput,
 };
 use crate::evm_hypersync_source::EventItem;
+use crate::js_value::JsTape;
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
@@ -78,7 +79,7 @@ impl RawLog {
         &self,
         src_address: String,
         on_event_registration_index: i64,
-        params: ParamValue,
+        params: JsTape,
     ) -> anyhow::Result<EventItem> {
         let to_i64 = |hex: &str| -> anyhow::Result<i64> {
             parse_hex_u64(hex)?
@@ -153,7 +154,7 @@ pub enum PageOutcome {
 }
 
 /// The outcome of a page read.
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct NextPageResult {
     pub kind: PageOutcome,
     /// The requests that finished since the source last reported any, so

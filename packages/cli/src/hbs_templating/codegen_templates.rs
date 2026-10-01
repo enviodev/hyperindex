@@ -686,22 +686,13 @@ impl ContractTemplate {
         let module_code = match &contract.abi {
             // EVM: abi and eventSignatures are already in internal.config.json
             Abi::Evm(_) => String::new(),
-            Abi::Fuel(abi) => {
-                let all_abi_type_declarations = abi.to_type_decl_multi().context(format!(
+            Abi::Fuel(abi) => abi
+                .to_type_decl_multi()
+                .context(format!(
                     "Failed getting types from the '{}' contract ABI",
                     contract.name
-                ))?;
-
-                // Indexer.res lives at <project_root>/src/Indexer.res, so `../`
-                // from the compiled .mjs reaches the project root.
-                // Escape back-ticks just in case: the abi path is inside a
-                // template literal.
-                format!(
-                    "let abi = FuelSDK.transpileAbi((await \
-                     Utils.importPathWithJson(`../{}`))[\"default\"])\n{}",
-                    abi.path_relative_to_root, all_abi_type_declarations,
-                )
-            }
+                ))?
+                .to_string(),
             // Solana programs ship no ABI artifact today.
             Abi::Svm(_) => String::new(),
         };

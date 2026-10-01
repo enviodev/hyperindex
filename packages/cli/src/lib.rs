@@ -21,11 +21,11 @@ mod fuel;
 mod fuel_hypersync_source;
 mod hbs_templating;
 mod hex;
+mod js_value;
 mod mock_http;
 mod mock_hypersync_server;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
-mod param_value;
 mod project_paths;
 mod registration_start_block;
 mod request_stats;
