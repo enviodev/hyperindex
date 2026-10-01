@@ -841,7 +841,17 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
         },
       });
 
-      await waitForOutput(secondProcess, "chains.1.endBlock", 120_000);
+      let output = "";
+      secondProcess.stdout?.on("data", (data: Buffer) => (output += data.toString()));
+      secondProcess.stderr?.on("data", (data: Buffer) => (output += data.toString()));
+      const exitCode = await new Promise<number | null>((resolve) =>
+        secondProcess!.on("close", resolve)
+      );
+
+      expect({ exited: exitCode !== 0, named: output.includes("chains.1.endBlock") }).toEqual({
+        exited: true,
+        named: true,
+      });
     } finally {
       if (secondProcess) {
         secondProcess.kill("SIGKILL");
