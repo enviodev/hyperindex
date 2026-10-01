@@ -19,12 +19,12 @@ By submitting a Pull Request or making any contribution to this project, you aut
 
 Install prerequisite tools:
 
-1. Node.js v22+ (v24 recommended) https://nodejs.org/en
+1. Node.js v22.15+ (v24 recommended) https://nodejs.org/en
    (Recommended to use a node manager like fnm or nvm)
 2. pnpm
 
    ```sh
-   npm install --global pnpm
+   npm install --global pnpm@11
    ```
 
 3. Cargo https://doc.rust-lang.org/cargo/getting-started/installation.html

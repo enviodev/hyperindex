@@ -8,7 +8,7 @@ routers and lending programs that move most of the volume are included.
 
 ## Prerequisites
 
-- **[Node.js v22+ (v24 recommended)](https://nodejs.org/en/download/)**
+- **[Node.js v22.15+ (v24 recommended)](https://nodejs.org/en/download/)**
 - **[pnpm](https://pnpm.io/installation)**
 - **[Docker](https://www.docker.com/products/docker-desktop/)** or **[Podman](https://podman.io/)**
 

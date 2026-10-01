@@ -39,7 +39,7 @@ indexer.contractRegister(
 
 Before running the indexer locally, make sure you have the following installed:
 
-- **[Node.js v22+ (v24 recommended)](https://nodejs.org/en/download/)**
+- **[Node.js v22.15+ (v24 recommended)](https://nodejs.org/en/download/)**
 - **[pnpm](https://pnpm.io/installation)**
 - **[Docker](https://www.docker.com/products/docker-desktop/)** or **[Podman](https://podman.io/)**
 
