@@ -62,22 +62,41 @@ export const register = (transformTs) => {
   // Node ignores the inline source maps below unless this is on.
   module.setSourceMapsSupport(true);
 
+  const resolveTs = (specifier, context, nextResolve) => {
+    try {
+      return nextResolve(specifier, context);
+    } catch (error) {
+      if (!RELATIVE_SPECIFIER.test(specifier) || context.parentURL === undefined) {
+        throw error;
+      }
+      const candidate = tsCandidates(fileURLToPath(new URL(specifier, context.parentURL))).find(
+        isFile
+      );
+      if (candidate === undefined) {
+        throw error;
+      }
+      return { url: pathToFileURL(candidate).href, shortCircuit: true };
+    }
+  };
+
   module.registerHooks({
     resolve(specifier, context, nextResolve) {
-      try {
-        return nextResolve(specifier, context);
-      } catch (error) {
-        if (!RELATIVE_SPECIFIER.test(specifier) || context.parentURL === undefined) {
-          throw error;
-        }
-        const candidate = tsCandidates(fileURLToPath(new URL(specifier, context.parentURL))).find(
-          isFile
-        );
-        if (candidate === undefined) {
-          throw error;
-        }
-        return { url: pathToFileURL(candidate).href, shortCircuit: true };
+      const resolved = resolveTs(specifier, context, nextResolve);
+      // `resolveJsonModule` lets TypeScript import JSON without the
+      // `type: "json"` attribute Node requires.
+      if (
+        resolved.url.endsWith(".json") &&
+        context.parentURL !== undefined &&
+        TS_EXTENSION.test(context.parentURL) &&
+        context.importAttributes?.type === undefined
+      ) {
+        return {
+          ...resolved,
+          importAttributes: { ...context.importAttributes, type: "json" },
+          shortCircuit: true,
+        };
       }
+      return resolved;
     },
 
     load(url, context, nextLoad) {

@@ -1,8 +1,8 @@
 // No `~handlers` source: `createTestIndexer` loads `test/fixtures/ts_loader`
 // through `HandlerLoader`, as a project's `src/handlers` is loaded, rather than
 // through vite. The fixture uses what Node cannot run as-is: a non-erasable
-// `enum`, an extensionless relative import, and a `.js` specifier resolving to a
-// `.ts` sibling.
+// `enum`, an extensionless relative import, a `.js` specifier resolving to a
+// `.ts` sibling, and a JSON import without an import attribute.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: ts-loader
@@ -46,7 +46,7 @@ describe("TypeScript handler loading", () => {
       },
     });
 
-    t.expect(await indexer.Transfer.getAll()).toEqual([{ id: "1_0_0", direction: "in" }]);
+    t.expect(await indexer.Transfer.getAll()).toEqual([{ id: "1_0_0", direction: "incoming" }]);
   });
 });
 `,

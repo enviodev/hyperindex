@@ -3,6 +3,8 @@ import { indexer } from "envio";
 import { contractName } from "./names";
 // `.js` spelling of a `.ts` sibling.
 import { eventName } from "./events.js";
+// `resolveJsonModule` allows this without the `type: "json"` attribute Node requires.
+import labels from "./labels.json";
 
 // Not erasable syntax, so Node's built-in type stripping rejects this module.
 enum Direction {
@@ -13,6 +15,6 @@ enum Direction {
 indexer.onEvent({ contract: contractName, event: eventName }, async ({ event, context }) => {
   context.Transfer.set({
     id: `${event.chainId}_${event.block.number}_${event.logIndex}`,
-    direction: Direction.In,
+    direction: labels[Direction.In],
   });
 });
