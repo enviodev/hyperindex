@@ -172,6 +172,36 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
     },
   )
 
+  let clickHouseOnly: array<Scenario.unsupported> = [
+    {backend: #postgres, reason: "asserts against a ClickHouse server"},
+  ]
+  Scenario.make(
+    ~schema,
+    ~configYaml=configYaml(~chains=[chainYaml(1)]),
+    ~unsupported=clickHouseOnly,
+  )->Scenario.it(
+    "Mirrors the added chain into ClickHouse alongside the deployed one",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])
+
+      let (config, sources) =
+        Scenario.make(
+          ~schema,
+          ~configYaml=configYaml(~chains=[chainYaml(1), chainYaml(137)]),
+          ~unsupported=clickHouseOnly,
+        )->edited(~deployedSources=[(1, source(1))])
+      let added = await indexer.restart(~config, ~chains=[ChainId.fromInt(137)], ())
+      await catchUp(~indexer=added, ~source=sources->sourceOf(137), ~items=[bump(10n)])
+
+      let rows = await TestClickHouse.query(
+        `SELECT id, count, chainId FROM \`${TestClickHouse.currentDatabase()}\`.\`Counter\` ORDER BY chainId FORMAT JSONEachRow`,
+      )
+      t.expect(rows->String.trim).toEqual(`{"id":"total","count":"1","chainId":1}
+{"id":"total","count":"10","chainId":137}`)
+    },
+  )
+
   deployed->Scenario.it(
     "Resumes every chain in one process once the added chain is there",
     ~sources=[{chain: 1}],

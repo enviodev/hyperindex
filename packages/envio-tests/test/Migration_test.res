@@ -239,3 +239,61 @@ describe("Changing the chains of a deployment", () => {
     ~expected=Refused(["chains.137.startBlock"]),
   )
 })
+
+describe("What a refused restart tells the operator", () => {
+  deployed->Scenario.it(
+    "Names every change and the ways forward, and logs nothing else about it",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    ~captureLogs=true,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      let config =
+        deployment(
+          ~chains=[chain(1, ~endBlock=1000, ~maxReorgDepth=10)],
+        ).config->Scenario.withMockSources(~sources=[(1, source)])
+      let logged = indexer.logs()->Array.length
+
+      let refusal = switch await indexer.restart(~config, ()) {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      let clickHouseLine = switch IndexerRunner.selectedBackend {
+      | #clickhouse => "\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
+      | #postgres => ""
+      }
+      t.expect(
+        (refusal, indexer.logs()->Array.slice(~start=logged)),
+        ~message="The refusal is the whole of what the operator reads: it isn't also logged as a storage failure",
+      ).toEqual((
+        Some(
+          `The following config changes are incompatible with the existing indexer data:
+
+    - chains.1.endBlock
+    - chains.1.maxReorgDepth
+
+Pick one:
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\${clickHouseLine}
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+        ),
+        [
+          (
+            {
+              msg: "Found existing indexer storage. Resuming indexing state...",
+              params: dict{},
+            }: IndexerRunner.logEntry
+          ),
+        ],
+      ))
+    },
+  )
+})
