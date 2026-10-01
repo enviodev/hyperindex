@@ -211,11 +211,6 @@ module ImportMeta = {
   @val external resolve: string => string = "import.meta.resolve"
 }
 
-module Module = {
-  // Register ESM loader hooks (e.g., for TypeScript support via tsx)
-  @module("node:module") external register: (string, string) => unit = "register"
-}
-
 module Path = {
   type t
 
