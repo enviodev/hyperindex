@@ -27,8 +27,17 @@ type fromUserApiResult = {
   indexerCode: Null.t<string>,
 }
 
+type fromSubgraphOptions = {
+  name?: string,
+  env?: dict<string>,
+  files?: dict<string>,
+  root?: string,
+}
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
+  fromSubgraph: (string, string, fromSubgraphOptions) => fromUserApiResult,
+  subgraphFileToJavascript: (string, string) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -296,6 +305,18 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~withIndexerTypes=false, yaml) =
       withIndexerTypes,
     },
   )
+}
+
+/// Parses a subgraph project without touching the filesystem: subgraph.yaml and
+/// its schema inline, ABI bodies through `files`.
+let fromSubgraph = (~name=?, ~env=?, ~files=?, ~root=?, ~manifest, ~schema) => {
+  let addon = getAddon()
+  addon.fromSubgraph(manifest, schema, {?name, ?env, ?files, ?root})
+}
+
+let subgraphFileToJavascript = (~source, ~path) => {
+  let addon = getAddon()
+  addon.subgraphFileToJavascript(source, path)
 }
 
 let runCli = args => {
