@@ -1,0 +1,18 @@
+---
+source: packages/cli/src/tui/testing.rs
+expression: "emulator.screen_text().join(\"\\n\")"
+---
+█▛▀▀ █▙  █ ▜▌ ▗█ █▌▗▟▀▀▙▖
+█▛▀▘ █▛█▄█ ▝█▖█▘ █▌█▌  ▐█
+█▙▄▄ █▌ ▜█  ▐█▛  █▌▝▜▄▄▛▘
+
+Chain: 1 ⚡         25%
+Blocks: 1,250,000 / 2,000,000  Events: 173,456
+
+Chain: 137 ⚡0%
+Blocks: 1,000,000 / 1,000,000  Events: 50,000
+
+Total Events: 223,456 (10,000 events/sec)
+⠸ Calculating ETA...
+
+GraphQL: http://localhost:8080 (password: testing)

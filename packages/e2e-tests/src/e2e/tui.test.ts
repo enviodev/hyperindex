@@ -53,7 +53,12 @@ const baseEnv = (): Record<string, string> => {
   };
 };
 
-const LOGO_TOP = "███████  ████  ██  ██      ██  ██  ▄███████▄";
+const LOGO = [
+  "█▛▀▀ █▙  █ ▜▌ ▗█ █▌▗▟▀▀▙▖",
+  "█▛▀▘ █▛█▄█ ▝█▖█▘ █▌█▌  ▐█",
+  "█▙▄▄ █▌ ▜█  ▐█▛  █▌▝▜▄▄▛▘",
+];
+const LOGO_TOP = LOGO[0]!;
 
 /** The display: from the logo to the end of the screen. */
 const frameOf = (screen: Screen) =>
@@ -126,14 +131,11 @@ describe.skipIf(!reachable)("E2E: TUI", () => {
       cursorVisible: true,
       frames: 1,
       // The log's own trailing blank line, then the frame.
-      linesAfterReady: 16,
+      linesAfterReady: 15,
       frame: [
-        "███████  ████  ██  ██      ██  ██  ▄███████▄",
-        "██▄▄▄▄   ██ ██ ██   ██    ██   ██  ██     ██",
-        "██▀▀▀▀   ██  ████    ██  ██    ██  ██     ██",
-        "███████  ██   ███     ▀██▀     ██  ▀███████▀",
+        ...LOGO,
         "",
-        "Chain: 1 ⚡                                            100% ",
+        "Chain: 1 ⚡                                            100%",
         "Blocks: 10,861,774 / 10,861,774 (End Block)  Events: 2",
         "",
         "Total Events: 2",
@@ -161,15 +163,12 @@ describe.skipIf(!reachable)("E2E: TUI", () => {
       cursorVisible: true,
       frames: 1,
       frame: [
-        "███████  ████  ██  ██      ██  ██  ▄███████▄",
-        "██▄▄▄▄   ██ ██ ██   ██    ██   ██  ██     ██",
-        "██▀▀▀▀   ██  ████    ██  ██    ██  ██     ██",
-        "███████  ██   ███     ▀██▀     ██  ▀███████▀",
+        ...LOGO,
         "",
-        "Chain: 1 ⚡                                            100% ",
+        "Chain: 1 ⚡                                            100%",
         "Blocks: 10,861,774 / 10,861,774 (End Block)  Events: 2",
         "",
-        "Chain: 8453 ⚡                                         100% ",
+        "Chain: 8453 ⚡                                         100%",
         "Blocks: 10,000,050 / 10,000,050 (End Block)  Events: 53",
         "",
         "Total Events: 55",

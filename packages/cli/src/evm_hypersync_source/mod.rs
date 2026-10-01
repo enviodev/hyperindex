@@ -27,10 +27,16 @@ static LOGGER_INIT: Once = Once::new();
 
 fn init_logger(log_level: Option<&str>) {
     LOGGER_INIT.call_once(|| {
+        let target = || env_logger::Target::Pipe(Box::new(crate::tui::LogWriter));
         if std::env::var("RUST_LOG").is_ok() {
-            env_logger::init();
+            env_logger::Builder::from_default_env()
+                .target(target())
+                .init();
         } else if let Some(filter) = log_level {
-            env_logger::Builder::new().parse_filters(filter).init();
+            env_logger::Builder::new()
+                .parse_filters(filter)
+                .target(target())
+                .init();
         }
     });
 }

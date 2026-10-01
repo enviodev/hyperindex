@@ -458,8 +458,9 @@ pub fn wrap(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::session::Size;
     use crate::tui::state::{TuiChain, TuiInfo};
-    use ratatui::{backend::TestBackend, widgets::Paragraph, Terminal};
+    use crate::tui::testing::{self, Emulator};
 
     const NOW: f64 = 1_700_000_100_000.;
     const START: f64 = 1_700_000_000_000.;
@@ -520,31 +521,25 @@ mod tests {
         state
     }
 
-    /// The rendered screen, one row per line, with a style legend wherever
-    /// styling starts, the way insta's buffer snapshots read.
-    fn render(state: &State, width: u16) -> String {
-        let lines = wrap(
-            status(
-                state,
-                NOW,
-                3,
-                width as usize,
-                Palette {
-                    level: ColorLevel::TrueColor,
-                },
-            ),
-            width as usize,
-        );
-        let mut terminal = Terminal::new(TestBackend::new(width, lines.len() as u16)).unwrap();
-        terminal
-            .draw(|f| f.render_widget(Paragraph::new(lines), f.area()))
+    /// Draws the whole display into an emulator and snapshots what it shows.
+    fn assert_screen(name: &str, state: &State, width: u16, level: ColorLevel) {
+        let size = Size { width, height: 40 };
+        let emulator = Emulator::new(size);
+        emulator
+            .session_with(level)
+            .render(None, state, NOW, 3, size)
             .unwrap();
-        format!("{:?}", terminal.backend().buffer())
+        testing::assert_screen(name, &emulator);
     }
 
     #[test]
     fn renders_a_syncing_chain() {
-        insta::assert_snapshot!(render(&state(&[syncing("1")], Messages::Loading), 100));
+        assert_screen(
+            "syncing_chain",
+            &state(&[syncing("1")], Messages::Loading),
+            100,
+            ColorLevel::TrueColor,
+        );
     }
 
     #[test]
@@ -558,7 +553,7 @@ mod tests {
         );
         state.info.dev_console_url = Some("https://envio.dev/console".to_string());
         state.info.clickhouse_url = Some("http://localhost:8123/play".to_string());
-        insta::assert_snapshot!(render(&state, 100));
+        assert_screen("synced_chains", &state, 100, ColorLevel::TrueColor);
     }
 
     #[test]
@@ -568,16 +563,26 @@ mod tests {
             rate_limit_reset_in_ms: Some(2_100.),
             ..syncing("1")
         };
-        insta::assert_snapshot!(render(&state(&[limited], Messages::Failed), 100));
+        assert_screen(
+            "rate_limited",
+            &state(&[limited], Messages::Failed),
+            100,
+            ColorLevel::TrueColor,
+        );
     }
 
     #[test]
-    fn moves_events_to_their_own_row_on_a_narrow_terminal() {
+    fn shrinks_the_logo_and_wraps_rows_on_a_narrow_terminal() {
         let chain = TuiChain {
             end_block: Some(2_000_000),
             ..syncing("1")
         };
-        insta::assert_snapshot!(render(&state(&[chain], Messages::Loading), 40));
+        assert_screen(
+            "narrow_terminal",
+            &state(&[chain], Messages::Loading),
+            24,
+            ColorLevel::TrueColor,
+        );
     }
 
     #[test]
@@ -591,10 +596,24 @@ mod tests {
             num_events_processed: 0.,
             ..syncing("137")
         };
-        insta::assert_snapshot!(render(
+        assert_screen(
+            "calculating_eta",
             &state(&[syncing("1"), waiting], Messages::Loaded(vec![])),
-            100
-        ));
+            100,
+            ColorLevel::TrueColor,
+        );
+    }
+
+    #[test]
+    fn renders_on_terminals_with_fewer_colours() {
+        let state = state(&[syncing("1"), synced("8453")], Messages::Loading);
+        for (name, level) in [
+            ("ansi256", ColorLevel::Ansi256),
+            ("basic_colours", ColorLevel::Basic),
+            ("no_colour", ColorLevel::None),
+        ] {
+            assert_screen(name, &state, 100, level);
+        }
     }
 
     #[test]

@@ -52,8 +52,9 @@ export function runInPty(
     type: (keys) => child.stdin.write(keys),
     exited,
     hasExited: () => hasExited,
-    // Hanging up the terminal ends everything running in it.
-    kill: () => child.kill("SIGHUP"),
+    // `script` outlives a hangup of its own; killing it closes the terminal,
+    // which hangs up everything running in it.
+    kill: () => child.kill("SIGKILL"),
   };
 }
 
@@ -64,13 +65,36 @@ export interface Screen {
   terminal: xterm.Terminal;
 }
 
+/** Indexed by lit pixels: top left, top right, bottom left, bottom right from the lowest bit. */
+const QUADRANTS = [" ", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█"];
+
+/** The pixels a block character shows: in reverse video, the ones it leaves unlit. */
+const shownPixels = (cell: xterm.IBufferCell): number | undefined => {
+  const pixels = QUADRANTS.indexOf(cell.getChars() || " ");
+  if (pixels < 0) return undefined;
+  return cell.isInverse() ? ~pixels & 0b1111 : pixels;
+};
+
+/** A row as it looks, trailing spaces trimmed. */
+function rowText(line: xterm.IBufferLine): string {
+  let text = "";
+  for (let col = 0; col < line.length; col++) {
+    const cell = line.getCell(col);
+    if (!cell || cell.getWidth() === 0) continue;
+    const pixels = shownPixels(cell);
+    text += pixels === undefined ? cell.getChars() : QUADRANTS[pixels];
+  }
+  return text.trimEnd();
+}
+
 export async function replay(output: Buffer, size: TerminalSize): Promise<Screen> {
   const terminal = new xterm.Terminal({ ...size, scrollback: 10_000, allowProposedApi: true });
   await new Promise<void>((resolve) => terminal.write(output, resolve));
   const buffer = terminal.buffer.active;
   const lines: string[] = [];
   for (let i = 0; i < buffer.length; i++) {
-    lines.push(buffer.getLine(i)?.translateToString(true) ?? "");
+    const line = buffer.getLine(i);
+    lines.push(line ? rowText(line) : "");
   }
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return {
@@ -126,7 +150,7 @@ const escapeXml = (text: string) =>
 export function toSvg(screen: Screen): string {
   const { terminal } = screen;
   const buffer = terminal.buffer.active;
-  const cell = { width: 8.4, height: 17 };
+  const cell = { width: 10, height: 20 };
   const parts: string[] = [];
   for (let row = 0; row < terminal.rows; row++) {
     const line = buffer.getLine(buffer.viewportY + row);
@@ -139,32 +163,37 @@ export function toSvg(screen: Screen): string {
       const width = cell.width * c.getWidth();
       const color = (rgb: boolean, palette: boolean, value: number) =>
         rgb ? `#${value.toString(16).padStart(6, "0")}` : palette ? paletteColor(value) : undefined;
-      const fg = color(c.isFgRGB(), c.isFgPalette(), c.getFgColor()) ?? "#cccccc";
-      const bg = color(c.isBgRGB(), c.isBgPalette(), c.getBgColor());
+      let fg = color(c.isFgRGB(), c.isFgPalette(), c.getFgColor()) ?? "#cccccc";
+      let bg = color(c.isBgRGB(), c.isBgPalette(), c.getBgColor());
+      if (c.isInverse()) [fg, bg] = [bg ?? "#1e1e1e", fg];
       if (bg) {
         parts.push(`<rect x="${x}" y="${y}" width="${width}" height="${cell.height}" fill="${bg}"/>`);
       }
       const chars = c.getChars();
-      // Block elements as shapes, so they tile the way they do in a terminal
-      // instead of leaving the gaps a font's glyphs would.
-      const block = { "█": [0, 1], "▀": [0, 0.5], "▄": [0.5, 1] }[chars];
-      if (block) {
-        const [top, bottom] = block as [number, number];
-        parts.push(
-          `<rect x="${x}" y="${y + top * cell.height}" width="${width}" height="${(bottom - top) * cell.height}" fill="${fg}"/>`
-        );
+      const pixels = QUADRANTS.indexOf(chars);
+      if (pixels > 0) {
+        // Block elements as shapes, so they tile the way they do in a terminal
+        // instead of leaving the gaps a font's glyphs would.
+        const half = { width: cell.width / 2, height: cell.height / 2 };
+        for (let bit = 0; bit < 4; bit++) {
+          if (!(pixels & (1 << bit))) continue;
+          const [dx, dy] = [(bit % 2) * half.width, Math.floor(bit / 2) * half.height];
+          parts.push(
+            `<rect x="${x + dx}" y="${y + dy}" width="${half.width}" height="${half.height}" fill="${fg}"/>`
+          );
+        }
       } else if (chars && chars !== " ") {
         const weight = c.isBold() ? ` font-weight="bold"` : "";
         const underline = c.isUnderline() ? ` text-decoration="underline"` : "";
         parts.push(
-          `<text x="${x}" y="${y + 13}" fill="${fg}"${weight}${underline}>${escapeXml(chars)}</text>`
+          `<text x="${x}" y="${y + 15}" fill="${fg}"${weight}${underline}>${escapeXml(chars)}</text>`
         );
       }
     }
   }
   const width = terminal.cols * cell.width;
   const height = terminal.rows * cell.height;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" font-family="monospace" font-size="14" xml:space="preserve" shape-rendering="crispEdges">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="16" xml:space="preserve" shape-rendering="crispEdges">
 <rect width="100%" height="100%" fill="#1e1e1e"/>
 ${parts.join("\n")}
 </svg>

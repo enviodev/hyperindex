@@ -3,6 +3,8 @@ mod logo;
 mod render;
 mod session;
 mod state;
+#[cfg(test)]
+mod testing;
 
 use napi_derive::napi;
 use render::{ColorLevel, Palette, SPINNER_INTERVAL_MS};
@@ -11,9 +13,9 @@ use state::{Messages, State};
 use state::{TuiChain, TuiInfo, TuiMessage};
 use std::{
     fs::File,
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     os::fd::{AsRawFd, FromRawFd},
-    sync::{mpsc, Arc},
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -151,6 +153,46 @@ fn run(mut session: Session<Tty>, tty: Tty, mut state: State, commands: mpsc::Re
     }
 }
 
+/// The running display, for Rust code that writes to the terminal itself.
+static DISPLAY: Mutex<Option<mpsc::Sender<Command>>> = Mutex::new(None);
+
+/// Sends a log record above the display when there is one and stderr is the
+/// terminal it draws on. Returns whether it did.
+fn print_log(
+    record: &[u8],
+    display: Option<&mpsc::Sender<Command>>,
+    stderr_is_terminal: bool,
+) -> bool {
+    let text = String::from_utf8_lossy(record);
+    stderr_is_terminal
+        && display.is_some_and(|display| {
+            display
+                .send(Command::Print(text.trim_end_matches('\n').to_string()))
+                .is_ok()
+        })
+}
+
+/// Where Rust loggers write: above the display while one is running, since a
+/// direct write to the terminal would land in the middle of its frame, and to
+/// stderr otherwise.
+pub struct LogWriter;
+
+impl Write for LogWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let display = DISPLAY
+            .lock()
+            .map(|display| display.clone())
+            .unwrap_or(None);
+        if !print_log(buf, display.as_ref(), io::stderr().is_terminal()) {
+            io::stderr().write_all(buf)?;
+        }
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        io::stderr().flush()
+    }
+}
+
 /// The progress display. Drawn by a thread of its own, so it keeps animating
 /// while the indexer keeps the event loop busy.
 #[napi]
@@ -182,6 +224,9 @@ impl Tui {
                 run(session, tty, State::new(info), receiver)
             })
             .map_err(to_napi)?;
+        if let Ok(mut display) = DISPLAY.lock() {
+            *display = Some(commands.clone());
+        }
         Ok(Tui {
             commands,
             running: true,
@@ -214,9 +259,45 @@ impl Tui {
         if !std::mem::replace(&mut self.running, false) {
             return;
         }
+        if let Ok(mut display) = DISPLAY.lock() {
+            *display = None;
+        }
         let (ack, done) = mpsc::channel();
         if self.commands.send(Command::Stop(ack)).is_ok() {
             let _ = done.recv_timeout(Duration::from_secs(2));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prints_rust_logs_above_a_running_display() {
+        let (display, received) = mpsc::channel();
+        let shown = print_log(
+            b"[ERROR hypersync_client] failed to get height\n",
+            Some(&display),
+            true,
+        );
+        let printed: Vec<String> = received
+            .try_iter()
+            .filter_map(|command| match command {
+                Command::Print(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        let without_display = print_log(b"after\n", None, true);
+        let to_a_redirected_stderr = print_log(b"after\n", Some(&display), false);
+        assert_eq!(
+            (shown, printed, without_display, to_a_redirected_stderr),
+            (
+                true,
+                vec!["[ERROR hypersync_client] failed to get height".to_string()],
+                false,
+                false
+            )
+        );
     }
 }

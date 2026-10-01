@@ -1,0 +1,21 @@
+---
+source: packages/cli/src/tui/testing.rs
+expression: "emulator.screen_text().join(\"\\n\")"
+---
+█▛▀▀ █▙  █ ▜▌ ▗█ █▌▗▟▀▀▙▖
+█▛▀▘ █▛█▄█ ▝█▖█▘ █▌█▌  ▐█
+█▙▄▄ █▌ ▜█  ▐█▛  █▌▝▜▄▄▛▘
+
+Chain: 1 ⚡        25%
+Blocks: 1,250,000 / 2,000,000  Events: 173,456
+
+Total Events: 173,456 (5,000 events/sec)
+Sync Time ETA: 5 minutes (⠸ in progress)
+
+Backfill 12s slower due to your plan's rate limit (⏳ 3s until reset)
+Upgrade at https://envio.dev/app/api-tokens for higher rate limits.
+
+GraphQL: http://localhost:8080 (password: testing)
+
+Notifications:
+Failed to load messages from envio server

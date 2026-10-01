@@ -238,78 +238,8 @@ fn encode(buf: &mut Vec<u8>, line: &Line) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::render::ColorLevel;
     use crate::tui::state::{Messages, TuiChain, TuiInfo};
-    use std::sync::{Arc, Mutex};
-
-    #[derive(Clone)]
-    struct Emulator {
-        parser: Arc<Mutex<vt100::Parser>>,
-        written: Arc<Mutex<usize>>,
-    }
-
-    impl Write for Emulator {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.parser.lock().unwrap().process(buf);
-            *self.written.lock().unwrap() += buf.len();
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl Emulator {
-        fn new(size: Size) -> Self {
-            Emulator {
-                parser: Arc::new(Mutex::new(vt100::Parser::new(
-                    size.height,
-                    size.width,
-                    1000,
-                ))),
-                written: Arc::new(Mutex::new(0)),
-            }
-        }
-
-        fn written(&self) -> usize {
-            *self.written.lock().unwrap()
-        }
-
-        /// Scrollback followed by the screen, trailing blanks trimmed.
-        fn lines(&self) -> Vec<String> {
-            let mut parser = self.parser.lock().unwrap();
-            parser.screen_mut().set_scrollback(usize::MAX);
-            let scrolled = parser.screen().scrollback();
-            let (rows, cols) = parser.screen().size();
-            let mut lines: Vec<String> = parser
-                .screen()
-                .rows(0, cols)
-                .take(scrolled.min(rows as usize))
-                .collect();
-            parser.screen_mut().set_scrollback(0);
-            lines.extend(parser.screen().rows(0, cols));
-            while lines.last().is_some_and(|line| line.trim().is_empty()) {
-                lines.pop();
-            }
-            lines
-                .iter()
-                .map(|line| line.trim_end().to_string())
-                .collect()
-        }
-
-        fn cursor(&self) -> (u16, u16) {
-            self.parser.lock().unwrap().screen().cursor_position()
-        }
-
-        fn session(&self) -> Session<Emulator> {
-            Session::new(
-                self.clone(),
-                Palette {
-                    level: ColorLevel::TrueColor,
-                },
-            )
-        }
-    }
+    use crate::tui::testing::Emulator;
 
     const SIZE: Size = Size {
         width: 60,
@@ -344,12 +274,7 @@ mod tests {
         state
     }
 
-    const FRAME: [&str; 12] = [
-        "███████  ████  ██  ██      ██  ██  ▄███████▄",
-        "██▄▄▄▄   ██ ██ ██   ██    ██   ██  ██     ██",
-        "██▀▀▀▀   ██  ████    ██  ██    ██  ██     ██",
-        "███████  ██   ███     ▀██▀     ██  ▀███████▀",
-        "",
+    const STATUS: [&str; 7] = [
         "Chain: 1 ⚡                                          100%",
         "Blocks: 100 / 100 (End Block)  Events: 42",
         "",
@@ -359,11 +284,21 @@ mod tests {
         "GraphQL: http://localhost:8080",
     ];
 
+    /// The logo's rows as text, then a blank row and the status.
+    fn frame() -> Vec<String> {
+        crate::tui::logo::lines(|_| ratatui::style::Color::Reset)
+            .iter()
+            .map(|line| line.to_string().trim_end().to_string())
+            .chain(std::iter::once(String::new()))
+            .chain(STATUS.iter().map(|line| line.to_string()))
+            .collect()
+    }
+
     fn with_frame(before: &[&str]) -> Vec<String> {
         before
             .iter()
-            .chain(FRAME.iter())
             .map(|line| line.to_string())
+            .chain(frame())
             .collect()
     }
 
@@ -478,7 +413,7 @@ mod tests {
         let status = |rows: usize| -> Vec<String> {
             ["log"]
                 .into_iter()
-                .chain(FRAME[5..5 + rows].iter().copied())
+                .chain(STATUS[..rows].iter().copied())
                 .map(str::to_string)
                 .collect()
         };
@@ -590,7 +525,7 @@ mod tests {
         let hidden = emulator.parser.lock().unwrap().screen().hide_cursor();
         assert_eq!(
             (emulator.lines(), emulator.cursor(), hidden),
-            (with_frame(&[]), (FRAME.len() as u16, 0), false)
+            (with_frame(&[]), (frame().len() as u16, 0), false)
         );
     }
 }
