@@ -296,7 +296,10 @@ fn blocks(chain: &Chain, form: Blocks, unit: &str, palette: Palette) -> Spans {
             latest_processed_block,
             ..
         } => label(
-            if chain.end_block.is_some() {
+            if chain
+                .end_block
+                .is_some_and(|end| latest_processed_block >= end)
+            {
                 "at end "
             } else {
                 "at head "
@@ -454,12 +457,16 @@ fn chain_rows(
         }
     };
 
-    let fit = |starts_at: usize, layout: Layout| {
+    // Past `bar_end` only as far as the shortest bar worth drawing, rather
+    // than drop details that fit.
+    let fit = |starts_at: usize, layout: Layout, shortest: usize| {
         let room = inner.saturating_sub(starts_at + after_bar(layout));
-        bar_end.map_or(room, |end| end.saturating_sub(starts_at).min(room))
+        bar_end.map_or(room, |end| {
+            end.saturating_sub(starts_at).max(shortest).min(room)
+        })
     };
     let one_line = ONE_LINE.into_iter().find_map(|layout| {
-        let bar_width = fit(name_width + 1, layout);
+        let bar_width = fit(name_width + 1, layout, MIN_BAR);
         (bar_width >= MIN_BAR).then(|| progress(layout, bar_width))
     });
     if let Some(progress) = one_line {
@@ -476,10 +483,10 @@ fn chain_rows(
     // they'd read as belonging to the next chain.
     let layout = FOLDED
         .into_iter()
-        .find(|layout| fit(0, *layout) >= MIN_FOLDED_BAR)
+        .find(|layout| fit(0, *layout, MIN_FOLDED_BAR) >= MIN_FOLDED_BAR)
         .unwrap_or(FOLDED[FOLDED.len() - 1]);
     // Too narrow for a bar that shows anything, the percentage says it alone.
-    let bar_width = match fit(0, layout) {
+    let bar_width = match fit(0, layout, MIN_FOLDED_BAR) {
         room if room >= MIN_FOLDED_BAR / 2 => room,
         _ => 0,
     };
@@ -1106,6 +1113,73 @@ mod tests {
 
     // The bars end under the point of the logo's V, wherever the columns
     // after them run to, so catching up never moves the logo or the bars.
+    // An end block still ahead of the chain's head isn't where it stopped.
+    #[test]
+    fn says_at_head_for_a_chain_caught_up_short_of_its_end_block() {
+        let lines: Vec<String> = frame(
+            &state(&[synced(ethereum(), None)], Messages::Loading),
+            NOW,
+            0,
+            100,
+            40,
+            Palette {
+                level: ColorLevel::None,
+            },
+        )
+        .iter()
+        .map(Line::to_string)
+        .collect();
+        let with_end_ahead: Vec<String> = frame(
+            &state(
+                &[TuiChain {
+                    end_block: Some(30_000_000),
+                    ..synced(ethereum(), None)
+                }],
+                Messages::Loading,
+            ),
+            NOW,
+            0,
+            100,
+            40,
+            Palette {
+                level: ColorLevel::None,
+            },
+        )
+        .iter()
+        .map(Line::to_string)
+        .collect();
+        assert_eq!(with_end_ahead, lines);
+    }
+
+    // The bar reaches past the V rather than cost a chain with a long name its
+    // details, or its one line.
+    #[test]
+    fn keeps_a_long_named_chain_on_one_line_with_its_details() {
+        let long_name = TuiChain {
+            chain_id: "421614".to_string(),
+            powered_by_hyper_sync: false,
+            ..ethereum()
+        };
+        let rows: Vec<String> = frame(
+            &state(&[long_name], Messages::Loading),
+            NOW,
+            0,
+            78,
+            40,
+            Palette {
+                level: ColorLevel::None,
+            },
+        )
+        .iter()
+        .map(Line::to_string)
+        .filter(|line| line.contains("Arbitrum") || line.contains('━'))
+        .collect();
+        assert_eq!(
+            rows,
+            ["  Arbitrum Sepolia 421614 rpc ━━━━━━━───── 62% 16,820,000/21.0M 1.2M events"]
+        );
+    }
+
     #[test]
     fn ends_the_bars_under_the_logos_v() {
         let all_synced = state(

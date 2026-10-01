@@ -121,7 +121,7 @@ impl Chain {
     }
 
     pub fn from_metrics(m: &TuiChain, ecosystem: &str, now: f64) -> Self {
-        let first_event_block = m.first_event_block_number.unwrap_or(0);
+        let first_event_block = m.first_event_block_number.unwrap_or(m.start_block);
         let latest_processed_block = m.progress_block_number;
         let synced = |caught_up_at| Progress::Synced {
             first_event_block,
@@ -450,10 +450,40 @@ mod tests {
         assert_eq!(
             chain.progress,
             Progress::Synced {
-                first_event_block: 0,
+                first_event_block: 100,
                 latest_processed_block: 500,
                 caught_up_at: 42.,
             }
+        );
+    }
+
+    // A chain that reached its end block without an event covered the blocks
+    // from its start block, not from genesis, which would make every other
+    // chain's remaining blocks look like a sliver of the run.
+    #[test]
+    fn projects_the_eta_past_a_chain_that_ended_without_events() {
+        let ended = TuiChain {
+            end_block: Some(500),
+            progress_block_number: 500,
+            processed_to_endblock: true,
+            latest_fetched_block_number: 500,
+            known_height: 500,
+            source_block_number: 500,
+            ..chain_metrics()
+        };
+        let syncing = TuiChain {
+            chain_id: "2".to_string(),
+            first_event_block_number: Some(100),
+            progress_block_number: 200,
+            latest_fetched_block_number: 300,
+            known_height: 1100,
+            source_block_number: 1100,
+            ..chain_metrics()
+        };
+        // 400 + 100 blocks in 10s, 900 to go.
+        assert_eq!(
+            state(&[ended, syncing], 10_000.).eta(10_000.),
+            Eta::Syncing("18s".to_string())
         );
     }
 
