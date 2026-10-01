@@ -415,8 +415,12 @@ let initForRun = (persistence, ~config: Config.t, ~reset, ~isDevelopmentMode) =>
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
     ~envioInfo=config.envioInfo,
-    ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
-    ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
+    ~resetCommand=(isDevelopmentMode ? "envio dev -r" : "envio start -r")->Config.withProjectFlags(
+      ~config,
+    ),
+    ~runCommand=Some(
+      (isDevelopmentMode ? "envio dev" : "envio start")->Config.withProjectFlags(~config),
+    ),
     ~lowercaseAddresses=config.lowercaseAddresses,
     ~isolated=config.isolated,
   )

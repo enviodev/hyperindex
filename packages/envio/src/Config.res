@@ -136,6 +136,9 @@ type t = {
   reorgThresholdReadyTolerance: int,
   lowercaseAddresses: bool,
   isDev: bool,
+  // The operator's `-d` / `--config` flags, repeated in every command printed
+  // for them to run next. Empty when they gave neither.
+  projectFlags: string,
   // An `envio start --chain` process: drives a subset of the schema's chains
   // while sibling processes drive the rest, so it only touches what its own
   // chains own — their partitions' indexes, their `ready_at`, their resume.
@@ -596,6 +599,7 @@ let publicConfigSchema = S.schema(s =>
     "handlers": s.matches(S.option(S.string)),
     "isDev": s.matches(S.option(S.bool)),
     "isolatedChains": s.matches(S.option(S.array(ChainId.schema))),
+    "projectFlags": s.matches(S.option(S.string)),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
@@ -668,8 +672,15 @@ let isolate = (config: t, ~chainIds: array<ChainId.t>) => {
 }
 
 // What the command decided rather than the project's files: `envio dev` vs
-// `envio start`, and which chains this process drives.
-let commandFields = ["isDev", "isolatedChains"]
+// `envio start`, which chains this process drives, and how it found the
+// project.
+let commandFields = ["isDev", "isolatedChains", "projectFlags"]
+
+let withProjectFlags = (command, ~config: t) =>
+  switch config.projectFlags {
+  | "" => command
+  | flags => `${command} ${flags}`
+  }
 
 let ecosystemFields = ["evm", "fuel", "svm"]
 
@@ -1165,6 +1176,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
+    projectFlags: publicConfig["projectFlags"]->Option.getOr(""),
     isolated: false,
     userEntitiesByName,
     userEntities,

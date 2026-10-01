@@ -296,4 +296,50 @@ Pick one:
       ))
     },
   )
+
+  // `projectFlags` is what the CLI hands over for `envio dev -d indexer
+  // --config config.head.yaml`.
+  deployed->Scenario.it(
+    "Repeats the flags that found the project in every command it prints",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      let config = {
+        ...deployment(~chains=[chain(1, ~endBlock=1000)]).config->Scenario.withMockSources(
+          ~sources=[(1, source)],
+        ),
+        projectFlags: "-d indexer --config config.head.yaml",
+      }
+
+      let refusal = switch await indexer.restart(~config, ()) {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      let clickHouseLine = switch IndexerRunner.selectedBackend {
+      | #clickhouse => "\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
+      | #postgres => ""
+      }
+      t.expect(refusal).toEqual(
+        Some(
+          `The following config changes are incompatible with the existing indexer data:
+
+    - chains.1.endBlock
+
+Pick one:
+  1. Revert the changes above                           # resume indexing where it left off
+  2. envio dev -r -d indexer --config config.head.yaml  # delete all indexed data and start over
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\${clickHouseLine}
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev -d indexer --config config.head.yaml`,
+        ),
+      )
+    },
+  )
 })

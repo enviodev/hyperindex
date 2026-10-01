@@ -211,16 +211,7 @@ let run = async (
       }
     }
 
-    await persistence->Persistence.init(
-      ~chainConfigs=config.chainMap->ChainMap.values,
-      ~contractMapping=config.contractMapping,
-      ~envioInfo=config.envioInfo,
-      ~resetCommand="envio dev -r",
-      ~runCommand=Some("envio dev"),
-      ~reset,
-      ~lowercaseAddresses=config.lowercaseAddresses,
-      ~isolated=config.isolated,
-    )
+    await persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=true)
 
     // Same order as `Main.start`: storage is initialized - which is where a
     // `start_block: latest` chain reads its head - before handler modules load,

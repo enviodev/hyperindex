@@ -419,7 +419,7 @@ let migrate = async (~reset) => {
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
     ~envioInfo=config.envioInfo,
-    ~resetCommand="envio local db-migrate setup",
+    ~resetCommand="envio local db-migrate setup"->Config.withProjectFlags(~config),
     ~runCommand=None,
     ~lowercaseAddresses=config.lowercaseAddresses,
     // A migration command runs once and exits, with nobody watching it recover:
