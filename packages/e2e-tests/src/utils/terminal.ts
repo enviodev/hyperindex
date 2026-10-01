@@ -65,11 +65,6 @@ export interface Screen {
   terminal: xterm.Terminal;
 }
 
-/** A row as it looks, trailing spaces trimmed. */
-function rowText(line: xterm.IBufferLine): string {
-  return line.translateToString(true);
-}
-
 export async function replay(
   output: Buffer,
   size: TerminalSize,
@@ -84,7 +79,7 @@ export async function replay(
   const lines: string[] = [];
   for (let i = 0; i < buffer.length; i++) {
     const line = buffer.getLine(i);
-    lines.push(line ? rowText(line) : "");
+    lines.push(line ? line.translateToString(true) : "");
   }
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return {

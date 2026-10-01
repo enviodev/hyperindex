@@ -827,7 +827,7 @@ fn indent(line: Line<'static>, by: usize) -> Line<'static> {
 
 /// Breaks lines at the terminal width, so the line count is the height the
 /// text occupies on screen.
-pub fn wrap(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+fn wrap(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
     let width = width.max(1);
     let mut out = Vec::with_capacity(lines.len());
     for line in lines {

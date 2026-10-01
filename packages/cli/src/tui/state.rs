@@ -332,7 +332,7 @@ impl State {
 mod tests {
     use super::*;
 
-    pub fn chain_metrics() -> TuiChain {
+    fn chain_metrics() -> TuiChain {
         TuiChain {
             chain_id: "1".to_string(),
             powered_by_hyper_sync: true,
