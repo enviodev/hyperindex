@@ -69,7 +69,9 @@ impl Tty {
         let mut quiet = saved;
         quiet.c_lflag &= !(libc::ICANON | libc::ECHO);
         quiet.c_cc[libc::VMIN] = 0;
-        quiet.c_cc[libc::VTIME] = 0;
+        // Each read waits up to a tenth of a second for input: macOS's poll
+        // can't wait on a terminal, it reports it invalid straight away.
+        quiet.c_cc[libc::VTIME] = 1;
         // SAFETY: as above.
         if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &quiet) } != 0 {
             return None;
@@ -123,20 +125,14 @@ fn read_cursor_report(terminal: &File, timeout: Duration) -> Option<(u16, u16)> 
         if let Some(cursor) = parse_cursor_report(&reply) {
             return Some(cursor);
         }
-        let left = deadline.checked_duration_since(Instant::now())?;
-        let mut poll = libc::pollfd {
-            fd: terminal.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // SAFETY: one valid `pollfd`, which outlives the call.
-        if unsafe { libc::poll(&mut poll, 1, left.as_millis() as libc::c_int) } <= 0 {
+        if Instant::now() >= deadline {
             return None;
         }
         let mut buf = [0; 64];
         match (&*terminal).read(&mut buf) {
-            Ok(0) | Err(_) => return None,
             Ok(read) => reply.extend_from_slice(&buf[..read]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => return None,
         }
     }
 }
