@@ -383,11 +383,11 @@ const FOLDED: [Layout; 3] = [
 ];
 
 const MIN_BAR: usize = 12;
-const MAX_BAR: usize = 40;
 const MIN_FOLDED_BAR: usize = 8;
 
 /// Columns as wide as their widest value, one space apart, with the bar
-/// taking what's left. When it would get too short, the least important
+/// taking what's left, so the rows always end at the right edge however the
+/// columns change. When the bar would get too short, the least important
 /// detail goes first, and past that each chain folds onto two lines.
 fn chain_rows(state: &State, inner: usize, palette: Palette) -> Vec<Line<'static>> {
     let chains = &state.chains;
@@ -438,7 +438,7 @@ fn chain_rows(state: &State, inner: usize, palette: Palette) -> Vec<Line<'static
 
     let one_line = ONE_LINE.into_iter().find_map(|layout| {
         let room = inner.saturating_sub(name_width + 1 + after_bar(layout));
-        (room >= MIN_BAR).then(|| progress(layout, room.min(MAX_BAR)))
+        (room >= MIN_BAR).then(|| progress(layout, room))
     });
     if let Some(progress) = one_line {
         return chains
@@ -738,17 +738,8 @@ pub fn frame(
 
     let rows = chain_rows(state, inner, palette);
     let title = fit_title(&state.info, inner, palette);
-    // As wide as its content, so on a wide terminal the logo centres over the
-    // rows rather than the screen.
-    let content_width = rows
-        .iter()
-        .map(Line::width)
-        .chain([title.width()])
-        .max()
-        .unwrap_or(0)
-        .min(inner);
     let logo: Vec<Line<'static>> = if inner >= logo::width() + 2 {
-        let center = content_width.saturating_sub(logo::width()) / 2;
+        let center = (inner - logo::width()) / 2;
         logo::lines(tick, |color| palette.rgb(color))
             .into_iter()
             .map(|line| indent(line, center))
@@ -1084,6 +1075,50 @@ mod tests {
             .clone()
         };
         assert_ne!(logo_at(0), logo_at(10));
+    }
+
+    // Catching up changes how wide the blocks and events columns are, which
+    // must not move the logo or the rows' right edge mid-run.
+    #[test]
+    fn keeps_the_logo_and_the_rows_right_edge_in_place_as_columns_change() {
+        let all_synced = state(
+            &[synced(ethereum(), None), synced(base(), None)],
+            Messages::Loading,
+        );
+        let layout = |state: &State, width: u16| {
+            let lines: Vec<String> = frame(
+                state,
+                NOW,
+                0,
+                width,
+                40,
+                Palette {
+                    level: ColorLevel::None,
+                },
+            )
+            .iter()
+            .map(Line::to_string)
+            .collect();
+            let logo_column = lines[2].len() - lines[2].trim_start().len();
+            let row_widths: Vec<usize> = lines
+                .iter()
+                .filter(|line| line.contains('━') || line.contains('─'))
+                .map(|line| Line::raw(line.as_str()).width())
+                .collect();
+            (logo_column, row_widths)
+        };
+        assert_eq!(
+            [
+                layout(&syncing(), 160),
+                layout(&all_synced, 160),
+                layout(&syncing(), 56),
+            ],
+            [
+                (67, vec![158, 158, 158]),
+                (67, vec![158, 158]),
+                (15, vec![54, 54, 54]),
+            ]
+        );
     }
 
     #[test]
