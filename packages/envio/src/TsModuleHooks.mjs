@@ -29,6 +29,9 @@ const tsCandidates = (path) => {
   ];
 };
 
+// Only an explicit `"type": "commonjs"` makes a `.ts` file CommonJS. Without a
+// type, Node detects the format from syntax, and handlers are written with
+// `import`, so they get the module format.
 const packageType = (path) => {
   const { root } = parsePath(path);
   let directory = dirname(path);
@@ -36,12 +39,12 @@ const packageType = (path) => {
     const manifest = join(directory, "package.json");
     if (isFile(manifest)) {
       try {
-        return JSON.parse(readFileSync(manifest, "utf8")).type === "module" ? "module" : "commonjs";
+        return JSON.parse(readFileSync(manifest, "utf8")).type === "commonjs" ? "commonjs" : "module";
       } catch {
-        return "commonjs";
+        return "module";
       }
     }
-    if (directory === root) return "commonjs";
+    if (directory === root) return "module";
     directory = dirname(directory);
   }
 };
