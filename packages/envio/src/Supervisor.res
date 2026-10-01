@@ -508,7 +508,7 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   )
 
   if shouldUseTui {
-    let _rerender = Tui.start(~config, ~getMetrics=() =>
+    Tui.start(~config, ~getMetrics=() =>
       switch reported() {
       | [] => {...[]->merge, chains: configuredChains(config)}
       | snapshots => snapshots->merge

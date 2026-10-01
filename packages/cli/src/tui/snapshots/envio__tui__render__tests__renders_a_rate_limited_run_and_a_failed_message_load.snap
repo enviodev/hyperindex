@@ -1,0 +1,59 @@
+---
+source: packages/cli/src/tui/render.rs
+expression: "render(&state(&[limited], Messages::Failed), 100)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 100, height: 13 },
+    content: [
+        "Chain: 1 ⚡        25%                                                                              ", // hidden by multi-width symbols: [(10, " ")]
+        "Blocks: 1,250,000 / 2,000,000  Events: 173,456                                                      ",
+        "                                                                                                    ",
+        "Total Events: 173,456 (5,000 events/sec)                                                            ",
+        "Sync Time ETA: 5 minutes (⠸ in progress)                                                            ",
+        "                                                                                                    ",
+        "Backfill 12s slower due to your plan's rate limit (⏳ 3s until reset)                               ", // hidden by multi-width symbols: [(52, " ")]
+        "Upgrade at https://envio.dev/app/api-tokens for higher rate limits.                                 ",
+        "                                                                                                    ",
+        "GraphQL: http://localhost:8080 (password: testing)                                                  ",
+        "                                                                                                    ",
+        "Notifications:                                                                                      ",
+        "Failed to load messages from envio server                                                           ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 7, y: 0, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 8, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 9, y: 0, fg: Rgb(255, 187, 47), bg: Reset, modifier: NONE,
+        x: 10, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 11, y: 0, fg: DarkGray, bg: Rgb(255, 187, 47), modifier: NONE,
+        x: 23, y: 0, fg: Reset, bg: DarkGray, modifier: NONE,
+        x: 35, y: 0, fg: Reset, bg: Gray, modifier: NONE,
+        x: 60, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 1, fg: DarkGray, bg: Reset, modifier: NONE,
+        x: 46, y: 1, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 3, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 14, y: 3, fg: Rgb(255, 187, 47), bg: Reset, modifier: NONE,
+        x: 21, y: 3, fg: DarkGray, bg: Reset, modifier: NONE,
+        x: 40, y: 3, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 4, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 26, y: 4, fg: Rgb(152, 96, 229), bg: Reset, modifier: BOLD,
+        x: 27, y: 4, fg: Rgb(255, 187, 47), bg: Reset, modifier: BOLD,
+        x: 39, y: 4, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 40, y: 4, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 6, fg: Rgb(255, 130, 105), bg: Reset, modifier: NONE,
+        x: 52, y: 6, fg: Reset, bg: Reset, modifier: NONE,
+        x: 53, y: 6, fg: Rgb(255, 130, 105), bg: Reset, modifier: NONE,
+        x: 69, y: 6, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 7, fg: Rgb(255, 130, 105), bg: Reset, modifier: NONE,
+        x: 11, y: 7, fg: Rgb(255, 130, 105), bg: Reset, modifier: UNDERLINED,
+        x: 43, y: 7, fg: Rgb(255, 130, 105), bg: Reset, modifier: NONE,
+        x: 67, y: 7, fg: Reset, bg: Reset, modifier: NONE,
+        x: 9, y: 9, fg: Rgb(108, 191, 238), bg: Reset, modifier: UNDERLINED,
+        x: 30, y: 9, fg: DarkGray, bg: Reset, modifier: NONE,
+        x: 50, y: 9, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 11, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 14, y: 11, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 12, fg: Rgb(255, 130, 105), bg: Reset, modifier: NONE,
+        x: 41, y: 12, fg: Reset, bg: Reset, modifier: NONE,
+    ]
+}

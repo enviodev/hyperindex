@@ -1,0 +1,51 @@
+---
+source: packages/cli/src/tui/render.rs
+expression: "render(&state(&[syncing(\"1\"), waiting], Messages::Loaded(vec![])), 100)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 100, height: 10 },
+    content: [
+        "Chain: 1 ⚡         25%                                                                             ", // hidden by multi-width symbols: [(10, " ")]
+        "Blocks: 1,250,000 / 2,000,000  Events: 173,456                                                      ",
+        "                                                                                                    ",
+        "Chain: 137 ⚡0%                                                                                     ", // hidden by multi-width symbols: [(12, " ")]
+        "Blocks: 1,000,000 / 1,000,000  Events: 50,000                                                       ",
+        "                                                                                                    ",
+        "Total Events: 223,456 (10,000 events/sec)                                                           ",
+        "⠸ Calculating ETA...                                                                                ",
+        "                                                                                                    ",
+        "GraphQL: http://localhost:8080 (password: testing)                                                  ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 7, y: 0, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 8, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 9, y: 0, fg: Rgb(255, 187, 47), bg: Reset, modifier: NONE,
+        x: 10, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 13, y: 0, fg: DarkGray, bg: Rgb(255, 187, 47), modifier: NONE,
+        x: 24, y: 0, fg: Reset, bg: DarkGray, modifier: NONE,
+        x: 36, y: 0, fg: Reset, bg: Gray, modifier: NONE,
+        x: 60, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 1, fg: DarkGray, bg: Reset, modifier: NONE,
+        x: 46, y: 1, fg: Reset, bg: Reset, modifier: NONE,
+        x: 7, y: 3, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 10, y: 3, fg: Reset, bg: Reset, modifier: NONE,
+        x: 11, y: 3, fg: Rgb(255, 187, 47), bg: Reset, modifier: NONE,
+        x: 12, y: 3, fg: Reset, bg: Reset, modifier: NONE,
+        x: 13, y: 3, fg: DarkGray, bg: Rgb(255, 187, 47), modifier: NONE,
+        x: 16, y: 3, fg: Reset, bg: Gray, modifier: NONE,
+        x: 60, y: 3, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 4, fg: DarkGray, bg: Reset, modifier: NONE,
+        x: 45, y: 4, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 6, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 14, y: 6, fg: Rgb(255, 187, 47), bg: Reset, modifier: NONE,
+        x: 21, y: 6, fg: DarkGray, bg: Reset, modifier: NONE,
+        x: 41, y: 6, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 7, fg: Rgb(152, 96, 229), bg: Reset, modifier: NONE,
+        x: 1, y: 7, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 20, y: 7, fg: Reset, bg: Reset, modifier: NONE,
+        x: 9, y: 9, fg: Rgb(108, 191, 238), bg: Reset, modifier: UNDERLINED,
+        x: 30, y: 9, fg: DarkGray, bg: Reset, modifier: NONE,
+        x: 50, y: 9, fg: Reset, bg: Reset, modifier: NONE,
+    ]
+}

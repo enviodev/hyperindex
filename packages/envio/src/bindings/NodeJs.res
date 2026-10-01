@@ -69,9 +69,17 @@ module Process = {
   // `process` rather than off a namespace import, which would drop the
   // receiver Node's own implementations read.
   @val @scope("process") external sendToParent: 'msg => bool = "send"
+  // The callback runs once the message is handed to the channel.
+  @val @scope("process") external sendToParentThen: ('msg, unit => unit) => bool = "send"
   @val @scope("process")
   external onMessage: (@as("message") _, 'msg => unit) => unit = "on"
   @val @scope("process") external onSignal: (string, unit => unit) => unit = "on"
+  @val @scope("process") external offSignal: (string, unit => unit) => unit = "removeListener"
+  @val @scope("process") external listenerCount: string => int = "listenerCount"
+  @val @scope("process") external pid: int = "pid"
+  @val @scope("process") external kill: (int, string) => bool = "kill"
+  @val @scope("process")
+  external onExit: (@as("exit") _, unit => unit) => unit = "on"
   // Present only in a process forked with an IPC channel.
   @val @scope("process") external channel: Nullable.t<unknown> = "channel"
   @val @scope("process")

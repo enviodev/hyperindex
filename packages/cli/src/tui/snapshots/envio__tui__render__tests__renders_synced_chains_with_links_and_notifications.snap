@@ -1,0 +1,61 @@
+---
+source: packages/cli/src/tui/render.rs
+expression: "render(&state, 100)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 100, height: 15 },
+    content: [
+        "Chain: 1 ⚡                                            100%                                         ", // hidden by multi-width symbols: [(10, " ")]
+        "Blocks: 2,000,000 / 2,000,000 (End Block)  Events: 173,456                                          ",
+        "                                                                                                    ",
+        "Chain: 8453 ⚡                                         100%                                         ", // hidden by multi-width symbols: [(13, " ")]
+        "Blocks: 2,000,000 / 2,000,000 (End Block)  Events: 173,456                                          ",
+        "                                                                                                    ",
+        "Total Events: 346,912                                                                               ",
+        "Time Synced: 2 minutes (synced)                                                                     ",
+        "                                                                                                    ",
+        "GraphQL: http://localhost:8080 (password: testing)                                                  ",
+        "Dev Console: https://envio.dev/console                                                              ",
+        "ClickHouse: http://localhost:8123/play                                                              ",
+        "                                                                                                    ",
+        "Notifications:                                                                                      ",
+        "A new envio version is available                                                                    ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 7, y: 0, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 8, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 9, y: 0, fg: Rgb(255, 187, 47), bg: Reset, modifier: NONE,
+        x: 10, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 14, y: 0, fg: DarkGray, bg: Rgb(255, 187, 47), modifier: NONE,
+        x: 60, y: 0, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 1, fg: DarkGray, bg: Reset, modifier: NONE,
+        x: 58, y: 1, fg: Reset, bg: Reset, modifier: NONE,
+        x: 7, y: 3, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 11, y: 3, fg: Reset, bg: Reset, modifier: NONE,
+        x: 12, y: 3, fg: Rgb(255, 187, 47), bg: Reset, modifier: NONE,
+        x: 13, y: 3, fg: Reset, bg: Reset, modifier: NONE,
+        x: 14, y: 3, fg: DarkGray, bg: Rgb(255, 187, 47), modifier: NONE,
+        x: 60, y: 3, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 4, fg: DarkGray, bg: Reset, modifier: NONE,
+        x: 58, y: 4, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 6, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 14, y: 6, fg: Rgb(255, 187, 47), bg: Reset, modifier: NONE,
+        x: 21, y: 6, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 7, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 24, y: 7, fg: Rgb(59, 140, 61), bg: Reset, modifier: BOLD,
+        x: 30, y: 7, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 31, y: 7, fg: Reset, bg: Reset, modifier: NONE,
+        x: 9, y: 9, fg: Rgb(108, 191, 238), bg: Reset, modifier: UNDERLINED,
+        x: 30, y: 9, fg: DarkGray, bg: Reset, modifier: NONE,
+        x: 50, y: 9, fg: Reset, bg: Reset, modifier: NONE,
+        x: 13, y: 10, fg: Rgb(108, 191, 238), bg: Reset, modifier: UNDERLINED,
+        x: 38, y: 10, fg: Reset, bg: Reset, modifier: NONE,
+        x: 12, y: 11, fg: Rgb(108, 191, 238), bg: Reset, modifier: UNDERLINED,
+        x: 38, y: 11, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 13, fg: Reset, bg: Reset, modifier: BOLD,
+        x: 14, y: 13, fg: Reset, bg: Reset, modifier: NONE,
+        x: 0, y: 14, fg: Rgb(108, 191, 238), bg: Reset, modifier: NONE,
+        x: 32, y: 14, fg: Reset, bg: Reset, modifier: NONE,
+    ]
+}

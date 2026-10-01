@@ -8,10 +8,5 @@
     "test:cli": "pnpm --filter e2e-tests test:cli",
     "test": "(cd packages/envio-tests && pnpm test) && pnpm test:cli && for d in test_codegen fuel_test svm_test cross_chain_test e2e_test; do echo \"=== scenarios/$d ===\" && (cd \"scenarios/$d\" && pnpm exec envio codegen && pnpm test) || exit 1; done"
   },
-  "devDependencies": {},
-  "pnpm": {
-    "overrides": {
-      "react-dom": "19.2.3"
-    }
-  }
+  "devDependencies": {}
 }

@@ -391,6 +391,14 @@ jobs:
         working-directory: packages/e2e-tests
         run: pnpm test:e2e
 
+      - name: Upload TUI screens
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tui-screens
+          path: packages/e2e-tests/.artifacts/tui
+          if-no-files-found: ignore
+
       - name: Run dependency completeness tests
         working-directory: packages/e2e-tests
         run: pnpm test:deps

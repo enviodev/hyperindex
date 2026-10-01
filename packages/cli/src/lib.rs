@@ -36,5 +36,6 @@ mod svm_hypersync_source;
 mod template_dirs;
 mod text_position;
 mod transaction_store;
+mod tui;
 mod type_schema;
 mod utils;
