@@ -1,0 +1,20 @@
+---
+source: packages/cli/src/tui/testing.rs
+expression: "emulator.screen_text().join(\"\\n\")"
+---
+  envio@2.32.0 ~/code/projects/envio/uniswap-indexer
+
+                                     ⢕⠕⠑⠑ ⢕⢕⠄ ⢕⠅⠐⢕  ⢔⠕⢐⢕ ⢀⠔⠕⠕⢔⠄
+                                     ⢕⠕⠔⠔ ⢕⠕⢕⢄⢕⠅ ⢑⢅⢐⠕ ⢐⢕ ⢕⠅  ⢐⢕
+                                     ⢕⢕⢔⢔⠄⢕⠅ ⠑⢕⠅  ⢕⢕⠁ ⢐⢕ ⠑⢕⢔⢔⠕⠁
+
+  Ethereum 1     ━━━━━━━━━━━━━━━━━━━━━━━━━━────────── 62% 16,820,000/21.0M blocks      1.2M events
+  Base 8453      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ✓  at head 24,118,903         903.4K events
+  Gnosis 100 rpc ━━━━━━━━━━━━━───────────────────────  …  searching 30,120,455/38.8M     no events
+
+  ⠸ syncing · ETA 37s · 2,108,293 events · 10,000/s
+
+  GraphQL http://localhost:8080 (admin secret: testing)   Console https://envio.dev/console
+
+  ▲ Ethereum is rate limited by HyperSync · 9s slower so far · resets in 3s
+    Raise the limit with an API token: https://envio.dev/app/api-tokens

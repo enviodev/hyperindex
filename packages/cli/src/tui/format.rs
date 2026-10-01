@@ -14,92 +14,68 @@ pub fn number(value: f64) -> String {
     out
 }
 
-fn plural(count: i64, unit: &str) -> String {
-    if count == 1 {
-        format!("1 {unit}")
-    } else {
-        format!("{count} {unit}s")
+/// Below ten thousand in full, so a small count never reads as a rounded one.
+pub fn compact(value: f64) -> String {
+    if value.abs() < 10_000. {
+        return number(value);
     }
+    let mut scaled = value / 1000.;
+    for unit in ["K", "M", "B"] {
+        // Rounds the way it prints, so 999,960 is 1.0M rather than 1000.0K.
+        if (scaled * 10.).round().abs() < 10_000. || unit == "B" {
+            return format!("{scaled:.1}{unit}");
+        }
+        scaled /= 1000.;
+    }
+    unreachable!()
 }
 
-/// Hours stay unbounded rather than rolling over into days, so a multi-day
-/// ETA reads as "50 hours" instead of silently dropping the days.
+/// The two largest units, the second padded so a ticking value keeps its
+/// width. Hours stay unbounded rather than rolling over into days, so a
+/// multi-day ETA reads as "50h 03m" instead of silently dropping the days.
 pub fn duration(ms: f64) -> String {
-    let total_seconds = (ms / 1000.).floor().max(0.) as i64;
-    let parts: Vec<String> = [
-        (total_seconds / 3600, "hour"),
-        (total_seconds % 3600 / 60, "minute"),
-        (total_seconds % 60, "second"),
-    ]
-    .into_iter()
-    .filter(|(count, _)| *count > 0)
-    .map(|(count, unit)| plural(count, unit))
-    .collect();
-    if parts.is_empty() {
-        "less than 1 second".to_string()
+    let seconds = (ms / 1000.).floor().max(0.) as i64;
+    let (hours, minutes, seconds) = (seconds / 3600, seconds % 3600 / 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}h {minutes:02}m")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds:02}s")
     } else {
-        parts.join(" ")
+        format!("{seconds}s")
     }
 }
 
-const MINUTES_IN_DAY: i64 = 1440;
-const MINUTES_IN_MONTH: i64 = 43200;
-
-/// The wording of date-fns `formatDistance` with `includeSeconds`, with months
-/// approximated as 30 days.
-pub fn distance(from_ms: f64, to_ms: f64) -> String {
-    let seconds = ((to_ms - from_ms).abs() / 1000.).trunc() as i64;
-    let minutes = (seconds as f64 / 60.).round() as i64;
-    if minutes < 2 {
-        return match seconds {
-            0..=4 => "less than 5 seconds".to_string(),
-            5..=9 => "less than 10 seconds".to_string(),
-            10..=19 => "less than 20 seconds".to_string(),
-            20..=39 => "half a minute".to_string(),
-            40..=59 => "less than a minute".to_string(),
-            _ => "1 minute".to_string(),
-        };
-    }
-    if minutes < 45 {
-        return plural(minutes, "minute");
-    }
-    if minutes < 90 {
-        return "about 1 hour".to_string();
-    }
-    if minutes < MINUTES_IN_DAY {
-        let hours = (minutes as f64 / 60.).round() as i64;
-        return format!("about {}", plural(hours, "hour"));
-    }
-    if minutes < 2520 {
-        return "1 day".to_string();
-    }
-    if minutes < MINUTES_IN_MONTH {
-        return plural(
-            (minutes as f64 / MINUTES_IN_DAY as f64).round() as i64,
-            "day",
-        );
-    }
-    if minutes < MINUTES_IN_MONTH * 2 {
-        return "about 1 month".to_string();
-    }
-    let months = minutes / MINUTES_IN_MONTH;
-    if months < 12 {
-        return plural(
-            (minutes as f64 / MINUTES_IN_MONTH as f64).round() as i64,
-            "month",
-        );
-    }
-    let years = months / 12;
-    match months % 12 {
-        0..=2 => format!("about {}", plural(years, "year")),
-        3..=8 => format!("over {}", plural(years, "year")),
-        _ => format!("almost {}", plural(years + 1, "year")),
+pub fn home_relative(path: &str, home: &str) -> String {
+    let home = home.trim_end_matches('/');
+    match path.strip_prefix(home) {
+        Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => {
+            format!("~{rest}")
+        }
+        _ => path.to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortens_paths_under_home_to_a_tilde() {
+        assert_eq!(
+            [
+                home_relative("/home/dev/code/indexer", "/home/dev"),
+                home_relative("/home/dev", "/home/dev/"),
+                home_relative("/home/developer/indexer", "/home/dev"),
+                home_relative("/srv/indexer", "/"),
+            ],
+            [
+                "~/code/indexer",
+                "~",
+                "/home/developer/indexer",
+                "/srv/indexer"
+            ]
+        );
+    }
 
     #[test]
     fn formats_numbers_with_thousands_separators() {
@@ -114,74 +90,34 @@ mod tests {
     }
 
     #[test]
-    fn formats_durations_without_rolling_hours_into_days() {
+    fn formats_large_numbers_compactly() {
         let formatted: Vec<String> = [
-            0.,
-            500.,
-            1000.,
-            61_000.,
-            3_600_000.,
-            7_322_000.,
-            90_061_000.,
+            9_999.,
+            10_000.,
+            903_412.,
+            999_960.,
+            21_000_000.,
+            301_229_870.,
+            4_200_000_000_000.,
         ]
         .into_iter()
-        .map(duration)
+        .map(compact)
         .collect();
         assert_eq!(
             formatted,
-            vec![
-                "less than 1 second",
-                "less than 1 second",
-                "1 second",
-                "1 minute 1 second",
-                "1 hour",
-                "2 hours 2 minutes 2 seconds",
-                "25 hours 1 minute 1 second",
-            ]
+            vec!["9,999", "10.0K", "903.4K", "1.0M", "21.0M", "301.2M", "4200.0B"]
         );
     }
 
-    // Expected strings come from date-fns 3.3.1 `formatDistance` with
-    // `includeSeconds: true`.
     #[test]
-    fn formats_distances_like_date_fns() {
-        let seconds = [
-            0, 4, 5, 9, 10, 19, 20, 39, 40, 59, 60, 89, 90, 119, 150, 2699, 5399, 9000, 86399,
-            151199, 151200, 2591999, 5184000, 30000000, 40000000,
-        ];
-        let formatted: Vec<String> = seconds
+    fn formats_durations_in_their_two_largest_units() {
+        let formatted: Vec<String> = [0., 999., 1000., 61_000., 242_000., 3_600_000., 180_301_000.]
             .into_iter()
-            .map(|s| distance(0., s as f64 * 1000.))
+            .map(duration)
             .collect();
         assert_eq!(
             formatted,
-            vec![
-                "less than 5 seconds",
-                "less than 5 seconds",
-                "less than 10 seconds",
-                "less than 10 seconds",
-                "less than 20 seconds",
-                "less than 20 seconds",
-                "half a minute",
-                "half a minute",
-                "less than a minute",
-                "less than a minute",
-                "1 minute",
-                "1 minute",
-                "2 minutes",
-                "2 minutes",
-                "3 minutes",
-                "about 1 hour",
-                "about 2 hours",
-                "about 3 hours",
-                "1 day",
-                "2 days",
-                "2 days",
-                "about 1 month",
-                "2 months",
-                "12 months",
-                "over 1 year",
-            ]
+            vec!["0s", "0s", "1s", "1m 01s", "4m 02s", "1h 00m", "50h 05m"]
         );
     }
 }

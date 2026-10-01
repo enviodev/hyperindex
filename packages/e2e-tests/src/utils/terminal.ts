@@ -29,7 +29,7 @@ const quote = (arg: string) => `'${arg.replaceAll("'", `'\\''`)}'`;
 export function runInPty(
   command: string,
   args: string[],
-  options: { cwd: string; env: Record<string, string>; size: TerminalSize }
+  options: { cwd: string; env: Record<string, string>; size: TerminalSize },
 ): PtyRun {
   const { cols, rows } = options.size;
   const shell = `stty cols ${cols} rows ${rows}; exec ${[command, ...args].map(quote).join(" ")}`;
@@ -45,7 +45,7 @@ export function runInPty(
     child.on("close", (code) => {
       hasExited = true;
       resolve(code);
-    })
+    }),
   );
   return {
     output: () => Buffer.concat(chunks),
@@ -65,30 +65,20 @@ export interface Screen {
   terminal: xterm.Terminal;
 }
 
-/** Indexed by lit pixels: top left, top right, bottom left, bottom right from the lowest bit. */
-const QUADRANTS = [" ", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█"];
-
-/** The pixels a block character shows: in reverse video, the ones it leaves unlit. */
-const shownPixels = (cell: xterm.IBufferCell): number | undefined => {
-  const pixels = QUADRANTS.indexOf(cell.getChars() || " ");
-  if (pixels < 0) return undefined;
-  return cell.isInverse() ? ~pixels & 0b1111 : pixels;
-};
-
 /** A row as it looks, trailing spaces trimmed. */
 function rowText(line: xterm.IBufferLine): string {
-  let text = "";
-  for (let col = 0; col < line.length; col++) {
-    const cell = line.getCell(col);
-    if (!cell || cell.getWidth() === 0) continue;
-    const pixels = shownPixels(cell);
-    text += pixels === undefined ? cell.getChars() : QUADRANTS[pixels];
-  }
-  return text.trimEnd();
+  return line.translateToString(true);
 }
 
-export async function replay(output: Buffer, size: TerminalSize): Promise<Screen> {
-  const terminal = new xterm.Terminal({ ...size, scrollback: 10_000, allowProposedApi: true });
+export async function replay(
+  output: Buffer,
+  size: TerminalSize,
+): Promise<Screen> {
+  const terminal = new xterm.Terminal({
+    ...size,
+    scrollback: 10_000,
+    allowProposedApi: true,
+  });
   await new Promise<void>((resolve) => terminal.write(output, resolve));
   const buffer = terminal.buffer.active;
   const lines: string[] = [];
@@ -99,7 +89,8 @@ export async function replay(output: Buffer, size: TerminalSize): Promise<Screen
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return {
     lines,
-    cursorVisible: output.lastIndexOf("\x1b[?25h") >= output.lastIndexOf("\x1b[?25l"),
+    cursorVisible:
+      output.lastIndexOf("\x1b[?25h") >= output.lastIndexOf("\x1b[?25l"),
     terminal,
   };
 }
@@ -108,7 +99,7 @@ export async function waitForScreen(
   run: PtyRun,
   size: TerminalSize,
   predicate: (screen: Screen) => boolean,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<Screen> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -121,15 +112,31 @@ export async function waitForScreen(
         : undefined;
     if (reason) {
       run.kill();
-      throw new Error(`${reason} Last screen:\n${screen.lines.slice(-size.rows).join("\n")}`);
+      throw new Error(
+        `${reason} Last screen:\n${screen.lines.slice(-size.rows).join("\n")}`,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }
 
 const ansi16 = [
-  "#000000", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5",
-  "#666666", "#f14c4c", "#23d18b", "#f5f543", "#3b8eea", "#d670d6", "#29b8db", "#ffffff",
+  "#000000",
+  "#cd3131",
+  "#0dbc79",
+  "#e5e510",
+  "#2472c8",
+  "#bc3fbc",
+  "#11a8cd",
+  "#e5e5e5",
+  "#666666",
+  "#f14c4c",
+  "#23d18b",
+  "#f5f543",
+  "#3b8eea",
+  "#d670d6",
+  "#29b8db",
+  "#ffffff",
 ];
 
 function paletteColor(index: number): string {
@@ -139,7 +146,8 @@ function paletteColor(index: number): string {
     return `#${level}${level}${level}`;
   }
   const cube = index - 16;
-  const level = (n: number) => (n === 0 ? 0 : 55 + n * 40).toString(16).padStart(2, "0");
+  const level = (n: number) =>
+    (n === 0 ? 0 : 55 + n * 40).toString(16).padStart(2, "0");
   return `#${level(Math.floor(cube / 36))}${level(Math.floor(cube / 6) % 6)}${level(cube % 6)}`;
 }
 
@@ -162,31 +170,49 @@ export function toSvg(screen: Screen): string {
       const x = col * cell.width;
       const width = cell.width * c.getWidth();
       const color = (rgb: boolean, palette: boolean, value: number) =>
-        rgb ? `#${value.toString(16).padStart(6, "0")}` : palette ? paletteColor(value) : undefined;
+        rgb
+          ? `#${value.toString(16).padStart(6, "0")}`
+          : palette
+            ? paletteColor(value)
+            : undefined;
       let fg = color(c.isFgRGB(), c.isFgPalette(), c.getFgColor()) ?? "#cccccc";
       let bg = color(c.isBgRGB(), c.isBgPalette(), c.getBgColor());
       if (c.isInverse()) [fg, bg] = [bg ?? "#1e1e1e", fg];
       if (bg) {
-        parts.push(`<rect x="${x}" y="${y}" width="${width}" height="${cell.height}" fill="${bg}"/>`);
+        parts.push(
+          `<rect x="${x}" y="${y}" width="${width}" height="${cell.height}" fill="${bg}"/>`,
+        );
       }
       const chars = c.getChars();
-      const pixels = QUADRANTS.indexOf(chars);
-      if (pixels > 0) {
-        // Block elements as shapes, so they tile the way they do in a terminal
-        // instead of leaving the gaps a font's glyphs would.
-        const half = { width: cell.width / 2, height: cell.height / 2 };
-        for (let bit = 0; bit < 4; bit++) {
-          if (!(pixels & (1 << bit))) continue;
-          const [dx, dy] = [(bit % 2) * half.width, Math.floor(bit / 2) * half.height];
-          parts.push(
-            `<rect x="${x + dx}" y="${y + dy}" width="${half.width}" height="${half.height}" fill="${fg}"/>`
-          );
-        }
+      const code = chars.codePointAt(0) ?? 0;
+      if (code > 0x2800 && code <= 0x28ff) {
+        // Braille and line glyphs as shapes, the way terminals that draw
+        // them themselves show them.
+        const dots = [
+          [0x01, 0x08],
+          [0x02, 0x10],
+          [0x04, 0x20],
+          [0x40, 0x80],
+        ];
+        dots.forEach((bits, dy) =>
+          bits.forEach((bit, dx) => {
+            if ((code - 0x2800) & bit) {
+              parts.push(
+                `<circle cx="${x + 3 + dx * 4}" cy="${y + 3 + dy * 4 + Math.floor(dy / 2)}" r="1.4" fill="${fg}"/>`,
+              );
+            }
+          }),
+        );
+      } else if (chars === "━" || chars === "─") {
+        const thickness = chars === "━" ? 4 : 2;
+        parts.push(
+          `<rect x="${x}" y="${y + (cell.height - thickness) / 2}" width="${width}" height="${thickness}" fill="${fg}"/>`,
+        );
       } else if (chars && chars !== " ") {
         const weight = c.isBold() ? ` font-weight="bold"` : "";
         const underline = c.isUnderline() ? ` text-decoration="underline"` : "";
         parts.push(
-          `<text x="${x}" y="${y + 15}" fill="${fg}"${weight}${underline}>${escapeXml(chars)}</text>`
+          `<text x="${x}" y="${y + 15}" fill="${fg}"${weight}${underline}>${escapeXml(chars)}</text>`,
         );
       }
     }

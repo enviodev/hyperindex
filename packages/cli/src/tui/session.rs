@@ -238,6 +238,7 @@ fn encode(buf: &mut Vec<u8>, line: &Line) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::render::ColorLevel;
     use crate::tui::state::{Messages, TuiChain, TuiInfo};
     use crate::tui::testing::Emulator;
 
@@ -248,7 +249,6 @@ mod tests {
 
     fn state() -> State {
         let mut state = State::new(TuiInfo {
-            block_unit: "Block".to_string(),
             start_time: 0.,
             graphql_url: "http://localhost:8080".to_string(),
             ..TuiInfo::default()
@@ -274,22 +274,27 @@ mod tests {
         state
     }
 
-    const STATUS: [&str; 7] = [
-        "Chain: 1 ⚡                                          100%",
-        "Blocks: 100 / 100 (End Block)  Events: 42",
+    const TITLE: [&str; 2] = ["  envio", ""];
+
+    const STATUS: [&str; 5] = [
+        "  Chain 1 ━━━━━━━━━━━━━━━━━━━━━━━  ✓  at end 100 42 events",
         "",
-        "Total Events: 42",
-        "Time Synced: less than 5 seconds (synced)",
+        "  ✓ synced in 3s · 42 events",
         "",
-        "GraphQL: http://localhost:8080",
+        "  GraphQL http://localhost:8080",
     ];
 
-    /// The logo's rows as text, then a blank row and the status.
+    /// The title, the logo centred over the rows with a blank row below, and the status.
     fn frame() -> Vec<String> {
-        crate::tui::logo::lines(|_| ratatui::style::Color::Reset)
+        let logo = crate::tui::logo::lines(0, |_| ratatui::style::Color::Reset)
             .iter()
-            .map(|line| line.to_string().trim_end().to_string())
+            .map(|line| format!("{:17}{}", "", line).trim_end().to_string())
             .chain(std::iter::once(String::new()))
+            .collect::<Vec<_>>();
+        TITLE
+            .iter()
+            .map(|line| line.to_string())
+            .chain(logo)
             .chain(STATUS.iter().map(|line| line.to_string()))
             .collect()
     }
@@ -362,8 +367,7 @@ mod tests {
                     .into_iter()
                     .chain([
                         "".to_string(),
-                        "Notifications:".to_string(),
-                        "Failed to load messages from envio server".to_string()
+                        "  ▲ Failed to load messages from envio server".to_string()
                     ])
                     .collect::<Vec<_>>(),
                 with_frame(&[])
@@ -413,17 +417,18 @@ mod tests {
         let status = |rows: usize| -> Vec<String> {
             ["log"]
                 .into_iter()
-                .chain(STATUS[..rows].iter().copied())
+                .chain(TITLE.into_iter().chain(STATUS).take(rows))
                 .map(str::to_string)
                 .collect()
         };
-        assert_eq!((render_at(9), render_at(5)), (status(7), status(4)));
+        assert_eq!((render_at(9), render_at(6)), (status(7), status(5)));
     }
 
     #[test]
     fn rewrites_only_the_lines_that_changed() {
+        // Without colour, so the logo's flow doesn't change the frame too.
         let emulator = Emulator::new(SIZE);
-        let mut session = emulator.session();
+        let mut session = emulator.session_with(ColorLevel::None);
         let mut calculating = State::new(TuiInfo {
             graphql_url: "http://localhost:8080".to_string(),
             ..TuiInfo::default()
@@ -442,7 +447,7 @@ mod tests {
 
         let fresh = Emulator::new(SIZE);
         fresh
-            .session()
+            .session_with(ColorLevel::None)
             .render(None, &calculating, 0., 1, SIZE)
             .unwrap();
         assert_eq!(

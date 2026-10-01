@@ -3,8 +3,10 @@ use std::collections::VecDeque;
 #[napi_derive::napi(object)]
 #[derive(Clone, Debug, Default)]
 pub struct TuiInfo {
-    /// `"Block"`, or `"Slot"` on SVM.
-    pub block_unit: String,
+    /// `"evm"`, `"fuel"` or `"svm"`.
+    pub ecosystem: String,
+    pub version: String,
+    pub project_dir: String,
     /// Indexer start, in epoch milliseconds.
     pub start_time: f64,
     pub graphql_url: String,
@@ -69,6 +71,7 @@ pub enum Progress {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chain {
     pub chain_id: String,
+    pub name: Option<String>,
     pub events_processed: f64,
     /// Clamped into `[start_block, to_block]`: the source height is 0 until the
     /// first height fetch lands, and the buffer starts one block below the start
@@ -86,8 +89,37 @@ pub struct Chain {
     pub rate_limit_reset_in_ms: Option<f64>,
 }
 
+/// Chain ids name networks only on EVM.
+fn chain_name(ecosystem: &str, chain_id: &str) -> Option<String> {
+    use crate::config_parsing::chain_helpers::Network;
+    let network = Network::from_network_id(chain_id.parse().ok()?).ok()?;
+    if ecosystem != "evm" {
+        return None;
+    }
+    Some(match network {
+        Network::EthereumMainnet => "Ethereum".to_string(),
+        network => network
+            .to_string()
+            .split('-')
+            .map(|word| {
+                let mut chars = word.chars();
+                chars.next().map_or(String::new(), |first| {
+                    first.to_uppercase().chain(chars).collect()
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+    })
+}
+
 impl Chain {
-    pub fn from_metrics(m: &TuiChain, now: f64) -> Self {
+    /// Waits are counted once they pass a second, so a single throttled
+    /// request doesn't raise an alarm.
+    pub fn is_rate_limited(&self) -> bool {
+        self.rate_limit_time_ms > 1000.
+    }
+
+    pub fn from_metrics(m: &TuiChain, ecosystem: &str, now: f64) -> Self {
         let first_event_block = m.first_event_block_number.unwrap_or(0);
         let latest_processed_block = m.progress_block_number;
         let synced = |caught_up_at| Progress::Synced {
@@ -119,6 +151,7 @@ impl Chain {
         let clamp = |block: i64| block.max(m.start_block).min(to_block);
         Chain {
             chain_id: m.chain_id.clone(),
+            name: chain_name(ecosystem, &m.chain_id),
             events_processed: m.num_events_processed,
             progress_block: clamp(m.progress_block_number),
             buffer_block: clamp(m.latest_fetched_block_number),
@@ -170,7 +203,7 @@ impl State {
     pub fn update(&mut self, chains: &[TuiChain], now: f64) {
         self.chains = chains
             .iter()
-            .map(|chain| Chain::from_metrics(chain, now))
+            .map(|chain| Chain::from_metrics(chain, &self.info.ecosystem, now))
             .collect();
         if !self.eta_ready {
             self.eta_ready = self
@@ -261,7 +294,7 @@ impl State {
                     _ => None,
                 })
                 .fold(0., f64::max);
-            return Eta::Synced(super::format::distance(self.info.start_time, caught_up_at));
+            return Eta::Synced(super::format::duration(caught_up_at - self.info.start_time));
         }
         let processed = self.processed_blocks();
         if !self.eta_ready || processed <= 0 {
@@ -320,11 +353,12 @@ mod tests {
 
     #[test]
     fn clamps_blocks_into_the_bar_range_before_the_first_height() {
-        let chain = Chain::from_metrics(&chain_metrics(), 0.);
+        let chain = Chain::from_metrics(&chain_metrics(), "evm", 0.);
         assert_eq!(
             chain,
             Chain {
                 chain_id: "1".to_string(),
+                name: Some("Ethereum".to_string()),
                 events_processed: 0.,
                 progress_block: 100,
                 buffer_block: 100,
@@ -352,6 +386,7 @@ mod tests {
                 latest_fetched_block_number: 450,
                 ..chain_metrics()
             },
+            "evm",
             0.,
         );
         assert_eq!(
@@ -372,6 +407,7 @@ mod tests {
                 source_block_number: 1000,
                 ..chain_metrics()
             },
+            "evm",
             0.,
         );
         assert_eq!(
@@ -402,6 +438,7 @@ mod tests {
                 processed_to_endblock: true,
                 ..chain_metrics()
             },
+            "evm",
             42.,
         );
         assert_eq!(
@@ -423,6 +460,7 @@ mod tests {
                 timestamp_caught_up_to_head_or_endblock: Some(7.),
                 ..chain_metrics()
             },
+            "evm",
             42.,
         );
         assert_eq!(
@@ -473,7 +511,7 @@ mod tests {
         // 100 blocks in 10s, 900 to go.
         assert_eq!(
             state(&[syncing], 10_000.).eta(10_000.),
-            Eta::Syncing("1 minute 30 seconds".to_string())
+            Eta::Syncing("1m 30s".to_string())
         );
     }
 
@@ -491,7 +529,7 @@ mod tests {
         // 1,000 blocks in 10s, 999,000 to go.
         assert_eq!(
             state(&[searching], 10_000.).eta(10_000.),
-            Eta::Syncing("2 hours 46 minutes 30 seconds".to_string())
+            Eta::Syncing("2h 46m".to_string())
         );
     }
 
@@ -506,7 +544,28 @@ mod tests {
         };
         assert_eq!(
             state(&[synced("1", 30_000.), synced("2", 150_000.)], 0.).eta(0.),
-            Eta::Synced("3 minutes".to_string())
+            Eta::Synced("2m 30s".to_string())
+        );
+    }
+
+    #[test]
+    fn names_known_evm_chains() {
+        let named = |ecosystem, chain_id| chain_name(ecosystem, chain_id);
+        assert_eq!(
+            [
+                named("evm", "1"),
+                named("evm", "42161"),
+                named("evm", "8453"),
+                named("evm", "424242424242"),
+                named("fuel", "1"),
+            ],
+            [
+                Some("Ethereum".to_string()),
+                Some("Arbitrum One".to_string()),
+                Some("Base".to_string()),
+                None,
+                None,
+            ]
         );
     }
 

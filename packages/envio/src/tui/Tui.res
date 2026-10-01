@@ -1,7 +1,9 @@
 type t
 
 type info = {
-  blockUnit: string,
+  ecosystem: string,
+  version: string,
+  projectDir: string,
   startTime: float,
   graphqlUrl: string,
   graphqlPassword: option<string>,
@@ -100,10 +102,9 @@ let redirectConsole: (
 let start = (~config: Config.t, ~getMetrics: unit => Metrics.t) => {
   let metrics = getMetrics()
   let info = {
-    blockUnit: switch config.ecosystem.name {
-    | Svm => "Slot"
-    | Evm | Fuel => "Block"
-    },
+    ecosystem: (config.ecosystem.name :> string),
+    version: Utils.EnvioPackage.value.version,
+    projectDir: NodeJs.Process.cwd(),
     startTime: metrics.startTime->Date.getTime,
     graphqlUrl: Env.Hasura.url,
     graphqlPassword: Env.Hasura.secret === "testing" ? Some("testing") : None,

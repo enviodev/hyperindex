@@ -2,7 +2,6 @@
 //! the screen as text, for a line diff, and as an SVG, for a reviewer to look
 //! at in the pull request.
 
-use super::logo::QUADRANTS;
 use super::render::{ColorLevel, Palette};
 use super::session::{Session, Size};
 use std::{
@@ -66,33 +65,13 @@ impl Emulator {
             .collect()
     }
 
-    /// The screen as it looks: a block character in reverse video shows as
-    /// the pixels it leaves lit, not the glyph it was drawn with.
+    /// The screen as text, without the colours.
     pub fn screen_text(&self) -> Vec<String> {
         let parser = self.parser.lock().unwrap();
-        let screen = parser.screen();
-        let (rows, cols) = screen.size();
-        let mut lines: Vec<String> = (0..rows)
-            .map(|row| {
-                (0..cols)
-                    .filter_map(|col| screen.cell(row, col))
-                    .filter(|cell| !cell.is_wide_continuation())
-                    .map(|cell| {
-                        let text = if cell.has_contents() {
-                            cell.contents()
-                        } else {
-                            " "
-                        };
-                        match QUADRANTS.iter().position(|q| *q == text) {
-                            Some(pixels) if cell.inverse() => QUADRANTS[!pixels & 0b1111],
-                            _ => text,
-                        }
-                        .to_string()
-                    })
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
+        let mut lines: Vec<String> = parser
+            .screen()
+            .rows(0, parser.screen().size().1)
+            .map(|line| line.trim_end().to_string())
             .collect();
         while lines.last().is_some_and(|line| line.is_empty()) {
             lines.pop();
@@ -151,16 +130,38 @@ impl Emulator {
                     rect(&mut shapes, x, y, width, CELL_HEIGHT, &bg);
                 }
                 let text = cell.contents();
-                if let Some(quadrant) = QUADRANTS.iter().position(|q| *q == text && *q != " ") {
-                    // Block elements as shapes, the way terminals that draw
-                    // them themselves show them.
-                    let (half_w, half_h) = (CELL_WIDTH / 2, CELL_HEIGHT / 2);
-                    for bit in 0..4 {
-                        if quadrant & (1 << bit) != 0 {
-                            let (dx, dy) = ((bit % 2) as u32 * half_w, (bit / 2) as u32 * half_h);
-                            rect(&mut shapes, x + dx, y + dy, half_w, half_h, &fg);
+                let braille = text
+                    .chars()
+                    .next()
+                    .map(|c| c as u32)
+                    .filter(|c| (0x2801..=0x28FF).contains(c));
+                if let Some(dots) = braille {
+                    // Braille and line glyphs as shapes, the way terminals
+                    // that draw them themselves show them.
+                    const DOTS: [[u32; 2]; 4] =
+                        [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
+                    for (dy, bits) in DOTS.iter().enumerate() {
+                        for (dx, bit) in bits.iter().enumerate() {
+                            if (dots - 0x2800) & bit != 0 {
+                                let _ = writeln!(
+                                    shapes,
+                                    r#"<circle cx="{}" cy="{}" r="1.4" fill="{fg}"/>"#,
+                                    x + 3 + dx as u32 * 4,
+                                    y + 3 + dy as u32 * 4 + dy as u32 / 2,
+                                );
+                            }
                         }
                     }
+                } else if text == "━" || text == "─" {
+                    let thickness = if text == "━" { 4 } else { 2 };
+                    rect(
+                        &mut shapes,
+                        x,
+                        y + (CELL_HEIGHT - thickness) / 2,
+                        width,
+                        thickness,
+                        &fg,
+                    );
                 } else if !text.trim().is_empty() {
                     let weight = if cell.bold() {
                         r#" font-weight="bold""#
@@ -195,7 +196,6 @@ impl Emulator {
     }
 }
 
-// Even, so a block character's halves tile the cell exactly.
 const CELL_WIDTH: u32 = 10;
 const CELL_HEIGHT: u32 = 20;
 const FOREGROUND: &str = "#cccccc";

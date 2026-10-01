@@ -109,14 +109,9 @@ enum Command {
 fn run(mut session: Session<Tty>, tty: Tty, mut state: State, commands: mpsc::Receiver<Command>) {
     let started = Instant::now();
     loop {
-        // Only the spinner moves between updates, and only until every chain is synced.
-        let next = if state.is_fully_synced() {
-            commands
-                .recv()
-                .map_err(|_| mpsc::RecvTimeoutError::Disconnected)
-        } else {
-            commands.recv_timeout(Duration::from_millis(SPINNER_INTERVAL_MS))
-        };
+        // The logo keeps flowing after the run is synced, so the frame ticks
+        // even without updates; an unchanged frame isn't redrawn.
+        let next = commands.recv_timeout(Duration::from_millis(SPINNER_INTERVAL_MS));
         let mut batch: Vec<Command> = match next {
             Ok(command) => vec![command],
             Err(mpsc::RecvTimeoutError::Timeout) => vec![],
@@ -204,7 +199,10 @@ pub struct Tui {
 #[napi]
 impl Tui {
     #[napi(factory)]
-    pub fn start(info: TuiInfo) -> napi::Result<Self> {
+    pub fn start(mut info: TuiInfo) -> napi::Result<Self> {
+        if let Ok(home) = std::env::var("HOME") {
+            info.project_dir = format::home_relative(&info.project_dir, &home);
+        }
         let to_napi =
             |e: io::Error| napi::Error::from_reason(format!("Failed to start the TUI: {e}"));
         let tty = Tty::open().map_err(to_napi)?;

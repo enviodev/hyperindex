@@ -3,30 +3,37 @@ use ratatui::{
     text::{Line, Span},
 };
 
-// The brand wordmark traced from the brand kit's SVG at 50×6, two by two
-// pixels per cell.
-const BITMAP: [&str; 6] = [
-    "########..###.....##..###.....##..###....######...",
-    "###.......####....##...##....###..###..###....###.",
-    "#######...######..##...###..###...###.###......###",
-    "###.......###.######....###.##....###.###......###",
-    "###.......###...####.....#####....###..###....###.",
-    "########..###....###.....####.....###....######...",
+// The brand wordmark traced from the brand kit's SVG at 52×12, drawn as
+// every other pixel so it reads as dots, two by four pixels per braille cell.
+const BITMAP: [&str; 12] = [
+    "########..###.....###..##......###.###.....#####....",
+    "########..####....###..###.....###.###....########..",
+    "###.......#####...###..###....###..###...####.#####.",
+    "###.......#####...###...##....###..###..###.....###.",
+    "###.......######..###...###...##...###..###......###",
+    "########..#######.###...###..###...###..###......###",
+    "########..###.#######....##..###...###..###......###",
+    "###.......###..######....###.##....###..###......###",
+    "###.......###...#####.....#####....###..###.....###.",
+    "########..###....####.....####.....###...##########.",
+    "#########.###.....###.....####.....###....########..",
+    "#########.###......##......###.....###.....#####....",
 ];
 
-/// Indexed by the lit pixels of a cell: top left, top right, bottom left,
-/// bottom right, from the lowest bit.
-pub const QUADRANTS: [&str; 16] = [
-    " ", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█",
-];
+/// The braille dot for the pixel at `[row][column]` of a cell.
+const DOTS: [[u32; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
 
-const GRADIENT: [(u8, u8, u8); 3] = [(0xFF, 0x82, 0x67), (0xFF, 0xA1, 0x52), (0xFD, 0xD7, 0x00)];
+pub const GRADIENT: [(u8, u8, u8); 3] =
+    [(0xFF, 0x82, 0x67), (0xFF, 0xA1, 0x52), (0xFD, 0xD7, 0x00)];
+
+/// Ticks for the colours to flow once across the wordmark and back.
+const FLOW_TICKS: f64 = 40.;
 
 pub fn width() -> usize {
     BITMAP[0].len() / 2
 }
 
-fn gradient(position: f64) -> (u8, u8, u8) {
+pub fn gradient(position: f64) -> (u8, u8, u8) {
     let scaled = position.clamp(0., 1.) * (GRADIENT.len() - 1) as f64;
     let index = (scaled.floor() as usize).min(GRADIENT.len() - 2);
     let t = scaled - index as f64;
@@ -35,33 +42,40 @@ fn gradient(position: f64) -> (u8, u8, u8) {
     (mix(from.0, to.0), mix(from.1, to.1), mix(from.2, to.2))
 }
 
-fn lit(row: usize, column: usize) -> bool {
-    BITMAP[row].as_bytes()[column] == b'#'
+/// Coral to gold and back, so the gradient can keep flowing without a seam.
+fn flowing(position: f64) -> (u8, u8, u8) {
+    let x = position.rem_euclid(1.) * 2.;
+    gradient(if x <= 1. { x } else { 2. - x })
 }
 
-/// Cells with more than a corner lit are drawn in reverse video: the lit part
-/// is the cell's background, which terminals paint as a solid rectangle, and
-/// the unlit part is the glyph. Many terminals leave a hairline gap where a
-/// block glyph meets its neighbour; this way the gap falls in the dark around
-/// a letter rather than through its strokes.
-pub fn lines(rgb: impl Fn((u8, u8, u8)) -> Color) -> Vec<Line<'static>> {
+fn lit(row: usize, column: usize) -> bool {
+    BITMAP[row].as_bytes()[column] == b'#' && (row + column).is_multiple_of(2)
+}
+
+pub fn lines(tick: usize, rgb: impl Fn((u8, u8, u8)) -> Color) -> Vec<Line<'static>> {
     let columns = width();
-    (0..BITMAP.len() / 2)
+    let phase = tick as f64 / FLOW_TICKS;
+    (0..BITMAP.len() / 4)
         .map(|row| {
             Line::from(
                 (0..columns)
                     .map(|column| {
-                        let pixels = (0..4).fold(0, |pixels, bit| {
-                            let lit = lit(row * 2 + bit / 2, column * 2 + bit % 2);
-                            pixels | (usize::from(lit) << bit)
-                        });
-                        let style =
-                            Style::new().fg(rgb(gradient(column as f64 / (columns - 1) as f64)));
-                        if pixels.count_ones() >= 2 {
-                            Span::styled(QUADRANTS[!pixels & 0b1111], style.reversed())
-                        } else {
-                            Span::styled(QUADRANTS[pixels], style)
+                        let mut dots = 0;
+                        for (y, bits) in DOTS.iter().enumerate() {
+                            for (x, bit) in bits.iter().enumerate() {
+                                if lit(row * 4 + y, column * 2 + x) {
+                                    dots |= bit;
+                                }
+                            }
                         }
+                        if dots == 0 {
+                            return Span::raw(" ");
+                        }
+                        let position = column as f64 / (columns - 1) as f64;
+                        Span::styled(
+                            char::from_u32(0x2800 + dots).unwrap().to_string(),
+                            Style::new().fg(rgb(flowing(position / 2. - phase))),
+                        )
                     })
                     .collect::<Vec<_>>(),
             )
@@ -69,41 +83,21 @@ pub fn lines(rgb: impl Fn((u8, u8, u8)) -> Color) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// For a terminal too narrow for the wordmark.
-pub fn compact(rgb: impl Fn((u8, u8, u8)) -> Color) -> Line<'static> {
-    let text = "ENVIO";
-    let last = (text.len() - 1) as f64;
-    Line::from(
-        text.chars()
-            .enumerate()
-            .map(|(i, c)| {
-                Span::styled(
-                    c.to_string(),
-                    Style::new().fg(rgb(gradient(i as f64 / last))).bold(),
-                )
-            })
-            .collect::<Vec<_>>(),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::style::Modifier;
 
-    /// The pixels a terminal shows for the drawn cells.
+    /// The pixels the braille dots show.
     fn shown(lines: &[Line]) -> Vec<String> {
-        let mut rows = vec![String::new(); lines.len() * 2];
+        let mut rows = vec![String::new(); lines.len() * 4];
         for (row, line) in lines.iter().enumerate() {
             for span in &line.spans {
-                let glyph = QUADRANTS
-                    .iter()
-                    .position(|quadrant| *quadrant == span.content)
-                    .unwrap();
-                let reversed = span.style.add_modifier.contains(Modifier::REVERSED);
-                let pixels = if reversed { !glyph & 0b1111 } else { glyph };
-                for bit in 0..4 {
-                    rows[row * 2 + bit / 2].push(if pixels & (1 << bit) != 0 { '#' } else { '.' });
+                let dots = span.content.chars().next().unwrap() as u32;
+                let dots = dots.saturating_sub(0x2800);
+                for x in 0..2 {
+                    for (y, bits) in DOTS.iter().enumerate() {
+                        rows[row * 4 + y].push(if dots & bits[x] != 0 { '#' } else { '.' });
+                    }
                 }
             }
         }
@@ -111,34 +105,45 @@ mod tests {
     }
 
     #[test]
-    fn draws_the_traced_wordmark_with_quadrants() {
-        let lines = lines(|(r, g, b)| Color::Rgb(r, g, b));
+    fn dots_every_other_pixel_of_the_wordmark() {
+        let lines = lines(0, |(r, g, b)| Color::Rgb(r, g, b));
+        let expected: Vec<String> = BITMAP
+            .iter()
+            .enumerate()
+            .map(|(row, pixels)| {
+                (0..pixels.len())
+                    .map(|column| if lit(row, column) { '#' } else { '.' })
+                    .collect()
+            })
+            .collect();
         assert_eq!(
             (
                 shown(&lines),
                 lines.iter().map(Line::width).collect::<Vec<_>>()
             ),
-            (BITMAP.map(str::to_string).to_vec(), vec![25, 25, 25])
+            (expected, vec![26, 26, 26])
         );
     }
 
     #[test]
-    fn paints_fully_lit_cells_as_background() {
-        let first = lines(|(r, g, b)| Color::Rgb(r, g, b))[0].spans[0].clone();
+    fn flows_the_brand_gradient_without_a_seam() {
         assert_eq!(
-            first,
-            Span::styled(
-                " ",
-                Style::new().fg(Color::Rgb(0xFF, 0x82, 0x67)).reversed()
+            (
+                flowing(0.),
+                flowing(0.25),
+                flowing(0.5),
+                flowing(0.75),
+                flowing(1.),
+                flowing(-0.25)
+            ),
+            (
+                GRADIENT[0],
+                GRADIENT[1],
+                GRADIENT[2],
+                GRADIENT[1],
+                GRADIENT[0],
+                GRADIENT[1]
             )
-        );
-    }
-
-    #[test]
-    fn runs_the_brand_gradient_across_the_wordmark() {
-        assert_eq!(
-            (gradient(0.), gradient(0.5), gradient(1.)),
-            ((0xFF, 0x82, 0x67), (0xFF, 0xA1, 0x52), (0xFD, 0xD7, 0x00))
         );
     }
 }

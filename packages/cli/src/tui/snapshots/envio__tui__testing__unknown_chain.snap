@@ -1,0 +1,16 @@
+---
+source: packages/cli/src/tui/testing.rs
+expression: "emulator.screen_text().join(\"\\n\")"
+---
+  envio@2.32.0 ~/code/projects/envio/uniswap-indexer
+
+                           ⢕⠕⠑⠑ ⢕⢕⠄ ⢕⠅⠐⢕  ⢔⠕⢐⢕ ⢀⠔⠕⠕⢔⠄
+                           ⢕⠕⠔⠔ ⢕⠕⢕⢄⢕⠅ ⢑⢅⢐⠕ ⢐⢕ ⢕⠅  ⢐⢕
+                           ⢕⢕⢔⢔⠄⢕⠅ ⠑⢕⠅  ⢕⢕⠁ ⢐⢕ ⠑⢕⢔⢔⠕⠁
+
+  Chain 1 ━━━━━━━━━━━━━━━━━━━━──────── 62% 16,820,000/21.0M blocks 1.2M events
+
+  ⠸ syncing · ETA 1m 01s · 1,204,881 events · 5,000/s
+
+  GraphQL http://localhost:8080 (admin secret: testing)
+  Console https://envio.dev/console

@@ -20,16 +20,25 @@ import { config } from "../config.js";
 import { runCommand } from "../utils/process.js";
 import { isPgReachable } from "../utils/pg-direct.js";
 import { isClickHouseReachable } from "../utils/clickhouse.js";
-import { replay, runInPty, toSvg, waitForScreen, type Screen } from "../utils/terminal.js";
+import {
+  replay,
+  runInPty,
+  toSvg,
+  waitForScreen,
+  type Screen,
+} from "../utils/terminal.js";
 
 const SIZE = { cols: 100, rows: 40 };
-const ARTIFACTS_DIR = path.join(config.rootDir, "packages/e2e-tests/.artifacts/tui");
+const ARTIFACTS_DIR = path.join(
+  config.rootDir,
+  "packages/e2e-tests/.artifacts/tui",
+);
 
 const reachable = (await isPgReachable()) && (await isClickHouseReachable());
 
 if (!reachable && process.env.CI) {
   throw new Error(
-    "Postgres or ClickHouse is unreachable, so the TUI suite cannot run. Refusing to skip it in CI."
+    "Postgres or ClickHouse is unreachable, so the TUI suite cannot run. Refusing to skip it in CI.",
   );
 }
 
@@ -37,7 +46,12 @@ const baseEnv = (): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     const lower = key.toLowerCase();
-    if (value === undefined || lower.startsWith("npm_") || lower.startsWith("pnpm_")) continue;
+    if (
+      value === undefined ||
+      lower.startsWith("npm_") ||
+      lower.startsWith("pnpm_")
+    )
+      continue;
     env[key] = value;
   }
   // The display's own decision is what's under test, so nothing decides it for it.
@@ -53,37 +67,46 @@ const baseEnv = (): Record<string, string> => {
   };
 };
 
-const LOGO = [
-  "█▛▀▀ █▙  █ ▜▌ ▗█ █▌▗▟▀▀▙▖",
-  "█▛▀▘ █▛█▄█ ▝█▖█▘ █▌█▌  ▐█",
-  "█▙▄▄ █▌ ▜█  ▐█▛  █▌▝▜▄▄▛▘",
-];
-const LOGO_TOP = LOGO[0]!;
+const isTitle = (line: string) => line.startsWith("  envio@");
 
-/** The display: from the logo to the end of the screen. */
+/** The display: from the title to the end of the screen. */
 const frameOf = (screen: Screen) =>
   screen.lines
-    .slice(screen.lines.lastIndexOf(LOGO_TOP))
-    .map((line) => line.replace(/^Time Synced: .+ \(synced\)$/, "Time Synced: <elapsed> (synced)"));
+    .slice(screen.lines.findLastIndex(isTitle))
+    .map((line) =>
+      line
+        .replace(/^  envio@\S+ .*\/([^/]+)$/, "  envio@<version> …/$1")
+        .replace(/^  ✓ synced in .+? · /, "  ✓ synced in <elapsed> · "),
+    );
+
+const LOGO = [
+  "                              ⢕⠕⠑⠑ ⢕⢕⠄ ⢕⠅⠐⢕  ⢔⠕⢐⢕ ⢀⠔⠕⠕⢔⠄",
+  "                              ⢕⠕⠔⠔ ⢕⠕⢕⢄⢕⠅ ⢑⢅⢐⠕ ⢐⢕ ⢕⠅  ⢐⢕",
+  "                              ⢕⢕⢔⢔⠄⢕⠅ ⠑⢕⠅  ⢕⢕⠁ ⢐⢕ ⠑⢕⢔⢔⠕⠁",
+];
 
 const READY = "Ready. Fully indexed for queries.";
 
 /** Synced, and every chain's last log is out, so nothing prints after Ctrl-C. */
 const isDone = (chains: number) => (screen: Screen) =>
-  frameOf(screen).includes("Time Synced: <elapsed> (synced)") &&
+  frameOf(screen).some((line) => line.startsWith("  ✓ synced in <elapsed>")) &&
   screen.lines.filter((line) => line.includes(READY)).length === chains;
 
 async function runToSyncedAndInterrupt(
   name: string,
   projectDir: string,
   chains: number,
-  env: Record<string, string>
+  env: Record<string, string>,
 ) {
-  const run = runInPty(config.envioCommand, [...config.envioArgs, "start", "-r"], {
-    cwd: projectDir,
-    env: { ...baseEnv(), ...env },
-    size: SIZE,
-  });
+  const run = runInPty(
+    config.envioCommand,
+    [...config.envioArgs, "start", "-r"],
+    {
+      cwd: projectDir,
+      env: { ...baseEnv(), ...env },
+      size: SIZE,
+    },
+  );
   await waitForScreen(run, SIZE, isDone(chains), 90_000);
   run.type("\x03");
   const exitCode = await run.exited;
@@ -95,10 +118,14 @@ async function runToSyncedAndInterrupt(
 }
 
 const codegen = async (projectDir: string) => {
-  const result = await runCommand(config.envioCommand, [...config.envioArgs, "codegen"], {
-    cwd: projectDir,
-    timeout: config.timeouts.codegen,
-  });
+  const result = await runCommand(
+    config.envioCommand,
+    [...config.envioArgs, "codegen"],
+    {
+      cwd: projectDir,
+      timeout: config.timeouts.codegen,
+    },
+  );
   expect(result.exitCode, `codegen failed: ${result.stderr}`).toBe(0);
 };
 
@@ -112,69 +139,78 @@ describe.skipIf(!reachable)("E2E: TUI", () => {
   });
 
   it("draws below the logs of a single process and leaves the final frame on Ctrl-C", async () => {
-    const { exitCode, screen } = await runToSyncedAndInterrupt("single-process", singleDir, 1, {
-      ENVIO_PG_SCHEMA: "e2e_tui",
-      ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
-      ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
-      ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
-      ENVIO_CLICKHOUSE_DATABASE: "e2e_tui",
-      E2E_EXPECTED_END_BLOCK: "10861774",
-    });
+    const { exitCode, screen } = await runToSyncedAndInterrupt(
+      "single-process",
+      singleDir,
+      1,
+      {
+        ENVIO_PG_SCHEMA: "e2e_tui",
+        ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
+        ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
+        ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+        ENVIO_CLICKHOUSE_DATABASE: "e2e_tui",
+        E2E_EXPECTED_END_BLOCK: "10861774",
+      },
+    );
     expect({
       exitCode,
       cursorVisible: screen.cursorVisible,
-      frames: screen.lines.filter((line) => line === LOGO_TOP).length,
-      linesAfterReady: screen.lines.length - screen.lines.findLastIndex((line) => line.includes(READY)),
+      frames: screen.lines.filter(isTitle).length,
+      linesAfterReady:
+        screen.lines.length -
+        screen.lines.findLastIndex((line) => line.includes(READY)),
       frame: frameOf(screen),
     }).toEqual({
       exitCode: 130,
       cursorVisible: true,
       frames: 1,
       // The log's own trailing blank line, then the frame.
-      linesAfterReady: 15,
+      linesAfterReady: 14,
       frame: [
+        "  envio@<version> …/e2e_test",
+        "",
         ...LOGO,
         "",
-        "Chain: 1 ⚡                                            100%",
-        "Blocks: 10,861,774 / 10,861,774 (End Block)  Events: 2",
+        "  Ethereum 1 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ✓  at end 10,861,774 2 events",
         "",
-        "Total Events: 2",
-        "Time Synced: <elapsed> (synced)",
+        "  ✓ synced in <elapsed> · 2 events",
         "",
-        "GraphQL: http://localhost:8080 (password: testing)",
-        `ClickHouse: ${config.clickhouseUrl}/play`,
+        `  GraphQL http://localhost:8080 (admin secret: testing)   ClickHouse ${config.clickhouseUrl}/play`,
       ],
     });
   });
 
   it("draws for every worker of a split run from the supervisor", async () => {
-    const { exitCode, screen } = await runToSyncedAndInterrupt("supervisor", splitDir, 2, {
-      ENVIO_PG_SCHEMA: "e2e_tui_split",
-      // Two processes' worth, so the run splits.
-      ENVIO_PG_MAX_CONNECTIONS: "4",
-    });
+    const { exitCode, screen } = await runToSyncedAndInterrupt(
+      "supervisor",
+      splitDir,
+      2,
+      {
+        ENVIO_PG_SCHEMA: "e2e_tui_split",
+        // Two processes' worth, so the run splits.
+        ENVIO_PG_MAX_CONNECTIONS: "4",
+      },
+    );
     expect({
       exitCode,
       cursorVisible: screen.cursorVisible,
-      frames: screen.lines.filter((line) => line === LOGO_TOP).length,
+      frames: screen.lines.filter(isTitle).length,
       frame: frameOf(screen),
     }).toEqual({
       exitCode: 0,
       cursorVisible: true,
       frames: 1,
       frame: [
+        "  envio@<version> …/split_test",
+        "",
         ...LOGO,
         "",
-        "Chain: 1 ⚡                                            100%",
-        "Blocks: 10,861,774 / 10,861,774 (End Block)  Events: 2",
+        "  Ethereum 1 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ✓  at end 10,861,774  2 events",
+        "  Base 8453  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ✓  at end 10,000,050 53 events",
         "",
-        "Chain: 8453 ⚡                                         100%",
-        "Blocks: 10,000,050 / 10,000,050 (End Block)  Events: 53",
+        "  ✓ synced in <elapsed> · 55 events",
         "",
-        "Total Events: 55",
-        "Time Synced: <elapsed> (synced)",
-        "",
-        "GraphQL: http://localhost:8080 (password: testing)",
+        "  GraphQL http://localhost:8080 (admin secret: testing)",
       ],
     });
   });
