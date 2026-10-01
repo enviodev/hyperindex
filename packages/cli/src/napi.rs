@@ -170,36 +170,42 @@ pub fn transform_ts(filename: String, source: String) -> napi::Result<TransformT
     })
 }
 
-/// Resolves a specifier Node's own resolver rejected, the way TypeScript with
-/// `moduleResolution: "bundler"` does: extensionless and directory imports,
-/// `.js` spellings of `.ts` files, and the `paths`/`baseUrl` of the nearest
-/// tsconfig.json to `parent`.
-#[napi_derive::napi]
-pub fn resolve_ts(specifier: String, parent: String) -> Option<String> {
-    use oxc_resolver::{ResolveOptions, Resolver, TsconfigDiscovery};
-    use std::sync::LazyLock;
+/// The tsconfig.json found from the working directory upwards, as tsx loads
+/// it: one config, with `extends` followed, for every handler module.
+fn project_tsconfig() -> Option<&'static oxc_resolver::TsConfig> {
+    use oxc_resolver::{ResolveOptions, Resolver, TsConfig};
+    use std::sync::{Arc, LazyLock};
 
-    static RESOLVER: LazyLock<Resolver> = LazyLock::new(|| {
-        let strings = |items: &[&str]| items.iter().map(|item| item.to_string()).collect();
-        Resolver::new(ResolveOptions {
-            tsconfig: Some(TsconfigDiscovery::Auto),
-            condition_names: strings(&["node", "import"]),
-            extensions: strings(&[
-                ".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".json",
-            ]),
-            extension_alias: vec![
-                (".js".into(), strings(&[".ts", ".tsx", ".js"])),
-                (".mjs".into(), strings(&[".mts", ".mjs"])),
-                (".cjs".into(), strings(&[".cts", ".cjs"])),
-            ],
-            ..ResolveOptions::default()
-        })
+    static TSCONFIG: LazyLock<Option<Arc<TsConfig>>> = LazyLock::new(|| {
+        let cwd = std::env::current_dir().ok()?;
+        let path = cwd
+            .ancestors()
+            .map(|directory| directory.join("tsconfig.json"))
+            .find(|path| path.is_file())?;
+        Resolver::new(ResolveOptions::default())
+            .resolve_tsconfig(path)
+            .ok()
     });
 
-    RESOLVER
-        .resolve_file(&parent, &specifier)
-        .ok()
-        .map(|resolution| resolution.full_path().to_string_lossy().into_owned())
+    TSCONFIG.as_deref()
+}
+
+#[napi_derive::napi]
+pub fn ts_allow_js() -> bool {
+    project_tsconfig().is_some_and(|tsconfig| tsconfig.compiler_options.allow_js == Some(true))
+}
+
+/// Candidate paths for a bare specifier under the project tsconfig's `paths`,
+/// or under `baseUrl` when no pattern matches. Empty without either.
+#[napi_derive::napi]
+pub fn ts_path_candidates(specifier: String) -> Vec<String> {
+    project_tsconfig().map_or_else(Vec::new, |tsconfig| {
+        tsconfig
+            .resolve_path_alias_or_base_url(&specifier)
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect()
+    })
 }
 
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when

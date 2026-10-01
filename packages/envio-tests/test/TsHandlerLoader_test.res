@@ -46,7 +46,7 @@ describe("TypeScript handler loading", () => {
       },
     });
 
-    t.expect(await indexer.Transfer.getAll()).toEqual([{ id: "1_0_0", direction: "js:incoming" }]);
+    t.expect(await indexer.Transfer.getAll()).toEqual([{ id: "1_0_0", direction: "js:incoming:ts" }]);
   });
 });
 `,

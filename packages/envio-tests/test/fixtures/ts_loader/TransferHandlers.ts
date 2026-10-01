@@ -7,6 +7,8 @@ import { eventName } from "./events.js";
 import labels from "./labels.json";
 // Extensionless import of a plain `.js` sibling, which `allowJs` permits.
 import { label } from "./format";
+// Both `dup.ts` and `dup.js` exist; like tsx, the TypeScript file wins.
+import { source } from "./dup.js";
 
 // Not erasable syntax, so Node's built-in type stripping rejects this module.
 enum Direction {
@@ -17,6 +19,6 @@ enum Direction {
 indexer.onEvent({ contract: contractName, event: eventName }, async ({ event, context }) => {
   context.Transfer.set({
     id: `${event.chainId}_${event.block.number}_${event.logIndex}`,
-    direction: label(labels[Direction.In]),
+    direction: `${label(labels[Direction.In])}:${source}`,
   });
 });

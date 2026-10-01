@@ -74,3 +74,21 @@ describe("TypeScript handler errors", () => {
     expect(`${result.stdout}${result.stderr}`).toMatch(/Throwing\.ts:9:/);
   });
 });
+
+// The tsconfig is the one found from the working directory, as tsx does, so
+// this runs the CLI rather than an in-process indexer.
+describe("TypeScript handler imports", () => {
+  it("resolve through tsconfig paths and baseUrl before packages", async () => {
+    const result = await runEnvio(
+      ["start"],
+      {
+        ENVIO_PG_PORT: String(config.pgPort),
+        ENVIO_PG_SCHEMA: `envio_test_${Date.now()}_${process.pid}_tspaths`,
+        ENVIO_HASURA: "false",
+      },
+      path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-paths-project")
+    );
+
+    expect(`${result.stdout}${result.stderr}`).toContain("loaded Gravatar NewGravatar shadowed");
+  });
+});
