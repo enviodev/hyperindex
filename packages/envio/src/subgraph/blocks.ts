@@ -3,8 +3,8 @@
  *
  * envio hands a block handler only the block number, so the timestamp has to be
  * fetched. Every handler invocation in a batch asks within the same microtask,
- * so the requests are collected and answered by a single HyperSync range query
- * rather than one round trip per block. An RPC endpoint, if one is configured,
+ * so the requests are collected and answered by a HyperSync range query per
+ * cluster of nearby blocks rather than one round trip per block. An RPC endpoint, if one is configured,
  * is the fallback for whatever HyperSync couldn't answer.
  */
 
@@ -59,21 +59,33 @@ export function requestBlockTimestamp(chainId: number, blockNumber: number): Pro
   });
 }
 
+/**
+ * Gaps narrower than one response's worth of headers are fetched through
+ * rather than split: a polling handler every few blocks is one query, one
+ * every 100,000 is one tiny query per block.
+ */
+const CLUSTER_GAP = 10_000;
+
+/** The requested blocks as `[from, to]` ranges, in order. */
+function clusters(blockNumbers: number[]): [number, number][] {
+  const sorted = [...blockNumbers].sort((a, b) => a - b);
+  const ranges: [number, number][] = [];
+  for (const blockNumber of sorted) {
+    const last = ranges[ranges.length - 1];
+    if (last && blockNumber - last[1] <= CLUSTER_GAP) last[1] = blockNumber;
+    else ranges.push([blockNumber, blockNumber]);
+  }
+  return ranges;
+}
+
 async function answer(chainId: number, blocks: Map<number, Waiter[]>) {
   let timestamps = new Map<number, bigint>();
 
-  // A batch can hold thousands of blocks, and one argument per block would
-  // overflow the call stack inside the try, where it would read as a HyperSync
-  // failure and fall back to one round trip per block.
-  let lowest = Infinity;
-  let highest = -Infinity;
-  for (const blockNumber of blocks.keys()) {
-    if (blockNumber < lowest) lowest = blockNumber;
-    if (blockNumber > highest) highest = blockNumber;
-  }
-
   try {
-    timestamps = await fromHyperSync(chainId, lowest, highest);
+    const fetched = await Promise.all(
+      clusters([...blocks.keys()]).map(([from, to]) => fromHyperSync(chainId, from, to)),
+    );
+    timestamps = new Map(fetched.flatMap((cluster) => [...cluster]));
   } catch (error) {
     if (rpcUrls.length === 0) {
       const message = error instanceof Error ? error.message : String(error);
