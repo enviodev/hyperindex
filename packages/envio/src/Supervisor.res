@@ -430,12 +430,7 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // same initialization an unsplit run does, and the supervisor hands the
   // connections it used to its workers.
   let persistence = PgStorage.makePersistenceFromConfig(~config)
-  await persistence->Persistence.initForRun(
-    ~config,
-    ~reset,
-    ~isDevelopmentMode=config.isDev,
-    ~requireInitialized=false,
-  )
+  await persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=config.isDev)
   await persistence.storage.close()
 
   let startTime = Date.make()
