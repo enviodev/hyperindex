@@ -3,10 +3,14 @@
 //! types are gone — except where the same source means something else. Each of
 //! those is rewritten here, before the file is imported:
 //!
-//! - `a / b` between two integers truncates. `timestamp / 86400` is a day bucket
-//!   in a mapping and a fraction in JavaScript, and the fraction travels into
-//!   ids and `Int` columns. Every `/` and `/=` goes through a runtime helper that
-//!   truncates only when both operands are integers.
+//! - Operators. graph-ts overloads arithmetic and comparison on `BigInt`,
+//!   `BigDecimal` and `ByteArray`, and AssemblyScript calls the overload, where
+//!   JavaScript would coerce or compare identity — `address == ZERO_ADDRESS`
+//!   would never hold. And `a / b` between two integers truncates:
+//!   `timestamp / 86400` is a day bucket in a mapping and a fraction in
+//!   JavaScript. Every such operator, compound assignment included, goes through
+//!   a runtime helper that calls the overload when there is one and otherwise
+//!   computes what AssemblyScript does.
 //! - `changetype<Foo>(x)` reinterprets a pointer. Nothing in JavaScript gives `x`
 //!   the generated class's getters, so a class argument goes to a helper that
 //!   sets the prototype.
@@ -33,13 +37,13 @@ use oxc::{
     semantic::SemanticBuilder,
     span::{SourceType, Span},
     syntax::{
-        operator::{AssignmentOperator, BinaryOperator},
+        operator::{AssignmentOperator, BinaryOperator, UnaryOperator},
         scope::ScopeFlags,
     },
     transformer::{TransformOptions, Transformer},
 };
 
-pub const DIVIDE_HELPER: &str = "__envio_idiv";
+pub const OPERATORS_HELPER: &str = "__envio_op";
 pub const RETAG_HELPER: &str = "__envio_retag";
 pub const EVENT_CLASSES_EXPORT: &str = "__envio_event_classes";
 
@@ -148,9 +152,60 @@ struct Rewrite<'a> {
     refused: Option<(Span, &'static str)>,
 }
 
+/// The `OPERATORS_HELPER` method standing in for a binary operator.
+fn binary_helper(operator: BinaryOperator) -> Option<&'static str> {
+    Some(match operator {
+        BinaryOperator::Addition => "add",
+        BinaryOperator::Subtraction => "sub",
+        BinaryOperator::Multiplication => "mul",
+        BinaryOperator::Division => "div",
+        BinaryOperator::Remainder => "rem",
+        BinaryOperator::Equality => "eq",
+        BinaryOperator::Inequality => "ne",
+        BinaryOperator::LessThan => "lt",
+        BinaryOperator::LessEqualThan => "le",
+        BinaryOperator::GreaterThan => "gt",
+        BinaryOperator::GreaterEqualThan => "ge",
+        _ => return None,
+    })
+}
+
+fn assignment_helper(operator: AssignmentOperator) -> Option<&'static str> {
+    Some(match operator {
+        AssignmentOperator::Addition => "add",
+        AssignmentOperator::Subtraction => "sub",
+        AssignmentOperator::Multiplication => "mul",
+        AssignmentOperator::Division => "div",
+        AssignmentOperator::Remainder => "rem",
+        _ => return None,
+    })
+}
+
 impl<'a> Rewrite<'a> {
-    fn call(&self, span: Span, helper: &'static str, args: [Expression<'a>; 2]) -> Expression<'a> {
+    fn call<const N: usize>(
+        &self,
+        span: Span,
+        helper: &'static str,
+        args: [Expression<'a>; N],
+    ) -> Expression<'a> {
         let callee = self.ast.expression_identifier(span, helper);
+        let args = self.ast.vec_from_iter(args.into_iter().map(Argument::from));
+        self.ast.expression_call(span, callee, NONE, args, false)
+    }
+
+    /// `OPERATORS_HELPER.method(args)`.
+    fn operator<const N: usize>(
+        &self,
+        span: Span,
+        method: &'static str,
+        args: [Expression<'a>; N],
+    ) -> Expression<'a> {
+        let object = self.ast.expression_identifier(span, OPERATORS_HELPER);
+        let property = self.ast.identifier_name(span, method);
+        let callee = Expression::from(
+            self.ast
+                .member_expression_static(span, object, property, false),
+        );
         let args = self.ast.vec_from_iter(args.into_iter().map(Argument::from));
         self.ast.expression_call(span, callee, NONE, args, false)
     }
@@ -194,26 +249,42 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
     fn visit_expression(&mut self, expr: &mut Expression<'a>) {
         walk_mut::walk_expression(self, expr);
         match expr {
-            Expression::BinaryExpression(binary) if binary.operator == BinaryOperator::Division => {
+            Expression::BinaryExpression(binary) => {
+                let Some(method) = binary_helper(binary.operator) else {
+                    return;
+                };
                 let span = binary.span;
                 let left = binary.left.take_in(self.ast.allocator);
                 let right = binary.right.take_in(self.ast.allocator);
-                *expr = self.call(span, DIVIDE_HELPER, [left, right]);
+                *expr = self.operator(span, method, [left, right]);
             }
-            Expression::AssignmentExpression(assign)
-                if assign.operator == AssignmentOperator::Division =>
+            // A negative literal is a number either way.
+            Expression::UnaryExpression(unary)
+                if unary.operator == UnaryOperator::UnaryNegation
+                    && !matches!(
+                        unary.argument,
+                        Expression::NumericLiteral(_) | Expression::BigIntLiteral(_)
+                    ) =>
             {
+                let span = unary.span;
+                let argument = unary.argument.take_in(self.ast.allocator);
+                *expr = self.operator(span, "neg", [argument]);
+            }
+            Expression::AssignmentExpression(assign) => {
+                let Some(method) = assignment_helper(assign.operator) else {
+                    return;
+                };
                 let Some(read) = self.read_of(&assign.left) else {
                     self.refused.get_or_insert((
                         assign.span,
-                        "Envio Subgraph can't divide into this target the way AssemblyScript \
-                         does: an indexed or computed `/=` would evaluate its target twice. \
-                         Divide into a local first.",
+                        "Envio Subgraph can't apply this compound assignment the way \
+                         AssemblyScript does: an indexed or computed target would be evaluated \
+                         twice. Compute into a local first.",
                     ));
                     return;
                 };
                 let right = assign.right.take_in(self.ast.allocator);
-                assign.right = self.call(assign.span, DIVIDE_HELPER, [read, right]);
+                assign.right = self.operator(assign.span, method, [read, right]);
                 assign.operator = AssignmentOperator::Assign;
             }
             Expression::CallExpression(call) => {
@@ -338,19 +409,25 @@ mod tests {
     }
 
     #[test]
-    fn divides_integers_through_the_helper() {
+    fn routes_operators_through_the_helper() {
         assert_eq!(
-            js("export function day(timestamp: i32, entity: Entity): i32 {
-  let bucket = timestamp / (86400 / 2) / 2;
-  bucket /= 2;
-  entity.total /= 3;
-  return bucket;
-}"),
-            "export function day(timestamp, entity) {
-\tlet bucket = __envio_idiv(__envio_idiv(timestamp, __envio_idiv(86400, 2)), 2);
-\tbucket = __envio_idiv(bucket, 2);
-\tentity.total = __envio_idiv(entity.total, 3);
-\treturn bucket;
+            js(
+                "export function day(timestamp: i32, total: BigInt, owner: Address): i32 {
+  let bucket = timestamp / 86400;
+  total += BigInt.fromI32(1);
+  if (owner == ZERO || -total < total) {
+    return -1;
+  }
+  return bucket % 7;
+}"
+            ),
+            "export function day(timestamp, total, owner) {
+\tlet bucket = __envio_op.div(timestamp, 86400);
+\ttotal = __envio_op.add(total, BigInt.fromI32(1));
+\tif (__envio_op.eq(owner, ZERO) || __envio_op.lt(__envio_op.neg(total), total)) {
+\t\treturn -1;
+\t}
+\treturn __envio_op.rem(bucket, 7);
 }
 "
         );
@@ -359,12 +436,12 @@ mod tests {
     // Reading an indexed target twice could run its index twice, so this is
     // refused rather than rewritten into something the mapping didn't write.
     #[test]
-    fn refuses_a_compound_division_into_a_computed_target() {
+    fn refuses_a_compound_assignment_into_a_computed_target() {
         assert_eq!(
             refusal("export function f(values: i32[], i: i32): void {\n  values[i++] /= 2;\n}"),
-            "src/mapping.ts:2:3: Envio Subgraph can't divide into this target the way \
-             AssemblyScript does: an indexed or computed `/=` would evaluate its target twice. \
-             Divide into a local first."
+            "src/mapping.ts:2:3: Envio Subgraph can't apply this compound assignment the way \
+             AssemblyScript does: an indexed or computed target would be evaluated twice. \
+             Compute into a local first."
         );
     }
 
@@ -428,7 +505,7 @@ export function f(value, n) {
 }"),
             "function f(value) {
 \tvar value = 1;
-\tif (value > 0) {
+\tif (__envio_op.gt(value, 0)) {
 \t\tlet value = 2;
 \t\treturn value;
 \t}

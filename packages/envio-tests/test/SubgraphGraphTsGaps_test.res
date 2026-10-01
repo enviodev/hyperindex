@@ -44,7 +44,7 @@ type Result @entity {
     (
       "src/probe.ts",
       `
-import { BigDecimal, BigInt, Bytes, Entity, EthereumUtils, json, JSONValue, Result, store, typeConversion, Wrapped } from "@graphprotocol/graph-ts";
+import { Address, BigDecimal, BigInt, Bytes, Entity, EthereumUtils, json, JSONValue, Result, store, typeConversion, Wrapped } from "@graphprotocol/graph-ts";
 
 function probe(id: string, value: string): void {
   let result = new Entity();
@@ -101,6 +101,34 @@ export function handlePing(event: any): void {
     [new Wrapped<boolean>(true).inner.toString(), parsed.isError.toString()].join(","),
   );
 
+  // graph-ts overloads these operators, and AssemblyScript calls the
+  // overload: in JavaScript they would coerce, or compare identity.
+  let two = BigInt.fromI32(2);
+  let three = BigInt.fromI32(3);
+  let total = two;
+  total += three;
+  let half = BigDecimal.fromString("1.5");
+  probe(
+    "operators",
+    [
+      (two + three).plus(two).toString(),
+      (three - two).plus(two).toString(),
+      (two * three).plus(two).toString(),
+      (three / two).plus(two).toString(),
+      (three % two).plus(two).toString(),
+      (-two).plus(three).toString(),
+      total.plus(two).toString(),
+      (two == BigInt.fromI32(2)).toString(),
+      (two != BigInt.fromI32(2)).toString(),
+      (two < three).toString(),
+      (half + half).toString(),
+      (
+        Address.fromString("0x00000000000000000000000000000000000000aa") ==
+        Address.fromString("0x00000000000000000000000000000000000000AA")
+      ).toString(),
+    ].join(","),
+  );
+
   probe(
     "create2",
     EthereumUtils.getCreate2Address(
@@ -139,6 +167,7 @@ describe("the graph-ts surface", () => {
       create2: await value("create2"),
       jsonNumbers: await value("jsonNumbers"),
       wrapped: await value("wrapped"),
+      operators: await value("operators"),
     }).toEqual({
       bigIntToString: "255",
       bigIntToHex: "0xff",
@@ -151,6 +180,7 @@ describe("the graph-ts surface", () => {
       create2: "0x4f2009bbb6b8238db8d2f37112e85902d5155077",
       jsonNumbers: "-12345678901234567890,-42,42,1.5",
       wrapped: "true,true",
+      operators: "7,3,8,3,3,1,7,true,false,true,3,true",
     });
   });
 });
