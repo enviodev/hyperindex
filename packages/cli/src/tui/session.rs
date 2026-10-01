@@ -49,6 +49,9 @@ pub struct Session<W: Write> {
     /// or from the frame shrinking, which output takes before it scrolls, so
     /// none of them reach the scrollback.
     blank: usize,
+    /// Where the terminal had the cursor before the first draw, as row and
+    /// column from 0, when it said.
+    started_at: Option<(u16, u16)>,
 }
 
 impl<W: Write> Session<W> {
@@ -59,7 +62,14 @@ impl<W: Write> Session<W> {
             drawn: Vec::new(),
             drawn_size: None,
             blank: 0,
+            started_at: None,
         }
+    }
+
+    /// Lets the first draw keep what the terminal shows right above the frame
+    /// instead of scrolling it off the screen.
+    pub fn started_at(&mut self, cursor: (u16, u16)) {
+        self.started_at = Some(cursor);
     }
 
     /// The rows the frame on screen takes at `size`: a narrower terminal may
@@ -121,14 +131,30 @@ impl<W: Write> Session<W> {
     ) -> io::Result<()> {
         let mut buf = BEGIN_SYNCHRONIZED_UPDATE.to_vec();
         let pinned = size.rows_above_cursor();
-        match (self.drawn_size, pinned) {
-            // Takes the screen, scrolling what was on it into the scrollback.
-            (None, Some(rows)) => {
+        match (self.drawn_size, pinned, self.started_at) {
+            // Moves what the terminal shows down to the bottom of the screen,
+            // past a line it left unfinished, onto the blank rows below it.
+            (None, Some(rows), Some((row, column))) => {
+                let mut row = (row as usize).min(rows);
+                if column > 0 {
+                    buf.extend(b"\r\n");
+                    row = (row + 1).min(rows);
+                }
+                self.blank = rows - row;
+                if self.blank > 0 {
+                    buf.extend(
+                        format!("\x1b[{0}A\x1b[{1}L\x1b[{0}B", size.height, self.blank).as_bytes(),
+                    );
+                }
+            }
+            // Not knowing where the cursor is, takes the screen, scrolling
+            // what was on it into the scrollback.
+            (None, Some(rows), None) => {
                 buf.extend(b"\r\n".repeat(rows));
                 self.blank = rows;
             }
             // The terminal may have moved what's at the top of the screen.
-            (Some(drawn), _) if drawn != size => self.blank = 0,
+            (Some(drawn), _, _) if drawn != size => self.blank = 0,
             _ => {}
         }
         let drawn_rows = self.drawn_rows(size);
@@ -431,6 +457,30 @@ mod tests {
         assert_eq!(
             emulator.lines(),
             pinned(&["$ envio dev"], &["first log", "second log"], &[])
+        );
+    }
+
+    // Startup logs would otherwise scroll off with whatever the shell showed.
+    #[test]
+    fn keeps_what_the_terminal_showed_right_above_the_frame() {
+        let emulator = Emulator::new(SIZE);
+        emulator
+            .clone()
+            .write_all(b"$ envio dev\r\nstarting\r\nhalf a line")
+            .unwrap();
+        let mut session = emulator.session();
+        session.started_at(emulator.cursor());
+        session.render(None, &state(), 0., 0, SIZE).unwrap();
+        session
+            .render(Some("first log"), &state(), 0., 0, SIZE)
+            .unwrap();
+        assert_eq!(
+            emulator.lines(),
+            pinned(
+                &[],
+                &["$ envio dev", "starting", "half a line", "first log"],
+                &[]
+            )
         );
     }
 

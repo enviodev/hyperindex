@@ -13,7 +13,7 @@ use state::{Messages, State};
 use state::{TuiChain, TuiInfo, TuiMessage};
 use std::{
     fs::File,
-    io::{self, IsTerminal, Write},
+    io::{self, IsTerminal, Read, Write},
     os::fd::{AsRawFd, FromRawFd},
     sync::{mpsc, Arc, Mutex},
     thread,
@@ -48,6 +48,41 @@ impl Tty {
         Ok(Size::reported(size.ws_col, size.ws_row))
     }
 
+    /// Where the terminal has the cursor, as row and column from 0, asked of
+    /// the terminal itself: `None` when there's none to ask or it doesn't
+    /// answer in time. Its reply arrives as input, so the terminal stops
+    /// echoing input and buffering it into lines until it has.
+    fn cursor(&self) -> Option<(u16, u16)> {
+        let terminal = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .ok()?;
+        let fd = terminal.as_raw_fd();
+        // SAFETY: `termios` is plain data that `tcgetattr` fills in.
+        let mut saved: libc::termios = unsafe { std::mem::zeroed() };
+        // SAFETY: the descriptor is open for the duration, and both calls
+        // only read or write the struct passed.
+        if unsafe { libc::tcgetattr(fd, &mut saved) } != 0 {
+            return None;
+        }
+        let mut quiet = saved;
+        quiet.c_lflag &= !(libc::ICANON | libc::ECHO);
+        quiet.c_cc[libc::VMIN] = 0;
+        quiet.c_cc[libc::VTIME] = 0;
+        // SAFETY: as above.
+        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &quiet) } != 0 {
+            return None;
+        }
+        let reply = (&terminal)
+            .write_all(b"\x1b[6n")
+            .ok()
+            .and_then(|()| read_cursor_report(&terminal, Duration::from_millis(500)));
+        // SAFETY: as above.
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
+        reply
+    }
+
     fn wait_until_writable(&self) -> io::Result<()> {
         let mut poll = libc::pollfd {
             fd: self.0.as_raw_fd(),
@@ -79,6 +114,42 @@ impl Write for Tty {
     fn flush(&mut self) -> io::Result<()> {
         (&*self.0).flush()
     }
+}
+
+fn read_cursor_report(terminal: &File, timeout: Duration) -> Option<(u16, u16)> {
+    let deadline = Instant::now() + timeout;
+    let mut reply = Vec::new();
+    loop {
+        if let Some(cursor) = parse_cursor_report(&reply) {
+            return Some(cursor);
+        }
+        let left = deadline.checked_duration_since(Instant::now())?;
+        let mut poll = libc::pollfd {
+            fd: terminal.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid `pollfd`, which outlives the call.
+        if unsafe { libc::poll(&mut poll, 1, left.as_millis() as libc::c_int) } <= 0 {
+            return None;
+        }
+        let mut buf = [0; 64];
+        match (&*terminal).read(&mut buf) {
+            Ok(0) | Err(_) => return None,
+            Ok(read) => reply.extend_from_slice(&buf[..read]),
+        }
+    }
+}
+
+/// `ESC [ row ; column R`, counted from 1, after anything typed before it.
+fn parse_cursor_report(reply: &[u8]) -> Option<(u16, u16)> {
+    let text = std::str::from_utf8(reply).ok()?;
+    let report = &text[text.rfind("\x1b[")? + 2..];
+    let (row, column) = report.strip_suffix('R')?.split_once(';')?;
+    Some((
+        row.parse::<u16>().ok()?.checked_sub(1)?,
+        column.parse::<u16>().ok()?.checked_sub(1)?,
+    ))
 }
 
 /// A frame that panics mid-draw would otherwise leave the user's shell with
@@ -213,6 +284,9 @@ impl Tui {
                 level: ColorLevel::detect(|name| std::env::var(name).ok()),
             },
         );
+        if let Some(cursor) = tty.cursor() {
+            session.started_at(cursor);
+        }
         session.hide_cursor().map_err(to_napi)?;
         let (commands, receiver) = mpsc::channel();
         thread::Builder::new()
@@ -270,6 +344,19 @@ impl Tui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_where_the_terminal_reports_the_cursor() {
+        assert_eq!(
+            [
+                parse_cursor_report(b"\x1b[12;1R"),
+                parse_cursor_report(b"typed\x1b[3;40R"),
+                parse_cursor_report(b"\x1b[12;1"),
+                parse_cursor_report(b"\x1b[0;1R"),
+            ],
+            [Some((11, 0)), Some((2, 39)), None, None]
+        );
+    }
 
     #[test]
     fn prints_rust_logs_above_a_running_display() {

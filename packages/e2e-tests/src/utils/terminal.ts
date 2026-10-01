@@ -56,7 +56,18 @@ export function runInPty(
   });
   const chunks: Buffer[] = [];
   const resizes: Resize[] = [];
-  child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+  child.stdout.on("data", (chunk: Buffer) => {
+    chunks.push(chunk);
+    // Answers a cursor position query as the terminal would, from what it shows.
+    if (chunk.includes("\x1b[6n")) {
+      void replay(Buffer.concat(chunks), options.size, resizes).then(
+        (screen) => {
+          const { cursorX, cursorY } = screen.terminal.buffer.active;
+          child.stdin.write(`\x1b[${cursorY + 1};${cursorX + 1}R`);
+        },
+      );
+    }
+  });
   let hasExited = false;
   const exited = new Promise<number | null>((resolve) =>
     child.on("close", (code) => {
