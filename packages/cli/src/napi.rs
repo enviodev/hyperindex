@@ -99,6 +99,9 @@ pub struct TransformTsResult {
     /// JSON source map, always emitted so handler stack traces point at the
     /// user's TypeScript rather than the stripped output.
     pub map: Option<String>,
+    /// Whether the source uses `import`/`export`, which only runs as an ES
+    /// module whatever the package `type` says.
+    pub has_module_syntax: bool,
 }
 
 /// Strips types from a TypeScript handler module and lowers the syntax Node
@@ -138,6 +141,7 @@ pub fn transform_ts(filename: String, source: String) -> napi::Result<TransformT
         return Err(report("parsing", &filename, &parsed.diagnostics));
     }
 
+    let has_module_syntax = parsed.module_record.has_module_syntax;
     let mut program = parsed.program;
     // `with_enum_eval` is what lets the transformer resolve enum member values;
     // without it, lowering an `enum` panics.
@@ -162,6 +166,7 @@ pub fn transform_ts(filename: String, source: String) -> napi::Result<TransformT
     Ok(TransformTsResult {
         code: generated.code,
         map: generated.map.map(|map| map.to_json_string()),
+        has_module_syntax,
     })
 }
 

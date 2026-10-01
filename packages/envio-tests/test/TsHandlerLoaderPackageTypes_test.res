@@ -1,10 +1,10 @@
-// The handler's nearest package.json has no `type`. Node gives an ambiguous
-// `.ts` file written with `import` the module format, so the loader must too
-// rather than running it as CommonJS.
+// Each handler's nearest package.json either has no `type` or says
+// `commonjs`. Both handlers are written with `import`, which only runs as an ES
+// module, so the loader must not give them the CommonJS format.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
-name: ts-loader-untyped
-handlers: test/fixtures/ts_loader_untyped
+name: ts-loader-package-types
+handlers: test/fixtures/ts_loader_package_types
 chains:
   - id: 1
     start_block: 0
@@ -25,8 +25,8 @@ import { createTestIndexer, TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;
 
-describe("TypeScript handler loading without a package type", () => {
-  it("runs an ESM handler module", async (t) => {
+describe("TypeScript handler loading in a non-module package", () => {
+  it("runs ESM handler modules", async (t) => {
     const indexer = createTestIndexer();
 
     await indexer.process({
@@ -43,7 +43,8 @@ describe("TypeScript handler loading without a package type", () => {
       },
     });
 
-    t.expect(await indexer.Transfer.getAll()).toEqual([{ id: "1_0_0" }]);
+    const ids = (await indexer.Transfer.getAll()).map((transfer) => transfer.id).sort();
+    t.expect(ids).toEqual(["commonjs", "untyped"]);
   });
 });
 `,

@@ -30,6 +30,7 @@ type fromUserApiResult = {
 type transformTsResult = {
   code: string,
   map: Null.t<string>,
+  hasModuleSyntax: bool,
 }
 
 type addon = {

@@ -6,6 +6,7 @@ import { dirname, join, parse as parsePath } from "node:path";
 const TS_EXTENSION = /\.([cm]?)tsx?$/;
 const JS_EXTENSION = /\.([cm]?)jsx?$/;
 const TS_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
+const EXTENSIONLESS_CANDIDATES = [...TS_EXTENSIONS, ".js", ".jsx", ".mjs", ".cjs"];
 const RELATIVE_SPECIFIER = /^\.{1,2}\//;
 
 const isFile = (path) => {
@@ -16,22 +17,22 @@ const isFile = (path) => {
   }
 };
 
-// The project tsconfig sets `moduleResolution: "bundler"`, so handlers may
-// import a sibling without an extension, or spell a `.ts` sibling `.js`.
-// Node's resolver does neither.
+// The project tsconfig sets `moduleResolution: "bundler"` and `allowJs`, so
+// handlers may import a sibling without an extension, or spell a `.ts` sibling
+// `.js`. Node's resolver does neither.
 const tsCandidates = (path) => {
   if (JS_EXTENSION.test(path)) {
     return [path.replace(JS_EXTENSION, ".$1ts"), path.replace(JS_EXTENSION, ".$1tsx")];
   }
   return [
-    ...TS_EXTENSIONS.map((extension) => path + extension),
-    ...TS_EXTENSIONS.map((extension) => join(path, `index${extension}`)),
+    ...EXTENSIONLESS_CANDIDATES.map((extension) => path + extension),
+    ...EXTENSIONLESS_CANDIDATES.map((extension) => join(path, `index${extension}`)),
   ];
 };
 
-// Only an explicit `"type": "commonjs"` makes a `.ts` file CommonJS. Without a
-// type, Node detects the format from syntax, and handlers are written with
-// `import`, so they get the module format.
+// Only decides the format of a file without `import`/`export`, which is a
+// script in either format. Like Node's own detection, it is CommonJS unless the
+// package says `module`.
 const packageType = (path) => {
   const { root } = parsePath(path);
   let directory = dirname(path);
@@ -39,12 +40,12 @@ const packageType = (path) => {
     const manifest = join(directory, "package.json");
     if (isFile(manifest)) {
       try {
-        return JSON.parse(readFileSync(manifest, "utf8")).type === "commonjs" ? "commonjs" : "module";
+        return JSON.parse(readFileSync(manifest, "utf8")).type === "module" ? "module" : "commonjs";
       } catch {
-        return "module";
+        return "commonjs";
       }
     }
-    if (directory === root) return "module";
+    if (directory === root) return "commonjs";
     directory = dirname(directory);
   }
 };
@@ -109,10 +110,16 @@ export const register = (transformTs) => {
         return nextLoad(url, context);
       }
 
-      const { code, map } = transformTs(path, readFileSync(path, "utf8"));
+      const { code, map, hasModuleSyntax } = transformTs(path, readFileSync(path, "utf8"));
       return {
         format:
-          extension[1] === "m" ? "module" : extension[1] === "c" ? "commonjs" : packageType(path),
+          extension[1] === "m"
+            ? "module"
+            : extension[1] === "c"
+              ? "commonjs"
+              : hasModuleSyntax
+                ? "module"
+                : packageType(path),
         source: map ? code + inlineSourceMap(map) : code,
         shortCircuit: true,
       };
