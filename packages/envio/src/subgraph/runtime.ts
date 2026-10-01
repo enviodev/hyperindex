@@ -265,7 +265,7 @@ class RegisterHostFailure extends Error {
 }
 
 function registerHostSync(scope: Scope, effect: Effect, input: unknown) {
-  const key = `${effect.name} ${typeof input === "string" ? input : JSON.stringify(input)}`;
+  const key = `${effect.name}\u0000${typeof input === "string" ? input : JSON.stringify(input)}`;
   const resolved = scope.resolved ?? new Map();
   scope.resolved = resolved;
 
