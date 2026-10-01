@@ -20,7 +20,7 @@ type FuelBlock = { id: string; height: number; time: number };
 type FuelTransaction = { id: string };
 declare namespace FuelTypes {
   namespace Greeter {
-    type type0 = string;
+    type type0 = `0x${string}`;
     type type1 = { case: "InvalidContractSender"; payload: FuelTypes.Greeter.type8 } | { case: "ToThrow"; payload: FuelTypes.Greeter.type8 };
     type type2<t> = { case: "None"; payload: FuelTypes.Greeter.type8 } | { case: "Some"; payload: t };
     type type4 = { readonly user: FuelTypes.Greeter.type7 };
