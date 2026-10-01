@@ -5,40 +5,34 @@ mod session;
 mod state;
 
 use napi_derive::napi;
-use render::{Palette, SPINNER_INTERVAL_MS};
+use render::{ColorLevel, Palette, SPINNER_INTERVAL_MS};
 use session::{Session, Size};
 use state::{Messages, State};
 use state::{TuiChain, TuiInfo, TuiMessage};
 use std::{
-    ffi::CStr,
-    fs::{File, OpenOptions},
+    fs::File,
     io::{self, Write},
-    os::fd::AsRawFd,
+    os::fd::{AsRawFd, FromRawFd},
     sync::{mpsc, Arc},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-/// The terminal behind stdout, opened anew. Node switches its own stdout to
-/// non-blocking mode, which would make a write from this thread fail with
-/// `EAGAIN` whenever the terminal falls behind; a fresh open of the same device
-/// blocks as a terminal write should.
+/// Stdout through a descriptor of the display's own. Node may switch the
+/// terminal to non-blocking mode, so a write that would block waits for the
+/// terminal instead of failing with `EAGAIN`.
 #[derive(Clone)]
 struct Tty(Arc<File>);
 
 impl Tty {
     fn open() -> io::Result<Self> {
-        let mut name = [0 as libc::c_char; 256];
-        // SAFETY: the buffer outlives the call and its length is passed along.
-        let code = unsafe { libc::ttyname_r(libc::STDOUT_FILENO, name.as_mut_ptr(), name.len()) };
-        if code != 0 {
-            return Err(io::Error::from_raw_os_error(code));
+        // SAFETY: `dup` returns a new descriptor or -1.
+        let fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
         }
-        // SAFETY: on success `ttyname_r` wrote a NUL-terminated path into the buffer.
-        let path = unsafe { CStr::from_ptr(name.as_ptr()) }
-            .to_str()
-            .map_err(io::Error::other)?;
-        Ok(Tty(Arc::new(OpenOptions::new().write(true).open(path)?)))
+        // SAFETY: the descriptor was just created and nothing else owns it.
+        Ok(Tty(Arc::new(unsafe { File::from_raw_fd(fd) })))
     }
 
     fn size(&self) -> io::Result<Size> {
@@ -49,16 +43,36 @@ impl Tty {
         if unsafe { libc::ioctl(self.0.as_raw_fd(), libc::TIOCGWINSZ, &mut size) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(Size {
-            width: size.ws_col,
-            height: size.ws_row,
-        })
+        Ok(Size::reported(size.ws_col, size.ws_row))
+    }
+
+    fn wait_until_writable(&self) -> io::Result<()> {
+        let mut poll = libc::pollfd {
+            fd: self.0.as_raw_fd(),
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        // SAFETY: one valid `pollfd`, which outlives the call.
+        if unsafe { libc::poll(&mut poll, 1, -1) } < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 }
 
 impl Write for Tty {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        (&*self.0).write(buf)
+        loop {
+            match (&*self.0).write(buf) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    self.wait_until_writable()?
+                }
+                result => return result,
+            }
+        }
     }
     fn flush(&mut self) -> io::Result<()> {
         (&*self.0).flush()
@@ -77,12 +91,6 @@ impl Drop for ShowCursorOnPanic {
     }
 }
 
-fn supports_truecolor() -> bool {
-    std::env::var("COLORTERM").is_ok_and(|value| {
-        value.eq_ignore_ascii_case("truecolor") || value.eq_ignore_ascii_case("24bit")
-    })
-}
-
 fn now_ms() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -99,15 +107,22 @@ enum Command {
 fn run(mut session: Session<Tty>, tty: Tty, mut state: State, commands: mpsc::Receiver<Command>) {
     let started = Instant::now();
     loop {
-        let mut batch: Vec<Command> =
-            match commands.recv_timeout(Duration::from_millis(SPINNER_INTERVAL_MS)) {
-                Ok(command) => vec![command],
-                Err(mpsc::RecvTimeoutError::Timeout) => vec![],
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    let (ack, _) = mpsc::channel();
-                    vec![Command::Stop(ack)]
-                }
-            };
+        // Only the spinner moves between updates, and only until every chain is synced.
+        let next = if state.is_fully_synced() {
+            commands
+                .recv()
+                .map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+        } else {
+            commands.recv_timeout(Duration::from_millis(SPINNER_INTERVAL_MS))
+        };
+        let mut batch: Vec<Command> = match next {
+            Ok(command) => vec![command],
+            Err(mpsc::RecvTimeoutError::Timeout) => vec![],
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let (ack, _) = mpsc::channel();
+                vec![Command::Stop(ack)]
+            }
+        };
         batch.extend(commands.try_iter());
 
         let mut printed: Vec<String> = Vec::new();
@@ -155,7 +170,7 @@ impl Tui {
         let mut session = Session::new(
             tty.clone(),
             Palette {
-                truecolor: supports_truecolor(),
+                level: ColorLevel::detect(|name| std::env::var(name).ok()),
             },
         );
         session.hide_cursor().map_err(to_napi)?;
@@ -186,9 +201,10 @@ impl Tui {
         ));
     }
 
+    /// `false` once the display is gone, so the text needs printing elsewhere.
     #[napi]
-    pub fn print(&self, text: String) {
-        let _ = self.commands.send(Command::Print(text));
+    pub fn print(&self, text: String) -> bool {
+        self.commands.send(Command::Print(text)).is_ok()
     }
 
     /// Draws the final frame and returns once it is on screen, so it can run

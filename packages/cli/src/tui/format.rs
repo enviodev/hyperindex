@@ -45,8 +45,8 @@ pub fn duration(ms: f64) -> String {
 const MINUTES_IN_DAY: i64 = 1440;
 const MINUTES_IN_MONTH: i64 = 43200;
 
-/// The wording of date-fns `formatDistance` with `includeSeconds`, which the
-/// display used before; months are approximated as 30 days.
+/// The wording of date-fns `formatDistance` with `includeSeconds`, with months
+/// approximated as 30 days.
 pub fn distance(from_ms: f64, to_ms: f64) -> String {
     let seconds = ((to_ms - from_ms).abs() / 1000.).trunc() as i64;
     let minutes = (seconds as f64 / 60.).round() as i64;

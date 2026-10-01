@@ -11,17 +11,65 @@ use unicode_width::UnicodeWidthChar;
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 pub const SPINNER_INTERVAL_MS: u64 = 80;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ColorLevel {
+    None,
+    Basic,
+    Ansi256,
+    TrueColor,
+}
+
+impl ColorLevel {
+    /// What the terminal supports, read from the environment the way chalk
+    /// read it: `FORCE_COLOR` sets a minimum, and `NO_COLOR` or
+    /// `FORCE_COLOR=0` turn colour off.
+    pub fn detect(var: impl Fn(&str) -> Option<String>) -> Self {
+        let forced = var("FORCE_COLOR").map(|value| match value.as_str() {
+            "0" | "false" => ColorLevel::None,
+            "2" => ColorLevel::Ansi256,
+            "3" => ColorLevel::TrueColor,
+            _ => ColorLevel::Basic,
+        });
+        if forced == Some(ColorLevel::None) || var("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+            return ColorLevel::None;
+        }
+        let detected = if var("COLORTERM").is_some_and(|value| {
+            value.eq_ignore_ascii_case("truecolor") || value.eq_ignore_ascii_case("24bit")
+        }) {
+            ColorLevel::TrueColor
+        } else if var("TERM").is_some_and(|term| term.contains("256")) {
+            ColorLevel::Ansi256
+        } else {
+            ColorLevel::Basic
+        };
+        forced.map_or(detected, |forced| {
+            if forced as u8 > detected as u8 {
+                forced
+            } else {
+                detected
+            }
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
-    pub truecolor: bool,
+    pub level: ColorLevel,
 }
 
 impl Palette {
     pub fn rgb(self, (r, g, b): (u8, u8, u8)) -> Color {
-        if self.truecolor {
-            Color::Rgb(r, g, b)
-        } else {
-            Color::Indexed(ansi256(r, g, b))
+        match self.level {
+            ColorLevel::TrueColor => Color::Rgb(r, g, b),
+            ColorLevel::Ansi256 => Color::Indexed(ansi256(r, g, b)),
+            ColorLevel::Basic => basic(ansi256(r, g, b)),
+            ColorLevel::None => Color::Reset,
+        }
+    }
+    fn named(self, color: Color) -> Color {
+        match self.level {
+            ColorLevel::None => Color::Reset,
+            _ => color,
         }
     }
     fn primary(self) -> Color {
@@ -39,25 +87,28 @@ impl Palette {
     fn success(self) -> Color {
         self.rgb((0x3B, 0x8C, 0x3D))
     }
-    fn named(self, name: &str) -> Color {
+    // The 16-colour "white" and "gray" (bright black), so they follow the
+    // terminal's theme.
+    fn white(self) -> Color {
+        self.named(Color::Gray)
+    }
+    fn gray(self) -> Color {
+        self.named(Color::DarkGray)
+    }
+    fn message(self, name: &str) -> Color {
         match name {
             "primary" => self.primary(),
             "secondary" => self.secondary(),
             "info" => self.info(),
             "danger" => self.danger(),
             "success" => self.success(),
-            "gray" => GRAY,
-            _ => WHITE,
+            "gray" => self.gray(),
+            _ => self.white(),
         }
     }
 }
 
-// The 16-colour "white" and "gray" (bright black) the display has always used,
-// so they follow the terminal's theme.
-const WHITE: Color = Color::Gray;
-const GRAY: Color = Color::DarkGray;
-
-/// The xterm 256-colour cube, for terminals that don't advertise truecolor.
+/// The xterm 256-colour cube.
 fn ansi256(r: u8, g: u8, b: u8) -> u8 {
     if r == g && g == b {
         return match r {
@@ -68,6 +119,48 @@ fn ansi256(r: u8, g: u8, b: u8) -> u8 {
     }
     let level = |c: u8| (c as f64 / 255. * 5.).round() as u8;
     16 + 36 * level(r) + 6 * level(g) + level(b)
+}
+
+/// The closest of the 16 standard colours to a 256-colour code.
+fn basic(code: u8) -> Color {
+    let (r, g, b) = if code >= 232 {
+        let level = ((code - 232) as f64 * 10. + 8.) / 255.;
+        (level, level, level)
+    } else {
+        let cube = code.saturating_sub(16);
+        (
+            (cube / 36) as f64 / 5.,
+            (cube % 36 / 6) as f64 / 5.,
+            (cube % 6) as f64 / 5.,
+        )
+    };
+    let bright = r.max(g).max(b) == 1.;
+    let index = ((b.round() as u8) << 2) | ((g.round() as u8) << 1) | r.round() as u8;
+    const NORMAL: [Color; 8] = [
+        Color::Black,
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+        Color::Gray,
+    ];
+    const BRIGHT: [Color; 8] = [
+        Color::DarkGray,
+        Color::LightRed,
+        Color::LightGreen,
+        Color::LightYellow,
+        Color::LightBlue,
+        Color::LightMagenta,
+        Color::LightCyan,
+        Color::White,
+    ];
+    if bright {
+        BRIGHT[index as usize]
+    } else {
+        NORMAL[index as usize]
+    }
 }
 
 fn progress_bar(
@@ -88,18 +181,19 @@ fn progress_bar(
     let label = format!("{}% ", (fraction(loaded) * 100.).trunc() as i64);
     let loaded_cells = cells(fraction(loaded)).max(label.len());
     let buffered_cells = cells(fraction(buffered)).max(loaded_cells);
+    let loaded_style = match palette.level {
+        ColorLevel::None => Style::new().reversed(),
+        _ => Style::new().fg(palette.gray()).bg(palette.secondary()),
+    };
     vec![
-        Span::styled(
-            format!("{label:>loaded_cells$}"),
-            Style::new().fg(GRAY).bg(palette.secondary()),
-        ),
+        Span::styled(format!("{label:>loaded_cells$}"), loaded_style),
         Span::styled(
             " ".repeat(buffered_cells - loaded_cells),
-            Style::new().bg(GRAY),
+            Style::new().bg(palette.gray()),
         ),
         Span::styled(
             " ".repeat(width.saturating_sub(buffered_cells)),
-            Style::new().bg(WHITE),
+            Style::new().bg(palette.white()),
         ),
     ]
 }
@@ -142,7 +236,7 @@ fn chain_lines(
         format::number(chain.to_block as f64),
     );
     let events = format!("Events: {}", format::number(chain.events_processed));
-    let gray = Style::new().fg(GRAY);
+    let gray = Style::new().fg(palette.gray());
     let mut lines = vec![Line::from(header)];
     if blocks.len() + events.len() <= chains_width {
         lines.push(Line::from(vec![
@@ -170,7 +264,7 @@ fn link(label: &str, url: &str, palette: Palette) -> Vec<Span<'static>> {
 fn message_line(palette: Palette, message: &TuiMessage) -> Line<'static> {
     Line::styled(
         message.content.clone(),
-        Style::new().fg(palette.named(&message.color)),
+        Style::new().fg(palette.message(&message.color)),
     )
 }
 
@@ -239,7 +333,7 @@ fn status(
     if let (false, Some(eps)) = (synced, state.events_per_second()) {
         total.push(Span::styled(
             format!(" ({} events/sec)", format::number(eps)),
-            Style::new().fg(GRAY),
+            Style::new().fg(palette.gray()),
         ));
     }
     lines.push(Line::from(total));
@@ -296,7 +390,7 @@ fn status(
     if let Some(password) = &info.graphql_password {
         graphql.push(Span::styled(
             format!(" (password: {password})"),
-            Style::new().fg(GRAY),
+            Style::new().fg(palette.gray()),
         ));
     }
     lines.push(Line::from(graphql));
@@ -389,6 +483,7 @@ mod tests {
             end_block: None,
             first_event_block_number: Some(1_000_000),
             progress_block_number: 1_250_000,
+            processed_to_endblock: false,
             latest_fetched_block_number: 1_500_000,
             known_height: 2_000_000,
             source_block_number: 2_000_000,
@@ -403,6 +498,7 @@ mod tests {
         TuiChain {
             end_block: Some(2_000_000),
             progress_block_number: 2_000_000,
+            processed_to_endblock: true,
             latest_fetched_block_number: 2_000_000,
             timestamp_caught_up_to_head_or_endblock: Some(START + 95_000.),
             ..syncing(chain_id)
@@ -428,7 +524,15 @@ mod tests {
     /// styling starts, the way insta's buffer snapshots read.
     fn render(state: &State, width: u16) -> String {
         let lines = wrap(
-            status(state, NOW, 3, width as usize, Palette { truecolor: true }),
+            status(
+                state,
+                NOW,
+                3,
+                width as usize,
+                Palette {
+                    level: ColorLevel::TrueColor,
+                },
+            ),
             width as usize,
         );
         let mut terminal = Terminal::new(TestBackend::new(width, lines.len() as u16)).unwrap();
@@ -494,15 +598,74 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_256_colours_without_truecolor() {
-        let palette = Palette { truecolor: false };
+    fn detects_the_colour_level_as_chalk_did() {
+        let detect = |vars: &[(&str, &str)]| {
+            ColorLevel::detect(|name| {
+                vars.iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.to_string())
+            })
+        };
         assert_eq!(
-            (
-                palette.secondary(),
-                palette.rgb((0x80, 0x80, 0x80)),
-                palette.rgb((0, 0, 0))
+            [
+                detect(&[("COLORTERM", "truecolor"), ("TERM", "xterm-256color")]),
+                detect(&[("TERM", "xterm-256color")]),
+                detect(&[("TERM", "linux")]),
+                detect(&[("TERM", "linux"), ("FORCE_COLOR", "2")]),
+                detect(&[("COLORTERM", "truecolor"), ("FORCE_COLOR", "1")]),
+                detect(&[("COLORTERM", "truecolor"), ("NO_COLOR", "1")]),
+                detect(&[("COLORTERM", "truecolor"), ("FORCE_COLOR", "0")]),
+            ],
+            [
+                ColorLevel::TrueColor,
+                ColorLevel::Ansi256,
+                ColorLevel::Basic,
+                ColorLevel::Ansi256,
+                ColorLevel::TrueColor,
+                ColorLevel::None,
+                ColorLevel::None,
+            ]
+        );
+    }
+
+    // The 256 and 16 colour codes chalk's ansi-styles picks for the same hex.
+    #[test]
+    fn downsamples_colours_to_the_terminal_level() {
+        let secondary = |level| Palette { level }.secondary();
+        assert_eq!(
+            [
+                ColorLevel::TrueColor,
+                ColorLevel::Ansi256,
+                ColorLevel::Basic,
+                ColorLevel::None
+            ]
+            .map(secondary),
+            [
+                Color::Rgb(255, 187, 47),
+                Color::Indexed(221),
+                Color::LightYellow,
+                Color::Reset
+            ]
+        );
+    }
+
+    #[test]
+    fn marks_progress_in_reverse_video_without_colour() {
+        assert_eq!(
+            progress_bar(
+                Palette {
+                    level: ColorLevel::None
+                },
+                25,
+                50,
+                100,
+                12
             ),
-            (Color::Indexed(221), Color::Indexed(244), Color::Indexed(16))
+            vec![
+                Span::styled("25% ", Style::new().reversed()),
+                Span::styled("  ", Style::new().bg(Color::Reset)),
+                Span::styled("      ", Style::new().bg(Color::Reset)),
+            ]
         );
     }
 

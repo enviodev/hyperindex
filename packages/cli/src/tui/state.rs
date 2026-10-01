@@ -24,6 +24,7 @@ pub struct TuiChain {
     pub first_event_block_number: Option<i64>,
     /// Committed progress; -1 before the first batch.
     pub progress_block_number: i64,
+    pub processed_to_endblock: bool,
     pub latest_fetched_block_number: i64,
     /// Clamped to the end block once the chain has processed to it.
     pub known_height: i64,
@@ -94,10 +95,9 @@ impl Chain {
             latest_processed_block,
             caught_up_at,
         };
-        // Mirrors `ChainState.hasProcessedToEndblock`. A chain can reach its end
-        // block without ever matching an event, so it still renders as synced.
-        let processed_to_end = m.end_block.is_some_and(|end| latest_processed_block >= end);
-        let progress = if processed_to_end {
+        // A chain can reach its end block without ever matching an event, so it
+        // still renders as synced.
+        let progress = if m.processed_to_endblock {
             synced(m.timestamp_caught_up_to_head_or_endblock.unwrap_or(now))
         } else {
             match (
@@ -244,7 +244,9 @@ impl State {
                     latest_processed_block,
                     ..
                 } => latest_processed_block - first_event_block,
-                Progress::SearchingForEvents => chain.latest_fetched_block_number,
+                Progress::SearchingForEvents => {
+                    (chain.latest_fetched_block_number - chain.start_block).max(0)
+                }
             })
             .sum()
     }
@@ -299,6 +301,7 @@ mod tests {
             end_block: None,
             first_event_block_number: None,
             progress_block_number: -1,
+            processed_to_endblock: false,
             latest_fetched_block_number: 99,
             known_height: 0,
             source_block_number: 0,
@@ -396,6 +399,7 @@ mod tests {
             &TuiChain {
                 end_block: Some(500),
                 progress_block_number: 500,
+                processed_to_endblock: true,
                 ..chain_metrics()
             },
             42.,
@@ -470,6 +474,24 @@ mod tests {
         assert_eq!(
             state(&[syncing], 10_000.).eta(10_000.),
             Eta::Syncing("1 minute 30 seconds".to_string())
+        );
+    }
+
+    // A chain still searching for its first event has covered the blocks it
+    // fetched since its start block, not every block since genesis.
+    #[test]
+    fn projects_the_eta_of_a_chain_searching_from_its_start_block() {
+        let searching = TuiChain {
+            start_block: 18_000_000,
+            latest_fetched_block_number: 18_001_000,
+            known_height: 19_000_000,
+            source_block_number: 19_000_000,
+            ..chain_metrics()
+        };
+        // 1,000 blocks in 10s, 999,000 to go.
+        assert_eq!(
+            state(&[searching], 10_000.).eta(10_000.),
+            Eta::Syncing("2 hours 46 minutes 30 seconds".to_string())
         );
     }
 

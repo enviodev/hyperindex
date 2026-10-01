@@ -183,7 +183,7 @@ let fork = (
   )
   if pipeOutput {
     // The supervisor writes a worker's lines the way it writes its own, which is
-    // the only way ink can keep them out of its frame. Each stream keeps the one
+    // the only way the display can print them above its frame. Each stream keeps the one
     // it was written to, so a worker's errors stay on stderr for whoever is
     // redirecting it.
     [

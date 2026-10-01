@@ -23,12 +23,13 @@ type chain = {
   numEventsProcessed: float,
   rateLimitTimeMs: float,
   rateLimitResetInMs: option<float>,
+  processedToEndblock: bool,
 }
 
 @send external make: (Core.tuiCtor, info) => t = "start"
 @send external update: (t, array<chain>) => unit = "update"
 @send external setMessages: (t, Null.t<array<InitApi.message>>) => unit = "setMessages"
-@send external print: (t, string) => unit = "print"
+@send external print: (t, string) => bool = "print"
 @send external stop: t => unit = "stop"
 
 // Whether this process draws the progress display: `ENVIO_TUI` first, then
@@ -55,6 +56,7 @@ let toChain = (m: Metrics.chainMetrics): chain => {
   numEventsProcessed: m.numEventsProcessed,
   rateLimitTimeMs: m.rateLimitTimeMs,
   rateLimitResetInMs: m.rateLimitResetInMs,
+  processedToEndblock: m->Metrics.hasProcessedToEndblock,
 }
 
 type consoleClass
@@ -65,28 +67,34 @@ type writableClass
 // Sends everything written through `console` above the display, the way the
 // terminal would have shown it, and returns the function that restores it.
 // Routed through a `Console` of our own so every method formats as Node's
-// would; stderr stays where it is when it isn't the terminal.
+// would; stderr stays where it is when it isn't the terminal, and once the
+// display is gone, output goes back to where it came from.
 let redirectConsole: (
   consoleClass,
   writableClass,
-  string => unit,
+  string => bool,
 ) => unit => unit = %raw(`(Console, Writable, print) => {
-  const toDisplay = new Writable({
+  let original = [];
+  const restore = () => original.forEach(([name, method]) => { console[name] = method; });
+  const toDisplay = (stream) => new Writable({
     write(chunk, _encoding, callback) {
       // Each call ends its output with a newline, which printing a line adds.
-      print(chunk.toString().replace(/\n$/, ""));
+      if (!print(chunk.toString().replace(/\n$/, ""))) {
+        restore();
+        stream.write(chunk);
+      }
       callback();
     },
   });
   const redirected = new Console({
-    stdout: toDisplay,
-    stderr: process.stderr.isTTY ? toDisplay : process.stderr,
-    colorMode: true,
+    stdout: toDisplay(process.stdout),
+    stderr: process.stderr.isTTY ? toDisplay(process.stderr) : process.stderr,
+    colorMode: process.stdout.hasColors(),
   });
   const methods = Object.keys(console).filter((name) => typeof redirected[name] === "function");
-  const original = methods.map((name) => [name, console[name]]);
+  original = methods.map((name) => [name, console[name]]);
   methods.forEach((name) => { console[name] = redirected[name].bind(redirected); });
-  return () => original.forEach(([name, method]) => { console[name] = method; });
+  return restore;
 }`)
 
 let start = (~config: Config.t, ~getMetrics: unit => Metrics.t) => {

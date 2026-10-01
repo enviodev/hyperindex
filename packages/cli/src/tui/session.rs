@@ -12,6 +12,18 @@ pub struct Size {
     pub height: u16,
 }
 
+impl Size {
+    /// A PTY can report zero for a size its client hasn't sent yet, as
+    /// `docker run -t` does until the first resize: assume the classic width,
+    /// and no limit on the height rather than a frame of none.
+    pub fn reported(columns: u16, rows: u16) -> Self {
+        Size {
+            width: if columns == 0 { 80 } else { columns },
+            height: if rows == 0 { u16::MAX } else { rows },
+        }
+    }
+}
+
 /// The display drawn below the terminal's output. It only ever moves the
 /// cursor relative to where it left it, so it never has to ask the terminal
 /// where that is, and printed lines scroll off the top the way any output
@@ -226,6 +238,7 @@ fn encode(buf: &mut Vec<u8>, line: &Line) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::render::ColorLevel;
     use crate::tui::state::{Messages, TuiChain, TuiInfo};
     use std::sync::{Arc, Mutex};
 
@@ -289,7 +302,12 @@ mod tests {
         }
 
         fn session(&self) -> Session<Emulator> {
-            Session::new(self.clone(), Palette { truecolor: true })
+            Session::new(
+                self.clone(),
+                Palette {
+                    level: ColorLevel::TrueColor,
+                },
+            )
         }
     }
 
@@ -313,6 +331,7 @@ mod tests {
                 end_block: Some(100),
                 first_event_block_number: Some(0),
                 progress_block_number: 100,
+                processed_to_endblock: true,
                 latest_fetched_block_number: 100,
                 known_height: 100,
                 source_block_number: 100,
@@ -509,6 +528,23 @@ mod tests {
         assert_eq!(
             (cell(0), cell(5)),
             (vt100::Color::Idx(1), vt100::Color::Default)
+        );
+    }
+
+    #[test]
+    fn assumes_a_size_the_terminal_did_not_report() {
+        assert_eq!(
+            (Size::reported(0, 0), Size::reported(120, 40)),
+            (
+                Size {
+                    width: 80,
+                    height: u16::MAX
+                },
+                Size {
+                    width: 120,
+                    height: 40
+                }
+            )
         );
     }
 
