@@ -8,6 +8,8 @@ const TS_PARENT = /\.([cm]?ts|tsx)($|\?)/;
 const JSON_URL = /\.json($|\?)/;
 const DIRECTORY_SPECIFIER = /\/(?:$|\?)/;
 const NOT_FOUND_CODES = new Set(["ERR_MODULE_NOT_FOUND", "ERR_PACKAGE_PATH_NOT_EXPORTED"]);
+const CJS_NOT_FOUND_CODES = new Set(["MODULE_NOT_FOUND", "ERR_PACKAGE_PATH_NOT_EXPORTED"]);
+const DEPENDENCY_PATH = `${sep}node_modules${sep}`;
 
 // Resolution follows tsx's ESM resolver, step for step, so handlers that ran
 // under tsx resolve the same files. `.jsx` is left out because the load hook
@@ -188,10 +190,92 @@ export const register = (transformTs, tsPathCandidates, allowJs) => {
     return resolveDirectory(specifier, context, nextResolve);
   };
 
+  // Sync hooks also see `require()`, including the one Node makes to find the
+  // named exports of a CommonJS module imported from ESM. tsx resolves those
+  // with its CommonJS resolver, which differs from the ESM one, and a
+  // CommonJS miss is `MODULE_NOT_FOUND` rather than `ERR_MODULE_NOT_FOUND`.
+  const resolveCjs = (specifier, context, nextResolve) => {
+    const parentPath = context.parentURL?.startsWith("file:")
+      ? fileURLToPath(context.parentURL)
+      : undefined;
+    const fromTs = parentPath !== undefined && TS_PARENT.test(parentPath);
+    const next = (request) => nextResolve(request, context);
+
+    const tryExtensions = (request) => {
+      if (DIRECTORY_SPECIFIER.test(request) || (!fromTs && !allowJs)) return undefined;
+      for (const candidate of extensionCandidates(request)) {
+        try {
+          return next(candidate);
+        } catch (error) {
+          if (!CJS_NOT_FOUND_CODES.has(error?.code)) throw error;
+        }
+      }
+      return undefined;
+    };
+
+    const resolveExtensionsCjs = (request) => {
+      if (isFilePath(request)) {
+        const resolved = tryExtensions(request);
+        if (resolved) return resolved;
+      }
+      try {
+        return next(request);
+      } catch (error) {
+        if (error?.code !== "MODULE_NOT_FOUND") throw error;
+        if (error.path) {
+          const missing =
+            error.message.match(/^Cannot find module '([^']+)'$/) ??
+            error.message.match(
+              /^Cannot find module '([^']+)'. Please verify that the package.json has a valid "main" entry$/
+            );
+          const resolved = missing && tryExtensions(missing[1]);
+          if (resolved) return resolved;
+        }
+        const resolved = tryExtensions(request);
+        if (resolved) return resolved;
+        throw error;
+      }
+    };
+
+    const resolveIndex = (request) => {
+      if (request === "." || request === ".." || request.endsWith("/..")) request += "/";
+      if (DIRECTORY_SPECIFIER.test(request)) {
+        let index = join(request, "index.js");
+        if (request.startsWith("./")) index = `./${index}`;
+        try {
+          return resolveExtensionsCjs(index);
+        } catch {}
+      }
+      try {
+        return resolveExtensionsCjs(request);
+      } catch (error) {
+        if (error?.code === "MODULE_NOT_FOUND") {
+          try {
+            return resolveExtensionsCjs(`${request}${sep}index.js`);
+          } catch {}
+        }
+        throw error;
+      }
+    };
+
+    const request = specifier.startsWith("file://") ? fileURLToPath(specifier) : specifier;
+    if (!isFilePath(request) && !parentPath?.includes(DEPENDENCY_PATH)) {
+      for (const candidate of tsPathCandidates(request)) {
+        try {
+          return resolveIndex(candidate);
+        } catch {}
+      }
+    }
+    return resolveIndex(request);
+  };
+
   module.registerHooks({
     resolve(specifier, context, nextResolve) {
       if (specifier.startsWith("node:")) {
         return nextResolve(specifier, context);
+      }
+      if (context.conditions?.includes("require")) {
+        return { ...resolveCjs(specifier, context, nextResolve), shortCircuit: true };
       }
       const [path, query] = specifier.split("?");
       const resolved = resolveTsPaths(path, context, nextResolve);
