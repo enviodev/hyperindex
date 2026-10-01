@@ -147,9 +147,11 @@ template-creating event the shim registers a wrapper that reruns the same
 mapping in register mode: `create()` → `context.chain.<Name>.add(addr)`
 (deduped, so replays are idempotent); writes/logs → no-ops; **reads → `null`**
 (no entity state exists at fetch time — a `create()` conditioned on loaded
-state can mis-register; documented caveat, rare in practice); effects before
-`create()` → §7 error. Safe because graph-node already requires mappings to
-be deterministic.
+state can mis-register; documented caveat, rare in practice); host ops
+(`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
+suspend-and-replay, capped at 100 rounds; a host op that fails fails the
+batch rather than dropping the registration. Safe because graph-node already
+requires mappings to be deterministic.
 
 ## 5. Sync bridge: try-sync, suspend, replay
 
@@ -212,10 +214,11 @@ the runtime ships in the same package (§8).
   synchronously;
 - the replay loop itself as an internal `runSync(context, fn)` so core owns
   round reset (`Aborted → Active`, clear pending) and settle-and-rethrow.
-  v1 has no termination guard — mappings are deterministic by graph-node's
-  rules, so every round makes progress. Later hardening (if needed): a
-  progress check (suspending on an already-resolved key = non-determinism or
-  eviction loop → clear error naming the handler and key).
+  Mappings are deterministic by graph-node's rules, so every round makes
+  progress; as a backstop a handler that suspends more than 10,000 rounds
+  fails with an error pointing at non-determinism. Later hardening (if
+  needed): a progress check (suspending on an already-resolved key →
+  clear error naming the handler and key).
 
 ## 6. AsyncLocalStorage scope
 
@@ -402,9 +405,10 @@ refuse instead, so behavior never silently diverges:
   `kind`, unknown `features` entries, unknown block-handler filter kinds,
   and `specVersion`/`apiVersion` above the supported range all raise the
   unknown error with the YAML path as location.
-- *Schema*: unknown directives, unknown arguments on known directives
-  (e.g. `@entity(...)` beyond `immutable`/`timeseries`), and unknown type
-  names that aren't schema-defined raise the unknown error.
+- *Schema*: unknown arguments on known directives (e.g. `@entity(...)`
+  beyond `immutable`/`timeseries`) and unknown type names that aren't
+  schema-defined raise the unknown error. Unknown directives are dropped
+  (§3 accepted divergence).
 - *Runtime*: every shim surface is strict, via three mechanisms picked by
   path heat and whether the unknown names are enumerable (precedent:
   `UserContext.res` already Proxy-traps invalid context access):
@@ -453,8 +457,8 @@ refuse instead, so behavior never silently diverges:
    read (change record + its checkpoint) for `getInBlock`; status check in
    every op closure and trap. Internal-only — kept out of `index.d.ts` and
    docs.
-3. Internal `runSync` replay loop (round reset, allSettled; no termination
-   guard in v1).
+3. Internal `runSync` replay loop (round reset, allSettled; 10,000-round
+   backstop).
 4. Tests (rung 1, `packages/envio-tests`, `fromUserApi`): sync hit after
    `set`; miss→suspend→replay from DB; known-absent → sync `null`;
    `effectSync` incl. `cache: false`; caught suspend → next access aborts;
@@ -475,7 +479,7 @@ refuse instead, so behavior never silently diverges:
    eager missing-RPC startup error; topic filters on dynamic-typed params →
    §7 error.
 3. Schema transform + §7 schema errors: translator-owned strictness
-   (`@entity` required, directive/argument whitelist — envio's parser
+   (`@entity` required, argument whitelist on known directives — envio's parser
    ignores unknowns, §3) plus aggregations; write
    transformed schema under `.envio/`. The transform records which fields
    are `Timestamp` so the shim can convert micros ↔ date at the store
@@ -529,7 +533,7 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
    messages): one case per §7 row — every unsupported feature (manifest,
    schema, runtime-access) and every unknown-rejection path (unknown manifest
    field/kind/feature name, too-new specVersion/apiVersion, unknown schema
-   directive/argument/type, unknown graph-ts namespace member, unknown
+   directive argument/type, unknown graph-ts namespace member, unknown
    entity field, unknown event property).
 
 **D. End to end.** `scenarios/subgraph_test`: a real small subgraph project
@@ -555,8 +559,8 @@ vitest run` (A, C), `cargo test -p envio-cli` (B), scenario CI job (D).
 2. Runtime home: inside the `envio` package, fully internal — no subpath
    export (§8 C).
 3. `ens.nameByHash`: best-effort cached effect, `null` on miss/failure.
-4. Replay termination guard: dropped for the first iteration (determinism
-   guarantees progress); progress check is possible later hardening.
+4. Replay termination guard: a 10,000-round backstop only (determinism
+   guarantees progress); a progress check is possible later hardening.
 5. Block-handler `block.timestamp`: internal batched HyperSync effect
    (pattern proven in all-contracts-indexer), `cache: false` — read once
    per block, so persisting it only bloats the effect cache table; `hash`

@@ -123,7 +123,7 @@ fn human_readable(name: &str, inputs: &[Value]) -> String {
     format!("{name}({})", params.join(", "))
 }
 
-fn event_name(manifest_signature: &str) -> String {
+pub(crate) fn event_name(manifest_signature: &str) -> String {
     manifest_signature
         .split('(')
         .next()

@@ -11,7 +11,7 @@ pub mod manifest;
 pub mod schema;
 pub mod usage;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 use serde::Serialize;
@@ -157,6 +157,14 @@ pub fn graph_codegen_failed_message() -> String {
      rerun. If `graph codegen` succeeds on its own but fails through envio,\n\
      please open an issue: https://github.com/enviodev/hyperindex/issues"
         .to_string()
+}
+
+/// The name envio routes an event by: its own unless one was minted.
+fn envio_event_name(event: &EventConfig) -> String {
+    event
+        .name
+        .clone()
+        .unwrap_or_else(|| abi::event_name(&event.event))
 }
 
 fn field_selection_for(receipt: bool, usage: &usage::FieldUsage) -> FieldSelection {
@@ -384,15 +392,42 @@ pub fn translate(
             .find(|contract| contract.name == source.name)
         {
             Some(existing) => {
-                for event in config.events {
-                    if !existing
+                // The template's own names were minted against its handlers
+                // alone, so each is re-resolved against the folded contract:
+                // a known signature takes that event's name, a new one the
+                // next free suffix.
+                let handlers = source
+                    .event_handlers
+                    .iter_mut()
+                    .filter(|handler| !handler.name.is_empty());
+                for (handler, mut event) in handlers.zip(config.events) {
+                    let known = existing
                         .config
                         .events
                         .iter()
-                        .any(|known| known.event == event.event)
-                    {
-                        existing.config.events.push(event);
-                    }
+                        .find(|known| known.event == event.event);
+                    handler.name = match known {
+                        Some(known) => envio_event_name(known),
+                        None => {
+                            let base = envio_event_name(&event);
+                            let taken: HashSet<String> = existing
+                                .config
+                                .events
+                                .iter()
+                                .map(envio_event_name)
+                                .collect();
+                            let name = (0..)
+                                .map(|ordinal| match ordinal {
+                                    0 => base.clone(),
+                                    _ => format!("{base}_{ordinal}"),
+                                })
+                                .find(|name| !taken.contains(name))
+                                .unwrap_or(base.clone());
+                            event.name = (name != base).then(|| name.clone());
+                            existing.config.events.push(event);
+                            name
+                        }
+                    };
                 }
                 continue;
             }

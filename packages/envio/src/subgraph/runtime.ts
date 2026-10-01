@@ -445,6 +445,24 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
 
   const templateNames = new Set(config.templates.map((template) => template.name));
 
+  // A template sharing a data source's name is folded into its envio contract,
+  // so both sets of handlers fire for every address of it. graph-node runs the
+  // data source's for its own address and the template's for the ones it
+  // created, so each is gated to its side.
+  const staticAddresses = new Map<string, Set<string>>();
+  for (const source of config.dataSources) {
+    if (!source.address || !templateNames.has(source.name)) continue;
+    const addresses = staticAddresses.get(source.name) ?? new Set();
+    addresses.add(`${source.chainId}:${source.address.toLowerCase()}`);
+    staticAddresses.set(source.name, addresses);
+  }
+  const ownerOf = (source: DataSource) => {
+    const addresses = staticAddresses.get(source.name);
+    if (!addresses) return () => true;
+    return (event: any) =>
+      addresses.has(`${event.chainId}:${String(event.srcAddress).toLowerCase()}`) !== source.isTemplate;
+  };
+
   for (const source of sources) {
     if (source.kind !== "contract") continue;
     const mapping = await loadMapping(config.root, generated, source.mappingFile, {
@@ -463,6 +481,8 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       blockNumber: source.startBlock ?? 0,
       mappingExports: {},
     });
+
+    const owns = ownerOf(source);
 
     for (const handler of source.eventHandlers) {
       const fn = mapping[handler.handler];
@@ -504,7 +524,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       indexer.onEvent(
         { contract: config.contractAccessors[source.name], event: handler.name, where },
         async ({ event, context }: any) => {
-          if (skipPreload && context.isPreload) return;
+          if ((skipPreload && context.isPreload) || !owns(event)) return;
           const graphEvent = makeEvent(event);
           await (context as any).runSync(() =>
             runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
@@ -519,6 +539,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         indexer.contractRegister(
           { contract: config.contractAccessors[source.name], event: handler.name, where },
           async ({ event, context }: any) => {
+            if (!owns(event)) return;
             const graphEvent = makeEvent(event);
             await runRegisterRounds(makeScope(event, context, "register"), () => fn(graphEvent));
           },
