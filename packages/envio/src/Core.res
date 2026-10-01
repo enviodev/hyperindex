@@ -36,6 +36,7 @@ type transformTsResult = {
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   transformTs: (~filename: string, ~source: string) => transformTsResult,
+  resolveTs: (~specifier: string, ~parent: string) => Null.t<string>,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -280,6 +281,8 @@ let getAddon = () =>
   }
 
 let transformTs = (filename, source) => getAddon().transformTs(~filename, ~source)
+
+let resolveTs = (specifier, parent) => getAddon().resolveTs(~specifier, ~parent)
 
 let getConfigJson = (~configPath=?, ~directory=?) => {
   let addon = getAddon()

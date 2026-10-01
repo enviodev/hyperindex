@@ -4,10 +4,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, parse as parsePath } from "node:path";
 
 const TS_EXTENSION = /\.([cm]?)tsx?$/;
-const JS_EXTENSION = /\.([cm]?)jsx?$/;
-const TS_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
-const EXTENSIONLESS_CANDIDATES = [...TS_EXTENSIONS, ".js", ".mjs", ".cjs"];
-const RELATIVE_SPECIFIER = /^\.{1,2}\//;
 
 const isFile = (path) => {
   try {
@@ -15,19 +11,6 @@ const isFile = (path) => {
   } catch {
     return false;
   }
-};
-
-// The project tsconfig sets `moduleResolution: "bundler"` and `allowJs`, so
-// handlers may import a sibling without an extension, or spell a `.ts` sibling
-// `.js`. Node's resolver does neither.
-const tsCandidates = (path) => {
-  if (JS_EXTENSION.test(path)) {
-    return [path.replace(JS_EXTENSION, ".$1ts"), path.replace(JS_EXTENSION, ".$1tsx")];
-  }
-  return [
-    ...EXTENSIONLESS_CANDIDATES.map((extension) => path + extension),
-    ...EXTENSIONLESS_CANDIDATES.map((extension) => join(path, `index${extension}`)),
-  ];
 };
 
 // Only decides the format of a file without `import`/`export`, which is a
@@ -53,7 +36,7 @@ const packageType = (path) => {
 const inlineSourceMap = (map) =>
   `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(map).toString("base64")}`;
 
-export const register = (transformTs) => {
+export const register = (transformTs, resolveTs) => {
   if (typeof module.registerHooks !== "function") {
     throw new Error(
       `Loading TypeScript handlers needs Node.js >=22.15.0 for module.registerHooks, but this process is ${process.version}.`
@@ -63,26 +46,27 @@ export const register = (transformTs) => {
   // Node ignores the inline source maps below unless this is on.
   module.setSourceMapsSupport(true);
 
-  const resolveTs = (specifier, context, nextResolve) => {
+  // The project tsconfig sets `moduleResolution: "bundler"`, `allowJs` and may
+  // set `paths`/`baseUrl`, none of which Node's resolver knows about. Node
+  // still goes first, so packages resolve exactly as they would without us.
+  const resolve = (specifier, context, nextResolve) => {
     try {
       return nextResolve(specifier, context);
     } catch (error) {
-      if (!RELATIVE_SPECIFIER.test(specifier) || context.parentURL === undefined) {
+      if (context.parentURL === undefined || !context.parentURL.startsWith("file:")) {
         throw error;
       }
-      const candidate = tsCandidates(fileURLToPath(new URL(specifier, context.parentURL))).find(
-        isFile
-      );
-      if (candidate === undefined) {
+      const resolved = resolveTs(specifier, fileURLToPath(context.parentURL));
+      if (resolved == null) {
         throw error;
       }
-      return { url: pathToFileURL(candidate).href, shortCircuit: true };
+      return { url: pathToFileURL(resolved).href, shortCircuit: true };
     }
   };
 
   module.registerHooks({
     resolve(specifier, context, nextResolve) {
-      const resolved = resolveTs(specifier, context, nextResolve);
+      const resolved = resolve(specifier, context, nextResolve);
       // `resolveJsonModule` lets TypeScript import JSON without the
       // `type: "json"` attribute Node requires.
       if (

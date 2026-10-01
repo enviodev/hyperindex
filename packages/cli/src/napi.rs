@@ -170,6 +170,38 @@ pub fn transform_ts(filename: String, source: String) -> napi::Result<TransformT
     })
 }
 
+/// Resolves a specifier Node's own resolver rejected, the way TypeScript with
+/// `moduleResolution: "bundler"` does: extensionless and directory imports,
+/// `.js` spellings of `.ts` files, and the `paths`/`baseUrl` of the nearest
+/// tsconfig.json to `parent`.
+#[napi_derive::napi]
+pub fn resolve_ts(specifier: String, parent: String) -> Option<String> {
+    use oxc_resolver::{ResolveOptions, Resolver, TsconfigDiscovery};
+    use std::sync::LazyLock;
+
+    static RESOLVER: LazyLock<Resolver> = LazyLock::new(|| {
+        let strings = |items: &[&str]| items.iter().map(|item| item.to_string()).collect();
+        Resolver::new(ResolveOptions {
+            tsconfig: Some(TsconfigDiscovery::Auto),
+            condition_names: strings(&["node", "import"]),
+            extensions: strings(&[
+                ".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".json",
+            ]),
+            extension_alias: vec![
+                (".js".into(), strings(&[".ts", ".tsx", ".js"])),
+                (".mjs".into(), strings(&[".mts", ".mjs"])),
+                (".cjs".into(), strings(&[".cts", ".cjs"])),
+            ],
+            ..ResolveOptions::default()
+        })
+    });
+
+    RESOLVER
+        .resolve_file(&parent, &specifier)
+        .ok()
+        .map(|resolution| resolution.full_path().to_string_lossy().into_owned())
+}
+
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when
 /// Rust has handled the command end-to-end (help/version, codegen, init,
 /// stop, docker up/down). The Node process then exits with code 0.

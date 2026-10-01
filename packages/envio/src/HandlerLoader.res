@@ -2,9 +2,12 @@
 external globIterator: string => Utils.asyncIterator<string> = "glob"
 
 @module("./TsModuleHooks.mjs")
-external registerTsHooks: ((string, string) => Core.transformTsResult) => unit = "register"
+external registerTsHooks: (
+  (string, string) => Core.transformTsResult,
+  (string, string) => Null.t<string>,
+) => unit = "register"
 
-registerTsHooks(Core.transformTs)
+registerTsHooks(Core.transformTs, Core.resolveTs)
 
 // Convert a relative path to a file:// URL for dynamic import
 // Paths are resolved relative to process.cwd() (project root)
