@@ -1,6 +1,7 @@
 type method = [
   | #isInitialized
   | #initialize
+  | #readStoredConfig
   | #resumeInitialState
   | #dumpEffectCache
   | #loadOrThrow
@@ -23,7 +24,14 @@ type t = {
   storage: Persistence.storage,
 }
 
-let make = (methods: array<method>, ~dbEntities=[]) => {
+// What a resume finds stored: by default, a storage an empty config built.
+let emptyStored: ResumePlan.stored = {
+  envioInfo: Some(JSON.Encode.object(Dict.make())),
+  chains: [],
+  contractMapping: ContractMapping.empty,
+}
+
+let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
       fn
@@ -91,20 +99,17 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
           initializeResolveFns->Array.push(resolve)->ignore
         })
       }),
+      readStoredConfig: implement(#readStoredConfig, () => Promise.resolve(stored)),
+      addChain: (~chainConfig as _, ~entities as _, ~contractMapping as _) =>
+        JsError.throwWithMessage("Not implemented"),
       resumeInitialState: implement(#resumeInitialState, (
         ~entities as _,
         ~chainIds as _,
-        ~throwIfIncompatible,
+        ~contractMapping as _,
       ) => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
           resumeInitialStateResolveFns->Array.push(resolve)->ignore
-        })->Promise.thenResolve((initialState: Persistence.initialState) => {
-          throwIfIncompatible(
-            ~storedEnvioInfo=initialState.envioInfo,
-            ~storedContractMapping=initialState.contractMapping,
-          )
-          initialState
         })
       }),
       dumpEffectCache: implement(#dumpEffectCache, () => {
@@ -169,7 +174,6 @@ let toPersistence = (storageMock: t, ~config: Config.t) => {
     storageStatus: Ready({
       cleanRun: false,
       contractMapping: config.contractMapping,
-      envioInfo: Some(JSON.Encode.object(Dict.make())),
       cache: Dict.make(),
       chains: [],
       reorgCheckpoints: [],
