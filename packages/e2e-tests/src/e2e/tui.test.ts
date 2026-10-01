@@ -25,10 +25,13 @@ import {
   runInPty,
   toSvg,
   waitForScreen,
+  type PtyRun,
   type Screen,
+  type TerminalSize,
 } from "../utils/terminal.js";
 
 const SIZE = { cols: 100, rows: 40 };
+const RESIZED = { cols: 100, rows: 24 };
 const ARTIFACTS_DIR = path.join(
   config.rootDir,
   "packages/e2e-tests/.artifacts/tui",
@@ -85,6 +88,18 @@ const LOGO = [
   "                                     ⢕⢕⢔⢔⠄⢕⠅ ⠑⢕⠅  ⢕⢕⠁ ⢐⢕ ⠑⢕⢔⢔⠕⠁",
 ];
 
+const singleProcessFrame = () => [
+  "  envio@<version> …/e2e_test",
+  "",
+  ...LOGO,
+  "",
+  "  Ethereum 1 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ✓  at end 10,861,774 2 events",
+  "",
+  "  ✓ synced in <elapsed> · 2 events",
+  "",
+  `  GraphQL http://localhost:8080 (admin secret: testing)   ClickHouse ${config.clickhouseUrl}/play`,
+];
+
 const READY = "Ready. Fully indexed for queries.";
 
 /** Synced, and every chain's last log is out, so nothing prints after Ctrl-C. */
@@ -97,6 +112,13 @@ async function runToSyncedAndInterrupt(
   projectDir: string,
   chains: number,
   env: Record<string, string>,
+  {
+    size = SIZE,
+    beforeInterrupt = async () => {},
+  }: {
+    size?: TerminalSize;
+    beforeInterrupt?: (run: PtyRun) => Promise<void>;
+  } = {},
 ) {
   const run = runInPty(
     config.envioCommand,
@@ -104,13 +126,14 @@ async function runToSyncedAndInterrupt(
     {
       cwd: projectDir,
       env: { ...baseEnv(), ...env },
-      size: SIZE,
+      size,
     },
   );
-  await waitForScreen(run, SIZE, isDone(chains), 90_000);
+  await waitForScreen(run, size, isDone(chains), 90_000);
+  await beforeInterrupt(run);
   run.type("\x03");
   const exitCode = await run.exited;
-  const screen = await replay(run.output(), SIZE);
+  const screen = await replay(run.output(), size, run.resizes);
   fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
   fs.writeFileSync(path.join(ARTIFACTS_DIR, `${name}.svg`), toSvg(screen));
   fs.writeFileSync(path.join(ARTIFACTS_DIR, `${name}.raw`), run.output());
@@ -166,17 +189,46 @@ describe.skipIf(!reachable)("E2E: TUI", () => {
       frames: 1,
       // The log's own trailing blank line, then the frame.
       linesAfterReady: 14,
-      frame: [
-        "  envio@<version> …/e2e_test",
-        "",
-        ...LOGO,
-        "",
-        "  Ethereum 1 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ✓  at end 10,861,774 2 events",
-        "",
-        "  ✓ synced in <elapsed> · 2 events",
-        "",
-        `  GraphQL http://localhost:8080 (admin secret: testing)   ClickHouse ${config.clickhouseUrl}/play`,
-      ],
+      frame: singleProcessFrame(),
+    });
+  });
+
+  // Narrowing rewraps the frame onto more rows; any that go off the top of
+  // the screen can't be erased and come back as copies when it widens.
+  it("leaves one frame after the terminal narrows and widens", async () => {
+    const { exitCode, screen } = await runToSyncedAndInterrupt(
+      "resized",
+      singleDir,
+      1,
+      {
+        ENVIO_PG_SCHEMA: "e2e_tui_resize",
+        ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
+        ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
+        ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
+        ENVIO_CLICKHOUSE_DATABASE: "e2e_tui_resize",
+        E2E_EXPECTED_END_BLOCK: "10861774",
+      },
+      {
+        // Short enough that the rewrapped frame reaches the top of the screen.
+        size: RESIZED,
+        beforeInterrupt: async (run) => {
+          for (let i = 0; i < 3; i++) {
+            for (const cols of [60, RESIZED.cols]) {
+              run.resize({ ...RESIZED, cols });
+              await new Promise((resolve) => setTimeout(resolve, 400));
+            }
+          }
+        },
+      },
+    );
+    expect({
+      exitCode,
+      frames: screen.lines.filter(isTitle).length,
+      frame: frameOf(screen),
+    }).toEqual({
+      exitCode: 130,
+      frames: 1,
+      frame: singleProcessFrame(),
     });
   });
 

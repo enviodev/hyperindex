@@ -997,13 +997,14 @@ mod tests {
         )
     }
 
-    /// Draws the whole display into an emulator and snapshots what it shows.
+    /// Draws the whole display into an emulator and snapshots what it shows,
+    /// as the final frame so it sits at the top rather than pinned to the bottom.
     fn assert_screen(name: &str, state: &State, width: u16, level: ColorLevel) {
         let size = Size { width, height: 40 };
         let emulator = Emulator::new(size);
         emulator
             .session_with(level)
-            .render(None, state, NOW, 3, size)
+            .finish(None, state, NOW, 3, size)
             .unwrap();
         testing::assert_screen(name, &emulator);
     }

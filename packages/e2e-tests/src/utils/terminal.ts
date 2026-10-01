@@ -6,7 +6,10 @@
  * xterm.js's headless emulator, the engine behind VS Code's terminal.
  */
 
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import xterm from "@xterm/headless";
 
 export interface TerminalSize {
@@ -14,9 +17,18 @@ export interface TerminalSize {
   rows: number;
 }
 
+/** The terminal took `size` once `at` bytes of output had been written. */
+export interface Resize {
+  at: number;
+  size: TerminalSize;
+}
+
 export interface PtyRun {
   /** Everything written to the terminal so far. */
   output(): Buffer;
+  /** Resizes the terminal, as dragging its window would. */
+  resize(size: TerminalSize): void;
+  resizes: Resize[];
   /** Types into the terminal, e.g. "\x03" for Ctrl-C. */
   type(keys: string): void;
   exited: Promise<number | null>;
@@ -32,13 +44,18 @@ export function runInPty(
   options: { cwd: string; env: Record<string, string>; size: TerminalSize },
 ): PtyRun {
   const { cols, rows } = options.size;
-  const shell = `stty cols ${cols} rows ${rows}; exec ${[command, ...args].map(quote).join(" ")}`;
+  const ttyFile = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "pty-")),
+    "tty",
+  );
+  const shell = `tty > ${quote(ttyFile)}; stty cols ${cols} rows ${rows}; exec ${[command, ...args].map(quote).join(" ")}`;
   const child = spawn("script", ["-qfec", shell, "/dev/null"], {
     cwd: options.cwd,
     env: options.env,
     stdio: ["pipe", "pipe", "inherit"],
   });
   const chunks: Buffer[] = [];
+  const resizes: Resize[] = [];
   child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
   let hasExited = false;
   const exited = new Promise<number | null>((resolve) =>
@@ -49,6 +66,19 @@ export function runInPty(
   );
   return {
     output: () => Buffer.concat(chunks),
+    resize: (size) => {
+      resizes.push({ at: Buffer.concat(chunks).length, size });
+      const tty = fs.readFileSync(ttyFile, "utf8").trim();
+      execFileSync("stty", [
+        "-F",
+        tty,
+        "cols",
+        `${size.cols}`,
+        "rows",
+        `${size.rows}`,
+      ]);
+    },
+    resizes,
     type: (keys) => child.stdin.write(keys),
     exited,
     hasExited: () => hasExited,
@@ -65,16 +95,26 @@ export interface Screen {
   terminal: xterm.Terminal;
 }
 
+/** Replays `output`, resizing the emulator where the terminal was resized, so it rewraps what's on screen as a terminal would. */
 export async function replay(
   output: Buffer,
   size: TerminalSize,
+  resizes: Resize[] = [],
 ): Promise<Screen> {
   const terminal = new xterm.Terminal({
     ...size,
     scrollback: 10_000,
     allowProposedApi: true,
   });
-  await new Promise<void>((resolve) => terminal.write(output, resolve));
+  const write = (data: Buffer) =>
+    new Promise<void>((resolve) => terminal.write(data, resolve));
+  let written = 0;
+  for (const { at, size } of resizes) {
+    await write(output.subarray(written, at));
+    terminal.resize(size.cols, size.rows);
+    written = at;
+  }
+  await write(output.subarray(written));
   const buffer = terminal.buffer.active;
   const lines: string[] = [];
   for (let i = 0; i < buffer.length; i++) {

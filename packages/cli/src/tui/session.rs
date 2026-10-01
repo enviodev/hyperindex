@@ -22,18 +22,40 @@ impl Size {
             height: if rows == 0 { u16::MAX } else { rows },
         }
     }
+
+    /// `None` while the height is unknown.
+    fn rows_above_cursor(self) -> Option<usize> {
+        (self.height != u16::MAX).then(|| self.height.saturating_sub(1) as usize)
+    }
 }
 
-/// The display drawn below the terminal's output. It only ever moves the
-/// cursor relative to where it left it, so it never has to ask the terminal
-/// where that is, and printed lines scroll off the top the way any output
-/// does, into the terminal's own scrollback.
+/// The rows a terminal grown taller since `drawn` added.
+fn added_rows(drawn: Size, size: Size) -> usize {
+    match (drawn.rows_above_cursor(), size.rows_above_cursor()) {
+        (Some(before), Some(after)) => after.saturating_sub(before),
+        _ => 0,
+    }
+}
+
+/// The display, pinned to the bottom of the terminal below its output. It
+/// only ever moves the cursor relative to where it left it, so it never has
+/// to ask the terminal where that is, and printed lines scroll off the top
+/// the way any output does, into the terminal's own scrollback.
+///
+/// The cursor rests on the bottom row, below the frame, and the display owns
+/// the rows above it: blank padding, then the frame. A terminal narrowing
+/// rewraps the frame onto more rows, which it makes room for by pushing
+/// what's above off the top; anchored at the bottom, those are the padding
+/// and the logs, while a frame higher up would lose its own top rows to the
+/// scrollback, where no redraw can erase them.
 pub struct Session<W: Write> {
     out: W,
     palette: Palette,
     /// The frame on screen, kept to erase it and to skip redrawing it as is.
     drawn: Vec<Line<'static>>,
-    drawn_width: u16,
+    drawn_size: Option<Size>,
+    /// Rows the display owns above the cursor: padding, then the frame.
+    owned: usize,
 }
 
 impl<W: Write> Session<W> {
@@ -42,29 +64,51 @@ impl<W: Write> Session<W> {
             out,
             palette,
             drawn: Vec::new(),
-            drawn_width: 0,
+            drawn_size: None,
+            owned: 0,
         }
     }
 
-    /// Moves the cursor back to where the frame started and clears from there.
-    fn erase(&self, buf: &mut Vec<u8>, width: u16) {
-        if self.drawn.is_empty() {
-            return;
-        }
-        // A narrower terminal may have rewrapped the frame's lines onto more rows.
-        let rows: usize = if width < self.drawn_width {
+    /// The rows above the cursor the display owns at `size`: a narrower
+    /// terminal may have rewrapped the frame's lines onto more of them, and a
+    /// taller one has more rows to pin it to the bottom of.
+    fn owned_at(&self, size: Size) -> usize {
+        let Some(drawn) = self.drawn_size else {
+            return 0;
+        };
+        let padding = self.owned - self.drawn.len();
+        let frame: usize = if size.width < drawn.width {
             self.drawn
                 .iter()
-                .map(|line| line.width().div_ceil(width.max(1) as usize).max(1))
+                .map(|line| line.width().div_ceil(size.width.max(1) as usize).max(1))
                 .sum()
         } else {
             self.drawn.len()
         };
+        (padding + frame + added_rows(drawn, size))
+            .min(size.rows_above_cursor().unwrap_or(usize::MAX))
+    }
+
+    /// Takes the screen on the first draw, scrolling what was on it into the
+    /// scrollback, then moves the cursor to the top of the rows the display
+    /// owns and clears from there.
+    fn erase(&self, buf: &mut Vec<u8>, size: Size) -> usize {
+        let pin = match self.drawn_size {
+            None => size.rows_above_cursor().unwrap_or(0),
+            // Onto the rows a taller terminal added, so it stays at the bottom.
+            Some(drawn) => added_rows(drawn, size),
+        };
+        buf.extend(b"\r\n".repeat(pin));
+        let owned = match self.drawn_size {
+            None => pin,
+            Some(_) => self.owned_at(size),
+        };
         buf.push(b'\r');
-        if rows > 1 {
-            buf.extend(format!("\x1b[{}A", rows - 1).as_bytes());
+        if owned > 0 {
+            buf.extend(format!("\x1b[{owned}A").as_bytes());
         }
         buf.extend(b"\x1b[J");
+        owned
     }
 
     fn frame(&self, state: &State, now: f64, tick: usize, size: Size) -> Vec<Line<'static>> {
@@ -75,10 +119,10 @@ impl<W: Write> Session<W> {
     }
 
     /// Rewrites the rows that differ from the frame on screen in place, with
-    /// the cursor left on the last row as a full redraw leaves it.
+    /// the cursor left below the frame as a full redraw leaves it.
     fn patch(&self, buf: &mut Vec<u8>, lines: &[Line<'static>]) {
-        let last = lines.len() - 1;
-        let mut row = last;
+        let below = lines.len();
+        let mut row = below;
         for (i, (line, drawn)) in lines.iter().zip(&self.drawn).enumerate() {
             if line == drawn {
                 continue;
@@ -94,41 +138,45 @@ impl<W: Write> Session<W> {
             encode(buf, line);
             row = i;
         }
-        if row < last {
-            buf.extend(format!("\x1b[{}B", last - row).as_bytes());
+        if row < below {
+            buf.extend(format!("\x1b[{}B", below - row).as_bytes());
         }
+        buf.push(b'\r');
     }
 
     /// Prints `printed` above the display and redraws it, as one synchronized
     /// update so terminals that support it never show the display erased.
+    /// Padded down to the bottom of the rows it owned unless `unpinned`.
     fn draw(
         &mut self,
         printed: Option<&str>,
         lines: Vec<Line<'static>>,
         size: Size,
-        in_place: bool,
+        unpinned: bool,
     ) -> io::Result<()> {
         let mut buf = BEGIN_SYNCHRONIZED_UPDATE.to_vec();
-        if in_place {
-            self.patch(&mut buf, &lines);
+        let mut owned = self.erase(&mut buf, size);
+        if let Some(text) = printed {
+            buf.extend(text.replace('\n', "\r\n").as_bytes());
+            buf.extend(b"\x1b[0m\r\n");
+            owned = owned.saturating_sub(rows(text, size.width));
+        }
+        let owned = if unpinned {
+            lines.len()
         } else {
-            self.erase(&mut buf, size.width);
-            if let Some(text) = printed {
-                buf.extend(text.replace('\n', "\r\n").as_bytes());
-                buf.extend(b"\x1b[0m\r\n");
-            }
-            for (i, line) in lines.iter().enumerate() {
-                if i > 0 {
-                    buf.extend(b"\r\n");
-                }
-                encode(&mut buf, line);
-            }
+            owned.max(lines.len())
+        };
+        buf.extend(b"\r\n".repeat(owned - lines.len()));
+        for line in &lines {
+            encode(&mut buf, line);
+            buf.extend(b"\r\n");
         }
         buf.extend(END_SYNCHRONIZED_UPDATE);
         self.out.write_all(&buf)?;
         self.out.flush()?;
         self.drawn = lines;
-        self.drawn_width = size.width;
+        self.drawn_size = Some(size);
+        self.owned = owned;
         Ok(())
     }
 
@@ -141,17 +189,26 @@ impl<W: Write> Session<W> {
         size: Size,
     ) -> io::Result<()> {
         let lines = self.frame(state, now, tick, size);
-        let same_shape = size.width == self.drawn_width && lines.len() == self.drawn.len();
+        let same_shape = self.drawn_size == Some(size) && lines.len() == self.drawn.len();
         match printed {
             None if same_shape && lines == self.drawn => Ok(()),
-            None if same_shape => self.draw(None, lines, size, true),
+            None if same_shape => {
+                let mut buf = BEGIN_SYNCHRONIZED_UPDATE.to_vec();
+                self.patch(&mut buf, &lines);
+                buf.extend(END_SYNCHRONIZED_UPDATE);
+                self.out.write_all(&buf)?;
+                self.out.flush()?;
+                self.drawn = lines;
+                Ok(())
+            }
             _ => self.draw(printed, lines, size, false),
         }
     }
 
-    /// Leaves the last frame on screen with the cursor below it, as the
-    /// terminal's own output would. Always redrawn, since the terminal may
-    /// have echoed the keys that ended the run, such as `^C`, onto it.
+    /// Leaves the last frame right below the output, with the cursor below
+    /// it, as the terminal's own output would. Always redrawn, since the
+    /// terminal may have echoed the keys that ended the run, such as `^C`,
+    /// onto it.
     pub fn finish(
         &mut self,
         printed: Option<&str>,
@@ -161,8 +218,8 @@ impl<W: Write> Session<W> {
         size: Size,
     ) -> io::Result<()> {
         let lines = self.frame(state, now, tick, size);
-        self.draw(printed, lines, size, false)?;
-        self.out.write_all(b"\r\n\x1b[?25h")?;
+        self.draw(printed, lines, size, true)?;
+        self.out.write_all(b"\x1b[?25h")?;
         self.out.flush()
     }
 
@@ -170,6 +227,41 @@ impl<W: Write> Session<W> {
         self.out.write_all(b"\x1b[?25l")?;
         self.out.flush()
     }
+}
+
+/// The rows `text` takes printed at `width`, its escape sequences taking none.
+fn rows(text: &str, width: u16) -> usize {
+    text.split('\n')
+        .map(|line| {
+            let mut columns = 0;
+            let mut chars = line.chars();
+            while let Some(c) = chars.next() {
+                if c == '\x1b' {
+                    // CSI ends at its final byte, OSC at BEL or ST.
+                    match chars.next() {
+                        Some('[') => {
+                            for c in chars.by_ref() {
+                                if ('@'..='~').contains(&c) {
+                                    break;
+                                }
+                            }
+                        }
+                        Some(']') => {
+                            while let Some(c) = chars.next() {
+                                if c == '\x07' || (c == '\x1b' && chars.next().is_some()) {
+                                    break;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                } else {
+                    columns += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+                }
+            }
+            columns.div_ceil(width.max(1) as usize).max(1)
+        })
+        .sum()
 }
 
 const BEGIN_SYNCHRONIZED_UPDATE: &[u8] = b"\x1b[?2026h";
@@ -307,8 +399,22 @@ mod tests {
             .collect()
     }
 
+    /// `above` and the frame then `below` it, pinned to the bottom of a
+    /// `SIZE` screen with blank rows between, after what scrolled off.
+    fn pinned(scrolled: &[&str], above: &[&str], below: &[&str]) -> Vec<String> {
+        let blank = SIZE.height as usize - 1 - above.len() - frame().len() - below.len();
+        scrolled
+            .iter()
+            .chain(above)
+            .map(|line| line.to_string())
+            .chain(std::iter::repeat_n(String::new(), blank))
+            .chain(frame())
+            .chain(below.iter().map(|line| line.to_string()))
+            .collect()
+    }
+
     #[test]
-    fn draws_below_the_existing_output_and_prints_above_the_frame() {
+    fn takes_the_screen_and_prints_above_the_frame_pinned_to_the_bottom() {
         let emulator = Emulator::new(SIZE);
         emulator.clone().write_all(b"$ envio dev\r\n").unwrap();
         let mut session = emulator.session();
@@ -318,8 +424,21 @@ mod tests {
             .unwrap();
         assert_eq!(
             emulator.lines(),
-            with_frame(&["$ envio dev", "first log", "second log"])
+            pinned(&["$ envio dev"], &["first log", "second log"], &[])
         );
+    }
+
+    #[test]
+    fn stays_pinned_to_the_bottom_of_a_taller_terminal() {
+        let short = Size {
+            width: 60,
+            height: 20,
+        };
+        let emulator = Emulator::new(SIZE);
+        let mut session = emulator.session();
+        session.render(None, &state(), 0., 0, short).unwrap();
+        session.render(None, &state(), 0., 0, SIZE).unwrap();
+        assert_eq!(emulator.lines(), pinned(&[], &[], &[]));
     }
 
     #[test]
@@ -346,7 +465,7 @@ mod tests {
         session
             .render(Some("pretty log\n"), &state(), 0., 0, SIZE)
             .unwrap();
-        assert_eq!(emulator.lines(), with_frame(&["pretty log", ""]));
+        assert_eq!(emulator.lines(), pinned(&[], &["pretty log", ""], &[]));
     }
 
     #[test]
@@ -363,14 +482,12 @@ mod tests {
         assert_eq!(
             (grown, emulator.lines()),
             (
-                with_frame(&[])
-                    .into_iter()
-                    .chain([
-                        "".to_string(),
-                        "  ▲ Failed to load messages from envio server".to_string()
-                    ])
-                    .collect::<Vec<_>>(),
-                with_frame(&[])
+                pinned(
+                    &[],
+                    &[],
+                    &["", "  ▲ Failed to load messages from envio server"]
+                ),
+                pinned(&[], &[], &[])
             )
         );
     }
@@ -384,24 +501,41 @@ mod tests {
         let emulator = Emulator::new(SIZE);
         let mut session = emulator.session();
         session.render(None, &state(), 0., 0, SIZE).unwrap();
-        // Replays the wide frame onto a narrow screen, which wraps its long
-        // rows the way a reflowing terminal does when it narrows.
+        // Replays the wide screen onto a narrow one, wrapping its long rows the
+        // way a reflowing terminal does when it narrows: the cursor's row stays
+        // at the bottom and the rows above make way upwards.
+        let rows: Vec<String> = emulator
+            .parser
+            .lock()
+            .unwrap()
+            .screen()
+            .rows(0, SIZE.width)
+            .flat_map(|row| {
+                let chars: Vec<char> = row.trim_end().chars().collect();
+                if chars.is_empty() {
+                    vec![String::new()]
+                } else {
+                    chars
+                        .chunks(narrow.width as usize)
+                        .map(|chunk| chunk.iter().collect())
+                        .collect()
+                }
+            })
+            .collect();
         let replayed = Emulator::new(narrow);
-        let screen = emulator.parser.lock().unwrap().screen().contents();
         replayed
             .clone()
-            .write_all(format!("$ envio dev\r\n{}", screen.replace('\n', "\r\n")).as_bytes())
+            .write_all(rows.join("\r\n").as_bytes())
             .unwrap();
         session.out = replayed.clone();
         session.render(None, &state(), 0., 0, narrow).unwrap();
 
         let fresh = Emulator::new(narrow);
-        fresh.clone().write_all(b"$ envio dev\r\n").unwrap();
         fresh
             .session()
             .render(None, &state(), 0., 0, narrow)
             .unwrap();
-        assert_eq!(replayed.lines(), fresh.lines());
+        assert_eq!(replayed.screen_text(), fresh.screen_text());
     }
 
     #[test]
