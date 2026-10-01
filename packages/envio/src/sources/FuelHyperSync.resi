@@ -1,5 +1,6 @@
 type logsQueryPage = {
   items: array<FuelHyperSyncClient.EventItems.item>,
+  rejectedLogData: array<FuelHyperSyncClient.EventItems.rejectedLogData>,
   nextBlock: int,
   archiveHeight: int,
   // Page store owning this page's raw blocks (built on the Rust side); its ids

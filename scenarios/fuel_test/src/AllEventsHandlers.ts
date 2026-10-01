@@ -92,7 +92,7 @@ indexer.onEvent({ contract: "AllEvents", event: "U64Log" },async ({ event }) => 
   expectType<AssertSchemaType<typeof event.params, typeof u64LogSchema>>(true);
 });
 
-const b256LogSchema = S.string;
+const b256LogSchema = S.string as S.Schema<`0x${string}`, string>;
 indexer.onEvent({ contract: "AllEvents", event: "B256Log" },async ({ event }) => {
   S.assertOrThrow(event.params, b256LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof b256LogSchema>>(true);
