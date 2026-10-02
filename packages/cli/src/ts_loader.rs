@@ -272,6 +272,7 @@ fn check_module_format(path: &Path) -> Result<(), String> {
 fn transform(path: &Path, source: &str) -> Result<(String, Option<String>), String> {
     use oxc::allocator::Allocator;
     use oxc::codegen::{Codegen, CodegenOptions};
+    use oxc::diagnostics::{Diagnostics, GraphicalReportHandler, GraphicalTheme, NamedSource};
     use oxc::parser::Parser;
     use oxc::semantic::SemanticBuilder;
     use oxc::span::SourceType;
@@ -280,19 +281,31 @@ fn transform(path: &Path, source: &str) -> Result<(String, Option<String>), Stri
     let file = path.display();
     let source_type = SourceType::from_path(path)
         .map_err(|_| format!("Unsupported handler file extension: {file}"))?;
-    let report = |stage: &str, diagnostics: &[oxc::diagnostics::OxcDiagnostic]| {
-        let message = diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!("Failed {stage} {file}:\n{message}")
+    let report = |stage: &str, diagnostics: Diagnostics| {
+        // No colors: the message goes through the logger and into error
+        // strings, where escape codes would show up raw.
+        let handler = GraphicalReportHandler::new_themed(GraphicalTheme::unicode_nocolor());
+        let mut rendered = String::new();
+        for diagnostic in diagnostics {
+            let diagnostic =
+                diagnostic.with_source_code(NamedSource::new(file.to_string(), source.to_string()));
+            if handler
+                .render_report(&mut rendered, diagnostic.as_ref())
+                .is_err()
+            {
+                rendered.push_str(&format!("{diagnostic}\n"));
+            }
+        }
+        format!(
+            "Failed {stage} {file}:\n{}",
+            rendered.trim_start_matches('\n')
+        )
     };
 
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, source_type).parse();
     if !parsed.diagnostics.is_empty() {
-        return Err(report("parsing", &parsed.diagnostics));
+        return Err(report("parsing", parsed.diagnostics));
     }
 
     let mut program = parsed.program;
@@ -306,7 +319,7 @@ fn transform(path: &Path, source: &str) -> Result<(String, Option<String>), Stri
     let transformed = Transformer::new(&allocator, path, &TransformOptions::default())
         .build_with_scoping(scoping, &mut program);
     if !transformed.diagnostics.is_empty() {
-        return Err(report("transforming", &transformed.diagnostics));
+        return Err(report("transforming", transformed.diagnostics));
     }
 
     let generated = Codegen::new()
