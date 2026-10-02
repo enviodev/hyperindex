@@ -172,7 +172,7 @@ describe("Supervisor.readLines", () => {
 
 describe("Supervisor.fork output", () => {
   // A worker writing straight to the terminal tears the frame its supervisor
-  // draws: ink only knows about the lines its own process logs. Each line keeps
+  // draws: it can only print above the frame the lines its own process logs. Each line keeps
   // the stream it was written to, so redirecting the run's stderr still catches
   // what its workers wrote there. Sorted, since stdout and stderr are two pipes
   // and neither waits for the other.

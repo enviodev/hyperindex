@@ -1,0 +1,25 @@
+---
+source: packages/cli/src/tui/testing.rs
+expression: "emulator.screen_text().join(\"\\n\")"
+---
+envio@2.32.0
+
+Ethereum 1
+62% 16,820,000/21.0M
+Base 8453
+ ✓  24,118,903
+Arbitrum One 42161
+28% 120,344,364/301.2M
+
+⠸ syncing · ETA 3m 06s
+2,481,034 events ·
+15,000/s
+
+GraphQL http://localhost
+:8080
+admin secret: testing
+Console https://envio.de
+v/console
+
+● Base HyperSync is 2x
+  faster! pnpm up envio

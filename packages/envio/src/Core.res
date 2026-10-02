@@ -12,6 +12,7 @@ type transactionStoreCtor
 type blockStoreCtor
 type clickHouseSinkCtor
 type addressStoreCtor
+type tuiCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
 type fromUserApiOptions = {
@@ -49,6 +50,8 @@ type addon = {
   addressStore: addressStoreCtor,
   @as("ClickHouseSink")
   clickHouseSink: clickHouseSinkCtor,
+  @as("Tui")
+  tui: tuiCtor,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
