@@ -1,14 +1,8 @@
 @module("node:fs/promises")
 external globIterator: string => Utils.asyncIterator<string> = "glob"
 
-// Register tsx for TypeScript handler support
-// Wrapped in try-catch because if tsx is already loaded via --import (e.g., in tests),
-// calling module.register again will throw an error
-try {
-  NodeJs.Module.register("tsx/esm", NodeJs.ImportMeta.url)
-} catch {
-| _ => () // tsx already loaded, ignore
-}
+@module("./TsModuleHooks.mjs")
+external registerTsHooks: Core.addon => unit = "register"
 
 // Convert a relative path to a file:// URL for dynamic import
 // Paths are resolved relative to process.cwd() (project root)
@@ -79,6 +73,10 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 // returns the resulting per-chain registrations.
 let registerAllHandlers = async (~config: Config.t): HandlerRegister.registrationsByChainId => {
   HandlerRegister.startRegistration(~config)
+
+  // The resolve hook calls into the addon, and loading the addon goes through
+  // the resolve hook, so the addon has to be loaded before the hooks exist.
+  registerTsHooks(Core.getAddon())
 
   // Auto-load all .js files from src/handlers directory
   await autoLoadFromSrcHandlers(~handlers=config.handlers)

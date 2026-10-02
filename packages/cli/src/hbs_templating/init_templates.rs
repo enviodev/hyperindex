@@ -75,7 +75,7 @@ impl InitTemplates {
         }
         out.push_str("\n  },\n");
         out.push_str("  \"engines\": {\n");
-        out.push_str("    \"node\": \">=22.0.0\"\n");
+        out.push_str("    \"node\": \">=22.15.0\"\n");
         out.push_str("  }\n");
         out.push_str("}\n");
         out

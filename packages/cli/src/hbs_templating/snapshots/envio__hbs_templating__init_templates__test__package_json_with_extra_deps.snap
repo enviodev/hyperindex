@@ -26,6 +26,6 @@ expression: "template(true, \"1.2.3\",\nvec![(\"viem\".to_string(), \"2.54.0\".t
     "foo": "1.0.0"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.15.0"
   }
 }
