@@ -72,7 +72,7 @@ fn is_directory(specifier: &str) -> bool {
 
 fn is_typescript(url: &str) -> bool {
     let path = url.split('?').next().unwrap_or(url);
-    [".ts", ".mts", ".cts", ".tsx"]
+    [".ts", ".mts", ".tsx"]
         .iter()
         .any(|extension| path.ends_with(extension))
 }
@@ -125,10 +125,16 @@ fn index_candidates(url: &str) -> Vec<String> {
 /// Specifiers to hand Node's resolver, in order, before the specifier itself.
 pub fn resolve_candidates(specifier: &str, parent_url: Option<&str>) -> Vec<String> {
     let project = project();
-    let typescript_mode = parent_url.is_some_and(is_typescript) || project.allow_js();
+    // A dependency resolves as Node resolves it, apart from the retry after a
+    // miss. Probing TypeScript siblings first, as tsx does under `allowJs`,
+    // can't find anything there (Node won't load TypeScript from
+    // `node_modules`) and doubled the time to import a package like viem.
+    let from_dependency = parent_url.is_some_and(|url| url.contains("/node_modules/"));
+    let typescript_mode =
+        !from_dependency && (parent_url.is_some_and(is_typescript) || project.allow_js());
     let mut candidates = Vec::new();
 
-    if !is_path_like(specifier) && !parent_url.is_some_and(|url| url.contains("/node_modules/")) {
+    if !is_path_like(specifier) && !from_dependency {
         for path in project.path_candidates(specifier) {
             let Ok(url) = Url::from_file_path(&path) else {
                 continue;

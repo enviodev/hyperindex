@@ -78,7 +78,7 @@ describe("TypeScript handler errors", () => {
 // The tsconfig is the one found from the working directory, as tsx does, so
 // this runs the CLI rather than an in-process indexer.
 describe("TypeScript handler imports", () => {
-  it("resolve tsconfig paths and baseUrl before packages, and CommonJS re-exports", async () => {
+  it("resolve tsconfig paths and baseUrl before packages, and dependencies as Node does", async () => {
     const result = await runEnvio(
       ["start"],
       {
@@ -89,6 +89,6 @@ describe("TypeScript handler imports", () => {
       path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-paths-project")
     );
 
-    expect(`${result.stdout}${result.stderr}`).toContain("loaded Gravatar NewGravatar shadowed cjs");
+    expect(`${result.stdout}${result.stderr}`).toContain("loaded Gravatar NewGravatar shadowed cjs js");
   });
 });
