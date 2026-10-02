@@ -240,7 +240,8 @@ impl<W: Write> Session<W> {
     /// Leaves the last frame right below the output, with the cursor below
     /// it, as the terminal's own output would. Always redrawn, since the
     /// terminal may have echoed the keys that ended the run, such as `^C`,
-    /// onto it.
+    /// onto it, and in full: it's not redrawn again, so what runs past the
+    /// top of a short screen can stay in the scrollback.
     pub fn finish(
         &mut self,
         printed: Option<&str>,
@@ -249,7 +250,7 @@ impl<W: Write> Session<W> {
         tick: usize,
         size: Size,
     ) -> io::Result<()> {
-        let lines = self.frame(state, now, tick, size);
+        let lines = render::frame(state, now, tick, size.width, u16::MAX, self.palette);
         self.draw(printed, lines, size, true)?;
         self.out.write_all(b"\x1b[?25h")?;
         self.out.flush()
@@ -611,7 +612,26 @@ mod tests {
                 .map(str::to_string)
                 .collect()
         };
-        assert_eq!((render_at(9), render_at(6)), (status(7), status(5)));
+        // Then the blank lines between sections, before any content.
+        let compact: Vec<String> = ["log", TITLE[0], STATUS[0], STATUS[2], STATUS[4]]
+            .map(str::to_string)
+            .to_vec();
+        assert_eq!((render_at(9), render_at(6)), (status(7), compact));
+    }
+
+    // It's no longer redrawn, so nothing stops it running past the top of
+    // the screen into the scrollback, where it stays to scroll back to.
+    #[test]
+    fn prints_the_whole_final_frame_on_a_short_screen() {
+        let size = Size {
+            width: 60,
+            height: 6,
+        };
+        let emulator = Emulator::new(size);
+        let mut session = emulator.session();
+        session.render(None, &state(), 0., 0, size).unwrap();
+        session.finish(None, &state(), 0., 0, size).unwrap();
+        assert_eq!(emulator.lines(), frame());
     }
 
     #[test]

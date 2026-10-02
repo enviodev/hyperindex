@@ -752,7 +752,8 @@ fn wrap_words(spans: Spans, width: usize, first: usize, indent: usize) -> Vec<Li
     lines
 }
 
-/// The frame at most `height` rows tall: the logo goes first when it doesn't fit.
+/// The frame at most `height` rows tall: when it doesn't fit, the logo goes
+/// first, then the blank lines between sections, and only then content.
 pub fn frame(
     state: &State,
     now: f64,
@@ -808,11 +809,18 @@ pub fn frame(
         lay_out(logo),
         lay_out(body),
     );
-    let fits = head.len() + logo.len() + body.len() <= height;
-    let mut lines = if fits {
+    let mut lines = if head.len() + logo.len() + body.len() <= height {
         [head, logo, body].concat()
     } else {
-        [head, body].concat()
+        let without_logo = [head, body].concat();
+        if without_logo.len() <= height {
+            without_logo
+        } else {
+            without_logo
+                .into_iter()
+                .filter(|line| line.width() > 0)
+                .collect()
+        }
     };
     lines.truncate(height);
     lines
