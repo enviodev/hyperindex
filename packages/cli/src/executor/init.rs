@@ -273,6 +273,14 @@ pub async fn run_init_args(
     )
     .context("Failed writing package.json")?;
 
+    let pm = init_config.package_manager;
+    for (file_name, content) in package_manager_files(pm) {
+        let path = project_root.join(file_name);
+        if !path.exists() {
+            fs::write(&path, content).context(format!("Failed writing {file_name}"))?;
+        }
+    }
+
     println!("Project template ready");
     println!("Running codegen");
 
@@ -281,7 +289,6 @@ pub async fn run_init_args(
 
     commands::codegen::run_codegen(&config).await?;
 
-    let pm = init_config.package_manager;
     println!("Installing dependencies with {}...", pm);
     commands::pm::install(pm, &parsed_project_paths.project_root)
         .await
@@ -307,6 +314,20 @@ pub async fn run_init_args(
     );
 
     Ok(())
+}
+
+// pnpm 11+ exits `pnpm install` with ERR_PNPM_IGNORED_BUILDS when a dependency
+// has a build script that is not listed in `allowBuilds`.
+// https://github.com/enviodev/hyperindex/issues/1679
+fn package_manager_files(pm: init_config::PackageManager) -> Vec<(&'static str, &'static str)> {
+    match pm {
+        init_config::PackageManager::Pnpm => {
+            vec![("pnpm-workspace.yaml", "allowBuilds:\n  esbuild: true\n")]
+        }
+        init_config::PackageManager::Npm
+        | init_config::PackageManager::Yarn
+        | init_config::PackageManager::Bun => vec![],
+    }
 }
 
 fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> String {
@@ -461,6 +482,26 @@ fn shell_quote(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::cli_args::init_config::PackageManager;
+
+    // https://github.com/enviodev/hyperindex/issues/1679
+    #[test]
+    fn package_manager_files_approve_esbuild_build_for_pnpm_only() {
+        assert_eq!(
+            [
+                PackageManager::Pnpm,
+                PackageManager::Npm,
+                PackageManager::Yarn,
+                PackageManager::Bun
+            ]
+            .map(package_manager_files),
+            [
+                vec![("pnpm-workspace.yaml", "allowBuilds:\n  esbuild: true\n")],
+                vec![],
+                vec![],
+                vec![]
+            ]
+        );
+    }
 
     #[test]
     fn next_steps_in_subdir() {
