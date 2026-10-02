@@ -2,11 +2,7 @@
 external globIterator: string => Utils.asyncIterator<string> = "glob"
 
 @module("./TsModuleHooks.mjs")
-external registerTsHooks: (
-  (string, string) => Core.transformTsResult,
-  string => array<string>,
-  bool,
-) => unit = "register"
+external registerTsHooks: Core.addon => unit = "register"
 
 // Convert a relative path to a file:// URL for dynamic import
 // Paths are resolved relative to process.cwd() (project root)
@@ -80,7 +76,7 @@ let registerAllHandlers = async (~config: Config.t): HandlerRegister.registratio
 
   // The resolve hook calls into the addon, and loading the addon goes through
   // the resolve hook, so the addon has to be loaded before the hooks exist.
-  registerTsHooks(Core.transformTs, Core.tsPathCandidates, Core.tsAllowJs())
+  registerTsHooks(Core.getAddon())
 
   // Auto-load all .js files from src/handlers directory
   await autoLoadFromSrcHandlers(~handlers=config.handlers)

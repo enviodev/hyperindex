@@ -1917,6 +1917,7 @@ dependencies = [
  "arrayvec",
  "arrow",
  "async-recursion",
+ "base64 0.22.1",
  "bollard",
  "bs58",
  "bytes",
@@ -1970,6 +1971,7 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "unicode-width 0.2.2",
+ "url",
  "vt100",
 ]
 

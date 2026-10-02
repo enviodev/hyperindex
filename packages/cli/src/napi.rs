@@ -93,119 +93,19 @@ pub fn from_user_api(
     })
 }
 
-#[napi_derive::napi(object)]
-pub struct TransformTsResult {
-    pub code: String,
-    /// JSON source map, always emitted so handler stack traces point at the
-    /// user's TypeScript rather than the stripped output.
-    pub map: Option<String>,
-    /// Whether the source uses `import`/`export`, which only runs as an ES
-    /// module whatever the package `type` says.
-    pub has_module_syntax: bool,
-}
-
-/// Strips types from a TypeScript handler module and lowers the syntax Node
-/// cannot execute directly (enums, namespaces, decorators, JSX). Called by the
-/// module load hook that `HandlerLoader` registers.
 #[napi_derive::napi]
-pub fn transform_ts(filename: String, source: String) -> napi::Result<TransformTsResult> {
-    use oxc::allocator::Allocator;
-    use oxc::codegen::{Codegen, CodegenOptions};
-    use oxc::parser::Parser;
-    use oxc::semantic::SemanticBuilder;
-    use oxc::span::SourceType;
-    use oxc::transformer::{TransformOptions, Transformer};
-    use std::path::Path;
-
-    let path = Path::new(&filename);
-    let source_type = SourceType::from_path(path).map_err(|_| {
-        napi::Error::from_reason(format!("Unsupported handler file extension: {filename}"))
-    })?;
-
-    fn report(
-        stage: &str,
-        filename: &str,
-        diagnostics: &[oxc::diagnostics::OxcDiagnostic],
-    ) -> napi::Error {
-        let message = diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        napi::Error::from_reason(format!("Failed {stage} {filename}:\n{message}"))
-    }
-
-    let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, &source, source_type).parse();
-    if !parsed.diagnostics.is_empty() {
-        return Err(report("parsing", &filename, &parsed.diagnostics));
-    }
-
-    let has_module_syntax = parsed.module_record.has_module_syntax;
-    let mut program = parsed.program;
-    // `with_enum_eval` is what lets the transformer resolve enum member values;
-    // without it, lowering an `enum` panics.
-    let scoping = SemanticBuilder::new()
-        .with_enum_eval(true)
-        .build(&program)
-        .semantic
-        .into_scoping();
-    let transformed = Transformer::new(&allocator, path, &TransformOptions::default())
-        .build_with_scoping(scoping, &mut program);
-    if !transformed.diagnostics.is_empty() {
-        return Err(report("transforming", &filename, &transformed.diagnostics));
-    }
-
-    let generated = Codegen::new()
-        .with_options(CodegenOptions {
-            source_map_path: Some(path.to_path_buf()),
-            ..CodegenOptions::default()
-        })
-        .build(&program);
-
-    Ok(TransformTsResult {
-        code: generated.code,
-        map: generated.map.map(|map| map.to_json_string()),
-        has_module_syntax,
-    })
-}
-
-/// The tsconfig.json found from the working directory upwards, as tsx loads
-/// it: one config, with `extends` followed, for every handler module.
-fn project_tsconfig() -> Option<&'static oxc_resolver::TsConfig> {
-    use oxc_resolver::{ResolveOptions, Resolver, TsConfig};
-    use std::sync::{Arc, LazyLock};
-
-    static TSCONFIG: LazyLock<Option<Arc<TsConfig>>> = LazyLock::new(|| {
-        let cwd = std::env::current_dir().ok()?;
-        let path = cwd
-            .ancestors()
-            .map(|directory| directory.join("tsconfig.json"))
-            .find(|path| path.is_file())?;
-        Resolver::new(ResolveOptions::default())
-            .resolve_tsconfig(path)
-            .ok()
-    });
-
-    TSCONFIG.as_deref()
+pub fn load_ts(path: String) -> napi::Result<String> {
+    crate::ts_loader::load(std::path::Path::new(&path)).map_err(napi::Error::from_reason)
 }
 
 #[napi_derive::napi]
-pub fn ts_allow_js() -> bool {
-    project_tsconfig().is_some_and(|tsconfig| tsconfig.compiler_options.allow_js == Some(true))
+pub fn ts_resolve_candidates(specifier: String, parent_url: Option<String>) -> Vec<String> {
+    crate::ts_loader::resolve_candidates(&specifier, parent_url.as_deref())
 }
 
-/// Candidate paths for a bare specifier under the project tsconfig's `paths`,
-/// or under `baseUrl` when no pattern matches. Empty without either.
 #[napi_derive::napi]
-pub fn ts_path_candidates(specifier: String) -> Vec<String> {
-    project_tsconfig().map_or_else(Vec::new, |tsconfig| {
-        tsconfig
-            .resolve_path_alias_or_base_url(&specifier)
-            .into_iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect()
-    })
+pub fn ts_not_found_candidates(code: String, url: Option<String>, message: String) -> Vec<String> {
+    crate::ts_loader::not_found_candidates(&code, url.as_deref(), &message)
 }
 
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when

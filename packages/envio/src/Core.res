@@ -28,17 +28,8 @@ type fromUserApiResult = {
   indexerCode: Null.t<string>,
 }
 
-type transformTsResult = {
-  code: string,
-  map: Null.t<string>,
-  hasModuleSyntax: bool,
-}
-
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
-  transformTs: (~filename: string, ~source: string) => transformTsResult,
-  tsPathCandidates: (~specifier: string) => array<string>,
-  tsAllowJs: unit => bool,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -283,12 +274,6 @@ let getAddon = () =>
       a
     }
   }
-
-let transformTs = (filename, source) => getAddon().transformTs(~filename, ~source)
-
-let tsPathCandidates = specifier => getAddon().tsPathCandidates(~specifier)
-
-let tsAllowJs = () => getAddon().tsAllowJs()
 
 let getConfigJson = (~configPath=?, ~directory=?) => {
   let addon = getAddon()
