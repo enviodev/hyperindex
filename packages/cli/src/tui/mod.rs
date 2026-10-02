@@ -47,67 +47,16 @@ impl Tty {
         }
         Ok(Size::reported(size.ws_col, size.ws_row))
     }
-
-    /// Where the terminal has the cursor, as row and column from 0, asked of
-    /// the terminal itself: `None` when there's none to ask or it doesn't
-    /// answer in time. Its reply arrives as input, so the terminal stops
-    /// echoing input and buffering it into lines until it has.
-    fn cursor(&self) -> Option<(u16, u16)> {
-        let terminal = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/tty")
-            .ok()?;
-        let fd = terminal.as_raw_fd();
-        // SAFETY: `termios` is plain data that `tcgetattr` fills in.
-        let mut saved: libc::termios = unsafe { std::mem::zeroed() };
-        // SAFETY: the descriptor is open for the duration, and both calls
-        // only read or write the struct passed.
-        if unsafe { libc::tcgetattr(fd, &mut saved) } != 0 {
-            return None;
-        }
-        let mut quiet = saved;
-        quiet.c_lflag &= !(libc::ICANON | libc::ECHO);
-        quiet.c_cc[libc::VMIN] = 0;
-        // Each read waits up to a tenth of a second for input: macOS's poll
-        // can't wait on a terminal, it reports it invalid straight away.
-        quiet.c_cc[libc::VTIME] = 1;
-        // SAFETY: as above.
-        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &quiet) } != 0 {
-            return None;
-        }
-        let reply = (&terminal)
-            .write_all(b"\x1b[6n")
-            .ok()
-            .and_then(|()| read_cursor_report(&terminal, Duration::from_millis(500)));
-        // SAFETY: as above.
-        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
-        reply
-    }
-
-    fn wait_until_writable(&self) -> io::Result<()> {
-        let mut poll = libc::pollfd {
-            fd: self.0.as_raw_fd(),
-            events: libc::POLLOUT,
-            revents: 0,
-        };
-        // SAFETY: one valid `pollfd`, which outlives the call.
-        if unsafe { libc::poll(&mut poll, 1, -1) } < 0 {
-            let error = io::Error::last_os_error();
-            if error.kind() != io::ErrorKind::Interrupted {
-                return Err(error);
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Write for Tty {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         loop {
             match (&*self.0).write(buf) {
+                // Waited out with a sleep: macOS's poll can't wait on a
+                // terminal, it reports it invalid straight away.
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    self.wait_until_writable()?
+                    thread::sleep(Duration::from_millis(1))
                 }
                 result => return result,
             }
@@ -116,6 +65,43 @@ impl Write for Tty {
     fn flush(&mut self) -> io::Result<()> {
         (&*self.0).flush()
     }
+}
+
+/// Where the terminal has the cursor, as row and column from 0, asked of the
+/// terminal itself: `None` when there's none to ask or it doesn't answer in
+/// time. Its reply arrives as input, so the terminal stops echoing input and
+/// buffering it into lines until it has.
+fn cursor_position() -> Option<(u16, u16)> {
+    let terminal = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .ok()?;
+    let fd = terminal.as_raw_fd();
+    // SAFETY: `termios` is plain data that `tcgetattr` fills in.
+    let mut saved: libc::termios = unsafe { std::mem::zeroed() };
+    // SAFETY: the descriptor is open for the duration, and both calls only
+    // read or write the struct passed.
+    if unsafe { libc::tcgetattr(fd, &mut saved) } != 0 {
+        return None;
+    }
+    let mut quiet = saved;
+    quiet.c_lflag &= !(libc::ICANON | libc::ECHO);
+    quiet.c_cc[libc::VMIN] = 0;
+    // Each read waits up to a tenth of a second for input, timed by the
+    // terminal rather than poll, which can't wait on one on macOS.
+    quiet.c_cc[libc::VTIME] = 1;
+    // SAFETY: as above.
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &quiet) } != 0 {
+        return None;
+    }
+    let reply = (&terminal)
+        .write_all(b"\x1b[6n")
+        .ok()
+        .and_then(|()| read_cursor_report(&terminal, Duration::from_millis(500)));
+    // SAFETY: as above.
+    unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
+    reply
 }
 
 fn read_cursor_report(terminal: &File, timeout: Duration) -> Option<(u16, u16)> {
@@ -280,7 +266,7 @@ impl Tui {
                 level: ColorLevel::detect(|name| std::env::var(name).ok()),
             },
         );
-        if let Some(cursor) = tty.cursor() {
+        if let Some(cursor) = cursor_position() {
             session.started_at(cursor);
         }
         session.hide_cursor().map_err(to_napi)?;

@@ -30,9 +30,10 @@ impl Size {
 }
 
 /// The display, pinned to the bottom of the terminal with the output right
-/// above it. It moves the cursor relative to where it left it, so it never
-/// has to ask the terminal where that is, and printed lines scroll off the
-/// top the way any output does, into the terminal's own scrollback.
+/// above it. Past the first draw, it moves the cursor relative to where it
+/// left it or to the top or bottom edge of the screen, so it never has to
+/// ask the terminal where that is, and printed lines scroll off the top the
+/// way any output does, into the terminal's own scrollback.
 ///
 /// The cursor rests on the bottom row, below the frame. A terminal narrowing
 /// rewraps the frame onto more rows, which it makes room for by pushing
@@ -85,11 +86,12 @@ impl<W: Write> Session<W> {
         }
     }
 
-    fn frame(&self, state: &State, now: f64, tick: usize, size: Size) -> Vec<Line<'static>> {
-        // Rows that scroll off the top can't be erased, so they'd pile up in
-        // the scrollback on every redraw.
-        let height = size.height.saturating_sub(1).max(1);
-        render::frame(state, now, tick, size.width, height, self.palette)
+    /// Writes `buf` as one synchronized update, so terminals that support it
+    /// never show the display half redrawn.
+    fn write(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.out
+            .write_all(&[BEGIN_SYNCHRONIZED_UPDATE, buf, END_SYNCHRONIZED_UPDATE].concat())?;
+        self.out.flush()
     }
 
     /// Rewrites the rows that differ from the frame on screen in place, with
@@ -118,10 +120,8 @@ impl<W: Write> Session<W> {
         buf.push(b'\r');
     }
 
-    /// Prints `printed` above the display and redraws it, as one synchronized
-    /// update so terminals that support it never show the display erased.
-    /// With `last`, the blank rows at the top go, so the shell carries on
-    /// right below the frame.
+    /// Prints `printed` above the display and redraws it. With `last`, the
+    /// blank rows at the top go, so the shell carries on right below the frame.
     fn draw(
         &mut self,
         printed: Option<&str>,
@@ -129,7 +129,7 @@ impl<W: Write> Session<W> {
         size: Size,
         last: bool,
     ) -> io::Result<()> {
-        let mut buf = BEGIN_SYNCHRONIZED_UPDATE.to_vec();
+        let mut buf = Vec::new();
         let pinned = size.rows_above_cursor();
         match (self.drawn_size, pinned, self.started_at) {
             // Moves what the terminal shows down to the bottom of the screen,
@@ -143,7 +143,7 @@ impl<W: Write> Session<W> {
                 self.blank = rows - row;
                 if self.blank > 0 {
                     buf.extend(
-                        format!("\x1b[{0}A\x1b[{1}L\x1b[{0}B", size.height, self.blank).as_bytes(),
+                        format!("{}\x1b[{}L{}", top(size), self.blank, bottom(size)).as_bytes(),
                     );
                 }
             }
@@ -167,24 +167,23 @@ impl<W: Write> Session<W> {
         // Everything above moves down onto rows the frame no longer needs,
         // or up into blank ones, so the output stays right above the frame.
         let rows_needed = printed.map_or(0, |text| rows(text, size.width)) + lines.len();
-        if let Some(height) = pinned {
-            let (top, bottom) = (format!("\x1b[{height}A"), format!("\x1b[{height}B"));
+        if pinned.is_some() {
             let start = if rows_needed < drawn_rows {
                 let spare = drawn_rows - rows_needed;
-                buf.extend(format!("{top}\x1b[{spare}L").as_bytes());
+                buf.extend(format!("{}\x1b[{spare}L", top(size)).as_bytes());
                 self.blank += spare;
                 rows_needed
             } else {
                 let taken = (rows_needed - drawn_rows).min(self.blank);
                 if taken > 0 {
-                    buf.extend(format!("{top}\x1b[{taken}M").as_bytes());
+                    buf.extend(format!("{}\x1b[{taken}M", top(size)).as_bytes());
                     self.blank -= taken;
                 }
                 drawn_rows + taken
             };
             // From the bottom row, which is also where a terminal grown
             // taller since the last draw pins the frame back to.
-            buf.extend(format!("{bottom}\r").as_bytes());
+            buf.extend(format!("{}\r", bottom(size)).as_bytes());
             if start > 0 {
                 buf.extend(format!("\x1b[{start}A").as_bytes());
             }
@@ -198,15 +197,13 @@ impl<W: Write> Session<W> {
             encode(&mut buf, line);
             buf.extend(b"\r\n");
         }
-        if let (true, Some(height), blank @ 1..) = (last, pinned, self.blank) {
+        if let (true, Some(_), blank @ 1..) = (last, pinned, self.blank) {
             buf.extend(
-                format!("\x1b[{height}A\x1b[{blank}M\x1b[{height}B\r\x1b[{blank}A").as_bytes(),
+                format!("{}\x1b[{blank}M{}\r\x1b[{blank}A", top(size), bottom(size)).as_bytes(),
             );
             self.blank = 0;
         }
-        buf.extend(END_SYNCHRONIZED_UPDATE);
-        self.out.write_all(&buf)?;
-        self.out.flush()?;
+        self.write(&buf)?;
         self.drawn = lines;
         self.drawn_size = Some(size);
         Ok(())
@@ -220,16 +217,17 @@ impl<W: Write> Session<W> {
         tick: usize,
         size: Size,
     ) -> io::Result<()> {
-        let lines = self.frame(state, now, tick, size);
+        // Rows that scroll off the top can't be erased, so they'd pile up in
+        // the scrollback on every redraw.
+        let height = size.height.saturating_sub(1).max(1);
+        let lines = render::frame(state, now, tick, size.width, height, self.palette);
         let same_shape = self.drawn_size == Some(size) && lines.len() == self.drawn.len();
         match printed {
             None if same_shape && lines == self.drawn => Ok(()),
             None if same_shape => {
-                let mut buf = BEGIN_SYNCHRONIZED_UPDATE.to_vec();
+                let mut buf = Vec::new();
                 self.patch(&mut buf, &lines);
-                buf.extend(END_SYNCHRONIZED_UPDATE);
-                self.out.write_all(&buf)?;
-                self.out.flush()?;
+                self.write(&buf)?;
                 self.drawn = lines;
                 Ok(())
             }
@@ -260,6 +258,16 @@ impl<W: Write> Session<W> {
         self.out.write_all(b"\x1b[?25l")?;
         self.out.flush()
     }
+}
+
+/// Moves the cursor to the top row: no further than the edge of the screen.
+fn top(size: Size) -> String {
+    format!("\x1b[{}A", size.height)
+}
+
+/// Moves the cursor to the bottom row.
+fn bottom(size: Size) -> String {
+    format!("\x1b[{}B", size.height)
 }
 
 /// The rows `text` takes printed at `width`, its escape sequences taking none.
