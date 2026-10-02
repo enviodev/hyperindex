@@ -650,6 +650,31 @@ module Schema = {
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
     ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
 
+  // A Json field is untyped, so a handler can put a bigint anywhere in it — and
+  // a decoded tuple param assigned as is always does. JSON has no bigint, and
+  // the drivers' `JSON.stringify` throws on one, so it's written as the decimal
+  // string the rest of the indexer uses for bigints in JSON.
+  let rec stringifyBigInts = (value: unknown): unknown =>
+    switch value->typeof {
+    | #bigint => value->(magic: unknown => bigint)->BigInt.toString->(magic: string => unknown)
+    | #object if value->Array.isArray =>
+      value
+      ->(magic: unknown => array<unknown>)
+      ->Array.map(stringifyBigInts)
+      ->(magic: array<unknown> => unknown)
+    | #object
+      if value !== %raw(`null`) &&
+        value->(magic: unknown => dict<unknown>)->Dict.getUnsafe("constructor") ===
+          %raw(`Object`) =>
+      value
+      ->(magic: unknown => dict<unknown>)
+      ->Dict.mapValues(stringifyBigInts)
+      ->(magic: dict<unknown> => unknown)
+    | _ => value
+    }
+
+  let dbJson = S.json(~validate=false)->S.preprocess(_ => {serializer: stringifyBigInts})
+
   // JSON `null` is a document, and Postgres stores it as one. Reaching the
   // ClickHouse sink as a JS `null` it would instead read as a field the handler
   // never set, which a String column has no way to hold — so it travels as the
@@ -659,7 +684,7 @@ module Schema = {
     serializer: value =>
       switch value->(magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
       | None => "null"->magic
-      | Some(json) => json
+      | Some(json) => json->stringifyBigInts
       },
   })
 
