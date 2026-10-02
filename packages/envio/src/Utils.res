@@ -650,10 +650,11 @@ module Schema = {
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
     ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
 
-  // A Json field is untyped, so a handler can put a bigint anywhere in it — and
-  // a decoded tuple param assigned as is always does. JSON has no bigint, and
-  // the drivers' `JSON.stringify` throws on one, so it's written as the decimal
-  // string the rest of the indexer uses for bigints in JSON.
+  // A Json field is untyped, so a handler can put a bigint anywhere in it — a
+  // decoded tuple param assigned as is always does. JSON has no bigint, so it's
+  // written as its digits. It can't be left to a `JSON.stringify` replacer in
+  // the Postgres driver: the driver types a parameter from its first leaf
+  // (`[[1n]]` binds as int8) before any serializer runs.
   let rec stringifyBigInts = (value: unknown): unknown =>
     switch value->typeof {
     | #bigint => value->(magic: unknown => bigint)->BigInt.toString->(magic: string => unknown)
@@ -684,7 +685,7 @@ module Schema = {
     serializer: value =>
       switch value->(magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
       | None => "null"->magic
-      | Some(json) => json->stringifyBigInts
+      | Some(json) => json
       },
   })
 

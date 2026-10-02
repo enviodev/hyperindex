@@ -2,7 +2,9 @@ open Vitest
 
 // https://github.com/enviodev/hyperindex/issues/1678
 // Contract import maps a tuple param to a Json field and assigns the decoded
-// value to it as is, so every integer inside arrives as a bigint.
+// value to it as is, so every integer inside arrives as a bigint. The entity
+// row goes through the UNNEST insert and its history row through INSERT
+// VALUES, which binds each value on its own.
 let scenario = Scenario.make(
   ~configYaml=`
 name: json-bigint
@@ -49,7 +51,10 @@ describe("Json field holding bigints", () => {
             let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
             context.enforcedOptionSet.set({
               id: "1",
-              _enforcedOptions: %raw(`[[30101n, 1n, "0x0003"], [30101n, 115792089237316195423570985008687907853269984665640564039457584007913129639935n, "0x"]]`),
+              _enforcedOptions: %raw(`[
+                [30101n, 1n, "0x0003"],
+                [30110n, 115792089237316195423570985008687907853269984665640564039457584007913129639935n, "0x"],
+              ]`),
             })
           },
         },
@@ -58,13 +63,36 @@ describe("Json field holding bigints", () => {
     )
     await indexer.getBatchWritePromise()
 
-    t.expect(
+    let stored = {
+      id: "1",
+      _enforcedOptions: %raw(`[
+        ["30101", "1", "0x0003"],
+        ["30110", "115792089237316195423570985008687907853269984665640564039457584007913129639935", "0x"],
+      ]`),
+    }
+    t.expect((
       await (indexer.query("WXTZ_EnforcedOptionSet"): promise<array<enforcedOptionSet>>),
-    ).toEqual([
-      {
-        id: "1",
-        _enforcedOptions: %raw(`[["30101", "1", "0x0003"], ["30101", "115792089237316195423570985008687907853269984665640564039457584007913129639935", "0x"]]`),
-      },
-    ])
+      await (
+        indexer.queryHistory("WXTZ_EnforcedOptionSet"): promise<array<Change.t<enforcedOptionSet>>>
+      ),
+    )).toEqual((
+      [stored],
+      [Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: stored})],
+    ))
+
+    switch IndexerRunner.selectedBackend {
+    | #postgres => ()
+    | #clickhouse =>
+      let database = TestClickHouse.currentDatabase()
+      let rows = await TestClickHouse.query(
+        `SELECT id, _enforcedOptions FROM \`${database}\`.\`WXTZ_EnforcedOptionSet\` FORMAT JSONEachRow`,
+      )
+      t.expect(rows->String.trim->JSON.parseOrThrow).toEqual(
+        %raw(`{
+          id: "1",
+          _enforcedOptions: '[["30101","1","0x0003"],["30110","115792089237316195423570985008687907853269984665640564039457584007913129639935","0x"]]',
+        }`),
+      )
+    }
   })
 })
