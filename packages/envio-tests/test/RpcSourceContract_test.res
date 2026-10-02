@@ -102,15 +102,16 @@ let invoke = (
   ~registration: Internal.evmOnEventRegistration,
   ~addressStore,
   ~retry=0,
+  ~toBlock=100,
 ) => {
   source.getItemsOrThrow(
     ~includeAllBlocks=false,
     ~fromBlock=100,
-    ~toBlock=Some(100),
+    ~toBlock=Some(toBlock),
     ~addressSet=addressStore->AddressStore.makeSet(
       ~contractName=registration.eventConfig.contractName,
     ),
-    ~knownHeight=100,
+    ~knownHeight=toBlock,
     ~partitionId="pin-partition",
     ~selection={
       dependsOnAddresses: true,
@@ -132,6 +133,20 @@ let blockParams = hex => JSON.parseOrThrow(`["${hex}",false]`)
 let block100 = JSON.parseOrThrow(
   `{"number":"0x64","timestamp":"0x64","hash":"0x0000000000000000000000000000000000000000000000000000000000000b64","parentHash":"0x0000000000000000000000000000000000000000000000000000000000000b63","gasUsed":"0x5208","miner":"${minerAddress}"}`,
 )
+
+let block199 = JSON.parseOrThrow(
+  `{"number":"0xc7","timestamp":"0xc7","hash":"0x0000000000000000000000000000000000000000000000000000000000000bc7","parentHash":"0x0000000000000000000000000000000000000000000000000000000000000bc6","gasUsed":"0x5208","miner":"${minerAddress}"}`,
+)
+
+// A hundred-block page: longer than the source reads with one query across
+// its contracts, so it keeps one query per selection.
+let longPageSyncConfig = EvmChain.getSyncConfig({
+  initialBlockInterval: 100,
+  accelerationAdditive: 0,
+  intervalCeiling: 100,
+  backoffMillis: 1,
+  queryTimeoutMillis: 1_000,
+})
 
 let log = (~logIndex) =>
   JSON.parseOrThrow(
@@ -570,53 +585,46 @@ describe("RPC source public contract", () => {
     ))
   })
 
-  Async.it("pins OR-filter fan-out and duplicate-log suppression", async t => {
-    let filter1 = "0x0000000000000000000000000000000000000000000000000000000000000001"
-    let filter2 = "0x0000000000000000000000000000000000000000000000000000000000000002"
-    // Two indexed params so the log can carry topic1/topic2 the branches
-    // filter on and decode cleanly (derived topicCount 3).
-    let registration = makeRoutingRegistration(
-      ~paramsMetadata=[
-        {name: "a", abiType: "uint256", indexed: true},
-        {name: "b", abiType: "uint256", indexed: true},
-      ],
-      ~eventFilters=[
-        {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-          topic1: Values([filter1->EvmTypes.Hex.fromStringUnsafe]),
-          topic2: Values([]),
-          topic3: Values([]),
-        },
-        {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-          topic1: Values([]),
-          topic2: Values([filter2->EvmTypes.Hex.fromStringUnsafe]),
-          topic3: Values([]),
-        },
-      ],
-    )
-    // Carries both filtered topics, so a real provider returns it for either
-    // branch's server-side filter; routing re-checks the registration's
-    // topic filters against these values and dedups to one item.
-    let orFanOutLog = JSON.parseOrThrow(
-      `{"address":"${contractAddress}","topics":["${sighash}","${filter1}","${filter2}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000b64","logIndex":"0x2","removed":false}`,
-    )
+  let orFilter1 = "0x0000000000000000000000000000000000000000000000000000000000000001"
+  let orFilter2 = "0x0000000000000000000000000000000000000000000000000000000000000002"
+  // Two indexed params so the log can carry topic1/topic2 the branches
+  // filter on and decode cleanly (derived topicCount 3).
+  let orRegistration = makeRoutingRegistration(
+    ~paramsMetadata=[
+      {name: "a", abiType: "uint256", indexed: true},
+      {name: "b", abiType: "uint256", indexed: true},
+    ],
+    ~eventFilters=[
+      {
+        Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+        topic1: Values([orFilter1->EvmTypes.Hex.fromStringUnsafe]),
+        topic2: Values([]),
+        topic3: Values([]),
+      },
+      {
+        Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+        topic1: Values([]),
+        topic2: Values([orFilter2->EvmTypes.Hex.fromStringUnsafe]),
+        topic3: Values([]),
+      },
+    ],
+  )
+  // Carries both filtered topics, so a real provider returns it for either
+  // branch's server-side filter; routing re-checks the registration's
+  // topic filters against these values and dedups to one item.
+  let orFanOutLog = JSON.parseOrThrow(
+    `{"address":"${contractAddress}","topics":["${sighash}","${orFilter1}","${orFilter2}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000b64","logIndex":"0x2","removed":false}`,
+  )
+
+  Async.it("pins a short page folding OR branches into one unfiltered query", async t => {
     let page = await MockRpcServer.withScenario(
-      ~name="OR fan-out and dedup",
+      ~name="OR branches on a short page",
       ~calls=[
         MockRpcServer.expectCall(
-          ~label="topic1 branch",
+          ~label="both branches",
           ~method="eth_getLogs",
           ~params=JSON.parseOrThrow(
-            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filter1}"]],"address":["${normalizedContractAddress}"]}]`,
-          ),
-          ~reply=RpcResult(JSON.Array([orFanOutLog])),
-        ),
-        MockRpcServer.expectCall(
-          ~label="topic2 branch",
-          ~method="eth_getLogs",
-          ~params=JSON.parseOrThrow(
-            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],null,["${filter2}"]],"address":["${normalizedContractAddress}"]}]`,
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"]],"address":["${normalizedContractAddress}"]}]`,
           ),
           ~reply=RpcResult(JSON.Array([orFanOutLog])),
         ),
@@ -627,8 +635,10 @@ describe("RPC source public contract", () => {
         ),
       ],
       async mock => {
-        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
-        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration=orRegistration)
+        switch await RpcSourcePins.capture(
+          () => source->invoke(~registration=orRegistration, ~addressStore),
+        ) {
         | Ok(page) => page
         | Error(_) => JsError.throwWithMessage("Expected the OR-filter page to succeed")
         }
@@ -640,7 +650,62 @@ describe("RPC source public contract", () => {
       "requestCounts": page.requestCounts,
     }).toEqual({
       "eventLogIndexes": [2],
-      "requestCounts": Dict.fromArray([("eth_getLogs", 2), ("eth_getBlockByNumber", 1)]),
+      "requestCounts": Dict.fromArray([("eth_getLogs", 1), ("eth_getBlockByNumber", 1)]),
+    })
+  })
+
+  Async.it("pins OR-filter fan-out and duplicate-log suppression on a long page", async t => {
+    let page = await MockRpcServer.withScenario(
+      ~name="OR fan-out and dedup",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~label="topic1 branch",
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0xc7","topics":[["${sighash}"],["${orFilter1}"]],"address":["${normalizedContractAddress}"]}]`,
+          ),
+          ~reply=RpcResult(JSON.Array([orFanOutLog])),
+        ),
+        MockRpcServer.expectCall(
+          ~label="topic2 branch",
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0xc7","topics":[["${sighash}"],null,["${orFilter2}"]],"address":["${normalizedContractAddress}"]}]`,
+          ),
+          ~reply=RpcResult(JSON.Array([orFanOutLog])),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          ~reply=RpcResult(block100),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0xc7"),
+          ~reply=RpcResult(block199),
+        ),
+      ],
+      async mock => {
+        let (source, addressStore) = makeSource(
+          ~url=mock.url,
+          ~registration=orRegistration,
+          ~syncConfig=longPageSyncConfig,
+        )
+        switch await RpcSourcePins.capture(
+          () => source->invoke(~registration=orRegistration, ~addressStore, ~toBlock=199),
+        ) {
+        | Ok(page) => page
+        | Error(_) => JsError.throwWithMessage("Expected the OR-filter page to succeed")
+        }
+      },
+    )
+
+    t.expect({
+      "eventLogIndexes": page.events->Array.map(event => event.logIndex),
+      "requestCounts": page.requestCounts,
+    }).toEqual({
+      "eventLogIndexes": [2],
+      "requestCounts": Dict.fromArray([("eth_getLogs", 2), ("eth_getBlockByNumber", 2)]),
     })
   })
 
@@ -698,12 +763,13 @@ describe("RPC source public contract", () => {
     })
   })
 
-  Async.it("pins each contract filter to only that contract's addresses", async t => {
+  Async.it("pins a short page routing one query's logs to their own contracts", async t => {
     let addressAString = "0x00000000000000000000000000000000000000a1"
     let addressBString = "0x00000000000000000000000000000000000000b1"
     let addressA = addressAString->Address.unsafeFromString
     let addressB = addressBString->Address.unsafeFromString
     let filterA = "0x000000000000000000000000000000000000000000000000000000000000000a"
+    let notFilterA = "0x000000000000000000000000000000000000000000000000000000000000000b"
     let selectionFor = filter => [
       {
         Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
@@ -719,10 +785,11 @@ describe("RPC source public contract", () => {
       ~paramsMetadata=addressParam,
       ~eventFilters=selectionFor(filterA),
     )
-    // ContractB filters on nothing but the signature, so its query is a
-    // superset of ContractA's and its response carries a log holding A's
-    // filtered topic1 value. Only the address scoping keeps that log off
-    // ContractA — routing re-checks both, per registration.
+    // ContractB registers the same signature unfiltered. A short page reads
+    // both contracts with one query carrying neither the address split nor
+    // A's topic1 filter, so the response holds B's log with A's filtered value
+    // and an A log with another; routing's emitter and topic checks, per
+    // registration, are all that keep each log on its own contract.
     let eventB = makeRoutingRegistration(
       ~index=1,
       ~contractName="ContractB",
@@ -740,23 +807,17 @@ describe("RPC source public contract", () => {
       ~name="contract address scoping",
       ~calls=[
         MockRpcServer.expectCall(
-          ~label="ContractA logs",
+          ~label="both contracts' logs",
           ~method="eth_getLogs",
           ~params=JSON.parseOrThrow(
-            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filterA}"]],"address":["${addressAString}"]}]`,
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"]],"address":["${addressAString}","${addressBString}"]}]`,
           ),
           ~reply=RpcResult(
-            JSON.Array([logFor(~address=addressAString, ~topic1=filterA, ~logIndex="0x2")]),
-          ),
-        ),
-        MockRpcServer.expectCall(
-          ~label="ContractB logs",
-          ~method="eth_getLogs",
-          ~params=JSON.parseOrThrow(
-            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"]],"address":["${addressBString}"]}]`,
-          ),
-          ~reply=RpcResult(
-            JSON.Array([logFor(~address=addressBString, ~topic1=filterA, ~logIndex="0x3")]),
+            JSON.Array([
+              logFor(~address=addressAString, ~topic1=filterA, ~logIndex="0x2"),
+              logFor(~address=addressBString, ~topic1=filterA, ~logIndex="0x3"),
+              logFor(~address=addressAString, ~topic1=notFilterA, ~logIndex="0x4"),
+            ]),
           ),
         ),
         MockRpcServer.expectCall(
