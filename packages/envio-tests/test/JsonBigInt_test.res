@@ -25,12 +25,20 @@ type WXTZ_EnforcedOptionSet {
   id: ID!
   _enforcedOptions: Json!
 }
+
+type Fee {
+  id: ID!
+  meta: Json
+}
 `,
 )
 
 type enforcedOptionSet = {id: string, _enforcedOptions: unknown}
+type fee = {id: string, meta: option<unknown>}
+type entityOps<'entity> = {set: 'entity => unit}
 type handlerContext = {
-  @as("WXTZ_EnforcedOptionSet") enforcedOptionSet: {set: enforcedOptionSet => unit},
+  @as("WXTZ_EnforcedOptionSet") enforcedOptionSet: entityOps<enforcedOptionSet>,
+  @as("Fee") fee: entityOps<fee>,
 }
 
 describe("Json field holding bigints", () => {
@@ -94,5 +102,44 @@ describe("Json field holding bigints", () => {
         }`),
       )
     }
+  })
+
+  // A key named `constructor` and a null prototype are both still plain data.
+  scenario->Scenario.it("reaches them in any plain object", ~sources=[{chain: 1}], async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let source = source(1)
+    source.resolveGetHeightOrThrow(10)
+
+    source.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 5,
+          logIndex: 0,
+          handler: async args => {
+            let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+            context.fee.set({
+              id: "1",
+              meta: Some(%raw(`{constructor: "Proxy", fee: 5n}`)),
+            })
+            context.fee.set({
+              id: "2",
+              meta: Some(%raw(`Object.assign(Object.create(null), {fee: 6n})`)),
+            })
+            context.fee.set({id: "3", meta: None})
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=10,
+    )
+    await indexer.getBatchWritePromise()
+
+    t.expect(await (indexer.query("Fee"): promise<array<fee>>)).toEqual([
+      {id: "1", meta: Some(%raw(`{constructor: "Proxy", fee: "5"}`))},
+      {id: "2", meta: Some(%raw(`{fee: "6"}`))},
+      {id: "3", meta: None},
+    ])
   })
 })
