@@ -11,9 +11,6 @@
     }
   ],
   "suffix": ".res.mjs",
-  "jsx": {
-    "version": 4
-  },
   "package-specs": {
     "module": "esmodule",
     "in-source": true

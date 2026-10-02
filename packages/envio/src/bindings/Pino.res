@@ -113,8 +113,8 @@ module ECS = {
 }
 
 /**
-Jank solution to make logs use console log wrather than stream.write so that ink 
-can render the logs statically.
+Logs through `console.log` rather than `stream.write`, so that the TUI can print
+them above its frame.
 */
 module MultiStreamLogger = {
   type stream = {write: string => unit}

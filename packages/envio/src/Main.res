@@ -528,7 +528,7 @@ exception FatalError(exn)
       ~onError,
     )
     if shouldUseTui {
-      let _rerender = Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
+      Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
     }
     Worker.bindRun(
       ~getMetrics=() => state->IndexerState.toMetrics,

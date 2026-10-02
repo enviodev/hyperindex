@@ -21,3 +21,6 @@ rescript.lock
 
 # Transient git worktrees created for background agents.
 .claude/worktrees/
+
+# Screens saved by the e2e TUI suite.
+packages/e2e-tests/.artifacts
