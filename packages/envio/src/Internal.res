@@ -801,6 +801,11 @@ let fuelTransferParamsSchema = S.schema(s => {
   amount: s.matches(Utils.BigInt.schema),
 })
 
+// Reserved handler-context prop that yields entity operations allowed to write a
+// materialized table, keyed by the table's own name. Absent from the generated
+// handler types, so user code can't reach it by accident.
+let materializerProp = "envio_materializer"
+
 type entity = private {id: string}
 
 // A data skipping index emitted into the history table DDL as
@@ -830,8 +835,21 @@ type entityStorage = {
   clickhouseOptions?: clickhouseTableOptions,
 }
 
+// Who writes an entity's rows, which is also what decides whether a handler can
+// reach it. Kept as one answer so a table can't be hidden without a reason.
+type written =
+  | Handlers
+  // The runtime writes it from the table's `select` in config.yaml. Nothing
+  // opts a table into the handler context, so no handler can reach one.
+  | Materialized
+
 type genericEntityConfig<'entity> = {
   name: string,
+  // What code calls the entity: the `as_entity` name for a materialized table,
+  // else the capitalized `name`. Keys `context.<X>`, `indexer.<X>` and the
+  // generated types, while `name` stays the database and GraphQL spelling.
+  codeName: string,
+  written: written,
   index: int,
   schema: S.t<'entity>,
   table: Table.table,

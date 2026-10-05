@@ -753,6 +753,102 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     `);
   });
 
+  it("keeps a config.yaml table out of GraphQL while its rows are written", async () => {
+    // As the `public` role, not admin: root fields are restricted by the
+    // table's select permission, and admin bypasses permissions entirely.
+    const asPublic = new GraphQLClient({
+      endpoint: config.graphqlEndpoint,
+      adminSecret: config.hasuraAdminSecret,
+      role: "public",
+    });
+    const result = await asPublic.query<{
+      __schema: { queryType: { fields: Array<{ name: string }> } };
+    }>(`{ __schema { queryType { fields { name } } } }`);
+
+    const rootsFor = (table: string) =>
+      result
+        .data!.__schema.queryType.fields.map((f) => f.name)
+        .filter((name) => name === table || name.startsWith(`${table}_`))
+        .sort();
+
+    // Tables aren't tracked in Hasura, so they have no roots at all, while a
+    // handler-written entity keeps its own. `_aggregate` is absent because
+    // aggregations are off here (ENVIO_HASURA_PUBLIC_AGGREGATE is unset).
+    expect({
+      transfer_totals: rootsFor("transfer_totals"),
+      transfer_blocks: rootsFor("transfer_blocks"),
+      TransferPgOnly: rootsFor("TransferPgOnly"),
+    }).toEqual({
+      transfer_totals: [],
+      transfer_blocks: [],
+      TransferPgOnly: ["TransferPgOnly", "TransferPgOnly_by_pk"],
+    });
+
+    // The rows are the indexer's own work all the same: `received` must equal
+    // what the handler-written Transfer entity says the account received.
+    const [account] = await runPgSql(
+      `SELECT "to" FROM "Transfer" GROUP BY "to" ORDER BY count(*) DESC, "to" LIMIT 1`
+    );
+    const recipient = account?.[0];
+    expect(recipient).toBeTruthy();
+
+    const expected = await runPgSql(
+      `SELECT sum(value)::text FROM "Transfer" WHERE "to" = '${recipient}'`
+    );
+    const actual = await runPgSql(
+      `SELECT received::text FROM transfer_totals WHERE id = '${recipient}'`
+    );
+
+    expect(actual[0]?.[0]).toBe(expected[0]?.[0]);
+  });
+
+  it("reads every address when a table's where takes over the binding", async () => {
+    // `any_erc20_transfers` says `srcAddress: {_nin: []}`, so it is registered
+    // as a wildcard and picks up ERC-20 transfers from contracts the config
+    // never named. `transfer_totals` has no `srcAddress` condition, so it stays
+    // bound to the one configured address.
+    const emitters = await runPgSql(
+      `SELECT count(DISTINCT id)::text FROM any_erc20_transfers`
+    );
+    expect(Number(emitters[0]?.[0])).toBeGreaterThan(1);
+
+    // Every transfer the bound table saw came from the configured address, and
+    // the wildcard table counted at least those.
+    const configured = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984";
+    const [boundTotal] = await runPgSql(
+      `SELECT count(*)::text FROM "Transfer"`
+    );
+    const [wildcardForConfigured] = await runPgSql(
+      `SELECT transfers::text FROM any_erc20_transfers WHERE id = '${configured}'`
+    );
+    expect(wildcardForConfigured?.[0]).toBe(boundTotal?.[0]);
+  });
+
+  it("follows a reference between two config.yaml tables with a numeric id", async () => {
+    // `_block_totals` keys rows by block number, so `transfer_blocks.block_id`
+    // is an INTEGER column rather than the usual text id — and the leading
+    // underscore survives into the table name.
+    const columnType = await runPgSql(
+      `SELECT data_type FROM information_schema.columns
+       WHERE table_name = 'transfer_blocks' AND column_name = 'block_id'`
+    );
+    expect(columnType[0]?.[0]).toBe("integer");
+
+    const expected = await runPgSql(
+      `SELECT block_number, count(*)::text FROM "Transfer"
+       GROUP BY block_number ORDER BY block_number LIMIT 1`
+    );
+    const blockNumber = Number(expected[0]?.[0]);
+
+    const actual = await runPgSql(
+      `SELECT b.id::text, b.transfers::text FROM transfer_blocks t
+       JOIN _block_totals b ON b.id = t.block_id
+       WHERE t.block_id = ${blockNumber} LIMIT 1`
+    );
+
+    expect(actual[0]).toEqual([String(blockNumber), expected[0]?.[1]]);
+  });
+
   it("Hasura serves numeric arrays as strings", async () => {
     // NUMERIC[] columns are created as TEXT[] when Hasura is enabled, because
     // Hasura otherwise returns the elements as numbers and drops precision on

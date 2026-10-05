@@ -288,6 +288,22 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   },
 }
 
+let makeEntityContext = (params: contextParams, ~entityConfig) =>
+  {
+    item: params.item,
+    isPreload: params.isPreload,
+    indexerState: params.indexerState,
+    loadManager: params.loadManager,
+    persistence: params.persistence,
+    checkpointId: params.checkpointId,
+    chains: params.chains,
+    isResolved: params.isResolved,
+    config: params.config,
+    entityConfig,
+  }
+  ->Utils.Proxy.make(entityTraps)
+  ->(Utils.magic: entityContextParams => unknown)
+
 let handlerTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
@@ -319,27 +335,37 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       params.chains
       ->ChainId.Dict.dangerouslyGetNonOption(chainId)
       ->(Utils.magic: option<Internal.chainInfo> => unknown)
+    | _ if prop === Internal.materializerProp =>
+      (
+        // By schema name, not the handler-context key: a table without
+        // `as_entity` is deliberately absent from that lookup.
+        (table: string) =>
+          switch params.config.entitiesByTableName->Utils.Dict.dangerouslyGetNonOption(table) {
+          | Some(entityConfig) => params->makeEntityContext(~entityConfig)
+          | None => JsError.throwWithMessage(`Table '${table}' is missing from the config.`)
+          }
+      )->(Utils.magic: (string => unknown) => unknown)
     | _ =>
       switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
-      | Some(entityConfig) =>
-        {
-          item: params.item,
-          isPreload: params.isPreload,
-          indexerState: params.indexerState,
-          loadManager: params.loadManager,
-          persistence: params.persistence,
-          checkpointId: params.checkpointId,
-          chains: params.chains,
-          isResolved: params.isResolved,
-          config: params.config,
-          entityConfig,
-        }
-        ->Utils.Proxy.make(entityTraps)
-        ->(Utils.magic: entityContextParams => unknown)
+      | Some(entityConfig) => params->makeEntityContext(~entityConfig)
       | None =>
-        JsError.throwWithMessage(
-          `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
-        )
+        // A materialized table that didn't opt in is absent on purpose, so say
+        // that rather than sending the user to regenerate code.
+        switch params.config.userEntities->Array.find(entityConfig =>
+          switch entityConfig.written {
+          | Materialized => entityConfig.codeName === prop
+          | Handlers => false
+          }
+        ) {
+        | Some(entityConfig) =>
+          JsError.throwWithMessage(
+            `context.${prop} is unavailable: config.yaml writes the table \`${entityConfig.name}\` from its \`select\`, so it isn't part of the handler context. Define the table in schema.graphql to read and write it from a handler.`,
+          )
+        | None =>
+          JsError.throwWithMessage(
+            `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
+          )
+        }
       }
     }
   },

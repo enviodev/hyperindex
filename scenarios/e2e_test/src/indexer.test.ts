@@ -102,7 +102,7 @@ describe("Indexer smoke test", () => {
               },
               "block": 10861674,
               "chainId": 1,
-              "eventsProcessed": 1,
+              "eventsProcessed": 282,
             },
           ],
         }

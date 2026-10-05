@@ -122,6 +122,7 @@ expression: json
   "entities": [
     {
       "name": "EmptyEntity",
+      "codeName": "EmptyEntity",
       "storage": {
         "postgres": true,
         "clickhouse": true
@@ -172,6 +173,7 @@ expression: json
     },
     {
       "name": "RelatedEntity",
+      "codeName": "RelatedEntity",
       "storage": {
         "postgres": true,
         "clickhouse": true
@@ -189,6 +191,7 @@ expression: json
     },
     {
       "name": "UnannotatedEntity",
+      "codeName": "UnannotatedEntity",
       "storage": {
         "clickhouse": true
       },
