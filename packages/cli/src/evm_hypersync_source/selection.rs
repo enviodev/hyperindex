@@ -190,10 +190,11 @@ impl SelectionBuilder {
         client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
     ) -> Result<BuiltSelection> {
         // Buckets: address-free selections pool together; address-bound ones
-        // group per contract so one contract's query can't fetch a sibling's
-        // logs (routing never re-applies the sibling's filter). Wildcard
-        // events that filter an indexed param by registered addresses fold
-        // the addresses into topics, so their query stays address-unbound.
+        // group per contract so one contract's query doesn't fetch a sibling's
+        // logs under signatures it never registered — routing would drop
+        // them, but a backfill range pays for them first. Wildcard events that
+        // filter an indexed param by registered addresses fold the addresses
+        // into topics, so their query stays address-unbound.
         let mut no_address: Vec<MaterializedTopicSelection> = Vec::new();
         let mut by_contract: HashMap<&str, Vec<&TopicSelection>> = HashMap::new();
         let mut wildcard_by_contract: HashMap<&str, Vec<&TopicSelection>> = HashMap::new();

@@ -12,6 +12,7 @@ mod enrich;
 mod fields;
 mod inflight;
 mod interval;
+mod merge;
 mod responses;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
@@ -456,13 +457,14 @@ impl EvmRpcClient {
     }
 
     /// Reads one page: decides the actual `toBlock` from this partition's
-    /// AIMD-suggested interval, fans out one `eth_getLogs` per selection, then
-    /// fills the page's block and transaction stores for the fields the routed
-    /// items selected. On success, grows the partition's interval when the full
-    /// suggested range was applied. Everything a caller is expected to handle
-    /// — a narrower range to retry, a backoff, a selection the provider cannot
-    /// serve — comes back as a value; the stores returned alongside a non-"ok"
-    /// result are empty.
+    /// AIMD-suggested interval, fans out one `eth_getLogs` per selection — or
+    /// one across every address-bound selection when the page is short enough
+    /// to be the head's — then fills the page's block and transaction stores
+    /// for the fields the routed items selected. On success, grows the
+    /// partition's interval when the full suggested range was applied.
+    /// Everything a caller is expected to handle — a narrower range to retry,
+    /// a backoff, a selection the provider cannot serve — comes back as a
+    /// value; the stores returned alongside a non-"ok" result are empty.
     #[napi]
     pub async fn get_next_page(
         &self,
@@ -498,6 +500,12 @@ impl EvmRpcClient {
             .selection_builder
             .build(&params.registration_indexes, address_set, &client_filtered)
             .map_err(map_err)?;
+        let page_blocks = to_block - from_block + 1;
+        let log_selections = if page_blocks <= merge::MERGED_PAGE_MAX_BLOCKS {
+            merge::merge_address_bound(built.log_selections)
+        } else {
+            built.log_selections
+        };
         let set_cache = address_set.cache().clone();
         let selection_decoder = Arc::new(
             self.decoder
@@ -513,7 +521,7 @@ impl EvmRpcClient {
             partition_id: &params.partition_id,
             from_block,
             to_block,
-            selections: &built.log_selections,
+            selections: &log_selections,
             set_cache: &set_cache,
             decoder: &selection_decoder,
             known_blocks,
