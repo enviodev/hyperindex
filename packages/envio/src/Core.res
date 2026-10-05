@@ -12,6 +12,7 @@ type transactionStoreCtor
 type blockStoreCtor
 type clickHouseSinkCtor
 type addressStoreCtor
+type tuiCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
 type fromUserApiOptions = {
@@ -42,6 +43,10 @@ type addon = {
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
+  loadTs: string => string,
+  tsCheckHandlerFormat: string => unit,
+  tsResolveCandidates: (string, Null.t<string>) => array<string>,
+  tsNotFoundCandidates: (string, Null.t<string>, string) => array<string>,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
@@ -58,6 +63,8 @@ type addon = {
   addressStore: addressStoreCtor,
   @as("ClickHouseSink")
   clickHouseSink: clickHouseSinkCtor,
+  @as("Tui")
+  tui: tuiCtor,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,

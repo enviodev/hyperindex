@@ -275,7 +275,6 @@ let makeInitialState = (
   {
     cleanRun: true,
     contractMapping,
-    envioInfo: Some(JSON.Encode.object(Dict.make())),
     cache: Dict.make(),
     chains,
     checkpointFrontier: Frontier.empty(),
@@ -567,7 +566,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   isInitialized: async () => true,
   // The runner injects the config-derived initial state by setting
   // `persistence.storageStatus = Ready(...)` directly, bypassing `Persistence.init`,
-  // so neither of these is reached.
+  // so none of these is reached.
   initialize: async (
     ~chainConfigs as _=?,
     ~entities as _=?,
@@ -578,7 +577,15 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
-  resumeInitialState: async (~entities as _, ~chainIds as _, ~throwIfIncompatible as _) =>
+  readStoredConfig: async () =>
+    JsError.throwWithMessage(
+      "TestIndexer: readStoredConfig should not be called; the initial state is derived from config.",
+    ),
+  addChain: async (~chainConfig as _, ~entities as _, ~contractMapping as _) =>
+    JsError.throwWithMessage(
+      "TestIndexer: addChain should not be called; the initial state is derived from config.",
+    ),
+  resumeInitialState: async (~entities as _, ~chainIds as _, ~contractMapping as _) =>
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
     ),
@@ -666,7 +673,10 @@ let getRegistrations = (~config) =>
   switch registrationsRef.contents {
   | Some(promise) => promise
   | None =>
-    let promise = HandlerLoader.registerAllHandlers(~config)
+    let promise =
+      HandlerLoader.getAutoLoadFiles(~config)->Promise.then(autoLoadFiles =>
+        HandlerLoader.registerAllHandlers(~config, ~autoLoadFiles)
+      )
     registrationsRef := Some(promise)
     promise
   }

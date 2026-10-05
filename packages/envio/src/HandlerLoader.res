@@ -1,20 +1,37 @@
 @module("node:fs/promises")
 external globIterator: string => Utils.asyncIterator<string> = "glob"
 
-// Register tsx for TypeScript handler support
-// Wrapped in try-catch because if tsx is already loaded via --import (e.g., in tests),
-// calling module.register again will throw an error
-try {
-  NodeJs.Module.register("tsx/esm", NodeJs.ImportMeta.url)
-} catch {
-| _ => () // tsx already loaded, ignore
+type tsHooksAddon = {
+  loadTs: string => string,
+  tsResolveCandidates: (string, Null.t<string>) => array<string>,
+  tsNotFoundCandidates: (string, Null.t<string>, string) => array<string>,
 }
 
-// Convert a relative path to a file:// URL for dynamic import
-// Paths are resolved relative to process.cwd() (project root)
-let toImportUrl = (relativePath: string) => {
-  let absolutePath = NodeJs.Path.resolve([NodeJs.Process.cwd(), relativePath])->NodeJs.Path.toString
-  NodeJs.Url.pathToFileURL(absolutePath)->NodeJs.Url.toString
+@module("./TsModuleHooks.mjs")
+external registerTsHooksWith: tsHooksAddon => unit = "register"
+
+// The resolve hook calls into the addon, and loading the addon goes through
+// the resolve hook, so the addon has to be loaded before the hooks exist.
+let registerTsHooks = () => {
+  let addon = Core.getAddon()
+  registerTsHooksWith({
+    loadTs: addon.loadTs,
+    tsResolveCandidates: addon.tsResolveCandidates,
+    tsNotFoundCandidates: addon.tsNotFoundCandidates,
+  })
+}
+
+let isTypeScript = file => /\.m?tsx?$/->RegExp.test(file)
+
+// Paths are relative to the project root, which is the working directory.
+let toAbsolutePath = (file: string) =>
+  NodeJs.Path.resolve([NodeJs.Process.cwd(), file])->NodeJs.Path.toString
+
+let importHandler = async file => {
+  if isTypeScript(file) {
+    Core.getAddon().tsCheckHandlerFormat(toAbsolutePath(file))
+  }
+  await Utils.importPath(toAbsolutePath(file)->NodeJs.Url.pathToFileURL->NodeJs.Url.toString)
 }
 
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
@@ -22,7 +39,7 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
   | None => ()
   | Some(handlerPath) =>
     try {
-      let _ = await Utils.importPath(toImportUrl(handlerPath))
+      let _ = await importHandler(handlerPath)
     } catch {
     | exn =>
       let cause = exn->Utils.prettifyExn->Obj.magic
@@ -37,10 +54,9 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
   }
 }
 
-let autoLoadFromSrcHandlers = async (~handlers: string) => {
-  // Relative to cwd (project root)
+let globAutoLoadFiles = async (~handlers) => {
   let srcPattern = `./${handlers}/**/*.{js,mjs,ts}`
-  let handlerFiles = try {
+  try {
     let iterator = globIterator(srcPattern)
     let files = await iterator->Utils.Array.fromAsyncIterator
     // Filter out test and spec files
@@ -54,22 +70,46 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   } catch {
   | exn =>
     JsError.throwWithMessage(
-      `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern}. Before continuing, check that you're using Node.js >=22 version. Error: ${exn
+      `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern}. Error: ${exn
         ->Utils.prettifyExn
         ->Obj.magic}`,
     )
   }
+}
 
-  // Import handler files using absolute file:// URLs resolved from cwd
-  let _ = await handlerFiles
-  ->Array.map(file => {
-    Utils.importPath(toImportUrl(file))->Promise.catch(exn => {
-      let cause = exn->Utils.prettifyExn->Obj.magic
-      Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
-      JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
-    })
-  })
-  ->Promise.all
+let getAutoLoadFiles = async (~config: Config.t) =>
+  switch config.subgraph {
+  // A subgraph project's `src/` holds AssemblyScript mappings, not envio
+  // handlers: auto-loading or type-checking them as TypeScript would fail.
+  | Some(_) => []
+  | None => await globAutoLoadFiles(~handlers=config.handlers)
+  }
+
+type typeCheckResult = {
+  skipped?: string,
+  errors?: string,
+}
+
+@module("./HandlerTypeCheck.mjs")
+external checkTypesInWorker: (~cwd: string, ~files: array<string>) => promise<typeCheckResult> =
+  "check"
+
+let typeCheck = async (~config: Config.t, ~autoLoadFiles) => {
+  // A contract's `handler:` may also be an auto-loaded file.
+  let files =
+    autoLoadFiles
+    ->Array.concat(config.contractHandlers->Array.filterMap(({handler}) => handler))
+    ->Array.filter(isTypeScript)
+    ->Array.map(toAbsolutePath)
+    ->Utils.Set.fromArray
+    ->Utils.Set.toArray
+  if files->Array.length > 0 {
+    switch await checkTypesInWorker(~cwd=NodeJs.Process.cwd(), ~files) {
+    | {errors} => JsError.throwWithMessage(`Handler files have type errors:\n\n${errors}`)
+    | {skipped} => Logging.warn(skipped)
+    | _ => ()
+    }
+  }
 }
 
 // `Config` holds only event definitions; handler + per-chain `where`
@@ -83,18 +123,28 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 let registerSubgraph: (JSON.t, ~isDev: bool) => promise<unit> = %raw(`(subgraph, isDev) =>
   import("./subgraph/runtime.ts").then((m) => m.registerSubgraph({ ...subgraph, isDev }))`)
 
-let registerAllHandlers = async (~config: Config.t): HandlerRegister.registrationsByChainId => {
+let registerAllHandlers = async (
+  ~config: Config.t,
+  ~autoLoadFiles,
+): HandlerRegister.registrationsByChainId => {
   HandlerRegister.startRegistration(~config)
+  registerTsHooks()
 
   switch config.subgraph {
-  // A subgraph project's `src/` holds AssemblyScript mappings, not envio
-  // handlers, so the usual auto-load would import them without a scope.
+  // Registered after the TypeScript hooks, so the subgraph runtime's own hooks
+  // see a mapping first.
   | Some(subgraph) => await registerSubgraph(subgraph, ~isDev=config.isDev)
   | None =>
-    // Auto-load all .js files from src/handlers directory
-    await autoLoadFromSrcHandlers(~handlers=config.handlers)
+    let _ = await autoLoadFiles
+    ->Array.map(file => {
+      importHandler(file)->Promise.catch(exn => {
+        let cause = exn->Utils.prettifyExn->Obj.magic
+        Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
+        JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
+      })
+    })
+    ->Promise.all
 
-    // Load contract-specific handlers
     let _ = await config.contractHandlers
     ->Array.map(({name, handler}) => {
       registerContractHandlers(~contractName=name, ~handler)

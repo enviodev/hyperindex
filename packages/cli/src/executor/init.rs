@@ -273,6 +273,24 @@ pub async fn run_init_args(
     )
     .context("Failed writing package.json")?;
 
+    let pm = init_config.package_manager;
+    let readme_path = project_root.join("README.md");
+    if let Ok(readme) = fs::read_to_string(&readme_path) {
+        fs::write(&readme_path, pm.rewrite_commands(&readme))
+            .context("Failed writing README.md")?;
+    }
+    let skills_dir = project_root.join(".claude").join("skills");
+    if skills_dir.is_dir() {
+        super::skills::rewrite_commands_in_markdown(&skills_dir, pm)?;
+    }
+    let workflows_dir = project_root.join(".github").join("workflows");
+    fs::create_dir_all(&workflows_dir).context("Failed creating .github/workflows")?;
+    fs::write(
+        workflows_dir.join("test.yaml"),
+        crate::hbs_templating::init_templates::render_test_workflow(pm),
+    )
+    .context("Failed writing .github/workflows/test.yaml")?;
+
     println!("Project template ready");
     println!("Running codegen");
 
@@ -281,7 +299,6 @@ pub async fn run_init_args(
 
     commands::codegen::run_codegen(&config).await?;
 
-    let pm = init_config.package_manager;
     println!("Installing dependencies with {}...", pm);
     commands::pm::install(pm, &parsed_project_paths.project_root)
         .await
@@ -328,14 +345,15 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
             shell_quote(&project_root.display().to_string())
         )
     };
-    let cmd = pm.cmd();
+    let [test, dev, start] = ["test", "dev", "start"].map(|script| pm.run_script_command(script));
+    let width = start.len();
 
     let _ = writeln!(
         out,
-        "  1. {prefix}{cmd} test    # run the tests (recommended for AI)"
+        "  1. {prefix}{test:<width$}   # run the tests (recommended for AI)"
     );
-    let _ = writeln!(out, "  2. {prefix}{cmd} dev     # run locally");
-    let _ = writeln!(out, "  3. {prefix}{cmd} start   # run in production");
+    let _ = writeln!(out, "  2. {prefix}{dev:<width$}   # run locally");
+    let _ = writeln!(out, "  3. {prefix}{start:<width$}   # run in production");
 
     out
 }
@@ -489,6 +507,33 @@ mod tests {
             Path::new("my-$HOME-`tmp`"),
             PackageManager::Npm
         ));
+    }
+
+    #[test]
+    fn commands_follow_the_package_manager() {
+        let text = "```bash\npnpm dev\n```\nRun `pnpm test -- -u`, `pnpm tsc --noEmit` and \
+                    `pnpm install`, then plain pnpm codegen.\nNot `pnpm i -g fuels`.\n";
+        let rendered = [
+            PackageManager::Pnpm,
+            PackageManager::Npm,
+            PackageManager::Yarn,
+            PackageManager::Bun,
+        ]
+        .map(|pm| pm.rewrite_commands(text));
+        assert_eq!(
+            rendered,
+            [
+                "```bash\npnpm dev\n```\nRun `pnpm test -- -u`, `pnpm tsc --noEmit` and \
+                 `pnpm install`, then plain pnpm codegen.\nNot `pnpm i -g fuels`.\n",
+                "```bash\nnpm run dev\n```\nRun `npm run test -- -u`, `npx tsc --noEmit` and \
+                 `npm install`, then plain npm run codegen.\nNot `pnpm i -g fuels`.\n",
+                "```bash\nyarn dev\n```\nRun `yarn test -- -u`, `yarn tsc --noEmit` and \
+                 `yarn install`, then plain yarn codegen.\nNot `pnpm i -g fuels`.\n",
+                "```bash\nbun run dev\n```\nRun `bun run test -- -u`, `bunx tsc --noEmit` and \
+                 `bun install`, then plain bun run codegen.\nNot `pnpm i -g fuels`.\n",
+            ]
+            .map(String::from)
+        );
     }
 
     #[test]

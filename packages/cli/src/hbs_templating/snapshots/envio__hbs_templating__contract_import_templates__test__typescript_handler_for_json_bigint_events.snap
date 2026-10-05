@@ -1,0 +1,51 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+/*
+ * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
+ */
+import { indexer } from "envio";
+import type {
+  WXTZ_EnforcedOptionSet,
+  WXTZ_PeerSet,
+  WXTZ_BatchSent,
+} from "envio";
+
+indexer.onEvent({ contract: "WXTZ", event: "EnforcedOptionSet" }, async ({ event, context }) => {
+  const entity: WXTZ_EnforcedOptionSet = {
+    id: `${event.chainId}_${event.block.number}_${event.logIndex}`,
+    _enforcedOptions: event.params._enforcedOptions.map((item) => ({
+      0: item[0].toString(),
+      1: item[1].toString(),
+      2: item[2],
+    })),
+  };
+
+  context.WXTZ_EnforcedOptionSet.set(entity);
+});
+
+indexer.onEvent({ contract: "WXTZ", event: "PeerSet" }, async ({ event, context }) => {
+  const entity: WXTZ_PeerSet = {
+    id: `${event.chainId}_${event.block.number}_${event.logIndex}`,
+    info: event.params.info,
+  };
+
+  context.WXTZ_PeerSet.set(entity);
+});
+
+indexer.onEvent({ contract: "WXTZ", event: "BatchSent" }, async ({ event, context }) => {
+  const entity: WXTZ_BatchSent = {
+    id: `${event.chainId}_${event.block.number}_${event.logIndex}`,
+    items: event.params.items.map((item) => ({
+      amount: item.amount.toString(),
+      steps: item.steps.map((item1) => ({
+        at: item1.at.toString(),
+        done: item1.done,
+      })),
+    })),
+    total: event.params.total,
+  };
+
+  context.WXTZ_BatchSent.set(entity);
+});

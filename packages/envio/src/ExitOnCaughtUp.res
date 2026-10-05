@@ -14,7 +14,11 @@ let run = async (state: IndexerState.t) => {
       | Some(onExit) => onExit()
       | None =>
         Logging.info("Exiting with success")
-        NodeJs.process->NodeJs.exitWithCode(Success)
+        if Worker.isEnabled {
+          Worker.exitAfterReporting(~metrics=state->IndexerState.toMetrics)
+        } else {
+          NodeJs.process->NodeJs.exitWithCode(Success)
+        }
       }
     | Some(message) => state->IndexerState.errorExit(ErrorHandling.make(Utils.Error.make(message)))
     }

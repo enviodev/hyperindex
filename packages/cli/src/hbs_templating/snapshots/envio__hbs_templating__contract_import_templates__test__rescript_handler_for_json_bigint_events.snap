@@ -1,0 +1,50 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+/*
+ * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
+ */
+
+open Indexer
+
+indexer.onEvent({event: WXTZ(EnforcedOptionSet)}, async ({event, context}) => {
+  let entity: Entities.WXTZ_EnforcedOptionSet.t = {
+    id: `${(event.chainId :> int)->Belt.Int.toString}_${event.block.number->Belt.Int.toString}_${event.logIndex->Belt.Int.toString}`,
+    _enforcedOptions: JSON.Array(event.params._enforcedOptions->Array.map(item => JSON.Object(dict{
+      "0": JSON.String(item["0"]->BigInt.toString),
+      "1": JSON.String(item["1"]->BigInt.toString),
+      "2": JSON.String(item["2"]),
+    }))),
+  }
+
+  context.\"WXTZ_EnforcedOptionSet".set(entity)
+})
+
+indexer.onEvent({event: WXTZ(PeerSet)}, async ({event, context}) => {
+  let entity: Entities.WXTZ_PeerSet.t = {
+    id: `${(event.chainId :> int)->Belt.Int.toString}_${event.block.number->Belt.Int.toString}_${event.logIndex->Belt.Int.toString}`,
+    info: JSON.Object(dict{
+      "peer": JSON.String(event.params.info["peer"]->Address.toString),
+      "label": JSON.String(event.params.info["label"]),
+    }),
+  }
+
+  context.\"WXTZ_PeerSet".set(entity)
+})
+
+indexer.onEvent({event: WXTZ(BatchSent)}, async ({event, context}) => {
+  let entity: Entities.WXTZ_BatchSent.t = {
+    id: `${(event.chainId :> int)->Belt.Int.toString}_${event.block.number->Belt.Int.toString}_${event.logIndex->Belt.Int.toString}`,
+    items: JSON.Array(event.params.items->Array.map(item => JSON.Object(dict{
+      "amount": JSON.String(item["amount"]->BigInt.toString),
+      "steps": JSON.Array(item["steps"]->Array.map(item1 => JSON.Object(dict{
+        "at": JSON.String(item1["at"]->BigInt.toString),
+        "done": JSON.Boolean(item1["done"]),
+      }))),
+    }))),
+    total: event.params.total,
+  }
+
+  context.\"WXTZ_BatchSent".set(entity)
+})

@@ -3,7 +3,10 @@ use include_dir::DirEntry;
 use serde::Deserialize;
 use std::{fs, path::Path};
 
-use crate::{project_paths::ParsedProjectPaths, template_dirs::TemplateDirs};
+use crate::{
+    cli_args::init_config::PackageManager, project_paths::ParsedProjectPaths,
+    template_dirs::TemplateDirs,
+};
 
 /// Skill names shipped before the `managed-by` marker existed.
 /// These lack the marker, so the marker-based cleanup won't find them.
@@ -48,6 +51,23 @@ fn read_managed_by(skill_dir: &Path) -> Option<String> {
     let frontmatter = &after_open[..close];
     let parsed: SkillFrontmatter = serde_yaml::from_str(frontmatter).ok()?;
     parsed.metadata?.managed_by
+}
+
+/// Writes the commands in every Markdown file under `dir` for the package
+/// manager.
+pub fn rewrite_commands_in_markdown(dir: &Path, pm: PackageManager) -> Result<()> {
+    for entry in fs::read_dir(dir).with_context(|| format!("Failed reading {}", dir.display()))? {
+        let path = entry.context("Failed reading directory entry")?.path();
+        if path.is_dir() {
+            rewrite_commands_in_markdown(&path, pm)?;
+        } else if path.extension().is_some_and(|extension| extension == "md") {
+            let text = fs::read_to_string(&path)
+                .with_context(|| format!("Failed reading {}", path.display()))?;
+            fs::write(&path, pm.rewrite_commands(&text))
+                .with_context(|| format!("Failed writing {}", path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Re-extracts every skill shipped by this CLI version into
@@ -116,6 +136,10 @@ pub fn run_update(project_paths: &ParsedProjectPaths) -> Result<()> {
             .new_child(dir)
             .extract(&skills_root)
             .with_context(|| format!("Failed extracting skill {}", name))?;
+        rewrite_commands_in_markdown(
+            &target,
+            PackageManager::detect(project_root).unwrap_or(PackageManager::Pnpm),
+        )?;
     }
 
     let mut sorted = shipped_names;
@@ -168,6 +192,34 @@ mod tests {
     fn write_skill(dir: &Path, body: &str) {
         fs::create_dir_all(dir).unwrap();
         fs::write(dir.join("SKILL.md"), body).unwrap();
+    }
+
+    #[test]
+    fn skills_follow_the_projects_package_manager() {
+        let tmp = TempDir::new("envio_skills").expect("tempdir");
+        let project_paths =
+            ParsedProjectPaths::default_with_root(tmp.path().to_str().expect("utf-8 path"))
+                .expect("parsed project paths");
+        fs::write(tmp.path().join("package-lock.json"), "{}").unwrap();
+
+        run_update(&project_paths).expect("update succeeds");
+
+        let skills = shipped_skill_names()
+            .iter()
+            .map(|name| {
+                let path = tmp
+                    .path()
+                    .join(".claude/skills")
+                    .join(name)
+                    .join("SKILL.md");
+                fs::read_to_string(path).unwrap()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            (skills.contains("pnpm"), skills.contains("`npm run dev`")),
+            (false, true)
+        );
     }
 
     #[test]

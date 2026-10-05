@@ -28,8 +28,8 @@ use std::{collections::HashSet, path::Path};
 
 use anyhow::{anyhow, Result};
 use oxc::{
-    allocator::{Allocator, CloneIn, TakeIn, Vec as ArenaVec},
-    ast::{ast::*, AstBuilder, NONE},
+    allocator::{Allocator, CloneIn, GetAllocator, TakeIn, Vec as ArenaVec},
+    ast::{ast::*, builder::AstBuilder},
     ast_visit::{walk_mut, VisitMut},
     codegen::{Codegen, CodegenOptions},
     diagnostics::OxcDiagnostic,
@@ -57,8 +57,8 @@ fn event_classes_export(program: &Program<'_>, classes: &HashSet<String>) -> Opt
         .body
         .iter()
         .filter_map(|statement| match statement {
-            Statement::ExportNamedDeclaration(export) => match &export.declaration {
-                Some(Declaration::FunctionDeclaration(func)) => Some(func),
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::FunctionDeclaration(func) => Some(func),
                 _ => None,
             },
             _ => None,
@@ -99,8 +99,8 @@ fn class_ref<'b>(
 pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::ts()).parse();
-    if parsed.panicked || !parsed.errors.is_empty() {
-        return Err(describe(path, source, &parsed.errors));
+    if parsed.panicked || parsed.diagnostics.has_errors() {
+        return Err(describe(path, source, parsed.diagnostics.errors()));
     }
     let mut program = parsed.program;
 
@@ -125,8 +125,8 @@ pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
         .into_scoping();
     let transformed = Transformer::new(&allocator, path, &TransformOptions::default())
         .build_with_scoping(scoping, &mut program);
-    if !transformed.errors.is_empty() {
-        return Err(describe(path, source, &transformed.errors));
+    if transformed.diagnostics.has_errors() {
+        return Err(describe(path, source, transformed.diagnostics.errors()));
     }
 
     let printed = Codegen::new()
@@ -188,9 +188,9 @@ impl<'a> Rewrite<'a> {
         helper: &'static str,
         args: [Expression<'a>; N],
     ) -> Expression<'a> {
-        let callee = self.ast.expression_identifier(span, helper);
-        let args = self.ast.vec_from_iter(args.into_iter().map(Argument::from));
-        self.ast.expression_call(span, callee, NONE, args, false)
+        let callee = Expression::new_identifier(span, helper, &self.ast);
+        let args = ArenaVec::from_iter_in(args.into_iter().map(Argument::from), &self.ast);
+        Expression::new_call_expression(span, callee, None, args, false, &self.ast)
     }
 
     /// `OPERATORS_HELPER.method(args)`.
@@ -200,14 +200,12 @@ impl<'a> Rewrite<'a> {
         method: &'static str,
         args: [Expression<'a>; N],
     ) -> Expression<'a> {
-        let object = self.ast.expression_identifier(span, OPERATORS_HELPER);
-        let property = self.ast.identifier_name(span, method);
-        let callee = Expression::from(
-            self.ast
-                .member_expression_static(span, object, property, false),
-        );
-        let args = self.ast.vec_from_iter(args.into_iter().map(Argument::from));
-        self.ast.expression_call(span, callee, NONE, args, false)
+        let object = Expression::new_identifier(span, OPERATORS_HELPER, &self.ast);
+        let property = IdentifierName::new(span, method, &self.ast);
+        let callee =
+            Expression::new_static_member_expression(span, object, property, false, &self.ast);
+        let args = ArenaVec::from_iter_in(args.into_iter().map(Argument::from), &self.ast);
+        Expression::new_call_expression(span, callee, None, args, false, &self.ast)
     }
 
     /// The expression that reads what `target` assigns to, when reading it has
@@ -215,10 +213,10 @@ impl<'a> Rewrite<'a> {
     fn read_of(&self, target: &AssignmentTarget<'a>) -> Option<Expression<'a>> {
         match target {
             AssignmentTarget::AssignmentTargetIdentifier(id) => {
-                Some(self.ast.expression_identifier(id.span, id.name))
+                Some(Expression::new_identifier(id.span, id.name, &self.ast))
             }
             AssignmentTarget::StaticMemberExpression(member) if is_pure(&member.object) => Some(
-                Expression::StaticMemberExpression(member.clone_in(self.ast.allocator)),
+                Expression::StaticMemberExpression(member.clone_in(self.ast.allocator())),
             ),
             _ => None,
         }
@@ -254,8 +252,8 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                     return;
                 };
                 let span = binary.span;
-                let left = binary.left.take_in(self.ast.allocator);
-                let right = binary.right.take_in(self.ast.allocator);
+                let left = binary.left.take_in(&self.ast);
+                let right = binary.right.take_in(&self.ast);
                 *expr = self.operator(span, method, [left, right]);
             }
             // A negative literal is a number either way.
@@ -267,7 +265,7 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                     ) =>
             {
                 let span = unary.span;
-                let argument = unary.argument.take_in(self.ast.allocator);
+                let argument = unary.argument.take_in(&self.ast);
                 *expr = self.operator(span, "neg", [argument]);
             }
             Expression::AssignmentExpression(assign) => {
@@ -283,7 +281,7 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                     ));
                     return;
                 };
-                let right = assign.right.take_in(self.ast.allocator);
+                let right = assign.right.take_in(&self.ast);
                 assign.right = self.operator(assign.span, method, [read, right]);
                 assign.operator = AssignmentOperator::Assign;
             }
@@ -292,12 +290,12 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                     return;
                 };
                 let span = call.span;
-                let value = call.arguments[0]
-                    .to_expression_mut()
-                    .take_in(self.ast.allocator);
-                let class = self
-                    .ast
-                    .expression_identifier(class_span, self.ast.ident(&class));
+                let value = call.arguments[0].to_expression_mut().take_in(&self.ast);
+                let class = Expression::new_identifier(
+                    class_span,
+                    Ident::from_str_in(&class, &self.ast),
+                    &self.ast,
+                );
                 *expr = self.call(span, RETAG_HELPER, [class, value]);
             }
             _ => {}
@@ -341,8 +339,8 @@ fn value_bindings(program: &Program<'_>) -> HashSet<String> {
     for statement in &program.body {
         let class = match statement {
             Statement::ClassDeclaration(class) => Some(class),
-            Statement::ExportNamedDeclaration(export) => match &export.declaration {
-                Some(Declaration::ClassDeclaration(class)) => Some(class),
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::ClassDeclaration(class) => Some(class),
                 _ => None,
             },
             Statement::ImportDeclaration(import) if !import.import_kind.is_type() => {
@@ -371,15 +369,17 @@ fn location(path: &Path, source: &str, span: Span) -> String {
     format!("{}:{line}:{column}", path.display())
 }
 
-fn describe(path: &Path, source: &str, diagnostics: &[OxcDiagnostic]) -> anyhow::Error {
+fn describe<'d>(
+    path: &Path,
+    source: &str,
+    diagnostics: impl Iterator<Item = &'d OxcDiagnostic>,
+) -> anyhow::Error {
     let rendered: Vec<String> = diagnostics
-        .iter()
         .map(|diagnostic| {
             let span = diagnostic
                 .labels
-                .as_ref()
-                .and_then(|labels| labels.first())
-                .map(|label| Span::sized(label.offset() as u32, label.len() as u32))
+                .first()
+                .map(|label| Span::sized(label.offset(), label.len()))
                 .unwrap_or_default();
             format!("{}: {}", location(path, source, span), diagnostic.message)
         })

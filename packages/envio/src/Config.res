@@ -136,6 +136,9 @@ type t = {
   reorgThresholdReadyTolerance: int,
   lowercaseAddresses: bool,
   isDev: bool,
+  // The operator's `-d` / `--config` flags, repeated in every command printed
+  // for them to run next. Empty when they gave neither.
+  projectFlags: string,
   // An `envio start --chain` process: drives a subset of the schema's chains
   // while sibling processes drive the rest, so it only touches what its own
   // chains own — their partitions' indexes, their `ready_at`, their resume.
@@ -147,6 +150,7 @@ type t = {
   // the schema alone: a cross-chain entity has rows any chain's reorg can
   // reach, so its checkpoints have to be comparable across chains.
   checkpointSequence: CheckpointSequence.t,
+  envioInfo: JSON.t,
   // Set only in subgraph mode: the translated manifest, which is what makes
   // the subgraph runtime take over handler registration.
   subgraph: option<JSON.t>,
@@ -598,6 +602,7 @@ let publicConfigSchema = S.schema(s =>
     "handlers": s.matches(S.option(S.string)),
     "isDev": s.matches(S.option(S.bool)),
     "isolatedChains": s.matches(S.option(S.array(ChainId.schema))),
+    "projectFlags": s.matches(S.option(S.string)),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
@@ -668,6 +673,45 @@ let isolate = (config: t, ~chainIds: array<ChainId.t>) => {
     defaultChain: chains->Array.get(0),
     isolated: true,
   }
+}
+
+// What the command decided rather than the project's files: `envio dev` vs
+// `envio start`, which chains this process drives, and how it found the
+// project.
+let commandFields = ["isDev", "isolatedChains", "projectFlags"]
+
+let withProjectFlags = (command, ~config: t) =>
+  switch config.projectFlags {
+  | "" => command
+  | flags => `${command} ${flags}`
+  }
+
+let ecosystemFields = ["evm", "fuel", "svm"]
+
+// What `envio_info` records: the public config without the command's fields
+// or its chains. A chain is recorded by its own `envio_chains` row and its
+// config's `envio_addresses` rows instead, so adding one never rewrites this
+// record. The rest of a chain's config — its sources, its block lag, a
+// contract's start block — is read from config.yaml on every start.
+let toEnvioInfo = (publicConfigJson: JSON.t): JSON.t => {
+  let envioInfo = publicConfigJson->JSON.stringify->JSON.parseOrThrow
+  switch envioInfo {
+  | Object(obj) => {
+      commandFields->Array.forEach(field => obj->Utils.Dict.deleteInPlace(field))
+      // The subgraph blob is how the runtime finds mappings. None of it
+      // describes stored data — that's already in `evm` / `entities` — so a
+      // specVersion bump or a mapping-path edit must not force a reset.
+      obj->Utils.Dict.deleteInPlace("subgraph")
+      ecosystemFields->Array.forEach(ecosystem =>
+        switch obj->Dict.get(ecosystem) {
+        | Some(Object(ecosystemDict)) => ecosystemDict->Utils.Dict.deleteInPlace("chains")
+        | _ => ()
+        }
+      )
+    }
+  | _ => ()
+  }
+  envioInfo
 }
 
 let fromPublic = (publicConfigJson: JSON.t) => {
@@ -1140,11 +1184,13 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
+    projectFlags: publicConfig["projectFlags"]->Option.getOr(""),
     isolated: false,
     userEntitiesByName,
     userEntities,
     allEnums,
     checkpointSequence: CheckpointSequence.fromEntities(userEntities),
+    envioInfo: publicConfigJson->toEnvioInfo,
     subgraph: publicConfig["subgraph"],
   }
 
@@ -1260,53 +1306,6 @@ let getPublicConfigJson = () =>
   | None => Core.getConfigJson()->JSON.parseOrThrow
   }
 
-// Drops source URLs from each chain so RPC/hypersync edits don't trigger
-// the resume-time compat check (and don't end up in `envio_info`). Also
-// drops `isDev`, which toggles between `envio dev` and `envio start` and
-// has no bearing on schema/indexing compatibility.
-let stripSensitiveData = (json: JSON.t): JSON.t => {
-  let cloned = json->JSON.stringify->JSON.parseOrThrow
-  let stripChains = (ecosystem: option<JSON.t>) =>
-    switch ecosystem {
-    | Some(Object(ecosystemDict)) =>
-      switch ecosystemDict->Dict.get("chains") {
-      | Some(Object(chains)) =>
-        chains
-        ->Dict.valuesToArray
-        ->Array.forEach(chainJson =>
-          switch chainJson {
-          | Object(chain) => {
-              chain->Utils.Dict.deleteInPlace("rpcs")
-              chain->Utils.Dict.deleteInPlace("hypersync")
-            }
-          | _ => ()
-          }
-        )
-      | _ => ()
-      }
-    | _ => ()
-    }
-  switch cloned {
-  | Object(obj) => {
-      obj->Utils.Dict.deleteInPlace("isDev")
-      obj->Utils.Dict.deleteInPlace("isolatedChains")
-      stripChains(obj->Dict.get("evm"))
-      stripChains(obj->Dict.get("fuel"))
-      stripChains(obj->Dict.get("svm"))
-      // The subgraph blob is how the runtime finds mappings. None of it
-      // describes stored data — that's already in `evm` / `entities` — so a
-      // specVersion bump or a mapping-path edit must not force a reset.
-      obj->Utils.Dict.deleteInPlace("subgraph")
-    }
-  | _ => ()
-  }
-  cloned
-}
-
-// What the storage layer records as the config this schema was built from,
-// and checks a resuming run against.
-let envioInfo = () => getPublicConfigJson()->stripSensitiveData
-
 // Postgres jsonb doesn't preserve key order, so canonicalize with sorted
 // keys before string-comparing.
 let rec canonicalJson = (json: JSON.t): JSON.t =>
@@ -1326,9 +1325,10 @@ let rec canonicalJson = (json: JSON.t): JSON.t =>
 // Returns dotted leaf paths (`a.b[i].c`) where `stored` differs from
 // `current`, restricted to the highest-priority top-level tier with any
 // diff. Tiers in order: version → name → storage → ecosystem
-// (evm/fuel/svm) → entities → other top-level keys. The first tier
-// containing a diff is the only one rendered; lower tiers are silenced
-// so a single noisy section doesn't bury the actionable change.
+// (evm/fuel/svm, and the chains a resume puts beside them) → entities →
+// other top-level keys. The first tier containing a diff is the only one
+// rendered; lower tiers are silenced so a single noisy section doesn't bury
+// the actionable change.
 let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
   let canonEq = (a: JSON.t, b: JSON.t) =>
     JSON.stringify(canonicalJson(a)) === JSON.stringify(canonicalJson(b))
@@ -1396,7 +1396,7 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
       ["chainIdMode"],
       ["name"],
       ["storage"],
-      ["evm", "fuel", "svm"],
+      ["evm", "fuel", "svm", "chains"],
       ["entities"],
     ]
     let firstHit = tiers->Array.reduce(None, (acc, tier) =>
@@ -1426,65 +1426,34 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
   acc
 }
 
-// Throws an `incompatible config` error listing each path in `changedPaths`,
-// plus the remediation options. `~resetCommand` is rendered as-is for
-// option 2 (the wipe-and-redo). `~runCommand` controls option 3 (parallel
-// indexer recipe): when `None`, option 3 is omitted — the migrate flow
-// uses this because running a second indexer doesn't apply.
-// `~hasClickhouse` adds the extra env line so users running both
-// Postgres and Clickhouse get a complete override.
-let throwIfIncompatible = (
+// The `incompatible config` error listing each path in `changedPaths`, plus
+// the remediation options. `~resetCommand` is rendered as-is for option 2
+// (the wipe-and-redo). `~runCommand` controls option 3 (parallel indexer
+// recipe): when `None`, option 3 is omitted — the migrate flow uses this
+// because running a second indexer doesn't apply. `~hasClickhouse` adds the
+// extra env line so users running both Postgres and Clickhouse get a complete
+// override.
+let incompatibleMessage = (
   changedPaths: array<string>,
   ~resetCommand: string,
   ~runCommand: option<string>,
   ~hasClickhouse: bool,
 ) => {
-  if changedPaths->Array.length > 0 {
-    let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
-    let option1 = "Revert the changes above"
-    let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
-    let col = Math.Int.max(String.length(option1), String.length(resetCommand)) + 2
-    let option3 = switch runCommand {
-    | None => ""
-    | Some(cmd) =>
-      let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
-      `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
-    }
-    JsError.throwWithMessage(
-      `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(
-          col,
-        )}# resume indexing where it left off\n  2. ${resetCommand->padTo(
-          col,
-        )}# delete all indexed data and start over${option3}`,
-    )
+  let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
+  let option1 = "Revert the changes above"
+  let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
+  let col = Math.Int.max(String.length(option1), String.length(resetCommand)) + 2
+  let option3 = switch runCommand {
+  | None => ""
+  | Some(cmd) =>
+    let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
+    `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
   }
-}
-
-let throwIfResumeIncompatible = (
-  ~storedEnvioInfo: option<JSON.t>,
-  ~storedContractMapping: ContractMapping.t,
-  ~envioInfo: JSON.t,
-  ~contractMapping: ContractMapping.t,
-  ~resetCommand: string,
-  ~runCommand: option<string>,
-) => {
-  let changedPaths = switch storedEnvioInfo {
-  | None => ["storage was initialized by an older envio version"]
-  | Some(stored) => diffPaths(~stored, ~current=envioInfo)
-  }
-  let changedPaths =
-    storedContractMapping->ContractMapping.isEqual(contractMapping)
-      ? changedPaths
-      : changedPaths->Array.concat(["contracts"])
-  let hasClickhouse = switch envioInfo {
-  | Object(d) =>
-    switch d->Dict.get("storage") {
-    | Some(Object(s)) => s->Dict.get("clickhouse") == Some(Boolean(true))
-    | _ => false
-    }
-  | _ => false
-  }
-  throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
+  `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(
+      col,
+    )}# resume indexing where it left off\n  2. ${resetCommand->padTo(
+      col,
+    )}# delete all indexed data and start over${option3}`
 }
 
 // The returned value is a pure function of the JSON: it holds only event

@@ -2,106 +2,39 @@ open Vitest
 
 let json = (s: string): JSON.t => s->JSON.parseOrThrow
 
-describe("Config.stripSensitiveData", () => {
-  it("removes rpcs and hypersync from chains across evm/fuel/svm", t => {
+describe("Config.toEnvioInfo", () => {
+  it("keeps everything but the chains and the command's own fields", t => {
     let input = json(`{
       "name": "demo",
+      "isDev": true,
+      "isolatedChains": [1],
       "evm": {
-        "chains": {
-          "1": {"id": 1, "rpcs": [{"url": "https://secret"}], "hypersync": "https://eth.hypersync.xyz"},
-          "10": {"id": 10, "rpcs": [{"url": "https://other-secret"}]}
-        }
+        "addressFormat": "checksum",
+        "chains": {"ethereum": {"id": 1, "rpcs": [{"url": "https://secret"}]}}
       },
       "fuel": {
-        "chains": {
-          "0": {"id": 0, "hypersync": "https://fuel.hypersync.xyz"}
-        }
-      },
-      "svm": {
-        "chains": {
-          "mainnet": {"id": 101, "hypersync": "https://solana.hypersync.xyz"}
-        }
+        "chains": {"fuel": {"id": 0, "hypersync": "https://fuel.hypersync.xyz"}}
       }
     }`)
 
-    let expected = json(`{
-      "name": "demo",
-      "evm": {
-        "chains": {
-          "1": {"id": 1},
-          "10": {"id": 10}
-        }
-      },
-      "fuel": {
-        "chains": {
-          "0": {"id": 0}
-        }
-      },
-      "svm": {
-        "chains": {
-          "mainnet": {"id": 101}
-        }
-      }
-    }`)
-
-    t.expect(Config.stripSensitiveData(input), ~message="strips rpcs and hypersync").toEqual(
-      expected,
+    t.expect(Config.toEnvioInfo(input)).toEqual(
+      json(`{"name": "demo", "evm": {"addressFormat": "checksum"}, "fuel": {}}`),
     )
   })
 
   it("does not mutate the input JSON", t => {
-    let input = json(`{"evm": {"chains": {"1": {"rpcs": [{"url": "x"}]}}}}`)
-    let _ = Config.stripSensitiveData(input)
-    let chain1 =
-      input
-      ->JSON.Decode.object
-      ->Option.flatMap(o => o->Dict.get("evm"))
-      ->Option.flatMap(JSON.Decode.object)
-      ->Option.flatMap(o => o->Dict.get("chains"))
-      ->Option.flatMap(JSON.Decode.object)
-      ->Option.flatMap(o => o->Dict.get("1"))
-      ->Option.flatMap(JSON.Decode.object)
-    t.expect(
-      chain1->Option.flatMap(o => o->Dict.get("rpcs"))->Option.isSome,
-      ~message="rpcs still on the original",
-    ).toBe(true)
-  })
-
-  it("is a no-op on configs without ecosystems", t => {
-    let input = json(`{"name": "demo", "entities": []}`)
-    t.expect(Config.stripSensitiveData(input), ~message="passthrough").toEqual(input)
-  })
-
-  it("strips isDev so toggling envio dev/start doesn't trigger compat reset", t => {
-    let dev = json(`{"name": "demo", "isDev": true, "entities": []}`)
-    let start = json(`{"name": "demo", "entities": []}`)
-    t.expect(
-      Config.stripSensitiveData(dev),
-      ~message="dev and start strip to identical envio_info",
-    ).toEqual(Config.stripSensitiveData(start))
+    let input = json(`{"isDev": true, "evm": {"chains": {"1": {"id": 1}}}}`)
+    let _ = Config.toEnvioInfo(input)
+    t.expect(input).toEqual(json(`{"isDev": true, "evm": {"chains": {"1": {"id": 1}}}}`))
   })
 
   it("drops the subgraph blob so a specVersion bump is not a reset", t => {
-    let stored = json(`{
+    let info = json(`{
       "name": "demo",
       "entities": [],
       "subgraph": {"specVersion": "0.0.2", "rpcUrls": ["https://secret"], "root": "."}
-    }`)
-    let current = json(`{
-      "name": "demo",
-      "entities": [],
-      "subgraph": {"specVersion": "0.0.4", "rpcUrls": ["https://other"], "root": "."}
-    }`)
-    t.expect(
-      (
-        Config.stripSensitiveData(stored),
-        Config.diffPaths(
-          ~stored=Config.stripSensitiveData(stored),
-          ~current=Config.stripSensitiveData(current),
-        ),
-      ),
-      ~message="subgraph fields are not part of envio_info",
-    ).toEqual((json(`{"name": "demo", "entities": []}`), []))
+    }`)->Config.toEnvioInfo
+    t.expect(info).toEqual(json(`{"name": "demo", "entities": []}`))
   })
 })
 
@@ -152,65 +85,5 @@ describe("Config.diffPaths", () => {
     let stored = json(`{"z": {"q": 0}, "a": 0, "m": 0}`)
     let current = json(`{"z": {"q": 1}, "a": 1, "m": 0}`)
     t.expect(Config.diffPaths(~stored, ~current), ~message="sorted").toEqual(["a", "z.q"])
-  })
-
-  it("ignores rpcs entirely when both sides come from stripSensitiveData", t => {
-    // Mimics the user-reported scenario: only RPC fields edited; after
-    // stripping, both sides should be identical and the diff empty.
-    let storedRaw = json(`{
-      "evm": {
-        "chains": {
-          "1": {"id": 1, "rpcs": [{"url": "u1", "pollingInterval": 1000}]}
-        }
-      }
-    }`)
-    let currentRaw = json(`{
-      "evm": {
-        "chains": {
-          "1": {"id": 1, "rpcs": [{"url": "u1", "pollingInterval": 5000}]}
-        }
-      }
-    }`)
-    t.expect(
-      Config.diffPaths(
-        ~stored=Config.stripSensitiveData(storedRaw),
-        ~current=Config.stripSensitiveData(currentRaw),
-      ),
-      ~message="rpc-only edits should produce no diff after stripping",
-    ).toEqual([])
-  })
-
-  it("ignores data-source flips that drop hypersync alongside rpcs edits", t => {
-    // When a user marks an RPC `for: sync`, the public config drops
-    // `chains.<id>.hypersync` (since `main` flips to Rpc). Stripping
-    // hypersync alongside rpcs makes that cascade invisible too.
-    let storedRaw = json(`{
-      "evm": {
-        "chains": {
-          "1": {
-            "id": 1,
-            "hypersync": "https://eth.hypersync.xyz",
-            "rpcs": [{"url": "u1", "for": "fallback"}]
-          }
-        }
-      }
-    }`)
-    let currentRaw = json(`{
-      "evm": {
-        "chains": {
-          "1": {
-            "id": 1,
-            "rpcs": [{"url": "u1", "for": "sync"}]
-          }
-        }
-      }
-    }`)
-    t.expect(
-      Config.diffPaths(
-        ~stored=Config.stripSensitiveData(storedRaw),
-        ~current=Config.stripSensitiveData(currentRaw),
-      ),
-      ~message="hypersync drop on data-source flip should not register as a diff",
-    ).toEqual([])
   })
 })

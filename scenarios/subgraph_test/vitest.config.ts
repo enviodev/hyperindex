@@ -7,8 +7,8 @@ const shim = fileURLToPath(
 
 export default defineConfig({
   resolve: {
-    // Running `envio dev` in this project, mappings are loaded by Node with
-    // tsx, and the runtime's own resolve hook redirects graph-ts to the shim.
+    // Running `envio dev` in this project, mappings are loaded by Node through
+    // the runtime's own module hooks, which redirect graph-ts to the shim.
     // Vite resolves the mapping's imports itself and never consults that hook,
     // so the redirect is restated here for the test run only.
     alias: [{ find: /^@graphprotocol\/graph-ts$/, replacement: shim }],
