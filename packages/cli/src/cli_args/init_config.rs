@@ -427,6 +427,72 @@ impl PackageManager {
         }
     }
 
+    pub fn install_command(&self) -> String {
+        format!("{} install", self.cmd())
+    }
+
+    /// Runs a binary installed in the project's node_modules.
+    pub fn exec_command(&self, binary: &str) -> String {
+        match self {
+            PackageManager::Pnpm | PackageManager::Yarn => format!("{} {binary}", self.cmd()),
+            PackageManager::Npm => format!("npx {binary}"),
+            PackageManager::Bun => format!("bunx {binary}"),
+        }
+    }
+
+    /// The package manager whose lockfile the project has.
+    pub fn detect(project_root: &std::path::Path) -> Option<Self> {
+        [
+            ("pnpm-lock.yaml", PackageManager::Pnpm),
+            ("package-lock.json", PackageManager::Npm),
+            ("yarn.lock", PackageManager::Yarn),
+            ("bun.lock", PackageManager::Bun),
+            ("bun.lockb", PackageManager::Bun),
+        ]
+        .into_iter()
+        .find(|(lockfile, _)| project_root.join(lockfile).is_file())
+        .map(|(_, pm)| pm)
+    }
+
+    /// The templates' docs spell commands with pnpm. This rewrites the ones
+    /// they use, scripts, `install` and `tsc`, and leaves any other `pnpm`
+    /// command as written.
+    pub fn rewrite_commands(&self, text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find("pnpm ") {
+            let starts_word = rest[..at]
+                .chars()
+                .last()
+                .is_none_or(|c| !c.is_ascii_alphanumeric());
+            let after = &rest[at + "pnpm ".len()..];
+            let word_end = after
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+                .unwrap_or(after.len());
+            let word = &after[..word_end];
+            let replacement = match word {
+                _ if !starts_word => None,
+                "build" | "codegen" | "dev" | "start" | "test" => {
+                    Some(self.run_script_command(word))
+                }
+                "install" => Some(self.install_command()),
+                "tsc" => Some(self.exec_command("tsc")),
+                _ => None,
+            };
+            out.push_str(&rest[..at]);
+            match replacement {
+                Some(replacement) => out.push_str(&replacement),
+                None => {
+                    out.push_str("pnpm ");
+                    out.push_str(word);
+                }
+            }
+            rest = &after[word_end..];
+        }
+        out.push_str(rest);
+        out
+    }
+
     /// Default when `--package-manager` isn't given: `pnpm` if it's on the
     /// PATH, otherwise `npm`. Node.js ships with `npm`, so it's always
     /// available as the last-resort fallback.

@@ -273,14 +273,23 @@ pub async fn run_init_args(
     )
     .context("Failed writing package.json")?;
 
+    let pm = init_config.package_manager;
     let readme_path = project_root.join("README.md");
     if let Ok(readme) = fs::read_to_string(&readme_path) {
-        fs::write(
-            &readme_path,
-            readme_for_package_manager(&readme, init_config.package_manager),
-        )
-        .context("Failed writing README.md")?;
+        fs::write(&readme_path, pm.rewrite_commands(&readme))
+            .context("Failed writing README.md")?;
     }
+    let skills_dir = project_root.join(".claude").join("skills");
+    if skills_dir.is_dir() {
+        super::skills::rewrite_commands_in_markdown(&skills_dir, pm)?;
+    }
+    let workflows_dir = project_root.join(".github").join("workflows");
+    fs::create_dir_all(&workflows_dir).context("Failed creating .github/workflows")?;
+    fs::write(
+        workflows_dir.join("test.yaml"),
+        crate::hbs_templating::init_templates::render_test_workflow(pm),
+    )
+    .context("Failed writing .github/workflows/test.yaml")?;
 
     println!("Project template ready");
     println!("Running codegen");
@@ -290,7 +299,6 @@ pub async fn run_init_args(
 
     commands::codegen::run_codegen(&config).await?;
 
-    let pm = init_config.package_manager;
     println!("Installing dependencies with {}...", pm);
     commands::pm::install(pm, &parsed_project_paths.project_root)
         .await
@@ -348,28 +356,6 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
     let _ = writeln!(out, "  3. {prefix}{start:<width$}   # run in production");
 
     out
-}
-
-/// The templates' READMEs spell their commands with pnpm; a project set up
-/// with another package manager gets them in its own spelling.
-fn readme_for_package_manager(readme: &str, pm: init_config::PackageManager) -> String {
-    readme
-        .split_inclusive('\n')
-        .map(|line| {
-            let script = line
-                .trim_end_matches('\n')
-                .strip_prefix("pnpm ")
-                .filter(|script| !script.contains(' '));
-            match script {
-                Some(script) => format!(
-                    "{}{}",
-                    pm.run_script_command(script),
-                    &line[line.trim_end_matches('\n').len()..]
-                ),
-                None => line.to_string(),
-            }
-        })
-        .collect()
 }
 
 /// Inputs that decide whether `envio init` should print an agentic prompt
@@ -524,23 +510,29 @@ mod tests {
     }
 
     #[test]
-    fn readme_commands_follow_the_package_manager() {
-        let readme = "## Run\n\n```bash\npnpm dev\n```\n\n```bash\npnpm i -g fuels\n```\n";
+    fn commands_follow_the_package_manager() {
+        let text = "```bash\npnpm dev\n```\nRun `pnpm test -- -u`, `pnpm tsc --noEmit` and \
+                    `pnpm install`, then plain pnpm codegen.\nNot `pnpm i -g fuels`.\n";
         let rendered = [
             PackageManager::Pnpm,
             PackageManager::Npm,
             PackageManager::Yarn,
             PackageManager::Bun,
         ]
-        .map(|pm| readme_for_package_manager(readme, pm));
+        .map(|pm| pm.rewrite_commands(text));
         assert_eq!(
             rendered,
             [
-                "## Run\n\n```bash\npnpm dev\n```\n\n```bash\npnpm i -g fuels\n```\n",
-                "## Run\n\n```bash\nnpm run dev\n```\n\n```bash\npnpm i -g fuels\n```\n",
-                "## Run\n\n```bash\nyarn dev\n```\n\n```bash\npnpm i -g fuels\n```\n",
-                "## Run\n\n```bash\nbun run dev\n```\n\n```bash\npnpm i -g fuels\n```\n",
+                "```bash\npnpm dev\n```\nRun `pnpm test -- -u`, `pnpm tsc --noEmit` and \
+                 `pnpm install`, then plain pnpm codegen.\nNot `pnpm i -g fuels`.\n",
+                "```bash\nnpm run dev\n```\nRun `npm run test -- -u`, `npx tsc --noEmit` and \
+                 `npm install`, then plain npm run codegen.\nNot `pnpm i -g fuels`.\n",
+                "```bash\nyarn dev\n```\nRun `yarn test -- -u`, `yarn tsc --noEmit` and \
+                 `yarn install`, then plain yarn codegen.\nNot `pnpm i -g fuels`.\n",
+                "```bash\nbun run dev\n```\nRun `bun run test -- -u`, `bunx tsc --noEmit` and \
+                 `bun install`, then plain bun run codegen.\nNot `pnpm i -g fuels`.\n",
             ]
+            .map(String::from)
         );
     }
 

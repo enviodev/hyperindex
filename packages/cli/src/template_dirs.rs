@@ -323,8 +323,49 @@ mod test {
     use crate::cli_args::init_config::{evm, fuel, svm};
 
     use super::*;
+    use crate::cli_args::init_config::PackageManager;
     use strum::IntoEnumIterator;
     use tempdir::TempDir;
+
+    #[test]
+    fn shipped_docs_and_workflow_follow_the_package_manager() {
+        let mentioning_pnpm = [
+            PackageManager::Npm,
+            PackageManager::Yarn,
+            PackageManager::Bun,
+        ]
+        .iter()
+        .flat_map(|pm| {
+            fn files<'a>(dir: &'a Dir<'a>) -> Vec<&'a include_dir::File<'a>> {
+                dir.entries()
+                    .iter()
+                    .flat_map(|entry| match entry {
+                        DirEntry::Dir(dir) => files(dir),
+                        DirEntry::File(file) => vec![file],
+                    })
+                    .collect()
+            }
+            let docs = files(&TEMPLATES_DIR)
+                .into_iter()
+                .filter(|file| file.path().extension().is_some_and(|ext| ext == "md"))
+                .map(|file| {
+                    (
+                        file.path().display().to_string(),
+                        pm.rewrite_commands(file.contents_utf8().expect("utf-8")),
+                    )
+                });
+            let workflow = (
+                ".github/workflows/test.yaml".to_string(),
+                crate::hbs_templating::init_templates::render_test_workflow(*pm),
+            );
+            docs.chain(std::iter::once(workflow))
+                .filter(|(_, text)| text.contains("pnpm"))
+                .map(|(path, _)| format!("{pm}: {path}"))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+        assert_eq!(mentioning_pnpm, Vec::<String>::new());
+    }
 
     #[test]
     fn shared_static_dir_exists() {
