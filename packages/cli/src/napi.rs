@@ -93,6 +93,27 @@ pub fn from_user_api(
     })
 }
 
+#[napi_derive::napi]
+pub fn load_ts(path: String) -> napi::Result<String> {
+    crate::ts_loader::load(std::path::Path::new(&path)).map_err(napi::Error::from_reason)
+}
+
+#[napi_derive::napi]
+pub fn ts_check_handler_format(path: String) -> napi::Result<()> {
+    crate::ts_loader::check_handler_format(std::path::Path::new(&path))
+        .map_err(napi::Error::from_reason)
+}
+
+#[napi_derive::napi]
+pub fn ts_resolve_candidates(specifier: String, parent_url: Option<String>) -> Vec<String> {
+    crate::ts_loader::resolve_candidates(&specifier, parent_url.as_deref())
+}
+
+#[napi_derive::napi]
+pub fn ts_not_found_candidates(code: String, url: Option<String>, message: String) -> Vec<String> {
+    crate::ts_loader::not_found_candidates(&code, url.as_deref(), &message)
+}
+
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when
 /// Rust has handled the command end-to-end (help/version, codegen, init,
 /// stop, docker up/down). The Node process then exits with code 0.

@@ -105,6 +105,23 @@ describe("Isolated dependency e2e", () => {
     }
   });
 
+  // pnpm 11 fails the install when any dependency has a build script the
+  // project root hasn't approved, and envio can't approve one on its users'
+  // behalf, so envio's install tree must carry none.
+  it("installs with pnpm 11", async () => {
+    const projectDir = path.join(tmpRoot, "pnpm11", "e2e_test");
+    fs.cpSync(baseProjectDir, projectDir, {
+      recursive: true,
+      filter: (source: string) => path.basename(source) !== "node_modules",
+    });
+
+    const install = await runCommand("pnpm", ["dlx", "pnpm@11", "install"], {
+      cwd: projectDir,
+      timeout: config.timeouts.install,
+    });
+    expect(install.exitCode, `${install.stdout}\n${install.stderr}`).toBe(0);
+  }, 180_000);
+
   describe.each(PACKAGE_MANAGERS)("$pm", ({ pm, installArgs }: PmConfig) => {
     let projectDir: string;
     let indexerProcess: ChildProcess | null = null;

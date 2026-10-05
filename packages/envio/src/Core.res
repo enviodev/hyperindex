@@ -141,6 +141,10 @@ type addon = {
     ~valueArrayType: string,
     ~relation: string,
   ) => string,
+  loadTs: string => string,
+  tsCheckHandlerFormat: string => unit,
+  tsResolveCandidates: (string, Null.t<string>) => array<string>,
+  tsNotFoundCandidates: (string, Null.t<string>, string) => array<string>,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
