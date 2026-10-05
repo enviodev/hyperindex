@@ -1,5 +1,6 @@
 import module from "node:module";
 import { fileURLToPath } from "node:url";
+import { unsupportedNodeMessage } from "./NodeVersion.mjs";
 
 const TS_URL = /\.[cm]?tsx?$/;
 const JSON_URL = /\.json($|\?)/;
@@ -17,9 +18,9 @@ export const register = (addon) => {
   if (registered) return;
   registered = true;
 
-  if (typeof module.registerHooks !== "function") {
-    throw new Error(`envio needs Node.js >=22.15.0, but this process runs ${process.version}.`);
-  }
+  // The CLI checks this first thing; a test indexer gets here without it.
+  const unsupported = unsupportedNodeMessage();
+  if (unsupported !== undefined) throw new Error(unsupported);
 
   // Node ignores the source maps `loadTs` inlines unless this is on.
   module.setSourceMapsSupport(true);

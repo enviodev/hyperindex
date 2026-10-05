@@ -45,11 +45,9 @@ impl InitTemplates {
             out.push_str("    \"build\": \"rescript\",\n");
             out.push_str("    \"watch\": \"rescript watch\",\n");
         }
-        let build_prefix = if self.is_rescript {
-            "pnpm build && "
-        } else {
-            ""
-        };
+        // `rescript` itself rather than the build script, so running these
+        // doesn't need any one package manager.
+        let build_prefix = if self.is_rescript { "rescript && " } else { "" };
         out.push_str("    \"codegen\": \"envio codegen\",\n");
         out.push_str(&format!("    \"dev\": \"{build_prefix}envio dev\",\n"));
         out.push_str(&format!("    \"start\": \"{build_prefix}envio start\",\n"));

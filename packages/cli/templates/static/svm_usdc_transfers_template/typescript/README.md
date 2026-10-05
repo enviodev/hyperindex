@@ -6,13 +6,9 @@ Indexes every USDC transfer made through the SPL Token program on Solana and
 writes one row per instruction — top-level calls and CPIs alike, so the swaps,
 routers and lending programs that move most of the volume are included.
 
-## Prerequisites
+## Running the indexer
 
-- **[Node.js v22.15+ (v24 recommended)](https://nodejs.org/en/download/)**
-- **[pnpm](https://pnpm.io/installation)**
-- **[Docker](https://www.docker.com/products/docker-desktop/)** or **[Podman](https://podman.io/)**
-
-Add an Envio API token to `.env` — it authenticates the HyperSync source that
+Add an Envio API token to `.env`; it authenticates the HyperSync source that
 streams instructions. Create one at
 [envio.dev/app/api-tokens](https://envio.dev/app/api-tokens).
 
@@ -20,7 +16,7 @@ streams instructions. Create one at
 ENVIO_API_TOKEN=<YOUR-API-TOKEN>
 ```
 
-## Running the indexer
+Then start the indexer:
 
 ```bash
 pnpm dev

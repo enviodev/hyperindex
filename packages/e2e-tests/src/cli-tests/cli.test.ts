@@ -61,6 +61,89 @@ describe("envio local db-migrate", () => {
   });
 });
 
+// The template READMEs don't list prerequisites, so a missing one has to say
+// what to install.
+describe("Missing prerequisites", () => {
+  it("names an unsupported Node.js and how to get a newer one", async () => {
+    const preload = path.join(config.rootDir, "packages/e2e-tests/fixtures/preload/node-22.14.mjs");
+    const result = await runEnvio(["start"], { NODE_OPTIONS: `--import=${preload}` });
+
+    expect({ exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr }).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: [
+        "envio needs Node.js 22.15.0 or newer, and this is Node.js 22.14.0.",
+        "Install a newer one from https://nodejs.org/en/download, or with your version manager, for example: nvm install --lts",
+        "",
+      ].join("\n"),
+    });
+  });
+
+  // No container engine answers: every socket envio probes is missing, and
+  // nothing listens on the Postgres port, so `envio dev` needs one.
+  const startDevWithoutContainers = async (pathDirs: string[]) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "envio-no-docker-"));
+    return runEnvio(["dev"], {
+      HOME: home,
+      // A run from the repo would otherwise rebuild the addon with cargo, which
+      // this HOME and PATH don't reach. A published envio ignores it.
+      ENVIO_DEV_ADDON: path.join(config.rootDir, "target/debug/envio.node"),
+      XDG_RUNTIME_DIR: home,
+      DOCKER_HOST: `unix://${home}/docker.sock`,
+      CONTAINER_HOST: `unix://${home}/podman.sock`,
+      PATH: pathDirs.join(path.delimiter),
+      ENVIO_PG_PORT: "1",
+      ENVIO_HASURA: "false",
+      ENVIO_TUI: "false",
+    }).finally(() => fs.rmSync(home, { recursive: true, force: true }));
+  };
+
+  // The PATH without its Docker and Podman, plus a folder with the named
+  // executables.
+  const pathWith = (executables: Record<string, string>) => {
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "envio-path-"));
+    for (const [name, script] of Object.entries(executables)) {
+      fs.writeFileSync(path.join(bin, name), script, { mode: 0o755 });
+    }
+    const dirs = (process.env.PATH ?? "")
+      .split(path.delimiter)
+      .filter((dir) => !["docker", "podman"].some((name) => fs.existsSync(path.join(dir, name))));
+    return { bin, dirs: [bin, ...dirs] };
+  };
+
+  it("says to install Docker or Podman when neither is installed", async () => {
+    const { bin, dirs } = pathWith({});
+    const result = await startDevWithoutContainers(dirs).finally(() =>
+      fs.rmSync(bin, { recursive: true, force: true })
+    );
+
+    expect({
+      exitCode: result.exitCode,
+      explains: `${result.stdout}${result.stderr}`.includes(
+        [
+          "Neither Docker nor Podman is installed, and envio needs one to run Postgres and Hasura locally.",
+          "Install Docker Desktop (https://www.docker.com/products/docker-desktop/) or Podman (https://podman.io/), then run this again.",
+          "To use a Postgres you run yourself instead, set ENVIO_PG_HOST.",
+        ].join("\n")
+      ),
+    }).toEqual({ exitCode: 1, explains: true });
+  });
+
+  it("says to start Docker when it's installed but not running", async () => {
+    const { bin, dirs } = pathWith({ docker: "#!/bin/sh\nexit 1\n" });
+    const result = await startDevWithoutContainers(dirs).finally(() =>
+      fs.rmSync(bin, { recursive: true, force: true })
+    );
+
+    expect({
+      exitCode: result.exitCode,
+      explains: `${result.stdout}${result.stderr}`.includes(
+        "Docker or Podman is installed but isn't running, so envio can't start Postgres and Hasura."
+      ),
+    }).toEqual({ exitCode: 1, explains: true });
+  });
+});
+
 describe("TypeScript handler errors", () => {
   it("name the handler's TypeScript source line", async () => {
     const result = await runEnvio(

@@ -418,6 +418,15 @@ impl PackageManager {
         }
     }
 
+    /// What a user types to run a package.json script. npm and bun only run
+    /// custom scripts through `run`.
+    pub fn run_script_command(&self, script: &str) -> String {
+        match self {
+            PackageManager::Pnpm | PackageManager::Yarn => format!("{} {script}", self.cmd()),
+            PackageManager::Npm | PackageManager::Bun => format!("{} run {script}", self.cmd()),
+        }
+    }
+
     /// Default when `--package-manager` isn't given: `pnpm` if it's on the
     /// PATH, otherwise `npm`. Node.js ships with `npm`, so it's always
     /// available as the last-resort fallback.

@@ -273,6 +273,15 @@ pub async fn run_init_args(
     )
     .context("Failed writing package.json")?;
 
+    let readme_path = project_root.join("README.md");
+    if let Ok(readme) = fs::read_to_string(&readme_path) {
+        fs::write(
+            &readme_path,
+            readme_for_package_manager(&readme, init_config.package_manager),
+        )
+        .context("Failed writing README.md")?;
+    }
+
     println!("Project template ready");
     println!("Running codegen");
 
@@ -328,16 +337,39 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
             shell_quote(&project_root.display().to_string())
         )
     };
-    let cmd = pm.cmd();
+    let [test, dev, start] = ["test", "dev", "start"].map(|script| pm.run_script_command(script));
+    let width = start.len();
 
     let _ = writeln!(
         out,
-        "  1. {prefix}{cmd} test    # run the tests (recommended for AI)"
+        "  1. {prefix}{test:<width$}   # run the tests (recommended for AI)"
     );
-    let _ = writeln!(out, "  2. {prefix}{cmd} dev     # run locally");
-    let _ = writeln!(out, "  3. {prefix}{cmd} start   # run in production");
+    let _ = writeln!(out, "  2. {prefix}{dev:<width$}   # run locally");
+    let _ = writeln!(out, "  3. {prefix}{start:<width$}   # run in production");
 
     out
+}
+
+/// The templates' READMEs spell their commands with pnpm; a project set up
+/// with another package manager gets them in its own spelling.
+fn readme_for_package_manager(readme: &str, pm: init_config::PackageManager) -> String {
+    readme
+        .split_inclusive('\n')
+        .map(|line| {
+            let script = line
+                .trim_end_matches('\n')
+                .strip_prefix("pnpm ")
+                .filter(|script| !script.contains(' '));
+            match script {
+                Some(script) => format!(
+                    "{}{}",
+                    pm.run_script_command(script),
+                    &line[line.trim_end_matches('\n').len()..]
+                ),
+                None => line.to_string(),
+            }
+        })
+        .collect()
 }
 
 /// Inputs that decide whether `envio init` should print an agentic prompt
@@ -489,6 +521,27 @@ mod tests {
             Path::new("my-$HOME-`tmp`"),
             PackageManager::Npm
         ));
+    }
+
+    #[test]
+    fn readme_commands_follow_the_package_manager() {
+        let readme = "## Run\n\n```bash\npnpm dev\n```\n\n```bash\npnpm i -g fuels\n```\n";
+        let rendered = [
+            PackageManager::Pnpm,
+            PackageManager::Npm,
+            PackageManager::Yarn,
+            PackageManager::Bun,
+        ]
+        .map(|pm| readme_for_package_manager(readme, pm));
+        assert_eq!(
+            rendered,
+            [
+                "## Run\n\n```bash\npnpm dev\n```\n\n```bash\npnpm i -g fuels\n```\n",
+                "## Run\n\n```bash\nnpm run dev\n```\n\n```bash\npnpm i -g fuels\n```\n",
+                "## Run\n\n```bash\nyarn dev\n```\n\n```bash\npnpm i -g fuels\n```\n",
+                "## Run\n\n```bash\nbun run dev\n```\n\n```bash\npnpm i -g fuels\n```\n",
+            ]
+        );
     }
 
     #[test]
