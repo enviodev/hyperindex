@@ -9,7 +9,6 @@ export const check = (cwd, files) =>
     });
     worker.once("message", resolve);
     worker.once("error", reject);
-    worker.once("exit", (code) => {
-      if (code !== 0) reject(new Error(`The handler type check exited with code ${code}.`));
-    });
+    // Settles nothing once the result has arrived.
+    worker.once("exit", () => reject(new Error("The handler type check exited without a result.")));
   });

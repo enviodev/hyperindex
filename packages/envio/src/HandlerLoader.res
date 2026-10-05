@@ -70,7 +70,7 @@ let typeCheck = async (~config: Config.t) => {
   let files =
     (await getAutoLoadFiles(~handlers=config.handlers))
     ->Array.concat(config.contractHandlers->Array.filterMap(({handler}) => handler))
-    ->Array.filter(file => [".ts", ".mts", ".tsx"]->Array.some(ext => file->String.endsWith(ext)))
+    ->Array.filter(file => /\.m?tsx?$/->RegExp.test(file))
   if files->Array.length > 0 {
     switch await checkTypesInWorker(~cwd=NodeJs.Process.cwd(), ~files) {
     | {errors} => JsError.throwWithMessage(`Handler files have type errors:\n\n${errors}`)
