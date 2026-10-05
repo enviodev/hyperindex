@@ -9,7 +9,7 @@ expression: project_template.envio_types_dts
  * (or your package manager's `codegen` script, e.g. `pnpm codegen`).
  */
 
-import type { Address, BigDecimal, SingleOrMultiple } from "envio";
+import type { Address, BigDecimal, Json, SingleOrMultiple } from "envio";
 
 declare namespace FuelTypes {}
 type Enums = {};

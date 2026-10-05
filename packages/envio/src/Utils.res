@@ -650,39 +650,6 @@ module Schema = {
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
     ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
 
-  @val external getPrototypeOf: unknown => Null.t<unknown> = "Object.getPrototypeOf"
-  let objectPrototype: unknown = %raw(`Object.prototype`)
-
-  // A Json field is untyped, so a handler can put a bigint anywhere in it — a
-  // decoded tuple param assigned as is always does. JSON has no bigint, so it's
-  // written as its digits. It can't be left to a `JSON.stringify` replacer in
-  // the Postgres driver: the driver types a parameter from its first leaf
-  // (`[[1n]]` binds as int8) before any serializer runs.
-  let rec stringifyBigInts = (value: unknown): unknown =>
-    switch value->typeof {
-    | #bigint => value->(magic: unknown => bigint)->BigInt.toString->(magic: string => unknown)
-    | #object if value->Array.isArray =>
-      value
-      ->(magic: unknown => array<unknown>)
-      ->Array.map(stringifyBigInts)
-      ->(magic: array<unknown> => unknown)
-    | #object if value !== %raw(`null`) =>
-      switch value->getPrototypeOf->Null.toOption {
-      | None => value->stringifyBigIntsInObject
-      | Some(prototype) if prototype === objectPrototype => value->stringifyBigIntsInObject
-      // A class instance, like a Date, is left to `JSON.stringify`
-      | Some(_) => value
-      }
-    | _ => value
-    }
-  and stringifyBigIntsInObject = (value: unknown): unknown =>
-    value
-    ->(magic: unknown => dict<unknown>)
-    ->Dict.mapValues(stringifyBigInts)
-    ->(magic: dict<unknown> => unknown)
-
-  let dbJson = S.json(~validate=false)->S.preprocess(_ => {serializer: stringifyBigInts})
-
   // JSON `null` is a document, and Postgres stores it as one. Reaching the
   // ClickHouse sink as a JS `null` it would instead read as a field the handler
   // never set, which a String column has no way to hold — so it travels as the

@@ -31,7 +31,7 @@ metadata:
 | `BigDecimal!` | `BigDecimal` | Use `@config(precision: N, scale: M)` |
 | `Bytes!` | `string` or `Uint8Array` | Depends on `bytes_type` in config.yaml: `hex` (the EVM/Fuel default) gives a hex-encoded `string`, `uint8array` gives a `Uint8Array` stored as raw bytes. SVM is always `Uint8Array` |
 | `Timestamp!` | `Date` | |
-| `Json!` | `any` | A `bigint` anywhere inside is stored, and read back from the database, as its decimal string |
+| `Json!` | `Json` | JSON values only — store a `bigint` as its `.toString()` |
 
 ## Enums
 

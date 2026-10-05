@@ -523,7 +523,7 @@ impl TypeIdent {
             Self::String => "string".to_string(),
             Self::Hex => "`0x${string}`".to_string(),
             Self::Bytes => "Uint8Array".to_string(),
-            Self::Json => "unknown".to_string(),
+            Self::Json => "Json".to_string(),
             Self::ID => "string".to_string(),
             Self::Bool => "boolean".to_string(),
             Self::Timestamp => "Date".to_string(),
@@ -1028,7 +1028,7 @@ mod tests {
         assert_eq!(TypeIdent::BigDecimal.to_ts_type_string(), "BigDecimal");
         assert_eq!(TypeIdent::Address.to_ts_type_string(), "Address");
         assert_eq!(TypeIdent::String.to_ts_type_string(), "string");
-        assert_eq!(TypeIdent::Json.to_ts_type_string(), "unknown");
+        assert_eq!(TypeIdent::Json.to_ts_type_string(), "Json");
         assert_eq!(TypeIdent::ID.to_ts_type_string(), "string");
         assert_eq!(TypeIdent::Bool.to_ts_type_string(), "boolean");
         assert_eq!(TypeIdent::Unknown.to_ts_type_string(), "unknown");

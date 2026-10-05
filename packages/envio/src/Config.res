@@ -399,7 +399,7 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
     )
   | "float" => (Table.Number, S.float->S.toUnknown)
   | "serial" => (Table.Serial, S.int->S.toUnknown)
-  | "json" => (Table.Json, Utils.Schema.dbJson->S.toUnknown)
+  | "json" => (Table.Json, S.json(~validate=false)->S.toUnknown)
   | "date" => (Table.Date, Utils.Schema.dbDate->S.toUnknown)
   | "enum" => {
       let enumName = prop["enum"]->Option.getOrThrow
