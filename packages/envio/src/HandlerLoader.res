@@ -56,7 +56,7 @@ let getAutoLoadFiles = async (~handlers: string) => {
 }
 
 type typeCheckResult = {
-  // Why the check didn't run.
+  // The warning saying why the check didn't run.
   skipped?: string,
   // The compiler's report, when handlers have errors.
   errors?: string,
@@ -74,7 +74,7 @@ let typeCheck = async (~config: Config.t) => {
   if files->Array.length > 0 {
     switch await checkTypesInWorker(~cwd=NodeJs.Process.cwd(), ~files) {
     | {errors} => JsError.throwWithMessage(`Handler files have type errors:\n\n${errors}`)
-    | {skipped} => Logging.warn(`Skipping the handler type check: ${skipped}.`)
+    | {skipped} => Logging.warn(skipped)
     | _ => ()
     }
   }

@@ -10,12 +10,15 @@ const check = ({ cwd, files }) => {
     // user's editor and `tsc` check them.
     ts = createRequire(path.join(cwd, "package.json"))("typescript");
   } catch {
-    return { skipped: "the project doesn't depend on typescript" };
+    return { skipped: "Skipped the handler type check: the project doesn't depend on typescript." };
   }
 
   const configPath = ts.findConfigFile(cwd, ts.sys.fileExists);
   if (configPath === undefined) {
-    return { skipped: "no tsconfig.json was found" };
+    return {
+      skipped:
+        "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates.",
+    };
   }
 
   const host = {

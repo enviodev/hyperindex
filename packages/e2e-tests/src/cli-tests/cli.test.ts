@@ -6,6 +6,8 @@
  */
 
 import { describe, it, expect } from "vitest";
+import fs from "fs";
+import os from "os";
 import path from "path";
 import { runCommand } from "../utils/process.js";
 import { config } from "../config.js";
@@ -103,6 +105,36 @@ describe("TypeScript handler type check", () => {
       reportsOtherFiles: output.includes("unused.ts"),
       loadedHandlers: output.includes("handler loaded"),
     }).toEqual({ exitCode: 1, reportsHandlerError: true, reportsOtherFiles: false, loadedHandlers: false });
+  });
+
+  it("is skipped with a pointer to tsconfig.json when the project has none", async () => {
+    // Outside the repo, so no parent folder has a tsconfig.json either.
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-no-tsconfig-"));
+    fs.cpSync(path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-typecheck-project"), projectDir, {
+      recursive: true,
+      filter: (source) => path.basename(source) !== "tsconfig.json",
+    });
+    fs.writeFileSync(path.join(projectDir, "package.json"), JSON.stringify({ type: "module" }));
+    fs.symlinkSync(path.join(config.rootDir, "packages/e2e-tests/node_modules"), path.join(projectDir, "node_modules"));
+
+    const result = await runEnvio(
+      ["start"],
+      {
+        ENVIO_PG_PORT: String(config.pgPort),
+        ENVIO_PG_SCHEMA: `envio_test_${Date.now()}_${process.pid}_notsconfig`,
+        ENVIO_HASURA: "false",
+      },
+      projectDir
+    );
+    fs.rmSync(projectDir, { recursive: true, force: true });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect({
+      warns: output.includes(
+        "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates."
+      ),
+      loadedHandlers: output.includes("handler loaded"),
+    }).toEqual({ warns: true, loadedHandlers: true });
   });
 });
 
