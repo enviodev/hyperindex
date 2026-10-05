@@ -67,7 +67,7 @@ futures-util = "0.3"
 tar = "0.4"
 napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
-oxc = { version = "0.144.0", features = ["transformer", "codegen", "semantic"] }
+oxc = { version = "0.144.0", features = ["ast_visit", "transformer", "codegen", "semantic"] }
 oxc_resolver = "11.24.3"
 url = "2.5.8"
 base64 = "0.22.1"

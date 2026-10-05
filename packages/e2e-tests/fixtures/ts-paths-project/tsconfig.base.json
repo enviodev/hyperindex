@@ -5,6 +5,10 @@
     "paths": {
       "@lib/*": ["src/lib/*"],
       "postgres": ["src/lib/shadow.ts"]
-    }
+    },
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "experimentalDecorators": true
   }
 }

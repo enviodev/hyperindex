@@ -5,7 +5,7 @@ indexer.onEvent({ contract: "Gravatar", event: "NewGravatar" }, async ({ event, 
     id: event.params.id,
     owner: event.params.owner,
     displayName: event.params.displayName,
-    imageUrl: event.params.imageUrl,
+    imageUrl: fixtureImageHost + event.params.imageUrl,
   });
 });
 

@@ -99,6 +99,12 @@ pub fn load_ts(path: String) -> napi::Result<String> {
 }
 
 #[napi_derive::napi]
+pub fn ts_check_handler_format(path: String) -> napi::Result<()> {
+    crate::ts_loader::check_handler_format(std::path::Path::new(&path))
+        .map_err(napi::Error::from_reason)
+}
+
+#[napi_derive::napi]
 pub fn ts_resolve_candidates(specifier: String, parent_url: Option<String>) -> Vec<String> {
     crate::ts_loader::resolve_candidates(&specifier, parent_url.as_deref())
 }

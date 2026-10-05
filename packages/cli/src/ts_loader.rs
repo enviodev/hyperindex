@@ -1,5 +1,5 @@
 use base64::Engine;
-use oxc_resolver::{ResolveOptions, Resolver, TsConfig};
+use oxc_resolver::{CompilerOptions, ResolveOptions, Resolver, TsConfig};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 use url::Url;
@@ -9,16 +9,24 @@ use url::Url;
 // which candidates to offer and in what order.
 const PROJECT_EXTENSIONS: &[&str] = &[".ts", ".tsx", ".js", ".json"];
 const DEPENDENCY_EXTENSIONS: &[&str] = &[".js", ".json", ".ts", ".tsx"];
+// A specifier ending in one of these names its file; nothing gets appended.
+const MODULE_EXTENSIONS: &[&str] = &[
+    ".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".json", ".node",
+];
 
 struct Project {
     tsconfig: Option<Arc<TsConfig>>,
 }
 
 impl Project {
-    fn allow_js(&self) -> bool {
+    fn option(&self, get: impl Fn(&CompilerOptions) -> Option<bool>) -> bool {
         self.tsconfig
             .as_ref()
-            .is_some_and(|tsconfig| tsconfig.compiler_options.allow_js == Some(true))
+            .is_some_and(|tsconfig| get(&tsconfig.compiler_options) == Some(true))
+    }
+
+    fn allow_js(&self) -> bool {
+        self.option(|options| options.allow_js)
     }
 
     fn path_candidates(&self, specifier: &str) -> Vec<PathBuf> {
@@ -47,11 +55,7 @@ fn project() -> &'static Project {
 }
 
 fn is_relative(specifier: &str) -> bool {
-    let bytes = specifier.as_bytes();
-    bytes.first() == Some(&b'.')
-        && (bytes.get(1) == Some(&b'/')
-            || bytes.get(1) == Some(&b'.')
-            || bytes.get(2) == Some(&b'/'))
+    matches!(specifier, "." | "..") || specifier.starts_with("./") || specifier.starts_with("../")
 }
 
 fn is_file_path(specifier: &str) -> bool {
@@ -102,9 +106,11 @@ fn extension_candidates(url: &str) -> Vec<String> {
             .iter()
             .map(|replacement| format!("{base}{replacement}{suffix}")),
     );
-    let from_dependency = !(url.starts_with("file://") || is_file_path(path))
-        || path.contains("/node_modules/")
-        || path.contains(&format!("{0}node_modules{0}", std::path::MAIN_SEPARATOR));
+    if MODULE_EXTENSIONS.contains(&extension(path)) {
+        return candidates;
+    }
+    let from_dependency =
+        !(url.starts_with("file://") || is_file_path(path)) || path.contains("/node_modules/");
     let appended = if from_dependency {
         DEPENDENCY_EXTENSIONS
     } else {
@@ -168,7 +174,29 @@ pub fn resolve_candidates(specifier: &str, parent_url: Option<&str>) -> Vec<Stri
     } else if (specifier.starts_with("file://") || is_relative(&specifier)) && typescript_mode {
         candidates.extend(extension_candidates(&specifier));
     }
+    let parent = parent_url.and_then(|url| Url::parse(url).ok());
+    existing(candidates, parent.as_ref())
+}
+
+// Each candidate Node can't find costs it a thrown error, so only files that
+// exist are offered. A candidate whose file can't be told stays for Node.
+fn existing(candidates: Vec<String>, parent: Option<&Url>) -> Vec<String> {
     candidates
+        .into_iter()
+        .filter(|candidate| {
+            let target = candidate.split('?').next().unwrap_or(candidate);
+            let path = if Path::new(target).is_absolute() {
+                Some(PathBuf::from(target))
+            } else {
+                let url = match parent {
+                    Some(parent) => parent.join(target),
+                    None => Url::parse(target),
+                };
+                url.ok().and_then(|url| url.to_file_path().ok())
+            };
+            path.is_none_or(|path| path.is_file())
+        })
+        .collect()
 }
 
 /// Specifiers to retry after Node rejected one, built from the path its error
@@ -180,11 +208,12 @@ pub fn not_found_candidates(code: &str, url: Option<&str>, message: &str) -> Vec
     else {
         return Vec::new();
     };
-    match code {
+    let candidates = match code {
         "ERR_MODULE_NOT_FOUND" => extension_candidates(&missing),
         "ERR_UNSUPPORTED_DIR_IMPORT" => index_candidates(&missing),
         _ => Vec::new(),
-    }
+    };
+    existing(candidates, None)
 }
 
 fn quoted_after<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
@@ -216,13 +245,26 @@ fn missing_from_message(message: &str) -> Option<String> {
     Some(url.join(&main).ok()?.to_string())
 }
 
-/// Reads a TypeScript module and returns it as ES module source, with its
-/// source map inlined.
 pub fn load(path: &Path) -> Result<String, String> {
-    check_module_format(path)?;
-    let source = std::fs::read_to_string(path)
-        .map_err(|error| format!("Failed reading {}: {error}", path.display()))?;
-    let (code, map) = transform(path, &source)?;
+    let file = path.display();
+    if path.extension().is_some_and(|extension| extension == "cts") {
+        return Err(format!(
+            "{file} can't load: .cts files are CommonJS, and envio loads TypeScript as ES modules. Rename it to .ts or .mts."
+        ));
+    }
+    let source =
+        std::fs::read_to_string(path).map_err(|error| format!("Failed reading {file}: {error}"))?;
+    // A panic would otherwise abort the whole process, since it can't unwind
+    // into Node.
+    let (code, map) =
+        std::panic::catch_unwind(|| transform(path, &source)).unwrap_or_else(|panic| {
+            let reason = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            Err(format!("Failed transforming {file}: {reason}"))
+        })?;
     Ok(match map {
         Some(map) => format!(
             "{code}\n//# sourceMappingURL=data:application/json;base64,{}",
@@ -232,16 +274,14 @@ pub fn load(path: &Path) -> Result<String, String> {
     })
 }
 
-fn check_module_format(path: &Path) -> Result<(), String> {
-    let file = path.display();
-    if path.extension().is_some_and(|extension| extension == "cts") {
-        return Err(format!(
-            "{file} can't load: envio handlers are ES modules, and .cts files are CommonJS. Rename it to .ts or .mts."
-        ));
-    }
+/// Handlers have to be ES modules. A module they import doesn't: it loads as
+/// one whatever its package.json says, as a workspace package often says
+/// nothing.
+pub fn check_handler_format(path: &Path) -> Result<(), String> {
     if path.extension().is_some_and(|extension| extension == "mts") {
         return Ok(());
     }
+    let file = path.display();
     let Some(manifest) = path
         .ancestors()
         .skip(1)
@@ -266,17 +306,56 @@ fn check_module_format(path: &Path) -> Result<(), String> {
     }
 }
 
+#[derive(Default)]
+struct FirstDecorator(Option<oxc::span::Span>);
+
+impl<'a> oxc::ast_visit::Visit<'a> for FirstDecorator {
+    fn visit_decorator(&mut self, decorator: &oxc::ast::ast::Decorator<'a>) {
+        self.0.get_or_insert(decorator.span);
+    }
+}
+
 /// Strips types and lowers the syntax Node can't run (enums, namespaces,
-/// decorators). The source map is always emitted so stack traces name the
-/// user's TypeScript lines.
+/// legacy decorators), following the tsconfig's `verbatimModuleSyntax` and
+/// `experimentalDecorators`. The source map is always emitted so stack traces
+/// name the user's TypeScript lines.
 fn transform(path: &Path, source: &str) -> Result<(String, Option<String>), String> {
     use oxc::allocator::Allocator;
+    use oxc::ast_visit::Visit;
     use oxc::codegen::{Codegen, CodegenOptions};
-    use oxc::diagnostics::{Diagnostics, GraphicalReportHandler, GraphicalTheme, NamedSource};
+    use oxc::diagnostics::{
+        Diagnostics, GraphicalReportHandler, GraphicalTheme, NamedSource, OxcDiagnostic,
+    };
     use oxc::parser::Parser;
     use oxc::semantic::SemanticBuilder;
     use oxc::span::SourceType;
-    use oxc::transformer::{TransformOptions, Transformer};
+    use oxc::transformer::{
+        DecoratorOptions, HelperLoaderMode, HelperLoaderOptions, TransformOptions, Transformer,
+        TypeScriptOptions,
+    };
+
+    let project = project();
+    let options = TransformOptions {
+        typescript: TypeScriptOptions {
+            // Without it an import whose bindings go unused is dropped, as tsc
+            // drops it, and the module's side effects with it.
+            only_remove_type_imports: project.option(|options| options.verbatim_module_syntax),
+            ..TypeScriptOptions::default()
+        },
+        decorator: DecoratorOptions {
+            legacy: project.option(|options| options.experimental_decorators),
+            emit_decorator_metadata: project.option(|options| options.emit_decorator_metadata),
+            ..DecoratorOptions::default()
+        },
+        // The default imports helpers from `@oxc-project/runtime`, which the
+        // user's project doesn't have, and inlining isn't implemented. These
+        // call the global `babelHelpers` that TsModuleHooks.mjs defines.
+        helper_loader: HelperLoaderOptions {
+            mode: HelperLoaderMode::External,
+            ..HelperLoaderOptions::default()
+        },
+        ..TransformOptions::default()
+    };
 
     let file = path.display();
     let source_type = SourceType::from_path(path)
@@ -309,6 +388,19 @@ fn transform(path: &Path, source: &str) -> Result<(String, Option<String>), Stri
     }
 
     let mut program = parsed.program;
+    // Only legacy decorators get lowered, and Node can't run standard ones yet.
+    if !options.decorator.legacy {
+        let mut first = FirstDecorator::default();
+        first.visit_program(&program);
+        if let Some(span) = first.0 {
+            let diagnostic = OxcDiagnostic::error(
+                "Decorators need \"experimentalDecorators\": true in tsconfig.json.",
+            )
+            .with_label(span);
+            return Err(report("transforming", vec![diagnostic].into()));
+        }
+    }
+
     // `with_enum_eval` is what lets the transformer resolve enum member values;
     // without it, lowering an `enum` panics.
     let scoping = SemanticBuilder::new()
@@ -316,8 +408,8 @@ fn transform(path: &Path, source: &str) -> Result<(String, Option<String>), Stri
         .build(&program)
         .semantic
         .into_scoping();
-    let transformed = Transformer::new(&allocator, path, &TransformOptions::default())
-        .build_with_scoping(scoping, &mut program);
+    let transformed =
+        Transformer::new(&allocator, path, &options).build_with_scoping(scoping, &mut program);
     if !transformed.diagnostics.is_empty() {
         return Err(report("transforming", transformed.diagnostics));
     }

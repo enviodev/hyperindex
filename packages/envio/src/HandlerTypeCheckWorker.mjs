@@ -45,12 +45,11 @@ const check = ({ cwd, files }) => {
     }
   );
 
+  // The tsconfig's files are roots, as tsc makes them, since any of them can
+  // declare globals a handler relies on. Only the handlers' errors count.
   const handlerFiles = files.map((file) => path.resolve(cwd, file));
-  // Declaration files carry the globals handlers rely on, `envio-env.d.ts`
-  // among them. Other files come in only through a handler's imports, so the
-  // program doesn't parse the whole project.
   const program = ts.createProgram({
-    rootNames: [...parsed.fileNames.filter((file) => /\.d\.[cm]?ts$/.test(file)), ...handlerFiles],
+    rootNames: [...parsed.fileNames, ...handlerFiles],
     options: parsed.options,
     projectReferences: parsed.projectReferences,
   });

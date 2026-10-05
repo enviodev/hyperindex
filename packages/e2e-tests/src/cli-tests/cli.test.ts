@@ -102,9 +102,16 @@ describe("TypeScript handler type check", () => {
           "      ~~",
         ].join("\n")
       ),
+      errorCount: output.match(/error TS\d+/g)?.length,
       reportsOtherFiles: output.includes("unused.ts"),
       loadedHandlers: output.includes("handler loaded"),
-    }).toEqual({ exitCode: 1, reportsHandlerError: true, reportsOtherFiles: false, loadedHandlers: false });
+    }).toEqual({
+      exitCode: 1,
+      reportsHandlerError: true,
+      errorCount: 1,
+      reportsOtherFiles: false,
+      loadedHandlers: false,
+    });
   });
 
   // The type-error fixture without its tsconfig.json, outside the repo so no
@@ -128,8 +135,7 @@ describe("TypeScript handler type check", () => {
         ENVIO_HASURA: "false",
       },
       projectDir
-    );
-    fs.rmSync(projectDir, { recursive: true, force: true });
+    ).finally(() => fs.rmSync(projectDir, { recursive: true, force: true }));
     const output = `${result.stdout}${result.stderr}`;
     return {
       warning: output.match(/Skipped the handler type check[^\n\x1b]*/)?.[0] ?? null,
@@ -156,8 +162,8 @@ describe("TypeScript handler type check", () => {
 
 // The tsconfig is the one found from the working directory, as tsx does, so
 // this runs the CLI rather than an in-process indexer.
-describe("TypeScript handler imports", () => {
-  it("resolve tsconfig paths and baseUrl before packages, and dependencies as Node does", async () => {
+describe("TypeScript project config", () => {
+  it("follow the tsconfig: paths and baseUrl before packages, verbatimModuleSyntax and experimentalDecorators", async () => {
     const result = await runEnvio(
       ["start"],
       {
@@ -168,6 +174,8 @@ describe("TypeScript handler imports", () => {
       path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-paths-project")
     );
 
-    expect(`${result.stdout}${result.stderr}`).toContain("loaded Gravatar NewGravatar shadowed cjs js");
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "loaded Gravatar NewGravatar shadowed cjs js side-effect decorated METHOD"
+    );
   });
 });

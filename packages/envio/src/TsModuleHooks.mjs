@@ -11,20 +11,51 @@ const NOT_FOUND_CODES = new Set([
 
 let registered = false;
 
-// The addon decides which specifiers to try and turns TypeScript into ES
-// module source; Node's own resolver still resolves every candidate.
+// Node's own resolver still resolves every candidate the addon offers, so
+// package exports and conditions behave as they do without the hooks.
 export const register = (addon) => {
   if (registered) return;
   registered = true;
 
   if (typeof module.registerHooks !== "function") {
-    throw new Error(
-      `Loading TypeScript handlers needs Node.js >=22.15.0 for module.registerHooks, but this process is ${process.version}.`
-    );
+    throw new Error(`envio needs Node.js >=22.15.0, but this process runs ${process.version}.`);
   }
 
   // Node ignores the source maps `loadTs` inlines unless this is on.
   module.setSourceMapsSupport(true);
+
+  // What legacy decorators lower to; tslib's `__decorate`, `__param` and
+  // `__metadata`.
+  const helpers = (globalThis.babelHelpers ??= {});
+  // A function rather than an arrow: the argument count tells a class
+  // decorator from a member's.
+  helpers.decorate ??= function (decorators, target, key, descriptor) {
+    const argumentCount = arguments.length;
+    let result =
+      argumentCount < 3
+        ? target
+        : descriptor === null
+          ? (descriptor = Object.getOwnPropertyDescriptor(target, key))
+          : descriptor;
+    for (let index = decorators.length - 1; index >= 0; index--) {
+      const decorator = decorators[index];
+      if (decorator) {
+        result =
+          (argumentCount < 3
+            ? decorator(result)
+            : argumentCount > 3
+              ? decorator(target, key, result)
+              : decorator(target, key)) || result;
+      }
+    }
+    if (argumentCount > 3 && result) Object.defineProperty(target, key, result);
+    return result;
+  };
+  helpers.decorateParam ??= (index, decorator) => (target, key) => decorator(target, key, index);
+  helpers.decorateMetadata ??= (key, value) =>
+    typeof Reflect === "object" && typeof Reflect.metadata === "function"
+      ? Reflect.metadata(key, value)
+      : undefined;
 
   const firstResolved = (candidates, context, nextResolve) => {
     for (const candidate of candidates) {
