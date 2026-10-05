@@ -27,14 +27,12 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6
 
+      # Installs the toolchain pinned in rust-toolchain.toml, which is the one
+      # rustup runs here, and adds the cross-compile target to it.
       - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      # rust-toolchain.toml pins the version rustup actually runs, and the
-      # action installs its targets against `stable` instead — so add the
-      # cross-compile target to the pinned toolchain here.
-      - name: Add cross-compile target
-        run: rustup target add ${{ matrix.job.target }}
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.job.target }}
 
       # No cargo cache here — this workflow produces published binaries,
       # and a poisoned cache could inject tampered artifacts.

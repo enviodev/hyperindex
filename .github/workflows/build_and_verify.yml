@@ -55,7 +55,8 @@ jobs:
   # envio package build has no Rust dependency.
   build-envio-package:
     runs-on: ubuntu-22.04
-    timeout-minutes: 9
+    # A cold cargo cache makes the release build alone take ~8.5 minutes.
+    timeout-minutes: 20
     needs: authorize
 
     steps:
@@ -63,8 +64,11 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      # Installs only the toolchain pinned in rust-toolchain.toml. Installing
+      # `stable` as well would put it in rust-cache's key, so every Rust
+      # release would drop the cache.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        run: rustup toolchain install
 
       - uses: ./.github/actions/cargo-cache
 
@@ -128,7 +132,7 @@ jobs:
 
       # Components come from rust-toolchain.toml, which also pins the version.
       - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
+        run: rustup toolchain install
 
       - uses: ./.github/actions/cargo-cache
 
@@ -155,7 +159,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
+        run: rustup toolchain install
 
       - uses: ./.github/actions/cargo-cache
 
