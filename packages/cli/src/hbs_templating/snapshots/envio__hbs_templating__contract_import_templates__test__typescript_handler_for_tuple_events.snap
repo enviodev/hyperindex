@@ -17,12 +17,21 @@ indexer.onEvent({ contract: "SablierLockupTranched", event: "CreateLockupTranche
     funder: event.params.funder,
     sender: event.params.sender,
     recipient: event.params.recipient,
-    amounts: event.params.amounts,
+    amounts: {
+      deposit: event.params.amounts.deposit.toString(),
+      brokerFee: event.params.amounts.brokerFee.toString(),
+    },
     asset: event.params.asset,
     cancelable: event.params.cancelable,
     transferable: event.params.transferable,
-    tranches: event.params.tranches,
-    timestamps: event.params.timestamps,
+    tranches: event.params.tranches.map((item) => ({
+      amount: item.amount.toString(),
+      timestamp: item.timestamp.toString(),
+    })),
+    timestamps: {
+      start: event.params.timestamps.start.toString(),
+      end: event.params.timestamps.end.toString(),
+    },
     broker: event.params.broker,
   };
 
