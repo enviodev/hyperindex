@@ -10,14 +10,6 @@ external toMethod: 'a => 'a = "%unsafe_to_method"
 
 @val external importPath: string => promise<unknown> = "import"
 
-@val
-external importPathWithJson: (
-  string,
-  @as(json`{with: {type: "json"}}`) _,
-) => promise<{
-  "default": JSON.t,
-}> = "import"
-
 // Half the delay fixed, half spread across it. Every indexer pointed at one
 // provider loses its stream, or gives up on a quiet chain, in the same instant
 // that provider blinks, and putting them all back on the same schedule is how a

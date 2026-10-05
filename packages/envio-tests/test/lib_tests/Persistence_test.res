@@ -85,7 +85,6 @@ describe("Test Persistence layer init", () => {
     let initialState: Persistence.initialState = {
       cleanRun: true,
       contractMapping: ContractMapping.empty,
-      envioInfo: Some(envioInfo),
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
@@ -155,7 +154,7 @@ describe("Test Persistence layer init", () => {
   Async.it("Should skip initialization when storage is already initialized", async t => {
     let envioInfo = JSON.Encode.object(Dict.make())
     // The stored snapshot matches the running one, so the compat gate no-ops.
-    let storageMock = MockStorage.make([#isInitialized, #resumeInitialState])
+    let storageMock = MockStorage.make([#isInitialized, #readStoredConfig, #resumeInitialState])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
@@ -192,7 +191,6 @@ describe("Test Persistence layer init", () => {
     let initialState: Persistence.initialState = {
       cleanRun: false,
       contractMapping: ContractMapping.empty,
-      envioInfo: Some(envioInfo),
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
@@ -215,7 +213,7 @@ Although it should load effect caches metadata.`,
     ).toEqual((1, 0, 1))
   })
 
-  // Drive a single resume whose payload carries `~storedEnvioInfo`, then
+  // Drive a single resume against a storage holding `~storedEnvioInfo`, then
   // capture whatever Persistence.init throws.
   let resumeWith = async (
     ~storedEnvioInfo: option<JSON.t>,
@@ -223,9 +221,12 @@ Although it should load effect caches metadata.`,
     ~resetCommand=resetCmd,
     ~runCommand=runCmd,
   ) => {
-    let storageMock = MockStorage.make([#isInitialized, #resumeInitialState])
+    let storageMock = MockStorage.make(
+      [#isInitialized, #readStoredConfig, #resumeInitialState],
+      ~stored={envioInfo: storedEnvioInfo, chains: [], contractMapping: ContractMapping.empty},
+    )
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
-    // Attach before resolving the mock: throwIfIncompatible rejects this
+    // Attach before resolving the mock: an incompatible config rejects this
     // promise, and an unattached rejection would surface as unhandled.
     let settled = (
       async () =>
@@ -245,7 +246,6 @@ Although it should load effect caches metadata.`,
     let initialState: Persistence.initialState = {
       cleanRun: false,
       contractMapping: ContractMapping.empty,
-      envioInfo: storedEnvioInfo,
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
@@ -305,46 +305,6 @@ Pick one:
        envio dev`)
   })
 
-  Async.it("Throws naming chains.<id> when a new chain is added", async t => {
-    let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
-    let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
-    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(
-      message,
-      ~message="full incompat message naming the new chain key",
-    ).toBe(`The following config changes are incompatible with the existing indexer data:
-
-    - evm.chains.10
-
-Pick one:
-  1. Revert the changes above  # resume indexing where it left off
-  2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
-       ENVIO_PG_SCHEMA=<new_schema> \\
-       ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`)
-  })
-
-  Async.it("Throws naming chains.<id> when an existing chain is removed", async t => {
-    let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
-    let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
-    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(
-      message,
-      ~message="full incompat message naming the removed chain key",
-    ).toBe(`The following config changes are incompatible with the existing indexer data:
-
-    - evm.chains.10
-
-Pick one:
-  1. Revert the changes above  # resume indexing where it left off
-  2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
-       ENVIO_PG_SCHEMA=<new_schema> \\
-       ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`)
-  })
-
   Async.it("Priority: name+entities diff → only name bullet shown", async t => {
     let stored = JSON.parseOrThrow(`{"name": "old", "entities": [{"name": "A"}]}`)
     let current = JSON.parseOrThrow(`{"name": "new", "entities": [{"name": "B"}]}`)
@@ -386,15 +346,15 @@ Pick one:
   })
 
   Async.it("Priority: evm+entities diff → only evm bullets shown", async t => {
-    let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}, "entities": [{"name": "A"}]}`)
-    let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 2}}}, "entities": [{"name": "B"}]}`)
+    let stored = JSON.parseOrThrow(`{"evm": {"addressFormat": "checksum"}, "entities": [{"name": "A"}]}`)
+    let current = JSON.parseOrThrow(`{"evm": {"addressFormat": "lowercase"}, "entities": [{"name": "B"}]}`)
     let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
     t.expect(
       message,
       ~message="entities tier suppressed when evm differs",
     ).toBe(`The following config changes are incompatible with the existing indexer data:
 
-    - evm.chains.1.id
+    - evm.addressFormat
 
 Pick one:
   1. Revert the changes above  # resume indexing where it left off
@@ -501,32 +461,5 @@ Pick one:
        ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`)
-  })
-
-  Async.it("Does NOT throw when only RPC or hypersync options change", async t => {
-    // Both sides go through stripSensitiveData first, mimicking what
-    // `Main.getEnvioInfo` does on every Persistence.init call.
-    let stored = Config.stripSensitiveData(
-      JSON.parseOrThrow(`{
-        "evm": {"chains": {"1": {
-          "id": 1,
-          "hypersync": "https://eth.hypersync.xyz",
-          "rpcs": [{"url": "u-old", "for": "fallback", "pollingInterval": 1000}]
-        }}}
-      }`),
-    )
-    let current = Config.stripSensitiveData(
-      JSON.parseOrThrow(`{
-        "evm": {"chains": {"1": {
-          "id": 1,
-          "rpcs": [{"url": "u-new", "for": "sync", "pollingInterval": 5000}]
-        }}}
-      }`),
-    )
-    let (raised, _message, storageMock) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(
-      (raised, storageMock.resumeInitialStateCalls->Array.length),
-      ~message="rpc/hypersync edits should not throw and resumeInitialState runs once",
-    ).toEqual((None, 1))
   })
 })

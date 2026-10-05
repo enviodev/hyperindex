@@ -13,6 +13,7 @@ type blockStoreCtor
 type clickHouseSinkCtor
 type pgClientCtor
 type addressStoreCtor
+type tuiCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
 type fromUserApiOptions = {
@@ -158,6 +159,8 @@ type addon = {
   clickHouseSink: clickHouseSinkCtor,
   @as("PgClient")
   pgClient: pgClientCtor,
+  @as("Tui")
+  tui: tuiCtor,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
@@ -208,10 +211,14 @@ let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
 let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
 
 // Runs `cargo build` on every invocation (like `cargo run`).
-let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
+let loadDevAddon: ({..}, string) => Null.t<addon> = %raw(`function(req, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;
   var fs = Nodefs;
+
+  // Vitest test.env points workers at the addon globalSetup already built.
+  var preBuilt = process.env.ENVIO_DEV_ADDON;
+  if (preBuilt && fs.existsSync(preBuilt)) return req(preBuilt);
 
   var repoRoot = null;
   var dir = path.resolve(envioDir);
@@ -282,16 +289,21 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
 // `code`, and any other fields a diagnostic might rely on.
 let rethrow: JsExn.t => 'a = %raw(`function(e) { throw e }`)
 
-// An addon named outright, which a test run or a bisect points at the build it
-// just made. Checked before the installed platform package, or a stale one left
-// in `node_modules` would silently shadow it — the failure that follows is an
-// argument-count mismatch at a boundary whose two sides look like they agree.
-%%private(
-  let namedAddon: unit => option<string> = %raw(`() => {
-    var named = process.env.ENVIO_DEV_ADDON;
-    return named && Nodefs.existsSync(named) ? named : undefined;
-  }`)
-)
+type packageJson = {version: string}
+let requirePackageJson: ({..}, string) => packageJson = %raw(`(req, p) => req(p)`)
+let devVersion = "0.0.1-dev"
+
+let isGlibc: unit => bool = %raw(`() => Boolean(process.report?.getReport().header.glibcVersionRuntime)`)
+
+@val external npmUserAgent: option<string> = "process.env.npm_config_user_agent"
+
+let addCommand = () =>
+  switch npmUserAgent {
+  | Some(ua) if ua->String.startsWith("pnpm/") => "pnpm add"
+  | Some(ua) if ua->String.startsWith("yarn/") => "yarn add"
+  | Some(ua) if ua->String.startsWith("bun/") => "bun add"
+  | _ => "npm install"
+  }
 
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
@@ -325,26 +337,37 @@ let loadAddon = () => {
       }
     }
 
-  switch namedAddon() {
-  | Some(named) => callRequire(req, named)
+  switch tryRequire(0) {
+  | Some(addon) => addon
   | None =>
-    switch tryRequire(0) {
+    let version = requirePackageJson(req, "../package.json").version
+    // Publishing stamps the real version, so only a monorepo checkout (or a
+    // `file:` link to one) can have a dev build to fall back to. Skipping it
+    // spares published installs a `pnpm list` spawn before the error below.
+    let devAddon = if version === devVersion {
+      loadDevAddon(req, envioPackageDir)->Null.toOption
+    } else {
+      None
+    }
+    switch devAddon {
     | Some(addon) => addon
     | None =>
-      // Dev build fallback (cargo build on every run)
-      // `null` rather than `undefined` when there is no dev build, which an
-      // `option` would read as `Some`.
-      switch loadDevAddon(req, envioPackageDir)->(Utils.magic: addon => Null.t<addon>) {
-      | Value(addon) => addon
-      | Null =>
-        let host = `${processPlatform}-${processArch}`
-        let msg = if candidates->Array.length === 0 {
-          `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
+      let host = `${processPlatform}-${processArch}`
+      let msg = switch candidates {
+      | []
+        if processPlatform === "win32" => `envio doesn't run natively on Windows. Use WSL 2 instead: https://learn.microsoft.com/windows/wsl/install`
+      | [] =>
+        `envio doesn't support ${host}. Supported: linux-x64 (glibc/musl), linux-arm64, darwin-x64, darwin-arm64.`
+      | _ =>
+        let pkg = if processPlatform === "linux" && processArch === "x64" && !isGlibc() {
+          `envio-linux-x64-musl`
         } else {
-          `Couldn't load the envio native addon for ${host}. Reinstall envio (ensure optional dependencies aren't skipped).`
+          candidates->Array.getUnsafe(0)
         }
-        JsError.throwWithMessage(msg)
+        `envio's native binary for ${host} isn't installed (package "${pkg}"). This happens when optional dependencies are skipped (--omit=optional, --no-optional) or the lockfile was generated on another platform.
+Reinstall dependencies, or add the package explicitly: ${addCommand()} ${pkg}@${version}`
       }
+      JsError.throwWithMessage(msg)
     }
   }
 }

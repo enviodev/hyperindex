@@ -17,20 +17,27 @@ pub(crate) mod query;
 pub(crate) mod selection;
 pub(crate) mod types;
 
+use crate::js_value::JsTape;
 use config::ClientConfig;
 use decode::{Decoder, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
-use types::{encode_address, Block, OnEventRegistrationInput, ParamValue, RollbackGuard};
+use types::{encode_address, Block, OnEventRegistrationInput, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
 
 fn init_logger(log_level: Option<&str>) {
     LOGGER_INIT.call_once(|| {
+        let target = || env_logger::Target::Pipe(Box::new(crate::tui::LogWriter));
         if std::env::var("RUST_LOG").is_ok() {
-            env_logger::init();
+            env_logger::Builder::from_default_env()
+                .target(target())
+                .init();
         } else if let Some(filter) = log_level {
-            env_logger::Builder::new().parse_filters(filter).init();
+            env_logger::Builder::new()
+                .parse_filters(filter)
+                .target(target())
+                .init();
         }
     });
 }
@@ -361,7 +368,7 @@ pub struct QueryResponse {
     pub rollback_guard: Option<RollbackGuard>,
 }
 
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct EventItem {
     pub log_index: i64,
     pub src_address: String,
@@ -374,12 +381,12 @@ pub struct EventItem {
     /// The registration this log routed to, as passed to the client
     /// constructor. Logs that route nowhere never cross the boundary.
     pub on_event_registration_index: i64,
-    pub params: ParamValue,
+    pub params: JsTape,
 }
 
 /// The always-needed block fields, surfaced per block number so the consumer can
 /// set each item's `timestamp`/`blockHash`, feed reorg detection, and stamp
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,

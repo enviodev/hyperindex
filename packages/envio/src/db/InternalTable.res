@@ -156,12 +156,14 @@ WHERE "${table.tableName}"."chain_id" = dead.chain_id
     )
   }
 
-  let makeGetRowsQuery = (~pgSchema) =>
+  let makeGetRowsQuery = (~pgSchema, ~onlyConfig=false) =>
     `SELECT "chain_id" as "chainId",
 "address" as "address",
 "contract_id" as "contractId",
 "registration_block" as "registrationBlock"
-FROM "${pgSchema}"."${table.tableName}";`
+FROM "${pgSchema}"."${table.tableName}"${onlyConfig
+        ? ` WHERE "registration_block" = ${AddressRows.configRegistrationBlock->Int.toString}`
+        : ""};`
 }
 
 module Chains = {
@@ -379,6 +381,54 @@ WHERE "${(#id: field :> string)}" = $2
     sourceBlockNumber: int,
     // BIGINT, which the driver hands back as a string.
     checkpointId: string,
+  }
+
+  let readStoredChains = async (sql, ~pgSchema): array<ResumePlan.storedChain> => {
+    let (rows, configAddressRows) = await Promise.all2((
+      sql
+      ->Sql.query(
+        `SELECT "${(#id: field :> string)}" as "id",
+"${(#ecosystem: field :> string)}" as "ecosystem",
+"${(#start_block: field :> string)}" as "startBlock",
+"${(#end_block: field :> string)}" as "endBlock",
+"${(#max_reorg_depth: field :> string)}" as "maxReorgDepth"
+FROM "${pgSchema}"."${table.tableName}";`,
+      )
+      ->(
+        Utils.magic: promise<array<unknown>> => promise<
+          array<{
+            "id": ChainId.t,
+            "ecosystem": string,
+            "startBlock": int,
+            "endBlock": Null.t<int>,
+            "maxReorgDepth": int,
+          }>,
+        >
+      ),
+      sql
+      ->Sql.query(EnvioAddresses.makeGetRowsQuery(~pgSchema, ~onlyConfig=true))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<AddressRows.row>>),
+    ))
+    let configAddressesByChain = Dict.make()
+    configAddressRows->Array.forEach(addressRow =>
+      configAddressesByChain->Utils.Dict.push(
+        addressRow.chainId->ChainId.normalizeOrThrow->ChainId.toString,
+        addressRow,
+      )
+    )
+    rows->Array.map((row): ResumePlan.storedChain => {
+      let id = row["id"]->ChainId.normalizeOrThrow
+      {
+        id,
+        ecosystem: row["ecosystem"],
+        startBlock: row["startBlock"],
+        endBlock: row["endBlock"]->Null.toOption,
+        maxReorgDepth: row["maxReorgDepth"],
+        configAddresses: configAddressesByChain
+        ->Utils.Dict.dangerouslyGetNonOption(id->ChainId.toString)
+        ->Option.getOr([]),
+      }
+    })
   }
 
   let makeGetInitialStateQuery = (~pgSchema) => {

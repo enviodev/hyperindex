@@ -802,7 +802,10 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     });
   });
 
-  it("should resume with DB state on second start", async () => {
+  // A resume compares what each chain's row stores with config.yaml, so a
+  // stored end block the config no longer matches is refused rather than
+  // silently winning over it.
+  it("should refuse a stored end block that config.yaml no longer matches", async () => {
     const patchedEndBlock = 10861775; // original 10861774 + 1
 
     // Patch envio_chains.end_block via Hasura run_sql
@@ -834,17 +837,21 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
           ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
           ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
           ENVIO_CLICKHOUSE_DATABASE: CH_DATABASE,
-          E2E_EXPECTED_END_BLOCK: String(patchedEndBlock),
+          E2E_EXPECTED_END_BLOCK: "10861774",
         },
       });
 
-      // If the handler's endBlock check fails, the indexer crashes and
-      // waitForOutput rejects. Success means DB state was used.
-      await waitForOutput(
-        secondProcess,
-        "Indexed to the end block",
-        120_000
+      let output = "";
+      secondProcess.stdout?.on("data", (data: Buffer) => (output += data.toString()));
+      secondProcess.stderr?.on("data", (data: Buffer) => (output += data.toString()));
+      const exitCode = await new Promise<number | null>((resolve) =>
+        secondProcess!.on("close", resolve)
       );
+
+      expect({ exited: exitCode !== 0, named: output.includes("chains.1.endBlock") }).toEqual({
+        exited: true,
+        named: true,
+      });
     } finally {
       if (secondProcess) {
         secondProcess.kill("SIGKILL");

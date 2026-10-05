@@ -62,7 +62,7 @@ let sibling = async (~sql, ~chainId) => {
   let resumed = await storage.resumeInitialState(
     ~entities,
     ~chainIds=[chainId],
-    ~throwIfIncompatible=(~storedEnvioInfo as _, ~storedContractMapping as _) => (),
+    ~contractMapping=config.contractMapping,
   )
 
   await sql->PgStorage.setOrThrow(

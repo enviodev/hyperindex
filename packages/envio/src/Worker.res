@@ -82,6 +82,14 @@ let bindToSupervisor = () => {
 
 %%private(let send = (message: workerMessage) => NodeJs.Process.sendToParent(message)->ignore)
 
+// A worker done with its chains exits only once its final snapshot is on the
+// channel: the last periodic one can be up to an interval old, and the
+// supervisor would go on reporting those chains as it left them.
+let exitAfterReporting = (~metrics: Metrics.t) =>
+  NodeJs.Process.sendToParentThen(Snapshot({metrics, runtime: Metrics.sampleRuntime()}), () =>
+    NodeJs.process->NodeJs.exitWithCode(Success)
+  )->ignore
+
 // Reports this process's chains and its own runtime for as long as it runs, so
 // the supervisor can merge every worker's into the one snapshot the run serves,
 // and listens for the one decision the supervisor makes on the run's behalf.

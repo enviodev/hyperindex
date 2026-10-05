@@ -39,9 +39,6 @@ type initialState = {
   // On a resume this is what the database holds, not what the config would
   // derive — the ids must never reshuffle under stored rows.
   contractMapping: ContractMapping.t,
-  // Public config snapshot, restored with the address rows. None when
-  // envio_info or envio_contracts is missing.
-  envioInfo: option<JSON.t>,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
   // Where each chain's checkpoint sequence stands in the database.
@@ -123,20 +120,25 @@ type storage = {
     ~contractMapping: ContractMapping.t,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
-  // `throwIfIncompatible` gets what the storage holds before any sink is
-  // resumed, so a config the stored one rules out is reported as such rather
-  // than as the sink tripping over tables it never created.
-  //
+  // Read before anything is resumed, so a config the stored one rules out is
+  // reported as such rather than as a sink tripping over tables it never
+  // created.
+  readStoredConfig: unit => promise<ResumePlan.stored>,
+  // Brings an initialized storage a chain it doesn't have yet: its row, its
+  // partitions and its config addresses, as `initialize` would have created
+  // them. The chains already there are left untouched.
+  addChain: (
+    ~chainConfig: Config.chain,
+    ~entities: array<Internal.entityConfig>,
+    ~contractMapping: ContractMapping.t,
+  ) => promise<unit>,
   // `chainIds` is what this run drives. An isolated run resumes a subset of
   // the stored chains, and the sink's resume trims past each resumed chain's
   // checkpoint, so chains a sibling process is still writing must stay out.
   resumeInitialState: (
     ~entities: array<Internal.entityConfig>,
     ~chainIds: array<ChainId.t>,
-    ~throwIfIncompatible: (
-      ~storedEnvioInfo: option<JSON.t>,
-      ~storedContractMapping: ContractMapping.t,
-    ) => unit,
+    ~contractMapping: ContractMapping.t,
   ) => promise<initialState>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
@@ -243,6 +245,10 @@ type t = {
 
 exception StorageError({message: string, reason: exn})
 
+// A start the operator has to act on, not a failure: what it says is all they
+// need, so it's printed once, without a stack trace.
+exception Refused(string)
+
 let make = (
   ~userEntities,
   // TODO: Should only pass userEnums and create internal config in runtime
@@ -271,10 +277,11 @@ let init = {
     ~runCommand,
     ~reset=false,
     ~lowercaseAddresses=false,
-    // An isolated run needs the schema to exist already: initializing under it
-    // would create rows for this process's chains only, leaving the ones it
-    // skipped with no state for their own processes to resume.
-    ~requireInitialized=false,
+    // An `envio start --chain` run. It needs the schema to exist already:
+    // initializing under it would create rows for this process's chains only,
+    // leaving the ones it skipped with no state for their own processes to
+    // resume. It is also the one run that may add its chain to the schema.
+    ~isolated=false,
     // Whether this process is the one that tells the operator the run resumed.
     // A supervisor says it once for the whole run, so the workers it forked
     // keep it to their own log files.
@@ -297,9 +304,11 @@ let init = {
         })
         persistence.storageStatus = Initializing(promise)
         if reset || !(await persistence.storage.isInitialized()) {
-          if requireInitialized {
-            JsError.throwWithMessage(
-              "`envio start --chain` needs a database that already holds every chain. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+          if isolated {
+            throw(
+              Refused(
+                "`envio start --chain` needs a database that is already set up. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+              ),
             )
           }
           Logging.info(`Initializing the indexer storage...`)
@@ -330,18 +339,51 @@ let init = {
         ) {
           let logResume = announceResume ? Logging.info : Logging.trace
           logResume(`Found existing indexer storage. Resuming indexing state...`)
+          let stored = await persistence.storage.readStoredConfig()
+          switch ResumePlan.make(
+            ~stored,
+            ~envioInfo,
+            ~chainConfigs,
+            ~contractMapping,
+            ~lowercaseAddresses,
+            ~isolated,
+          ) {
+          | Resume => ()
+          | Incompatible(changedPaths) =>
+            throw(
+              Refused(
+                ResumePlan.incompatibleMessage(
+                  changedPaths,
+                  ~envioInfo,
+                  ~resetCommand,
+                  ~runCommand,
+                ),
+              ),
+            )
+          | AddChain(chainConfig) =>
+            Logging.info({
+              "msg": `Adding the chain to the existing indexer storage...`,
+              "chainId": chainConfig.id,
+            })
+            // The same resolution `initialize` runs, and for the same reason:
+            // this is the one time the chain's row is written.
+            let chainConfig =
+              (
+                await [chainConfig]->StartBlockResolver.resolveAllOrThrow(
+                  ~lowercaseAddresses,
+                  ~retry=startBlockRetry,
+                )
+              )->Array.getUnsafe(0)
+            await persistence.storage.addChain(
+              ~chainConfig,
+              ~entities=persistence.allEntities,
+              ~contractMapping=stored.contractMapping,
+            )
+          }
           let initialState = await persistence.storage.resumeInitialState(
             ~entities=persistence.allEntities,
             ~chainIds=chainConfigs->Array.map(chain => chain.id),
-            ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) =>
-              Config.throwIfResumeIncompatible(
-                ~storedEnvioInfo,
-                ~storedContractMapping,
-                ~envioInfo,
-                ~contractMapping,
-                ~resetCommand,
-                ~runCommand,
-              ),
+            ~contractMapping=stored.contractMapping,
           )
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
@@ -356,6 +398,7 @@ let init = {
         resolveRef.contents()
       }
     } catch {
+    | Refused(message) => JsError.throwWithMessage(message)
     | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
     }
   }
@@ -365,23 +408,21 @@ let init = {
 // a migration command: what a config change prints names the command the
 // operator ran, and an unreachable chain is waited on rather than reported,
 // since somebody is watching the run come up.
-let initForRun = (
-  persistence,
-  ~config: Config.t,
-  ~reset,
-  ~isDevelopmentMode,
-  ~requireInitialized,
-) =>
+let initForRun = (persistence, ~config: Config.t, ~reset, ~isDevelopmentMode) =>
   persistence->init(
     ~announceResume=!Worker.isEnabled,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
-    ~envioInfo=Config.envioInfo(),
-    ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
-    ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
+    ~envioInfo=config.envioInfo,
+    ~resetCommand=(isDevelopmentMode ? "envio dev -r" : "envio start -r")->Config.withProjectFlags(
+      ~config,
+    ),
+    ~runCommand=Some(
+      (isDevelopmentMode ? "envio dev" : "envio start")->Config.withProjectFlags(~config),
+    ),
     ~lowercaseAddresses=config.lowercaseAddresses,
-    ~requireInitialized,
+    ~isolated=config.isolated,
   )
 
 let getInitializedStorageOrThrow = persistence => {

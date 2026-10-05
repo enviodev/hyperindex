@@ -111,24 +111,6 @@ describe("Per-chain entity partition DDL", () => {
   })
 })
 
-describe("A changed chain set can't reach an existing schema", () => {
-  let publicConfig = configYaml =>
-    Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow->Config.stripSensitiveData
-
-  // Chain 137 is last in the yaml, so cutting it off drops exactly that chain.
-  let singleChainConfigYaml =
-    configYaml->String.split("  - id: 137")->Array.get(0)->Option.getOrThrow
-
-  it("Reports a dropped chain as an incompatible config change", t => {
-    t.expect(
-      Config.diffPaths(
-        ~stored=publicConfig(configYaml),
-        ~current=publicConfig(singleChainConfigYaml),
-      ),
-    ).toEqual(["evm.chains.polygon"])
-  })
-})
-
 type counterRow = {
   id: string,
   count: bigint,

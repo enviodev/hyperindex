@@ -1,7 +1,7 @@
 open Vitest
 
-// What Postgres stored is what the compatibility check has to be handed: the
-// only thing binding the check to the storage is this call.
+// Two processes racing to add the same chain can't be lined up from outside,
+// so this one case drives the storage directly.
 let sql = PgStorage.makeClient()
 
 let config = TestConfig.make(
@@ -15,51 +15,76 @@ type Counter {
 let entities = [config->IndexerRunner.entityConfigByName("Counter")]
 let enums =
   config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
-let pgSchema = TestPgSchema.make()
+let pgSchemas = []
+
+let makeStorage = () => {
+  let pgSchema = TestPgSchema.make()
+  pgSchemas->Array.push(pgSchema)->ignore
+  PgStorage.make(~sql, ~pgSchema, ~pgUser=Env.Db.user, ~isHasuraEnabled=false, ~ecosystem=Evm)
+}
+
+let storedOf = (chains: array<Config.chain>): ResumePlan.stored => {
+  envioInfo: Some(config.envioInfo),
+  chains: chains->Array.map((chain): ResumePlan.storedChain => {
+    id: chain.id,
+    ecosystem: (chain.ecosystem :> string),
+    startBlock: chain->Config.startBlockOrThrow,
+    endBlock: chain.endBlock,
+    maxReorgDepth: chain.maxReorgDepth,
+    // The encoder hands back a Buffer; a bytea read back is a plain Uint8Array.
+    configAddresses: chain
+    ->ChainState.configStorageRows(
+      ~ecosystem=chain.ecosystem,
+      ~contractMapping=config.contractMapping,
+    )
+    ->Array.map(row => {
+      ...row,
+      address: row.address
+      ->(Utils.magic: NodeJs.Buffer.t => Uint8Array.t)
+      ->Uint8Array.fromArrayLikeOrIterable
+      ->(Utils.magic: Uint8Array.t => NodeJs.Buffer.t),
+    }),
+  }),
+  contractMapping: config.contractMapping,
+}
 
 Async.afterAll(async () => {
-  let _ = await sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+  for idx in 0 to pgSchemas->Array.length - 1 {
+    let _ = await sql->Sql.query(
+      `DROP SCHEMA IF EXISTS "${pgSchemas->Array.getUnsafe(idx)}" CASCADE;`,
+    )
+  }
   await sql->Sql.close
 })
 
 describe("Resuming Postgres storage", () => {
-  Async.it("hands the stored config to the compatibility check and stops on its throw", async t => {
-    let storage = PgStorage.make(
-      ~sql,
-      ~pgSchema,
-      ~pgUser=Env.Db.user,
-      ~isHasuraEnabled=false,
-      ~ecosystem=Evm,
-    )
-    let envioInfo = JSON.parseOrThrow(`{"name": "stored", "storage": {"clickhouse": false}}`)
+  // Two `envio start --chain` processes naming the same new chain can both
+  // plan to add it. Only one may: the other would index the chain alongside it.
+  Async.it("adds a chain once, failing a second add of it that runs at the same time", async t => {
+    let storage = makeStorage()
     let _ = await storage.initialize(
-      ~chainConfigs=config.chainMap->ChainMap.values,
+      ~chainConfigs=[],
       ~contractMapping=config.contractMapping,
       ~entities,
       ~enums,
-      ~envioInfo,
+      ~envioInfo=config.envioInfo,
     )
-
-    let handed = []
-    let outcome = try {
-      let _ = await storage.resumeInitialState(
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let add = async () =>
+      switch await storage.addChain(
+        ~chainConfig=chain,
         ~entities,
-        ~chainIds=config.chainMap->ChainMap.keys,
-        ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) => {
-          handed
-          ->Array.push((
-            storedEnvioInfo,
-            storedContractMapping->ContractMapping.isEqual(config.contractMapping),
-          ))
-          ->ignore
-          JsError.throwWithMessage("refused")
-        },
-      )
-      "resumed"
-    } catch {
-    | JsExn(e) => e->JsExn.message->Option.getOr("")
-    }
+        ~contractMapping=config.contractMapping,
+      ) {
+      | () => true
+      | exception _ => false
+      }
 
-    t.expect((handed, outcome)).toEqual(([(Some(envioInfo), true)], "refused"))
+    let added = await Promise.all([add(), add()])
+
+    t.expect((
+      added->Array.filter(added => added)->Array.length,
+      await storage.readStoredConfig(),
+    )).toEqual((1, [chain]->storedOf))
   })
 })

@@ -22,7 +22,7 @@ let makePersistence = () =>
     ),
   )
 
-let initRun = (~requireInitialized, ~announceResume=true) =>
+let initRun = (~isolated, ~announceResume=true) =>
   makePersistence()->Persistence.init(
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
@@ -30,7 +30,7 @@ let initRun = (~requireInitialized, ~announceResume=true) =>
     ~resetCommand="envio dev -r",
     ~runCommand=Some("envio dev"),
     ~lowercaseAddresses=config.lowercaseAddresses,
-    ~requireInitialized,
+    ~isolated,
     ~announceResume,
   )
 
@@ -64,7 +64,7 @@ let resumeLines = async (~announceResume) => {
     ),
   )
 
-  await initRun(~requireInitialized=true, ~announceResume)
+  await initRun(~isolated=true, ~announceResume)
   Logging.info("done")
 
   let rec until = async deadline =>
@@ -84,7 +84,7 @@ describe("Announcing a resume", () => {
   // of them need the schema to exist already — so what a process requires of
   // the storage can't be what decides whether it speaks.
   Async.it("Quiet for a forked worker, and not for anyone else", async t => {
-    await initRun(~requireInitialized=false)
+    await initRun(~isolated=false)
 
     let quiet = await resumeLines(~announceResume=false)
     let announced = await resumeLines(~announceResume=true)

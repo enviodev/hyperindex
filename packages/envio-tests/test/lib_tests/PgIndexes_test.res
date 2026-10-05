@@ -100,7 +100,7 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEnt
     let _ = await storage.resumeInitialState(
       ~entities,
       ~chainIds=config.chainMap->ChainMap.keys,
-      ~throwIfIncompatible=(~storedEnvioInfo as _, ~storedContractMapping as _) => (),
+      ~contractMapping=config.contractMapping,
     )
   }
   storage
@@ -220,7 +220,7 @@ describe("Indexes built against a real schema", () => {
     let _ = await storage.resumeInitialState(
       ~entities,
       ~chainIds=config.chainMap->ChainMap.keys,
-      ~throwIfIncompatible=(~storedEnvioInfo as _, ~storedContractMapping as _) => (),
+      ~contractMapping=config.contractMapping,
     )
 
     let leftBehind = await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"])
