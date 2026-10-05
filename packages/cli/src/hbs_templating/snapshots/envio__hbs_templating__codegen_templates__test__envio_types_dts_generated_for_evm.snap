@@ -9,7 +9,7 @@ expression: project_template.envio_types_dts
  * (or your package manager's `codegen` script, e.g. `pnpm codegen`).
  */
 
-import type { Address, BigDecimal, Json, SingleOrMultiple } from "envio";
+import type { Address, BigDecimal, JSON, SingleOrMultiple } from "envio";
 
 /** Marks a block/transaction field that this event's `field_selection` doesn't include.
  * Reading such a field is a type error; the message tells you which field to add to
