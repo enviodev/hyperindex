@@ -80,14 +80,6 @@ const fetchTokenDetails = createEffect(
 );
 ```
 
-## Prerequisites
-
-Before running the indexer locally, make sure you have the following installed:
-
-- **[Node.js 22+](https://nodejs.org/en/download/)**
-- **[pnpm](https://pnpm.io/installation)**
-- **[Docker Desktop](https://www.docker.com/products/docker-desktop/)**
-
 ## Running the Indexer
 
 Add your Envio API key and RPC URLs to the `.env` file, then start the indexer:

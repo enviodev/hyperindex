@@ -34,6 +34,10 @@ type addon = {
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
+  loadTs: string => string,
+  tsCheckHandlerFormat: string => unit,
+  tsResolveCandidates: (string, Null.t<string>) => array<string>,
+  tsNotFoundCandidates: (string, Null.t<string>, string) => array<string>,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")

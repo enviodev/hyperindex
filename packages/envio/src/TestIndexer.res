@@ -673,7 +673,10 @@ let getRegistrations = (~config) =>
   switch registrationsRef.contents {
   | Some(promise) => promise
   | None =>
-    let promise = HandlerLoader.registerAllHandlers(~config)
+    let promise =
+      HandlerLoader.getAutoLoadFiles(~config)->Promise.then(autoLoadFiles =>
+        HandlerLoader.registerAllHandlers(~config, ~autoLoadFiles)
+      )
     registrationsRef := Some(promise)
     promise
   }

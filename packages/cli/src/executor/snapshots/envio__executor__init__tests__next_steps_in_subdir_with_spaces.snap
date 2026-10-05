@@ -5,6 +5,6 @@ expression: "next_steps_message(Path::new(\"my indexer\"), PackageManager::Npm)"
 
 Your indexer is ready! Pick how you'd like to run it:
 
-  1. cd 'my indexer' && npm test    # run the tests (recommended for AI)
-  2. cd 'my indexer' && npm dev     # run locally
-  3. cd 'my indexer' && npm start   # run in production
+  1. cd 'my indexer' && npm run test    # run the tests (recommended for AI)
+  2. cd 'my indexer' && npm run dev     # run locally
+  3. cd 'my indexer' && npm run start   # run in production

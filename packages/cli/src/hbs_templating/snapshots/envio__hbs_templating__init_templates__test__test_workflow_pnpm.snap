@@ -1,12 +1,13 @@
+---
+source: packages/cli/src/hbs_templating/init_templates.rs
+expression: render_test_workflow(pm)
+---
 # GitHub Actions workflow for testing your Envio indexer
 #
 # This workflow runs your indexer tests on every push to main and on pull requests.
 # It ensures your indexer code compiles correctly and all tests pass before merging.
 #
-# Prerequisites:
-# - Your project uses pnpm as the package manager
-# - Vitest is installed (included by default in envio projects)
-# - You have a "test" script defined in package.json (e.g., "test": "vitest run")
+# It runs the "codegen" and "test" scripts from package.json.
 #
 # Required: ENVIO_API_TOKEN
 # Envio indexers use HyperSync as the default data source, which requires an Envio API token.
@@ -41,7 +42,6 @@ jobs:
           version: 10
 
       # Set up Node.js with caching for faster installs
-      # The cache: 'pnpm' option caches dependencies between runs
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:

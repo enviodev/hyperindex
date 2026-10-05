@@ -430,7 +430,12 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // same initialization an unsplit run does, and the supervisor hands the
   // connections it used to its workers.
   let persistence = PgStorage.makePersistenceFromConfig(~config)
-  await persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=config.isDev)
+  // Checked here once, so the workers don't each check the same handlers.
+  let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
+  let _ = await Promise.all2((
+    persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=config.isDev),
+    HandlerLoader.typeCheck(~config, ~autoLoadFiles),
+  ))
   await persistence.storage.close()
 
   let startTime = Date.make()
