@@ -75,6 +75,37 @@ describe("TypeScript handler errors", () => {
   });
 });
 
+describe("TypeScript handler type check", () => {
+  it("stops the start before handlers load, reporting only handler files", async () => {
+    const result = await runEnvio(
+      ["start"],
+      {
+        ENVIO_PG_PORT: String(config.pgPort),
+        ENVIO_PG_SCHEMA: `envio_test_${Date.now()}_${process.pid}_typecheck`,
+        ENVIO_HASURA: "false",
+      },
+      path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-typecheck-project")
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect({
+      exitCode: result.exitCode,
+      reportsHandlerError: output.includes(
+        [
+          "Handler files have type errors:",
+          "",
+          "src/handlers/Gravatar.ts:5:5 - error TS2322: Type 'bigint' is not assignable to type 'string'.",
+          "",
+          "5     id: event.params.id,",
+          "      ~~",
+        ].join("\n")
+      ),
+      reportsOtherFiles: output.includes("unused.ts"),
+      loadedHandlers: output.includes("handler loaded"),
+    }).toEqual({ exitCode: 1, reportsHandlerError: true, reportsOtherFiles: false, loadedHandlers: false });
+  });
+});
+
 // The tsconfig is the one found from the working directory, as tsx does, so
 // this runs the CLI rather than an in-process indexer.
 describe("TypeScript handler imports", () => {

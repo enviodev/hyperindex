@@ -31,10 +31,10 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
   }
 }
 
-let autoLoadFromSrcHandlers = async (~handlers: string) => {
+let getAutoLoadFiles = async (~handlers: string) => {
   // Relative to cwd (project root)
   let srcPattern = `./${handlers}/**/*.{js,mjs,ts}`
-  let handlerFiles = try {
+  try {
     let iterator = globIterator(srcPattern)
     let files = await iterator->Utils.Array.fromAsyncIterator
     // Filter out test and spec files
@@ -53,6 +53,35 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
         ->Obj.magic}`,
     )
   }
+}
+
+type typeCheckResult = {
+  // Why the check didn't run.
+  skipped?: string,
+  // The compiler's report, when handlers have errors.
+  errors?: string,
+}
+
+@module("./HandlerTypeCheck.mjs")
+external checkTypesInWorker: (~cwd: string, ~files: array<string>) => promise<typeCheckResult> =
+  "check"
+
+let typeCheck = async (~config: Config.t) => {
+  let files =
+    (await getAutoLoadFiles(~handlers=config.handlers))
+    ->Array.concat(config.contractHandlers->Array.filterMap(({handler}) => handler))
+    ->Array.filter(file => [".ts", ".mts", ".tsx"]->Array.some(ext => file->String.endsWith(ext)))
+  if files->Array.length > 0 {
+    switch await checkTypesInWorker(~cwd=NodeJs.Process.cwd(), ~files) {
+    | {errors} => JsError.throwWithMessage(`Handler files have type errors:\n\n${errors}`)
+    | {skipped} => Logging.warn(`Skipping the handler type check: ${skipped}.`)
+    | _ => ()
+    }
+  }
+}
+
+let autoLoadFromSrcHandlers = async (~handlers: string) => {
+  let handlerFiles = await getAutoLoadFiles(~handlers)
 
   // Import handler files using absolute file:// URLs resolved from cwd
   let _ = await handlerFiles

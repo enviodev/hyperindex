@@ -464,7 +464,14 @@ exception FatalError(exn)
     | None => PgStorage.makePersistenceFromConfig(~config)
     }
     setGlobalPersistence(persistence)
-    await persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode)
+    // A worker's supervisor has checked the handlers already, and the test
+    // indexer leaves type checking to the user's test setup.
+    let typeCheck =
+      isTest || Worker.isEnabled ? Promise.resolve() : HandlerLoader.typeCheck(~config)
+    let _ = await Promise.all2((
+      persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode),
+      typeCheck,
+    ))
 
     // Loads user handler files, which register handler/contractRegister/where
     // state into the global `HandlerRegister` registry as a side effect; this
