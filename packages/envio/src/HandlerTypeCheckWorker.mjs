@@ -1,24 +1,29 @@
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { parentPort, workerData } from "node:worker_threads";
 
 const check = ({ cwd, files }) => {
+  // The ReScript compiler checks a ReScript project's handlers, so it has no
+  // reason to set up TypeScript, and the warning would only be noise there.
+  // `rescript.json` at the root is what makes codegen treat it as ReScript.
+  const skip = (warning) => (existsSync(path.join(cwd, "rescript.json")) ? {} : { skipped: warning });
+
   let ts;
   try {
     // The project's own compiler, so handlers are checked exactly as the
     // user's editor and `tsc` check them.
     ts = createRequire(path.join(cwd, "package.json"))("typescript");
   } catch {
-    return { skipped: "Skipped the handler type check: the project doesn't depend on typescript." };
+    return skip("Skipped the handler type check: the project doesn't depend on typescript.");
   }
 
   const configPath = ts.findConfigFile(cwd, ts.sys.fileExists);
   if (configPath === undefined) {
-    return {
-      skipped:
-        "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates.",
-    };
+    return skip(
+      "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates."
+    );
   }
 
   const host = {

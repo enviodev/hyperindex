@@ -107,14 +107,17 @@ describe("TypeScript handler type check", () => {
     }).toEqual({ exitCode: 1, reportsHandlerError: true, reportsOtherFiles: false, loadedHandlers: false });
   });
 
-  it("is skipped with a pointer to tsconfig.json when the project has none", async () => {
-    // Outside the repo, so no parent folder has a tsconfig.json either.
+  // The type-error fixture without its tsconfig.json, outside the repo so no
+  // parent folder has one either.
+  const startWithoutTsconfig = async (extraFiles: Record<string, string>) => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-no-tsconfig-"));
     fs.cpSync(path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-typecheck-project"), projectDir, {
       recursive: true,
       filter: (source) => path.basename(source) !== "tsconfig.json",
     });
-    fs.writeFileSync(path.join(projectDir, "package.json"), JSON.stringify({ type: "module" }));
+    for (const [name, contents] of Object.entries({ "package.json": '{"type":"module"}', ...extraFiles })) {
+      fs.writeFileSync(path.join(projectDir, name), contents);
+    }
     fs.symlinkSync(path.join(config.rootDir, "packages/e2e-tests/node_modules"), path.join(projectDir, "node_modules"));
 
     const result = await runEnvio(
@@ -128,13 +131,26 @@ describe("TypeScript handler type check", () => {
     );
     fs.rmSync(projectDir, { recursive: true, force: true });
     const output = `${result.stdout}${result.stderr}`;
-
-    expect({
-      warns: output.includes(
-        "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates."
-      ),
+    return {
+      warning: output.match(/Skipped the handler type check[^\n\x1b]*/)?.[0] ?? null,
       loadedHandlers: output.includes("handler loaded"),
-    }).toEqual({ warns: true, loadedHandlers: true });
+    };
+  };
+
+  it("is skipped with a pointer to tsconfig.json when the project has none", async () => {
+    const result = await startWithoutTsconfig({});
+
+    expect(result).toEqual({
+      warning:
+        "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates.",
+      loadedHandlers: true,
+    });
+  });
+
+  it("is skipped quietly in a ReScript project, whose handlers the ReScript compiler checks", async () => {
+    const result = await startWithoutTsconfig({ "rescript.json": '{"name":"indexer"}' });
+
+    expect(result).toEqual({ warning: null, loadedHandlers: true });
   });
 });
 
