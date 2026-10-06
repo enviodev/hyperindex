@@ -174,6 +174,14 @@ let run = async (
       resolveFailure.contents->Option.forEach(resolve => resolve(exn))
     }
 
+  // The run stops waiting on a body once its indexer fails, but the body keeps
+  // going. An indexer it starts after that would outlive the teardown.
+  let isClosing = ref(false)
+  let throwIfClosing = () =>
+    if isClosing.contents {
+      JsError.throwWithMessage("Can't start an indexer once the run is tearing down.")
+    }
+
   // The ClickHouse leg writes through the sink Postgres storage attaches, into
   // a database of this run's own.
   let clickHouseDatabase = switch backend {
@@ -184,6 +192,7 @@ let run = async (
   // The builder is only reachable here and from `restart`, so it takes just
   // what differs between them and reads the rest off this call.
   let rec make = async (~reset, ~config as baseConfig, ~chains=?) => {
+    throwIfClosing()
     let config = switch chains {
     | Some(chainIds) => baseConfig->Config.isolate(~chainIds)
     | None => baseConfig
@@ -226,6 +235,9 @@ let run = async (
     // `start_block: latest` chain reads its head - before handler modules load,
     // so a registration-time `chain.startBlock` sees the resolved block.
     let registrationsByChainId = await resolveRegistrations(~config)
+    // The client above is already in `clients`, so teardown still closes it;
+    // only the loop must not start, since teardown may have passed `stops`.
+    throwIfClosing()
     MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let state = IndexerState.makeFromDbState(
@@ -579,6 +591,7 @@ let run = async (
   } catch {
   | exn => Some(exn)
   }
+  isClosing := true
 
   // Every step runs even if an earlier one throws, and a teardown failure
   // never replaces the body's — losing the real failure behind a cleanup
