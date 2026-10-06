@@ -35,9 +35,13 @@ use schema::SchemaTranslation;
 pub const RPC_ENV_VAR: &str = "ENVIO_SUBGRAPH_RPC";
 pub const API_TOKEN_ENV_VAR: &str = "ENVIO_API_TOKEN";
 
-/// The receipt scalars graph-ts exposes on `event.receipt`. All but
-/// `contractAddress` are HyperSync-only fields.
+/// The transaction fields graph-ts exposes on `event.receipt`. A mapping can
+/// read the hash, index and root there without the usage scan seeing a read
+/// of `event.transaction`.
 const RECEIPT_TRANSACTION_FIELDS: &[TransactionField] = &[
+    TransactionField::Hash,
+    TransactionField::TransactionIndex,
+    TransactionField::Root,
     TransactionField::Status,
     TransactionField::GasUsed,
     TransactionField::CumulativeGasUsed,
@@ -875,6 +879,47 @@ type Gravatar @entity {
                     "Deposit".to_string(),
                 ]
             )]
+        );
+    }
+
+    // A mapping can read the transaction's hash, index and root off
+    // `event.receipt` alone, which the usage scan doesn't count as a read of
+    // `event.transaction`.
+    #[test]
+    fn selects_what_the_receipt_reads_off_the_transaction() {
+        let mappings = vec!["let receipt = event.receipt!; receipt.transactionHash;".to_string()];
+        let translation = translate(
+            MANIFEST,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &mappings,
+        )
+        .unwrap();
+        let selection = translation.human_config.contracts.as_ref().unwrap()[0]
+            .config
+            .events[1]
+            .field_selection
+            .clone()
+            .unwrap();
+
+        assert_eq!(
+            selection,
+            FieldSelection {
+                transaction_fields: Some(vec![
+                    TransactionField::Hash,
+                    TransactionField::TransactionIndex,
+                    TransactionField::Root,
+                    TransactionField::Status,
+                    TransactionField::GasUsed,
+                    TransactionField::CumulativeGasUsed,
+                    TransactionField::LogsBloom,
+                    TransactionField::ContractAddress,
+                ]),
+                block_fields: Some(vec![]),
+            }
         );
     }
 

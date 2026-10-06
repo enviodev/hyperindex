@@ -26,8 +26,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The corpus suite runs third-party subgraph code; no step pushes.
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        run: rustup toolchain install
 
       - uses: ./.github/actions/cargo-cache
 

@@ -946,8 +946,9 @@ function toRow(entityType: string, entity: Entity): Record<string, unknown> {
     // a relation, which carries one. Every other `Bytes` field is a bytes
     // column, which is what `bytes_type: uint8array` makes of it.
     const isId = entry.key === "id" || refFields.has(entry.key) || listFields.has(entry.key);
-    row[column] = timestampFields.has(entry.key)
-      ? new Date(Number(entry.value.toTimestamp() / 1000n))
+    row[column] =
+      timestampFields.has(entry.key) && entry.value.kind !== ValueKind.NULL
+        ? new Date(Number(entry.value.toTimestamp() / 1000n))
       : fromValue(entry.value, isId);
   }
   return row;
@@ -991,7 +992,7 @@ function toEntity(entityType: string, row: Record<string, unknown> | undefined |
         : column;
     entity.set(
       key,
-      timestampFields.has(key)
+      timestampFields.has(key) && value !== null && value !== undefined
         ? Value.fromTimestamp(BigInt((value as Date).getTime()) * 1000n)
         : toValue(value, declaredKind(schema, declared[key])),
     );

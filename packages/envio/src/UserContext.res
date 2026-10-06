@@ -24,9 +24,8 @@ type syncState = {
   mutable status: contextStatus,
   // Ops scheduled by this round's suspended reads, awaited before the replay.
   mutable pending: option<array<promise<unit>>>,
-  // Effect outputs already resolved for this handler invocation. Replay rounds
-  // and the preload -> execute transition reuse them even when the in-memory
-  // effect table drops the entry (`cache: false`).
+  // Effect outputs read from the in-memory table during this handler
+  // invocation, reused by its later replay rounds.
   mutable memo: option<dict<Internal.effectOutput>>,
   // Only while a synchronous round runs: its writes, held until it completes.
   mutable writes: option<SyncWrites.t>,

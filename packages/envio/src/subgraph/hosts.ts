@@ -72,8 +72,9 @@ export function makeHostEffects(rpcUrls: string[]) {
     async ({ input }: { input: string }) => fetchBase64(ARWEAVE_GATEWAY + input),
   );
 
-  // Best-effort, as graph-node is: it returns null when its rainbow table
-  // doesn't hold the hash, so a lookup failure is a miss, not an error.
+  // graph-node returns null when its rainbow table doesn't hold the hash.
+  // ENSRainbow answers that as a 404, and a hash that isn't one as a 400;
+  // anything else is the service failing, which must not be cached as a miss.
   const ensName = createEffect(
     {
       name: "envio_subgraph_ens_name",
@@ -83,14 +84,16 @@ export function makeHostEffects(rpcUrls: string[]) {
       cache: true,
     },
     async ({ input }: { input: string }) => {
-      try {
-        const response = await fetch(ENS_RAINBOW + input);
-        if (!response.ok) return null;
-        const body = (await response.json()) as { label?: string };
-        return body.label ?? null;
-      } catch {
+      const url = ENS_RAINBOW + input;
+      const response = await fetch(url, { signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS) });
+      if (response.status === 404 || response.status === 400) {
         return null;
       }
+      if (!response.ok) {
+        throw new Error(`Envio Subgraph's lookup of ${url} failed: ${response.status} ${response.statusText}`);
+      }
+      const body = (await response.json()) as { label?: string };
+      return body.label ?? null;
     },
   );
 

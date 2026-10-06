@@ -591,6 +591,14 @@ fn parse_data_source(
                     &name,
                     report,
                 ) {
+                    // graph-node runs one per created instance; envio's block
+                    // handlers know no instances, so it would run chain-wide.
+                    if is_template {
+                        report.unsupported(
+                            "block handlers on templates",
+                            where_(&format!("blockHandlers → \"{}\"", handler.handler)),
+                        );
+                    }
                     block_handlers.push(handler);
                 }
             }

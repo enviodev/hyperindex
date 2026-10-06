@@ -46,19 +46,19 @@ by name. Newer than 0.0.9 is a §7 error.
 | Data source (`address`, `abi`, `startBlock`, `endBlock`) | `contracts` + `chains[].contracts`, `start_block`/`end_block` | ✅ |
 | `network: mainnet` | `chains[].id` through a snapshot of The Graph's networks registry (ids and aliases; `scripts/sync-graph-networks.mjs`, drift reported in CI), then Envio's own chain names | ✅ |
 | Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper | ✅ |
-| `receipt: true` | scalars (`status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection` — all but `contractAddress` are HyperSync-only fields (§6b); `receipt.logs` → §7 error on access | ⚠️ |
+| `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — the receipt-only ones are HyperSync fields (§6b); `receipt.logs` → §7 error on access | ⚠️ |
 | Topic filters (1.2.0) | `where: { params: ... }` (arrays = OR), raw topic values decoded back to param values. Dynamic-typed indexed params (`string`/`bytes`/arrays/tuples) appear in topics as keccak hashes, which can't be decoded back to the values envio filters on → §7 error | ⚠️ |
 | Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock` | ✅ |
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
 | Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
-| A template sharing a data source's name | graph-node keeps the two namespaces apart; envio has one, and one contract with a static address plus dynamically registered ones is the same thing — folded together, events unioned | ✅ |
+| A template sharing a data source's name | graph-node keeps the two namespaces apart; envio has one, and one contract with a static address plus dynamically registered ones is the same thing — folded together, events unioned. The handlers stay apart: the data source's run for its static address, the template's for the addresses it created | ✅ |
 | Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass, which resolves host ops by suspend-and-replay of its own (§5) so a mapping can read a contract before deciding what to create | ✅ |
 | File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
 | `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` with a non-empty context → §7 error (nowhere to keep it per created address) | ⚠️ |
 | `features: [...]` | a declaration, not a use — whatever it enables is refused where the manifest or schema uses it | — |
-| `callHandlers`, block `filter: call`, `graft`, composition (1.3.0) | — | ❌ §7 error |
+| `callHandlers`, block `filter: call`, block handlers on a template, `graft`, composition (1.3.0) | — | ❌ §7 error |
 
 ## 3. Schema → envio schema
 
@@ -139,7 +139,7 @@ query and is dropped; stored, it is an error.
 | `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup |
 | `dataSource.context()` | persisted in an internal entity table |
 | `ipfs.cat/map`, `arweave.*` | effect + gateway, `cache: true`, suspend |
-| `ens.nameByHash` | best-effort effect against public ENS data, `cache: true`; `null` on miss/failure (graph-node also returns `null` when its rainbow table lacks the hash) |
+| `ens.nameByHash` | effect against the public ENSRainbow API, `cache: true`; `null` when its table lacks the hash, as graph-node's does; a failing lookup fails the batch for a retry rather than caching a miss |
 
 **Register pass.** `dataSource.create` must reach envio's `contractRegister`,
 which runs at fetch time — before any entities exist. For each
@@ -330,9 +330,11 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
   rules as config.yaml's `rpc` field, then injected into the generated
   chain config verbatim (bare URLs default to `for: fallback`). The shim's
   call effects (`ethereum.call`/`try_`/`getBalance`/`hasCode`) use the same
-  entries in order as a viem fallback transport.
+  entries in order as a viem fallback transport. The entries are fallbacks
+  for one chain, not per-chain endpoints: translation refuses a non-empty
+  value when the subgraph indexes more than one chain.
 - **`receipt: true` + RPC: envio's standard behavior, inherited.** The
-  receipt scalars (all but `contractAddress`) aren't servable via RPC —
+  HyperSync-only receipt scalars aren't servable via RPC —
   they're outside `RpcTransactionField`. Envio's existing validation already
   rejects `for: sync` entries when those fields are selected;
   `for: fallback` entries are accepted as in any envio project, with the
@@ -438,6 +440,7 @@ refuse instead, so behavior never silently diverges:
 |---|---|
 | `callHandlers` | translation (manifest) |
 | `blockHandlers` with `filter: call` | translation (manifest) |
+| `blockHandlers` on a template | translation (manifest) |
 | `graft` | translation (manifest) |
 | Subgraph composition (`kind: subgraph`, `entityHandlers`) | translation (manifest) |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
@@ -558,7 +561,8 @@ vitest run` (A, C), `cargo test -p envio-cli` (B), scenario CI job (D).
 1. Core sync API: internal-only, for the subgraph runtime.
 2. Runtime home: inside the `envio` package, fully internal — no subpath
    export (§8 C).
-3. `ens.nameByHash`: best-effort cached effect, `null` on miss/failure.
+3. `ens.nameByHash`: cached effect, `null` on a miss; a failing lookup is
+   retried.
 4. Replay termination guard: a 10,000-round backstop only (determinism
    guarantees progress); a progress check is possible later hardening.
 5. Block-handler `block.timestamp`: internal batched HyperSync effect

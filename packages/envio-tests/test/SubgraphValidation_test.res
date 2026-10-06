@@ -114,6 +114,33 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
+  // graph-node runs one per created instance; registered for the chain, it
+  // would run on every block whether or not any instance exists.
+  it("refuses a block handler on a template", t => {
+    let manifest =
+      manifestWith(plainEventHandler) ++ `templates:
+  - kind: ethereum/contract
+    name: Pool
+    network: mainnet
+    source:
+      abi: Token
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      blockHandlers:
+        - handler: handlePoolBlock
+      file: ./src/pool.ts
+`
+    translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
+      t,
+      ~headline="Envio Subgraph doesn't support block handlers on templates yet.",
+      ~location=`data source "Pool" → blockHandlers → "handlePoolBlock"`,
+    )
+  })
+
   it("refuses grafting", t => {
     let manifest =
       manifestWith(plainEventHandler)->String.replace(
