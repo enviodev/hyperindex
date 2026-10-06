@@ -12,10 +12,7 @@
     "module": "esmodule",
     "in-source": true
   },
-  "jsx": {
-    "version": 4
-  },
-  "dependencies": ["rescript-schema", "@rescript/react"],
+  "dependencies": ["rescript-schema"],
   "compiler-flags": ["-open RescriptSchema"],
   "warnings": {
     "error": "+a"

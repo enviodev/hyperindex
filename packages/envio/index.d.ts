@@ -12,6 +12,17 @@ declare const bigintSchema: Sury.Schema<bigint>;
 /** Ethereum address — a 20-byte hex string prefixed with `0x`. */
 export type Address = `0x${string}`;
 
+/** A value a `Json` entity field can hold. A `bigint` isn't JSON — store its
+ * decimal string with `.toString()`. Shadows the global `JSON` interface only
+ * where imported; the `JSON` object itself is unaffected. */
+export type JSON =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly JSON[]
+  | { readonly [key: string]: JSON };
+
 /** Structured logger bound to an event or handler context. Messages are
  * displayed in the console and the Envio Hosted Service. */
 export type Logger = {

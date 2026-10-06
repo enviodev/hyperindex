@@ -1,0 +1,68 @@
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
+import { parentPort, workerData } from "node:worker_threads";
+
+const check = ({ cwd, files }) => {
+  // The ReScript compiler checks a ReScript project's handlers, so it has no
+  // reason to set up TypeScript, and the warning would only be noise there.
+  // `rescript.json` at the root is what makes codegen treat it as ReScript.
+  const skip = (warning) => (existsSync(path.join(cwd, "rescript.json")) ? {} : { skipped: warning });
+
+  let ts;
+  try {
+    // The project's own compiler, so handlers are checked exactly as the
+    // user's editor and `tsc` check them.
+    ts = createRequire(path.join(cwd, "package.json"))("typescript");
+  } catch {
+    return skip("Skipped the handler type check: the project doesn't depend on typescript.");
+  }
+
+  const configPath = ts.findConfigFile(cwd, ts.sys.fileExists);
+  if (configPath === undefined) {
+    return skip(
+      "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates."
+    );
+  }
+
+  const host = {
+    getCanonicalFileName: (file) => file,
+    getCurrentDirectory: () => cwd,
+    getNewLine: () => "\n",
+  };
+  const format = (diagnostics) =>
+    stripVTControlCharacters(ts.formatDiagnosticsWithColorAndContext(diagnostics, host)).trimEnd();
+
+  const parsed = ts.getParsedCommandLineOfConfigFile(
+    configPath,
+    { noEmit: true },
+    {
+      ...ts.sys,
+      onUnRecoverableConfigFileDiagnostic: (diagnostic) => {
+        throw new Error(format([diagnostic]));
+      },
+    }
+  );
+
+  // The tsconfig's files are roots, as tsc makes them, since any of them can
+  // declare globals a handler relies on. Only the handlers' errors count.
+  const handlerFiles = files.map((file) => path.resolve(cwd, file));
+  const program = ts.createProgram({
+    rootNames: [...parsed.fileNames, ...handlerFiles],
+    options: parsed.options,
+    projectReferences: parsed.projectReferences,
+  });
+
+  // Every file is a root, so each has a source file. Without one,
+  // `getSemanticDiagnostics` would check the whole program.
+  const diagnostics = handlerFiles
+    .map((file) => program.getSourceFile(file))
+    .flatMap((sourceFile) => [
+      ...program.getSyntacticDiagnostics(sourceFile),
+      ...program.getSemanticDiagnostics(sourceFile),
+    ]);
+  return diagnostics.length === 0 ? {} : { errors: format(diagnostics) };
+};
+
+parentPort.postMessage(check(workerData));

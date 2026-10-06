@@ -18,13 +18,22 @@ indexer.onEvent({event: SablierLockupTranched(CreateLockupTranchedStream)}, asyn
       ->Address.toString,
     recipient: event.params.recipient
       ->Address.toString,
-    amounts: event.params.amounts->(Utils.magic: _ => JSON.t),
+    amounts: JSON.Object(dict{
+      "deposit": JSON.String(event.params.amounts["deposit"]->BigInt.toString),
+      "brokerFee": JSON.String(event.params.amounts["brokerFee"]->BigInt.toString),
+    }),
     asset: event.params.asset
       ->Address.toString,
     cancelable: event.params.cancelable,
     transferable: event.params.transferable,
-    tranches: event.params.tranches->(Utils.magic: _ => JSON.t),
-    timestamps: event.params.timestamps->(Utils.magic: _ => JSON.t),
+    tranches: JSON.Array(event.params.tranches->Array.map(item => JSON.Object(dict{
+      "amount": JSON.String(item["amount"]->BigInt.toString),
+      "timestamp": JSON.String(item["timestamp"]->BigInt.toString),
+    }))),
+    timestamps: JSON.Object(dict{
+      "start": JSON.String(event.params.timestamps["start"]->BigInt.toString),
+      "end": JSON.String(event.params.timestamps["end"]->BigInt.toString),
+    }),
     broker: event.params.broker
       ->Address.toString,
   }

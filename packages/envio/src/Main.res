@@ -464,13 +464,23 @@ exception FatalError(exn)
     | None => PgStorage.makePersistenceFromConfig(~config)
     }
     setGlobalPersistence(persistence)
-    await persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode)
+    let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
+    // A worker's supervisor has checked the handlers already, and the test
+    // indexer leaves type checking to the user's test setup.
+    let typeCheck =
+      isTest || Worker.isEnabled
+        ? Promise.resolve()
+        : HandlerLoader.typeCheck(~config, ~autoLoadFiles)
+    let _ = await Promise.all2((
+      persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode),
+      typeCheck,
+    ))
 
     // Loads user handler files, which register handler/contractRegister/where
     // state into the global `HandlerRegister` registry as a side effect; this
     // returns that state resolved into per-chain registrations. `config` itself
     // is never mutated by registration — it holds only event definitions.
-    let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config)
+    let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config, ~autoLoadFiles)
     let config = if isTest {
       {...config, shouldRollbackOnReorg: false}
     } else {
@@ -528,7 +538,7 @@ exception FatalError(exn)
       ~onError,
     )
     if shouldUseTui {
-      let _rerender = Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
+      Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
     }
     Worker.bindRun(
       ~getMetrics=() => state->IndexerState.toMetrics,
@@ -558,6 +568,8 @@ let start = async (
   Worker.config->Option.forEach(({chainIds, isDev}) =>
     Config.prime(Config.getPublicConfigJson()->Config.withCommandFields(~chainIds, ~isDev))
   )
+  // An unsupported Node fails here, before the database is touched.
+  HandlerLoader.registerTsHooks()
   let config = Config.load()
   switch isTest ? None : Supervisor.planForRun(~config) {
   | Some(workers) => await Supervisor.run(~config, ~workers, ~reset)

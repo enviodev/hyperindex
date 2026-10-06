@@ -1,5 +1,102 @@
 use super::env_template;
-use crate::cli_args::init_config::Language;
+use crate::cli_args::init_config::{Language, PackageManager};
+
+/// `.github/workflows/test.yaml`, set up for the project's package manager.
+pub fn render_test_workflow(pm: PackageManager) -> String {
+    let setup = match pm {
+        PackageManager::Pnpm => "      # Set up pnpm package manager
+      # Update the version below if you need a different pnpm version
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # Set up Node.js with caching for faster installs
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+"
+        .to_string(),
+        PackageManager::Npm | PackageManager::Yarn => format!(
+            "      # Set up Node.js with caching for faster installs
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: '{}'
+",
+            pm.cmd()
+        ),
+        PackageManager::Bun => "      # Set up Node.js, which runs the indexer and its tests
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Set up Bun, which installs dependencies and runs the scripts
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+"
+        .to_string(),
+    };
+    format!(
+        "# GitHub Actions workflow for testing your Envio indexer
+#
+# This workflow runs your indexer tests on every push to main and on pull requests.
+# It ensures your indexer code compiles correctly and all tests pass before merging.
+#
+# It runs the \"codegen\" and \"test\" scripts from package.json.
+#
+# Required: ENVIO_API_TOKEN
+# Envio indexers use HyperSync as the default data source, which requires an Envio API token.
+# Add ENVIO_API_TOKEN to your repository secrets before running this workflow.
+# To add the secret: Repository Settings > Secrets and variables > Actions > New repository secret
+# Get your token at: https://envio.dev
+
+name: Test
+
+on:
+  # Run tests when code is pushed to main branch
+  push:
+    branches:
+      - main
+  # Run tests on all pull requests
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Check out your repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+{setup}
+      # Install project dependencies
+      - name: Install dependencies
+        run: {install}
+
+      # Generate indexer types
+      # This step is required before running tests
+      - name: Run codegen
+        run: {codegen}
+        env:
+          ENVIO_API_TOKEN: ${{{{ secrets.ENVIO_API_TOKEN }}}}
+
+      # Run your indexer tests using Vitest
+      - name: Run tests
+        run: {test}
+        env:
+          ENVIO_API_TOKEN: ${{{{ secrets.ENVIO_API_TOKEN }}}}
+",
+        install = pm.install_command(),
+        codegen = pm.run_script_command("codegen"),
+        test = pm.run_script_command("test"),
+    )
+}
 
 #[derive(Debug, PartialEq)]
 pub struct InitTemplates {
@@ -45,11 +142,9 @@ impl InitTemplates {
             out.push_str("    \"build\": \"rescript\",\n");
             out.push_str("    \"watch\": \"rescript watch\",\n");
         }
-        let build_prefix = if self.is_rescript {
-            "pnpm build && "
-        } else {
-            ""
-        };
+        // `rescript` itself rather than the build script, so running these
+        // doesn't need any one package manager.
+        let build_prefix = if self.is_rescript { "rescript && " } else { "" };
         out.push_str("    \"codegen\": \"envio codegen\",\n");
         out.push_str(&format!("    \"dev\": \"{build_prefix}envio dev\",\n"));
         out.push_str(&format!("    \"start\": \"{build_prefix}envio start\",\n"));
@@ -75,7 +170,7 @@ impl InitTemplates {
         }
         out.push_str("\n  },\n");
         out.push_str("  \"engines\": {\n");
-        out.push_str("    \"node\": \">=22.0.0\"\n");
+        out.push_str("    \"node\": \">=22.15.0\"\n");
         out.push_str("  }\n");
         out.push_str("}\n");
         out
@@ -99,6 +194,19 @@ mod test {
             None,
             deps,
         )
+    }
+
+    #[test]
+    fn test_workflow_for_each_package_manager() {
+        use crate::cli_args::init_config::PackageManager;
+        for pm in [
+            PackageManager::Pnpm,
+            PackageManager::Npm,
+            PackageManager::Yarn,
+            PackageManager::Bun,
+        ] {
+            insta::assert_snapshot!(format!("test_workflow_{pm}"), render_test_workflow(pm));
+        }
     }
 
     #[test]

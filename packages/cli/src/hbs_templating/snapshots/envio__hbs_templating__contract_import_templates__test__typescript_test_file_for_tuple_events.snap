@@ -47,12 +47,18 @@ describe("SablierLockupTranched contract CreateLockupTranchedStream event tests"
       funder: event.params.funder,
       sender: event.params.sender,
       recipient: event.params.recipient,
-      amounts: event.params.amounts,
+      amounts: {
+        deposit: "0",
+        brokerFee: "0",
+      },
       asset: event.params.asset,
       cancelable: event.params.cancelable,
       transferable: event.params.transferable,
-      tranches: event.params.tranches,
-      timestamps: event.params.timestamps,
+      tranches: [],
+      timestamps: {
+        start: "0",
+        end: "0",
+      },
       broker: event.params.broker,
       chainId: 1,
     };

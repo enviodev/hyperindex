@@ -197,7 +197,16 @@ async fn connect_docker() -> anyhow::Result<Docker> {
         }
     }
 
-    // Build an actionable error with platform-specific hints.
+    let installed = ["docker", "podman"].iter().any(|name| is_on_path(name));
+    if !installed {
+        anyhow::bail!(
+            "Neither Docker nor Podman is installed, and envio needs one to run Postgres and \
+             Hasura locally.\nInstall Docker Desktop (https://www.docker.com/products/docker-desktop/) \
+             or Podman (https://podman.io/), then run this again.\nTo use a Postgres you run \
+             yourself instead, set ENVIO_PG_HOST."
+        );
+    }
+
     let hint = if cfg!(target_os = "macos") {
         "Hint: Open Docker Desktop, or run:\n  export \
          DOCKER_HOST=unix://$HOME/.docker/run/docker.sock"
@@ -206,10 +215,16 @@ async fn connect_docker() -> anyhow::Result<Docker> {
     };
 
     anyhow::bail!(
-        "Failed connecting to Docker or Podman. Is the daemon running?\nChecked: DOCKER_HOST, \
-         default Docker socket, ~/.docker/run/docker.sock, CONTAINER_HOST, common Podman \
-         sockets.\n\n{hint}"
+        "Docker or Podman is installed but isn't running, so envio can't start Postgres and \
+         Hasura.\nChecked: DOCKER_HOST, default Docker socket, ~/.docker/run/docker.sock, \
+         CONTAINER_HOST, common Podman sockets.\n\n{hint}"
     )
+}
+
+fn is_on_path(executable: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|directory| directory.join(executable).is_file())
+    })
 }
 
 const DEFAULT_PG_HOST: &str = "localhost";

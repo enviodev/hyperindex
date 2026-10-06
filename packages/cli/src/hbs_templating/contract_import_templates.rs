@@ -1,8 +1,8 @@
 ///Helpers for enumerating event params with their original positional index.
 ///Tuple params (including `tuple[]` / `tuple[N]`) are kept intact as single
-///entity fields typed as JSON — the handler just assigns the whole value
-///through a magic cast and the entity column stores the nested object as
-///JSON. This keeps the contract-import path uniform for every ABI type
+///entity fields typed as JSON — the handler converts the whole value (see
+///`json_value`) and the entity column stores the nested object as JSON. This
+///keeps the contract-import path uniform for every ABI type
 ///without having to invent column names for nested struct fields.
 mod nested_params {
     use super::*;
@@ -73,6 +73,178 @@ mod nested_params {
     }
 }
 
+///Renders a decoded tuple param as the value of its Json entity field. JSON
+///has no bigint, so each one is written as its decimal string; the rest of
+///the value passes through.
+mod json_value {
+    use crate::type_schema::{RecordField, TypeIdent};
+    use itertools::Itertools;
+
+    fn holds_bigint(type_ident: &TypeIdent) -> bool {
+        match type_ident {
+            TypeIdent::BigInt => true,
+            TypeIdent::Array(inner) => holds_bigint(inner),
+            TypeIdent::Record(fields) => fields.iter().any(|f| holds_bigint(&f.type_ident)),
+            _ => false,
+        }
+    }
+
+    ///The component's key on the decoded JS object.
+    fn js_key(field: &RecordField) -> &str {
+        field.as_name.as_deref().unwrap_or(&field.name)
+    }
+
+    ///An unnamed component is keyed by its position.
+    fn is_position(key: &str) -> bool {
+        key.chars().all(|c| c.is_ascii_digit())
+    }
+
+    fn item_name(depth: usize) -> String {
+        match depth {
+            0 => "item".to_string(),
+            depth => format!("item{depth}"),
+        }
+    }
+
+    fn typescript_record<'a>(
+        fields: &'a [RecordField],
+        indent: &str,
+        field_value: impl Fn(&'a RecordField, &str, &str) -> String,
+    ) -> String {
+        let inner_indent = format!("{indent}  ");
+        let entries = fields
+            .iter()
+            .map(|field| {
+                let key = js_key(field);
+                format!(
+                    "{inner_indent}{key}: {},\n",
+                    field_value(field, key, &inner_indent)
+                )
+            })
+            .join("");
+        format!("{{\n{entries}{indent}}}")
+    }
+
+    ///`value` is an expression of `type_ident`; `indent` is that of the line it
+    ///starts on.
+    pub fn typescript(type_ident: &TypeIdent, value: &str, indent: &str) -> String {
+        typescript_at(type_ident, value, indent, 0)
+    }
+
+    fn typescript_at(type_ident: &TypeIdent, value: &str, indent: &str, depth: usize) -> String {
+        if !holds_bigint(type_ident) {
+            return value.to_string();
+        }
+        match type_ident {
+            TypeIdent::BigInt => format!("{value}.toString()"),
+            TypeIdent::Array(inner) => {
+                let item = item_name(depth);
+                let converted = typescript_at(inner, &item, indent, depth + 1);
+                // An arrow function returning an object literal needs parens
+                if converted.starts_with('{') {
+                    format!("{value}.map(({item}) => ({converted}))")
+                } else {
+                    format!("{value}.map(({item}) => {converted})")
+                }
+            }
+            TypeIdent::Record(fields) => {
+                typescript_record(fields, indent, |field, key, inner_indent| {
+                    let access = if is_position(key) {
+                        format!("{value}[{key}]")
+                    } else {
+                        format!("{value}.{key}")
+                    };
+                    typescript_at(&field.type_ident, &access, inner_indent, depth)
+                })
+            }
+            other => unreachable!("a contract import param can't hold a bigint in {other:?}"),
+        }
+    }
+
+    ///The value [`typescript`] renders for the param's default value, in which
+    ///every bigint is `0n` and every array is empty.
+    pub fn typescript_default(type_ident: &TypeIdent, indent: &str) -> String {
+        match type_ident {
+            TypeIdent::BigInt => "\"0\"".to_string(),
+            TypeIdent::Array(_) => "[]".to_string(),
+            TypeIdent::Record(fields) if holds_bigint(type_ident) => {
+                typescript_record(fields, indent, |field, _, inner_indent| {
+                    typescript_default(&field.type_ident, inner_indent)
+                })
+            }
+            other => typescript(other, &other.get_default_value_non_rescript(), indent),
+        }
+    }
+
+    fn rescript_object<'a>(
+        fields: &'a [RecordField],
+        indent: &str,
+        field_value: impl Fn(&'a RecordField, &str, &str) -> String,
+    ) -> String {
+        let inner_indent = format!("{indent}  ");
+        let entries = fields
+            .iter()
+            .map(|field| {
+                let key = js_key(field);
+                format!(
+                    "{inner_indent}\"{key}\": {},\n",
+                    field_value(field, key, &inner_indent)
+                )
+            })
+            .join("");
+        format!("JSON.Object(dict{{\n{entries}{indent}}})")
+    }
+
+    ///`value` is an expression of `type_ident`; `indent` is that of the line it
+    ///starts on. ReScript's `JSON.t` is a variant, so every value is wrapped,
+    ///not only the ones holding a bigint.
+    pub fn rescript(type_ident: &TypeIdent, value: &str, indent: &str) -> String {
+        rescript_at(type_ident, value, indent, 0)
+    }
+
+    fn rescript_at(type_ident: &TypeIdent, value: &str, indent: &str, depth: usize) -> String {
+        match type_ident {
+            TypeIdent::BigInt => format!("JSON.String({value}->BigInt.toString)"),
+            TypeIdent::Bool => format!("JSON.Boolean({value})"),
+            TypeIdent::String => format!("JSON.String({value})"),
+            TypeIdent::Address => format!("JSON.String({value}->Address.toString)"),
+            TypeIdent::Array(inner) => {
+                let item = item_name(depth);
+                format!(
+                    "JSON.Array({value}->Array.map({item} => {}))",
+                    rescript_at(inner, &item, indent, depth + 1)
+                )
+            }
+            TypeIdent::Record(fields) => {
+                rescript_object(fields, indent, |field, key, inner_indent| {
+                    rescript_at(
+                        &field.type_ident,
+                        &format!("{value}[\"{key}\"]"),
+                        inner_indent,
+                        depth,
+                    )
+                })
+            }
+            other => unreachable!("a contract import param can't decode to {other:?}"),
+        }
+    }
+
+    ///The value [`rescript`] renders for the param's default value, in which
+    ///every bigint is `0n` and every array is empty.
+    pub fn rescript_default(type_ident: &TypeIdent, indent: &str) -> String {
+        match type_ident {
+            TypeIdent::BigInt => "JSON.String(\"0\")".to_string(),
+            TypeIdent::Array(_) => "JSON.Array([])".to_string(),
+            TypeIdent::Record(fields) => {
+                rescript_object(fields, indent, |field, _, inner_indent| {
+                    rescript_default(&field.type_ident, inner_indent)
+                })
+            }
+            other => rescript(other, &other.get_default_value_rescript(), indent),
+        }
+    }
+}
+
 use super::env_template;
 use crate::{
     cli_args::init_config::Language,
@@ -82,7 +254,7 @@ use crate::{
         system_config::{self, Ecosystem, EventKind, SystemConfig},
     },
     template_dirs::TemplateDirs,
-    type_schema::RecordField,
+    type_schema::{RecordField, TypeIdent},
     utils::text::{Capitalize, CapitalizedOptions},
 };
 use anyhow::{Context, Result};
@@ -181,11 +353,12 @@ impl Contract {
             ));
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
-            // Add params. Tuple params (including `tuple[]`) flow through as
-            // JSON entity columns — TypeScript's `unknown` trivially accepts
-            // the structured event param value, so no cast is needed.
             for param in &event.params {
                 let value = format!("event.params.{}", param.event_key.original);
+                let value = match &param.json_type {
+                    Some(json_type) => json_value::typescript(json_type, &value, "    "),
+                    None => value,
+                };
                 content.push_str(&format!(
                     "    {}: {},\n",
                     param.entity_key.uncapitalized, value
@@ -230,23 +403,17 @@ impl Contract {
             ));
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
-            // Add params. Leaf params pass through directly; addresses get
-            // a `->Address.toString` conversion. Tuple params (including
-            // `tuple[]`) flow through as JSON entity columns — the event
-            // value is already a structured JS object at runtime, so we only
-            // need a magic cast so ReScript's type system accepts assigning
-            // it to the `JSON.t` entity column.
             for param in &event.params {
                 let base = format!("event.params.{}", param.event_key.uncapitalized);
-                content.push_str(&format!("    {}: {}", param.entity_key.uncapitalized, base));
-
-                if param.is_eth_address {
-                    content.push_str("\n      ->Address.toString");
-                } else if param.is_json_entity_field {
-                    content.push_str("->(Utils.magic: _ => JSON.t)");
-                }
-
-                content.push_str(",\n");
+                let value = match &param.json_type {
+                    Some(json_type) => json_value::rescript(json_type, &base, "    "),
+                    None if param.is_eth_address => format!("{base}\n      ->Address.toString"),
+                    None => base,
+                };
+                content.push_str(&format!(
+                    "    {}: {},\n",
+                    param.entity_key.uncapitalized, value
+                ));
             }
 
             content.push_str("  }\n\n");
@@ -352,9 +519,13 @@ impl Contract {
             ));
             content.push_str(&format!("      id: \"{}\",\n", entity_id));
             for param in &first_event.params {
+                let value = match &param.json_type {
+                    Some(json_type) => json_value::typescript_default(json_type, "      "),
+                    None => format!("event.params.{}", param.js_name),
+                };
                 content.push_str(&format!(
-                    "      {}: event.params.{},\n",
-                    param.entity_key.uncapitalized, param.js_name
+                    "      {}: {},\n",
+                    param.entity_key.uncapitalized, value
                 ));
             }
             content.push_str(&format!("      chainId: {},\n", chain_id));
@@ -484,18 +655,12 @@ impl Contract {
                  Entities.{entity_name}.testIndexerRow = {{\n\x20     id: \"{entity_id}\",\n",
             ));
             for param in &first_event.params {
-                let value = if param.is_eth_address {
-                    format!("{}->Address.toString", param.default_value_rescript)
-                } else if param.is_json_entity_field {
-                    // Tuple defaults are structured records (matching the
-                    // runtime event shape); cast to `JSON.t` for the entity
-                    // column.
-                    format!(
-                        "{}->(Utils.magic: _ => JSON.t)",
-                        param.default_value_rescript
-                    )
-                } else {
-                    param.default_value_rescript.clone()
+                let value = match &param.json_type {
+                    Some(json_type) => json_value::rescript_default(json_type, "      "),
+                    None if param.is_eth_address => {
+                        format!("{}->Address.toString", param.default_value_rescript)
+                    }
+                    None => param.default_value_rescript.clone(),
                 };
                 content.push_str(&format!(
                     "      {}: {},\n",
@@ -665,12 +830,10 @@ pub struct Param {
     event_key: CapitalizedOptions,
     graphql_type: FieldType,
     is_eth_address: bool,
-    ///True when the param is a tuple (struct), `tuple[]`, or `tuple[N]`.
-    ///These render as JSON entity columns; the ReScript handler casts the
-    ///structured value through `Utils.magic` so the type checker accepts it
-    ///against the `JSON.t` entity field. TypeScript's `unknown` accepts any
-    ///value so no cast is needed.
-    is_json_entity_field: bool,
+    ///Set when the param is a tuple (struct), `tuple[]`, or `tuple[N]`, which
+    ///is stored in a Json entity field and has to be converted to JSON first.
+    #[serde(skip)]
+    json_type: Option<TypeIdent>,
     default_value_rescript: String,
     default_value_typescript: String,
 }
@@ -690,12 +853,14 @@ impl Param {
         // Detect tuple / array-of-tuple params. These get flattened to a
         // single JSON entity column instead of per-field expansion, so the
         // contract-import path handles every ABI shape uniformly.
-        let is_json_entity_field = match &flattened_event_param.event_param.kind {
-            AbiType::Tuple(_) => true,
-            AbiType::Array(inner) | AbiType::FixedArray(inner, _) => {
-                matches!(inner.as_ref(), AbiType::Tuple(_))
+        let json_type = match &flattened_event_param.event_param.kind {
+            AbiType::Tuple(_) => Some(type_ident.clone()),
+            AbiType::Array(inner) | AbiType::FixedArray(inner, _)
+                if matches!(inner.as_ref(), AbiType::Tuple(_)) =>
+            {
+                Some(type_ident.clone())
             }
-            _ => false,
+            _ => None,
         };
 
         Ok(Param {
@@ -711,7 +876,7 @@ impl Param {
                 flattened_event_param.event_param.name
             ))?,
             is_eth_address: matches!(flattened_event_param.event_param.kind, AbiType::Address),
-            is_json_entity_field,
+            json_type,
             default_value_rescript,
             default_value_typescript,
         })
@@ -1056,8 +1221,7 @@ mod test {
     // LockupTranched ABI. `CreateLockupTranchedStream` has a mix of tuple
     // shapes (named struct, nested struct, `tuple[]`) that previously bailed
     // out of contract-import entirely. Each tuple param now lands as a JSON
-    // entity column; the ReScript handler adds a `Utils.magic` cast to
-    // satisfy the `JSON.t` column type.
+    // entity column.
 
     #[test]
     fn typescript_handler_for_tuple_events() {
@@ -1084,6 +1248,41 @@ mod test {
     #[test]
     fn rescript_test_file_for_tuple_events() {
         let template = get_test_template_helper("tuple-events-config.yaml", &Language::ReScript);
+        let content = template.imported_contracts[0]
+            .generate_rescript_test_content(false, template.first_chain_id);
+        insta::assert_snapshot!(content);
+    }
+
+    // https://github.com/enviodev/hyperindex/issues/1678
+    #[test]
+    fn typescript_handler_for_json_bigint_events() {
+        let template =
+            get_test_template_helper("json-bigint-events-config.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0].generate_typescript_handler_content(false);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn rescript_handler_for_json_bigint_events() {
+        let template =
+            get_test_template_helper("json-bigint-events-config.yaml", &Language::ReScript);
+        let content = template.imported_contracts[0].generate_rescript_handler_content(false);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn typescript_test_file_for_json_bigint_events() {
+        let template =
+            get_test_template_helper("json-bigint-events-config.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0]
+            .generate_typescript_test_content(false, template.first_chain_id);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn rescript_test_file_for_json_bigint_events() {
+        let template =
+            get_test_template_helper("json-bigint-events-config.yaml", &Language::ReScript);
         let content = template.imported_contracts[0]
             .generate_rescript_test_content(false, template.first_chain_id);
         insta::assert_snapshot!(content);
