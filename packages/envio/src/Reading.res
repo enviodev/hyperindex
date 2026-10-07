@@ -1,11 +1,3 @@
-// Reading a result set out of a Rust-owned arena.
-//
-// The mirror of `Staging.res`: there JavaScript writes into lent buffers and
-// Rust reads them, here Rust has written and JavaScript reads. The ownership
-// and phase rules are the same ones, written down at the top of
-// `packages/cli/src/columnar/mod.rs` — the buffers stay valid only until they
-// are handed back, and reading one after that is what detaching prevents.
-
 // What a column becomes, which is more than the slot it travels in: a boolean,
 // a timestamp and a float all ride in the same eight bytes.
 type kind =

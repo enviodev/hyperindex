@@ -1,5 +1,3 @@
-//! Rendering a column's Postgres type.
-
 use anyhow::{bail, Result};
 
 pub use crate::config_parsing::system_config::ChainIdMode;

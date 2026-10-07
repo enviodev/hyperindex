@@ -1,5 +1,3 @@
-//! Bound query parameters.
-//!
 //! Every parameter goes to the server in its text representation, which is what
 //! the stored values were produced from. Binary format would be faster to
 //! encode but not identical: `numeric`, `timestamptz` and the float types each

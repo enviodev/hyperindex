@@ -1,5 +1,3 @@
-//! Building a table's DDL from its column list.
-
 use anyhow::Result;
 
 use super::pg_type::{pg_field_type, ChainIdMode, FieldType};

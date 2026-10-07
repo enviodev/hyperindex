@@ -1,5 +1,3 @@
-//! The connection pool and the statements run against it.
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

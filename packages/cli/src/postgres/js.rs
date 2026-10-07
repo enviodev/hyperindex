@@ -1,5 +1,3 @@
-//! The addon surface for the Postgres backend.
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -262,7 +260,6 @@ pub struct PgClient {
     transactions: Mutex<HashMap<u32, client::Transaction>>,
     /// Batches laid out but not yet bound to a statement.
     staged: columnar::js::Stages<Arc<WriteSchema>>,
-    /// The shape of each table a batch can be staged for.
     write_tables: Mutex<HashMap<u32, Arc<WriteSchema>>>,
     next_handle: AtomicU32,
 }
@@ -295,8 +292,6 @@ impl PgClient {
         })
     }
 
-    /// Runs statements that take no parameters, discarding any rows. More than
-    /// one may be given at once, which is what the initialization relies on.
     #[napi]
     pub async fn batch(&self, transaction: Option<u32>, sql: String) -> napi::Result<()> {
         match self.on(transaction)? {
@@ -306,9 +301,6 @@ impl PgClient {
         .map_err(to_napi)
     }
 
-    /// Writes what a `COPY ... TO STDOUT` produces into a file, and reads a
-    /// file back into a `COPY ... FROM STDIN`. The rows never cross this
-    /// boundary.
     #[napi]
     pub async fn copy_out(&self, sql: String, path: String) -> napi::Result<()> {
         self.inner.copy_out(&sql, &path).await.map_err(to_napi)
@@ -323,14 +315,11 @@ impl PgClient {
             .map_err(to_napi)
     }
 
-    /// Forgets what the connections have prepared, which the schema being
-    /// dropped and built again makes necessary.
     #[napi]
     pub fn forget_prepared(&self) {
         self.inner.forget_prepared();
     }
 
-    /// Runs a statement in `transaction`, or on any free connection.
     #[napi]
     pub async fn execute(
         &self,
@@ -400,8 +389,6 @@ impl PgClient {
         }
     }
 
-    /// Opens a transaction and returns the handle every statement in it is
-    /// given. It holds a connection until `commit` or `rollback`.
     #[napi]
     pub async fn begin(&self) -> napi::Result<u32> {
         let transaction = self.inner.begin().await.map_err(to_napi)?;
@@ -434,7 +421,6 @@ impl PgClient {
     }
 }
 
-/// Where a statement runs.
 enum On {
     Pool,
     Transaction(client::Transaction),
@@ -515,7 +501,6 @@ fn to_params(params: Vec<Option<String>>) -> Vec<Param> {
         .collect()
 }
 
-/// What a history table is asked about, for the two statements a rollback runs.
 #[napi(object)]
 pub struct PgHistoryQueryInput {
     pub pg_schema: String,
@@ -633,7 +618,6 @@ struct WriteSchema {
     insert: String,
 }
 
-/// A registered write table, and the slot each of its columns travels in.
 #[napi(object)]
 pub struct PgWriteTable {
     pub handle: u32,
@@ -669,6 +653,7 @@ impl PgClient {
             .iter()
             .map(|column| insert::staged_kind(&column.field_type))
             .collect::<Vec<_>>();
+        let wire = kinds.iter().map(|&kind| kind as u8).collect();
         let schema = WriteSchema {
             names: spec
                 .columns
@@ -676,7 +661,7 @@ impl PgClient {
                 .map(|column| column.name.clone())
                 .collect(),
             insert: insert::unnest_query(&spec, &pg_schema, append_only, chain_id_mode),
-            kinds: kinds.clone(),
+            kinds,
         };
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         self.write_tables
@@ -685,7 +670,7 @@ impl PgClient {
             .insert(handle, Arc::new(schema));
         Ok(PgWriteTable {
             handle,
-            kinds: kinds.into_iter().map(|kind| kind as u8).collect(),
+            kinds: wire,
         })
     }
 
@@ -733,9 +718,8 @@ impl PgClient {
     /// reading, so a batch that cannot be handed back is abandoned rather than
     /// reported over the top of it.
     #[napi]
-    pub fn abort_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+    pub fn abort_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) {
         let _ = self.staged.abort(handle, buffers);
-        Ok(())
     }
 
     /// Inserts the staged batch with its table's statement, and frees the batch

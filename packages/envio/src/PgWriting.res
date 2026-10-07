@@ -1,6 +1,3 @@
-// Laying a batch of rows into the arena for Postgres to take. The addon picks
-// the slot each column travels in, next to the casts that read them back.
-
 // A column of arrays has no slot: the arena carries one value per row, and an
 // array is a value the row holds rather than a run of them. A table with one
 // binds its parameters as text instead.

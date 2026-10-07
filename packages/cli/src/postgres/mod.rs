@@ -1,6 +1,3 @@
-//! The Postgres storage backend. The storage interface itself stays in
-//! ReScript; a batch's values reach this side through the columnar arena.
-
 pub mod client;
 pub mod ddl;
 pub mod error;

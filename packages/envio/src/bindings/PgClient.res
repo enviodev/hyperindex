@@ -1,5 +1,3 @@
-// The Postgres client in the addon.
-//
 // A query lands its rows in a Rust-owned arena rather than returning them:
 // `query` says what shape they are, `lendResult` hands over the buffers they
 // live in, and `releaseResult` takes them back. Reading through a buffer after

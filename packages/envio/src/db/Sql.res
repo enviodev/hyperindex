@@ -1,7 +1,3 @@
-// Statements go to the server through the addon's client. A `t` carries the
-// client and, when one is open, the transaction a statement runs in, so the
-// same value can be passed down whether or not there is one.
-
 type t = {client: PgClient.t, transaction: Null.t<int>}
 
 // The SQLSTATE of a failure the server raised. napi keeps an error's `code` for

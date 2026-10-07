@@ -116,8 +116,6 @@ let getSchemaIndexes = (
   )
 }
 
-// The column as the addon takes it: the variant's name, plus whichever of
-// precision, scale and enum name that variant carries.
 let pgColumnInput = (field: Table.field): Core.pgColumnInput => {
   let (fieldType, precision, scale, enumName) = field.fieldType->Table.pgFieldTypeParts
   {
@@ -555,8 +553,6 @@ let makeInsertUnnestSetQuery = (
       columns: table->Table.schemaOrderedFields(~schema=itemSchema)->Array.map(pgColumnInput),
     },
     ~pgSchema,
-    // Raw events are only ever appended, so a row already there is one the
-    // batch has seen before rather than one to overwrite.
     ~appendOnly=isRawEvents,
     ~chainIdMode=(chainIdMode :> string),
   )
@@ -583,11 +579,8 @@ let maxParamsPerQuery = 65535
 let itemsPerQuery = (~columns) =>
   Pervasives.max(1, Pervasives.min(maxItemsPerQuery, maxParamsPerQuery / columns))
 
-// A table registered with the client for staging: the client's name for it,
-// and the columns its batches are written into.
 type registered = {writeTable: int, columns: array<Staging.column>}
 
-// How a table's batch reaches its statement.
 type binding =
   // One array per column, laid into the arena and inserted by Rust. Registered
   // with the client the first time a batch is staged.
@@ -601,7 +594,6 @@ type binding =
   // takes, and the history tables whose schema doesn't survive the conversion.
   | PerCell({query: string, itemsPerQuery: int})
 
-// What a table's batch write needs, built once and cached per table.
 type batchSet = {
   // The table's own schema, compiled: rows in, one array per column out.
   convertOrThrow: array<unknown> => array<array<unknown>>,
@@ -691,10 +683,6 @@ let makeTableBatchSetQuery = (
       Utils.magic: (unknown => unknown) => array<unknown> => array<array<unknown>>
     )
 
-  // The unnest statement takes a table whose columns the arena can hold, which
-  // rules out one of arrays: the arena carries a value per row, and an array is
-  // a value a row holds rather than a run of them. Deciding it here is what lets
-  // the caller stage without asking again.
   let fields = table->Table.schemaOrderedFields(~schema=itemSchema->S.toUnknown)
   let staged = !isHistoryUpdate && PgWriting.canStage(fields)
 
