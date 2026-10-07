@@ -86,44 +86,60 @@ pub struct PgClient {
 
 /// A transaction, pinned to the connection it was opened on.
 ///
-/// Cloning one shares that connection. Statements issued on it at the same time
-/// are pipelined rather than serialised — which is what the driver being
-/// replaced did for the concurrent statements a batch write issues — so the
-/// connection is behind an `Arc` and never a lock.
+/// Cloning one shares that connection. A batch write issues its statements at
+/// once, so they are pipelined on it rather than serialised.
 #[derive(Clone)]
 pub struct Transaction {
     connection: Arc<Pinned>,
 }
 
-/// The connection a transaction runs on, and whether it may go back to the
-/// pool.
-///
-/// Only a transaction seen to end — its `COMMIT` or `ROLLBACK` answered — hands
-/// its connection back. Any other way of letting go leaves it possibly still
-/// inside the transaction, and the next caller to be handed it would run inside
-/// a stranger's: a failed commit, a clone still holding it when the ending
-/// statement failed, or a transaction dropped with nothing sent. Those detach it
-/// from the pool instead — one connection lost against statements landing
-/// somewhere they were never meant to. Deciding when the last holder lets go,
-/// rather than when `finish` runs, is what covers the clones.
-struct Pinned {
-    object: Option<deadpool_postgres::Object>,
-    ended: std::sync::atomic::AtomicBool,
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Open,
+    /// `COMMIT` or `ROLLBACK` has been sent. Anything issued after it would run
+    /// on the same connection outside the transaction, and commit on its own.
+    Ending,
+    /// The server answered the `COMMIT` or `ROLLBACK`.
+    Ended,
 }
 
-impl std::ops::Deref for Pinned {
-    type Target = deadpool_postgres::Object;
+/// The connection a transaction runs on, and how far the transaction has got.
+///
+/// Statements hold the stage shared, so they still pipeline; ending it takes
+/// it exclusively, which waits for the statements already in flight and turns
+/// away the rest.
+///
+/// Only a transaction seen to end hands its connection back. Any other way of
+/// letting go leaves it possibly still inside the transaction, and the next
+/// caller to be handed it would run inside a stranger's: a failed commit, a
+/// clone still holding it when the ending statement failed, or a transaction
+/// dropped with nothing sent. Those detach it from the pool instead. Deciding
+/// when the last holder lets go, rather than when `finish` runs, is what covers
+/// the clones.
+struct Pinned {
+    object: Option<deadpool_postgres::Object>,
+    stage: tokio::sync::RwLock<Stage>,
+}
 
-    fn deref(&self) -> &Self::Target {
+impl Pinned {
+    fn client(&self) -> &deadpool_postgres::Object {
         self.object
             .as_ref()
             .expect("the connection is only taken out on drop")
+    }
+
+    async fn open(&self) -> Result<tokio::sync::RwLockReadGuard<'_, Stage>> {
+        let stage = self.stage.read().await;
+        if *stage != Stage::Open {
+            bail!("The transaction has already ended");
+        }
+        Ok(stage)
     }
 }
 
 impl Drop for Pinned {
     fn drop(&mut self) {
-        if !self.ended.load(std::sync::atomic::Ordering::Acquire) {
+        if *self.stage.get_mut() != Stage::Ended {
             if let Some(object) = self.object.take() {
                 let _ = deadpool_postgres::Object::take(object);
             }
@@ -136,21 +152,24 @@ impl Transaction {
         Self {
             connection: Arc::new(Pinned {
                 object: Some(connection),
-                ended: std::sync::atomic::AtomicBool::new(false),
+                stage: tokio::sync::RwLock::new(Stage::Open),
             }),
         }
     }
 
     pub async fn execute(&self, sql: &str, params: &[Param]) -> Result<u64> {
-        execute_on(&self.connection, sql, params).await
+        let _open = self.connection.open().await?;
+        execute_on(self.connection.client(), sql, params).await
     }
 
     pub async fn query(&self, sql: &str, params: &[Param]) -> Result<(Vec<Row>, Vec<Column>)> {
-        query_on(&self.connection, sql, params).await
+        let _open = self.connection.open().await?;
+        query_on(self.connection.client(), sql, params).await
     }
 
     pub async fn batch(&self, sql: &str) -> Result<()> {
-        self.connection.batch_execute(sql).await?;
+        let _open = self.connection.open().await?;
+        self.connection.client().batch_execute(sql).await?;
         Ok(())
     }
 
@@ -166,10 +185,13 @@ impl Transaction {
     }
 
     async fn finish(self, statement: &str) -> Result<()> {
-        self.connection.batch_execute(statement).await?;
-        self.connection
-            .ended
-            .store(true, std::sync::atomic::Ordering::Release);
+        let mut stage = self.connection.stage.write().await;
+        if *stage != Stage::Open {
+            bail!("The transaction has already ended");
+        }
+        *stage = Stage::Ending;
+        self.connection.client().batch_execute(statement).await?;
+        *stage = Stage::Ended;
         Ok(())
     }
 }

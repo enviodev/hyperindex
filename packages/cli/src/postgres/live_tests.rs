@@ -518,6 +518,47 @@ async fn a_failed_statement_leaves_a_transaction_that_can_still_be_rolled_back()
         .expect("the rollback is taken even so");
 }
 
+/// A batch write's statements run concurrently, so one can still be on its way
+/// when a sibling's failure rolls the transaction back. Arriving after the
+/// rollback, it would run on the same connection with no transaction around it
+/// and commit on its own.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_statement_arriving_after_the_rollback_is_refused() {
+    let client = client();
+    client
+        .batch("DROP TABLE IF EXISTS late_rows; CREATE TABLE late_rows (n int4)")
+        .await
+        .expect("the table is made");
+    let transaction = client.begin().await.expect("the transaction opens");
+    let late = transaction.clone();
+    transaction
+        .rollback()
+        .await
+        .expect("the transaction rolls back");
+
+    let outcome = late
+        .execute("INSERT INTO late_rows VALUES (1)", &[])
+        .await
+        .map(|_| ())
+        .map_err(|error| super::error::message_of(&error));
+    let (rows, _) = client
+        .query("SELECT count(*)::int4 FROM late_rows", &[])
+        .await
+        .expect("the count comes back");
+    client
+        .batch("DROP TABLE late_rows")
+        .await
+        .expect("the table is dropped");
+    assert_eq!(
+        (outcome, rows[0].get::<_, Cell>(0)),
+        (
+            Err("The transaction has already ended".to_string()),
+            Cell::Num(0.0)
+        )
+    );
+}
+
 /// The write path end to end: rows laid into the arena, rendered into the
 /// arrays an unnest insert binds, and read back as what went in. The rendering
 /// is what replaces building these literals in JavaScript.
