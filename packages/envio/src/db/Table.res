@@ -444,9 +444,6 @@ let getUnfilteredCompositeIndexesUnsafe = (table): array<array<compositeIndexFie
 
 type sqlParams<'entity> = {
   dbSchema: S.t<'entity>,
-  quotedFieldNames: array<string>,
-  quotedNonPrimaryFieldNames: array<string>,
-  arrayFieldTypes: array<string>,
   hasArrayField: bool,
 }
 
@@ -471,10 +468,7 @@ let schemaOrderedFields = (table: table, ~schema): array<field> =>
     )
   }
 
-let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
-  let quotedFieldNames = []
-  let quotedNonPrimaryFieldNames = []
-  let arrayFieldTypes = []
+let toSqlParams = (table: table, ~schema) => {
   let hasArrayField = ref(false)
 
   let dbSchema: S.t<dict<unknown>> = S.schema(s =>
@@ -514,41 +508,6 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
         | _ => ()
         }
 
-        // Schema locations use API field names, while the SQL references
-        // columns by their possibly renamed db names.
-        let quotedDbName = `"${field->getPgFieldName}"`
-        quotedFieldNames
-        ->Array.push(quotedDbName)
-        ->ignore
-        switch field {
-        | Field({isPrimaryKey: false}) =>
-          quotedNonPrimaryFieldNames
-          ->Array.push(quotedDbName)
-          ->ignore
-        | _ => ()
-        }
-
-        arrayFieldTypes
-        ->Array.push(
-          switch field {
-          | Field(f) =>
-            let pgFieldType = getPgFieldType(
-              ~fieldType=f.fieldType,
-              ~pgSchema,
-              ~isArray=true,
-              ~isNullable=f.isNullable,
-              ~isNumericArrayAsText=false,
-              ~chainIdMode,
-            )
-            switch f.fieldType {
-            | Enum(_) => `${(Text: Sql.columnType :> string)}[]::${pgFieldType}`
-            | Boolean => `${(Integer: Sql.columnType :> string)}[]::${pgFieldType}`
-            | _ => pgFieldType
-            }
-          | DerivedFrom(_) => (Text: Sql.columnType :> string) ++ "[]"
-          },
-        )
-        ->ignore
         dict->Dict.set(location, s.matches(schema->coerceSchema))
       })
       dict
@@ -559,9 +518,6 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
 
   {
     dbSchema: dbSchema->(Utils.magic: S.t<dict<unknown>> => S.t<'entity>),
-    quotedFieldNames,
-    quotedNonPrimaryFieldNames,
-    arrayFieldTypes,
     hasArrayField: hasArrayField.contents,
   }
 }

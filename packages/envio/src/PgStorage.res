@@ -568,7 +568,6 @@ let makeInsertValuesSetQuery = (
   ~table: Table.table,
   ~itemSchema,
   ~itemsCount,
-  ~chainIdMode as _: ChainId.mode=Int32,
 ) =>
   Core.pgInsertValuesQuery(
     ~table={
@@ -648,18 +647,13 @@ type batchSet = {
   }
 )
 
-// Where the schema's fields land among the columns, for the ones whose values
-// have to be rendered before they are bound. A schema whose fields aren't the
-// table's own names none.
+// Where the json fields land among the columns, for the values that have to be
+// rendered before they are bound.
 %%private(
-  let documentColumns = (table: Table.table, ~schema) =>
-    switch table->Table.schemaOrderedFields(~schema) {
-    | fields =>
-      fields->Array.filterMapWithIndex((field: Table.field, index) =>
-        field.fieldType === Table.Json ? Some((index, field.isArray)) : None
-      )
-    | exception _ => []
-    }
+  let documentColumns = (fields: array<Table.field>) =>
+    fields->Array.filterMapWithIndex((field, index) =>
+      field.fieldType === Table.Json ? Some((index, field.isArray)) : None
+    )
 )
 
 let makeTableBatchSetQuery = (
@@ -669,7 +663,7 @@ let makeTableBatchSetQuery = (
   ~chainIdMode: ChainId.mode=Int32,
 ): batchSet => {
   let {dbSchema, hasArrayField} =
-    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
+    table->Table.toSqlParams(~schema=itemSchema)
 
   // Should move this to a better place
   // We need it for the isRawEvents check in makeTableBatchSet
@@ -707,7 +701,7 @@ let makeTableBatchSetQuery = (
     None
   }
 
-  let documents = table->documentColumns(~schema=itemSchema->S.toUnknown)
+  let documents = fields->documentColumns
 
   switch staged {
   | Some(columns) => {
@@ -731,7 +725,6 @@ let makeTableBatchSetQuery = (
         ~table,
         ~itemSchema,
         ~itemsCount=itemsPerQuery,
-        ~chainIdMode,
       ),
       convertOrThrow: compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
@@ -907,7 +900,6 @@ let setOrThrow = async (
                     ~table,
                     ~itemSchema,
                     ~itemsCount=chunkSize,
-                    ~chainIdMode,
                   ),
               ~params,
             ),
