@@ -1,15 +1,9 @@
 open Vitest
 
-// Every parameter reaches the server as text, so what a value renders to has to
-// mean what the driver being replaced meant by it. These are pinned against
-// what that driver stored for the same values.
-//
-// Three of them it could not send at all: it types an array after its first
-// element, so an array of bytes binds as one `bytea` and an array of bigints as
-// one `bigint`, and a bigint past `int8` overflows the type it picks. Each is a
-// workaround the calling code carries today — `Utils.Bytes.toPgArrayLiteral`,
-// `Utils.BigInt.arrayToStringArray`, `BigInt.toString` — and none is needed
-// here.
+// Every parameter reaches the server as text, so what a value renders to is
+// what gets stored. Among them an array of bytes, an array of bigints and a
+// bigint past `int8`, which a driver typing a parameter after its value gets
+// wrong.
 
 let bytes = (values): Uint8Array.t => values->Uint8Array.fromArray
 

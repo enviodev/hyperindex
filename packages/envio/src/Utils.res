@@ -546,31 +546,6 @@ module Bytes = {
 
   @get_index external byteAt: (Uint8Array.t, int) => int = ""
 
-  // A bytea[] parameter as the array literal Postgres parses itself.
-  //
-  // Nests, since an `in` filter over a list column carries one array per
-  // candidate value. A sub-array is written unquoted, which is how Postgres
-  // spells a dimension rather than an element.
-  let rec toPgArrayLiteral = (values: array<unknown>) =>
-    "{" ++
-    values
-    ->Array.map(value =>
-      switch value->(magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
-      | None => "NULL"
-      | Some(value) =>
-        switch value->asUint8Array {
-        | Some(bytes) => `"\\\\x${bytes->toHex}"`
-        | None =>
-          if value->Array.isArray {
-            value->(magic: unknown => array<unknown>)->toPgArrayLiteral
-          } else {
-            JsError.throwWithMessage("Expected Uint8Array")
-          }
-        }
-      }
-    )
-    ->Array.join(",") ++ "}"
-
   // Bytewise, the order Postgres sorts a bytea in.
   let compare = (a: Uint8Array.t, b: Uint8Array.t) => {
     let aLength = a->TypedArray.length
@@ -618,9 +593,9 @@ module Schema = {
   })
 
   // A bytea[] value: a list column, or the values an `in` filter compares
-  // against — one array per candidate when the column is itself a list, which
-  // the literal writer nests. Only a column is ever read back, so the parser
-  // takes the one level a bytea[] column returns.
+  // against — one array per candidate when the column is itself a list. Only a
+  // column is ever read back, so the parser takes the one level a bytea[]
+  // column returns.
   let bytesArray = S.custom("BytesArray", s => {
     parser: unknown =>
       if unknown->Array.isArray {
@@ -635,8 +610,7 @@ module Schema = {
       } else {
         s.fail("Expected array of Uint8Array")
       },
-    serializer: (values: array<Uint8Array.t>) =>
-      values->(magic: array<Uint8Array.t> => array<unknown>)->Bytes.toPgArrayLiteral,
+    serializer: (values: array<Uint8Array.t>) => values,
   })
 
   // Don't use S.unknown, since it's not serializable to json
@@ -941,14 +915,6 @@ module EnvioPackage = {
 }
 
 module BigInt = {
-  let arrayToStringArray: array<bigint> => array<string> = %raw(`(arr) => {
-    const res = new Array(arr.length);
-    for (let i = 0; i < arr.length; i++) {
-      res[i] = arr[i].toString();
-    }
-    return res;
-  }`)
-
   let schema =
     S.string
     ->S.setName("BigInt")

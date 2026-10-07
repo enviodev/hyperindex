@@ -622,7 +622,7 @@ FROM "public"."envio_chains";`
       filter->EntityFilter.parseOrThrow(~entityName=table.tableName, ~table)
 
     Async.it(
-      "Binds bytea values as bytes and bytea arrays as array literals",
+      "Renders bytea values as hex and bytea arrays as array literals",
       async t => {
         let params = []
         let condition = PgStorage.makeFilterCondition(
@@ -645,14 +645,14 @@ FROM "public"."envio_chains";`
           ~params,
         )
 
-        t.expect((condition, params)).toEqual((
+        t.expect((condition, params->Sql.params)).toEqual((
           `"tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND ("chunks" = $4 OR "chunks" = $5)`,
           [
-            Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
-            `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
-            `{"\\\\x03"}`->(Utils.magic: string => unknown),
-            `{"\\\\x04"}`->(Utils.magic: string => unknown),
-            `{"\\\\x05"}`->(Utils.magic: string => unknown),
+            Null.make(`\\xaa`),
+            Null.make(`{"\\\\x0102","\\\\x"}`),
+            Null.make(`{"\\\\x03"}`),
+            Null.make(`{"\\\\x04"}`),
+            Null.make(`{"\\\\x05"}`),
           ],
         ))
       },

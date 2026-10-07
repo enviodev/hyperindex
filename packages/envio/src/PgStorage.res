@@ -1212,9 +1212,7 @@ let writeBatch = async (
                   entityConfig.table
                   ->Table.encodeIdsToJson(batchDeleteEntityIds)
                   ->(Utils.magic: JSON.t => unknown),
-                  batchDeleteCheckpointIds
-                  ->Utils.BigInt.arrayToStringArray
-                  ->(Utils.magic: array<string> => unknown),
+                  batchDeleteCheckpointIds->(Utils.magic: array<bigint> => unknown),
                 ]->Array.concat(chainIdParams),
               ),
             )
