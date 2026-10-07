@@ -6,13 +6,39 @@
 
 use super::ddl::{ColumnSpec, TableSpec};
 use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
+use crate::columnar::ColumnKind;
 
-/// How a column's array of values is cast in an `unnest`.
+/// Which arena slot a staged column's values travel in, and so what the
+/// unnest's cast for it reads.
 ///
-/// Two types are not handed over as themselves. An enum array is sent as text
-/// and cast, since the driver has no way to name a type it did not create; a
-/// boolean array is sent as integers, which is what the driver being replaced
-/// bound them as.
+/// A boolean travels as the number 1 or 0, which Postgres reads as a boolean.
+/// Everything a double cannot hold exactly — a bigint, a decimal, a timestamp —
+/// travels as text, as does an enum, whose cast names the type.
+pub fn staged_kind(field_type: &FieldType) -> ColumnKind {
+    match field_type {
+        FieldType::Boolean
+        | FieldType::Int32
+        | FieldType::Uint32
+        | FieldType::UInt52
+        | FieldType::SmallInt
+        | FieldType::Number
+        | FieldType::ChainId
+        | FieldType::Serial
+        | FieldType::BigSerial => ColumnKind::F64,
+        FieldType::Bytea => ColumnKind::Bytes,
+        FieldType::String
+        | FieldType::UInt64
+        | FieldType::BigInt { .. }
+        | FieldType::BigDecimal { .. }
+        | FieldType::Json
+        | FieldType::Date
+        | FieldType::Enum { .. } => ColumnKind::Text,
+    }
+}
+
+/// How a column's array of values is cast in an `unnest`. An enum array is sent
+/// as text and cast, since a parameter cannot name a type the client did not
+/// create.
 fn unnest_cast(column: &ColumnSpec, pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
     let array_type = pg_field_type(
         &column.field_type,
@@ -24,7 +50,6 @@ fn unnest_cast(column: &ColumnSpec, pg_schema: &str, chain_id_mode: ChainIdMode)
     );
     match column.field_type {
         FieldType::Enum { .. } => format!("TEXT[]::{array_type}"),
-        FieldType::Boolean => format!("INTEGER[]::{array_type}"),
         _ => array_type,
     }
 }
@@ -167,7 +192,7 @@ mod tests {
         assert_eq!(
             unnest_query(&spec, "test_schema", false, ChainIdMode::Int32),
             "INSERT INTO \"test_schema\".\"A\" (\"id\", \"flag\", \"kind\", \"at\")\n\
-             SELECT * FROM unnest($1::TEXT[],$2::INTEGER[]::BOOLEAN[],\
+             SELECT * FROM unnest($1::TEXT[],$2::BOOLEAN[],\
              $3::TEXT[]::\"test_schema\".AccountType[],\
              $4::TIMESTAMP WITH TIME ZONE[])\
              ON CONFLICT(\"id\") DO UPDATE SET \"flag\" = EXCLUDED.\"flag\",\

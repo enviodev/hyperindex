@@ -57,8 +57,18 @@ external queryRaw: (
 
 @send external rollback: (t, int) => promise<unit> = "rollback"
 
+// A table a batch can be staged for, and the slot each of its columns travels
+// in. The addon keeps the insert its batches go through.
+type writeTable = {handle: int, kinds: array<Staging.kind>}
+
 @send
-external registerWriteTable: (t, array<string>, array<int>) => int = "registerWriteTable"
+external registerWriteTable: (
+  t,
+  Core.pgTableInput,
+  ~pgSchema: string,
+  ~appendOnly: bool,
+  ~chainIdMode: string,
+) => writeTable = "registerWriteTable"
 
 @send external beginStage: (t, ~table: int, ~rows: int) => Staging.begun = "beginStage"
 
@@ -77,12 +87,8 @@ external commitStage: (t, ~handle: int, ~buffers: array<ArrayBuffer.t>) => unit 
 @send external abortStage: (t, ~handle: int, ~buffers: array<ArrayBuffer.t>) => unit = "abortStage"
 
 @send
-external executeStaged: (
-  t,
-  ~transaction: Null.t<int>,
-  ~sql: string,
-  ~handle: int,
-) => promise<unit> = "executeStaged"
+external executeStaged: (t, ~transaction: Null.t<int>, ~handle: int) => promise<unit> =
+  "executeStaged"
 
 let arena = (client): Staging.arena => {
   beginStage: (~table, ~rows) => client->beginStage(~table, ~rows),

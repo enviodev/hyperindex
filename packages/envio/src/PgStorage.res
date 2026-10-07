@@ -585,23 +585,40 @@ let maxParamsPerQuery = 65535
 let itemsPerQuery = (~columns) =>
   Pervasives.max(1, Pervasives.min(maxItemsPerQuery, maxParamsPerQuery / columns))
 
+// A table registered with the client for staging: the client's name for it,
+// and the columns its batches are written into.
+type registered = {writeTable: int, columns: array<Staging.column>}
+
 // How a table's batch reaches its statement.
 type binding =
-  // One array per column, laid into the arena and rendered by Rust. `writeTable`
-  // is the arena's name for the table, taken the first time a batch is staged.
-  | Staged({columns: array<Staging.column>, mutable writeTable: option<int>})
+  // One array per column, laid into the arena and inserted by Rust. Registered
+  // with the client the first time a batch is staged.
+  | Staged({
+      table: Core.pgTableInput,
+      fields: array<Table.field>,
+      appendOnly: bool,
+      mutable registered: option<registered>,
+    })
   // A parameter per cell, rendered here. What a table with an array column
   // takes, and the history tables whose schema doesn't survive the conversion.
-  | PerCell({itemsPerQuery: int})
+  | PerCell({query: string, itemsPerQuery: int})
 
 // What a table's batch write needs, built once and cached per table.
 type batchSet = {
-  query: string,
   // The table's own schema, compiled: rows in, one array per column out.
   convertOrThrow: array<unknown> => array<array<unknown>>,
-  // How the batch reaches the statement: laid into the arena for Rust to render
-  // as one array per column, or rendered as a parameter per cell.
   binding: binding,
+}
+
+let registerStaged = (sql: Sql.t, ~table, ~fields, ~appendOnly, ~pgSchema, ~chainIdMode) => {
+  let {handle, kinds} =
+    sql.client->PgClient.registerWriteTable(
+      table,
+      ~pgSchema,
+      ~appendOnly,
+      ~chainIdMode=(chainIdMode: ChainId.mode :> string),
+    )
+  {writeTable: handle, columns: PgWriting.columns(fields, ~kinds)}
 }
 
 // A json column holds a document, which is as readily a string or a boolean as
@@ -655,7 +672,6 @@ let makeTableBatchSetQuery = (
   ~pgSchema,
   ~table: Table.table,
   ~itemSchema: S.t<'item>,
-  ~chainIdMode: ChainId.mode=Int32,
 ): batchSet => {
   let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema)
 
@@ -689,17 +705,12 @@ let makeTableBatchSetQuery = (
   // a value a row holds rather than a run of them. Deciding it here is what lets
   // the caller stage without asking again.
   let fields = table->Table.schemaOrderedFields(~schema=itemSchema->S.toUnknown)
-  let staged = if (isRawEvents || !hasArrayField) && !isHistoryUpdate {
-    PgWriting.canStage(fields) ? Some(PgWriting.columns(fields)) : None
-  } else {
-    None
-  }
+  let staged = (isRawEvents || !hasArrayField) && !isHistoryUpdate && PgWriting.canStage(fields)
 
   let documents = fields->documentColumns
 
-  switch staged {
-  | Some(columns) => {
-      query: makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents, ~chainIdMode),
+  if staged {
+    {
       convertOrThrow: compile(
         S.unnest(dbSchema)->S.preprocess(_ => {
           serializer: columns =>
@@ -709,12 +720,18 @@ let makeTableBatchSetQuery = (
             ->(Utils.magic: array<array<unknown>> => unknown),
         }),
       ),
-      binding: Staged({columns, writeTable: None}),
+      binding: Staged({
+        table: {tableName: table.tableName, columns: fields->Array.map(pgColumnInput)},
+        fields,
+        // Raw events are only ever appended, so a row already there is one the
+        // batch has seen before rather than one to overwrite.
+        appendOnly: isRawEvents,
+        registered: None,
+      }),
     }
-  | None =>
+  } else {
     let itemsPerQuery = itemsPerQuery(~columns=fields->Array.length)
     {
-      query: makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=itemsPerQuery),
       convertOrThrow: compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
           serializer: columns =>
@@ -725,7 +742,10 @@ let makeTableBatchSetQuery = (
             ->(Utils.magic: array<unknown> => unknown),
         }),
       ),
-      binding: PerCell({itemsPerQuery: itemsPerQuery}),
+      binding: PerCell({
+        query: makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=itemsPerQuery),
+        itemsPerQuery,
+      }),
     }
   }
 }
@@ -786,7 +806,6 @@ let setOrThrow = async (
           ~pgSchema,
           ~table,
           ~itemSchema=itemSchema->S.toUnknown,
-          ~chainIdMode,
         )
         setQueryCache->Utils.WeakMap.set(table, newQuery)->ignore
         newQuery
@@ -796,31 +815,28 @@ let setOrThrow = async (
     try {
       switch data.binding {
       | Staged(staged) =>
-        let columns = data.convertOrThrow(items->(Utils.magic: array<'item> => array<unknown>))
-        let writeTable = switch staged.writeTable {
-        | Some(writeTable) => writeTable
+        let values = data.convertOrThrow(items->(Utils.magic: array<'item> => array<unknown>))
+        let {writeTable, columns} = switch staged.registered {
+        | Some(registered) => registered
         | None =>
-          let writeTable =
-            sql.client->PgClient.registerWriteTable(
-              staged.columns->Array.map(column => column.name),
-              staged.columns->Array.map(column => (column.kind :> int)),
+          let registered =
+            sql->registerStaged(
+              ~table=staged.table,
+              ~fields=staged.fields,
+              ~appendOnly=staged.appendOnly,
+              ~pgSchema,
+              ~chainIdMode,
             )
-          staged.writeTable = Some(writeTable)
-          writeTable
+          staged.registered = Some(registered)
+          registered
         }
         await sql.client->PgClient.executeStaged(
           ~transaction=sql.transaction,
-          ~sql=data.query,
           ~handle=sql.client
           ->PgClient.arena
-          ->PgWriting.stage(
-            ~table=writeTable,
-            ~columns=staged.columns,
-            ~values=columns,
-            ~rows=items->Array.length,
-          ),
+          ->PgWriting.stage(~table=writeTable, ~columns, ~values, ~rows=items->Array.length),
         )
-      | PerCell({itemsPerQuery}) =>
+      | PerCell({query, itemsPerQuery}) =>
         let responses = []
         chunkArray(items, ~chunkSize=itemsPerQuery)->Array.forEach(chunk => {
           let chunkSize = chunk->Array.length
@@ -838,7 +854,7 @@ let setOrThrow = async (
           ->Array.push(
             sql->Sql.exec(
               chunkSize === itemsPerQuery
-                ? data.query
+                ? query
                 : makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
               ~params,
             ),

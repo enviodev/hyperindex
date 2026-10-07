@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use napi::bindgen_prelude::{ArrayBuffer, Object};
@@ -641,42 +642,68 @@ pub fn pg_set_by_unnest_query(
 struct StagedBatch {
     arena: Arena,
     names: Vec<String>,
+    insert: Arc<str>,
 }
 
-/// A table's shape, registered once so a batch for it only has to say how many
-/// rows it holds.
+/// A table's shape and the statement its batches are inserted with, registered
+/// once so a batch for it only has to say how many rows it holds.
 struct WriteSchema {
     names: Vec<String>,
     kinds: Vec<ColumnKind>,
+    insert: Arc<str>,
+}
+
+/// A registered write table, and the slot each of its columns travels in.
+#[napi(object)]
+pub struct PgWriteTable {
+    pub handle: u32,
+    pub kinds: Vec<u8>,
 }
 
 #[napi]
 impl PgClient {
-    /// Registers a table's shape. A batch for it then only has to say how many
-    /// rows it holds.
+    /// Registers a table a batch can be staged for: the slot each column
+    /// travels in, which the caller writes its values into, and the unnest
+    /// insert whose casts read them.
     ///
     /// No column of arrays: unnesting one spreads it across the rows instead of
     /// keeping it as a value, so a table holding one takes the statement that
     /// binds every cell on its own and never reaches here.
     #[napi]
-    pub fn register_write_table(&self, names: Vec<String>, kinds: Vec<u8>) -> napi::Result<u32> {
-        let kinds = kinds
-            .into_iter()
-            .map(
-                |ordinal| match ColumnKind::try_from(ordinal).map_err(to_napi)? {
-                    ColumnKind::List => Err(napi::Error::from_reason(
-                        "a table with an array column is written one row at a time, not staged",
-                    )),
-                    kind => Ok(kind),
-                },
-            )
-            .collect::<napi::Result<Vec<_>>>()?;
+    pub fn register_write_table(
+        &self,
+        table: PgTableInput,
+        pg_schema: String,
+        append_only: bool,
+        chain_id_mode: String,
+    ) -> napi::Result<PgWriteTable> {
+        let spec = TableSpec::try_from(table).map_err(to_napi)?;
+        let chain_id_mode = ChainIdMode::parse(&chain_id_mode).map_err(to_napi)?;
+        if spec.columns.iter().any(|column| column.is_array) {
+            return Err(napi::Error::from_reason(
+                "a table with an array column is written one row at a time, not staged",
+            ));
+        }
+        let kinds = spec
+            .columns
+            .iter()
+            .map(|column| insert::staged_kind(&column.field_type))
+            .collect::<Vec<_>>();
+        let schema = WriteSchema {
+            names: spec
+                .columns
+                .iter()
+                .map(|column| column.name.clone())
+                .collect(),
+            insert: insert::unnest_query(&spec, &pg_schema, append_only, chain_id_mode).into(),
+            kinds: kinds.clone(),
+        };
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        self.write_tables
-            .lock()
-            .unwrap()
-            .insert(handle, WriteSchema { names, kinds });
-        Ok(handle)
+        self.write_tables.lock().unwrap().insert(handle, schema);
+        Ok(PgWriteTable {
+            handle,
+            kinds: kinds.into_iter().map(|kind| kind as u8).collect(),
+        })
     }
 
     /// Lays out a batch and lends JavaScript the memory to fill it in. Nothing
@@ -689,12 +716,16 @@ impl PgClient {
         table: u32,
         rows: u32,
     ) -> napi::Result<Object<'env>> {
-        let (names, kinds) = {
+        let (names, kinds, insert) = {
             let tables = self.write_tables.lock().unwrap();
             let schema = tables
                 .get(&table)
                 .ok_or_else(|| napi::Error::from_reason(format!("Unknown write table {table}")))?;
-            (schema.names.clone(), schema.kinds.clone())
+            (
+                schema.names.clone(),
+                schema.kinds.clone(),
+                schema.insert.clone(),
+            )
         };
 
         let mut arena = Arena::new(rows as usize, &kinds).map_err(to_napi)?;
@@ -702,10 +733,14 @@ impl PgClient {
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         // Storing the arena moves its `Vec` headers, not the allocations the
         // buffers above point into, so the lending survives the move.
-        self.staged
-            .lock()
-            .unwrap()
-            .insert(handle, StagedBatch { arena, names });
+        self.staged.lock().unwrap().insert(
+            handle,
+            StagedBatch {
+                arena,
+                names,
+                insert,
+            },
+        );
         let mut result = Object::new(env)?;
         result.set("handle", handle)?;
         result.set("buffers", buffers)?;
@@ -753,20 +788,18 @@ impl PgClient {
         Ok(())
     }
 
-    /// Runs `sql` with the staged batch bound, and frees the batch either way.
+    /// Inserts the staged batch with its table's statement, and frees the batch
+    /// either way.
     #[napi]
-    pub async fn execute_staged(
-        &self,
-        transaction: Option<u32>,
-        sql: String,
-        handle: u32,
-    ) -> napi::Result<()> {
+    pub async fn execute_staged(&self, transaction: Option<u32>, handle: u32) -> napi::Result<()> {
         let staged =
             self.staged.lock().unwrap().remove(&handle).ok_or_else(|| {
                 napi::Error::from_reason(format!("Unknown staged batch {handle}"))
             })?;
         let params = write::unnest_params(&staged.arena).map_err(to_napi)?;
-        self.run(transaction, &sql, &params).await.map(|_| ())
+        self.run(transaction, &staged.insert, &params)
+            .await
+            .map(|_| ())
     }
 }
 
