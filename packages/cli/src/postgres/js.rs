@@ -276,7 +276,7 @@ pub struct PgClient {
     /// holds a connection out of the pool for as long as it is open.
     transactions: Mutex<HashMap<u32, client::Transaction>>,
     /// Batches laid out but not yet bound to a statement.
-    staged: Mutex<HashMap<u32, StagedBatch>>,
+    staged: columnar::js::Stages<StagedTable>,
     /// The shape of each table a batch can be staged for.
     write_tables: Mutex<HashMap<u32, WriteSchema>>,
     next_handle: AtomicU32,
@@ -304,7 +304,7 @@ impl PgClient {
             inner,
             results: Mutex::new(HashMap::new()),
             transactions: Mutex::new(HashMap::new()),
-            staged: Mutex::new(HashMap::new()),
+            staged: Default::default(),
             write_tables: Mutex::new(HashMap::new()),
             next_handle: AtomicU32::new(0),
         })
@@ -637,10 +637,9 @@ pub fn pg_set_by_unnest_query(
     )
 }
 
-/// A batch on its way in, held between `beginStage` and the statement that
-/// binds it.
-struct StagedBatch {
-    arena: Arena,
+/// What a staged batch is written with: its columns' names, which sealing
+/// checks, and its table's insert.
+struct StagedTable {
     names: Vec<String>,
     insert: Arc<str>,
 }
@@ -728,23 +727,9 @@ impl PgClient {
             )
         };
 
-        let mut arena = Arena::new(rows as usize, &kinds).map_err(to_napi)?;
-        let buffers = columnar::js::expose(env, &mut arena)?;
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        // Storing the arena moves its `Vec` headers, not the allocations the
-        // buffers above point into, so the lending survives the move.
-        self.staged.lock().unwrap().insert(
-            handle,
-            StagedBatch {
-                arena,
-                names,
-                insert,
-            },
-        );
-        let mut result = Object::new(env)?;
-        result.set("handle", handle)?;
-        result.set("buffers", buffers)?;
-        Ok(result)
+        self.staged
+            .begin(env, handle, rows, &kinds, StagedTable { names, insert })
     }
 
     #[napi]
@@ -756,22 +741,13 @@ impl PgClient {
         needed: u32,
         stale: ArrayBuffer,
     ) -> napi::Result<ArrayBuffer<'env>> {
-        let mut staged = self.staged.lock().unwrap();
-        let staged = staged
-            .get_mut(&handle)
-            .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
-        columnar::js::grow(env, &mut staged.arena, column, needed, stale)
+        self.staged.grow(env, handle, column, needed, stale)
     }
 
     #[napi]
     pub fn commit_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
-        let mut staged = self.staged.lock().unwrap();
-        Self::detach_or_abandon(&mut staged, handle, buffers)?;
-        let staged = staged
-            .get_mut(&handle)
-            .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
-        let names = staged.names.clone();
-        staged.arena.seal(&names).map_err(to_napi)
+        self.staged
+            .commit(handle, buffers, |table| table.names.clone())
     }
 
     /// Gives up on a batch. Whatever sent the caller here is the error worth
@@ -779,12 +755,7 @@ impl PgClient {
     /// reported over the top of it.
     #[napi]
     pub fn abort_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
-        let mut staged = self.staged.lock().unwrap();
-        if !staged.contains_key(&handle) {
-            return Ok(());
-        }
-        let _ = Self::detach_or_abandon(&mut staged, handle, buffers);
-        staged.remove(&handle);
+        let _ = self.staged.abort(handle, buffers);
         Ok(())
     }
 
@@ -792,35 +763,13 @@ impl PgClient {
     /// either way.
     #[napi]
     pub async fn execute_staged(&self, transaction: Option<u32>, handle: u32) -> napi::Result<()> {
-        let staged =
-            self.staged.lock().unwrap().remove(&handle).ok_or_else(|| {
-                napi::Error::from_reason(format!("Unknown staged batch {handle}"))
-            })?;
+        let staged = self
+            .staged
+            .take(handle)
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
         let params = write::unnest_params(&staged.arena).map_err(to_napi)?;
-        self.run(transaction, &staged.insert, &params)
+        self.run(transaction, &staged.meta.insert, &params)
             .await
             .map(|_| ())
-    }
-}
-
-impl PgClient {
-    /// Detaches a staged batch's buffers. A batch that cannot hand them all back
-    /// still has a JavaScript view into its memory, so that allocation is
-    /// abandoned rather than freed.
-    fn detach_or_abandon(
-        staged: &mut HashMap<u32, StagedBatch>,
-        handle: u32,
-        buffers: Vec<ArrayBuffer>,
-    ) -> napi::Result<()> {
-        let Some(entry) = staged.get_mut(&handle) else {
-            return Err(napi::Error::from_reason(format!(
-                "Unknown staged batch {handle}"
-            )));
-        };
-        let detached = columnar::js::detach_all(&mut entry.arena, buffers);
-        if detached.is_err() {
-            std::mem::forget(staged.remove(&handle));
-        }
-        detached
     }
 }

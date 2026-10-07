@@ -17,7 +17,7 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, Status};
 use napi_derive::napi;
 
-use crate::columnar::{self, Arena, ColumnKind};
+use crate::columnar::{self, ColumnKind};
 use crate::config_parsing::system_config::ChainIdMode;
 use ch_type::{ChType, FieldSpec};
 use ddl::ResumeBounds;
@@ -220,10 +220,7 @@ struct TableSchema {
     insert_query: String,
 }
 
-struct Staged {
-    schema: Arc<TableSchema>,
-    arena: Arena,
-}
+type Staged = columnar::js::Staged<Arc<TableSchema>>;
 
 #[napi]
 pub struct ClickHouseSink {
@@ -233,7 +230,7 @@ pub struct ClickHouseSink {
     password: String,
     database: String,
     tables: Mutex<HashMap<u32, Arc<TableSchema>>>,
-    staged: Mutex<HashMap<u32, Staged>>,
+    staged: columnar::js::Stages<Arc<TableSchema>>,
     next_handle: AtomicU32,
     tuning: Tuning,
     warn: WarningSink,
@@ -336,7 +333,7 @@ impl ClickHouseSink {
             password: options.password,
             database: options.database,
             tables: Mutex::new(HashMap::new()),
-            staged: Mutex::new(HashMap::new()),
+            staged: Default::default(),
             next_handle: AtomicU32::new(1),
             tuning,
             warn,
@@ -396,19 +393,8 @@ impl ClickHouseSink {
     ) -> napi::Result<Object<'env>> {
         let schema = self.table_schema(table).map_err(to_napi)?;
         let kinds: Vec<ColumnKind> = schema.columns.iter().map(|column| column.kind).collect();
-        let mut arena = Arena::new(rows as usize, &kinds).map_err(to_napi)?;
-        let buffers = columnar::js::expose(env, &mut arena)?;
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        // Storing the arena moves its `Vec` headers, not the allocations the
-        // buffers above point into, so the lending survives the move.
-        self.staged
-            .lock()
-            .unwrap()
-            .insert(handle, Staged { schema, arena });
-        let mut result = Object::new(env)?;
-        result.set("handle", handle)?;
-        result.set("buffers", buffers)?;
-        Ok(result)
+        self.staged.begin(env, handle, rows, &kinds, schema)
     }
 
     /// Replaces a variable-width column's payload with a larger one holding the
@@ -423,29 +409,20 @@ impl ClickHouseSink {
         needed: u32,
         stale: ArrayBuffer,
     ) -> napi::Result<ArrayBuffer<'env>> {
-        let mut staged = self.staged.lock().unwrap();
-        let staged = staged
-            .get_mut(&handle)
-            .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
-        columnar::js::grow(env, &mut staged.arena, column, needed, stale)
+        self.staged.grow(env, handle, column, needed, stale)
     }
 
     /// Ends the filling phase: every buffer is detached, so a view JavaScript
     /// kept throws rather than writing into memory Rust is about to read.
     #[napi]
     pub fn commit_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
-        let mut staged = self.staged.lock().unwrap();
-        Self::detach_or_abandon(&mut staged, handle, buffers)?;
-        let staged = staged
-            .get_mut(&handle)
-            .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
-        let names: Vec<String> = staged
-            .schema
-            .columns
-            .iter()
-            .map(|column| column.name.clone())
-            .collect();
-        staged.arena.seal(&names).map_err(to_napi)
+        self.staged.commit(handle, buffers, |schema| {
+            schema
+                .columns
+                .iter()
+                .map(|column| column.name.clone())
+                .collect()
+        })
     }
 
     /// Drops a batch that threw while it was being filled. The buffers are
@@ -453,22 +430,13 @@ impl ClickHouseSink {
     /// from outliving the bytes it points at on the error path.
     #[napi]
     pub fn abort_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
-        let mut staged = self.staged.lock().unwrap();
-        if !staged.contains_key(&handle) {
-            return Ok(());
-        }
-        // An abort is already carrying an error out, and that error is the one
-        // worth reading. A batch that cannot be handed back has been abandoned
-        // and is safe either way, so say so rather than throwing over it.
-        if let Err(failed) = Self::detach_or_abandon(&mut staged, handle, buffers) {
+        if let Some(failed) = self.staged.abort(handle, buffers) {
             (self.warn)(&format!(
                 "A staged ClickHouse batch could not be handed back and its memory was abandoned: \
                  {}",
                 failed.reason
             ));
-            return Ok(());
         }
-        staged.remove(&handle);
         Ok(())
     }
 
@@ -497,9 +465,8 @@ impl ClickHouseSink {
     /// by `commitStage`, so there is nothing left pointing at the arenas.
     #[napi]
     pub fn discard(&self, handles: Vec<u32>) {
-        let mut staged = self.staged.lock().unwrap();
         for handle in handles {
-            staged.remove(&handle);
+            self.staged.take(handle);
         }
     }
 }
@@ -960,42 +927,16 @@ impl ClickHouseSink {
             .with_context(|| format!("Unknown ClickHouse table handle {handle}"))
     }
 
-    /// Detaches a staged batch's buffers. A batch that cannot hand them all back
-    /// still has a JavaScript view into its arena, and that allocation has to
-    /// outlive the view — so it leaves the registry without being freed. The
-    /// handle stops working, which is what makes the leak one batch rather than
-    /// a write into memory that has been handed to something else.
-    fn detach_or_abandon(
-        staged: &mut HashMap<u32, Staged>,
-        handle: u32,
-        buffers: Vec<ArrayBuffer>,
-    ) -> napi::Result<()> {
-        let Some(entry) = staged.get_mut(&handle) else {
-            return Err(napi::Error::from_reason(format!(
-                "Unknown staged batch {handle}"
-            )));
-        };
-        let detached = columnar::js::detach_all(&mut entry.arena, buffers);
-        if detached.is_err() {
-            std::mem::forget(staged.remove(&handle));
-        }
-        detached
-    }
-
     fn take_staged(
         &self,
         entities: &[u32],
         checkpoints: Option<u32>,
     ) -> Result<(Vec<Staged>, Option<Staged>)> {
-        let (entities, checkpoints) = {
-            let mut staged = self.staged.lock().unwrap();
-            let entities: Vec<(u32, Option<Staged>)> = entities
-                .iter()
-                .map(|&handle| (handle, staged.remove(&handle)))
-                .collect();
-            let checkpoints = checkpoints.map(|handle| (handle, staged.remove(&handle)));
-            (entities, checkpoints)
-        };
+        let entities: Vec<(u32, Option<Staged>)> = entities
+            .iter()
+            .map(|&handle| (handle, self.staged.take(handle)))
+            .collect();
+        let checkpoints = checkpoints.map(|handle| (handle, self.staged.take(handle)));
         let found = |(handle, staged): (u32, Option<Staged>)| {
             staged.with_context(|| format!("Unknown staged ClickHouse batch {handle}"))
         };
@@ -1056,7 +997,10 @@ impl ClickHouseSink {
     }
 
     async fn insert_staged(&self, staged: Staged) -> Result<()> {
-        let Staged { schema, arena } = staged;
+        let Staged {
+            meta: schema,
+            arena,
+        } = staged;
         if !arena.is_sealed() {
             bail!(
                 "a batch staged for ClickHouse table `{}` was never committed",
@@ -1346,6 +1290,7 @@ fn clickhouse_error_code(body: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::columnar::Arena;
     use pretty_assertions::assert_eq;
 
     /// Stages a single-text-column batch without an isolate, which is what
@@ -1364,10 +1309,13 @@ mod tests {
         }
         arena.seal_unlent(&names).unwrap();
         let handle = sink.next_handle.fetch_add(1, Ordering::Relaxed);
-        sink.staged
-            .lock()
-            .unwrap()
-            .insert(handle, Staged { schema, arena });
+        sink.staged.insert(
+            handle,
+            Staged {
+                meta: schema,
+                arena,
+            },
+        );
         handle
     }
 
@@ -2235,7 +2183,7 @@ mod tests {
         assert_eq!(
             (
                 err.reason.contains("Unknown staged ClickHouse batch"),
-                sink.staged.lock().unwrap().len()
+                sink.staged.count()
             ),
             (true, 0),
             "expected an unknown-handle error, got: {}",
