@@ -461,11 +461,9 @@ let makeFilterCondition = (
       | "_eq" if queryField.isChainId =>
         `${column} = ${fieldValue->ChainId.normalizeOrThrow->ChainId.toString}`
       // Postgres arrays are rectangular, so candidates for a list column can't
-      // be bound as one array unless they all have the same length, and
-      // postgres.js can't bind a boolean array at all
-      // (https://github.com/porsager/postgres/issues/471). One equality per
-      // candidate has neither problem.
-      | "_in" if queryField.isArray || queryField.fieldType === Boolean =>
+      // be bound as one array unless they all have the same length. One
+      // equality per candidate doesn't care.
+      | "_in" if queryField.isArray =>
         switch fieldValue->EntityFilter.asArray {
         | [] => "FALSE"
         | candidates =>

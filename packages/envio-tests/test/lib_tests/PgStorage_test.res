@@ -747,10 +747,10 @@ FROM "public"."envio_chains";`
 
     // Candidates for a list column go out one equality each: Postgres arrays
     // are rectangular, so a single bound array can't hold candidates of
-    // different lengths. A boolean column takes the same route, because
-    // postgres.js can't bind a boolean array. An empty list matches nothing.
+    // different lengths. An empty list matches nothing, and a boolean column
+    // binds its candidates as one array like any other scalar.
     Async.it(
-      "Expands an _in over a list or boolean column into one equality per candidate",
+      "Expands an _in over a list column into one equality per candidate",
       async t => {
         let listTable = Table.mkTable(
           "lists",
@@ -788,10 +788,7 @@ FROM "public"."envio_chains";`
             ],
           ),
           ("FALSE", []),
-          (
-            `("flag" = $1 OR "flag" = $2)`,
-            [true->(Utils.magic: bool => unknown), false->(Utils.magic: bool => unknown)],
-          ),
+          (`"flag" = ANY($1)`, [[true, false]->(Utils.magic: array<bool> => unknown)]),
         ))
       },
     )
