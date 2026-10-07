@@ -574,7 +574,7 @@ let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~it
 // Constants for chunking
 let maxItemsPerQuery = 500
 
-// The wire protocol counts a statement's parameters in a signed 16-bit field.
+// The wire protocol counts a statement's parameters in an unsigned 16-bit field.
 let maxParamsPerQuery = 65535
 
 // How many rows the statement that binds a parameter per cell can take at once.
@@ -2325,10 +2325,8 @@ let make = (
           ),
         )
       }),
-      sql
-      ->Sql.query(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
-      ->(
-        Utils.magic: promise<array<unknown>> => promise<
+      (
+        sql->Sql.query(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema)): promise<
           array<{
             "id": string,
             "chain_id": int,

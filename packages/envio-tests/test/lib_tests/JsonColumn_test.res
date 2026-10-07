@@ -1,9 +1,8 @@
 open Vitest
 
-// A json column holds whatever a document can be, not only an object. The
-// driver this replaced serialized a parameter by the type the statement said it
-// was, so a string document reached the server quoted; rendering the parameter
-// here has only the value to go on, and a string looks like any other text.
+// A json column holds whatever a document can be, not only an object. A string
+// or boolean document has to reach the server as JSON, not as the text or
+// boolean it would otherwise render to.
 
 let field = (name, fieldType, ~fieldSchema, ~isPrimaryKey=false) =>
   Table.mkField(name, fieldType, ~fieldSchema, ~isPrimaryKey)

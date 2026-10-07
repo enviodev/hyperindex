@@ -78,7 +78,7 @@ let rec render = (value: unknown): string =>
   } else {
     switch value->typeof {
     | #string => value->(Utils.magic: unknown => string)
-    | #boolean => value === %raw(`true`) ? "t" : "f"
+    | #boolean => value->(Utils.magic: unknown => bool) ? "t" : "f"
     | #object =>
       switch value->Utils.Bytes.asUint8Array {
       | Some(bytes) => "\\x" ++ bytes->Utils.Bytes.toHex

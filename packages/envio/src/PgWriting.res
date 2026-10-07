@@ -11,7 +11,6 @@ let columns = (fields: array<Table.field>, ~kinds: array<Staging.kind>): array<S
     Staging.name: field->Table.getPgDbFieldName,
     kind: kinds->Array.getUnsafe(index),
     isNullable: field.isNullable,
-    replacer: %raw(`undefined`),
   })
 
 // Lays a batch into the arena, column by column. The values are the ones the

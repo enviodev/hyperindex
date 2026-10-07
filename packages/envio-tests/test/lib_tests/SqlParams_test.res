@@ -2,8 +2,7 @@ open Vitest
 
 // Every parameter reaches the server as text, so what a value renders to is
 // what gets stored. Among them an array of bytes, an array of bigints and a
-// bigint past `int8`, which a driver typing a parameter after its value gets
-// wrong.
+// bigint past `int8`.
 
 let bytes = (values): Uint8Array.t => values->Uint8Array.fromArray
 
@@ -51,7 +50,7 @@ let insert =
 let readBack = `SELECT * FROM params;`
 
 describe("Binding a parameter", () => {
-  Async.it("Stores the value the driver it replaces would have stored", async t => {
+  Async.it("Stores what each value renders to", async t => {
     let sql = PgStorage.makeClient()
     let rows = await sql->Sql.begin(
       async sql => {
@@ -81,9 +80,7 @@ describe("Binding a parameter", () => {
         ("blob", "bytes de00ad"),
         ("json", `json {"a":[1,2],"b":"}"}`),
         ("missing", "null"),
-        // The driver being replaced hands a NULL array element back as the
-        // four-character string "NULL"; this reads it as the absence of a
-        // value, which is what the server stored.
+        // A NULL array element reads back as null, not the string "NULL".
         ("texts", "[text a,b, null, text ]"),
         ("blobs", "[bytes 01, bytes ]"),
         ("bigs", "[text 1, text 2]"),

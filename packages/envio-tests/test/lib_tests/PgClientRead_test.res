@@ -1,11 +1,8 @@
 open Vitest
 
-// What the addon's client makes of every shape a column can take. These are
-// pinned against what the driver being replaced produced for the same queries,
-// which is what every schema downstream was written against — the two differ in
-// how they get the bytes, text out of the driver against binary decoded in Rust
-// and laid into the arena, so any disagreement is a value that would change
-// under the migration.
+// What the addon's client returns for every shape a column can take: what each
+// type's text form parses to, which is what every schema downstream is written
+// against.
 
 let client = () =>
   PgClient.make({
@@ -16,7 +13,6 @@ let client = () =>
     database: Env.Db.database,
     ssl: "false",
     maxConnections: 2,
-    applicationName: "envio-read-test",
   })
 
 // Every scalar shape a column can take, in one row.
@@ -48,7 +44,7 @@ let arrayQuery = `SELECT
   NULL::int4[] AS a_null_array`
 
 describe("Reading a result set through the arena", () => {
-  Async.it("Makes of every scalar column what the driver it replaces made of it", async t => {
+  Async.it("Reads every scalar column as its text form parses", async t => {
     let pg = client()
     let rows = await pg->PgClient.query(scalarQuery)
     await pg->PgClient.close

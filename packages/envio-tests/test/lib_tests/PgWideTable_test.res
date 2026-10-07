@@ -1,7 +1,7 @@
 open Vitest
 
 // An entity wide enough that a batch of the usual size binds more parameters
-// than the wire protocol can count. The protocol's field is a signed 16-bit
+// than the wire protocol can count. The protocol's field is an unsigned 16-bit
 // integer, so a statement stops at 65535 of them, and the insert that binds a
 // parameter per cell reaches that at 132 columns and 500 rows.
 

@@ -113,7 +113,7 @@ external bufferOver: (ArrayBuffer.t, int, int) => nodeBuffer = "from"
 // holding.
 %%private(
   let rec materialize = (reader, ~nulls, ~count): array<unknown> => {
-    let values = Array.make(~length=count, %raw(`null`))
+    let values = Array.make(~length=count, Null.null->(Utils.magic: Null.t<unknown> => unknown))
     let present = row => nulls->flagAt(row) === 0
     switch reader {
     | Floats(source) =>

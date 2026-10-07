@@ -372,30 +372,25 @@ WHERE "${(#id: field :> string)}" = $2
   }
 
   let readStoredChains = async (sql, ~pgSchema): array<ResumePlan.storedChain> => {
-    let (rows, configAddressRows) = await Promise.all2((
-      sql
-      ->Sql.query(
+    let (
+      rows: array<{
+        "id": ChainId.t,
+        "ecosystem": string,
+        "startBlock": int,
+        "endBlock": Null.t<int>,
+        "maxReorgDepth": int,
+      }>,
+      configAddressRows: array<AddressRows.row>,
+    ) = await Promise.all2((
+      sql->Sql.query(
         `SELECT "${(#id: field :> string)}" as "id",
 "${(#ecosystem: field :> string)}" as "ecosystem",
 "${(#start_block: field :> string)}" as "startBlock",
 "${(#end_block: field :> string)}" as "endBlock",
 "${(#max_reorg_depth: field :> string)}" as "maxReorgDepth"
 FROM "${pgSchema}"."${table.tableName}";`,
-      )
-      ->(
-        Utils.magic: promise<array<unknown>> => promise<
-          array<{
-            "id": ChainId.t,
-            "ecosystem": string,
-            "startBlock": int,
-            "endBlock": Null.t<int>,
-            "maxReorgDepth": int,
-          }>,
-        >
       ),
-      sql
-      ->Sql.query(EnvioAddresses.makeGetRowsQuery(~pgSchema, ~onlyConfig=true))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<AddressRows.row>>),
+      sql->Sql.query(EnvioAddresses.makeGetRowsQuery(~pgSchema, ~onlyConfig=true)),
     ))
     let configAddressesByChain = Dict.make()
     configAddressRows->Array.forEach(addressRow =>
@@ -438,13 +433,12 @@ FROM "${pgSchema}"."${table.tableName}";`
   // json_agg: a single chain's aggregate can exceed V8's max string length.
   // Grouping happens in JS instead — see getInitialState.
   let getInitialState = async (sql, ~pgSchema) => {
-    let (rawInitialStates, rawAddressRows) = await Promise.all2((
-      sql
-      ->Sql.query(makeGetInitialStateQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>),
-      sql
-      ->Sql.query(EnvioAddresses.makeGetRowsQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<AddressRows.row>>),
+    let (
+      rawInitialStates: array<rawInitialState>,
+      rawAddressRows: array<AddressRows.row>,
+    ) = await Promise.all2((
+      sql->Sql.query(makeGetInitialStateQuery(~pgSchema)),
+      sql->Sql.query(EnvioAddresses.makeGetRowsQuery(~pgSchema)),
     ))
 
     let addressRowsByChainId = rawAddressRows->AddressRows.group
@@ -889,20 +883,16 @@ WHERE t."${(#id: field :> string)}" > ${bounds.checkpointId}
 GROUP BY t."${(#chain_id: field :> string)}";`
   }
 
-  let getRollbackProgressDiff = (sql, ~pgSchema, ~floors: RollbackFloors.t) =>
-    sql
-    ->Sql.query(
+  let getRollbackProgressDiff = (sql, ~pgSchema, ~floors: RollbackFloors.t): promise<
+    array<{
+      "chain_id": ChainId.t,
+      "events_processed_diff": string,
+      "new_progress_block_number": int,
+    }>,
+  > =>
+    sql->Sql.query(
       makeGetRollbackProgressDiffQuery(~pgSchema, ~floors),
       ~params=floors.checkpointBounds->CheckpointSequence.params,
-    )
-    ->(
-      Utils.magic: promise<array<unknown>> => promise<
-        array<{
-          "chain_id": ChainId.t,
-          "events_processed_diff": string,
-          "new_progress_block_number": int,
-        }>,
-      >
     )
 }
 

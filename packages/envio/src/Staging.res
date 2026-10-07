@@ -22,7 +22,7 @@ let kindOfOrdinal = ordinal =>
 
 // The replacer closes over nothing but the column's name, so it is built once
 // with the column rather than once per column per batch.
-type column = {name: string, kind: kind, isNullable: bool, replacer: JSON.replacer}
+type column = {name: string, kind: kind, isNullable: bool, replacer?: JSON.replacer}
 
 type begun = {handle: int, buffers: array<ArrayBuffer.t>}
 
@@ -66,7 +66,7 @@ type storage =
 type builder = {
   name: string,
   isNullable: bool,
-  replacer: JSON.replacer,
+  replacer: option<JSON.replacer>,
   index: int,
   storage: storage,
   nulls: Uint8Array.t,
@@ -95,7 +95,7 @@ let begin = (arena, ~table, ~rows, ~columns: array<column>) => {
     let ends = Uint32Array.fromBuffer(take())
     {data, ends, slot, cursor: 0}
   }
-  let builders = columns->Array.mapWithIndex(({name, kind, isNullable, replacer}, index) => {
+  let builders = columns->Array.mapWithIndex(({name, kind, isNullable, ?replacer}, index) => {
     let storage = switch kind {
     | F64 => Floats(Float64Array.fromBuffer(take()))
     | U64 => Unsigned(BigUint64Array.fromBuffer(take()))
@@ -142,11 +142,11 @@ let finiteOrThrow = (number: float, ~column) =>
     )
   }
 
-let toText = (value: unknown, ~replacer) =>
+let toText = (value: unknown, ~replacer=?) =>
   switch value->typeof {
   | #string => value->asString
   | #bigint => value->stringOf
-  | _ => value->(Utils.magic: unknown => JSON.t)->JSON.stringify(~replacer)
+  | _ => value->(Utils.magic: unknown => JSON.t)->JSON.stringify(~replacer?)
   }
 
 // Copies `text` in as one byte per character, or returns -1 at the first
@@ -265,7 +265,7 @@ let toText = (value: unknown, ~replacer) =>
         value->checkedBigInt(~builder, ~min=-9223372036854775808n, ~max=9223372036854775807n),
       )
     | Text(variable) =>
-      stage->writeText(builder, variable, ~row, value->toText(~replacer=builder.replacer))
+      stage->writeText(builder, variable, ~row, value->toText(~replacer=?builder.replacer))
     | Bytes(variable) =>
       stage->writeBytes(builder, variable, ~row, value->(Utils.magic: unknown => Uint8Array.t))
     }
