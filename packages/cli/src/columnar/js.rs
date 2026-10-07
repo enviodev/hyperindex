@@ -69,10 +69,10 @@ pub fn grow<'env>(
 }
 
 /// Ends the lending phase, in whichever direction it ran: detaches every buffer
-/// JavaScript hands back, then
-/// checks that this covered all of the arena's. A buffer the caller forgot
-/// would be a live view over memory Rust is about to read and then free, so it
-/// fails instead — and the caller has to keep the arena rather than free it.
+/// JavaScript hands back, then checks that this covered all of the arena's. A
+/// buffer the caller forgot would be a live view over memory Rust is about to
+/// read and then free, so it fails instead — and the caller has to keep the
+/// arena rather than free it.
 ///
 /// Does nothing for an arena that is already detached, which is the abort after
 /// a commit that detached everything and then failed to seal. Counting those
