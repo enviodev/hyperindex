@@ -1,6 +1,6 @@
 // `ens.nameByHash` through ENSRainbow. A hash its table doesn't hold reads as
-// null, as on graph-node; a lookup service that is failing is an error envio
-// retries, not a null cached for good.
+// null, as on graph-node; a lookup service that is failing is asked again, not
+// cached as a null for good.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.5
@@ -65,6 +65,8 @@ const missing = "0x" + "01".repeat(32);
 const flaky = "0x" + "02".repeat(32);
 
 beforeAll(() => {
+  process.env.ENVIO_SUBGRAPH_RETRY_BACKOFF_MS = "20";
+  let flakyFailures = 0;
   const realFetch = g.fetch;
   g.fetch = (input: any, init: any) => {
     const url = String(input);
@@ -75,7 +77,9 @@ beforeAll(() => {
     }
     if (url.endsWith("/v1/heal/" + flaky)) {
       return Promise.resolve(
-        Response.json({ status: "error", error: "Internal server error", errorCode: 500 }, { status: 500 }),
+        flakyFailures++ < 2
+          ? Response.json({ status: "error", error: "Internal server error", errorCode: 500 }, { status: 500 })
+          : Response.json({ status: "success", label: "vitalik" }),
       );
     }
     return realFetch(input, init);
@@ -91,10 +95,10 @@ describe("ens.nameByHash", () => {
     t.expect(await indexer.Label.getAll()).toEqual([{ id: missing, name: "null" }]);
   });
 
-  it("fails on a lookup error rather than answering null", async (t) => {
-    await t
-      .expect(createTestIndexer().process({ chains: { 1: { simulate: [named(flaky)] } } }))
-      .rejects.toThrow("500");
+  it("asks a failing lookup again rather than answering null", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({ chains: { 1: { simulate: [named(flaky)] } } });
+    t.expect(await indexer.Label.getAll()).toEqual([{ id: flaky, name: "vitalik" }]);
   });
 });
 `,

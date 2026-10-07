@@ -52,7 +52,7 @@ by name. Newer than 0.0.9 is a §7 error.
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
 | Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
 | A template sharing a data source's name | graph-node keeps the two namespaces apart; envio has one, and one contract with a static address plus dynamically registered ones is the same thing — folded together, events unioned. The handlers stay apart: the data source's run for its static address, the template's for the addresses it created | ✅ |
-| Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass, which resolves host ops by suspend-and-replay of its own (§5) so a mapping can read a contract before deciding what to create | ✅ |
+| Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass, which resolves host ops by suspend-and-replay of its own (§5) so a mapping can read a contract before deciding what to create. A new address's events in the block that created it run after that block's other events and block handlers, as graph-node runs a new data source's creation-block triggers — a constructor's logs precede the factory event that announces it | ✅ |
 | File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
@@ -126,20 +126,21 @@ query and is dropped; stored, it is an error.
 | A field the schema declares that nothing has set | graph-node's store returns every column, envio's returns what was written — the shim answers `null` rather than refusing, so a mapping's null check reads the same |
 | `Entity.load`, `store.get`, derived loaders | sync try-read; miss → suspend (§5) |
 | `getInBlock` | never suspends, and checkpoint-filtered: the in-memory table spans the whole batch, so a hit counts only if its change record's checkpoint falls in the current block — everything else (including entities written in an *earlier* block of the same batch) = `null` |
-| `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary |
+| `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary. `BigDecimal` arithmetic reproduces graph-node's digit for digit: every value is normalized to 34 significant digits through the `bigdecimal` 0.1.2 rounding graph-node pins (positives half up, negatives truncated), so residues match; checked against vectors that crate computes |
 | `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` (log's index within its tx — envio has no per-tx log index) → §7 error on access |
-| `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it throws as the handler error (envio retries), so a flaky RPC never fabricates `reverted` data |
+| `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it is asked again (below), so a flaky RPC never fabricates `reverted` data |
 | `ethereum.Value` | its own class, tagged with graph-ts' ABI `ValueKind` from the ABI type (event inputs, call outputs, `ethereum.decode`'s type string); accessors refuse another kind exactly as graph-ts' asserts do |
 | `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
-| RPC traffic | contract calls, `getBalance`/`hasCode` and the block-timestamp fallback share one client, which keeps at most 16 requests in flight and queues the rest — preload runs a batch's handlers at once, and unbounded that was one connection per call |
+| RPC traffic | contract calls, `getBalance`/`hasCode` and the block-timestamp fallback share one client, which keeps at most 16 requests in flight and queues the rest — preload runs a batch's handlers at once, and unbounded that was one connection per call. A slot is held at most the request deadline, so requests that never settle can't stall every call behind them |
+| Transient host failures | envio exits on a handler error, it has no batch retry, so every host op (calls, balances, timestamps, IPFS, Arweave, ENS) gets a per-attempt deadline and is asked again with exponential backoff on a timeout, a network error, a 429/5xx or a JSON-RPC rate limit — as graph-node does — and only a deterministic answer (a value, a revert, a definite miss) reaches the mapping. Any other failure, such as a 401, still stops the run |
 | Block handler's `block.timestamp` | internal `getBlockTimestamp` effect, `cache: false`, suspend: calls are microtask-collected into one HyperSync range query (`fieldSelection: {block: [Number, Timestamp]}`) — the pattern proven in [all-contracts-indexer](https://github.com/enviodev/all-contracts-indexer/blob/main/src/handlers/onBlock.ts). Uncached on purpose: a block's timestamp is read exactly once, by that block's own handler invocation, so a persisted row per indexed block would be pure bloat with no reuse. In-memory memoization (which holds even with `cache: false`, §5) still covers what the bridge needs — replay rounds and the preload→execute transition reuse the fetched value |
 | `log.*` | `context.log`, buffered per replay round, flushed on success; `log.critical` throws (halts, as graph-node) |
 | `dataSource.create/createWithContext` | captured in register pass (below) |
 | `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup |
 | `dataSource.context()` | persisted in an internal entity table |
-| `ipfs.cat/map`, `arweave.*` | effect + gateway, `cache: true`, suspend |
-| `ens.nameByHash` | effect against the public ENSRainbow API, `cache: true`; `null` when its table lacks the hash, as graph-node's does; a failing lookup fails the batch for a retry rather than caching a miss |
+| `ipfs.cat/map`, `arweave.*` | effect + gateway, `cache: true`, suspend; a 404 is the cached `null`, a failing gateway is asked again |
+| `ens.nameByHash` | effect against the public ENSRainbow API, `cache: true`; `null` when its table lacks the hash (its 404), as graph-node's does; a failing lookup is asked again rather than cached as a miss |
 
 **Register pass.** `dataSource.create` must reach envio's `contractRegister`,
 which runs at fetch time — before any entities exist. For each
@@ -267,6 +268,14 @@ classes call `DataSource.create`. Consequences:
   - `--skip-migrations`: migrations rewrite `subgraph.yaml` in place, and
     envio only reads the manifest.
 
+  When the project's `codegen` script runs `graph codegen` among other
+  steps — Lido's `graph codegen && node genParserData.js` writes
+  `generated/parserData.ts` — every step runs in order: `graph codegen`
+  in-process as above, the rest in a shell with the project's
+  `node_modules/.bin` on `PATH`, as the package manager would. graph-cli
+  before 0.93 ships CommonJS, whose command class an ES import finds one
+  level down; both shapes load.
+
   `envio dev`'s `graph build` type check runs the same way. The failure modes
   get explicit messages:
 
@@ -322,6 +331,8 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 |---|---|---|
 | HyperSync token | `ENVIO_API_TOKEN` (process env or `.env`, loaded in subgraph mode) | required for the default HyperSync source; missing → setup error at startup |
 | RPC for sync fallback + contract calls | `ENVIO_SUBGRAPH_RPC` | optional for sync (HyperSync is primary), required for contract calls — HyperRPC doesn't support `eth_call`. Required at startup when the manifest declares `eth_calls` (1.2.0); otherwise lazily, at the first call |
+| Host op request deadline | `ENVIO_SUBGRAPH_REQUEST_TIMEOUT_MS` | optional, default 30000: how long one attempt of a contract call, balance, block timestamp, IPFS/Arweave fetch or ENS lookup may take before it's given up on and asked again |
+| Host op retry backoff | `ENVIO_SUBGRAPH_RETRY_BACKOFF_MS` | optional, default 500: the first wait before asking again after a transient failure, doubling up to 30 s |
 
 - **`ENVIO_SUBGRAPH_RPC` value = envio's rpc config**, not just a URL:
   `<url>` | `{...}` (JSON object matching the config `rpc` entry schema —
@@ -508,7 +519,7 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
    the generated code sits on: `Entity`/`Value`/`TypedMap` + `store` (→ ALS
    scope + `getSync`/`set`/`deleteUnsafe`/`getWhereSync`),
    `ethereum.SmartContract.call/tryCall` (→ effects; revert →
-   `{reverted: true}`, transport failure → handler error, §4),
+   `{reverted: true}`, transport failure → asked again, §4),
    `DataSourceTemplate.create` (→ register capture), `ethereum.Event` (→
    envio event conversion; `receipt.logs` getter → §7 error), the
    `getBlockTimestamp` effect for block handlers (§4), and `Timestamp`
@@ -579,6 +590,6 @@ vitest run` (A, C), `cargo test -p envio-cli` (B), scenario CI job (D).
    sync` rejected by existing field validation, `for: fallback` allowed
    with documented degradation (§6b).
 9. `try_` calls: only contract reverts produce `{reverted: true}`;
-   transport failures throw as the handler error.
+   transport failures are asked again with backoff until they answer.
 10. Topic filters on dynamic-typed indexed params: §7 unsupported (topics
     hold keccak hashes, unrecoverable to the values envio filters on).

@@ -9,9 +9,18 @@ const { packageDir, command, argv } = workerData;
 
 let ok = true;
 try {
-  const { default: Command } = await import(
-    pathToFileURL(path.join(packageDir, "dist", "commands", `${command}.js`)).href
+  const commandFile = path.join(packageDir, "dist", "commands", `${command}.js`);
+  const exported = await import(pathToFileURL(commandFile).href);
+  // graph-cli before 0.93 is CommonJS compiled from TypeScript: an ES import
+  // hands back `module.exports`, so the class is its `default`, one level down.
+  const Command = [exported.default, exported.default?.default].find(
+    (candidate) => typeof candidate?.run === "function",
   );
+  if (Command === undefined) {
+    throw new Error(
+      `Envio Subgraph couldn't find a runnable \`graph ${command}\` in ${commandFile}`,
+    );
+  }
   await Command.run(argv, packageDir);
   // A generation failure is reported through the exit code, not a throw.
   ok = process.exitCode === undefined || process.exitCode === 0;

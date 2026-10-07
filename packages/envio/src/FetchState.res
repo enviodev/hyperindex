@@ -865,6 +865,11 @@ type t = {
   // switched to client-side filtering. None disables the switch, leaving every
   // contract filtered server-side.
   clientFilterAddressThreshold: option<int>,
+  // Subgraph mode only: the block each dynamically registered address was
+  // registered in, keyed by contract and lowercase address, until fetching
+  // passes it. Its events in that block run after the rest of the block, as
+  // graph-node runs a new data source's creation-block triggers.
+  creationBlocks: option<dict<int>>,
 }
 
 // The latest block whose items are all in the buffer: the lowest partition
@@ -972,8 +977,8 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   if ba != bb {
     ba < bb ? -1 : 1
   } else {
-    let ka = a->Internal.getItemKind
-    let kb = b->Internal.getItemKind
+    let ka = a->Internal.getItemRunsAfterBlock ? 2 : a->Internal.getItemKind
+    let kb = b->Internal.getItemRunsAfterBlock ? 2 : b->Internal.getItemKind
     if ka !== kb {
       ka < kb ? -1 : 1
     } else {
@@ -1189,6 +1194,7 @@ let updateInternal = (
     },
     firstEventBlock: fetchState.firstEventBlock,
     clientFilterAddressThreshold: fetchState.clientFilterAddressThreshold,
+    creationBlocks: fetchState.creationBlocks,
   }
 
   updatedFetchState
@@ -1713,6 +1719,34 @@ OptimizedPartitions.t => {
   )
 }
 
+let creationBlockKey = (~contractName, ~address: Address.t) =>
+  `${contractName}:${address->Address.toString->String.toLowerCase}`
+
+// Marks the response's events that were logged in the block their address was
+// registered in, once the registrations fetching has already passed are
+// dropped: those can't receive another item.
+let markCreationBlockEvents = (creationBlocks: dict<int>, ~newItems, ~fetchedThrough) => {
+  creationBlocks
+  ->Dict.toArray
+  ->Array.forEach(((key, block)) =>
+    if block < fetchedThrough {
+      creationBlocks->Utils.Dict.deleteInPlace(key)
+    }
+  )
+  newItems->Array.forEach(item =>
+    if item->Internal.getItemKind === 0 {
+      let eventItem = item->Internal.castUnsafeEventItem
+      let key = creationBlockKey(
+        ~contractName=eventItem.onEventRegistration.eventConfig.contractName,
+        ~address=eventItem.payload->Internal.getPayloadSrcAddress,
+      )
+      if creationBlocks->Utils.Dict.dangerouslyGetNonOption(key) === Some(eventItem.blockNumber) {
+        item->Internal.markItemRunsAfterBlock(true)
+      }
+    }
+  )
+}
+
 let registerDynamicContracts = (
   fetchState: t,
   ~addressStore: AddressStore.t,
@@ -1750,6 +1784,14 @@ let registerDynamicContracts = (
     let verdict = verdicts->Array.getUnsafe(idx)
     switch verdict {
     | Added({fetchable: true}) =>
+      switch fetchState.creationBlocks {
+      | Some(creationBlocks) =>
+        creationBlocks->Dict.set(
+          creationBlockKey(~contractName=registration.contractName, ~address=registration.address),
+          registration.registrationBlock,
+        )
+      | None => ()
+      }
       if !(registeringContractNames->Array.includes(registration.contractName)) {
         registeringContractNames->Array.push(registration.contractName)->ignore
       }
@@ -1930,7 +1972,16 @@ let handleQueryResult = (fetchState: t, ~query: query, ~latestFetchedBlock: int,
     ~mutItems=?{
       switch newItems {
       | [] => None
-      | _ => Some(fetchState.buffer->mergeIntoBuffer(newItems))
+      | _ =>
+        switch fetchState.creationBlocks {
+        | Some(creationBlocks) =>
+          creationBlocks->markCreationBlockEvents(
+            ~newItems,
+            ~fetchedThrough=fetchState->bufferBlockNumber,
+          )
+        | None => ()
+        }
+        Some(fetchState.buffer->mergeIntoBuffer(newItems))
       }
     },
   )
@@ -2638,6 +2689,7 @@ let make = (
   ~firstEventBlock=None,
   ~clientFilterAddressThreshold=None,
   ~isResumed=false,
+  ~deferCreationBlockEvents=false,
 ): t => {
   let latestFetchedBlock = progressBlockNumber
 
@@ -2816,6 +2868,7 @@ let make = (
     buffer,
     firstEventBlock,
     clientFilterAddressThreshold,
+    creationBlocks: deferCreationBlockEvents ? Some(Dict.make()) : None,
   }
 
   fetchState

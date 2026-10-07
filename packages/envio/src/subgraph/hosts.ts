@@ -10,6 +10,7 @@ import * as Sury from "rescript-schema";
 import { createEffect } from "../Envio.res.mjs";
 import { configureBlockTimestamps, requestBlockTimestamp } from "./blocks.ts";
 import { missingRpcMessage } from "./errors.ts";
+import { HttpStatusError, untilAnswered } from "./transient.ts";
 
 const IPFS_GATEWAY = "https://ipfs.io/ipfs/";
 const ARWEAVE_GATEWAY = "https://arweave.net/";
@@ -18,24 +19,22 @@ const ENS_RAINBOW = "https://api.ensrainbow.io/v1/heal/";
 
 const nullableString = Sury.union([Sury.string, null]);
 
-/** A stalled gateway would hold the whole batch, which waits on the mapping. */
-const GATEWAY_TIMEOUT_MS = 30_000;
-
 /**
- * Only "the gateway doesn't have it" is an answer, and a cached one; anything
- * else — a timeout, a 5xx, a rate limit — throws, so envio retries the batch
- * instead of caching a null for good.
+ * Only "the gateway doesn't have it" is an answer, and a cached one; a timeout,
+ * a 5xx or a rate limit is asked again rather than cached as a null for good.
  */
-async function fetchBase64(url: string): Promise<string | null> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS) });
-  if (response.status === 404) {
-    return null;
-  }
-  if (!response.ok) {
-    throw new Error(`Envio Subgraph's fetch of ${url} failed: ${response.status} ${response.statusText}`);
-  }
-  const buffer = new Uint8Array(await response.arrayBuffer());
-  return Buffer.from(buffer).toString("base64");
+function fetchBase64(url: string): Promise<string | null> {
+  return untilAnswered(`the fetch of ${url}`, async (signal) => {
+    const response = await fetch(url, { signal });
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      throw new HttpStatusError(url, response.status, response.statusText);
+    }
+    const buffer = new Uint8Array(await response.arrayBuffer());
+    return Buffer.from(buffer).toString("base64");
+  });
 }
 
 export type HostEffects = ReturnType<typeof makeHostEffects>;
@@ -85,15 +84,17 @@ export function makeHostEffects(rpcUrls: string[]) {
     },
     async ({ input }: { input: string }) => {
       const url = ENS_RAINBOW + input;
-      const response = await fetch(url, { signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS) });
-      if (response.status === 404 || response.status === 400) {
-        return null;
-      }
-      if (!response.ok) {
-        throw new Error(`Envio Subgraph's lookup of ${url} failed: ${response.status} ${response.statusText}`);
-      }
-      const body = (await response.json()) as { label?: string };
-      return body.label ?? null;
+      return untilAnswered(`the lookup of ${url}`, async (signal) => {
+        const response = await fetch(url, { signal });
+        if (response.status === 404 || response.status === 400) {
+          return null;
+        }
+        if (!response.ok) {
+          throw new HttpStatusError(url, response.status, response.statusText);
+        }
+        const body = (await response.json()) as { label?: string };
+        return body.label ?? null;
+      });
     },
   );
 
@@ -108,10 +109,10 @@ export function makeHostEffects(rpcUrls: string[]) {
     },
     async ({ input }: { input: string }) => {
       const { address, blockNumber } = JSON.parse(input);
-      const balance = await clientOrThrow("ethereum.getBalance").getBalance({
-        address,
-        blockNumber: BigInt(blockNumber),
-      });
+      const client = clientOrThrow("ethereum.getBalance");
+      const balance = await untilAnswered(`the balance of ${address} at block ${blockNumber}`, () =>
+        client.getBalance({ address, blockNumber: BigInt(blockNumber) }),
+      );
       return balance.toString();
     },
   );
@@ -127,10 +128,10 @@ export function makeHostEffects(rpcUrls: string[]) {
     },
     async ({ input }: { input: string }) => {
       const { address, blockNumber } = JSON.parse(input);
-      const code = await clientOrThrow("ethereum.hasCode").getCode({
-        address,
-        blockNumber: BigInt(blockNumber),
-      });
+      const client = clientOrThrow("ethereum.hasCode");
+      const code = await untilAnswered(`the code of ${address} at block ${blockNumber}`, () =>
+        client.getCode({ address, blockNumber: BigInt(blockNumber) }),
+      );
       return code !== undefined && code !== "0x";
     },
   );

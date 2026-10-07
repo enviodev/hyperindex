@@ -263,6 +263,7 @@ let makeInternal = (
     ),
     ~onBlockRegistrations,
     ~firstEventBlock,
+    ~deferCreationBlockEvents=config.subgraph->Option.isSome,
     // Fuel and SVM route through the address store like EVM does, so the
     // client-side path works for them - but their address counts are nowhere
     // near the threshold, so switching would only trade a server-side filter

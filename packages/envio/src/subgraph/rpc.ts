@@ -10,10 +10,16 @@
  */
 
 import { createPublicClient, fallback, http, type Transport } from "viem";
+import { requestTimeoutMs, withDeadline } from "./transient.ts";
 
 const MAX_IN_FLIGHT = 16;
 
-/** Runs at most `MAX_IN_FLIGHT` requests at once, queueing the rest. */
+/**
+ * Runs at most `MAX_IN_FLIGHT` requests at once, queueing the rest. A slot is
+ * held at most the request deadline: one that never settles would otherwise
+ * keep it for good, and a handful of those stall every call behind them with
+ * no connection doing anything.
+ */
 function gate() {
   let inFlight = 0;
   const queued: (() => void)[] = [];
@@ -22,7 +28,7 @@ function gate() {
     // A finishing request hands its slot straight over.
     else await new Promise<void>((resolve) => queued.push(resolve));
     try {
-      return await request();
+      return await withDeadline("The RPC request", request);
     } finally {
       const next = queued.shift();
       if (next) next();
@@ -50,9 +56,14 @@ export function rpcClient(rpcUrls: string[]) {
   let client = clients.get(key);
   if (!client) {
     client = createPublicClient({
-      // Retrying is envio's job: a failed read becomes a handler error and
-      // the batch is retried with the effect's dedup still in place.
-      transport: boundedTransport(fallback(rpcUrls.map((url) => http(url, { retryCount: 0 })))),
+      // Retrying is `untilAnswered`'s job, with a backoff that outlasts a rate
+      // limit; viem's own would give up within a second.
+      transport: boundedTransport(
+        fallback(
+          rpcUrls.map((url) => http(url, { retryCount: 0, timeout: requestTimeoutMs() })),
+          { retryCount: 0 },
+        ),
+      ),
     });
     clients.set(key, client);
   }

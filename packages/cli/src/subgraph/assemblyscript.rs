@@ -103,6 +103,7 @@ pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
         return Err(describe(path, source, parsed.diagnostics.errors()));
     }
     let mut program = parsed.program;
+    drop_reimported_names(&mut program);
 
     let mut rewrite = Rewrite {
         ast: AstBuilder::new(&allocator),
@@ -333,6 +334,25 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
     }
 }
 
+/// AssemblyScript accepts a name imported more than once — mappings import the
+/// same generated event class from two contracts' bindings — but a JavaScript
+/// module can't bind it twice. The first import keeps the name; a later one
+/// still loads its module.
+fn drop_reimported_names(program: &mut Program<'_>) {
+    let mut bound = HashSet::new();
+    for statement in program.body.iter_mut() {
+        let Statement::ImportDeclaration(import) = statement else {
+            continue;
+        };
+        if let Some(specifiers) = import.specifiers.as_mut() {
+            specifiers.retain(|specifier| bound.insert(specifier.local().name.to_string()));
+            if specifiers.is_empty() {
+                import.specifiers = None;
+            }
+        }
+    }
+}
+
 /// Module-level names a `changetype` target can refer to at runtime.
 fn value_bindings(program: &Program<'_>) -> HashSet<String> {
     let mut names = HashSet::new();
@@ -429,6 +449,22 @@ mod tests {
 \t}
 \treturn __envio_op.rem(bucket, 7);
 }
+"
+        );
+    }
+
+    // AssemblyScript accepts a name imported twice; a JavaScript module that
+    // declares the binding twice doesn't load. The first import wins.
+    #[test]
+    fn drops_a_name_imported_again() {
+        assert_eq!(
+            js("import { Farmed } from \"./a\";
+import { Farmed } from \"./b\";
+export function handleFarmed(event: Farmed): void {}"),
+            "import { Farmed } from \"./a\";
+import \"./b\";
+export function handleFarmed(event) {}
+export const __envio_event_classes = { handleFarmed: Farmed };
 "
         );
     }

@@ -11,6 +11,7 @@
  */
 
 import BigNumber from "bignumber.js";
+import * as GraphNodeDecimal from "./graph-node-decimal.ts";
 import { keccak256 as viemKeccak256, toHex, hexToBytes, decodeAbiParameters, parseAbiParameters } from "viem";
 import { currentScope } from "./scope.ts";
 import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-enums.ts";
@@ -367,57 +368,54 @@ class BigInt_ extends Uint8Array {
 
 export { BigInt_ as BigInt };
 
-/** Significant digits graph-node keeps in a `BigDecimal`. */
-const BIG_DECIMAL_DIGITS = 34;
-
-const DivisionBigNumber = BigNumber.clone({ DECIMAL_PLACES: BIG_DECIMAL_DIGITS * 3 });
-
+/**
+ * Every value is held as graph-node holds it: normalized to 34 significant
+ * digits by `graph-node-decimal`, on construction and after every operation.
+ * `value` is the same number for envio's store and comparisons.
+ */
 export class BigDecimal {
+  readonly decimal: GraphNodeDecimal.Decimal;
   readonly value: BigNumber;
 
-  constructor(value: BigNumber | BigInt_ | string | number) {
-    if (value instanceof BigNumber) {
-      this.value = value;
-    } else if (value instanceof BigInt_) {
-      this.value = new BigNumber(value.toString());
-    } else {
-      this.value = new BigNumber(value as any);
-    }
+  constructor(value: GraphNodeDecimal.Decimal | BigNumber | BigInt_ | string | number) {
+    this.decimal =
+      value instanceof BigInt_
+        ? GraphNodeDecimal.fromInteger(value.value)
+        : value instanceof BigNumber
+          ? GraphNodeDecimal.parse(value.toFixed())
+          : typeof value === "object"
+            ? GraphNodeDecimal.normalize(value)
+            : GraphNodeDecimal.parse(String(value));
+    this.value = new BigNumber(GraphNodeDecimal.format(this.decimal));
   }
 
   static fromString(value: string): BigDecimal {
-    return new BigDecimal(new BigNumber(value));
+    return new BigDecimal(value);
   }
   static zero(): BigDecimal {
-    return new BigDecimal(new BigNumber(0));
+    return new BigDecimal(0);
   }
   static compare(a: BigDecimal, b: BigDecimal): number {
     return a.value.comparedTo(b.value);
   }
 
   toString(): string {
-    return this.value.toFixed();
+    return GraphNodeDecimal.format(this.decimal);
   }
   toBigInt(): BigInt_ {
     return BigInt_.fromString(this.value.integerValue(BigNumber.ROUND_DOWN).toFixed());
   }
   plus(other: BigDecimal): BigDecimal {
-    return new BigDecimal(this.value.plus(other.value));
+    return new BigDecimal(GraphNodeDecimal.add(this.decimal, other.decimal));
   }
   minus(other: BigDecimal): BigDecimal {
-    return new BigDecimal(this.value.minus(other.value));
+    return new BigDecimal(GraphNodeDecimal.subtract(this.decimal, other.decimal));
   }
   times(other: BigDecimal): BigDecimal {
-    return new BigDecimal(this.value.times(other.value));
+    return new BigDecimal(GraphNodeDecimal.multiply(this.decimal, other.decimal));
   }
   div(other: BigDecimal): BigDecimal {
-    // graph-node carries a BigDecimal at 34 significant digits. bignumber.js
-    // divides to 20 *decimal places* by default, which is a different rule and
-    // a lossy one: 1 / 1e30 comes out as 0. Divide with room to spare, then
-    // round the way graph-node does.
-    return new BigDecimal(
-      new DivisionBigNumber(this.value).div(other.value).precision(BIG_DECIMAL_DIGITS),
-    );
+    return new BigDecimal(GraphNodeDecimal.divide(this.decimal, other.decimal));
   }
   equals(other: BigDecimal): boolean {
     return this.value.isEqualTo(other.value);
@@ -437,21 +435,21 @@ export class BigDecimal {
   ge(other: BigDecimal): boolean {
     return this.value.isGreaterThanOrEqualTo(other.value);
   }
+  // graph-ts negates by subtracting from zero, which normalizes like any other
+  // operation.
   neg(): BigDecimal {
-    return new BigDecimal(this.value.negated());
+    return BigDecimal.zero().minus(this);
   }
   truncate(decimals: number): BigDecimal {
     return new BigDecimal(this.value.decimalPlaces(decimals, BigNumber.ROUND_DOWN));
   }
-  // graph-ts stores a decimal as `digits * 10 ** exp`.
+  // graph-ts stores a decimal as `digits * 10 ** exp`, in graph-node's
+  // normalized form.
   get digits(): BigInt_ {
-    const [coefficient, exponent] = this.value.toFixed().split(".");
-    const scaled = (coefficient ?? "0") + (exponent ?? "");
-    return BigInt_.fromString(scaled === "" || scaled === "-" ? "0" : scaled);
+    return new BigInt_(this.decimal.int);
   }
   get exp(): BigInt_ {
-    const fraction = this.value.toFixed().split(".")[1] ?? "";
-    return BigInt_.fromI32(-fraction.length);
+    return BigInt_.fromI32(-this.decimal.scale);
   }
 }
 
@@ -1320,8 +1318,8 @@ class SmartContract {
 /**
  * Contract calls go through the shim's call hook, installed by the runtime so
  * this module stays free of envio imports. A transport failure is not a revert:
- * it throws as the handler error (which envio retries) so a flaky RPC never
- * fabricates `{reverted: true}` data.
+ * the call effect asks again until it answers, so a flaky RPC never fabricates
+ * `{reverted: true}` data.
  */
 let callHook:
   | ((call: SmartContractCall) => { reverted: boolean; value: unknown[] | null })

@@ -16,6 +16,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { spawn } from "node:child_process";
 import { totalmem } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
@@ -123,23 +124,81 @@ export function missingGeneratedCode(root: string, dir: string): Error {
   );
 }
 
-/** The generated code is usually gitignored, so it's built when missing. */
+const GRAPH_CODEGEN = /^(?:(?:npx|pnpm exec|pnpm|yarn|bunx)\s+)?graph\s+codegen\b/;
+
+/**
+ * The project's `codegen` script, step by step, when it runs `graph codegen`
+ * itself. Some do more after it — Lido writes `generated/parserData.ts` with a
+ * script of its own — and the mappings import what those steps leave.
+ */
+function codegenSteps(root: string): string[] | null {
+  let script: unknown;
+  try {
+    script = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).scripts?.codegen;
+  } catch {
+    return null;
+  }
+  if (typeof script !== "string") return null;
+  const steps = script
+    .split("&&")
+    .map((step) => step.trim())
+    .filter(Boolean);
+  return steps.some((step) => GRAPH_CODEGEN.test(step)) ? steps : null;
+}
+
+/** A step as the package manager would run it: a shell, with the project's bins on PATH. */
+function runScriptStep(root: string, step: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(step, {
+      cwd: root,
+      shell: true,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        PATH: [path.join(root, "node_modules", ".bin"), process.env.PATH].join(path.delimiter),
+      },
+    });
+    child.on("error", reject);
+    child.on("exit", (code) =>
+      code === 0
+        ? resolve()
+        : reject(
+            new Error(
+              `Envio Subgraph ran \`${step}\` from the project's codegen script, and it\n` +
+                `exited with ${code} — the error above is the script's own.`,
+            ),
+          ),
+    );
+  });
+}
+
+/**
+ * The generated code is usually gitignored, so it's built when missing. `graph
+ * codegen` itself runs in-process, sized and without migrations, wherever the
+ * project's codegen script puts it among its steps.
+ */
 export async function ensureGeneratedCode(root: string, dir: string): Promise<void> {
   if (existsSync(dir)) return;
   const graphCli = graphCliPackage(root);
   // Reported when a mapping fails to import it, naming that mapping.
   if (!graphCli) return;
 
-  await runOrThrow(
-    graphCli,
-    root,
-    "codegen",
-    dir,
-    "Envio Subgraph ran `graph codegen` to build the generated code, but it\n" +
-      "failed — the error above comes from The Graph's own codegen, so fix it\n" +
-      "there and rerun. If `graph codegen` succeeds on its own but fails through\n" +
-      "envio, please open an issue: https://github.com/enviodev/hyperindex/issues",
-  );
+  for (const step of codegenSteps(root) ?? ["graph codegen"]) {
+    if (!GRAPH_CODEGEN.test(step)) {
+      await runScriptStep(root, step);
+      continue;
+    }
+    await runOrThrow(
+      graphCli,
+      root,
+      "codegen",
+      dir,
+      "Envio Subgraph ran `graph codegen` to build the generated code, but it\n" +
+        "failed — the error above comes from The Graph's own codegen, so fix it\n" +
+        "there and rerun. If `graph codegen` succeeds on its own but fails through\n" +
+        "envio, please open an issue: https://github.com/enviodev/hyperindex/issues",
+    );
+  }
 }
 
 /**

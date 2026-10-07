@@ -12,6 +12,7 @@ import { createEffect } from "../Envio.res.mjs";
 import { missingRpcMessage } from "./errors.ts";
 import { rpcClient } from "./rpc.ts";
 import { parseSignature } from "./abi-types.ts";
+import { untilAnswered } from "./transient.ts";
 
 export function abiItemFor(signature: string): Abi {
   const { name, inputs, outputs } = parseSignature(signature);
@@ -28,8 +29,8 @@ export function abiItemFor(signature: string): Abi {
 
 /**
  * A revert is data: the mapping's `try_` sees `{reverted: true}`. A transport
- * failure is not — it throws as the handler error so envio retries, and a flaky
- * RPC never fabricates reverted data.
+ * failure is not — `untilAnswered` asks again — so a flaky RPC never
+ * fabricates reverted data.
  */
 export function isRevert(error: unknown): boolean {
   const parts: string[] = [];
@@ -89,18 +90,23 @@ export function makeCallEffect(rpcUrls: string[]) {
         args: input.args.map(decodeArg),
       });
 
-      let result;
-      try {
-        result = await rpcClient(rpcUrls).call({
-          to: input.address as `0x${string}`,
-          data,
-          blockNumber: BigInt(input.blockNumber),
-        });
-      } catch (error) {
-        if (isRevert(error)) {
-          return JSON.stringify({ reverted: true, values: null });
-        }
-        throw error;
+      const result = await untilAnswered(
+        `${input.signature} on ${input.address} at block ${input.blockNumber}`,
+        async () => {
+          try {
+            return await rpcClient(rpcUrls).call({
+              to: input.address as `0x${string}`,
+              data,
+              blockNumber: BigInt(input.blockNumber),
+            });
+          } catch (error) {
+            if (isRevert(error)) return null;
+            throw error;
+          }
+        },
+      );
+      if (result === null) {
+        return JSON.stringify({ reverted: true, values: null });
       }
 
       try {

@@ -1,6 +1,6 @@
 // `ipfs.cat` through the public gateway. A file the gateway doesn't have reads
-// as null, as on graph-node; a gateway that is failing is an error envio
-// retries, not a null cached for good.
+// as null, as on graph-node; a gateway that is failing is asked again, not
+// cached as a null for good.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.5
@@ -63,11 +63,17 @@ import { createTestIndexer } from "envio";
 const g = globalThis as any;
 
 beforeAll(() => {
+  process.env.ENVIO_SUBGRAPH_RETRY_BACKOFF_MS = "20";
+  let flakyFailures = 0;
   const realFetch = g.fetch;
   g.fetch = (input: any, init: any) => {
     const url = String(input);
     if (url.endsWith("/ipfs/QmMissing")) return Promise.resolve(new Response("not found", { status: 404 }));
-    if (url.endsWith("/ipfs/QmFlaky")) return Promise.resolve(new Response("busy", { status: 503 }));
+    if (url.endsWith("/ipfs/QmFlaky")) {
+      return Promise.resolve(
+        flakyFailures++ < 2 ? new Response("busy", { status: 503 }) : new Response("hello"),
+      );
+    }
     return realFetch(input, init);
   };
 });
@@ -85,10 +91,10 @@ describe("ipfs.cat", () => {
     t.expect(await indexer.Metadata.getAll()).toEqual([{ id: "QmMissing", content: "null" }]);
   });
 
-  it("fails on a gateway error rather than answering null", async (t) => {
-    await t
-      .expect(createTestIndexer().process({ chains: { 1: { simulate: [published("QmFlaky")] } } }))
-      .rejects.toThrow("503");
+  it("asks a failing gateway again rather than answering null", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({ chains: { 1: { simulate: [published("QmFlaky")] } } });
+    t.expect(await indexer.Metadata.getAll()).toEqual([{ id: "QmFlaky", content: "0x68656c6c6f" }]);
   });
 });
 `,

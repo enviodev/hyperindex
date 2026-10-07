@@ -1,5 +1,5 @@
 // Contract calls from a mapping: an envio effect over viem, evaluated at the
-// event's block. A revert is data; a transport failure is a handler error.
+// event's block. A revert is data; a transport failure is asked again.
 let _ = InternalTestIndexer.fromSubgraph(
   ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8599")]),
   ~manifest=`
@@ -85,7 +85,11 @@ export function handlePing(event: any): void {
 
   if (nonce === 2) {
     // A transport failure must not be mistaken for a revert.
-    token.try_flaky();
+    let flaky = token.try_flaky();
+    let probe = new Entity();
+    probe.setString("name", flaky.reverted ? "reverted" : flaky.value[0].toBigInt().toString());
+    probe.setBoolean("reverted", flaky.reverted);
+    store.set("Probe", "flaky", probe);
     return;
   }
 
@@ -154,6 +158,7 @@ const ODD_NAME_RESULT =
   "0x656e76696f000000000000000000000000000000000000000000000000000000";
 
 let server: Server;
+let flakyFailures = 0;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -179,9 +184,12 @@ beforeAll(async () => {
           }),
         );
       }
-      // Anything else is the flaky endpoint: a transport failure.
-      res.statusCode = 503;
-      res.end("upstream unavailable");
+      // Anything else is the flaky endpoint: two transport failures, then 7.
+      if (flakyFailures++ < 2) {
+        res.statusCode = 503;
+        return res.end("upstream unavailable");
+      }
+      reply(SLOT_RESULT.replace(/2a$/, "07"));
     });
   });
   await new Promise<void>((resolve) => server.listen(8599, "127.0.0.1", resolve));
@@ -256,16 +264,20 @@ describe("contract calls", () => {
     });
   });
 
-  it("fails the handler on a transport error instead of faking a revert", async () => {
+  it("asks again on a transport error instead of faking a revert", async (t) => {
     const indexer = createTestIndexer();
 
-    await expect(
-      indexer.process({
-        chains: {
-          1: { simulate: [{ contract: "Token", event: "Ping", params: { nonce: 2n } }] },
-        },
-      }),
-    ).rejects.toThrow();
+    await indexer.process({
+      chains: {
+        1: { simulate: [{ contract: "Token", event: "Ping", params: { nonce: 2n } }] },
+      },
+    });
+
+    t.expect(await indexer.Probe.getOrThrow("flaky")).toEqual({
+      id: "flaky",
+      name: "7",
+      reverted: false,
+    });
   });
 });
 `,

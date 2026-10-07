@@ -9,6 +9,7 @@
  */
 
 import { rpcClient } from "./rpc.ts";
+import { HttpStatusError, untilAnswered, withDeadline } from "./transient.ts";
 
 const API_TOKEN_ENV_VAR = "ENVIO_API_TOKEN";
 
@@ -136,25 +137,34 @@ async function fromHyperSync(
   // HyperSync answers as much of the range as one response holds and points at
   // where to resume, so a wide range takes more than one round trip.
   while (cursor <= toBlock) {
-    const response = await fetch(hypersyncUrl(chainId), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
+    const url = hypersyncUrl(chainId);
+    const from = cursor;
+    // With an RPC to fall back to, one try: a failing HyperSync hands the
+    // blocks to RPC rather than holding them until it recovers.
+    const ask = rpcUrls.length > 0 ? withDeadline : untilAnswered;
+    const body = await ask(
+      `HyperSync's timestamps of blocks ${from}-${toBlock}`,
+      async (signal): Promise<HyperSyncResponse> => {
+        const response = await fetch(url, {
+          method: "POST",
+          signal,
+          headers: {
+            "content-type": "application/json",
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            from_block: from,
+            to_block: toBlock + 1,
+            include_all_blocks: true,
+            field_selection: { block: ["number", "timestamp"] },
+          }),
+        });
+        if (!response.ok) {
+          throw new HttpStatusError(url, response.status, await response.text());
+        }
+        return (await response.json()) as HyperSyncResponse;
       },
-      body: JSON.stringify({
-        from_block: cursor,
-        to_block: toBlock + 1,
-        include_all_blocks: true,
-        field_selection: { block: ["number", "timestamp"] },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`HyperSync returned ${response.status} ${await response.text()}`);
-    }
-
-    const body = (await response.json()) as HyperSyncResponse;
+    );
     for (const page of body.data ?? []) {
       for (const block of page.blocks ?? []) {
         timestamps.set(block.number, BigInt(block.timestamp));
@@ -178,6 +188,9 @@ async function fromRpc(blockNumber: number): Promise<bigint> {
         `environment.`,
     );
   }
-  const block = await rpcClient(rpcUrls).getBlock({ blockNumber: BigInt(blockNumber) });
+  const client = rpcClient(rpcUrls);
+  const block = await untilAnswered(`block ${blockNumber} from RPC`, () =>
+    client.getBlock({ blockNumber: BigInt(blockNumber) }),
+  );
   return block.timestamp;
 }
