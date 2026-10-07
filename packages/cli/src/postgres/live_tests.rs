@@ -655,10 +655,10 @@ async fn a_staged_batch_unnests_into_its_table() {
 #[ignore = "needs a Postgres server"]
 async fn a_failure_reports_the_message_the_server_gave() {
     let client = client();
-    let nul = client
-        .execute("SELECT $1::text", &[Param::Text("a\0b".to_string())])
+    let refused = client
+        .execute("SELECT 1 / $1::int4", &[Param::Text("0".to_string())])
         .await
-        .expect_err("a NUL is not something a text column takes");
+        .expect_err("nothing divides by zero");
     let missing = client
         .execute("SELECT 1 FROM nothing_is_here", &[])
         .await
@@ -666,14 +666,14 @@ async fn a_failure_reports_the_message_the_server_gave() {
 
     assert_eq!(
         (
-            super::error::message_of(&nul),
-            super::error::sql_state(&nul),
+            super::error::message_of(&refused),
+            super::error::sql_state(&refused),
             super::error::message_of(&missing),
             super::error::sql_state(&missing),
         ),
         (
-            "invalid byte sequence for encoding \"UTF8\": 0x00".to_string(),
-            Some("22021"),
+            "division by zero".to_string(),
+            Some("22012"),
             "relation \"nothing_is_here\" does not exist".to_string(),
             Some("42P01"),
         )

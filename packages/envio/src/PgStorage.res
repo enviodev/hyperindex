@@ -615,7 +615,7 @@ type batchSet = {
 %%private(
   let renderDocument = value =>
     value->(Utils.magic: unknown => Nullable.t<unknown>)->Nullable.toOption->Option.isSome
-      ? value->(Utils.magic: unknown => JSON.t)->JSON.stringify->(Utils.magic: string => unknown)
+      ? value->Sql.stringifyDocument->(Utils.magic: string => unknown)
       : value
 )
 
@@ -741,59 +741,19 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
   chunks
 }
 
-// Strips NUL bytes, recursing into nested objects/arrays so a NUL buried
-// inside a jsonb column (an event param object, a json entity field) is
-// removed too — Postgres rejects it in both text (0x00) and jsonb (22P05).
-let rec removeInvalidUtf8DeepInPlace = (value: unknown): unknown => {
-  if value->typeof === #string {
-    value
-    ->(Utils.magic: unknown => string)
-    ->Utils.String.replaceAll("\x00", "")
-    ->(Utils.magic: string => unknown)
-  } else if value->typeof === #object && value !== %raw(`null`) {
-    let dict = value->(Utils.magic: unknown => dict<unknown>)
-    dict->Utils.Dict.forEachWithKey((v, k) => dict->Dict.set(k, removeInvalidUtf8DeepInPlace(v)))
-    value
-  } else {
-    value
-  }
-}
-
-let removeInvalidUtf8InPlace = items =>
-  items->Array.forEach(item =>
-    removeInvalidUtf8DeepInPlace(item->(Utils.magic: 'a => unknown))->ignore
-  )
-
-exception PgEncodingError({table: Table.table})
-
-// Classifies a write failure, parking it in `specificError` so the
-// transaction can unwind and the outer handler can react. Both Postgres
-// encoding failures we recognize are NUL-related — `0x00` in a text column
-// (22021) and a NUL rejected by jsonb (22P05) — so they become a PgEncodingError
-// that triggers an escape-and-retry of the offending table, where deep NUL
-// stripping resolves them. We escape lazily on first failure to keep the
-// happy path free of per-item sanitization. The aborted-transaction cascade
-// (25P02) is ignored so it never masks the original error.
-let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table, ~exn) => {
-  /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
+// Parks a write failure in `specificError` so the transaction can unwind and
+// the outer handler can report it. The aborted-transaction cascade (25P02) a
+// failure sets off in its siblings is ignored, so it never masks the original.
+let classifyWriteError = (~specificError: ref<option<exn>>, ~exn) => {
   let normalizedExn = switch exn {
-  | JsExn(_) => exn
   | Persistence.StorageError({reason: exn}) => exn
   | _ => exn
   }->JsExn.anyToExnInternal
 
   switch normalizedExn {
   | JsExn(_) =>
-    switch Sql.sqlState(normalizedExn) {
-    | Some("25P02") => ()
-    | Some("22021" | "22P05") => specificError.contents = Some(PgEncodingError({table: table}))
-    // An encoding failure is the one the batch can be written again without,
-    // so it outranks whatever else the transaction refused afterwards.
-    | _ =>
-      switch specificError.contents {
-      | Some(PgEncodingError(_)) => ()
-      | _ => specificError.contents = Some(exn->Utils.prettifyExn)
-      }
+    if Sql.sqlState(normalizedExn) !== Some("25P02") {
+      specificError.contents = Some(exn->Utils.prettifyExn)
     }
   | S.Raised(_) => throw(normalizedExn) // But rethrow this one, since it's not a PG error
   | _ => ()
@@ -1045,7 +1005,7 @@ let pickCheckpoints = (column, picked) =>
   | CheckpointIndexes(indexes) => indexes->Array.map(index => column->Array.getUnsafe(index))
   }
 
-let rec writeBatch = async (
+let writeBatch = async (
   sql,
   ~batch: Batch.t,
   ~pgSchema,
@@ -1059,516 +1019,434 @@ let rec writeBatch = async (
   ~registeredAddresses: array<AddressRows.staged>,
   ~sinkPromise: option<promise<option<exn>>>,
   ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
-  ~escapeTables=?,
 ) => {
-  try {
-    let chainIdMode = config.chainIdMode
-    // A checkpoint anchors the history its chain keeps, so the batch's
-    // decision picks the checkpoints chain by chain.
-    let pickedCheckpoints = {
-      let indexes =
-        batch.checkpointChainIds->Array.filterMapWithIndex((chainId, index) =>
-          batch.history->HistoryPolicy.forChain(chainId) ? Some(index) : None
-        )
-      if indexes->Utils.Array.isEmpty {
-        None
-      } else if indexes->Array.length === batch.checkpointIds->Array.length {
-        Some(AllCheckpoints)
-      } else {
-        Some(CheckpointIndexes(indexes))
-      }
+  let chainIdMode = config.chainIdMode
+  // A checkpoint anchors the history its chain keeps, so the batch's
+  // decision picks the checkpoints chain by chain.
+  let pickedCheckpoints = {
+    let indexes =
+      batch.checkpointChainIds->Array.filterMapWithIndex((chainId, index) =>
+        batch.history->HistoryPolicy.forChain(chainId) ? Some(index) : None
+      )
+    if indexes->Utils.Array.isEmpty {
+      None
+    } else if indexes->Array.length === batch.checkpointIds->Array.length {
+      Some(AllCheckpoints)
+    } else {
+      Some(CheckpointIndexes(indexes))
     }
-    let writtenFrontier = Persistence.writtenFrontier(~batch, ~rollback)
+  }
+  let writtenFrontier = Persistence.writtenFrontier(~batch, ~rollback)
 
-    let specificError = ref(None)
+  let specificError = ref(None)
 
-    let rawEvents = if config.enableRawEvents {
-      // A single on-chain log fans out to one item per matching registration;
-      // `raw_events` records the log itself, so dedupe by its coordinate
-      // (chain, block, logIndex) to keep one row per log.
-      let seenLogCoordinates = Utils.Set.make()
-      let rows = batch.items->Array.filterMap(item =>
-        switch item {
-        | Internal.Event(_) =>
-          let eventItem = item->Internal.castUnsafeEventItem
-          let coordinate = `${eventItem.chainId->ChainId.toString}-${eventItem.blockNumber->Int.toString}-${eventItem.logIndex->Int.toString}`
-          if seenLogCoordinates->Utils.Set.has(coordinate) {
-            None
-          } else {
-            seenLogCoordinates->Utils.Set.add(coordinate)->ignore
-            Some(config.ecosystem.toRawEvent(item->Internal.castUnsafeEventItem))
-          }
-        | Internal.Block(_) => None
+  let rawEvents = if config.enableRawEvents {
+    // A single on-chain log fans out to one item per matching registration;
+    // `raw_events` records the log itself, so dedupe by its coordinate
+    // (chain, block, logIndex) to keep one row per log.
+    let seenLogCoordinates = Utils.Set.make()
+    batch.items->Array.filterMap(item =>
+      switch item {
+      | Internal.Event(_) =>
+        let eventItem = item->Internal.castUnsafeEventItem
+        let coordinate = `${eventItem.chainId->ChainId.toString}-${eventItem.blockNumber->Int.toString}-${eventItem.logIndex->Int.toString}`
+        if seenLogCoordinates->Utils.Set.has(coordinate) {
+          None
+        } else {
+          seenLogCoordinates->Utils.Set.add(coordinate)->ignore
+          Some(config.ecosystem.toRawEvent(item->Internal.castUnsafeEventItem))
+        }
+      | Internal.Block(_) => None
+      }
+    )
+  } else {
+    []
+  }
+
+  let setRawEvents = async sql => {
+    try {
+      await sql->setOrThrow(
+        ~items=rawEvents,
+        ~table=InternalTable.RawEvents.table,
+        ~itemSchema=InternalTable.RawEvents.schema,
+        ~pgSchema,
+        ~chainIdMode,
+        ~setQueryCache,
+      )
+    } catch {
+    | exn => classifyWriteError(~specificError, ~exn)
+    }
+  }
+
+  let setEntities = updatedEntities->Array.map(({
+    entityConfig,
+    scope,
+    changes,
+    shouldSaveHistory,
+  }) => {
+    let entitiesToSet = []
+    let idsToDelete = []
+
+    // Every row in this group belongs to the group's scope, so the chain id
+    // is stamped once here instead of being looked up per row downstream.
+    let scopeChainId = switch scope {
+    | Internal.CrossChain => None
+    | Chain(chainId) => Some(chainId)
+    }
+    let changes = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
+    | (Some(field), Some(chainId)) =>
+      changes->Array.map(change =>
+        switch change {
+        | Change.Set(set) =>
+          Change.Set({
+            ...set,
+            entity: set.entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId),
+          })
+        | Delete(_) => change
         }
       )
-      switch escapeTables {
-      | Some(tables) if tables->Utils.Set.has(InternalTable.RawEvents.table) =>
-        rows->removeInvalidUtf8InPlace
-      | _ => ()
-      }
-      rows
-    } else {
-      []
+    | _ => changes
     }
 
-    let setRawEvents = async sql => {
-      try {
-        await sql->setOrThrow(
-          ~items=rawEvents,
-          ~table=InternalTable.RawEvents.table,
-          ~itemSchema=InternalTable.RawEvents.schema,
-          ~pgSchema,
-          ~chainIdMode,
-          ~setQueryCache,
-        )
-      } catch {
-      | exn => classifyWriteError(~specificError, ~table=InternalTable.RawEvents.table, ~exn)
-      }
+    // Bound as $3 by the history-delete query, after its two unnest arrays.
+    // Empty for cross-chain entities, whose SQL has no such param.
+    let chainIdParams = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
+    | (Some(_), Some(chainId)) => [chainId->(Utils.magic: ChainId.t => unknown)]
+    | _ => []
     }
 
-    let setEntities = updatedEntities->Array.map(({
-      entityConfig,
-      scope,
-      changes,
-      shouldSaveHistory,
-    }) => {
-      let entitiesToSet = []
-      let idsToDelete = []
+    // The rollback-diff change is written to the entity table only, never the
+    // history table; when present it is an id's oldest change.
+    let diffCheckpointId =
+      rollback->Option.flatMap(r =>
+        config.checkpointSequence->CheckpointSequence.findForScope(r.diffFrontier, ~scope)
+      )
 
-      // Every row in this group belongs to the group's scope, so the chain id
-      // is stamped once here instead of being looked up per row downstream.
-      let scopeChainId = switch scope {
-      | Internal.CrossChain => None
-      | Chain(chainId) => Some(chainId)
+    // History batches, populated only when saving history.
+    let batchSetUpdates = []
+    let batchDeleteEntityIds = []
+    let batchDeleteCheckpointIds = []
+    let idsWithDiff = Utils.Set.make()
+
+    // Single pass over the change log: track each id's latest change (the last
+    // one seen) and, when saving history, fan every non-diff change out to the
+    // history-table batches.
+    // Keyed/deduped in memory by the id's string key (toKey), while the
+    // batches sent to SQL keep the real id values so they serialize with the
+    // id column's type.
+    let latestChangeById = Dict.make()
+    let orderedIds = []
+    changes->Array.forEach(change => {
+      let entityId = change->Change.getEntityId
+      let entityKey = entityId->EntityId.toKey
+      if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey)->Option.isNone {
+        orderedIds->Array.push(entityId)
       }
-      let changes = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
-      | (Some(field), Some(chainId)) =>
-        changes->Array.map(change =>
+      latestChangeById->Dict.set(entityKey, change)
+      if shouldSaveHistory {
+        if Some(change->Change.getCheckpointId) === diffCheckpointId {
+          idsWithDiff->Utils.Set.add(entityKey)->ignore
+        } else {
           switch change {
-          | Change.Set(set) =>
-            Change.Set({
-              ...set,
-              entity: set.entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId),
-            })
-          | Delete(_) => change
+          | Delete({entityId, checkpointId}) =>
+            batchDeleteEntityIds->Array.push(entityId)->ignore
+            batchDeleteCheckpointIds->Array.push(checkpointId)->ignore
+          | Set(_) => batchSetUpdates->Array.push(change)->ignore
           }
-        )
-      | _ => changes
-      }
-
-      // Bound as $3 by the history-delete query, after its two unnest arrays.
-      // Empty for cross-chain entities, whose SQL has no such param.
-      let chainIdParams = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
-      | (Some(_), Some(chainId)) => [chainId->(Utils.magic: ChainId.t => unknown)]
-      | _ => []
-      }
-
-      // The rollback-diff change is written to the entity table only, never the
-      // history table; when present it is an id's oldest change.
-      let diffCheckpointId =
-        rollback->Option.flatMap(r =>
-          config.checkpointSequence->CheckpointSequence.findForScope(r.diffFrontier, ~scope)
-        )
-
-      // History batches, populated only when saving history.
-      let batchSetUpdates = []
-      let batchDeleteEntityIds = []
-      let batchDeleteCheckpointIds = []
-      let idsWithDiff = Utils.Set.make()
-
-      // Single pass over the change log: track each id's latest change (the last
-      // one seen) and, when saving history, fan every non-diff change out to the
-      // history-table batches.
-      // Keyed/deduped in memory by the id's string key (toKey), while the
-      // batches sent to SQL keep the real id values so they serialize with the
-      // id column's type.
-      let latestChangeById = Dict.make()
-      let orderedIds = []
-      changes->Array.forEach(change => {
-        let entityId = change->Change.getEntityId
-        let entityKey = entityId->EntityId.toKey
-        if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey)->Option.isNone {
-          orderedIds->Array.push(entityId)
         }
-        latestChangeById->Dict.set(entityKey, change)
+      }
+    })
+
+    let backfillHistoryIds = Utils.Set.make()
+    orderedIds->Array.forEach(entityId => {
+      let entityKey = entityId->EntityId.toKey
+      switch latestChangeById->Dict.getUnsafe(entityKey) {
+      | Set({entity}) => entitiesToSet->Array.push(entity)
+      | Delete({entityId}) => idsToDelete->Array.push(entityId)
+      }
+
+      // An id needs a history backfill iff none of its changes is the diff.
+      if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityKey)) {
+        backfillHistoryIds->Utils.Set.add(entityId)->ignore
+      }
+    })
+
+    async sql => {
+      try {
+        let promises = []
+
         if shouldSaveHistory {
-          if Some(change->Change.getCheckpointId) === diffCheckpointId {
-            idsWithDiff->Utils.Set.add(entityKey)->ignore
-          } else {
-            switch change {
-            | Delete({entityId, checkpointId}) =>
-              batchDeleteEntityIds->Array.push(entityId)->ignore
-              batchDeleteCheckpointIds->Array.push(checkpointId)->ignore
-            | Set(_) => batchSetUpdates->Array.push(change)->ignore
-            }
-          }
-        }
-      })
-
-      let backfillHistoryIds = Utils.Set.make()
-      orderedIds->Array.forEach(entityId => {
-        let entityKey = entityId->EntityId.toKey
-        switch latestChangeById->Dict.getUnsafe(entityKey) {
-        | Set({entity}) => entitiesToSet->Array.push(entity)
-        | Delete({entityId}) => idsToDelete->Array.push(entityId)
-        }
-
-        // An id needs a history backfill iff none of its changes is the diff.
-        if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityKey)) {
-          backfillHistoryIds->Utils.Set.add(entityId)->ignore
-        }
-      })
-
-      let shouldRemoveInvalidUtf8 = switch escapeTables {
-      | Some(tables) if tables->Utils.Set.has(entityConfig.table) => true
-      | _ => false
-      }
-
-      // The ids the history statements bind come from the change log rather
-      // than from the entities, so stripping the entities alone leaves them
-      // carrying the NUL the write is being retried without — and the retry
-      // fails on exactly what it was meant to fix.
-      let escapeIds = (ids: array<EntityId.t>) =>
-        shouldRemoveInvalidUtf8
-          ? ids->Array.map(id =>
-              id
-              ->(Utils.magic: EntityId.t => unknown)
-              ->removeInvalidUtf8DeepInPlace
-              ->(Utils.magic: unknown => EntityId.t)
+          if backfillHistoryIds->Utils.Set.size !== 0 {
+            // This must run before updating entity or entity history tables
+            await EntityHistory.backfillHistory(
+              sql,
+              ~pgSchema,
+              ~table=entityConfig.table,
+              ~entityIndex=entityConfig.index,
+              ~chainId=scopeChainId,
+              ~ids=backfillHistoryIds->Utils.Set.toArray,
             )
-          : ids
-
-      async sql => {
-        try {
-          let promises = []
-
-          if shouldSaveHistory {
-            if backfillHistoryIds->Utils.Set.size !== 0 {
-              // This must run before updating entity or entity history tables
-              await EntityHistory.backfillHistory(
-                sql,
-                ~pgSchema,
-                ~table=entityConfig.table,
-                ~entityIndex=entityConfig.index,
-                ~chainId=scopeChainId,
-                ~ids=backfillHistoryIds->Utils.Set.toArray->escapeIds,
-              )
-            }
-
-            if batchDeleteCheckpointIds->Utils.Array.notEmpty {
-              promises->Array.push(
-                sql->Sql.exec(
-                  makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema, ~chainId=scopeChainId),
-                  ~params=[
-                    entityConfig.table
-                    ->Table.encodeIdsToJson(batchDeleteEntityIds->escapeIds)
-                    ->(Utils.magic: JSON.t => unknown),
-                    batchDeleteCheckpointIds
-                    ->Utils.BigInt.arrayToStringArray
-                    ->(Utils.magic: array<string> => unknown),
-                  ]->Array.concat(chainIdParams),
-                ),
-              )
-            }
-
-            if batchSetUpdates->Utils.Array.notEmpty {
-              if shouldRemoveInvalidUtf8 {
-                let entities = batchSetUpdates->Array.map(batchSetUpdate => {
-                  switch batchSetUpdate {
-                  | Set({entity}) => entity
-                  | _ => JsError.throwWithMessage("Expected Set action")
-                  }
-                })
-                entities->removeInvalidUtf8InPlace
-              }
-
-              let entityHistory = getEntityHistory(~entityConfig)
-
-              promises
-              ->Array.push(
-                sql->setOrThrow(
-                  ~items=batchSetUpdates,
-                  ~itemSchema=entityHistory.setChangeSchema,
-                  ~table=entityHistory.table,
-                  ~pgSchema,
-                  ~chainIdMode,
-                  ~setQueryCache,
-                ),
-              )
-              ->ignore
-            }
           }
 
-          if entitiesToSet->Utils.Array.notEmpty {
-            if shouldRemoveInvalidUtf8 {
-              entitiesToSet->removeInvalidUtf8InPlace
-            }
+          if batchDeleteCheckpointIds->Utils.Array.notEmpty {
             promises->Array.push(
+              sql->Sql.exec(
+                makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema, ~chainId=scopeChainId),
+                ~params=[
+                  entityConfig.table
+                  ->Table.encodeIdsToJson(batchDeleteEntityIds)
+                  ->(Utils.magic: JSON.t => unknown),
+                  batchDeleteCheckpointIds
+                  ->Utils.BigInt.arrayToStringArray
+                  ->(Utils.magic: array<string> => unknown),
+                ]->Array.concat(chainIdParams),
+              ),
+            )
+          }
+
+          if batchSetUpdates->Utils.Array.notEmpty {
+            let entityHistory = getEntityHistory(~entityConfig)
+
+            promises
+            ->Array.push(
               sql->setOrThrow(
-                ~items=entitiesToSet,
-                ~table=entityConfig.table,
-                ~itemSchema=entityConfig->getRowSchema,
+                ~items=batchSetUpdates,
+                ~itemSchema=entityHistory.setChangeSchema,
+                ~table=entityHistory.table,
                 ~pgSchema,
                 ~chainIdMode,
                 ~setQueryCache,
               ),
             )
+            ->ignore
           }
-          if idsToDelete->Utils.Array.notEmpty {
-            promises->Array.push(
-              sql->deleteByIdsOrThrow(
-                ~pgSchema,
-                ~ids=idsToDelete->escapeIds,
-                ~table=entityConfig.table,
-                ~chainId=scopeChainId,
-              ),
-            )
-          }
+        }
 
-          // Every rejection is classified, not just whichever lands first. The
-          // statements run together on one connection, so the one that says
-          // what is wrong with the batch — a NUL the encoding refuses, which
-          // the retry can strip — arrives beside the aborted-transaction
-          // cascade its own failure set off, as readily after it as before.
-          //
-          // Nothing is rethrown here: the transaction fails on its own, and a
-          // rejection let out of this loop would be unhandled.
-          let _ = await promises
-          ->Array.map(promise =>
-            promise->Promise.catch(
-              exn => {
-                classifyWriteError(~specificError, ~table=entityConfig.table, ~exn)
-                Promise.resolve()
-              },
+        if entitiesToSet->Utils.Array.notEmpty {
+          promises->Array.push(
+            sql->setOrThrow(
+              ~items=entitiesToSet,
+              ~table=entityConfig.table,
+              ~itemSchema=entityConfig->getRowSchema,
+              ~pgSchema,
+              ~chainIdMode,
+              ~setQueryCache,
+            ),
+          )
+        }
+        if idsToDelete->Utils.Array.notEmpty {
+          promises->Array.push(
+            sql->deleteByIdsOrThrow(
+              ~pgSchema,
+              ~ids=idsToDelete,
+              ~table=entityConfig.table,
+              ~chainId=scopeChainId,
+            ),
+          )
+        }
+
+        // Every rejection is classified, not just whichever lands first. The
+        // statements run together on one connection, so the one that says
+        // what is wrong with the batch arrives beside the aborted-transaction
+        // cascade its own failure set off, as readily after it as before.
+        //
+        // Nothing is rethrown here: the transaction fails on its own, and a
+        // rejection let out of this loop would be unhandled.
+        let _ = await promises
+        ->Array.map(promise =>
+          promise->Promise.catch(
+            exn => {
+              classifyWriteError(~specificError, ~exn)
+              Promise.resolve()
+            },
+          )
+        )
+        ->Promise.all
+      } catch {
+      | exn => classifyWriteError(~specificError, ~exn)
+      }
+    }
+  })
+
+  //In the event of a rollback, rollback all meta tables based on the given
+  //valid event identifier, where all rows created after this eventIdentifier should
+  //be deleted
+  let rollbackTables = switch rollback {
+  | Some({floors, rolledBackAddresses, progressedChains}) =>
+    Some(
+      sql => {
+        // Postgres owns history tables only for Postgres-backed entities;
+        // ClickHouse-only entities have none to roll back.
+        let promises =
+          allEntities
+          ->Array.filter(entityConfig => entityConfig.storage.postgres)
+          ->Array.map(entityConfig => {
+            sql->EntityHistory.rollback(
+              ~pgSchema,
+              ~entityName=entityConfig.name,
+              ~entityIndex=entityConfig.index,
+              ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+              ~floors,
+            )
+          })
+        promises
+        ->Array.push(sql->InternalTable.Checkpoints.rollback(~pgSchema, ~floors))
+        ->ignore
+
+        // Runs before the batch's own progress write below, so a chain the
+        // batch also progressed keeps the batch's later value.
+        if progressedChains->Utils.Array.notEmpty {
+          promises
+          ->Array.push(sql->InternalTable.Chains.setProgressedChains(~pgSchema, ~progressedChains))
+          ->ignore
+        }
+
+        // Addresses are insert-only, so undoing their registrations is a
+        // delete rather than a history replay. It runs before the batch's own
+        // inserts in the same transaction, so a re-registered address lands
+        // after its old row is gone.
+        if rolledBackAddresses->Utils.Array.notEmpty {
+          promises
+          ->Array.push(
+            sql->InternalTable.EnvioAddresses.delete(
+              ~pgSchema,
+              ~keys=rolledBackAddresses,
+              ~chainIdMode,
+            ),
+          )
+          ->ignore
+        }
+        Promise.all(promises)
+      },
+    )
+  | None => None
+  }
+
+  try {
+    let _ = await Promise.all2((
+      sql->Sql.begin(async sql => {
+        //Rollback tables need to happen first in the traction
+        switch rollbackTables {
+        | Some(rollbackTables) =>
+          let _ = await rollbackTables(sql)
+        | None => ()
+        }
+
+        let setOperations = [
+          sql =>
+            sql->InternalTable.Chains.setProgressedChains(
+              ~pgSchema,
+              ~progressedChains=batch.progressedChainsById->Utils.Dict.mapValuesToArray((
+                chainAfterBatch
+              ): InternalTable.Chains.progressedChain => {
+                chainId: chainAfterBatch.fetchState.chainId,
+                progressBlockNumber: chainAfterBatch.progressBlockNumber,
+                progressBlockTime: chainAfterBatch.progressBlockTime,
+                sourceBlockNumber: chainAfterBatch.sourceBlockNumber,
+                totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
+              }),
+            ),
+          setRawEvents,
+        ]->Array.concat(setEntities)
+
+        switch chainMetaData {
+        | Some(chainsData) =>
+          setOperations
+          ->Array.push(sql =>
+            sql->InternalTable.Chains.setMeta(~pgSchema, ~chainsData)->Utils.Promise.ignoreValue
+          )
+          ->ignore
+        | None => ()
+        }
+
+        if registeredAddresses->Utils.Array.notEmpty {
+          setOperations->Array.push(sql =>
+            sql->InternalTable.EnvioAddresses.insert(
+              ~pgSchema,
+              ~rows=registeredAddresses->Array.map(staged => staged.row),
+              ~chainIdMode,
             )
           )
-          ->Promise.all
-        } catch {
-        | exn => classifyWriteError(~specificError, ~table=entityConfig.table, ~exn)
         }
-      }
-    })
 
-    //In the event of a rollback, rollback all meta tables based on the given
-    //valid event identifier, where all rows created after this eventIdentifier should
-    //be deleted
-    let rollbackTables = switch rollback {
-    | Some({floors, rolledBackAddresses, progressedChains}) =>
-      Some(
-        sql => {
-          // Postgres owns history tables only for Postgres-backed entities;
-          // ClickHouse-only entities have none to roll back.
-          let promises =
-            allEntities
-            ->Array.filter(entityConfig => entityConfig.storage.postgres)
-            ->Array.map(entityConfig => {
-              sql->EntityHistory.rollback(
-                ~pgSchema,
-                ~entityName=entityConfig.name,
-                ~entityIndex=entityConfig.index,
-                ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
-                ~floors,
-              )
-            })
-          promises
-          ->Array.push(sql->InternalTable.Checkpoints.rollback(~pgSchema, ~floors))
-          ->ignore
-
-          // Runs before the batch's own progress write below, so a chain the
-          // batch also progressed keeps the batch's later value.
-          if progressedChains->Utils.Array.notEmpty {
-            promises
-            ->Array.push(
-              sql->InternalTable.Chains.setProgressedChains(~pgSchema, ~progressedChains),
+        if !(writtenFrontier->Utils.Dict.isEmpty) {
+          setOperations->Array.push(sql =>
+            sql->InternalTable.Chains.setCheckpointFrontier(
+              ~pgSchema,
+              ~frontier=writtenFrontier,
+              ~chainIdMode,
             )
-            ->ignore
-          }
+          )
+        }
 
-          // Addresses are insert-only, so undoing their registrations is a
-          // delete rather than a history replay. It runs before the batch's own
-          // inserts in the same transaction, so a re-registered address lands
-          // after its old row is gone.
-          if rolledBackAddresses->Utils.Array.notEmpty {
-            promises
-            ->Array.push(
-              sql->InternalTable.EnvioAddresses.delete(
-                ~pgSchema,
-                ~keys=rolledBackAddresses,
-                ~chainIdMode,
-              ),
+        switch pickedCheckpoints {
+        | Some(picked) =>
+          setOperations->Array.push(sql =>
+            sql->InternalTable.Checkpoints.insert(
+              ~pgSchema,
+              ~checkpointIds=batch.checkpointIds->pickCheckpoints(picked),
+              ~checkpointChainIds=batch.checkpointChainIds->pickCheckpoints(picked),
+              ~checkpointBlockNumbers=batch.checkpointBlockNumbers->pickCheckpoints(picked),
+              ~checkpointBlockHashes=batch.checkpointBlockHashes->pickCheckpoints(picked),
+              ~checkpointEventsProcessed=batch.checkpointEventsProcessed->pickCheckpoints(picked),
+              ~chainIdMode,
             )
-            ->ignore
-          }
-          Promise.all(promises)
-        },
-      )
-    | None => None
-    }
+          )
+        | None => ()
+        }
 
-    try {
-      let _ = await Promise.all2((
-        sql->Sql.begin(async sql => {
-          //Rollback tables need to happen first in the traction
-          switch rollbackTables {
-          | Some(rollbackTables) =>
-            let _ = await rollbackTables(sql)
-          | None => ()
-          }
+        await setOperations
+        ->Array.map(dbFunc => sql->dbFunc)
+        ->Promise.all
+        ->Utils.Promise.ignoreValue
 
-          let setOperations = [
-            sql =>
-              sql->InternalTable.Chains.setProgressedChains(
-                ~pgSchema,
-                ~progressedChains=batch.progressedChainsById->Utils.Dict.mapValuesToArray((
-                  chainAfterBatch
-                ): InternalTable.Chains.progressedChain => {
-                  chainId: chainAfterBatch.fetchState.chainId,
-                  progressBlockNumber: chainAfterBatch.progressBlockNumber,
-                  progressBlockTime: chainAfterBatch.progressBlockTime,
-                  sourceBlockNumber: chainAfterBatch.sourceBlockNumber,
-                  totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
-                }),
-              ),
-            setRawEvents,
-          ]->Array.concat(setEntities)
-
-          switch chainMetaData {
-          | Some(chainsData) =>
-            setOperations
-            ->Array.push(sql =>
-              sql->InternalTable.Chains.setMeta(~pgSchema, ~chainsData)->Utils.Promise.ignoreValue
-            )
-            ->ignore
-          | None => ()
-          }
-
-          if registeredAddresses->Utils.Array.notEmpty {
-            setOperations->Array.push(sql =>
-              sql->InternalTable.EnvioAddresses.insert(
-                ~pgSchema,
-                ~rows=registeredAddresses->Array.map(staged => staged.row),
-                ~chainIdMode,
-              )
-            )
-          }
-
-          if !(writtenFrontier->Utils.Dict.isEmpty) {
-            setOperations->Array.push(sql =>
-              sql->InternalTable.Chains.setCheckpointFrontier(
-                ~pgSchema,
-                ~frontier=writtenFrontier,
-                ~chainIdMode,
-              )
-            )
-          }
-
-          switch pickedCheckpoints {
-          | Some(picked) =>
-            setOperations->Array.push(sql =>
-              sql->InternalTable.Checkpoints.insert(
-                ~pgSchema,
-                ~checkpointIds=batch.checkpointIds->pickCheckpoints(picked),
-                ~checkpointChainIds=batch.checkpointChainIds->pickCheckpoints(picked),
-                ~checkpointBlockNumbers=batch.checkpointBlockNumbers->pickCheckpoints(picked),
-                ~checkpointBlockHashes=batch.checkpointBlockHashes->pickCheckpoints(picked),
-                ~checkpointEventsProcessed=batch.checkpointEventsProcessed->pickCheckpoints(picked),
-                ~chainIdMode,
-              )
-            )
-          | None => ()
-          }
-
-          await setOperations
-          ->Array.map(dbFunc => sql->dbFunc)
-          ->Promise.all
-          ->Utils.Promise.ignoreValue
-
-          // A write that failed is classified rather than rethrown, so the
-          // transaction would commit everything else in the batch — the
-          // checkpoint and the chains' progress included. Postgres already
-          // refuses to commit after a failure of its own; one raised before a
-          // statement went out, like a value the staging buffer refuses, it
-          // never hears about. Thrown here so the transaction rolls back.
-          switch specificError.contents {
-          | Some(specificError) => throw(specificError)
-          | None => ()
-          }
-
-          switch sinkPromise {
-          | Some(sinkPromise) =>
-            switch await sinkPromise {
-            | Some(exn) => throw(exn)
-            | None => ()
-            }
-          | None => ()
-          }
-        }),
-        // Since effect cache currently doesn't support rollback,
-        // we can run it outside of the transaction for simplicity.
-        updatedEffectsCache
-        ->Array.map((
-          {table, itemSchema, items, shouldInitialize}: Persistence.updatedEffectCache,
-        ) => {
-          setEffectCacheOrThrow(~table, ~itemSchema, ~items, ~initialize=shouldInitialize)
-        })
-        ->Promise.all,
-      ))
-
-      // Just in case, if there's a not PG-specific error.
-      switch specificError.contents {
-      | Some(specificError) => throw(specificError)
-      | None => ()
-      }
-    } catch {
-    | exn =>
-      throw(
+        // A write that failed is classified rather than rethrown, so the
+        // transaction would commit everything else in the batch — the
+        // checkpoint and the chains' progress included. Postgres already
+        // refuses to commit after a failure of its own; one raised before a
+        // statement went out, like a value the staging buffer refuses, it
+        // never hears about. Thrown here so the transaction rolls back.
         switch specificError.contents {
-        | Some(specificError) => specificError
-        | None => exn
-        },
-      )
+        | Some(specificError) => throw(specificError)
+        | None => ()
+        }
+
+        switch sinkPromise {
+        | Some(sinkPromise) =>
+          switch await sinkPromise {
+          | Some(exn) => throw(exn)
+          | None => ()
+          }
+        | None => ()
+        }
+      }),
+      // Since effect cache currently doesn't support rollback,
+      // we can run it outside of the transaction for simplicity.
+      updatedEffectsCache
+      ->Array.map((
+        {table, itemSchema, items, shouldInitialize}: Persistence.updatedEffectCache,
+      ) => {
+        setEffectCacheOrThrow(~table, ~itemSchema, ~items, ~initialize=shouldInitialize)
+      })
+      ->Promise.all,
+    ))
+
+    // Just in case, if there's a not PG-specific error.
+    switch specificError.contents {
+    | Some(specificError) => throw(specificError)
+    | None => ()
     }
   } catch {
-  | PgEncodingError({table}) =>
-    let escapeTables = switch escapeTables {
-    | Some(set) => set
-    | None => Utils.Set.make()
-    }
-
-    // Already written again without the bytes Postgres refused, and refused
-    // again: a third attempt would strip the same nothing. Fail with what the
-    // server said rather than spin on it.
-    if escapeTables->Utils.Set.has(table) {
-      throw(
-        Persistence.StorageError({
-          message: `Failed to write table "${table.tableName}": Postgres refused the batch for an encoding it cannot store, and writing it again without those bytes did not help`,
-          reason: PgEncodingError({table: table}),
-        }),
-      )
-    }
-    let _ = escapeTables->Utils.Set.add(table)
-    // Retry with specifying which tables to escape.
-    await writeBatch(
-      sql,
-      ~escapeTables,
-      ~batch,
-      ~pgSchema,
-      ~setQueryCache,
-      ~rollback,
-      ~config,
-      ~setEffectCacheOrThrow,
-      ~updatedEffectsCache,
-      ~allEntities,
-      ~updatedEntities,
-      ~registeredAddresses,
-      ~sinkPromise,
-      ~chainMetaData,
+  | exn =>
+    throw(
+      switch specificError.contents {
+      | Some(specificError) => specificError
+      | None => exn
+      },
     )
   }
 }
 
-// Returns the most recent history row at or before the rollback target for IDs changed after it.
-// envio_change is included so ReScript can turn SET rows into restores and DELETE rows into removals.
 // The columns that identify a history row: the id, plus the chain id for a
 // per-chain entity.
 let rollbackKeyColumns = (entityConfig: Internal.entityConfig) =>

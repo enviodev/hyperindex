@@ -1,10 +1,10 @@
 //! Bound query parameters.
 //!
 //! Every parameter goes to the server in its text representation, which is what
-//! the driver this replaces sent and therefore what the stored values were
-//! produced from. Binary format would be faster to encode but not identical:
-//! `numeric`, `timestamptz` and the float types each round-trip differently
-//! through it, and the statements here were written against text.
+//! the stored values were produced from. Binary format would be faster to
+//! encode but not identical: `numeric`, `timestamptz` and the float types each
+//! round-trip differently through it, and the statements here were written
+//! against text.
 //!
 //! The server tells the driver what type each parameter is — the statement's own
 //! casts decide it — so a parameter never has to name its type, only render
@@ -31,8 +31,13 @@ impl ToSql for Param {
     ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
         match self {
             Param::Null => Ok(IsNull::Yes),
+            // Postgres takes a NUL byte in no text-format value. One arrives
+            // whenever a contract's bytes are read as text, and leaving it out
+            // is what lets the rest of the value be stored.
             Param::Text(text) => {
-                out.extend_from_slice(text.as_bytes());
+                for part in text.as_bytes().split(|&byte| byte == 0) {
+                    out.extend_from_slice(part);
+                }
                 Ok(IsNull::No)
             }
         }
@@ -59,5 +64,14 @@ mod tests {
     #[test]
     fn an_empty_string_is_not_null() {
         assert_ne!(Param::Text(String::new()), Param::Null);
+    }
+
+    #[test]
+    fn a_nul_byte_is_left_out() {
+        let mut out = BytesMut::new();
+        Param::Text("a\0b\0".to_string())
+            .to_sql(&Type::TEXT, &mut out)
+            .unwrap();
+        assert_eq!(&out[..], b"ab");
     }
 }

@@ -1,10 +1,8 @@
 open Vitest
 
 // A NUL byte reaches an entity whenever a contract's bytes are read as text,
-// and Postgres takes it in neither a text column nor a jsonb one. The write
-// fails, the failure is recognized by the message the server gave it, and the
-// batch is written again with the NULs stripped — a path that only works while
-// the client reports those messages verbatim.
+// and Postgres takes it in neither a text column nor a jsonb one, so it is left
+// out on the way and the rest of the value is stored.
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -35,7 +33,10 @@ let nul = String.fromCharCode(0)
 
 type note = {id: string, text: string, tags: array<string>, payload: JSON.t}
 type noteOps = {set: note => unit}
-type handlerContext = {@as("Note") note: noteOps}
+type handlerContext = {
+  @as("Note") note: noteOps,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+}
 
 let contextOf = (args: Internal.handlerArgs) =>
   args.context->(Utils.magic: Internal.handlerContext => handlerContext)
@@ -93,6 +94,54 @@ describe("A NUL byte in what a handler stores", () => {
             payload: JSON.Encode.object(Dict.fromArray([("deep", JSON.Encode.string("inside"))])),
           },
         ],
+      ))
+    },
+  )
+
+  // An effect's output is stored as jsonb in its cache table, so a NUL in it is
+  // refused the same way a NUL in an entity is.
+  let cachedLookup = Envio.createEffect(
+    {
+      name: "nulLookup",
+      input: S.string,
+      output: S.string,
+      rateLimit: Disable,
+      cache: true,
+    },
+    async ({input}) => `${input}${nul}out`,
+  )
+
+  scenario->Scenario.it(
+    "is stripped from a cached effect's output too",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~onError=errHandler =>
+      refused
+      ->Array.push(
+        (errHandler.exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
+      )
+      ->ignore,
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Utils.delay(0)
+      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 1,
+            logIndex: 0,
+            handler: async args => {
+              let _ = await (args->contextOf).effect(cachedLookup, "in")
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=1,
+      )
+      await indexer.getBatchWritePromise()
+
+      t.expect((refused, await indexer.queryEffectCache(cachedLookup, ~scope=CrossChain))).toEqual((
+        [],
+        [{"id": `"in"`, "output": %raw(`"inout"`)}],
       ))
     },
   )
