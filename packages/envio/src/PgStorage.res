@@ -775,18 +775,16 @@ let removeInvalidUtf8InPlace = items =>
     removeInvalidUtf8DeepInPlace(item->(Utils.magic: 'a => unknown))->ignore
   )
 
-let pgErrorMessageSchema = S.object(s => s.field("message", S.string))
-
 exception PgEncodingError({table: Table.table})
 
 // Classifies a write failure, parking it in `specificError` so the
 // transaction can unwind and the outer handler can react. Both Postgres
 // encoding failures we recognize are NUL-related — `0x00` in a text column
-// and a NUL rejected by jsonb (22P05) — so they become a PgEncodingError
+// (22021) and a NUL rejected by jsonb (22P05) — so they become a PgEncodingError
 // that triggers an escape-and-retry of the offending table, where deep NUL
 // stripping resolves them. We escape lazily on first failure to keep the
 // happy path free of per-item sanitization. The aborted-transaction cascade
-// is ignored so it never masks the original error.
+// (25P02) is ignored so it never masks the original error.
 let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table, ~exn) => {
   /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
   let normalizedExn = switch exn {
@@ -796,12 +794,10 @@ let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table,
   }->JsExn.anyToExnInternal
 
   switch normalizedExn {
-  | JsExn(error) =>
-    switch error->S.parseOrThrow(pgErrorMessageSchema) {
-    | `current transaction is aborted, commands ignored until end of transaction block` => ()
-    | `invalid byte sequence for encoding "UTF8": 0x00`
-    | `unsupported Unicode escape sequence` =>
-      specificError.contents = Some(PgEncodingError({table: table}))
+  | JsExn(_) =>
+    switch Sql.sqlState(normalizedExn) {
+    | Some("25P02") => ()
+    | Some("22021" | "22P05") => specificError.contents = Some(PgEncodingError({table: table}))
     // An encoding failure is the one the batch can be written again without,
     // so it outranks whatever else the transaction refused afterwards.
     | _ =>
@@ -809,7 +805,6 @@ let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table,
       | Some(PgEncodingError(_)) => ()
       | _ => specificError.contents = Some(exn->Utils.prettifyExn)
       }
-    | exception _ => ()
     }
   | S.Raised(_) => throw(normalizedExn) // But rethrow this one, since it's not a PG error
   | _ => ()
@@ -2035,16 +2030,18 @@ let make = (
 
   // Another process in the same schema builds the same indexes, and when two
   // creates meet only one of them wins. Both of these say the index is there,
-  // which is what was wanted: the first when the creates overlapped, the second
-  // when one merely followed the other.
-  let builtByAnother = exn => {
-    let message =
-      (exn->Utils.prettifyExn->(Utils.magic: exn => {"message": Nullable.t<string>}))["message"]
-      ->Nullable.toOption
-      ->Option.getOr("")
-    message->String.includes(`duplicate key value violates unique constraint "pg_class_relname_nsp_index"`) ||
-      message->String.includes("already exists")
-  }
+  // which is what was wanted: a unique violation on the catalog's own index
+  // when the creates overlapped (23505), "already exists" when one merely
+  // followed the other (42P07).
+  let builtByAnother = exn =>
+    switch Sql.sqlState(exn) {
+    | Some("42P07") => true
+    | Some("23505") =>
+      exn
+      ->Utils.exnMessage
+      ->Option.mapOr(false, message => message->String.includes("pg_class_relname_nsp_index"))
+    | _ => false
+    }
 
   // A build outside a transaction can commit its DDL and still fail — the
   // read-back is a second round trip. Re-reading the index puts the catalog

@@ -167,3 +167,19 @@ describe("Running statements in a transaction", () => {
     ))
   })
 })
+
+describe("A failure the server raised", () => {
+  // The message is in the server's `lc_messages`; the SQLSTATE is the same in
+  // every language, so it is what a caller tells failures apart by.
+  Async.it("Carries the server's SQLSTATE", async t => {
+    let pg = client()
+    let code = try {
+      let _ = await pg->PgClient.query("SELECT 1 FROM nothing_is_here")
+      None
+    } catch {
+    | exn => Sql.sqlState(exn)
+    }
+    await pg->PgClient.close
+    t.expect(code).toEqual(Some("42P01"))
+  })
+})

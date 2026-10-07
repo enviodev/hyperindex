@@ -1,29 +1,18 @@
 //! What a failure reads as on the other side of the boundary.
 //!
-//! The storage layer classifies a write failure by its message, matching the
-//! server's text exactly — a NUL in a text column and a NUL refused by `jsonb`
-//! are what send it back to retry the table with the value stripped, and the
-//! aborted-transaction cascade is what it ignores so the first failure is the
-//! one reported.
-//!
-//! The driver being replaced surfaced the server's message and nothing else, so
-//! that is what has to arrive here. Wrapping it in the context of the call that
-//! made it would read fine and match none of those cases.
+//! A failure the server raised arrives as the server's own message, with its
+//! SQLSTATE as the message of the error's `cause`. The storage layer classifies
+//! on the code: the message is translated into the server's `lc_messages`.
 
 /// The server's own message, where the failure came from the server.
 ///
 /// Anything else — a connection that would not open, a pool that timed out —
 /// has no server message and is reported with the context it was given.
 pub fn message_of(error: &anyhow::Error) -> String {
-    for cause in error.chain() {
-        if let Some(database) = cause
-            .downcast_ref::<tokio_postgres::Error>()
-            .and_then(tokio_postgres::Error::as_db_error)
-        {
-            return database.message().to_string();
-        }
+    match database_error(error) {
+        Some(database) => database.message().to_string(),
+        None => chain_of(error),
     }
-    chain_of(error)
 }
 
 /// Every cause, in order, with the ones that only repeat what is already there
@@ -46,8 +35,27 @@ fn chain_of(error: &anyhow::Error) -> String {
     parts.join(": ")
 }
 
+fn database_error(error: &anyhow::Error) -> Option<&tokio_postgres::error::DbError> {
+    error.chain().find_map(|cause| {
+        cause
+            .downcast_ref::<tokio_postgres::Error>()
+            .and_then(tokio_postgres::Error::as_db_error)
+    })
+}
+
+/// The server's SQLSTATE, where the failure came from the server.
+pub fn sql_state(error: &anyhow::Error) -> Option<&str> {
+    database_error(error).map(|database| database.code().code())
+}
+
+/// napi only puts its own status names in an error's `code`, so the SQLSTATE
+/// travels as the message of a `cause`.
 pub fn to_napi(error: anyhow::Error) -> napi::Error {
-    napi::Error::from_reason(message_of(&error))
+    let mut napi_error = napi::Error::from_reason(message_of(&error));
+    if let Some(code) = sql_state(&error) {
+        napi_error.set_cause(napi::Error::from_reason(code));
+    }
+    napi_error
 }
 
 #[cfg(test)]

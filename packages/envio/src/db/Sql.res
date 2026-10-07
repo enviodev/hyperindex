@@ -4,6 +4,17 @@
 
 type t = {client: PgClient.t, transaction: Null.t<int>}
 
+// The SQLSTATE of a failure the server raised. napi keeps an error's `code` for
+// its own statuses, so the addon carries it as the message of the `cause`.
+let sqlState = (exn: exn): option<string> =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(error) =>
+    (error->(Utils.magic: JsExn.t => {"cause": Nullable.t<{"message": string}>}))["cause"]
+    ->Nullable.toOption
+    ->Option.map(cause => cause["message"])
+  | _ => None
+  }
+
 // As `SslSetting::parse` in packages/cli/src/postgres/client.rs spells them.
 @unboxed
 type sslMode =

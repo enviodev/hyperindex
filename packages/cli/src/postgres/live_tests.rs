@@ -649,9 +649,8 @@ async fn a_staged_batch_unnests_into_its_table() {
     );
 }
 
-/// A write failure is classified by the server's own message, so that is what
-/// has to reach the other side. Wrapping it in the context of the call that made
-/// it would read fine and match none of the cases the storage layer looks for.
+/// A failure reads as the server's own message, and is classified by its
+/// SQLSTATE, which a server set to another language still reports the same.
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
 async fn a_failure_reports_the_message_the_server_gave() {
@@ -668,11 +667,15 @@ async fn a_failure_reports_the_message_the_server_gave() {
     assert_eq!(
         (
             super::error::message_of(&nul),
+            super::error::sql_state(&nul),
             super::error::message_of(&missing),
+            super::error::sql_state(&missing),
         ),
         (
             "invalid byte sequence for encoding \"UTF8\": 0x00".to_string(),
+            Some("22021"),
             "relation \"nothing_is_here\" does not exist".to_string(),
+            Some("42P01"),
         )
     );
 }

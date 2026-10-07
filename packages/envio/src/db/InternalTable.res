@@ -5,21 +5,9 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-// Whether the schema has a table at all. A schema initialized by an older envio
-// is missing the ones added since, and reading one of those has to report the
-// old schema rather than fail.
-let exists = async (sql, ~pgSchema, ~tableName) => {
-  let rows: array<{
-    "present": bool,
-  }> = await sql->Sql.query(
-    `SELECT to_regclass($1) IS NOT NULL AS present;`,
-    ~params=[`"${pgSchema}"."${tableName}"`->(Utils.magic: string => unknown)],
-  )
-  switch rows->Array.get(0) {
-  | Some(row) => row["present"]
-  | None => false
-  }
-}
+// What a read gets when the schema was initialized by an older envio that
+// didn't have the table.
+let isUndefinedTable = exn => Sql.sqlState(exn) === Some("42P01")
 
 // The array type an unnest binds a chain-id column to. Resolved from the
 // config's mode, so every internal query casts the parameter the same way the
@@ -65,15 +53,15 @@ SELECT * FROM unnest($1::${(SmallInt: Sql.columnType :> string)}[],$2::${(Text: 
   // contract mapping, and every address row in it is shaped differently — so a
   // resume has to stop at the compat check rather than at a missing column.
   let read = async (sql, ~pgSchema): option<array<string>> =>
-    if await sql->exists(~pgSchema, ~tableName=table.tableName) {
+    try {
       let rows: array<{
         "name": string,
       }> = await sql->Sql.query(
         `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
       )
       Some(rows->Array.map(row => row["name"]))
-    } else {
-      None
+    } catch {
+    | exn => isUndefinedTable(exn) ? None : throw(exn)
     }
 }
 
@@ -607,10 +595,10 @@ module EnvioInfo = {
   let read = async (sql, ~pgSchema): option<JSON.t> => {
     let rows: array<{
       "config": string,
-    }> = if await sql->exists(~pgSchema, ~tableName=table.tableName) {
-      await sql->Sql.query(`SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`)
-    } else {
-      []
+    }> = try await sql->Sql.query(
+      `SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`,
+    ) catch {
+    | exn => isUndefinedTable(exn) ? [] : throw(exn)
     }
     rows->Array.get(0)->Option.map(row => row["config"]->JSON.parseOrThrow)
   }

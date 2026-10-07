@@ -2,8 +2,8 @@ open Vitest
 
 // What Postgres refuses a NUL byte with, in each of the places one can hide.
 //
-// The write path recognizes that refusal by its wording and answers it by
-// writing the batch again with the NULs stripped, so the wording is part of the
+// The write path recognizes that refusal by its SQLSTATE and answers it by
+// writing the batch again with the NULs stripped, so the code is part of the
 // contract between the client and the storage layer rather than a detail of
 // either.
 
@@ -45,7 +45,7 @@ let item = (~id, ~text, ~tags) => {
   item
 }
 
-// The server's own message, or "written" when it took the row.
+// The SQLSTATE the server refused the row with, or "written" when it took it.
 let write = async item =>
   switch await sql->PgStorage.setOrThrow(
     ~items=[item]->(Utils.magic: array<dict<unknown>> => array<unknown>),
@@ -57,16 +57,17 @@ let write = async item =>
   | () => "written"
   | exception exn =>
     switch exn->Utils.prettifyExn {
-    | Persistence.StorageError({reason}) =>
-      (reason->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"]
-    | other => (other->(Utils.magic: exn => {"message": string}))["message"]
+    | Persistence.StorageError({reason}) => reason
+    | other => other
     }
+    ->Sql.sqlState
+    ->Option.getOr("no SQLSTATE")
   }
 
-let refusal = `invalid byte sequence for encoding "UTF8": 0x00`
+let refusal = "22021"
 
 describe("A NUL byte reaching Postgres", () => {
-  Async.it("is refused in the same words wherever it sits, and survives nowhere", async t => {
+  Async.it("is refused with the same code wherever it sits, and survives nowhere", async t => {
     let inId = await write(item(~id=`1${nul}x`, ~text="fine", ~tags=["fine"]))
     let inText = await write(item(~id="2", ~text=`a${nul}b`, ~tags=["fine"]))
     let inArrayElement = await write(item(~id="3", ~text="fine", ~tags=[`a${nul}b`]))
