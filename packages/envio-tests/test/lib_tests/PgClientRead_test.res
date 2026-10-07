@@ -228,3 +228,21 @@ describe("Writing a staged batch", () => {
     ))
   })
 })
+
+describe("Reading a bytea column", () => {
+  Async.it("Keeps only the bytes the rows hold", async t => {
+    let pg = client()
+    let rows = await pg->PgClient.query(`SELECT '\\xdead'::bytea AS b UNION ALL SELECT '\\xbeef'::bytea`)
+    await pg->PgClient.close
+    let retained =
+      rows->Array.map(
+        row =>
+          row
+          ->Dict.getUnsafe("b")
+          ->(Utils.magic: unknown => Uint8Array.t)
+          ->TypedArray.buffer
+          ->ArrayBuffer.byteLength,
+      )
+    t.expect(retained).toEqual([4, 4])
+  })
+})

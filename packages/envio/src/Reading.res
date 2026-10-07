@@ -166,7 +166,11 @@ external bufferOver: (ArrayBuffer.t, int, int) => nodeBuffer = "from"
       // The arena's memory is detached once the result is handed back, so the
       // bytes have to be copied out — but once for the column rather than once
       // per row, leaving each row a view over what the column already owns.
-      let owned = variable.data->TypedArray.slice(~start=0, ~end=variable.data->TypedArray.length)
+      let owned =
+        variable.data->TypedArray.slice(
+          ~start=0,
+          ~end=count === 0 ? 0 : variable.ends->offsetAt(count - 1),
+        )
       for row in 0 to count - 1 {
         if present(row) {
           let (start, end) = boundsOf(variable, row)
