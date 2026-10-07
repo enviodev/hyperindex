@@ -197,12 +197,11 @@ mod tests {
         }
     }
 
-    /// Every expectation here was produced by the ReScript this replaces, so an
-    /// index keeps the name it already has in every deployed schema. A drifting
-    /// hash would silently build a second copy of an index that is already
-    /// there.
+    /// An index has to keep the name it already has in every deployed schema.
+    /// A drifting hash would silently build a second copy of an index that is
+    /// already there.
     #[test]
-    fn names_match_the_implementation_this_replaces() {
+    fn names_stay_as_deployed_schemas_have_them() {
         let cases = [
             (
                 definition("A", vec![asc("b_id")], BTREE),

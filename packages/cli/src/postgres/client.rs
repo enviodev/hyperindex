@@ -476,8 +476,6 @@ mod tests {
         );
     }
 
-    /// The three that encrypt without checking anything are the ones the driver
-    /// this replaces gave `rejectUnauthorized: false`.
     #[test]
     fn only_the_verifying_spellings_check_the_certificate() {
         assert_eq!(

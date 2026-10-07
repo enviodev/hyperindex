@@ -1,9 +1,9 @@
 //! Checks the decoding against a real server.
 //!
 //! Every case asks Postgres for a value twice: once in the binary this decodes,
-//! and once as the text it renders itself. The text is the answer the driver
-//! being replaced would have handed to JavaScript, so anywhere the two disagree
-//! is a value that would change under the migration.
+//! and once as the text it renders itself. The schemas on the JavaScript side
+//! are written against the text form, so anywhere the two disagree is a value
+//! they would misread.
 //!
 //! Ignored by default — CI's `cargo test` job has no database. Run against a
 //! local one with `cargo test --lib postgres::live -- --ignored`.
@@ -464,8 +464,7 @@ async fn a_rollback_undoes_what_it_did() {
     assert_eq!(rows[0].get::<_, Cell>(0), Cell::Bool(true));
 }
 
-/// A batch write issues its statements at once rather than one after another,
-/// which is what the driver being replaced did on its transaction's connection.
+/// A batch write issues its statements at once rather than one after another.
 /// They have to all land, and land in a transaction that is still whole.
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
@@ -560,8 +559,7 @@ async fn a_statement_arriving_after_the_rollback_is_refused() {
 }
 
 /// The write path end to end: rows laid into the arena, rendered into the
-/// arrays an unnest insert binds, and read back as what went in. The rendering
-/// is what replaces building these literals in JavaScript.
+/// arrays an unnest insert binds, and read back as what went in.
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
 async fn a_staged_batch_unnests_into_its_table() {
@@ -1070,9 +1068,8 @@ async fn one_int(client: &PgClient, sql: &str) -> i32 {
     rows.first().expect("one row").get::<_, i32>(0)
 }
 
-/// The effect cache leaves the database as text and comes back the same way.
-/// It used to travel by `psql`, spawned as a child process; this is the same
-/// COPY over the connection the rest of the work already uses.
+/// The effect cache leaves the database as text and comes back the same way,
+/// by COPY over the connection the rest of the work already uses.
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
 async fn a_table_copies_out_to_a_file_and_back_in() {

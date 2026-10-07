@@ -1,14 +1,11 @@
 //! Turning a staged batch into the parameters its insert binds.
 //!
 //! The rows arrive in the arena, written there by JavaScript through lent
-//! buffers, and leave as the text the statement takes. Rendering them here is
-//! the point of the exercise: the path this replaces built a Postgres array
-//! literal in JavaScript, hex-encoding every `bytea` a character at a time,
-//! which is the most expensive thing a batch write did.
+//! buffers, and leave as the text the statement takes.
 //!
-//! Two statements bind their rows differently and both are reproduced as they
-//! were. An insert that unnests takes one array per column; one that lists its
-//! values takes every cell of every row, column by column.
+//! Two statements bind their rows differently. An insert that unnests takes
+//! one array per column; one that lists its values takes every cell of every
+//! row, column by column.
 
 use anyhow::{bail, Result};
 use std::fmt::Write;
@@ -177,8 +174,6 @@ mod tests {
         );
     }
 
-    /// The whole point of rendering here: the path this replaces built this
-    /// literal in JavaScript, a character at a time.
     #[test]
     fn bytes_render_as_a_hex_literal() {
         let mut arena = Arena::new_filled(2, &[ColumnSpec::Scalar(ColumnKind::Bytes)]);

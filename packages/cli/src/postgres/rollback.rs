@@ -30,10 +30,6 @@ impl Sequence {
 }
 
 /// The pieces a statement splices in to read its bound as `checkpoint_id`.
-///
-/// A prune and a rollback of the internal tables splice the same relation in
-/// with `USING` rather than `JOIN`; those forms arrive with the statements that
-/// need them.
 #[derive(Debug)]
 pub struct Bounds {
     pub join: String,
@@ -238,8 +234,7 @@ mod tests {
         }
     }
 
-    /// The text the ReScript this replaces produced, for a per-chain entity
-    /// under one shared counter.
+    /// A per-chain entity under one shared counter.
     #[test]
     fn removed_ids_reads_as_it_did() {
         assert_eq!(

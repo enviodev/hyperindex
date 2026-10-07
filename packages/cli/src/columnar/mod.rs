@@ -1,9 +1,8 @@
 //! A staging arena that JavaScript fills in place.
 //!
-//! A batch used to reach Rust as napi typed arrays, JS strings and per-row
-//! `Uint8Array`s, every one of which napi copied on the way in. Here Rust owns
-//! the memory up front and lends it to JavaScript as `ArrayBuffer`s, so the
-//! values are written where they will be read from.
+//! Rust owns the memory up front and lends it to JavaScript as `ArrayBuffer`s,
+//! so the values are written where they will be read from, without napi copying
+//! typed arrays, strings or per-row `Uint8Array`s on the way in.
 //!
 //! # Ownership
 //!

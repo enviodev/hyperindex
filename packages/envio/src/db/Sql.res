@@ -106,8 +106,7 @@ let params = (values: array<unknown>): array<Null.t<string>> =>
   )
 
 // The rows come back as plain objects keyed by the column names the statement
-// selected. The server decides what is in them, so the caller names their
-// shape, as it did under the driver this replaces.
+// selected. The server decides what is in them, so the caller names their shape.
 let query = ({client, transaction}, sql, ~params as values: array<unknown>=[]): promise<
   array<'row>,
 > => {

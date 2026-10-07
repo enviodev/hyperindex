@@ -1,10 +1,9 @@
 //! Turning a result row into the JavaScript values the storage layer expects.
 //!
-//! The driver this replaces read every column in its text form and parsed that;
-//! `tokio_postgres` asks the server for binary instead (its Bind always sends
-//! result format 1). So each type is decoded from binary here and rendered into
-//! the same JavaScript value the text parser produced, which is what the schemas
-//! on the other side are written against. Where the two could differ — `numeric`
+//! `tokio_postgres` asks the server for binary (its Bind always sends result
+//! format 1), while the schemas on the other side are written against each
+//! type's text form. So each type is decoded from binary here and rendered into
+//! the JavaScript value its text form parses to. Where the two could differ — `numeric`
 //! above all — the text rendering is reproduced digit for digit rather than
 //! approximated through a float.
 //!
@@ -57,9 +56,8 @@ impl Cell<'_> {
 const POSTGRES_EPOCH_DAYS: i64 = 10957;
 const MILLIS_PER_DAY: i64 = 86_400_000;
 
-/// The OIDs decoded as something other than text. The driver this replaces
-/// dispatched on these same numbers, and the ones absent here are the reason
-/// `int8` and `numeric` come back as strings.
+/// The OIDs decoded as something other than text. The ones absent here are the
+/// reason `int8` and `numeric` come back as strings.
 mod oid {
     pub const BOOL: u32 = 16;
     pub const BYTEA: u32 = 17;
@@ -226,25 +224,22 @@ pub fn decode<'a>(ty: &Type, raw: &'a [u8]) -> Result<Cell<'a>> {
         INT4 | OID => Cell::Num(f64::from(be_i32(raw, 0)?)),
         FLOAT4 => Cell::Num(f64::from(f32::from_bits(be_i32(raw, 0)? as u32))),
         FLOAT8 => Cell::Num(f64::from_bits(be_i64(raw, 0)? as u64)),
-        // Not a number: a 64-bit integer does not fit one, and the driver this
-        // replaces left it as text for that reason.
+        // Not a number: a 64-bit integer does not fit one.
         INT8 => Cell::Str(Cow::Owned(be_i64(raw, 0)?.to_string())),
         NUMERIC => Cell::Str(Cow::Owned(numeric_to_string(raw)?)),
         TIMESTAMP | TIMESTAMPTZ => {
             let micros = be_i64(raw, 0)?;
             // Floored, not truncated. Before 2000 the count is negative, and
             // truncating toward zero would land a sub-millisecond value a
-            // millisecond later than the text the old driver parsed — which
-            // renders the fraction of a second and so always rounds the same
-            // way whichever side of the epoch it is on.
+            // millisecond later than its text form, which always rounds the
+            // same way whichever side of the epoch it is on.
             Cell::Timestamp((micros.div_euclid(1000) + POSTGRES_EPOCH_DAYS * MILLIS_PER_DAY) as f64)
         }
         DATE => {
             let days = i64::from(be_i32(raw, 0)?);
             Cell::Timestamp(((days + POSTGRES_EPOCH_DAYS) * MILLIS_PER_DAY) as f64)
         }
-        // The document's own text. The driver this replaces ran `JSON.parse`
-        // over exactly these bytes, so parsing stays on the other side.
+        // The document's own text; parsing stays on the other side.
         JSON => Cell::Str(Cow::Borrowed(
             str::from_utf8(raw).context("a json column is not UTF-8")?,
         )),
@@ -285,12 +280,6 @@ impl<'a> FromSql<'a> for Cell<'a> {
 
 /// Which arena slot a value of this type is laid into, and so which view
 /// JavaScript builds over it.
-///
-/// Two of these are wider than the slot that carries them: `int8` and `numeric`
-/// are text because that is what the driver being replaced produced, and a
-/// timestamp is the milliseconds a `Date` is built from rather than a `Date`. A
-/// JSON document travels as its own text, which is what that driver's parser was
-/// handed too.
 pub fn scalar_kind(ty: &Type) -> ColumnKind {
     read_kind(ty).slot()
 }
@@ -308,8 +297,7 @@ pub enum ReadKind {
     Text = 3,
     Bytes = 4,
     List = 5,
-    /// The document's own text, parsed on the other side — which is what the
-    /// driver being replaced did with exactly these bytes.
+    /// The document's own text, parsed on the other side.
     Json = 6,
 }
 
@@ -325,10 +313,8 @@ impl ReadKind {
     }
 }
 
-/// What a scalar of this type becomes. Two of these are wider than the slot
-/// that carries them: `int8` and `numeric` are text because that is what the
-/// driver being replaced produced, and a JSON document travels as its own text
-/// because that is what its parser was handed.
+/// What a scalar of this type becomes. `int8` and `numeric` are text: a float
+/// would lose digits the schemas on the other side keep.
 pub fn read_kind(ty: &Type) -> ReadKind {
     match ty.oid() {
         BOOL => ReadKind::Bool,
