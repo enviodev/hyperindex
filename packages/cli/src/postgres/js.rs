@@ -13,7 +13,7 @@ use crate::columnar::{self, Arena, ColumnKind};
 
 use super::client::{self, PgConnectionOptions, SslSetting};
 use super::ddl::{self, ColumnSpec, TableSpec};
-use super::error::to_napi;
+use super::error::{to_napi, Aborted};
 use super::index_definition::{self, Direction, IndexColumn, IndexDefinition};
 use super::insert;
 use super::internal;
@@ -330,17 +330,15 @@ impl PgClient {
         self.inner.forget_prepared();
     }
 
-    /// Runs a statement in `transaction`, or on any free connection, and
-    /// returns how many rows it touched.
+    /// Runs a statement in `transaction`, or on any free connection.
     #[napi]
     pub async fn execute(
         &self,
         transaction: Option<u32>,
         sql: String,
         params: Vec<Option<String>>,
-    ) -> napi::Result<f64> {
-        let affected = self.run(transaction, &sql, &to_params(params)).await?;
-        Ok(affected as f64)
+    ) -> napi::Result<()> {
+        self.run(transaction, &sql, &to_params(params)).await
     }
 
     #[napi]
@@ -442,6 +440,12 @@ enum On {
     Transaction(client::Transaction),
 }
 
+/// Handles are never reused, so one the map no longer holds belongs to a
+/// transaction that has ended.
+fn ended() -> napi::Error {
+    to_napi(Aborted("The transaction has already ended").into())
+}
+
 impl PgClient {
     /// A transaction's connection is cloned out of the map rather than used
     /// under its lock: statements issued at the same time have to reach the
@@ -456,19 +460,15 @@ impl PgClient {
             .get(&handle)
             .cloned()
             .map(On::Transaction)
-            .ok_or_else(|| napi::Error::from_reason(format!("Unknown transaction {handle}")))
+            .ok_or_else(ended)
     }
 
-    async fn run(
-        &self,
-        transaction: Option<u32>,
-        sql: &str,
-        params: &[Param],
-    ) -> napi::Result<u64> {
+    async fn run(&self, transaction: Option<u32>, sql: &str, params: &[Param]) -> napi::Result<()> {
         match self.on(transaction)? {
             On::Pool => self.inner.execute(sql, params).await,
             On::Transaction(transaction) => transaction.execute(sql, params).await,
         }
+        .map(|_| ())
         .map_err(to_napi)
     }
 
@@ -477,7 +477,7 @@ impl PgClient {
             .lock()
             .unwrap()
             .remove(&handle)
-            .ok_or_else(|| napi::Error::from_reason(format!("Unknown transaction {handle}")))
+            .ok_or_else(ended)
     }
 
     fn hold(
@@ -744,8 +744,6 @@ impl PgClient {
     pub async fn execute_staged(&self, transaction: Option<u32>, handle: u32) -> napi::Result<()> {
         let staged = self.staged.take_sealed(handle)?;
         let params = write::unnest_params(&staged.arena).map_err(to_napi)?;
-        self.run(transaction, &staged.meta.insert, &params)
-            .await
-            .map(|_| ())
+        self.run(transaction, &staged.meta.insert, &params).await
     }
 }

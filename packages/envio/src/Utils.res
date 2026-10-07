@@ -580,9 +580,8 @@ module Schema = {
       serializer: value => value->(magic: option<'a> => Nullable.t<'a>)->Nullable.toOption,
     })
 
-  // Postgres hands a bytea back as a Buffer, while handlers are promised the
-  // plain Uint8Array of the entity type — Buffer's `slice` and `toString` behave
-  // differently.
+  // Handlers are promised a plain Uint8Array: a Node Buffer is one too, but its
+  // `slice` and `toString` behave differently.
   let bytes = S.custom("Bytes", s => {
     parser: unknown =>
       switch unknown->Bytes.asUint8Array {

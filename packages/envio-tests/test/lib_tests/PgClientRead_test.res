@@ -245,3 +245,21 @@ describe("Reading a bytea column", () => {
     t.expect(retained).toEqual([4, 4])
   })
 })
+
+describe("A statement on a transaction that has ended", () => {
+  // The rejection a sibling of the failure gets, which has to read as the
+  // cascade rather than as the failure itself.
+  Async.it("Carries the aborted-transaction SQLSTATE", async t => {
+    let pg = client()
+    let transaction = await pg->PgClient.begin
+    await pg->PgClient.rollback(transaction)
+    let code = try {
+      let _ = await pg->PgClient.execute(~transaction=Null.make(transaction), "SELECT 1", [])
+      None
+    } catch {
+    | exn => Sql.sqlState(exn)
+    }
+    await pg->PgClient.close
+    t.expect(code).toEqual(Some("25P02"))
+  })
+})

@@ -43,8 +43,8 @@ fn database_error(error: &anyhow::Error) -> Option<&tokio_postgres::error::DbErr
     })
 }
 
-/// A transaction that can no longer commit, refused before anything reaches
-/// the server: a statement in it failed, or it has already ended. It carries
+/// A transaction that can no longer commit: a statement in it failed, or it
+/// has already ended. It carries
 /// the code the server gives the same refusal, so the storage layer reads it
 /// as the cascade of the failure behind it rather than as a cause.
 #[derive(Debug)]

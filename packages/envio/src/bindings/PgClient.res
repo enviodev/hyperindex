@@ -35,7 +35,7 @@ type queryResult = {
 @send external batch: (t, ~transaction: Null.t<int>, string) => promise<unit> = "batch"
 
 @send
-external execute: (t, ~transaction: Null.t<int>, string, array<Null.t<string>>) => promise<float> =
+external execute: (t, ~transaction: Null.t<int>, string, array<Null.t<string>>) => promise<unit> =
   "execute"
 
 @send

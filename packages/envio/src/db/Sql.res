@@ -120,7 +120,7 @@ let query = ({client, transaction}, sql, ~params as values: array<unknown>=[]): 
 // no columns at all, and building a result for it would be an arena, a handle
 // and a pair of boundary crossings for nothing.
 let exec = ({client, transaction}, sql, ~params as values: array<unknown>=[]) => {
-  client->PgClient.execute(~transaction, sql, params(values))->Utils.Promise.ignoreValue
+  client->PgClient.execute(~transaction, sql, params(values))
 }
 
 // A table's rows as the text the server writes them out as, straight into a
