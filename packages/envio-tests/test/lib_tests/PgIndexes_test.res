@@ -45,11 +45,11 @@ let makeFlakyClient: (
 ) => PgClient.t = %raw(`(client, log, shouldFail) => new Proxy(client, {
   get(target, prop, receiver) {
     if (prop === "batch" || prop === "query") {
-      return (query, ...rest) => {
+      return (transaction, query, ...rest) => {
         log.push(query);
         return shouldFail(query)
           ? Promise.reject(new Error("connection terminated unexpectedly"))
-          : target[prop](query, ...rest);
+          : target[prop](transaction, query, ...rest);
       };
     }
     const value = Reflect.get(target, prop, receiver);

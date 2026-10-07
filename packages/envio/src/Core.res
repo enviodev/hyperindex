@@ -118,8 +118,6 @@ type addon = {
   ) => string,
   pgIndexKey: (~definition: pgIndexInput) => string,
   pgIndexName: (~definition: pgIndexInput) => string,
-  pgIndexReadablePrefix: (~definition: pgIndexInput) => string,
-  pgIndexColumnKey: (~column: pgIndexColumnInput) => string,
   pgIndexCreateQuery: (~definition: pgIndexInput, ~pgSchema: string) => string,
   pgIndexDropQuery: (~pgSchema: string, ~indexName: string) => string,
   pgRollbackPreTargetRowsQuery: (~input: pgHistoryQueryInput) => string,
@@ -447,8 +445,6 @@ let pgFieldType = (
 
 let pgIndexKey = (~definition) => getAddon().pgIndexKey(~definition)
 let pgIndexName = (~definition) => getAddon().pgIndexName(~definition)
-let pgIndexReadablePrefix = (~definition) => getAddon().pgIndexReadablePrefix(~definition)
-let pgIndexColumnKey = (~column) => getAddon().pgIndexColumnKey(~column)
 let pgIndexCreateQuery = (~definition, ~pgSchema) =>
   getAddon().pgIndexCreateQuery(~definition, ~pgSchema)
 let pgIndexDropQuery = (~pgSchema, ~indexName) => getAddon().pgIndexDropQuery(~pgSchema, ~indexName)

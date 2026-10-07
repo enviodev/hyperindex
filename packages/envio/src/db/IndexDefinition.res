@@ -3,9 +3,8 @@
 // the name is derived from it rather than being part of it, so the catalog can
 // always be matched on what an index actually covers.
 //
-// The identity, the generated name and the DDL are all built by the addon. An
-// index has to keep the name it was created under in every schema already
-// deployed, so there is one implementation of it rather than two.
+// The identity, the generated name and the DDL are built by the addon: an index
+// has to keep the name it was created under in every schema already deployed.
 
 let btree = "btree"
 
@@ -49,7 +48,11 @@ let fromIndexFields = (~tableName, ~indexFields: array<Table.compositeIndexField
   }
 )
 
-let columnKey = (column: column) => Core.pgIndexColumnKey(~column=column->toColumnInput)
+let columnKey = ({name, direction}: column) =>
+  switch direction {
+  | Asc => name
+  | Desc => `${name} DESC`
+  }
 
 let key = (definition: t) => Core.pgIndexKey(~definition=definition->toInput)
 
@@ -57,8 +60,6 @@ let describe = (definition: t) =>
   `${definition.tableName}(${definition.columns
     ->Array.map(columnKey)
     ->Array.joinUnsafe(", ")}) using ${definition.method}`
-
-let readablePrefix = (definition: t) => Core.pgIndexReadablePrefix(~definition=definition->toInput)
 
 let name = (definition: t) => Core.pgIndexName(~definition=definition->toInput)
 

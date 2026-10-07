@@ -209,20 +209,6 @@ pub fn pg_index_name(definition: PgIndexInput) -> napi::Result<String> {
 }
 
 #[napi]
-pub fn pg_index_readable_prefix(definition: PgIndexInput) -> napi::Result<String> {
-    Ok(IndexDefinition::try_from(definition)
-        .map_err(to_napi)?
-        .readable_prefix())
-}
-
-#[napi]
-pub fn pg_index_column_key(column: PgIndexColumnInput) -> napi::Result<String> {
-    Ok(IndexDefinition::column_key(
-        &IndexColumn::try_from(column).map_err(to_napi)?,
-    ))
-}
-
-#[napi]
 pub fn pg_index_create_query(definition: PgIndexInput, pg_schema: String) -> napi::Result<String> {
     Ok(IndexDefinition::try_from(definition)
         .map_err(to_napi)?

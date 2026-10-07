@@ -29,7 +29,9 @@ describe("Index identity", () => {
         key(~columns=[b, a], ~method="btree"),
         key(~columns=[a, b], ~method="hash"),
         key(~columns=[{...a, direction: Table.Desc}, b], ~method="btree"),
-      ]->Set.fromArray->Set.size,
+      ]
+      ->Set.fromArray
+      ->Set.size,
       ~message="Each variation must be a distinct index identity",
     ).toBe(4)
   })
@@ -50,12 +52,9 @@ describe("Generated index names", () => {
     let a_bc = IndexDefinition.single(~tableName="A", ~column="B_C")
 
     t.expect(
-      (
-        ab_c->IndexDefinition.readablePrefix === a_bc->IndexDefinition.readablePrefix,
-        ab_c->IndexDefinition.name === a_bc->IndexDefinition.name,
-      ),
+      ab_c->IndexDefinition.name === a_bc->IndexDefinition.name,
       ~message="Same readable prefix, different index — the names must not collide",
-    ).toEqual((true, false))
+    ).toBe(false)
   })
 
   // Postgres truncates identifiers at 63 bytes on its own, so two long field
@@ -66,26 +65,20 @@ describe("Generated index names", () => {
     let one = IndexDefinition.single(~tableName, ~column="some_long_column_one")
     let two = IndexDefinition.single(~tableName, ~column="some_long_column_two")
 
-    t.expect((
-      one->IndexDefinition.readablePrefix->String.slice(~start=0, ~end=63) ===
-        two->IndexDefinition.readablePrefix->String.slice(~start=0, ~end=63),
-      one->IndexDefinition.name === two->IndexDefinition.name,
-    )).toEqual((true, false))
+    t.expect(one->IndexDefinition.name === two->IndexDefinition.name).toBe(false)
   })
 
   Async.it("Never exceeds Postgres' 63-byte identifier limit", async t => {
     let long = "x"->String.repeat(200)
-    let names = [
-      IndexDefinition.single(~tableName="Token", ~column="owner_id"),
-      IndexDefinition.single(~tableName=long, ~column=long),
-      IndexDefinition.make(
-        ~tableName=long,
-        ~columns=[
-          {name: long, direction: Table.Desc},
-          {name: long, direction: Table.Asc},
-        ],
-      ),
-    ]->Array.map(IndexDefinition.name)
+    let names =
+      [
+        IndexDefinition.single(~tableName="Token", ~column="owner_id"),
+        IndexDefinition.single(~tableName=long, ~column=long),
+        IndexDefinition.make(
+          ~tableName=long,
+          ~columns=[{name: long, direction: Table.Desc}, {name: long, direction: Table.Asc}],
+        ),
+      ]->Array.map(IndexDefinition.name)
 
     t.expect(
       (
@@ -191,8 +184,18 @@ describe("Matching the catalog against a desired index", () => {
     let composite = makeRow(~tableName="Token", ~indexName="Token_a_b", ~columns=["a", "b"])
 
     t.expect((
-      composite->entry->IndexCatalog.satisfies(IndexDefinition.single(~tableName="Token", ~column="a"), ~coverage=LeadingColumns),
-      composite->entry->IndexCatalog.satisfies(IndexDefinition.single(~tableName="Token", ~column="b"), ~coverage=LeadingColumns),
+      composite
+      ->entry
+      ->IndexCatalog.satisfies(
+        IndexDefinition.single(~tableName="Token", ~column="a"),
+        ~coverage=LeadingColumns,
+      ),
+      composite
+      ->entry
+      ->IndexCatalog.satisfies(
+        IndexDefinition.single(~tableName="Token", ~column="b"),
+        ~coverage=LeadingColumns,
+      ),
     )).toEqual((true, false))
   })
 
@@ -207,10 +210,16 @@ describe("Matching the catalog against a desired index", () => {
     t.expect(
       (
         catalog
-        ->IndexCatalog.find(IndexDefinition.single(~tableName="Token", ~column="a"), ~coverage=LeadingColumns)
+        ->IndexCatalog.find(
+          IndexDefinition.single(~tableName="Token", ~column="a"),
+          ~coverage=LeadingColumns,
+        )
         ->Option.map((e: IndexCatalog.entry) => e.name),
         catalog
-        ->IndexCatalog.find(IndexDefinition.single(~tableName="Token", ~column="b"), ~coverage=LeadingColumns)
+        ->IndexCatalog.find(
+          IndexDefinition.single(~tableName="Token", ~column="b"),
+          ~coverage=LeadingColumns,
+        )
         ->Option.map((e: IndexCatalog.entry) => e.name),
       ),
       ~message="Table names are part of the identity, so Transfer_a can't serve Token",
