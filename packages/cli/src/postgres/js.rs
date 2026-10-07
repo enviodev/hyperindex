@@ -8,7 +8,7 @@ use napi::bindgen_prelude::{ArrayBuffer, Object};
 use napi::Env;
 use napi_derive::napi;
 
-use crate::columnar::{self, Arena, ColumnKind, ColumnSpec as ArenaColumn};
+use crate::columnar::{self, Arena, ColumnKind};
 
 use super::client::{self, PgConnectionOptions, SslSetting};
 use super::ddl::{self, ColumnSpec, TableSpec};
@@ -245,10 +245,10 @@ pub struct PgQueryResult {
     /// One per column, as `columnar`'s ordinals. JavaScript picks the view to
     /// build over each buffer from these.
     pub kinds: Vec<u8>,
-    /// What a list column's elements are, and `-1` for a column that is not a
+    /// What a list column's elements are, and null for a column that is not a
     /// list. A list's own ordinal says nothing about what it holds, and the
     /// element column is read exactly as a top-level one of that kind.
-    pub element_kinds: Vec<i32>,
+    pub element_kinds: Vec<Option<u8>>,
     pub rows: u32,
 }
 
@@ -438,9 +438,12 @@ impl PgClient {
         held.rollback().await.map_err(to_napi)
     }
 
+    /// Closes the pool. A transaction still open gives up its connection
+    /// without returning it to the pool.
     #[napi]
     pub async fn close(&self) {
-        self.inner.close().await;
+        self.transactions.lock().unwrap().clear();
+        self.inner.close();
     }
 }
 
@@ -647,22 +650,6 @@ struct WriteSchema {
     kinds: Vec<ColumnKind>,
 }
 
-fn column_kind(ordinal: u8) -> napi::Result<ColumnKind> {
-    Ok(match ordinal {
-        0 => ColumnKind::F64,
-        1 => ColumnKind::U64,
-        2 => ColumnKind::I64,
-        3 => ColumnKind::Text,
-        4 => ColumnKind::Bytes,
-        5 => ColumnKind::List,
-        unknown => {
-            return Err(napi::Error::from_reason(format!(
-                "Unknown staged column kind {unknown}"
-            )))
-        }
-    })
-}
-
 #[napi]
 impl PgClient {
     /// Registers a table's shape. A batch for it then only has to say how many
@@ -675,12 +662,14 @@ impl PgClient {
     pub fn register_write_table(&self, names: Vec<String>, kinds: Vec<u8>) -> napi::Result<u32> {
         let kinds = kinds
             .into_iter()
-            .map(|ordinal| match column_kind(ordinal)? {
-                ColumnKind::List => Err(napi::Error::from_reason(
-                    "a table with an array column is written one row at a time, not staged",
-                )),
-                kind => Ok(kind),
-            })
+            .map(
+                |ordinal| match ColumnKind::try_from(ordinal).map_err(to_napi)? {
+                    ColumnKind::List => Err(napi::Error::from_reason(
+                        "a table with an array column is written one row at a time, not staged",
+                    )),
+                    kind => Ok(kind),
+                },
+            )
             .collect::<napi::Result<Vec<_>>>()?;
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         self.write_tables
@@ -700,23 +689,15 @@ impl PgClient {
         table: u32,
         rows: u32,
     ) -> napi::Result<Object<'env>> {
-        let (names, specs) = {
+        let (names, kinds) = {
             let tables = self.write_tables.lock().unwrap();
             let schema = tables
                 .get(&table)
                 .ok_or_else(|| napi::Error::from_reason(format!("Unknown write table {table}")))?;
-            (
-                schema.names.clone(),
-                schema
-                    .kinds
-                    .iter()
-                    .map(|&kind| ArenaColumn::Scalar(kind))
-                    .collect::<Vec<_>>(),
-            )
+            (schema.names.clone(), schema.kinds.clone())
         };
 
-        let mut arena = Arena::new_filled(rows as usize, &specs);
-        arena.reopen_for_filling();
+        let mut arena = Arena::new(rows as usize, &kinds).map_err(to_napi)?;
         let buffers = columnar::js::expose(env, &mut arena)?;
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         // Storing the arena moves its `Vec` headers, not the allocations the

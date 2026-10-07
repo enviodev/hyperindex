@@ -63,6 +63,22 @@ pub enum ColumnKind {
     List = 5,
 }
 
+impl TryFrom<u8> for ColumnKind {
+    type Error = anyhow::Error;
+
+    fn try_from(ordinal: u8) -> Result<Self> {
+        Ok(match ordinal {
+            0 => ColumnKind::F64,
+            1 => ColumnKind::U64,
+            2 => ColumnKind::I64,
+            3 => ColumnKind::Text,
+            4 => ColumnKind::Bytes,
+            5 => ColumnKind::List,
+            unknown => bail!("Unknown column kind {unknown}"),
+        })
+    }
+}
+
 impl ColumnKind {
     pub fn is_variable(self) -> bool {
         matches!(self, ColumnKind::Text | ColumnKind::Bytes)
@@ -395,14 +411,6 @@ impl Arena {
                 .collect(),
             phase: Phase::Detached,
         }
-    }
-
-    /// Hands a laid-out arena back to JavaScript to fill. The reading direction
-    /// lays one out and reads it here; the writing direction lays one out and
-    /// lets JavaScript write it, which is the same memory before anything is in
-    /// it.
-    pub fn reopen_for_filling(&mut self) {
-        self.phase = Phase::Filling;
     }
 
     pub fn rows(&self) -> usize {

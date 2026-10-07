@@ -349,11 +349,11 @@ pub fn column_read_kind(ty: &Type) -> ReadKind {
     }
 }
 
-/// What a list column's elements become, or `-1` where the column is not a list.
-pub fn element_read_kind(ty: &Type) -> i32 {
+/// What a list column's elements become, where the column is a list.
+pub fn element_read_kind(ty: &Type) -> Option<u8> {
     match ty.kind() {
-        Kind::Array(element) => read_kind(element) as i32,
-        _ => -1,
+        Kind::Array(element) => Some(read_kind(element) as u8),
+        _ => None,
     }
 }
 

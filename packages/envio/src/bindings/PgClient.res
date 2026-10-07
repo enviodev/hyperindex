@@ -23,9 +23,9 @@ type options = {
 type queryResult = {
   handle: int,
   names: array<string>,
-  kinds: array<int>,
-  // What a list column's elements are; -1 for a column that is not a list.
-  elementKinds: array<int>,
+  kinds: array<Reading.kind>,
+  // What a list column's elements are; null for a column that is not a list.
+  elementKinds: array<Null.t<Reading.kind>>,
   rows: int,
 }
 

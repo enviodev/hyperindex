@@ -32,10 +32,6 @@ fn lend<'env>(env: &'env Env, data: *mut u8, len: usize) -> napi::Result<ArrayBu
 /// Every buffer of `arena`, column by column, in the order the column's kind
 /// lays them out. The arena is in its filling phase from here on.
 pub fn expose<'env>(env: &'env Env, arena: &mut Arena) -> napi::Result<Vec<ArrayBuffer<'env>>> {
-    lend_all(env, arena)
-}
-
-fn lend_all<'env>(env: &'env Env, arena: &mut Arena) -> napi::Result<Vec<ArrayBuffer<'env>>> {
     let mut buffers = Vec::new();
     for column in arena.columns.iter_mut() {
         for (data, len) in column.buffers() {
@@ -117,5 +113,5 @@ pub fn lend_for_reading<'env>(
     arena: &mut Arena,
 ) -> napi::Result<Vec<ArrayBuffer<'env>>> {
     arena.start_reading().map_err(to_napi)?;
-    lend_all(env, arena)
+    expose(env, arena)
 }

@@ -430,7 +430,7 @@ impl PgClient {
         self.pool.manager().statement_caches.clear();
     }
 
-    pub async fn close(&self) {
+    pub fn close(&self) {
         self.pool.close();
     }
 }

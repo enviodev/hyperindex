@@ -17,18 +17,6 @@ type kind =
   | @as(5) List
   | @as(6) Json
 
-let kindOfOrdinal = ordinal =>
-  switch ordinal {
-  | 0 => Float
-  | 1 => Bool
-  | 2 => Timestamp
-  | 3 => Text
-  | 4 => Bytes
-  | 5 => List
-  | 6 => Json
-  | unknown => JsError.throwWithMessage(`Unknown result column kind ${unknown->Int.toString}`)
-  }
-
 // A variable-width column: the bytes of every row end to end, and where each
 // row's own bytes stop. The row before says where they start.
 type variable = {data: Uint8Array.t, ends: Uint32Array.t}
@@ -107,12 +95,9 @@ external bufferOver: (ArrayBuffer.t, int, int) => nodeBuffer = "from"
 %%private(
   let readers = (~buffers, ~kinds, ~elementKinds) => {
     let cursor = ref(0)
-    kinds->Array.mapWithIndex((ordinal, index) => {
-      let elementKind = switch elementKinds->Array.getUnsafe(index) {
-      | -1 => Float
-      | ordinal => ordinal->kindOfOrdinal
-      }
-      let reader = takeReader(buffers, cursor, ~kind=ordinal->kindOfOrdinal, ~elementKind)
+    kinds->Array.mapWithIndex((kind, index) => {
+      let elementKind = elementKinds->Array.getUnsafe(index)->Null.getOr(Float)
+      let reader = takeReader(buffers, cursor, ~kind, ~elementKind)
       let nulls = Uint8Array.fromBuffer(buffers->Array.getUnsafe(cursor.contents))
       cursor := cursor.contents + 1
       (reader, nulls)
