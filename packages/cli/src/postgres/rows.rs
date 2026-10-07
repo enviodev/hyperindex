@@ -3,14 +3,12 @@
 //! `tokio_postgres` asks the server for binary (its Bind always sends result
 //! format 1), while the schemas on the other side are written against each
 //! type's text form. So each type is decoded from binary here and rendered into
-//! the JavaScript value its text form parses to. Where the two could differ — `numeric`
-//! above all — the text rendering is reproduced digit for digit rather than
-//! approximated through a float.
+//! the JavaScript value its text form parses to. Where the two could differ —
+//! `numeric` above all — the text rendering is reproduced digit for digit
+//! rather than approximated through a float.
 //!
-//! Two of those renderings are easy to get wrong by assuming they are numbers:
-//! `int8` and `numeric` both arrive as strings, because the driver only parsed
-//! OIDs 21, 23, 26, 700 and 701 into JavaScript numbers and left everything else
-//! as text.
+//! `int8` and `numeric` arrive as strings: only int2, int4, oid, float4 and
+//! float8 become numbers.
 
 use anyhow::{bail, Context, Result};
 use std::borrow::Cow;
@@ -35,9 +33,7 @@ pub enum Cell<'a> {
 }
 
 impl Cell<'_> {
-    /// The same value owning what it borrowed. Nothing in the indexer needs
-    /// this — a cell is written into the arena and dropped before the rows it
-    /// borrows from are — but a check that reads one back does.
+    /// The same value owning what it borrowed.
     #[cfg(test)]
     pub fn into_owned(self) -> Cell<'static> {
         match self {
@@ -175,15 +171,13 @@ pub fn numeric_to_string(raw: &[u8]) -> Result<String> {
 
 fn decode_array<'a>(raw: &'a [u8], element: &Type) -> Result<Cell<'a>> {
     let dimensions = be_i32(raw, 0)? as usize;
-    if dimensions == 0 {
-        return Ok(Cell::Arr(Vec::new()));
+    match dimensions {
+        0 => return Ok(Cell::Arr(Vec::new())),
+        1 => {}
+        _ => bail!("a {dimensions}-dimensional array has no column to be read into"),
     }
-    let lengths = (0..dimensions)
-        .map(|index| Ok(be_i32(raw, 12 + index * 8)? as usize))
-        .collect::<Result<Vec<_>>>()?;
-
-    let mut at = 12 + dimensions * 8;
-    let total: usize = lengths.iter().product();
+    let total = be_i32(raw, 12)? as usize;
+    let mut at = 20;
     let mut flat = Vec::with_capacity(total);
     for _ in 0..total {
         let length = be_i32(raw, at)?;
@@ -199,18 +193,7 @@ fn decode_array<'a>(raw: &'a [u8], element: &Type) -> Result<Cell<'a>> {
         flat.push(decode(element, bytes)?);
         at += length;
     }
-
-    // Postgres flattens a multidimensional array on the wire; the lengths say
-    // where to fold it back. Every array a schema can declare is
-    // one-dimensional, so this is the general case standing in for one row.
-    let mut nested = flat;
-    for length in lengths.iter().skip(1).rev() {
-        nested = nested
-            .chunks(*length)
-            .map(|chunk| Cell::Arr(chunk.to_vec()))
-            .collect();
-    }
-    Ok(Cell::Arr(nested))
+    Ok(Cell::Arr(flat))
 }
 
 pub fn decode<'a>(ty: &Type, raw: &'a [u8]) -> Result<Cell<'a>> {
@@ -253,8 +236,7 @@ pub fn decode<'a>(ty: &Type, raw: &'a [u8]) -> Result<Cell<'a>> {
                 str::from_utf8(document).context("a jsonb column is not UTF-8")?,
             ))
         }
-        // Text, and every type an enum or a domain resolves to. The driver had
-        // no parser for these either and handed back the bytes as a string.
+        // Text, and every type an enum or a domain resolves to.
         _ => Cell::Str(Cow::Borrowed(
             str::from_utf8(raw).context("a text column is not UTF-8")?,
         )),
@@ -532,8 +514,7 @@ mod tests {
         );
     }
 
-    /// Both are wide enough to lose digits as a double, which is why the driver
-    /// left them as text.
+    /// Both are wide enough to lose digits as a double, so they stay text.
     #[test]
     fn the_wide_integer_types_stay_text() {
         assert_eq!(

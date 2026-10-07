@@ -156,13 +156,17 @@ impl<M> Stages<M> {
         let buffers = expose(env, &mut arena)?;
         // Storing the arena moves its `Vec` headers, not the allocations the
         // buffers above point into, so the lending survives the move.
-        self.insert(handle, Staged { meta, arena });
+        self.batches
+            .lock()
+            .unwrap()
+            .insert(handle, Staged { meta, arena });
         let mut result = Object::new(env)?;
         result.set("handle", handle)?;
         result.set("buffers", buffers)?;
         Ok(result)
     }
 
+    #[cfg(test)]
     pub fn insert(&self, handle: u32, staged: Staged<M>) {
         self.batches.lock().unwrap().insert(handle, staged);
     }

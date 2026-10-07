@@ -33,10 +33,9 @@ const HASH_LENGTH: usize = 10;
 const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
 const MAX_PREFIX_LENGTH: usize = PG_MAX_IDENTIFIER_LENGTH - HASH_LENGTH - 1;
 
-/// Hashes the UTF-16 code units of `input`, which is what the JavaScript this
-/// was ported from iterated and so what the stored index names were built from.
-/// Every key is ASCII in practice — table and column names come from GraphQL —
-/// but the encoding is part of the identity either way.
+/// Hashes the UTF-16 code units of `input`: deployed index names were built
+/// that way. Every key is ASCII in practice — table and column names come from
+/// GraphQL — but the encoding is part of the identity either way.
 fn fnv1a(input: &str, seed: i32) -> i32 {
     let mut hash = seed;
     for unit in input.encode_utf16() {
@@ -70,7 +69,7 @@ fn to_base36(value: u32, length: usize) -> String {
 }
 
 impl IndexDefinition {
-    pub fn column_key(column: &IndexColumn) -> String {
+    fn column_key(column: &IndexColumn) -> String {
         match column.direction {
             Direction::Asc => column.name.clone(),
             Direction::Desc => format!("{} DESC", column.name),
@@ -106,7 +105,7 @@ impl IndexDefinition {
 
     /// `<Entity>_<column>`, with each further column appended in order. Only
     /// there so a human reading `\d` output can tell what the index is for.
-    pub fn readable_prefix(&self) -> String {
+    fn readable_prefix(&self) -> String {
         let mut prefix = self.table_name.clone();
         for column in &self.columns {
             prefix.push('_');

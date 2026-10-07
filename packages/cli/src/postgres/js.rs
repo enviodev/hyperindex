@@ -229,8 +229,8 @@ pub fn pg_index_drop_query(pg_schema: String, index_name: String) -> String {
 pub struct PgQueryResult {
     pub handle: u32,
     pub names: Vec<String>,
-    /// One per column, as `columnar`'s ordinals. JavaScript picks the view to
-    /// build over each buffer from these.
+    /// One per column, as `rows::ReadKind` ordinals. JavaScript picks the view
+    /// to build over each buffer from these.
     pub kinds: Vec<u8>,
     /// What a list column's elements are, and null for a column that is not a
     /// list. A list's own ordinal says nothing about what it holds, and the
@@ -262,9 +262,9 @@ pub struct PgClient {
     /// holds a connection out of the pool for as long as it is open.
     transactions: Mutex<HashMap<u32, client::Transaction>>,
     /// Batches laid out but not yet bound to a statement.
-    staged: columnar::js::Stages<StagedTable>,
+    staged: columnar::js::Stages<Arc<WriteSchema>>,
     /// The shape of each table a batch can be staged for.
-    write_tables: Mutex<HashMap<u32, WriteSchema>>,
+    write_tables: Mutex<HashMap<u32, Arc<WriteSchema>>>,
     next_handle: AtomicU32,
 }
 
@@ -308,8 +308,8 @@ impl PgClient {
     }
 
     /// Writes what a `COPY ... TO STDOUT` produces into a file, and reads a
-    /// file back into a `COPY ... FROM STDIN`. The effect cache travels this
-    /// way, and the rows never cross this boundary.
+    /// file back into a `COPY ... FROM STDIN`. The rows never cross this
+    /// boundary.
     #[napi]
     pub async fn copy_out(&self, sql: String, path: String) -> napi::Result<()> {
         self.inner.copy_out(&sql, &path).await.map_err(to_napi)
@@ -623,19 +623,12 @@ pub fn pg_set_by_unnest_query(
     )
 }
 
-/// What a staged batch is written with: its columns' names, which sealing
-/// checks, and its table's insert.
-struct StagedTable {
-    names: Vec<String>,
-    insert: Arc<str>,
-}
-
 /// A table's shape and the statement its batches are inserted with, registered
 /// once so a batch for it only has to say how many rows it holds.
 struct WriteSchema {
     names: Vec<String>,
     kinds: Vec<ColumnKind>,
-    insert: Arc<str>,
+    insert: String,
 }
 
 /// A registered write table, and the slot each of its columns travels in.
@@ -680,11 +673,14 @@ impl PgClient {
                 .iter()
                 .map(|column| column.name.clone())
                 .collect(),
-            insert: insert::unnest_query(&spec, &pg_schema, append_only, chain_id_mode).into(),
+            insert: insert::unnest_query(&spec, &pg_schema, append_only, chain_id_mode),
             kinds: kinds.clone(),
         };
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        self.write_tables.lock().unwrap().insert(handle, schema);
+        self.write_tables
+            .lock()
+            .unwrap()
+            .insert(handle, Arc::new(schema));
         Ok(PgWriteTable {
             handle,
             kinds: kinds.into_iter().map(|kind| kind as u8).collect(),
@@ -701,21 +697,16 @@ impl PgClient {
         table: u32,
         rows: u32,
     ) -> napi::Result<Object<'env>> {
-        let (names, kinds, insert) = {
-            let tables = self.write_tables.lock().unwrap();
-            let schema = tables
-                .get(&table)
-                .ok_or_else(|| napi::Error::from_reason(format!("Unknown write table {table}")))?;
-            (
-                schema.names.clone(),
-                schema.kinds.clone(),
-                schema.insert.clone(),
-            )
-        };
-
+        let schema = self
+            .write_tables
+            .lock()
+            .unwrap()
+            .get(&table)
+            .cloned()
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown write table {table}")))?;
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         self.staged
-            .begin(env, handle, rows, &kinds, StagedTable { names, insert })
+            .begin(env, handle, rows, &schema.kinds, schema.clone())
     }
 
     #[napi]

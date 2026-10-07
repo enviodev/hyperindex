@@ -1,11 +1,5 @@
-//! The Postgres storage backend.
-//!
-//! Everything between the storage interface and the server lives here: the
-//! connection pool, the statements an indexer runs, the parameters they bind,
-//! and the rows they return. What crosses the addon boundary is the shape of a
-//! table and the values of a batch; the storage interface itself stays in
-//! ReScript, and a batch's values reach this side through the columnar arena
-//! rather than as text it built.
+//! The Postgres storage backend. The storage interface itself stays in
+//! ReScript; a batch's values reach this side through the columnar arena.
 
 pub mod client;
 pub mod ddl;

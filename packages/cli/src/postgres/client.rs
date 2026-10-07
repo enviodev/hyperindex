@@ -17,11 +17,10 @@ use super::param::Param;
 
 /// What `ENVIO_PG_SSL_MODE` asks for.
 ///
-/// These are the driver's spellings, not libpq's, and two of them do not mean
-/// what the libpq names suggest: `require`, `allow` and `prefer` all encrypt
-/// without checking the server's certificate, and only `prefer` falls back to a
-/// plaintext connection when the server refuses TLS. Reproduced as they were
-/// rather than corrected, so an existing deployment keeps connecting.
+/// Not libpq's meanings: `require`, `allow` and `prefer` all encrypt without
+/// checking the server's certificate, and only `prefer` falls back to a
+/// plaintext connection when the server refuses TLS. Existing deployments rely
+/// on this.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SslSetting {
     /// `false` — never TLS.
@@ -440,7 +439,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_ssl_spelling_maps_to_what_the_driver_did() {
+    fn every_ssl_spelling_maps_to_a_setting() {
         let parsed = ["false", "true", "verify-full", "require", "allow", "prefer"]
             .map(|value| SslSetting::parse(value).unwrap());
         assert_eq!(

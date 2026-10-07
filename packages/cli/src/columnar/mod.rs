@@ -180,9 +180,6 @@ impl Column {
     }
 
     /// The elements of a list column, and where each row's run of them stops.
-    /// Nothing in the indexer reaches for these — the Postgres reader walks the
-    /// lent buffers from the other side of the boundary and ClickHouse only
-    /// writes — but a check on how a list grows does.
     #[cfg(test)]
     pub fn list(&self) -> Result<(&Column, &[u32])> {
         match &self.storage {
