@@ -162,6 +162,7 @@ describe("TypeScript handler errors", () => {
 
 describe("TypeScript handler type check", () => {
   const fixtureDir = path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-typecheck-project");
+  const fixtureTsconfig = fs.readFileSync(path.join(fixtureDir, "tsconfig.json"), "utf8");
   const e2eModules = path.join(config.rootDir, "packages/e2e-tests/node_modules");
 
   // The type-error fixture, outside the repo so no parent folder has a
@@ -170,7 +171,7 @@ describe("TypeScript handler type check", () => {
   const startTypeCheckProject = async ({
     typescript = "typescript",
     copyTypescript = false,
-    tsconfig = fs.readFileSync(path.join(fixtureDir, "tsconfig.json"), "utf8"),
+    tsconfig = fixtureTsconfig,
     files = {},
   }: {
     typescript?: string;
@@ -207,7 +208,8 @@ describe("TypeScript handler type check", () => {
       fs.symlinkSync(typescriptDir, path.join(modules, "typescript"));
     }
 
-    let leftovers: string[] = [];
+    const before = fs.readdirSync(projectDir);
+    let written: string[] = [];
     const result = await runEnvio(
       ["start"],
       {
@@ -217,7 +219,10 @@ describe("TypeScript handler type check", () => {
       },
       projectDir
     ).finally(() => {
-      leftovers = fs.readdirSync(projectDir).filter((name) => name.startsWith("tsconfig.") && name !== "tsconfig.json");
+      // What the start itself generates aside, the check writes nothing.
+      written = fs
+        .readdirSync(projectDir)
+        .filter((name) => !before.includes(name) && name !== ".envio" && name !== "envio-env.d.ts");
       fs.rmSync(projectDir, { recursive: true, force: true });
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -227,7 +232,7 @@ describe("TypeScript handler type check", () => {
       typeErrors: output.match(/Handler files have type errors:[^\x1b]*/)?.[0] ?? null,
       warning: output.match(/Skipped the handler type check[^\x1b]*/)?.[0] ?? null,
       loadedHandlers: output.includes("handler loaded"),
-      leftovers,
+      written,
     };
   };
 
@@ -258,30 +263,37 @@ describe("TypeScript handler type check", () => {
         typeErrors: typeErrors(typescript),
         warning: null,
         loadedHandlers: false,
-        leftovers: [],
+        written: [],
       });
     }
   );
 
-  // TypeScript 6 and 7 default `rootDir` to the directory of the config they
-  // run, so a project that builds with `outDir` and `composite` is checked
-  // from beside its own tsconfig.json.
   it.each(["typescript-5", "typescript", "typescript-7"])(
-    "checks a composite project with an outDir with %s as its own tsc does",
+    "checks a composite project with %s without writing its build info",
     async (typescript) => {
-      const fixture = JSON.parse(
-        fs.readFileSync(path.join(fixtureDir, "tsconfig.json"), "utf8").replace(/\/\*[^]*?\*\//g, "")
-      );
-      const tsconfig = JSON.stringify({
-        compilerOptions: { ...fixture.compilerOptions, noEmit: undefined, composite: true, outDir: "dist" },
-      });
+      const tsconfig = fixtureTsconfig.replace('"noEmit": true', '"composite": true, "outDir": "dist"');
 
       expect(await startTypeCheckProject({ typescript, tsconfig })).toEqual({
         exitCode: 1,
         typeErrors: typeErrors(typescript),
         warning: null,
         loadedHandlers: false,
-        leftovers: [],
+        written: [],
+      });
+    }
+  );
+
+  it.each(["typescript-5", "typescript", "typescript-7"])(
+    "names the handlers %s doesn't check because the tsconfig.json leaves them out",
+    async (typescript) => {
+      const tsconfig = fixtureTsconfig.replace("{", '{ "include": ["src/types.ts"],');
+
+      expect(await startTypeCheckProject({ typescript, tsconfig })).toEqual({
+        exitCode: 1,
+        typeErrors: null,
+        warning: "Skipped the handler type check for src/handlers/Gravatar.ts: tsconfig.json doesn't include it.",
+        loadedHandlers: true,
+        written: [],
       });
     }
   );
@@ -295,10 +307,10 @@ describe("TypeScript handler type check", () => {
       warning: [
         "Skipped the handler type check: TypeScript's tsc failed without reporting a type error:",
         "",
-        "Error: Unable to resolve @typescript/typescript-linux-x64. Either your platform is unsupported, or you are missing the package on disk.",
+        `Error: Unable to resolve @typescript/typescript-${process.platform}-${process.arch}. Either your platform is unsupported, or you are missing the package on disk.`,
       ].join("\n"),
       loadedHandlers: true,
-      leftovers: [],
+      written: [],
     });
   });
 
@@ -311,14 +323,14 @@ describe("TypeScript handler type check", () => {
       warning:
         "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates.",
       loadedHandlers: true,
-      leftovers: [],
+      written: [],
     });
   });
 
   it("is skipped quietly in a ReScript project, whose handlers the ReScript compiler checks", async () => {
     const result = await startTypeCheckProject({ tsconfig: null, files: { "rescript.json": '{"name":"indexer"}' } });
 
-    expect(result).toEqual({ exitCode: 1, typeErrors: null, warning: null, loadedHandlers: true, leftovers: [] });
+    expect(result).toEqual({ exitCode: 1, typeErrors: null, warning: null, loadedHandlers: true, written: [] });
   });
 });
 
