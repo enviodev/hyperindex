@@ -116,7 +116,9 @@ pub fn lend_for_reading<'env>(
     arena: &mut Arena,
 ) -> napi::Result<Vec<ArrayBuffer<'env>>> {
     arena.start_reading().map_err(to_napi)?;
-    expose(env, arena)
+    // The buffers made before a failure never reach JavaScript, so nothing is
+    // left lent.
+    expose(env, arena).inspect_err(|_| arena.finish_lending())
 }
 
 /// A batch lent to JavaScript to fill, and what its sink needs to write it.
@@ -207,8 +209,21 @@ impl<M> Stages<M> {
         failed
     }
 
-    pub fn take(&self, handle: u32) -> Option<Staged<M>> {
-        self.batches.lock().unwrap().remove(&handle)
+    /// Hands over a committed batch to be written. One that was never committed
+    /// stays where it is, still lent out, for `abort` to take back.
+    pub fn take_sealed(&self, handle: u32) -> napi::Result<Staged<M>> {
+        let mut batches = self.batches.lock().unwrap();
+        if !batches
+            .get(&handle)
+            .ok_or_else(|| unknown(handle))?
+            .arena
+            .is_sealed()
+        {
+            return Err(napi::Error::from_reason(format!(
+                "Staged batch {handle} was never committed"
+            )));
+        }
+        Ok(batches.remove(&handle).expect("checked above"))
     }
 
     /// How many batches are lent out or waiting to be written.

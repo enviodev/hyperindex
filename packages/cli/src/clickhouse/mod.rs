@@ -461,12 +461,12 @@ impl ClickHouseSink {
     }
 
     /// Drops batches that were committed but never written — the rest of a
-    /// write that failed partway through staging. Their buffers were detached
-    /// by `commitStage`, so there is nothing left pointing at the arenas.
+    /// write that failed partway through staging. One still lent out is left
+    /// for `abortStage`.
     #[napi]
     pub fn discard(&self, handles: Vec<u32>) {
         for handle in handles {
-            self.staged.take(handle);
+            let _ = self.staged.take_sealed(handle);
         }
     }
 }
@@ -932,20 +932,18 @@ impl ClickHouseSink {
         entities: &[u32],
         checkpoints: Option<u32>,
     ) -> Result<(Vec<Staged>, Option<Staged>)> {
-        let entities: Vec<(u32, Option<Staged>)> = entities
-            .iter()
-            .map(|&handle| (handle, self.staged.take(handle)))
-            .collect();
-        let checkpoints = checkpoints.map(|handle| (handle, self.staged.take(handle)));
-        let found = |(handle, staged): (u32, Option<Staged>)| {
-            staged.with_context(|| format!("Unknown staged ClickHouse batch {handle}"))
+        // Every handle is taken before any failure is reported, so one bad
+        // handle does not strand the batches beside it.
+        let take = |handle: u32| {
+            self.staged
+                .take_sealed(handle)
+                .map_err(|err| anyhow::anyhow!("ClickHouse: {}", err.reason))
         };
+        let entities: Vec<Result<Staged>> = entities.iter().map(|&handle| take(handle)).collect();
+        let checkpoints = checkpoints.map(take);
         Ok((
-            entities
-                .into_iter()
-                .map(found)
-                .collect::<Result<Vec<_>>>()?,
-            checkpoints.map(found).transpose()?,
+            entities.into_iter().collect::<Result<Vec<_>>>()?,
+            checkpoints.transpose()?,
         ))
     }
 
@@ -1001,12 +999,6 @@ impl ClickHouseSink {
             meta: schema,
             arena,
         } = staged;
-        if !arena.is_sealed() {
-            bail!(
-                "a batch staged for ClickHouse table `{}` was never committed",
-                schema.table
-            );
-        }
         let rows = arena.rows();
         let encode_schema = schema.clone();
         let encoded = tokio::task::spawn_blocking(move || {
@@ -2182,7 +2174,7 @@ mod tests {
 
         assert_eq!(
             (
-                err.reason.contains("Unknown staged ClickHouse batch"),
+                err.reason.contains("Unknown staged batch"),
                 sink.staged.count()
             ),
             (true, 0),

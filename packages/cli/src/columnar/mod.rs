@@ -426,7 +426,7 @@ impl Arena {
 
     /// Whether JavaScript currently holds the arena's buffers, in either
     /// direction. Both end by detaching every one of them.
-    fn is_lent(&self) -> bool {
+    pub fn is_lent(&self) -> bool {
         self.phase == Phase::Filling || self.phase == Phase::Reading
     }
 

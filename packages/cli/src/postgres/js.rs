@@ -371,9 +371,9 @@ impl PgClient {
             .get_mut(&handle)
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown result {handle}")))?;
         let lent = columnar::js::lend_for_reading(env, arena);
-        // The buffers a failed lend made never reach JavaScript, so nothing
-        // can read the arena once it is freed.
-        if lent.is_err() {
+        // A lend that fails on a result already lent out leaves those buffers
+        // live, and `releaseResult` still has to detach them.
+        if lent.is_err() && !arena.is_lent() {
             results.remove(&handle);
         }
         lent
@@ -749,10 +749,7 @@ impl PgClient {
     /// either way.
     #[napi]
     pub async fn execute_staged(&self, transaction: Option<u32>, handle: u32) -> napi::Result<()> {
-        let staged = self
-            .staged
-            .take(handle)
-            .ok_or_else(|| napi::Error::from_reason(format!("Unknown staged batch {handle}")))?;
+        let staged = self.staged.take_sealed(handle)?;
         let params = write::unnest_params(&staged.arena).map_err(to_napi)?;
         self.run(transaction, &staged.meta.insert, &params)
             .await

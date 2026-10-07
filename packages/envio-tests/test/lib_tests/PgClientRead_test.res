@@ -186,3 +186,49 @@ describe("A failure the server raised", () => {
     t.expect(code).toEqual(Some("42P01"))
   })
 })
+
+describe("Lending a result's buffers", () => {
+  Async.it("Keeps the result alive when it is lent a second time", async t => {
+    let pg = client()
+    let result = await pg->PgClient.queryRaw(~transaction=Null.null, "SELECT 'x'::text AS a", [])
+    let buffers = pg->PgClient.lendResult(result.handle)
+    let lentAgain = try {
+      let _ = pg->PgClient.lendResult(result.handle)
+      true
+    } catch {
+    | _ => false
+    }
+    pg->PgClient.releaseResult(result.handle, buffers)
+    await pg->PgClient.close
+    t.expect((lentAgain, buffers->Array.map(ArrayBuffer.byteLength))).toEqual((
+      false,
+      buffers->Array.map(_ => 0),
+    ))
+  })
+})
+
+describe("Writing a staged batch", () => {
+  Async.it("Refuses a batch that was never committed, and can still abort it", async t => {
+    let pg = client()
+    let table =
+      pg->PgClient.registerWriteTable(
+        {tableName: "never_committed", columns: [{name: "id", fieldType: "String"}]},
+        ~pgSchema="public",
+        ~appendOnly=true,
+        ~chainIdMode="int32",
+      )
+    let {handle, buffers} = pg->PgClient.beginStage(~table=table.handle, ~rows=1)
+    let refused = try {
+      await pg->PgClient.executeStaged(~transaction=Null.null, ~handle)
+      false
+    } catch {
+    | _ => true
+    }
+    pg->PgClient.abortStage(~handle, ~buffers)
+    await pg->PgClient.close
+    t.expect((refused, buffers->Array.map(ArrayBuffer.byteLength))).toEqual((
+      true,
+      buffers->Array.map(_ => 0),
+    ))
+  })
+})
