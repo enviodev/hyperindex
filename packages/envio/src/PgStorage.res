@@ -671,14 +671,7 @@ let makeTableBatchSetQuery = (
   ~table: Table.table,
   ~itemSchema: S.t<'item>,
 ): batchSet => {
-  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema)
-
-  // Should move this to a better place
-  // We need it for the isRawEvents check in makeTableBatchSet
-  // to always apply the unnest optimization.
-  // This is needed, because even though it has JSON fields,
-  // they are always guaranteed to be an object.
-  // FIXME what about Fuel params?
+  let dbSchema = table->Table.toDbSchema(~schema=itemSchema)
   let isRawEvents = table.tableName === InternalTable.RawEvents.table.tableName
 
   // Currently history update table uses S.object with transformation for schema,
@@ -703,7 +696,7 @@ let makeTableBatchSetQuery = (
   // a value a row holds rather than a run of them. Deciding it here is what lets
   // the caller stage without asking again.
   let fields = table->Table.schemaOrderedFields(~schema=itemSchema->S.toUnknown)
-  let staged = (isRawEvents || !hasArrayField) && !isHistoryUpdate && PgWriting.canStage(fields)
+  let staged = !isHistoryUpdate && PgWriting.canStage(fields)
 
   let documents = fields->documentColumns
 
@@ -1442,12 +1435,6 @@ let writeBatch = async (
       })
       ->Promise.all,
     ))
-
-    // Just in case, if there's a not PG-specific error.
-    switch specificError.contents {
-    | Some(specificError) => throw(specificError)
-    | None => ()
-    }
   } catch {
   | exn =>
     throw(

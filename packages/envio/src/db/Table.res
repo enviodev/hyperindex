@@ -442,11 +442,6 @@ let getUnfilteredCompositeIndexesUnsafe = (table): array<array<compositeIndexFie
   )
 }
 
-type sqlParams<'entity> = {
-  dbSchema: S.t<'entity>,
-  hasArrayField: bool,
-}
-
 // The table's fields in the order the schema names them, which is the order an
 // insert names its columns and binds its values.
 //
@@ -468,9 +463,7 @@ let schemaOrderedFields = (table: table, ~schema): array<field> =>
     )
   }
 
-let toSqlParams = (table: table, ~schema) => {
-  let hasArrayField = ref(false)
-
+let toDbSchema = (table: table, ~schema): S.t<'entity> => {
   let dbSchema: S.t<dict<unknown>> = S.schema(s =>
     switch schema->S.classify {
     | Object({items}) =>
@@ -482,16 +475,9 @@ let toSqlParams = (table: table, ~schema) => {
           | Option(child)
           | Null(child) =>
             Utils.Schema.nullTolerant(child->coerceSchema)->S.toUnknown
-          | Array(child) => {
-              hasArrayField := true
-              S.array(child->coerceSchema)->S.toUnknown
-            }
-          | JSON(_) => {
-              hasArrayField := true
-              schema
-            }
+          | Array(child) => S.array(child->coerceSchema)->S.toUnknown
           | Bool =>
-            // Workaround for https://github.com/porsager/postgres/issues/471
+            // Booleans travel as 1/0; the insert casts them back.
             S.union([
               S.literal(1)->S.shape(_ => true),
               S.literal(0)->S.shape(_ => false),
@@ -499,13 +485,8 @@ let toSqlParams = (table: table, ~schema) => {
           | _ => schema
           }
 
-        let field = switch table->getFieldByApiName(location) {
-        | Some(field) => field
-        | None => throw(NonExistingTableField(location))
-        }
-        switch field {
-        | Field({isArray: true}) => hasArrayField := true
-        | _ => ()
+        if table->getFieldByApiName(location)->Option.isNone {
+          throw(NonExistingTableField(location))
         }
 
         dict->Dict.set(location, s.matches(schema->coerceSchema))
@@ -516,10 +497,7 @@ let toSqlParams = (table: table, ~schema) => {
     }
   )
 
-  {
-    dbSchema: dbSchema->(Utils.magic: S.t<dict<unknown>> => S.t<'entity>),
-    hasArrayField: hasArrayField.contents,
-  }
+  dbSchema->(Utils.magic: S.t<dict<unknown>> => S.t<'entity>)
 }
 
 /*

@@ -555,3 +555,33 @@ describe("Rows written and read back", () => {
     ~timeout=300_000,
   )
 })
+
+describe("Choosing the insert a table's rows go through", () => {
+  it("Stages a table whose only non-scalar columns are a date and a document", t => {
+    let table = Table.mkTable(
+      "dated",
+      ~fields=[
+        idField,
+        Table.mkField("at", Table.Date, ~fieldSchema=Utils.Schema.dbDate),
+        Table.mkField("doc", Table.Json, ~fieldSchema=S.json(~validate=false)),
+      ],
+    )
+    let itemSchema = S.object(
+      s =>
+        {
+          "id": s.field("id", S.string),
+          "at": s.field("at", Utils.Schema.dbDate),
+          "doc": s.field("doc", S.json(~validate=false)),
+        },
+    )->S.toUnknown
+    let staged = switch PgStorage.makeTableBatchSetQuery(
+      ~pgSchema="public",
+      ~table,
+      ~itemSchema,
+    ).binding {
+    | Staged(_) => true
+    | PerCell(_) => false
+    }
+    t.expect(staged).toBe(true)
+  })
+})
