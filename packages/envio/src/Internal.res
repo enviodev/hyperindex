@@ -762,6 +762,13 @@ external getItemOrderPath: item => Nullable.t<array<int>> = "orderPath"
 // block ahead of that block's handlers without a `switch`.
 @get
 external getItemKind: item => int = "kind"
+// Set only in subgraph mode, on an event of an address registered in the very
+// block it was logged in: graph-node runs a new data source's creation-block
+// events after everything else in that block. Absent reads as false.
+@get
+external getItemRunsAfterBlock: item => bool = "runsAfterBlock"
+@set
+external markItemRunsAfterBlock: (item, bool) => unit = "runsAfterBlock"
 
 let getItemChainId = item =>
   switch item {

@@ -671,6 +671,22 @@ describe("HeightFeed poll failures", () => {
     t.expect((pollsBefore, pollsAfter > pollsBefore)).toStrictEqual((1, true))
   })
 
+  // A height is a tiny request: a healthy endpoint answers in well under a
+  // second, and one that hasn't in 15 has stalled. Waiting out a minute on it
+  // is what left Ethereum and Linea indexers idle before falling back to RPC.
+  Async.it("Asks again within 15 seconds when a poll never answers", async t => {
+    Vi.useFakeTimers()
+    let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
+    let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 1)
+    let (_heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 1)
+
+    await Vi.advanceTimersByTimeAsync(15_000)
+    let polls = mock.getHeightOrThrowCalls->Array.length
+    Vi.useRealTimers()
+
+    t.expect(polls > 1).toBe(true)
+  })
+
   Async.it("Polls at once for a waiter that arrives while the last loop is unwinding", async t => {
     let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
     let (feed, _stats) = makeFeed(mock)

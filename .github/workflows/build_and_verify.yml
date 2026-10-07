@@ -146,6 +146,34 @@ jobs:
       - name: Cargo Test
         run: cargo test
 
+  # graph-cli codegen goldens: fail if generated/ is stale vs graph-cli 0.97.1.
+  subgraph-codegen-goldens:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: authorize
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # This job runs graph-cli over the pull request's own files, and does
+          # no authenticated git operation of its own.
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Check subgraph codegen goldens
+        working-directory: packages/envio-tests
+        run: pnpm check-subgraph-codegen
+
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:
     runs-on: ubuntu-latest
@@ -165,6 +193,24 @@ jobs:
 
       - name: Hypersync Health Test
         run: cargo test --features hypersync_health --test hypersync_health
+
+  # The Graph's networks registry vs the snapshot subgraph mode resolves
+  # `network:` through - non-blocking, external dependency
+  graph-networks-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    needs: authorize
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # The script comes from the pull request.
+          persist-credentials: false
+
+      - name: Compare with The Graph's networks registry
+        run: node packages/cli/scripts/sync-graph-networks.mjs --check
 
   # Template tests - verify envio templates can be initialized and built
   template-tests:
@@ -189,7 +235,7 @@ jobs:
   envio-tests:
     runs-on: ubuntu-latest
     needs: build-envio-package
-    timeout-minutes: 9
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false
@@ -239,6 +285,15 @@ jobs:
         env:
           ENVIO_TEST_STORAGE: ${{ matrix.storage }}
 
+      # The subgraph suite again with preload off, so every mapping replays as
+      # often as it can and must still produce the same store. The one test
+      # left out asserts preload's own batching, which this mode switches off.
+      - name: subgraph replay stress (${{ matrix.storage }})
+        working-directory: packages/envio-tests
+        run: pnpm test:replay-stress
+        env:
+          ENVIO_TEST_STORAGE: ${{ matrix.storage }}
+
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@c2597273488aeda841dd1e891321952b51f7996f # v2.2.1
         if: failure() && github.event_name == 'push'
@@ -282,6 +337,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
+      # The shim has to stay assignable to the types a subgraph's mappings are
+      # compiled against; every known gap is recorded in conformance.ts.
+      - name: graph-ts conformance
+        working-directory: packages/envio
+        run: pnpm check-graph-ts
+
       - name: CLI subprocess tests
         working-directory: packages/e2e-tests
         run: pnpm test:cli
@@ -309,6 +370,11 @@ jobs:
         run: |
           pnpm exec envio codegen
           pnpm test
+
+      # A subgraph project has no codegen step: subgraph.yaml is the config.
+      - name: subgraph_test
+        working-directory: scenarios/subgraph_test
+        run: pnpm test
 
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@c2597273488aeda841dd1e891321952b51f7996f # v2.2.1

@@ -1,0 +1,155 @@
+/**
+ * `Contract.bind(x).foo()` -> an envio effect over viem.
+ *
+ * graph-node evaluates a mapping's contract calls against the block the event
+ * came from, so the block number is part of the effect's input — and therefore
+ * of its cache key, which is what makes a cached call safe to reuse.
+ */
+
+import { decodeFunctionResult, encodeFunctionData, parseAbiParameters, type Abi } from "viem";
+import * as Sury from "rescript-schema";
+import { createEffect } from "../Envio.res.mjs";
+import { missingRpcMessage } from "./errors.ts";
+import { rpcClient } from "./rpc.ts";
+import { parseSignature } from "./abi-types.ts";
+import { untilAnswered } from "./transient.ts";
+
+export function abiItemFor(signature: string): Abi {
+  const { name, inputs, outputs } = parseSignature(signature);
+  return [
+    {
+      type: "function",
+      name,
+      stateMutability: "view",
+      inputs: inputs.trim() === "" ? [] : [...parseAbiParameters(inputs)],
+      outputs: outputs.trim() === "" ? [] : [...parseAbiParameters(outputs)],
+    },
+  ] as Abi;
+}
+
+/**
+ * A revert is data: the mapping's `try_` sees `{reverted: true}`. A transport
+ * failure is not — `untilAnswered` asks again — so a flaky RPC never
+ * fabricates reverted data.
+ */
+export function isRevert(error: unknown): boolean {
+  const parts: string[] = [];
+  let current: any = error;
+  for (let depth = 0; current && depth < 10; depth++) {
+    parts.push(current.name, current.shortMessage, current.details, current.message);
+    current = current.cause;
+  }
+  const text = parts.filter(Boolean).join(" | ");
+
+  if (/revert|ContractFunctionZeroDataError|invalid opcode|out of gas/i.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+export type CallInput = {
+  chainId: number;
+  address: string;
+  signature: string;
+  args: unknown[];
+  blockNumber: number;
+};
+
+export type CallOutput = {
+  reverted: boolean;
+  values: unknown[] | null;
+};
+
+/**
+ * BigInt and Bytes cross the effect boundary through Sury, which needs a
+ * serialisable shape — so the call is described in plain JSON and the graph-ts
+ * values are converted on both sides by the shim.
+ */
+export function makeCallEffect(rpcUrls: string[]) {
+  return createEffect(
+    {
+      name: "envio_subgraph_eth_call",
+      // Both sides travel as JSON text: the cache key is then the exact call
+      // description, and the cached row is readable.
+      input: Sury.string,
+      output: Sury.string,
+      rateLimit: false,
+      cache: true,
+      crossChain: false,
+    },
+    async ({ input: encoded }: { input: string }) => {
+      const input = JSON.parse(encoded) as CallInput;
+      if (rpcUrls.length === 0) {
+        throw new Error(missingRpcMessage(input.signature));
+      }
+      const abi = abiItemFor(input.signature);
+      const { name } = parseSignature(input.signature);
+      const data = encodeFunctionData({
+        abi,
+        functionName: name,
+        args: input.args.map(decodeArg),
+      });
+
+      const result = await untilAnswered(
+        `${input.signature} on ${input.address} at block ${input.blockNumber}`,
+        async () => {
+          try {
+            return await rpcClient(rpcUrls).call({
+              to: input.address as `0x${string}`,
+              data,
+              blockNumber: BigInt(input.blockNumber),
+            });
+          } catch (error) {
+            if (isRevert(error)) return null;
+            throw error;
+          }
+        },
+      );
+      if (result === null) {
+        return JSON.stringify({ reverted: true, values: null });
+      }
+
+      try {
+        const decoded = decodeFunctionResult({
+          abi,
+          functionName: name,
+          data: (result.data ?? "0x") as `0x${string}`,
+        });
+        // graph-ts returns one `ethereum.Value` per ABI output. A single
+        // tuple/struct is therefore `[tuple]`, not the flattened fields —
+        // generated bindings call `result[0].toTuple()`.
+        const outputs = (abi[0] as { outputs?: unknown[] }).outputs ?? [];
+        const values = outputs.length === 1 ? [decoded] : Array.isArray(decoded) ? decoded : [decoded];
+        return JSON.stringify({ reverted: false, values: values.map(encodeArg) });
+      } catch {
+        // Output the declared signature can't decode counts as a failed call,
+        // which is what lets a mapping retry through a different ABI — the
+        // bytes32-vs-string ERC20 name is the case every token subgraph hits.
+        return JSON.stringify({ reverted: true, values: null });
+      }
+    },
+  );
+}
+
+/** Effect inputs/outputs travel as strings, tagged so the type survives. */
+export function encodeArg(value: unknown): string {
+  if (typeof value === "bigint") return `i:${value.toString()}`;
+  if (typeof value === "boolean") return `b:${value ? "1" : "0"}`;
+  if (Array.isArray(value)) return `a:${JSON.stringify(value.map(encodeArg))}`;
+  return `s:${String(value)}`;
+}
+
+export function decodeArg(value: string): unknown {
+  const tag = value.slice(0, 2);
+  const body = value.slice(2);
+  switch (tag) {
+    case "i:":
+      return BigInt(body);
+    case "b:":
+      return body === "1";
+    case "a:":
+      return (JSON.parse(body) as string[]).map(decodeArg);
+    default:
+      return body;
+  }
+}

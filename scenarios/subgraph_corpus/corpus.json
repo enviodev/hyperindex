@@ -1,0 +1,9 @@
+[
+  {
+    "name": "ens",
+    "repo": "https://github.com/ensdomains/ens-subgraph",
+    "commit": "ad62221d8ebb6a0102a5caa41a23130e2e6251b2",
+    "chainId": 1,
+    "endBlock": 3427417
+  }
+]

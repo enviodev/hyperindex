@@ -241,9 +241,11 @@ let recordLateAnswer = (feed: t, res: Source.getHeightResponse) => {
 }
 
 // A source that has not answered in this long is not going to. Far longer than
-// any healthy getHeight, so a merely slow endpoint answers first and nothing
-// here fires in normal running.
-let pollTimeoutMillis = 60_000
+// any healthy getHeight — a few hundred bytes, answered in well under a second —
+// so a merely slow endpoint answers first and nothing here fires in normal
+// running. Not the source's own request timeout: HyperSync's is sized for its
+// largest queries, and a stalled height waited out on it idles the chain.
+let pollTimeoutMillis = 10_000
 
 // One height request, with a bound on how long the caller waits for it. The
 // request itself is not cancelled and a late answer is not thrown away: it is

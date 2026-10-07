@@ -54,8 +54,8 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
   }
 }
 
-let getAutoLoadFiles = async (~config: Config.t) => {
-  let srcPattern = `./${config.handlers}/**/*.{js,mjs,ts}`
+let globAutoLoadFiles = async (~handlers) => {
+  let srcPattern = `./${handlers}/**/*.{js,mjs,ts}`
   try {
     let iterator = globIterator(srcPattern)
     let files = await iterator->Utils.Array.fromAsyncIterator
@@ -76,6 +76,14 @@ let getAutoLoadFiles = async (~config: Config.t) => {
     )
   }
 }
+
+let getAutoLoadFiles = async (~config: Config.t) =>
+  switch config.subgraph {
+  // A subgraph project's `src/` holds AssemblyScript mappings, not envio
+  // handlers: auto-loading or type-checking them as TypeScript would fail.
+  | Some(_) => []
+  | None => await globAutoLoadFiles(~handlers=config.handlers)
+  }
 
 type typeCheckResult = {
   skipped?: string,
@@ -109,6 +117,12 @@ let typeCheck = async (~config: Config.t, ~autoLoadFiles) => {
 // `HandlerRegister.finishRegistration`. This loads the user handler files
 // (populating the global `HandlerRegister` registry as a side effect) and
 // returns the resulting per-chain registrations.
+// The subgraph runtime lives in this package but is never exported: it's
+// reached only from here, when the resolved config carries a translated
+// manifest.
+let registerSubgraph: (JSON.t, ~isDev: bool) => promise<unit> = %raw(`(subgraph, isDev) =>
+  import("./subgraph/runtime.ts").then((m) => m.registerSubgraph({ ...subgraph, isDev }))`)
+
 let registerAllHandlers = async (
   ~config: Config.t,
   ~autoLoadFiles,
@@ -116,21 +130,27 @@ let registerAllHandlers = async (
   HandlerRegister.startRegistration(~config)
   registerTsHooks()
 
-  let _ = await autoLoadFiles
-  ->Array.map(file => {
-    importHandler(file)->Promise.catch(exn => {
-      let cause = exn->Utils.prettifyExn->Obj.magic
-      Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
-      JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
+  switch config.subgraph {
+  // Registered after the TypeScript hooks, so the subgraph runtime's own hooks
+  // see a mapping first.
+  | Some(subgraph) => await registerSubgraph(subgraph, ~isDev=config.isDev)
+  | None =>
+    let _ = await autoLoadFiles
+    ->Array.map(file => {
+      importHandler(file)->Promise.catch(exn => {
+        let cause = exn->Utils.prettifyExn->Obj.magic
+        Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
+        JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
+      })
     })
-  })
-  ->Promise.all
+    ->Promise.all
 
-  let _ = await config.contractHandlers
-  ->Array.map(({name, handler}) => {
-    registerContractHandlers(~contractName=name, ~handler)
-  })
-  ->Promise.all
+    let _ = await config.contractHandlers
+    ->Array.map(({name, handler}) => {
+      registerContractHandlers(~contractName=name, ~handler)
+    })
+    ->Promise.all
+  }
 
   HandlerRegister.finishRegistration(~config)
 }
