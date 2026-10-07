@@ -563,12 +563,7 @@ let makeInsertUnnestSetQuery = (
     ~chainIdMode=(chainIdMode :> string),
   )
 
-let makeInsertValuesSetQuery = (
-  ~pgSchema,
-  ~table: Table.table,
-  ~itemSchema,
-  ~itemsCount,
-) =>
+let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~itemsCount) =>
   Core.pgInsertValuesQuery(
     ~table={
       tableName: table.tableName,
@@ -662,8 +657,7 @@ let makeTableBatchSetQuery = (
   ~itemSchema: S.t<'item>,
   ~chainIdMode: ChainId.mode=Int32,
 ): batchSet => {
-  let {dbSchema, hasArrayField} =
-    table->Table.toSqlParams(~schema=itemSchema)
+  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema)
 
   // Should move this to a better place
   // We need it for the isRawEvents check in makeTableBatchSet
@@ -720,12 +714,7 @@ let makeTableBatchSetQuery = (
   | None =>
     let itemsPerQuery = itemsPerQuery(~columns=fields->Array.length)
     {
-      query: makeInsertValuesSetQuery(
-        ~pgSchema,
-        ~table,
-        ~itemSchema,
-        ~itemsCount=itemsPerQuery,
-      ),
+      query: makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=itemsPerQuery),
       convertOrThrow: compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
           serializer: columns =>
@@ -890,12 +879,7 @@ let setOrThrow = async (
             sql->Sql.exec(
               chunkSize === itemsPerQuery
                 ? data.query
-                : makeInsertValuesSetQuery(
-                    ~pgSchema,
-                    ~table,
-                    ~itemSchema,
-                    ~itemsCount=chunkSize,
-                  ),
+                : makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
               ~params,
             ),
           )

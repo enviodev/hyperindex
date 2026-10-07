@@ -31,27 +31,27 @@ type queryResult = {
 
 @send external classCreate: (Core.pgClientCtor, options) => t = "create"
 
-@send external batch: (t, string) => promise<unit> = "batch"
+// Each statement runs in the transaction it is given, or on any free connection
+// when it is given none.
+@send external batch: (t, ~transaction: Null.t<int>, string) => promise<unit> = "batch"
 
-@send external execute: (t, string, array<Null.t<string>>) => promise<int> = "execute"
+@send
+external execute: (t, ~transaction: Null.t<int>, string, array<Null.t<string>>) => promise<float> =
+  "execute"
 
-@send external queryRaw: (t, string, array<Null.t<string>>) => promise<queryResult> = "query"
+@send
+external queryRaw: (
+  t,
+  ~transaction: Null.t<int>,
+  string,
+  array<Null.t<string>>,
+) => promise<queryResult> = "query"
 
 @send external lendResult: (t, int) => array<ArrayBuffer.t> = "lendResult"
 
 @send external releaseResult: (t, int, array<ArrayBuffer.t>) => unit = "releaseResult"
 
 @send external begin: t => promise<int> = "begin"
-
-@send external transactionBatch: (t, int, string) => promise<unit> = "transactionBatch"
-
-@send
-external transactionExecute: (t, int, string, array<Null.t<string>>) => promise<int> =
-  "transactionExecute"
-
-@send
-external transactionQueryRaw: (t, int, string, array<Null.t<string>>) => promise<queryResult> =
-  "transactionQuery"
 
 @send external commit: (t, int) => promise<unit> = "commit"
 
@@ -96,7 +96,7 @@ let arena = (client): Staging.arena => {
 
 @send external copyOut: (t, string, string) => promise<unit> = "copyOut"
 
-@send external copyIn: (t, string, string) => promise<int> = "copyIn"
+@send external copyIn: (t, string, string) => promise<float> = "copyIn"
 
 @send external close: t => promise<unit> = "close"
 
@@ -120,10 +120,8 @@ let make = options => Core.getAddon().pgClient->classCreate(options)
   }
 )
 
-let query = async (client, sql, ~params=[]) => client->read(await client->queryRaw(sql, params))
-
-let transactionQuery = async (client, transaction, sql, ~params=[]) =>
-  client->read(await client->transactionQueryRaw(transaction, sql, params))
+let query = async (client, ~transaction=Null.null, sql, ~params=[]) =>
+  client->read(await client->queryRaw(~transaction, sql, params))
 
 // Opens a transaction, runs `body` in it, and commits. Anything thrown rolls
 // back instead and is re-thrown — the transaction holds a connection until one

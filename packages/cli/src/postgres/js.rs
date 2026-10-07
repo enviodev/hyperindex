@@ -312,8 +312,12 @@ impl PgClient {
     /// Runs statements that take no parameters, discarding any rows. More than
     /// one may be given at once, which is what the initialization relies on.
     #[napi]
-    pub async fn batch(&self, sql: String) -> napi::Result<()> {
-        self.inner.batch(&sql).await.map_err(to_napi)
+    pub async fn batch(&self, transaction: Option<u32>, sql: String) -> napi::Result<()> {
+        match self.on(transaction)? {
+            On::Pool => self.inner.batch(&sql).await,
+            On::Transaction(transaction) => transaction.batch(&sql).await,
+        }
+        .map_err(to_napi)
     }
 
     /// Writes what a `COPY ... TO STDOUT` produces into a file, and reads a
@@ -325,9 +329,9 @@ impl PgClient {
     }
 
     #[napi]
-    pub async fn copy_in(&self, sql: String, path: String) -> napi::Result<u32> {
+    pub async fn copy_in(&self, sql: String, path: String) -> napi::Result<f64> {
         let rows = self.inner.copy_in(&sql, &path).await.map_err(to_napi)?;
-        Ok(rows as u32)
+        Ok(rows as f64)
     }
 
     /// Forgets what the connections have prepared, which the schema being
@@ -337,24 +341,32 @@ impl PgClient {
         self.inner.forget_prepared();
     }
 
+    /// Runs a statement in `transaction`, or on any free connection, and
+    /// returns how many rows it touched.
     #[napi]
-    pub async fn execute(&self, sql: String, params: Vec<Option<String>>) -> napi::Result<u32> {
-        let params = to_params(params);
-        let affected = self.inner.execute(&sql, &params).await.map_err(to_napi)?;
-        Ok(affected as u32)
+    pub async fn execute(
+        &self,
+        transaction: Option<u32>,
+        sql: String,
+        params: Vec<Option<String>>,
+    ) -> napi::Result<f64> {
+        let affected = self.run(transaction, &sql, &to_params(params)).await?;
+        Ok(affected as f64)
     }
 
     #[napi]
     pub async fn query(
         &self,
+        transaction: Option<u32>,
         sql: String,
         params: Vec<Option<String>>,
     ) -> napi::Result<PgQueryResult> {
-        let (rows, columns) = self
-            .inner
-            .query(&sql, &to_params(params))
-            .await
-            .map_err(to_napi)?;
+        let params = to_params(params);
+        let (rows, columns) = match self.on(transaction)? {
+            On::Pool => self.inner.query(&sql, &params).await,
+            On::Transaction(transaction) => transaction.query(&sql, &params).await,
+        }
+        .map_err(to_napi)?;
         self.hold(rows, columns)
     }
 
@@ -371,7 +383,13 @@ impl PgClient {
         let arena = results
             .get_mut(&handle)
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown result {handle}")))?;
-        columnar::js::lend_for_reading(env, arena)
+        let lent = columnar::js::lend_for_reading(env, arena);
+        // The buffers a failed lend made never reach JavaScript, so nothing
+        // can read the arena once it is freed.
+        if lent.is_err() {
+            results.remove(&handle);
+        }
+        lent
     }
 
     /// Detaches a result's buffers and frees it. A result that cannot hand them
@@ -409,44 +427,6 @@ impl PgClient {
     }
 
     #[napi]
-    pub async fn transaction_batch(&self, transaction: u32, sql: String) -> napi::Result<()> {
-        self.transaction(transaction)?
-            .batch(&sql)
-            .await
-            .map_err(to_napi)
-    }
-
-    #[napi]
-    pub async fn transaction_execute(
-        &self,
-        transaction: u32,
-        sql: String,
-        params: Vec<Option<String>>,
-    ) -> napi::Result<u32> {
-        let affected = self
-            .transaction(transaction)?
-            .execute(&sql, &to_params(params))
-            .await
-            .map_err(to_napi)?;
-        Ok(affected as u32)
-    }
-
-    #[napi]
-    pub async fn transaction_query(
-        &self,
-        transaction: u32,
-        sql: String,
-        params: Vec<Option<String>>,
-    ) -> napi::Result<PgQueryResult> {
-        let transaction = self.transaction(transaction)?;
-        let (rows, columns) = transaction
-            .query(&sql, &to_params(params))
-            .await
-            .map_err(to_napi)?;
-        self.hold(rows, columns)
-    }
-
-    #[napi]
     pub async fn commit(&self, transaction: u32) -> napi::Result<()> {
         let held = self.take_transaction(transaction)?;
         held.commit().await.map_err(to_napi)
@@ -464,17 +444,40 @@ impl PgClient {
     }
 }
 
+/// Where a statement runs.
+enum On {
+    Pool,
+    Transaction(client::Transaction),
+}
+
 impl PgClient {
-    /// A transaction's connection, taken out of the map rather than held under
-    /// its lock: statements issued at the same time have to reach the server
-    /// together, and waiting on a lock would put them in a queue instead.
-    fn transaction(&self, handle: u32) -> napi::Result<client::Transaction> {
+    /// A transaction's connection is cloned out of the map rather than used
+    /// under its lock: statements issued at the same time have to reach the
+    /// server together, and waiting on a lock would put them in a queue instead.
+    fn on(&self, transaction: Option<u32>) -> napi::Result<On> {
+        let Some(handle) = transaction else {
+            return Ok(On::Pool);
+        };
         self.transactions
             .lock()
             .unwrap()
             .get(&handle)
             .cloned()
+            .map(On::Transaction)
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown transaction {handle}")))
+    }
+
+    async fn run(
+        &self,
+        transaction: Option<u32>,
+        sql: &str,
+        params: &[Param],
+    ) -> napi::Result<u64> {
+        match self.on(transaction)? {
+            On::Pool => self.inner.execute(sql, params).await,
+            On::Transaction(transaction) => transaction.execute(sql, params).await,
+        }
+        .map_err(to_napi)
     }
 
     fn take_transaction(&self, handle: u32) -> napi::Result<client::Transaction> {
@@ -782,12 +785,7 @@ impl PgClient {
                 napi::Error::from_reason(format!("Unknown staged batch {handle}"))
             })?;
         let params = write::unnest_params(&staged.arena).map_err(to_napi)?;
-        match transaction {
-            Some(transaction) => self.transaction(transaction)?.execute(&sql, &params).await,
-            None => self.inner.execute(&sql, &params).await,
-        }
-        .map(|_| ())
-        .map_err(to_napi)
+        self.run(transaction, &sql, &params).await.map(|_| ())
     }
 }
 

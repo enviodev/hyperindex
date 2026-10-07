@@ -121,16 +121,16 @@ describe("Running statements in a transaction", () => {
     let pg = client()
     let rows = await pg->PgClient.transaction(
       async handle => {
-        await pg->PgClient.transactionBatch(
-          handle,
+        await pg->PgClient.batch(
+          ~transaction=Null.make(handle),
           "CREATE TEMPORARY TABLE committed_here (n int4) ON COMMIT DROP",
         )
-        let _ = await pg->PgClient.transactionExecute(
-          handle,
+        let _ = await pg->PgClient.execute(
+          ~transaction=Null.make(handle),
           "INSERT INTO committed_here VALUES ($1::int4)",
           [Null.make("7")],
         )
-        await pg->PgClient.transactionQuery(handle, "SELECT n FROM committed_here")
+        await pg->PgClient.query(~transaction=Null.make(handle), "SELECT n FROM committed_here")
       },
     )
     await pg->PgClient.close
@@ -143,7 +143,10 @@ describe("Running statements in a transaction", () => {
     let pg = client()
     let thrown = switch await pg->PgClient.transaction(
       async handle => {
-        await pg->PgClient.transactionBatch(handle, "CREATE TEMPORARY TABLE undone_here (n int4)")
+        await pg->PgClient.batch(
+          ~transaction=Null.make(handle),
+          "CREATE TEMPORARY TABLE undone_here (n int4)",
+        )
         JsError.throwWithMessage("the body gave up")
       },
     ) {

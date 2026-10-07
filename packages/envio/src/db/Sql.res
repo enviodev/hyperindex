@@ -103,11 +103,9 @@ let params = (values: array<unknown>): array<Null.t<string>> =>
 let query = ({client, transaction}, sql, ~params as values: array<unknown>=[]): promise<
   array<'row>,
 > => {
-  let params = params(values)
-  switch transaction {
-  | Null => client->PgClient.query(sql, ~params)
-  | Value(handle) => client->PgClient.transactionQuery(handle, sql, ~params)
-  }->(Utils.magic: promise<array<dict<unknown>>> => promise<array<'row>>)
+  client
+  ->PgClient.query(~transaction, sql, ~params=params(values))
+  ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<'row>>)
 }
 
 // A statement with nothing to read back. It goes through the addon's own
@@ -115,11 +113,7 @@ let query = ({client, transaction}, sql, ~params as values: array<unknown>=[]): 
 // no columns at all, and building a result for it would be an arena, a handle
 // and a pair of boundary crossings for nothing.
 let exec = ({client, transaction}, sql, ~params as values: array<unknown>=[]) => {
-  let params = params(values)
-  switch transaction {
-  | Null => client->PgClient.execute(sql, params)
-  | Value(handle) => client->PgClient.transactionExecute(handle, sql, params)
-  }->Utils.Promise.ignoreValue
+  client->PgClient.execute(~transaction, sql, params(values))->Utils.Promise.ignoreValue
 }
 
 // A table's rows as the text the server writes them out as, straight into a
@@ -131,11 +125,7 @@ let copyIn = ({client}, sql, ~path) => client->PgClient.copyIn(sql, path)
 
 // Statements that take no parameters and return nothing worth reading. More
 // than one may be given at once, which the schema initialization relies on.
-let batch = ({client, transaction}, sql) =>
-  switch transaction {
-  | Null => client->PgClient.batch(sql)
-  | Value(handle) => client->PgClient.transactionBatch(handle, sql)
-  }
+let batch = ({client, transaction}, sql) => client->PgClient.batch(~transaction, sql)
 
 // Runs `body` in a transaction, committing it unless something throws. A `t`
 // that already carries one stays in it: the statements inside belong to the
