@@ -161,7 +161,53 @@ describe("TypeScript handler errors", () => {
 });
 
 describe("TypeScript handler type check", () => {
-  it("stops the start before handlers load, reporting only handler files", async () => {
+  const fixtureDir = path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-typecheck-project");
+  const e2eModules = path.join(config.rootDir, "packages/e2e-tests/node_modules");
+
+  // The type-error fixture, outside the repo so no parent folder has a
+  // tsconfig.json or a typescript package. Its `typescript` is one of the
+  // versions e2e-tests installs under an alias.
+  const startTypeCheckProject = async ({
+    typescript = "typescript",
+    copyTypescript = false,
+    tsconfig = fs.readFileSync(path.join(fixtureDir, "tsconfig.json"), "utf8"),
+    files = {},
+  }: {
+    typescript?: string;
+    // A copy can't resolve the packages installed beside the original, so
+    // TypeScript 7 finds no native compiler, as after an install that skipped
+    // optional dependencies.
+    copyTypescript?: boolean;
+    tsconfig?: string | null;
+    files?: Record<string, string>;
+  }) => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-typecheck-"));
+    fs.cpSync(fixtureDir, projectDir, {
+      recursive: true,
+      filter: (source) => path.basename(source) !== "tsconfig.json",
+    });
+    for (const [name, contents] of Object.entries({
+      "package.json": '{"type":"module"}',
+      ...(tsconfig === null ? {} : { "tsconfig.json": tsconfig }),
+      ...files,
+    })) {
+      fs.writeFileSync(path.join(projectDir, name), contents);
+    }
+    const modules = path.join(projectDir, "node_modules");
+    fs.mkdirSync(modules);
+    for (const name of fs.readdirSync(e2eModules)) {
+      if (!name.startsWith("typescript") && name !== ".bin") {
+        fs.symlinkSync(path.join(e2eModules, name), path.join(modules, name));
+      }
+    }
+    const typescriptDir = fs.realpathSync(path.join(e2eModules, typescript));
+    if (copyTypescript) {
+      fs.cpSync(typescriptDir, path.join(modules, "typescript"), { recursive: true });
+    } else {
+      fs.symlinkSync(typescriptDir, path.join(modules, "typescript"));
+    }
+
+    let leftovers: string[] = [];
     const result = await runEnvio(
       ["start"],
       {
@@ -169,77 +215,110 @@ describe("TypeScript handler type check", () => {
         ENVIO_PG_SCHEMA: `envio_test_${Date.now()}_${process.pid}_typecheck`,
         ENVIO_HASURA: "false",
       },
-      path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-typecheck-project")
-    );
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect({
-      exitCode: result.exitCode,
-      reportsHandlerError: output.includes(
-        [
-          "Handler files have type errors:",
-          "",
-          "src/handlers/Gravatar.ts:5:5 - error TS2322: Type 'bigint' is not assignable to type 'string'.",
-          "",
-          "5     id: event.params.id,",
-          "      ~~",
-        ].join("\n")
-      ),
-      errorCount: output.match(/error TS\d+/g)?.length,
-      reportsOtherFiles: output.includes("unused.ts"),
-      loadedHandlers: output.includes("handler loaded"),
-    }).toEqual({
-      exitCode: 1,
-      reportsHandlerError: true,
-      errorCount: 1,
-      reportsOtherFiles: false,
-      loadedHandlers: false,
-    });
-  });
-
-  // The type-error fixture without its tsconfig.json, outside the repo so no
-  // parent folder has one either.
-  const startWithoutTsconfig = async (extraFiles: Record<string, string>) => {
-    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-no-tsconfig-"));
-    fs.cpSync(path.join(config.rootDir, "packages/e2e-tests/fixtures/ts-typecheck-project"), projectDir, {
-      recursive: true,
-      filter: (source) => path.basename(source) !== "tsconfig.json",
-    });
-    for (const [name, contents] of Object.entries({ "package.json": '{"type":"module"}', ...extraFiles })) {
-      fs.writeFileSync(path.join(projectDir, name), contents);
-    }
-    fs.symlinkSync(path.join(config.rootDir, "packages/e2e-tests/node_modules"), path.join(projectDir, "node_modules"));
-
-    const result = await runEnvio(
-      ["start"],
-      {
-        ENVIO_PG_PORT: String(config.pgPort),
-        ENVIO_PG_SCHEMA: `envio_test_${Date.now()}_${process.pid}_notsconfig`,
-        ENVIO_HASURA: "false",
-      },
       projectDir
-    ).finally(() => fs.rmSync(projectDir, { recursive: true, force: true }));
+    ).finally(() => {
+      leftovers = fs.readdirSync(projectDir).filter((name) => name.startsWith("tsconfig.") && name !== "tsconfig.json");
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    });
     const output = `${result.stdout}${result.stderr}`;
     return {
-      warning: output.match(/Skipped the handler type check[^\n\x1b]*/)?.[0] ?? null,
+      exitCode: result.exitCode,
+      // A log message ends where the logger resets its color.
+      typeErrors: output.match(/Handler files have type errors:[^\x1b]*/)?.[0] ?? null,
+      warning: output.match(/Skipped the handler type check[^\x1b]*/)?.[0] ?? null,
       loadedHandlers: output.includes("handler loaded"),
+      leftovers,
     };
   };
 
-  it("is skipped with a pointer to tsconfig.json when the project has none", async () => {
-    const result = await startWithoutTsconfig({});
+  const expectedType =
+    "The expected type comes from property 'id' which is declared here on type '{ readonly id: string; readonly owner: string; readonly displayName: string; readonly imageUrl: string; }'";
+  // The report is what the project's own tsc prints, and TypeScript 7 puts a
+  // related location's message beside it rather than under its code.
+  const typeErrors = (typescript: string) =>
+    [
+      "Handler files have type errors:",
+      "",
+      "src/handlers/Gravatar.ts:5:5 - error TS2322: Type 'bigint' is not assignable to type 'string'.",
+      "",
+      "5     id: event.params.id,",
+      "      ~~",
+      "",
+      ...(typescript === "typescript-7"
+        ? [`  .envio/types.d.ts:645:14 - ${expectedType}`, '    645     readonly "id": string;', "                     ~~~~"]
+        : ["  .envio/types.d.ts:645:14", '    645     readonly "id": string;', "                     ~~~~", `    ${expectedType}`]),
+    ].join("\n");
+
+  // https://github.com/enviodev/hyperindex/issues/1684
+  it.each(["typescript-5", "typescript", "typescript-7"])(
+    "stops the start before handlers load with %s, reporting only handler files",
+    async (typescript) => {
+      expect(await startTypeCheckProject({ typescript })).toEqual({
+        exitCode: 1,
+        typeErrors: typeErrors(typescript),
+        warning: null,
+        loadedHandlers: false,
+        leftovers: [],
+      });
+    }
+  );
+
+  // TypeScript 6 and 7 default `rootDir` to the directory of the config they
+  // run, so a project that builds with `outDir` and `composite` is checked
+  // from beside its own tsconfig.json.
+  it.each(["typescript-5", "typescript", "typescript-7"])(
+    "checks a composite project with an outDir with %s as its own tsc does",
+    async (typescript) => {
+      const fixture = JSON.parse(
+        fs.readFileSync(path.join(fixtureDir, "tsconfig.json"), "utf8").replace(/\/\*[^]*?\*\//g, "")
+      );
+      const tsconfig = JSON.stringify({
+        compilerOptions: { ...fixture.compilerOptions, noEmit: undefined, composite: true, outDir: "dist" },
+      });
+
+      expect(await startTypeCheckProject({ typescript, tsconfig })).toEqual({
+        exitCode: 1,
+        typeErrors: typeErrors(typescript),
+        warning: null,
+        loadedHandlers: false,
+        leftovers: [],
+      });
+    }
+  );
+
+  it("is skipped with the reason when TypeScript 7 is missing its native compiler", async () => {
+    const result = await startTypeCheckProject({ typescript: "typescript-7", copyTypescript: true });
 
     expect(result).toEqual({
+      exitCode: 1,
+      typeErrors: null,
+      warning: [
+        "Skipped the handler type check: TypeScript's tsc failed without reporting a type error:",
+        "",
+        "Error: Unable to resolve @typescript/typescript-linux-x64. Either your platform is unsupported, or you are missing the package on disk.",
+      ].join("\n"),
+      loadedHandlers: true,
+      leftovers: [],
+    });
+  });
+
+  it("is skipped with a pointer to tsconfig.json when the project has none", async () => {
+    const result = await startTypeCheckProject({ tsconfig: null });
+
+    expect(result).toEqual({
+      exitCode: 1,
+      typeErrors: null,
       warning:
         "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates.",
       loadedHandlers: true,
+      leftovers: [],
     });
   });
 
   it("is skipped quietly in a ReScript project, whose handlers the ReScript compiler checks", async () => {
-    const result = await startWithoutTsconfig({ "rescript.json": '{"name":"indexer"}' });
+    const result = await startTypeCheckProject({ tsconfig: null, files: { "rescript.json": '{"name":"indexer"}' } });
 
-    expect(result).toEqual({ warning: null, loadedHandlers: true });
+    expect(result).toEqual({ exitCode: 1, typeErrors: null, warning: null, loadedHandlers: true, leftovers: [] });
   });
 });
 
