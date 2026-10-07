@@ -517,6 +517,40 @@ async fn a_failed_statement_leaves_a_transaction_that_can_still_be_rolled_back()
         .expect("the rollback is taken even so");
 }
 
+/// The server answers a `COMMIT` of an aborted transaction by rolling it back,
+/// without an error. Resolving that as a commit would report work as saved
+/// that never was.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_commit_after_a_failed_statement_is_refused() {
+    let client = client();
+    client
+        .batch("DROP TABLE IF EXISTS failed_commit; CREATE TABLE failed_commit (n int4)")
+        .await
+        .expect("the table is made");
+    let transaction = client.begin().await.expect("the transaction opens");
+    transaction
+        .execute("INSERT INTO failed_commit VALUES (1)", &[])
+        .await
+        .expect("the row is written");
+    let _ = transaction
+        .execute("SELECT 1 FROM nothing_is_here", &[])
+        .await;
+
+    let outcome = transaction
+        .commit()
+        .await
+        .map_err(|error| super::error::sql_state(&error).map(str::to_string));
+    let (rows, _) = client
+        .query("SELECT count(*)::int4 FROM failed_commit", &[])
+        .await
+        .expect("the count comes back");
+    assert_eq!(
+        (outcome, rows[0].get::<_, i32>(0)),
+        (Err(Some("25P02".to_string())), 0)
+    );
+}
+
 /// A batch write's statements run concurrently, so one can still be on its way
 /// when a sibling's failure rolls the transaction back. Arriving after the
 /// rollback, it would run on the same connection with no transaction around it

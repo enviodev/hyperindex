@@ -43,9 +43,31 @@ fn database_error(error: &anyhow::Error) -> Option<&tokio_postgres::error::DbErr
     })
 }
 
-/// The server's SQLSTATE, where the failure came from the server.
+/// A transaction that can no longer commit, refused before anything reaches
+/// the server: a statement in it failed, or it has already ended. It carries
+/// the code the server gives the same refusal, so the storage layer reads it
+/// as the cascade of the failure behind it rather than as a cause.
+#[derive(Debug)]
+pub struct Aborted(pub &'static str);
+
+impl std::fmt::Display for Aborted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for Aborted {}
+
+/// The SQLSTATE, where the failure came from the server or stands in for one.
 pub fn sql_state(error: &anyhow::Error) -> Option<&str> {
-    database_error(error).map(|database| database.code().code())
+    database_error(error)
+        .map(|database| database.code().code())
+        .or_else(|| {
+            error
+                .chain()
+                .any(|cause| cause.is::<Aborted>())
+                .then_some("25P02")
+        })
 }
 
 /// napi only puts its own status names in an error's `code`, so the SQLSTATE
@@ -61,6 +83,15 @@ pub fn to_napi(error: anyhow::Error) -> napi::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A statement the client turns away reads as the cascade of the failure
+    /// behind it, not as a failure of its own.
+    #[test]
+    fn a_refused_statement_carries_the_aborted_transaction_code() {
+        let error = anyhow::Error::new(Aborted("The transaction has already ended"))
+            .context("Failed running the statement");
+        assert_eq!(sql_state(&error), Some("25P02"));
+    }
 
     /// Nothing in the chain came from the server, so the context is all there
     /// is to report.

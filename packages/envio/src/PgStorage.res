@@ -1407,10 +1407,10 @@ let writeBatch = async (
 
         // A write that failed is classified rather than rethrown, so the
         // transaction would commit everything else in the batch — the
-        // checkpoint and the chains' progress included. Postgres already
-        // refuses to commit after a failure of its own; one raised before a
-        // statement went out, like a value the staging buffer refuses, it
-        // never hears about. Thrown here so the transaction rolls back.
+        // checkpoint and the chains' progress included. The client refuses to
+        // commit after a statement failed; one raised before a statement went
+        // out, like a value the staging buffer refuses, it never hears about.
+        // Thrown here so the transaction rolls back.
         switch specificError.contents {
         | Some(specificError) => throw(specificError)
         | None => ()

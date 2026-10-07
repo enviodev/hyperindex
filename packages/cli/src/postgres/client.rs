@@ -1,5 +1,6 @@
 //! The connection pool and the statements run against it.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
@@ -13,6 +14,7 @@ use tokio_postgres::config::SslMode;
 use tokio_postgres::types::{ToSql, Type};
 use tokio_postgres::{Config, NoTls, Row, Statement};
 
+use super::error::Aborted;
 use super::param::Param;
 
 /// What `ENVIO_PG_SSL_MODE` asks for.
@@ -118,6 +120,9 @@ enum Stage {
 struct Pinned {
     object: Option<deadpool_postgres::Object>,
     stage: tokio::sync::RwLock<Stage>,
+    /// A statement in the transaction failed. The server then answers a
+    /// `COMMIT` by rolling back, without an error.
+    failed: AtomicBool,
 }
 
 impl Pinned {
@@ -130,9 +135,16 @@ impl Pinned {
     async fn open(&self) -> Result<tokio::sync::RwLockReadGuard<'_, Stage>> {
         let stage = self.stage.read().await;
         if *stage != Stage::Open {
-            bail!("The transaction has already ended");
+            return Err(Aborted("The transaction has already ended").into());
         }
         Ok(stage)
+    }
+
+    fn note<T>(&self, outcome: Result<T>) -> Result<T> {
+        if outcome.is_err() {
+            self.failed.store(true, Ordering::Relaxed);
+        }
+        outcome
     }
 }
 
@@ -152,45 +164,61 @@ impl Transaction {
             connection: Arc::new(Pinned {
                 object: Some(connection),
                 stage: tokio::sync::RwLock::new(Stage::Open),
+                failed: AtomicBool::new(false),
             }),
         }
     }
 
     pub async fn execute(&self, sql: &str, params: &[Param]) -> Result<u64> {
         let _open = self.connection.open().await?;
-        execute_on(self.connection.client(), sql, params).await
+        self.connection
+            .note(execute_on(self.connection.client(), sql, params).await)
     }
 
     pub async fn query(&self, sql: &str, params: &[Param]) -> Result<(Vec<Row>, Vec<Column>)> {
         let _open = self.connection.open().await?;
-        query_on(self.connection.client(), sql, params).await
+        self.connection
+            .note(query_on(self.connection.client(), sql, params).await)
     }
 
     pub async fn batch(&self, sql: &str) -> Result<()> {
         let _open = self.connection.open().await?;
-        self.connection.client().batch_execute(sql).await?;
-        Ok(())
+        let outcome = self.connection.client().batch_execute(sql).await;
+        self.connection.note(outcome.map_err(Into::into))
     }
 
     pub async fn commit(self) -> Result<()> {
-        self.finish("COMMIT").await
+        self.finish(true).await
     }
 
     /// Undoes everything the transaction did. Safe to send after a statement
     /// has already failed: the server has aborted the transaction by then and
     /// is waiting for exactly this.
     pub async fn rollback(self) -> Result<()> {
-        self.finish("ROLLBACK").await
+        self.finish(false).await
     }
 
-    async fn finish(self, statement: &str) -> Result<()> {
+    /// Read only once the stage is held exclusively: a statement still in
+    /// flight records its failure before letting go of it.
+    async fn finish(self, commit: bool) -> Result<()> {
         let mut stage = self.connection.stage.write().await;
         if *stage != Stage::Open {
-            bail!("The transaction has already ended");
+            return Err(Aborted("The transaction has already ended").into());
         }
         *stage = Stage::Ending;
+        let failed = self.connection.failed.load(Ordering::Relaxed);
+        let statement = if commit && !failed {
+            "COMMIT"
+        } else {
+            "ROLLBACK"
+        };
         self.connection.client().batch_execute(statement).await?;
         *stage = Stage::Ended;
+        if commit && failed {
+            return Err(
+                Aborted("The transaction was rolled back: a statement in it failed").into(),
+            );
+        }
         Ok(())
     }
 }
@@ -370,7 +398,7 @@ impl PgClient {
         let partial = format!(
             "{path}.{}.{}.partial",
             std::process::id(),
-            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            NEXT.fetch_add(1, Ordering::Relaxed)
         );
         let outcome = self.copy_out_into(sql, &partial).await;
         let outcome = match outcome {
