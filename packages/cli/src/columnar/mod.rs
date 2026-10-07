@@ -291,12 +291,7 @@ impl Column {
                          was given"
                     );
                 }
-                let mut elements =
-                    std::mem::replace(elements, Box::new(Column::new(ColumnKind::F64, 0)));
                 elements.seal(&format!("{name}'s elements"), elements_len)?;
-                if let Storage::List { elements: slot, .. } = &mut self.storage {
-                    *slot = elements;
-                }
             }
             Storage::Variable { data, ends } => {
                 if ends.len() != rows {

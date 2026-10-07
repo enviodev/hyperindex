@@ -249,7 +249,6 @@ pub struct PgClientOptions {
     /// As `ENVIO_PG_SSL_MODE` spells it.
     pub ssl: String,
     pub max_connections: u32,
-    pub application_name: Option<String>,
 }
 
 #[napi]
@@ -282,7 +281,7 @@ impl PgClient {
             database: options.database,
             ssl: SslSetting::parse(&options.ssl).map_err(to_napi)?,
             max_connections: options.max_connections as usize,
-            application_name: options.application_name,
+            application_name: None,
             connect_timeout: std::time::Duration::from_secs(30),
         })
         .map_err(to_napi)?;
@@ -316,9 +315,12 @@ impl PgClient {
     }
 
     #[napi]
-    pub async fn copy_in(&self, sql: String, path: String) -> napi::Result<f64> {
-        let rows = self.inner.copy_in(&sql, &path).await.map_err(to_napi)?;
-        Ok(rows as f64)
+    pub async fn copy_in(&self, sql: String, path: String) -> napi::Result<()> {
+        self.inner
+            .copy_in(&sql, &path)
+            .await
+            .map(|_| ())
+            .map_err(to_napi)
     }
 
     /// Forgets what the connections have prepared, which the schema being

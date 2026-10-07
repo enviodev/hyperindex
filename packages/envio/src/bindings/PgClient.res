@@ -101,7 +101,7 @@ let arena = (client): Staging.arena => {
 
 @send external copyOut: (t, string, string) => promise<unit> = "copyOut"
 
-@send external copyIn: (t, string, string) => promise<float> = "copyIn"
+@send external copyIn: (t, string, string) => promise<unit> = "copyIn"
 
 @send external close: t => promise<unit> = "close"
 
