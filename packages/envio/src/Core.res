@@ -76,10 +76,6 @@ type addon = {
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
-  pgIndexKey: (~definition: pgIndexInput) => string,
-  pgIndexName: (~definition: pgIndexInput) => string,
-  pgIndexCreateQuery: (~definition: pgIndexInput, ~pgSchema: string) => string,
-  pgIndexDropQuery: (~pgSchema: string, ~indexName: string) => string,
   loadTs: string => string,
   tsCheckHandlerFormat: string => unit,
   tsResolveCandidates: (string, Null.t<string>) => array<string>,
@@ -357,9 +353,3 @@ let runCli = args => {
   let addon = getAddon()
   addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
 }
-
-let pgIndexKey = (~definition) => getAddon().pgIndexKey(~definition)
-let pgIndexName = (~definition) => getAddon().pgIndexName(~definition)
-let pgIndexCreateQuery = (~definition, ~pgSchema) =>
-  getAddon().pgIndexCreateQuery(~definition, ~pgSchema)
-let pgIndexDropQuery = (~pgSchema, ~indexName) => getAddon().pgIndexDropQuery(~pgSchema, ~indexName)

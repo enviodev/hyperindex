@@ -247,15 +247,8 @@ exception StorageError({message: string, reason: exn})
 // need, so it's printed once, without a stack trace.
 exception Refused(string)
 
-let make = (
-  ~userEntities,
-  // TODO: Should only pass userEnums and create internal config in runtime
-  ~allEnums,
-  ~storage,
-) => {
+let make = (~userEntities, ~allEnums, ~storage) => {
   let allEntities = userEntities
-  let allEnums =
-    allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
     userEntities,
     allEntities,

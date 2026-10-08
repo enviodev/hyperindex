@@ -1,12 +1,6 @@
 // What the indexer wants an index to be: a table, its ordered key columns with
-// their directions, and an access method. That tuple is the index's identity;
-// the name is derived from it rather than being part of it, so the catalog can
-// always be matched on what an index actually covers.
-//
-// The identity, the generated name and the DDL are built by the addon: an index
-// has to keep the name it was created under in every schema already deployed.
-
-let btree = "btree"
+// their directions, and an access method. The addon names it, matches it
+// against what PostgreSQL holds and builds it.
 
 type column = {
   name: string,
@@ -19,7 +13,7 @@ type t = {
   method: string,
 }
 
-let make = (~tableName, ~columns, ~method=btree) => {tableName, columns, method}
+let make = (~tableName, ~columns) => {tableName, columns, method: "btree"}
 
 let single = (~tableName, ~column) =>
   make(~tableName, ~columns=[{name: column, direction: Table.Asc}])
@@ -30,40 +24,24 @@ let fromIndexFields = (~tableName, ~indexFields: array<Table.compositeIndexField
     ~columns=indexFields->Array.map(({fieldName, direction}) => {name: fieldName, direction}),
   )
 
-%%private(
-  let toColumnInput = ({name, direction}: column): Core.pgIndexColumnInput => {
+let toInput = ({tableName, columns, method}: t): Core.pgIndexInput => {
+  tableName,
+  columns: columns->Array.map(({name, direction}): Core.pgIndexColumnInput => {
     name,
     direction: switch direction {
     | Table.Asc => "Asc"
     | Desc => "Desc"
     },
-  }
-)
-
-%%private(
-  let toInput = ({tableName, columns, method}: t): Core.pgIndexInput => {
-    tableName,
-    columns: columns->Array.map(toColumnInput),
-    method,
-  }
-)
-
-let columnKey = ({name, direction}: column) =>
-  switch direction {
-  | Asc => name
-  | Desc => `${name} DESC`
-  }
-
-let key = (definition: t) => Core.pgIndexKey(~definition=definition->toInput)
+  }),
+  method,
+}
 
 let describe = (definition: t) =>
   `${definition.tableName}(${definition.columns
-    ->Array.map(columnKey)
+    ->Array.map(({name, direction}) =>
+      switch direction {
+      | Asc => name
+      | Desc => `${name} DESC`
+      }
+    )
     ->Array.joinUnsafe(", ")}) using ${definition.method}`
-
-let name = (definition: t) => Core.pgIndexName(~definition=definition->toInput)
-
-let makeCreateQuery = (definition: t, ~pgSchema) =>
-  Core.pgIndexCreateQuery(~definition=definition->toInput, ~pgSchema)
-
-let makeDropQuery = (~pgSchema, ~indexName) => Core.pgIndexDropQuery(~pgSchema, ~indexName)

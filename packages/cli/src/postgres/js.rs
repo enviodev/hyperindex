@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use napi::bindgen_prelude::{ArrayBuffer, Buffer, Object, Promise};
-use napi::Env;
+use napi::bindgen_prelude::{ArrayBuffer, Buffer, Object, Promise, PromiseRaw};
+use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use napi::{Env, Status};
 use napi_derive::napi;
 
 use crate::columnar::{self, Arena, ColumnKind};
@@ -13,7 +14,8 @@ use super::client::{self, PgConnectionOptions, SslSetting};
 use super::ddl::{ColumnSpec, TableSpec};
 use super::error::to_napi;
 use super::history::Sequence;
-use super::index_definition::{self, Direction, IndexColumn, IndexDefinition};
+use super::index_definition::{Direction, IndexColumn, IndexDefinition, BTREE};
+use super::indexes::{Coverage, IndexEvent, Purpose};
 use super::internal::ChainConfig;
 use super::param::Param;
 use super::pg_type::{ChainIdMode, FieldType};
@@ -129,32 +131,6 @@ impl TryFrom<PgIndexInput> for IndexDefinition {
             method: input.method,
         })
     }
-}
-
-#[napi]
-pub fn pg_index_key(definition: PgIndexInput) -> napi::Result<String> {
-    Ok(IndexDefinition::try_from(definition)
-        .map_err(to_napi)?
-        .key())
-}
-
-#[napi]
-pub fn pg_index_name(definition: PgIndexInput) -> napi::Result<String> {
-    Ok(IndexDefinition::try_from(definition)
-        .map_err(to_napi)?
-        .name())
-}
-
-#[napi]
-pub fn pg_index_create_query(definition: PgIndexInput, pg_schema: String) -> napi::Result<String> {
-    Ok(IndexDefinition::try_from(definition)
-        .map_err(to_napi)?
-        .create_query(&pg_schema))
-}
-
-#[napi]
-pub fn pg_index_drop_query(pg_schema: String, index_name: String) -> String {
-    index_definition::drop_query(&pg_schema, &index_name)
 }
 
 /// A result set laid out in the arena, waiting to be read.
@@ -444,8 +420,17 @@ pub struct PgStorage {
 
 #[napi]
 impl PgStorage {
+    /// `onIndexEvent` hears what the indexes are doing, for the logs.
     #[napi(factory)]
-    pub fn create(options: PgStorageOptions) -> napi::Result<Self> {
+    pub fn create(
+        env: &Env,
+        options: PgStorageOptions,
+        mut on_index_event: ThreadsafeFunction<IndexEvent, (), IndexEvent, Status, false>,
+    ) -> napi::Result<Self> {
+        // Unreferenced, or a storage nobody closed would keep the process
+        // from exiting. See the same call in the ClickHouse sink.
+        #[allow(deprecated)]
+        on_index_event.unref(env)?;
         let port = u16::try_from(options.port)
             .map_err(|_| napi::Error::from_reason(format!("`{}` is not a port", options.port)))?;
         let client = client::PgClient::connect(PgConnectionOptions {
@@ -469,6 +454,9 @@ impl PgStorage {
                     chain_id_mode: ChainIdMode::parse(&options.chain_id_mode).map_err(to_napi)?,
                     numeric_array_as_text: options.is_hasura_enabled,
                 },
+                Arc::new(move |event| {
+                    on_index_event.call(event, ThreadsafeFunctionCallMode::NonBlocking);
+                }),
             ),
             results: Mutex::new(HashMap::new()),
             staged: Default::default(),
@@ -751,14 +739,69 @@ impl PgStorage {
         self.inner.set_chain_meta(&chains).await.map_err(to_napi)
     }
 
-    /// `readyAt` in unix milliseconds.
+    /// Builds the schema's indexes, then marks the chains ready. `readyAt` in
+    /// unix milliseconds.
     #[napi]
-    pub async fn set_ready_at(&self, chain_ids: Vec<f64>, ready_at: f64) -> napi::Result<()> {
+    pub async fn finalize_backfill(
+        &self,
+        definitions: Vec<PgIndexInput>,
+        chain_ids: Vec<f64>,
+        ready_at: f64,
+    ) -> napi::Result<()> {
+        let definitions = definitions_of(definitions)?;
         let chain_ids = chain_ids.into_iter().map(chain_id).collect::<Vec<_>>();
         self.inner
-            .set_ready_at(&chain_ids, ready_at)
+            .finalize_backfill(definitions, &chain_ids, ready_at)
             .await
             .map_err(to_napi)
+    }
+
+    /// Restores whatever the schema promises and the database no longer has.
+    /// Never rejects: a failed build is reported, and its queries run
+    /// unindexed until the next restart.
+    #[napi]
+    pub async fn ensure_schema_indexes(&self, definitions: Vec<PgIndexInput>) -> napi::Result<()> {
+        let definitions = definitions_of(definitions)?;
+        self.inner
+            .indexes
+            .ensure(definitions, Purpose::Schema)
+            .await;
+        Ok(())
+    }
+
+    /// The single-column indexes a getWhere on `columns` wants. Null when the
+    /// catalog already covers them, which is every call but the first: this
+    /// runs on every batched load, so it answers without leaving the thread.
+    /// Never rejects: a failed build is reported, and the query runs without
+    /// it.
+    #[napi]
+    pub fn ensure_query_indexes<'env>(
+        &self,
+        env: &'env Env,
+        table_name: String,
+        columns: Vec<String>,
+    ) -> napi::Result<Option<PromiseRaw<'env, ()>>> {
+        let definitions = columns
+            .into_iter()
+            .map(|name| IndexDefinition {
+                table_name: table_name.clone(),
+                columns: vec![IndexColumn {
+                    name,
+                    direction: Direction::Asc,
+                }],
+                method: BTREE.to_string(),
+            })
+            .collect::<Vec<_>>();
+        let indexes = &self.inner.indexes;
+        if indexes.covers_all(&definitions, Coverage::LeadingColumns) {
+            return Ok(None);
+        }
+        let indexes = indexes.clone();
+        env.spawn_future(async move {
+            indexes.ensure(definitions, Purpose::Query).await;
+            Ok(())
+        })
+        .map(Some)
     }
 
     #[napi]
@@ -907,6 +950,14 @@ impl PgStorage {
     pub async fn close(&self) {
         self.inner.client.close();
     }
+}
+
+fn definitions_of(definitions: Vec<PgIndexInput>) -> napi::Result<Vec<IndexDefinition>> {
+    definitions
+        .into_iter()
+        .map(IndexDefinition::try_from)
+        .collect::<anyhow::Result<Vec<_>>>()
+        .map_err(to_napi)
 }
 
 impl PgStorage {

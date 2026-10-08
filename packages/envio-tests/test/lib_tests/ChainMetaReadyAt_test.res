@@ -28,9 +28,7 @@ describe("A chain metadata write", () => {
       ~chainConfigs=config.chainMap->ChainMap.values,
       ~contractMapping=config.contractMapping,
       ~entities=config.userEntities,
-      ~enums=config.allEnums->Array.concat([
-        EntityHistory.RowAction.config->Table.fromGenericEnumConfig,
-      ]),
+      ~enums=config.allEnums,
       ~envioInfo=JSON.Encode.object(Dict.make()),
     )
     await storage.finalizeBackfill(

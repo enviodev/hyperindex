@@ -69,7 +69,7 @@ fn to_base36(value: u32, length: usize) -> String {
 }
 
 impl IndexDefinition {
-    fn column_key(column: &IndexColumn) -> String {
+    pub(super) fn column_key(column: &IndexColumn) -> String {
         match column.direction {
             Direction::Asc => column.name.clone(),
             Direction::Desc => format!("{} DESC", column.name),
@@ -88,6 +88,19 @@ impl IndexDefinition {
                 .map(Self::column_key)
                 .collect::<Vec<_>>()
                 .join(",")
+        )
+    }
+
+    pub fn describe(&self) -> String {
+        format!(
+            "{}({}) using {}",
+            self.table_name,
+            self.columns
+                .iter()
+                .map(Self::column_key)
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.method
         )
     }
 
@@ -243,6 +256,12 @@ mod tests {
                 "CREATE INDEX \"e_x_drfgb2iklc\" ON \"test_schema\".\"e\"(\"x\");",
             ),
             (
+                definition("Token", vec![asc("owner_id")], BTREE),
+                "Token|btree|owner_id",
+                "Token_owner_id_548uhmhvrh",
+                "CREATE INDEX \"Token_owner_id_548uhmhvrh\" ON \"test_schema\".\"Token\"(\"owner_id\");",
+            ),
+            (
                 definition("Multi", vec![asc("a"), asc("b"), desc("c")], BTREE),
                 "Multi|btree|a,b,c DESC",
                 "Multi_a_b_c_desc_er4sbpbz9k",
@@ -267,14 +286,37 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    /// The readable half is truncated; the identity hash is always kept whole.
     #[test]
     fn a_generated_name_always_fits_postgres() {
-        let long = definition(
-            "EntityWith63LenghtName______________________________________one",
-            vec![asc("some_quite_long_column_name_here")],
-            BTREE,
+        let long = "x".repeat(200);
+        let lengths = [
+            definition("Token", vec![asc("owner_id")], BTREE),
+            definition(&long, vec![asc(&long)], BTREE),
+            definition(&long, vec![desc(&long), asc(&long)], BTREE),
+        ]
+        .map(|definition| definition.name().len());
+        assert_eq!(
+            lengths,
+            [25, PG_MAX_IDENTIFIER_LENGTH, PG_MAX_IDENTIFIER_LENGTH]
         );
-        assert_eq!(long.name().len(), PG_MAX_IDENTIFIER_LENGTH);
+    }
+
+    /// `<table>_<column>` alone can't tell these apart, and Postgres would
+    /// truncate two long names onto one; the hash over the structured identity
+    /// keeps them apart.
+    #[test]
+    fn identities_that_read_alike_get_distinct_names() {
+        let table = format!("Entity{}", "x".repeat(50));
+        assert_eq!(
+            (
+                definition("A_B", vec![asc("C")], BTREE).name()
+                    == definition("A", vec![asc("B_C")], BTREE).name(),
+                definition(&table, vec![asc("some_long_column_one")], BTREE).name()
+                    == definition(&table, vec![asc("some_long_column_two")], BTREE).name(),
+            ),
+            (false, false)
+        );
     }
 
     #[test]
@@ -292,15 +334,17 @@ mod tests {
     }
 
     #[test]
-    fn definitions_that_cover_the_same_thing_share_a_key() {
+    fn column_order_direction_and_method_each_make_another_identity() {
+        let keys = [
+            definition("T", vec![asc("a"), asc("b")], BTREE),
+            definition("T", vec![asc("b"), asc("a")], BTREE),
+            definition("T", vec![desc("a"), asc("b")], BTREE),
+            definition("T", vec![asc("a"), asc("b")], "hash"),
+        ]
+        .map(|definition| definition.key());
         assert_eq!(
-            (
-                definition("A", vec![asc("b")], BTREE).key()
-                    == definition("A", vec![desc("b")], BTREE).key(),
-                definition("A", vec![asc("b")], BTREE).key()
-                    == definition("A", vec![asc("b")], "gin").key(),
-            ),
-            (false, false)
+            keys.iter().collect::<std::collections::HashSet<_>>().len(),
+            keys.len()
         );
     }
 

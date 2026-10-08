@@ -26,40 +26,14 @@ type C {
 }
 `,
 )
-let enums =
-  config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
+let enums = config.allEnums
 
 let entityA = config->IndexerRunner.entityConfigByName("A")
 let entityB = config->IndexerRunner.entityConfigByName("B")
 let entities = [entityA, entityB]
 let allEntities = entities
 
-// Delegates to the real client, records every statement, and can be told to
-// fail one kind of query — enough to reproduce a read-back that fails after its
-// DDL has already committed. A Proxy rather than a hand-written stand-in, so
-// the storage reaching for a method this test never thought about still works.
-let makeFlakyClient: (
-  PgClient.t,
-  array<string>,
-  string => bool,
-) => PgClient.t = %raw(`(client, log, shouldFail) => new Proxy(client, {
-  get(target, prop, receiver) {
-    if (prop === "batch" || prop === "query") {
-      return (query, ...rest) => {
-        log.push(query);
-        return shouldFail(query)
-          ? Promise.reject(new Error("connection terminated unexpectedly"))
-          : target[prop](query, ...rest);
-      };
-    }
-    const value = Reflect.get(target, prop, receiver);
-    return typeof value === "function" ? value.bind(target) : value;
-  },
-})`)
-
-let makeFlakySql = (sql: Sql.t, log, shouldFail): Sql.t => makeFlakyClient(sql, log, shouldFail)
-
-let makeStorage = (~sql=?, pgSchema) => PgStorage.make(~pgSchema, ~sql?, ~ecosystem=Evm)
+let makeStorage = pgSchema => PgStorage.make(~pgSchema, ~ecosystem=Evm)
 
 // A schema of its own per test, so the fixtures below can leave whatever
 // indexes they like behind without disturbing the other suites. `fixtures` run
@@ -79,9 +53,9 @@ Async.afterAll(async () => {
   await sql->Sql.close
 })
 
-let setup = async (~pgSchema, ~fixtures=[], ~sql as client=?, ~entities=allEntities) => {
+let setup = async (~pgSchema, ~fixtures=[], ~entities=allEntities) => {
   createdSchemas->Array.push(pgSchema)->ignore
-  let storage = makeStorage(~sql=?client, pgSchema)
+  let storage = makeStorage(pgSchema)
   let _ = await storage.initialize(
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
@@ -102,35 +76,14 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=?, ~entities=allEntit
   storage
 }
 
-let loadCatalog = async pgSchema => {
-  let rows =
-    (await sql->Sql.query(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
-      IndexCatalog.rowsSchema,
-    )
-  IndexCatalog.fromRows(~rows)
-}
+let findIndexes = (~pgSchema, ~tableName, ~columns) =>
+  sql->PgCatalog.leadingWith(~pgSchema, ~tableName, ~columns)
 
-let findIndexes = async (~pgSchema, ~tableName, ~columns) => {
-  let catalog = await loadCatalog(pgSchema)
-  catalog
-  ->IndexCatalog.entries
-  ->Array.filter((entry: IndexCatalog.entry) =>
-    entry.tableName === tableName &&
-      columns->Array.everyWithIndex((column, idx) =>
-        switch entry.columns->Array.get(idx) {
-        | Some(actual) => actual.name === column
-        | None => false
-        }
-      )
-  )
-  ->Array.toSorted((a, b) => String.compare(a.name, b.name))
-}
-
-let describeIndex = (entry: IndexCatalog.entry) => (
-  entry.name,
-  entry.isValid,
-  entry.isPartial,
-  entry.method,
+let describeIndex = (index: PgCatalog.index) => (
+  index.name,
+  index.isValid,
+  index.isPartial,
+  index.method,
 )
 
 let eq = (~fieldName): EntityFilter.t =>
@@ -138,8 +91,7 @@ let eq = (~fieldName): EntityFilter.t =>
     (fieldName, dict{"_eq": "1"->(Utils.magic: string => unknown)}),
   ])->EntityFilter.parseOrThrow(~entityName=entityA.name, ~table=entityA.table)
 
-let aBId = IndexDefinition.single(~tableName="A", ~column="b_id")
-let aBIdName = aBId->IndexDefinition.name
+let aBIdName = "A_b_id_556h9mdu8a"
 
 let readyAt = Date.fromString("2024-01-01T00:00:00Z")
 
@@ -296,9 +248,7 @@ describe("Indexes built against a real schema", () => {
     t.expect(
       (await findIndexes(~pgSchema, ~tableName="A", ~columns=[column]))->Array.map(describeIndex),
       ~message="The second request is served from the catalog, with no second index",
-    ).toEqual([
-      (IndexDefinition.single(~tableName="A", ~column)->IndexDefinition.name, true, false, "btree"),
-    ])
+    ).toEqual([("A_optionalStringToTestLinkedEntities_cedvgf89cu", true, false, "btree")])
   })
 
   // Entity names are capped at 63 characters by codegen, so nothing the
@@ -310,7 +260,6 @@ describe("Indexes built against a real schema", () => {
     let tableName = "Entity" ++ "x"->String.repeat(57)
     let entity = textEntity(~tableName, ~columns=["b_id"])
     let storage = await setup(~pgSchema, ~entities=[entity])
-    let definition = IndexDefinition.single(~tableName, ~column="b_id")
 
     await storage.finalizeBackfill(~entities=[entity], ~chainIds=[], ~readyAt)
     // A second pass has to recognise what the first one built. If the stored
@@ -320,96 +269,31 @@ describe("Indexes built against a real schema", () => {
     t.expect((
       tableName->String.length,
       (await findIndexes(~pgSchema, ~tableName, ~columns=["b_id"]))->Array.map(describeIndex),
-    )).toEqual((63, [(definition->IndexDefinition.name, true, false, "btree")]))
-  })
-
-  // The DDL commits, then the read-back fails on its own round trip. Without
-  // resyncing that index, the catalog keeps claiming the name is free and every
-  // later request replans a create that can only raise "already exists".
-  Async.it("Recovers when the read-back fails after the index was built", async t => {
-    let pgSchema = testSchema("flaky")
-    let queries = []
-    // One-shot: the storage reads the catalog during initialize too, so the
-    // failure is armed only once the schema is up.
-    let failNextRead = ref(false)
-    let flakySql = makeFlakySql(
-      PgStorage.makeClient(~pgSchema),
-      queries,
-      query =>
-        if failNextRead.contents && query->String.includes("FROM pg_index") {
-          failNextRead := false
-          true
-        } else {
-          false
-        },
-    )
-    let storage = await setup(~pgSchema, ~sql=flakySql)
-    let filters = [eq(~fieldName="b_id")]
-
-    failNextRead := true
-    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters)
-
-    let built = await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"])
-    t.expect(
-      built->Array.map(entry => entry.name),
-      ~message="The index committed even though the verification read never came back",
-    ).toEqual([aBIdName])
-
-    // The resync happens on the failure path, so by now the storage should
-    // already know the index exists.
-    queries->Utils.Array.clearInPlace
-    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters)
-    await storage.ensureQueryIndexes(~entityConfig=entityA, ~scope=CrossChain, ~filters)
-
-    t.expect(
-      (
-        queries->Array.filter(query => query->String.includes("CREATE INDEX")),
-        (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
-          entry => entry.name,
-        ),
-      ),
-      ~message="Later requests are served from the catalog instead of retrying a doomed create",
-    ).toEqual(([], [aBIdName]))
+    )).toEqual((63, [(`Entity${"x"->String.repeat(46)}_cc8kvf5n3y`, true, false, "btree")]))
   })
 
   // A finalize that dies part way through must not undo the indexes it already
-  // built, and must not claim readiness the schema doesn't back yet.
+  // built, and must not claim readiness the schema doesn't back yet. A btree
+  // refuses a key past a third of a page, so one oversized value fails the
+  // second build for real.
   Async.it("Keeps the indexes it built when a later one fails, and retries the rest", async t => {
     let pgSchema = testSchema("partial_failure")
     let tableName = "Triple"
     let entity = textEntity(~tableName, ~columns=["first_id", "second_id", "third_id"])
-    let indexNames =
-      ["first_id", "second_id", "third_id"]->Array.map(
-        column => IndexDefinition.single(~tableName, ~column)->IndexDefinition.name,
-      )
-    let secondName = indexNames->Array.getUnsafe(1)
-
-    let queries = []
-    let failSecondBuild = ref(true)
-    let flakySql = makeFlakySql(
-      PgStorage.makeClient(~pgSchema),
-      queries,
-      query =>
-        failSecondBuild.contents &&
-        query->String.includes("CREATE INDEX") &&
-        query->String.includes(secondName),
-    )
-    let storage = await setup(~pgSchema, ~sql=flakySql, ~entities=[entity])
+    let indexNames = [
+      "Triple_first_id_25x6ow0iho",
+      "Triple_second_id_8gn2rflahq",
+      "Triple_third_id_fu01se72wu",
+    ]
+    let storage = await setup(~pgSchema, ~entities=[entity])
     let chainIds = config.chainMap->ChainMap.values->Array.map(chain => chain.id)
-    let createdIndexNames = async () =>
-      (await loadCatalog(pgSchema))
-      ->IndexCatalog.entries
-      ->Array.filterMap(
-        (entry: IndexCatalog.entry) =>
-          indexNames->Array.includes(entry.name) ? Some(entry.name) : None,
-      )
-      ->Array.toSorted(String.compare)
-    let attemptedBuilds = () =>
-      indexNames->Array.filter(
-        name =>
-          queries->Array.some(
-            query => query->String.includes("CREATE INDEX") && query->String.includes(name),
-          ),
+    let _ = await sql->Sql.query(
+      `INSERT INTO "${pgSchema}"."Triple" ("id", "first_id", "second_id", "third_id")
+       SELECT '1', 'a', string_agg(md5(i::text), ''), 'c' FROM generate_series(1, 1000) i;`,
+    )
+    let builtIndexNames = async () =>
+      (await sql->PgCatalog.indexes(~pgSchema))->Array.filterMap(
+        index => indexNames->Array.includes(index.name) ? Some(index.name) : None,
       )
 
     let failure = await storage.finalizeBackfill(
@@ -417,33 +301,18 @@ describe("Indexes built against a real schema", () => {
       ~chainIds,
       ~readyAt,
     )->catchMessage
+    let afterFailure = (
+      failure->Option.isSome,
+      await builtIndexNames(),
+      await readyAtByChainId(pgSchema),
+    )
 
-    t.expect(
-      (
-        failure->Option.isSome,
-        await createdIndexNames(),
-        attemptedBuilds(),
-        await readyAtByChainId(pgSchema),
-      ),
-      ~message="The first index survives the failure, the third is never attempted, and nothing is ready",
-    ).toEqual((
-      true,
-      [indexNames->Array.getUnsafe(0)],
-      indexNames->Array.slice(~start=0, ~end=2),
-      chainIds->Array.map(id => (id, false)),
-    ))
-
-    failSecondBuild := false
-    queries->Utils.Array.clearInPlace
+    let _ = await sql->Sql.query(`UPDATE "${pgSchema}"."Triple" SET "second_id" = 'b';`)
     await storage.finalizeBackfill(~entities=[entity], ~chainIds, ~readyAt)
 
-    t.expect(
-      (await createdIndexNames(), attemptedBuilds(), await readyAtByChainId(pgSchema)),
-      ~message="The retry owes only what's left, and readiness is committed once it's all there",
-    ).toEqual((
-      indexNames->Array.toSorted(String.compare),
-      indexNames->Array.slice(~start=1, ~end=3),
-      chainIds->Array.map(id => (id, true)),
+    t.expect((afterFailure, (await builtIndexNames(), await readyAtByChainId(pgSchema)))).toEqual((
+      (true, [indexNames->Array.getUnsafe(0)], chainIds->Array.map(id => (id, false))),
+      (indexNames, chainIds->Array.map(id => (id, true))),
     ))
   })
 

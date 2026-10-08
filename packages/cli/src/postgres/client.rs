@@ -79,6 +79,7 @@ pub struct Column {
     pub ty: Type,
 }
 
+#[derive(Clone)]
 pub struct PgClient {
     pool: Pool,
 }

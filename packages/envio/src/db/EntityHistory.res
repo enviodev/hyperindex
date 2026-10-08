@@ -3,13 +3,7 @@ open Table
 module RowAction = {
   type t = SET | DELETE
   let variants = [SET, DELETE]
-  let name = "ENVIO_HISTORY_CHANGE"
   let schema = S.enum(variants)
-  let config: Table.enumConfig<t> = {
-    name,
-    variants,
-    schema,
-  }
 }
 
 // Prefix with envio_ to avoid colleasions

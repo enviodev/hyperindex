@@ -22,8 +22,7 @@ chains:
         events:
           - event: "TestEvent()"
 `)
-let enums =
-  config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
+let enums = config.allEnums
 
 let chainId = (config.chainMap->ChainMap.values->Array.getUnsafe(0)).id
 let contractMapping = config.contractMapping

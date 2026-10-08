@@ -1,3 +1,98 @@
+// The metric label, the `storage` field on this backend's logs, and the
+// storage record's own name are all the same string.
+let storageName = "postgres"
+
+let formatSeconds = seconds => (Math.round(seconds *. 100.) /. 100.)->Float.toString
+
+// Every index build blocks writes to its table for as long as it runs, and on a
+// large database that is not quick. Both build paths say so up front, so a
+// stalled-looking indexer is explainable from the logs alone.
+let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
+
+let logIndexEvent = (~pgSchema, event: PgClient.indexEvent) =>
+  switch event {
+  | Invalid({names}) =>
+    Logging.warn({
+      "storage": storageName,
+      "msg": `Ignoring invalid PostgreSQL indexes in schema "${pgSchema}". They can't serve queries, so the indexer builds its own alongside them.`,
+      "indexes": names,
+    })
+  | Planned({declared, missing, rebuilt}) =>
+    if rebuilt->Utils.Array.notEmpty {
+      Logging.warn({
+        "storage": storageName,
+        "msg": `PostgreSQL reports ${rebuilt
+          ->Array.length
+          ->Int.toString} of the indexer's own indexes as invalid, so they can't serve queries. Rebuilding them.`,
+        "indexes": rebuilt,
+      })
+    }
+    switch missing {
+    // The line that matters next is the indexer reporting itself ready, which
+    // finalization logs.
+    | [] =>
+      Logging.info({
+        "storage": storageName,
+        "msg": `All ${declared->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
+      })
+    | _ =>
+      Logging.info({
+        "storage": storageName,
+        "msg": `Creating the ${missing
+          ->Array.length
+          ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
+        "indexes": missing,
+      })
+    }
+  | Building({purpose: Query, name, tableName, isRebuild}) =>
+    Logging.info({
+      "storage": storageName,
+      "msg": `${isRebuild
+          ? "Rebuilding unusable index"
+          : "Creating index"} "${name}" to serve a getWhere query on "${tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+    })
+  | Building({purpose: Schema, name, isRebuild}) =>
+    Logging.info({
+      "storage": storageName,
+      "msg": `${isRebuild
+          ? "Rebuilding unusable index"
+          : "Creating missing index"} "${name}" the schema promises but the database no longer has. Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+    })
+  | Built({purpose, name, seconds}) =>
+    Logging.info({
+      "storage": storageName,
+      "msg": `Index "${name}" is ready after ${seconds->formatSeconds}s.${switch purpose {
+        | Query => " Resuming indexing."
+        | Schema => ""
+        }}`,
+    })
+  | Failed({purpose: Query, tableName, columns, error}) =>
+    Logging.warn({
+      "storage": storageName,
+      "msg": `Failed to create an index on "${tableName}"(${columns
+        ->Array.map(column => `"${column}"`)
+        ->Array.joinUnsafe(", ")}) for a getWhere query. The query runs without it.`,
+      "err": error,
+    })
+  | Failed({purpose: Schema, name, error}) =>
+    Logging.warn({
+      "storage": storageName,
+      "msg": `Failed to restore the schema index "${name}". Queries relying on it run unindexed until the next restart.`,
+      "err": error,
+    })
+  | ResyncFailed({name, error}) =>
+    Logging.trace({
+      "storage": storageName,
+      "msg": `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
+      "err": error,
+    })
+  | Committed({count, seconds}) =>
+    Logging.info({
+      "storage": storageName,
+      "msg": `Committed ${count->Int.toString} schema indexes and the ready timestamp in ${seconds->formatSeconds}s.`,
+    })
+  }
+
 // One client per storage: the schema and the chain-id mode it was created
 // with decide every statement the addon builds.
 let makeClient = (
@@ -6,26 +101,21 @@ let makeClient = (
   ~isHasuraEnabled=false,
   ~maxConnections=Env.Db.maxConnections,
 ): Sql.t =>
-  PgClient.make({
-    host: Env.Db.host,
-    port: Env.Db.port,
-    user: Env.Db.user,
-    password: Env.Db.password,
-    database: Env.Db.database,
-    ssl: Env.Db.ssl->Sql.sslModeToString,
-    maxConnections,
-    pgSchema,
-    chainIdMode: (chainIdMode :> string),
-    isHasuraEnabled,
-  })
-
-let formatSeconds = (timeRef: Performance.timeRef) =>
-  (Math.round(timeRef->Performance.secondsSince *. 100.) /. 100.)->Float.toString
-
-// Every index build blocks writes to its table for as long as it runs, and on a
-// large database that is not quick. Both build paths say so up front, so a
-// stalled-looking indexer is explainable from the logs alone.
-let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
+  PgClient.make(
+    {
+      host: Env.Db.host,
+      port: Env.Db.port,
+      user: Env.Db.user,
+      password: Env.Db.password,
+      database: Env.Db.database,
+      ssl: Env.Db.ssl->Sql.sslModeToString,
+      maxConnections,
+      pgSchema,
+      chainIdMode: (chainIdMode :> string),
+      isHasuraEnabled,
+    },
+    ~onIndexEvent=event => logIndexEvent(~pgSchema, event),
+  )
 
 // A per-chain entity's rows are partitioned by the chain that owns them, so a
 // chain-filtered read scans one chain's partition rather than the whole table.
@@ -107,11 +197,11 @@ let getSchemaIndexes = (
 
   all
   ->Array.filter(definition => {
-    let key = definition->IndexDefinition.key
-    if seen->Utils.Set.has(key) {
+    let identity = definition->IndexDefinition.describe
+    if seen->Utils.Set.has(identity) {
       false
     } else {
-      seen->Utils.Set.add(key)->ignore
+      seen->Utils.Set.add(identity)->ignore
       true
     }
   })
@@ -599,12 +689,6 @@ let make = (
     ])
   }
 
-  // The metric label, the `storage` field on this backend's logs, and the
-  // storage record's own name are all the same string.
-  let storageName = "postgres"
-
-  let indexManager = IndexManager.make()
-
   // Every table is registered with the addon once, by name: the handle is what
   // a write names it by.
   let registry: dict<registered> = Dict.make()
@@ -646,32 +730,6 @@ let make = (
         name: partitionTableName(~entityConfig, ~chainId),
       })
     )
-
-  let loadCatalogRows = (sql, ~indexName=?) =>
-    sql
-    ->Sql.query(IndexCatalog.makeQuery(~pgSchema, ~indexName?))
-    ->Promise.thenResolve(rows => rows->S.parseOrThrow(IndexCatalog.rowsSchema))
-
-  // The whole-schema snapshot, taken on a clean initialize and on every resume.
-  // Individual indexes are re-read from the catalog as they are built, so this
-  // is the only point where the full listing is needed.
-  let refreshIndexCatalog = async () => {
-    let rows = await sql->loadCatalogRows
-    indexManager->IndexManager.reload(~rows)
-  }
-
-  let reloadIndexCatalog = async () => {
-    let catalog = await refreshIndexCatalog()
-    switch catalog->IndexCatalog.invalidNames {
-    | [] => ()
-    | invalidIndexNames =>
-      Logging.warn({
-        "storage": storageName,
-        "msg": `Ignoring invalid PostgreSQL indexes in schema "${pgSchema}". They can't serve queries, so the indexer builds its own alongside them.`,
-        "indexes": invalidIndexNames,
-      })
-    }
-  }
 
   let isInitialized = () => sql->PgClient.isInitialized
 
@@ -804,8 +862,6 @@ let make = (
 
     let cache = await restoreEffectCache(~withUpload=true)
 
-    await reloadIndexCatalog()
-
     // Integration with other tools like Hasura
     switch onInitialize {
     | Some(onInitialize) => await onInitialize()
@@ -887,52 +943,6 @@ let make = (
     columns
   }
 
-  // Runs a prepared build's DDL and reads the index back from pg_catalog before
-  // it counts as existing. `sql` is the transaction's handle when there is one,
-  // so a failed verification rolls the DDL back with it.
-  let runAndVerify = async (sql, prepared: IndexManager.prepared) => {
-    // Sequential rather than Promise.all: inside a transaction they share one
-    // connection, and a rebuild's DROP has to land before its CREATE.
-    for idx in 0 to prepared.queries->Array.length - 1 {
-      await sql->Sql.batch(prepared.queries->Array.getUnsafe(idx))
-    }
-    let rows = await sql->loadCatalogRows(~indexName=prepared.name)
-    prepared->IndexManager.verifyOrThrow(~rows, ~pgSchema)
-  }
-
-  // Another process in the same schema builds the same indexes, and when two
-  // creates meet only one of them wins. Both of these say the index is there,
-  // which is what was wanted: a unique violation on the catalog's own index
-  // when the creates overlapped (23505), "already exists" when one merely
-  // followed the other (42P07).
-  let builtByAnother = exn =>
-    switch Sql.sqlState(exn) {
-    | Some("42P07") => true
-    | Some("23505") =>
-      exn
-      ->Utils.exnMessage
-      ->Option.mapOr(false, message => message->String.includes("pg_class_relname_nsp_index"))
-    | _ => false
-    }
-
-  // A build outside a transaction can commit its DDL and still fail — the
-  // read-back is a second round trip. Re-reading the index puts the catalog
-  // back in step, so the next attempt plans against what the database holds
-  // instead of retrying a create that can only raise "already exists".
-  //
-  // If this read fails too, the next attempt does waste a create before landing
-  // here again — bounded, and it recovers as soon as the database answers.
-  let resyncIndex = async name =>
-    switch await sql->loadCatalogRows(~indexName=name) {
-    | rows => indexManager->IndexManager.resync(~name, ~rows)
-    | exception exn =>
-      Logging.trace({
-        "storage": storageName,
-        "msg": `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
-        "err": exn->Utils.prettifyExn,
-      })
-    }
-
   let partitionChainIds = chainIds => isolated ? Some(chainIds) : None
 
   // The physical table a query index for `scope` is built on. A per-chain
@@ -952,211 +962,33 @@ let make = (
     ~entityConfig: Internal.entityConfig,
     ~scope: Internal.chainScope,
     ~filters: array<EntityFilter.t>,
-  ) => {
-    let tableName = queryTableName(~entityConfig, ~scope)
-    let columns = filterColumns(~table=entityConfig.table, ~filters)
-    let _ = await columns
-    ->Array.map(column => {
-      let definition = IndexDefinition.single(~tableName, ~column)
-      indexManager
-      ->IndexManager.ensure(~definition, ~coverage=LeadingColumns, ~build=async () => {
-        // Resolved before logging so a rebuild is reported as one, and an
-        // unrelated index holding the name fails before any DDL runs.
-        switch indexManager->IndexManager.prepare(
-          ~definition,
-          ~coverage=LeadingColumns,
-          ~pgSchema,
-        ) {
-        | None => ()
-        | Some(prepared) =>
-          let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating index"
-          // Logged from inside the build so it reports the one request that
-          // actually creates the index, not the ones waiting on it.
-          Logging.info({
-            "storage": storageName,
-            "msg": `${verb} "${prepared.name}" to serve a getWhere query on "${tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
-          })
-          let timeRef = Performance.now()
-          let entry = await sql->runAndVerify(prepared)
-          indexManager->IndexManager.record(entry)
-          Logging.info({
-            "storage": storageName,
-            "msg": `Index "${prepared.name}" is ready after ${timeRef->formatSeconds}s. Resuming indexing.`,
-          })
-        }
-      })
-      // A failed build records nothing, so the next getWhere retries. Meanwhile
-      // the query still runs — just without the index.
-      ->Promise.catch(async exn => {
-        if !(exn->builtByAnother) {
-          Logging.warn({
-            "storage": storageName,
-            "msg": `Failed to create an index on "${tableName}"("${column}") for a getWhere query. The query runs without it.`,
-            "err": exn->Utils.prettifyExn,
-          })
-        }
-        await resyncIndex(definition->IndexDefinition.name)
-      })
-    })
-    ->Promise.all
-  }
+  ) =>
+    switch sql->PgClient.ensureQueryIndexes(
+      queryTableName(~entityConfig, ~scope),
+      filterColumns(~table=entityConfig.table, ~filters),
+    ) {
+    | Value(building) => await building
+    | Null => ()
+    }
 
-  // Goes through `IndexManager.ensure`, unlike `finalizeBackfill` below: that
-  // one runs with processing paused, while this runs on a resumed indexer that
-  // is already ready, so handlers may be issuing getWhere queries alongside it
-  // and the per-table queues are what keep the two from colliding. Nothing here
-  // writes `ready_at` — the chains already carry theirs.
-  let ensureSchemaIndexes = async (~entities: array<Internal.entityConfig>, ~chainIds) => {
-    let schemaIndexes = getSchemaIndexes(
+  let schemaIndexes = (~entities: array<Internal.entityConfig>, ~chainIds) =>
+    getSchemaIndexes(
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
       ~partitionChainIds=?partitionChainIds(chainIds),
+    )->Array.map(IndexDefinition.toInput)
+
+  // Runs on a resumed indexer that is already ready, so handlers may be issuing
+  // getWhere queries alongside it. Nothing here writes `ready_at` — the chains
+  // already carry theirs.
+  let ensureSchemaIndexes = (~entities, ~chainIds) =>
+    sql->PgClient.ensureSchemaIndexes(schemaIndexes(~entities, ~chainIds))
+
+  let finalizeBackfill = (~entities, ~chainIds, ~readyAt: Date.t) =>
+    sql->PgClient.finalizeBackfill(
+      schemaIndexes(~entities, ~chainIds),
+      chainIds,
+      readyAt->Date.getTime,
     )
-
-    let _ = await schemaIndexes
-    ->Array.map(definition =>
-      indexManager
-      ->IndexManager.ensure(~definition, ~coverage=Exact, ~build=async () => {
-        switch indexManager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema) {
-        | None => ()
-        | Some(prepared) =>
-          let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating missing index"
-          Logging.info({
-            "storage": storageName,
-            "msg": `${verb} "${prepared.name}" the schema promises but the database no longer has. Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
-          })
-          let timeRef = Performance.now()
-          let entry = await sql->runAndVerify(prepared)
-          indexManager->IndexManager.record(entry)
-          Logging.info({
-            "storage": storageName,
-            "msg": `Index "${prepared.name}" is ready after ${timeRef->formatSeconds}s.`,
-          })
-        }
-      })
-      ->Promise.catch(async exn => {
-        if !(exn->builtByAnother) {
-          Logging.warn({
-            "storage": storageName,
-            "msg": `Failed to restore the schema index "${definition->IndexDefinition.name}". Queries relying on it run unindexed until the next restart.`,
-            "err": exn->Utils.prettifyExn,
-          })
-        }
-        await resyncIndex(definition->IndexDefinition.name)
-      })
-    )
-    ->Promise.all
-  }
-
-  // Unlike `ensureQueryIndexes`, this doesn't go through `IndexManager.ensure`.
-  // Within this process that is safe: `FinalizeBackfill.run` is reached from the
-  // processing loop with processing already paused, so no handler can be running
-  // a getWhere. Nothing keeps a sibling process driving other chains of the same
-  // schema out, though — it builds the same indexes at the same moment, which is
-  // why a lost create below is re-read rather than taken as a failure.
-  //
-  // Each index is built on its own rather than in one transaction with
-  // `ready_at`: a build that dies half way through a large schema would
-  // otherwise roll back every index before it and make the retry start over.
-  let finalizeBackfill = async (
-    ~entities: array<Internal.entityConfig>,
-    ~chainIds: array<ChainId.t>,
-    ~readyAt: Date.t,
-  ) => {
-    let schemaIndexes = getSchemaIndexes(
-      ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
-      ~partitionChainIds=?partitionChainIds(chainIds),
-    )
-
-    // Resolved up front so a name held by an unrelated index fails before any
-    // DDL runs, rather than part way through the set.
-    //
-    // `Exact`, so the set built here is decided by the schema alone: matching a
-    // declared index against a composite that happens to lead with the same
-    // column would make a fresh database and an upgraded one end up holding
-    // different tables.
-    let missing =
-      schemaIndexes->Array.filterMap(definition =>
-        indexManager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema)
-      )
-
-    switch missing->Array.filter((prepared: IndexManager.prepared) => prepared.isRebuild) {
-    | [] => ()
-    | rebuilt =>
-      Logging.warn({
-        "storage": storageName,
-        "msg": `PostgreSQL reports ${rebuilt
-          ->Array.length
-          ->Int.toString} of the indexer's own indexes as invalid, so they can't serve queries. Rebuilding them.`,
-        "indexes": rebuilt->Array.map((prepared: IndexManager.prepared) => prepared.name),
-      })
-    }
-
-    switch missing {
-    // A schema that declares no indexes has nothing to say about them, and one
-    // whose indexes are all in place says it once. Either way the line that
-    // matters is the indexer reporting itself ready, which finalization logs.
-    | [] if schemaIndexes->Utils.Array.notEmpty =>
-      Logging.info({
-        "storage": storageName,
-        "msg": `All ${schemaIndexes
-          ->Array.length
-          ->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
-      })
-    | [] => ()
-    | _ =>
-      Logging.info({
-        "storage": storageName,
-        "msg": `Creating the ${missing
-          ->Array.length
-          ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
-        "indexes": missing->Array.map((prepared: IndexManager.prepared) => prepared.name),
-      })
-    }
-    let timeRef = Performance.now()
-
-    // Sequential, one committed index at a time: whatever is built before a
-    // failure stays built and recorded, so the retry owes only the rest.
-    for idx in 0 to missing->Array.length - 1 {
-      let prepared = missing->Array.getUnsafe(idx)
-      switch await sql->runAndVerify(prepared) {
-      | entry => indexManager->IndexManager.record(entry)
-      | exception exn =>
-        // The DDL is outside a transaction, so a create that commits and then
-        // fails its read-back leaves the index in place and unrecorded.
-        // Re-reading it means the retry plans against the database rather than
-        // replaying a create that can only raise "already exists".
-        await resyncIndex(prepared.name)
-        // Whether the re-read left anything to do is what says if this is a
-        // failure at all: a sibling process building the same index leaves
-        // none, and stopping the backfill over it would stop an indexer for
-        // having been beaten to its own work.
-        switch indexManager->IndexManager.prepare(
-          ~definition=prepared.definition,
-          ~coverage=Exact,
-          ~pgSchema,
-        ) {
-        | None => ()
-        | Some(_) => throw(exn)
-        }
-      }
-    }
-
-    // Reached only once every definition is verified against pg_catalog, so a
-    // crash either leaves `ready_at` null and the retry finds the indexes
-    // already built, or commits readiness the schema backs.
-    await sql->PgClient.setReadyAt(chainIds, readyAt->Date.getTime)
-
-    // Only when something was built: the wait this closes is the index build,
-    // and the stamp on its own is not one anybody waited through.
-    if missing->Utils.Array.notEmpty {
-      Logging.info({
-        "storage": storageName,
-        "msg": `Committed ${missing
-          ->Array.length
-          ->Int.toString} schema indexes and the ready timestamp in ${timeRef->formatSeconds}s.`,
-      })
-    }
-  }
 
   let dumpEffectCache = async () => {
     try {
@@ -1279,8 +1111,6 @@ let make = (
       blockNumber: checkpoint.blockNumber,
       blockHash: checkpoint.blockHash,
     })
-
-    await reloadIndexCatalog()
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {

@@ -43,8 +43,7 @@ chains:
 )
 let entityConfig = config->IndexerRunner.entityConfigByName("Item")
 let entities = [entityConfig]
-let enums =
-  config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
+let enums = config.allEnums
 let pgSchema = TestPgSchema.make()
 
 let migrateClient = PgStorage.makeClient(~pgSchema)

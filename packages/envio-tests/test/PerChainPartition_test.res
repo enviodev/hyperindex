@@ -116,8 +116,7 @@ type relation = {
   @as("parent") parent: string,
 }
 
-let ownerIndexName =
-  IndexDefinition.single(~tableName="Counter", ~column="owner")->IndexDefinition.name
+let ownerIndexName = "Counter_owner_0nly2t9mp5"
 
 describe("Per-chain entity partitions against Postgres", () => {
   scenario->Scenario.it(
@@ -159,18 +158,11 @@ describe("Per-chain entity partitions against Postgres", () => {
       // Postgres cascades a partitioned index down to every partition. The
       // indexer declared its index on the parent, so that is what has to
       // satisfy the declaration — a child's copy must never stand in for it.
-      let catalog = IndexCatalog.fromRows(
-        ~rows=(await sql->Sql.query(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
-          IndexCatalog.rowsSchema,
-        ),
-      )
+      let catalog = await sql->PgCatalog.indexes(~pgSchema)
       let ownerIndex =
         catalog
-        ->IndexCatalog.find(
-          IndexDefinition.single(~tableName="Counter", ~column="owner"),
-          ~coverage=Exact,
-        )
-        ->Option.map((entry: IndexCatalog.entry) => (entry.tableName, entry.name, entry.isValid))
+        ->Array.find(index => index.tableName === "Counter" && index.columns == ["owner"])
+        ->Option.map(index => (index.tableName, index.name, index.isValid))
 
       let plan: array<{
         "QUERY PLAN": string,
@@ -185,7 +177,7 @@ describe("Per-chain entity partitions against Postgres", () => {
         relations,
         ownerIndex,
         // Nothing anywhere in the schema — partitions included — is unusable.
-        catalog->IndexCatalog.invalidNames,
+        catalog->Array.filterMap(index => index.isValid ? None : Some(index.name)),
         // Only chain 137's partition survives planning; the other is pruned.
         plan
         ->Array.map(row => row["QUERY PLAN"])

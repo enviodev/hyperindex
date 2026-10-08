@@ -19,7 +19,11 @@ use crate::columnar::{Arena, ColumnKind};
 use super::client::{Column, PgClient, Transaction};
 use super::ddl::{create_partition_query, create_table_query, ColumnSpec, TableSpec};
 use super::error::sql_state;
-use super::history::{History, Sequence, CHANGE_COLUMN, CHANGE_TYPE, CHECKPOINT_COLUMN};
+use super::history::{
+    History, Sequence, CHANGE_COLUMN, CHANGE_TYPE, CHECKPOINT_COLUMN, DELETE, SET,
+};
+use super::index_definition::IndexDefinition;
+use super::indexes::{IndexEvent, Indexes, Report};
 use super::insert::{self, Constant};
 use super::internal::{self, ChainConfig};
 use super::param::Param;
@@ -495,6 +499,7 @@ pub struct Storage {
     pub client: PgClient,
     settings: Settings,
     tables: RwLock<Vec<Arc<Table>>>,
+    pub indexes: Arc<Indexes<PgClient>>,
 }
 
 /// The failure worth reporting out of a transaction's: the first one that is
@@ -529,8 +534,13 @@ fn settle<T>(outcomes: Vec<std::result::Result<T, Failure>>) -> std::result::Res
 }
 
 impl Storage {
-    pub fn new(client: PgClient, settings: Settings) -> Self {
+    pub fn new(client: PgClient, settings: Settings, report: Report) -> Self {
         Self {
+            indexes: Arc::new(Indexes::new(
+                client.clone(),
+                settings.pg_schema.clone(),
+                report,
+            )),
             client,
             settings,
             tables: RwLock::new(Vec::new()),
@@ -661,6 +671,9 @@ impl Storage {
                     .join(", ")
             ));
         }
+        ddl.push(format!(
+            "CREATE TYPE \"{schema}\".{CHANGE_TYPE} AS ENUM('{SET}', '{DELETE}');"
+        ));
         for spec in internal::tables(input.sequence) {
             ddl.push(self.create_table(&spec)?);
         }
@@ -706,7 +719,8 @@ impl Storage {
             anyhow::Ok(())
         }
         .await;
-        finish(transaction, outcome).await
+        finish(transaction, outcome).await?;
+        self.indexes.reload().await
     }
 
     async fn insert_addresses(
@@ -809,10 +823,11 @@ impl Storage {
             internal::read_addresses(schema, false),
             internal::read_reorg_checkpoints(schema),
         );
-        let ((chains, _), addresses, (checkpoints, _)) = futures_util::try_join!(
+        let ((chains, _), addresses, (checkpoints, _), ()) = futures_util::try_join!(
             self.client.query(&read_chains, &[]),
             self.client.query(&read_addresses, &[]),
             self.client.query(&read_checkpoints, &[]),
+            self.indexes.reload(),
         )?;
         Ok((
             chains
@@ -877,6 +892,33 @@ impl Storage {
         }
         .await;
         finish(transaction, outcome).await
+    }
+
+    /// Builds the schema's indexes, then marks the chains ready. Each index
+    /// commits on its own rather than in one transaction with `ready_at`: a
+    /// build that dies half way through a large schema would otherwise roll
+    /// back every index before it and make the retry start over. Readiness is
+    /// stamped only once every one is verified, so a crash either leaves it
+    /// unset and the retry finds the indexes built, or commits readiness the
+    /// schema backs.
+    pub async fn finalize_backfill(
+        &self,
+        definitions: Vec<IndexDefinition>,
+        chain_ids: &[i64],
+        ready_at: f64,
+    ) -> Result<()> {
+        let start = std::time::Instant::now();
+        let built = self.indexes.finalize(definitions).await?;
+        self.set_ready_at(chain_ids, ready_at).await?;
+        // Only when something was built: the wait this closes is the build,
+        // and the stamp on its own is not one anybody waited through.
+        if built > 0 {
+            self.indexes.report(IndexEvent::Committed {
+                count: built as u32,
+                seconds: start.elapsed().as_secs_f64(),
+            });
+        }
+        Ok(())
     }
 
     pub async fn prune_checkpoints(&self, bounds: &Bounds) -> Result<()> {

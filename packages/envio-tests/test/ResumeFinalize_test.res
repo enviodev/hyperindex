@@ -65,15 +65,12 @@ name: resume-finalize-multichain${contractsYaml}chains:${chainYaml(1, gravatar1,
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
-let hasIndex = async (definition, ~sql, ~pgSchema) => {
-  let rows =
-    (await sql->Sql.query(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
-      IndexCatalog.rowsSchema,
-    )
-  IndexCatalog.fromRows(~rows)->IndexCatalog.find(definition, ~coverage=Exact)->Option.isSome
-}
+let aBIdIndex = "A_b_id_556h9mdu8a"
 
-let aBIdIndex = IndexDefinition.single(~tableName="A", ~column="b_id")
+let hasIndex = async (name, ~sql, ~pgSchema) =>
+  (await sql->PgCatalog.indexes(~pgSchema))->Array.some(index =>
+    index.name === name && index.isValid
+  )
 
 type persistedChain = {
   id: int,
@@ -103,8 +100,8 @@ let persistedReadyAt = async (~sql, ~pgSchema) => {
   rows->Array.map(row => row["ready_at"]->Null.toOption->Option.map(Date.toISOString))
 }
 
-let dropIndex = async (definition, ~sql, ~pgSchema) => {
-  let _ = await sql->Sql.query(`DROP INDEX "${pgSchema}"."${definition->IndexDefinition.name}";`)
+let dropIndex = async (name, ~sql, ~pgSchema) => {
+  let _ = await sql->Sql.query(`DROP INDEX "${pgSchema}"."${name}";`)
 }
 
 let clearReadyAt = async (~sql, ~pgSchema) => {

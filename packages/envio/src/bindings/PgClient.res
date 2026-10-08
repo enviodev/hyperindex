@@ -213,9 +213,30 @@ type batch = {
   effectCaches: array<tableWrite>,
 }
 
-@send external classCreate: (Core.pgStorageCtor, options) => t = "create"
+// What a build was for, which decides how much an existing index has to match.
+type indexPurpose = | @as("Query") Query | @as("Schema") Schema
 
-let make = options => Core.getAddon().pgStorage->classCreate(options)
+// What the indexes are doing, for the logs.
+@tag("kind")
+type indexEvent =
+  | Invalid({names: array<string>})
+  | Planned({declared: int, missing: array<string>, rebuilt: array<string>})
+  | Building({purpose: indexPurpose, name: string, tableName: string, isRebuild: bool})
+  | Built({purpose: indexPurpose, name: string, seconds: float})
+  | Failed({
+      purpose: indexPurpose,
+      name: string,
+      tableName: string,
+      columns: array<string>,
+      error: string,
+    })
+  | ResyncFailed({name: string, error: string})
+  | Committed({count: int, seconds: float})
+
+@send
+external classCreate: (Core.pgStorageCtor, options, indexEvent => unit) => t = "create"
+
+let make = (options, ~onIndexEvent) => Core.getAddon().pgStorage->classCreate(options, onIndexEvent)
 
 @send external registerTable: (t, Core.pgTableInput) => registeredTable = "registerTable"
 
@@ -287,7 +308,18 @@ let query = async (client, sql, ~params=[]) => client->read(await client->queryR
 
 @send external setChainMeta: (t, array<chainMeta>) => promise<unit> = "setChainMeta"
 
-@send external setReadyAt: (t, array<ChainId.t>, float) => promise<unit> = "setReadyAt"
+// Builds the schema's indexes, then marks the chains ready.
+@send
+external finalizeBackfill: (t, array<Core.pgIndexInput>, array<ChainId.t>, float) => promise<unit> =
+  "finalizeBackfill"
+
+@send
+external ensureSchemaIndexes: (t, array<Core.pgIndexInput>) => promise<unit> = "ensureSchemaIndexes"
+
+// Null when the indexes are already there, which is every call but the first.
+@send
+external ensureQueryIndexes: (t, string, array<string>) => Null.t<promise<unit>> =
+  "ensureQueryIndexes"
 
 @send external pruneCheckpoints: (t, bounds) => promise<unit> = "pruneCheckpoints"
 

@@ -97,47 +97,15 @@ name: schema-indexes-multichain${contractsYaml}chains:${chainYaml(
   ~schema,
 )
 
-let loadCatalog = async (~sql, ~pgSchema) => {
-  let rows =
-    (await sql->Sql.query(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
-      IndexCatalog.rowsSchema,
-    )
-  IndexCatalog.fromRows(~rows)
-}
-
 // Every index on `tableName` whose key columns start with `columns`, so an
 // assertion can say what the schema holds rather than what SQL was emitted.
-let findIndexes = async (~sql, ~tableName, ~columns, ~pgSchema) => {
-  let catalog = await loadCatalog(~sql, ~pgSchema)
-  catalog
-  ->IndexCatalog.entries
-  ->Array.filter(entry =>
-    entry.tableName === tableName &&
-      columns->Array.everyWithIndex((column, idx) =>
-        switch entry.columns->Array.get(idx) {
-        | Some(actual) => actual.name === column
-        | None => false
-        }
-      )
-  )
-  ->Array.toSorted((a, b) => String.compare(a.name, b.name))
-}
+let findIndexes = (~sql, ~tableName, ~columns, ~pgSchema) =>
+  sql->PgCatalog.leadingWith(~pgSchema, ~tableName, ~columns)
 
-let indexNames = async (~sql, ~pgSchema) => {
-  let catalog = await loadCatalog(~sql, ~pgSchema)
-  catalog
-  ->IndexCatalog.entries
-  ->Array.map((entry: IndexCatalog.entry) => entry.name)
-  ->Array.toSorted(String.compare)
-}
+let indexNames = async (~sql, ~pgSchema) =>
+  (await sql->PgCatalog.indexes(~pgSchema))->Array.map(index => index.name)
 
-let isValid = (entry: IndexCatalog.entry) => entry.isValid
-let isPartial = (entry: IndexCatalog.entry) => entry.isPartial
-let predicate = (entry: IndexCatalog.entry) => entry.predicate
-let method = (entry: IndexCatalog.entry) => entry.method
-
-let aBIdIndex = IndexDefinition.single(~tableName="A", ~column="b_id")
-let aBIdIndexName = aBIdIndex->IndexDefinition.name
+let aBIdIndexName = "A_b_id_556h9mdu8a"
 
 let readyAtRows = async (~sql, ~pgSchema) => {
   let rows: array<{
@@ -253,7 +221,7 @@ describe("Deferred schema indexes", () => {
       t.expect(
         (
           (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
-            entry => (entry.name, entry->isValid, entry->isPartial, entry->method),
+            entry => (entry.name, entry.isValid, entry.isPartial, entry.method),
           ),
           await readyAtByChainId(~sql, ~pgSchema),
           await indexer.metric("envio_progress_ready"),
@@ -476,14 +444,10 @@ describe("Deferred schema indexes", () => {
         (
           await indexer.metric("envio_progress_ready"),
           conflicting->Array.map(entry => entry.name),
-          aIndexes->Array.map(entry => (entry->isValid, entry->isPartial, entry->predicate)),
+          aIndexes->Array.map(entry => (entry.isValid, entry.isPartial)),
         ),
         ~message="The conflicting index is left alone and A(b_id) still gets a usable index of its own",
-      ).toEqual((
-        [{value: "1", labels: dict{"chainId": "1337"}}],
-        ["A_b_id"],
-        [(true, false, None)],
-      ))
+      ).toEqual(([{value: "1", labels: dict{"chainId": "1337"}}], ["A_b_id"], [(true, false)]))
 
       t.expect(
         aIndexes->Array.map(entry => entry.name),
@@ -566,19 +530,14 @@ describe("Automatic getWhere indexes", () => {
           matched.contents,
           (
             await findIndexes(~sql, ~tableName="A", ~columns=[optionalColumn], ~pgSchema)
-          )->Array.map(entry => (entry.name, entry->isValid)),
+          )->Array.map(entry => (entry.name, entry.isValid)),
           await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema),
           await readyAtByChainId(~sql, ~pgSchema),
         ),
         ~message="The query builds its own index during backfill and still returns the right rows, while the schema's own indexes stay deferred",
       ).toEqual((
         ["1", "3"],
-        [
-          (
-            IndexDefinition.single(~tableName="A", ~column=optionalColumn)->IndexDefinition.name,
-            true,
-          ),
-        ],
+        [("A_optionalStringToTestLinkedEntities_cedvgf89cu", true)],
         [],
         [(ChainId.fromInt(1337), false)],
       ))

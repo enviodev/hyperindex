@@ -19,8 +19,7 @@ type Counter {
 `,
 )
 let entities = [config->IndexerRunner.entityConfigByName("Counter")]
-let enums =
-  config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
+let enums = config.allEnums
 let pgSchema = TestPgSchema.make()
 
 Async.afterAll(async () => {

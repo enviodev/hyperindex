@@ -188,9 +188,7 @@ describe("EntityFilter matcher against Postgres", () => {
     let _ = await storage.initialize(
       ~contractMapping=config.contractMapping,
       ~entities=config.userEntities,
-      ~enums=config.allEnums->Array.concat([
-        EntityHistory.RowAction.config->Table.fromGenericEnumConfig,
-      ]),
+      ~enums=config.allEnums,
       ~envioInfo=JSON.Object(Dict.make()),
     )
 

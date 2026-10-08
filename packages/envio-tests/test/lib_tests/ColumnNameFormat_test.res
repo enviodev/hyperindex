@@ -77,10 +77,9 @@ describe("Storage column naming (snake_case)", () => {
   })
 
   it("creates indexes with db column names", t => {
-    let definition = PgStorage.getSchemaIndexes(~entities=[snapshotEntity])->Array.getUnsafe(0)
-    t.expect(definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema")).toBe(
-      `CREATE INDEX "${definition->IndexDefinition.name}" ON "test_schema"."Snapshot"("transaction_index");`,
-    )
+    t.expect(
+      PgStorage.getSchemaIndexes(~entities=[snapshotEntity])->Array.map(IndexDefinition.describe),
+    ).toEqual(["Snapshot(transaction_index) using btree"])
   })
 
   it("parses rows keyed by db column names into entities", t => {

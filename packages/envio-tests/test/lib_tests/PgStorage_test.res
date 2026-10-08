@@ -130,24 +130,12 @@ describe("Test PgStorage SQL generation functions", () => {
     let entities = [entityConfig("A"), entityConfig("B")]
 
     Async.it(
-      "Describes every promised index once, with its generated name",
+      "Describes every promised index once",
       async t => {
-        let definition = IndexDefinition.single(~tableName="A", ~column="b_id")
-
         t.expect(
-          PgStorage.getSchemaIndexes(~entities)->Array.map(
-            definition => (
-              definition->IndexDefinition.name,
-              definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
-            ),
-          ),
+          PgStorage.getSchemaIndexes(~entities)->Array.map(IndexDefinition.describe),
           ~message="The @index on A.b and B's derived relationship describe the same index",
-        ).toEqual([
-          (
-            definition->IndexDefinition.name,
-            `CREATE INDEX "${definition->IndexDefinition.name}" ON "test_schema"."A"("b_id");`,
-          ),
-        ])
+        ).toEqual(["A(b_id) using btree"])
       },
     )
 
@@ -227,41 +215,6 @@ describe("Test PgStorage SQL generation functions", () => {
             ),
           ),
         ).toEqual([("Order", ["trader_id"])])
-      },
-    )
-
-    // Two long field names on one entity used to truncate to the same
-    // 63-character identifier, and the second index silently never got built.
-    Async.it(
-      "Keeps two long names distinct within Postgres' identifier limit",
-      async t => {
-        let tableName = "Entity" ++ "x"->String.repeat(50)
-        let names =
-          ["some_long_column_one", "some_long_column_two"]->Array.map(
-            column => IndexDefinition.single(~tableName, ~column)->IndexDefinition.name,
-          )
-
-        t.expect((
-          names->Array.map(String.length),
-          names->Array.getUnsafe(0) === names->Array.getUnsafe(1),
-        )).toEqual(([63, 63], false))
-      },
-    )
-
-    Async.it(
-      "Keeps composite index columns ordered with their directions",
-      async t => {
-        let definition = IndexDefinition.make(
-          ~tableName="Transfer",
-          ~columns=[
-            {name: "block_number", direction: Table.Desc},
-            {name: "log_index", direction: Table.Asc},
-          ],
-        )
-
-        t.expect(definition->IndexDefinition.makeCreateQuery(~pgSchema="s")).toBe(
-          `CREATE INDEX "${definition->IndexDefinition.name}" ON "s"."Transfer"("block_number" DESC, "log_index");`,
-        )
       },
     )
   })
