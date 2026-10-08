@@ -408,6 +408,8 @@ jobs:
         run: |
           pnpm exec envio codegen
           pnpm test
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
       - name: Run E2E test
         working-directory: packages/e2e-tests

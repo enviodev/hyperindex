@@ -543,7 +543,7 @@
       "type": "object",
       "properties": {
         "url": {
-          "description": "The RPC endpoint URL.",
+          "description": "The RPC endpoint URL. An entry whose url is empty, for example `${RPC_URL:-}` with the variable unset, is ignored.",
           "type": "string"
         },
         "for": {

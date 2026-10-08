@@ -1637,11 +1637,13 @@ impl DataSource {
 
         let mut rpcs = vec![];
         for rpc in raw_rpcs.iter() {
+            if rpc.url.is_empty() {
+                continue;
+            }
             match parse_url(rpc.url.as_str()) {
               None => return Err(anyhow!("The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", rpc.url)),
               Some(url) => {
-                // Validate ws URL protocol if provided
-                let ws = match &rpc.ws {
+                let ws = match rpc.ws.as_deref().filter(|ws_url| !ws_url.is_empty()) {
                     Some(ws_url) => {
                         if ws_url.starts_with("wss://") || ws_url.starts_with("ws://") {
                             Some(ws_url.trim_end_matches('/').to_string())
