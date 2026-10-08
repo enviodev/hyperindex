@@ -32,11 +32,8 @@ type pinnedRetry =
 type pinnedError =
   | UnsupportedSelection(string)
   | FailedGettingItems({attemptedToBlock: int, providerMessage: option<string>, retry: pinnedRetry})
-  | FailedGettingFieldSelection({
-      blockNumber: int,
-      message: string,
-      causeMessage: option<string>,
-    })
+  | FailedGettingFieldSelection({blockNumber: int, message: string, causeMessage: option<string>})
+  | BehindHead({blockNumber: int})
 
 let countRequests = (stats: array<Source.requestStat>) => {
   let counts = Dict.make()
@@ -173,5 +170,6 @@ let capture = async getPage => {
   let (blockStore, transactionStore) = makeStores()
   try Ok(await (await getPage())->normalizePage(~blockStore, ~transactionStore)) catch {
   | Source.GetItemsError(error) => Error(error->normalizeError)
+  | Source.SourceBehindHead({blockNumber}) => Error(BehindHead({blockNumber: blockNumber}))
   }
 }
