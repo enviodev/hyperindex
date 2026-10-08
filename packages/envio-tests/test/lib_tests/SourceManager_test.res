@@ -1530,6 +1530,52 @@ describe("SourceManager.executeQuery", () => {
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
+  Async.it(
+    "Keeps retrying a source behind the head for about 10 seconds before failing over",
+    async t => {
+      Vi.useFakeTimers()
+      let syncMock = MockSource.make([#getItemsOrThrow])
+      let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
+      let sourceManager = SourceManager.make(
+        ~isRealtime=false,
+        ~sources=[syncMock.source, fallbackMock.source],
+      )
+      let startedAt = Date.now()
+      let p =
+        sourceManager->SourceManager.executeQuery(
+          ~query={...mockQuery(), fromBlock: 10},
+          ~isRealtime=false,
+          ~knownHeight=100,
+        )
+
+      // The replica answering is only briefly behind its siblings, so a source
+      // that is otherwise healthy must not be traded away within a few retries.
+      let syncRetries = []
+      let failedOverAt = ref(None)
+      let ticks = ref(0)
+      while failedOverAt.contents === None && ticks.contents < 3_000 {
+        switch (syncMock.getItemsOrThrowCalls, fallbackMock.getItemsOrThrowCalls) {
+        | ([call], []) =>
+          syncRetries->Array.push(call.payload["retry"])
+          call.reject(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
+        | ([], [call]) =>
+          failedOverAt := Some((call.payload["retry"], Date.now() -. startedAt))
+          call.resolve([])
+        | _ => ()
+        }
+        await Vi.advanceTimersByTimeAsync(10)
+        ticks := ticks.contents + 1
+      }
+      let _ = await p
+      Vi.useRealTimers()
+
+      t.expect((syncRetries, failedOverAt.contents)).toEqual((
+        Array.fromInitializer(~length=13, i => i),
+        Some((13, 9550.)),
+      ))
+    },
+  )
+
   Async.it("counts the requests a failed getItems still made", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
@@ -1592,12 +1638,14 @@ describe("SourceManager.executeQuery", () => {
     t.expect(
       sourceManager
       ->SourceManager.getRequestStatSamples
-      ->Array.map(({method, count, responseBlocks, emptyResponseCount}) => (
-        method,
-        count,
-        responseBlocks,
-        emptyResponseCount,
-      )),
+      ->Array.map(
+        ({method, count, responseBlocks, emptyResponseCount}) => (
+          method,
+          count,
+          responseBlocks,
+          emptyResponseCount,
+        ),
+      ),
     ).toEqual([("getLogs", 2, Some(3), 1)])
   })
 

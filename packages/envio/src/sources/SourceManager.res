@@ -24,7 +24,7 @@ let recordStatsInto = (
   aggregates: dict<requestStatAgg>,
   requestStats: array<Source.requestStat>,
 ) => {
-  requestStats->Array.forEach(({method, seconds, responseBlocks: ?responseBlocks}) => {
+  requestStats->Array.forEach(({method, seconds, ?responseBlocks}) => {
     let agg = switch aggregates->Utils.Dict.dangerouslyGetNonOption(method) {
     | Some(agg) => agg
     | None =>
@@ -577,11 +577,14 @@ let backoffBeforeRetry = async (
   ~isRealtime,
   ~backoffMillis,
   ~minBackoffMillis=0,
+  ~failoverAfterRetries=2,
   ~excludedSources=?,
 ) => {
-  // Give the source two attempts before demoting it, then re-try a failover
+  // Give the source a few attempts before demoting it, then re-try a failover
   // every second attempt.
-  let switchedToWorkingSource = if retry >= 2 && retry->mod(2) === 0 {
+  let switchedToWorkingSource = if (
+    retry >= failoverAfterRetries && (retry - failoverAfterRetries)->mod(2) === 0
+  ) {
     let now = Date.now()
     sourceState.lastFailedAt = Some(now)
     switch sourceManager->getNextSource(~isRealtime, ~excludedSources?) {
@@ -608,6 +611,13 @@ let backoffBeforeRetry = async (
   }
 }
 
+// A replica behind its siblings usually catches up within seconds, and failing
+// over demotes an otherwise healthy source for the whole recovery timeout. So
+// the source keeps the query for about 10s (100ms doubling, capped at 1s per
+// attempt) before a failover is tried.
+let behindHeadMaxBackoffMillis = 1_000
+let behindHeadFailoverRetries = 12
+
 // The queried block hasn't reached the backend instance that served the
 // request. Expected around the head of a load-balanced backend, so early
 // attempts stay quiet and short; a source that stays behind fails over like any
@@ -623,8 +633,8 @@ let retryBehindHead = async (
   ~err: exn,
   ~excludedSources=?,
 ) => {
-  let backoffMillis = retry->retryBackoffMillis
-  let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
+  let backoffMillis = Utils.expBackoff(~base=100, ~exp=retry, ~maxMillis=behindHeadMaxBackoffMillis)
+  let log = retry >= behindHeadFailoverRetries ? Logging.childWarn : Logging.childTrace
   logger->log({
     "msg": `Block #${blockNumber->Int.toString} is not available on the ${sourceState.source.name} source yet. Instances of a load-balanced backend drift slightly around the head, so this is expected - indexing continues after an automatic retry.`,
     "method": method,
@@ -638,6 +648,7 @@ let retryBehindHead = async (
     ~isRealtime,
     ~backoffMillis,
     ~minBackoffMillis=minRecoverableBackoffMillis,
+    ~failoverAfterRetries=behindHeadFailoverRetries,
     ~excludedSources?,
   )
 }
@@ -861,8 +872,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
       // Re-armed because distrusting a stream is a one-shot — the next height it
       // delivers takes it back at its word — and the silence that earned it can
       // come straight back.
-      let rec armPokeTimeout = () =>
-        pokeTimeoutId := Some(setTimeout(() => {
+      let rec armPokeTimeout = () => pokeTimeoutId := Some(setTimeout(() => {
               pokeTimeoutId := None
               if !settled.contents {
                 watched->Array.forEach(subscription => subscription.distrustStream())
@@ -879,8 +889,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
       // operator about when they hear about a quiet chain, and spreading that
       // would report it early. Fires once — the warning is worth saying once per
       // wait, and a fallback stays recruited.
-      let armStallTimeout = () =>
-        stallTimeoutId := Some(setTimeout(() => {
+      let armStallTimeout = () => stallTimeoutId := Some(setTimeout(() => {
               stallTimeoutId := None
               if !settled.contents {
                 stalled := true
@@ -917,9 +926,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
                 }
 
                 // Recruited to poll, not to stream: see `watch`.
-                fallbackSources->Array.forEach(
-                  sourceState => sourceState->watch(~withStream=false),
-                )
+                fallbackSources->Array.forEach(sourceState => sourceState->watch(~withStream=false))
 
                 // A fallback recruited here can still be holding a stream from an
                 // earlier wait that made it a primary, and a live stream is not
@@ -940,7 +947,6 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
   })
 }
 
-
 let executeQuery = async (
   sourceManager: t,
   ~query: FetchState.query,
@@ -949,11 +955,12 @@ let executeQuery = async (
 ) => {
   // Read when the manager actually runs out of sources, not on the way in: the
   // reason is recorded by the failure that disabled the last one.
-  let noSourcesError = () => switch sourceManager.disableReason {
-  | Some(reason) =>
-    `The indexer doesn't have data-sources which can continue fetching. The last one was disabled because ${reason}`
-  | None => "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
-  }
+  let noSourcesError = () =>
+    switch sourceManager.disableReason {
+    | Some(reason) =>
+      `The indexer doesn't have data-sources which can continue fetching. The last one was disabled because ${reason}`
+    | None => "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
+    }
 
   // Sources where the query is impossible - lazily allocated, excluded for the duration of this query
   let excludedSourcesRef = ref(None)
@@ -1135,7 +1142,11 @@ let executeQuery = async (
         })
         retryRef := 0
 
-      | FailedGettingItems({?exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
+      | FailedGettingItems({
+          ?exn,
+          attemptedToBlock,
+          retry: WithBackoff({message, backoffMillis}),
+        }) =>
         await sourceManager->retryFailedPage(
           sourceState,
           ~retry,
