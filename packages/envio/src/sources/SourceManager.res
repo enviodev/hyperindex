@@ -641,28 +641,28 @@ let retryBehindHead = async (
   ~isRealtime,
   ~logger: Pino.t,
   ~blockNumber: int,
-  ~method: string,
-  ~err: exn,
   ~excludedSources=?,
 ) => {
   let backoffMillis = retry->behindHeadBackoffMillis
+  let source = sourceState.source.name
+  let block = blockNumber->Int.toString
+  // The condition is routine and resolves without the user doing anything, so
+  // the wording says so; the error object would only add internals.
   let (log, msg) = if retry < behindHeadFailoverRetries {
     (
       Logging.childTrace,
-      `Block #${blockNumber->Int.toString} is not available on the ${sourceState.source.name} source yet. Instances of a load-balanced backend drift slightly around the head, so this is expected - indexing continues after an automatic retry.`,
+      `${source} hasn't reached block ${block} yet. This is normal near the latest block and resolves by itself - retrying shortly.`,
     )
   } else {
     (
       Logging.childWarn,
-      `Block #${blockNumber->Int.toString} is still not available on the ${sourceState.source.name} source after retrying for several seconds. Switching to another source if one is available, otherwise retrying with a growing delay.`,
+      `${source} is still catching up to block ${block}. Indexing will continue automatically, using another data source if one is configured.`,
     )
   }
   logger->log({
     "msg": msg,
-    "method": method,
     "retry": retry,
     "backOffMilliseconds": backoffMillis,
-    "err": err->Utils.prettifyExn,
   })
   await sourceManager->backoffBeforeRetry(
     sourceState,
@@ -1059,7 +1059,7 @@ let executeQuery = async (
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
-    | Source.SourceBehindHead({blockNumber, requestStats}) as err =>
+    | Source.SourceBehindHead({blockNumber, requestStats}) =>
       sourceState->recordRequestStats(requestStats)
       await sourceManager->retryBehindHead(
         sourceState,
@@ -1067,8 +1067,6 @@ let executeQuery = async (
         ~isRealtime,
         ~logger,
         ~blockNumber,
-        ~method="getItems",
-        ~err,
         ~excludedSources=?excludedSourcesRef.contents,
       )
       retryRef := retryRef.contents + 1
@@ -1239,16 +1237,8 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
-    | Source.SourceBehindHead({blockNumber}) as err =>
-      await sourceManager->retryBehindHead(
-        sourceState,
-        ~retry,
-        ~isRealtime,
-        ~logger,
-        ~blockNumber,
-        ~method="getBlockHashes",
-        ~err,
-      )
+    | Source.SourceBehindHead({blockNumber}) =>
+      await sourceManager->retryBehindHead(sourceState, ~retry, ~isRealtime, ~logger, ~blockNumber)
       retryRef := retryRef.contents + 1
 
     | Source.InconsistentResponse(_) as err =>

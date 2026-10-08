@@ -73,19 +73,6 @@ impl FetchKey {
             }
         }
     }
-
-    fn describe(&self) -> String {
-        match self {
-            FetchKey::Block(number) => format!("block {number}"),
-            FetchKey::Transaction(hash) => {
-                format!("transaction {}", format::Hash::from(*hash).encode_hex())
-            }
-            FetchKey::Receipt(hash) => format!(
-                "the receipt of transaction {}",
-                format::Hash::from(*hash).encode_hex()
-            ),
-        }
-    }
 }
 
 pub(crate) enum EnrichError {
@@ -94,7 +81,7 @@ pub(crate) enum EnrichError {
     /// answered has not reached this block yet. Reported as the block it
     /// belongs to, so SourceManager retries it on the same schedule as any
     /// other source behind the head.
-    BehindHead { block_number: u64, message: String },
+    BehindHead { block_number: u64 },
     /// The provider's answer is unusable, but the next one may not be: a
     /// response for a block other than the one asked for, a value that will not
     /// decode. A node can answer badly once without answering badly again, so
@@ -115,9 +102,10 @@ pub(crate) enum EnrichError {
 impl std::fmt::Display for EnrichError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EnrichError::BehindHead { message, .. } | EnrichError::Transient(message) => {
-                write!(f, "{message}")
+            EnrichError::BehindHead { block_number } => {
+                write!(f, "The RPC node hasn't reached block {block_number} yet.")
             }
+            EnrichError::Transient(message) => write!(f, "{message}"),
             EnrichError::FieldSelection { error, .. } => write!(f, "{error:#}"),
             EnrichError::Rpc(err) => write!(f, "{err}"),
         }
@@ -291,15 +279,7 @@ async fn require(
 
     let value = result.map_err(EnrichError::Rpc)?;
     if value.is_null() {
-        return Err(EnrichError::BehindHead {
-            block_number,
-            message: format!(
-                "The RPC returned null for {}. The provider may be load-balanced between nodes \
-                 that drift from the head independently; indexing continues correctly once the \
-                 query is retried.",
-                key.describe()
-            ),
-        });
+        return Err(EnrichError::BehindHead { block_number });
     }
     Ok(value)
 }
