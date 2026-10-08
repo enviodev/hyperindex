@@ -651,7 +651,7 @@ let retryBehindHead = async (
   let (log, msg) = if retry < behindHeadFailoverRetries {
     (
       Logging.childTrace,
-      `${source} hasn't reached block ${block} yet. Its servers are slightly out of sync near the latest block, which is normal and resolves by itself - retrying shortly.`,
+      `${source} hasn't reached block ${block} on all of its servers yet. This is normal near the latest block and resolves by itself - retrying shortly.`,
     )
   } else {
     (

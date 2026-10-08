@@ -1842,7 +1842,7 @@ describe("SourceManager.executeQuery", () => {
       Some((
         "trace",
         dict{
-          "msg": "MockSource hasn't reached block 10 yet. Its servers are slightly out of sync near the latest block, which is normal and resolves by itself - retrying shortly."->(
+          "msg": "MockSource hasn't reached block 10 on all of its servers yet. This is normal near the latest block and resolves by itself - retrying shortly."->(
             Utils.magic: string => unknown
           ),
           "retry": 0->(Utils.magic: int => unknown),
