@@ -44,6 +44,8 @@ describe("Starting with ClickHouse storage but no ClickHouse settings", () => {
   | #clickhouse => Async.it_skip(`${name} [no clickhouse: the leg provides them]`, async _ => ())
   | #postgres =>
     Async.it(name, async t => {
+      // A developer's shell or an earlier file in the same worker may have set
+      // them, and the refusal is only reachable with all four gone.
       let env = NodeJs.Process.process.env
       let saved = names->Array.map(name => (name, env->Dict.get(name)))
       names->Array.forEach(name => env->Dict.delete(name))
@@ -53,6 +55,7 @@ describe("Starting with ClickHouse storage but no ClickHouse settings", () => {
       ) {
       | () => "the start to fail, but it succeeded"
       | exception JsExn(error) => error->JsExn.message->Option.getOr("")
+      | exception error => `an unexpected failure: ${error->String.make}`
       }
       saved->Array.forEach(
         ((name, value)) =>

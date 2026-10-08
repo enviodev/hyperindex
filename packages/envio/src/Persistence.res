@@ -399,7 +399,6 @@ let init = {
 // a migration command: what a config change prints names the command the
 // operator ran, and an unreachable chain is waited on rather than reported,
 // since somebody is watching the run come up.
-// A worker's supervisor announces the resume once for the whole run.
 let initForRun = (
   persistence,
   ~config: Config.t,

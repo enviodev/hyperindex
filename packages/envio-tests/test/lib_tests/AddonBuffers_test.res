@@ -18,10 +18,11 @@ describe("Lending a result's buffers", () => {
     }
     pg->PgClient.releaseResult(result.handle, buffers)
     await pg->PgClient.close
-    t.expect((lentAgain, buffers->Array.map(ArrayBuffer.byteLength))).toEqual((
-      false,
-      buffers->Array.map(_ => 0),
-    ))
+    t.expect((
+      lentAgain,
+      buffers->Array.length > 0,
+      buffers->Array.map(ArrayBuffer.byteLength),
+    )).toEqual((false, true, buffers->Array.map(_ => 0)))
   })
 })
 
@@ -59,10 +60,11 @@ describe("Writing a staged batch", () => {
     }
     pg->PgClient.abortStage(~handle, ~buffers)
     await pg->PgClient.close
-    t.expect((refused, buffers->Array.map(ArrayBuffer.byteLength))).toEqual((
-      true,
-      buffers->Array.map(_ => 0),
-    ))
+    t.expect((
+      refused,
+      buffers->Array.length > 0,
+      buffers->Array.map(ArrayBuffer.byteLength),
+    )).toEqual((true, true, buffers->Array.map(_ => 0)))
   })
 })
 

@@ -175,7 +175,9 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
   // Two `envio start --chain` processes naming the same new chain can both
   // plan to add it. Only one may: the other would index the chain alongside it.
   // Both are held at the add until both have planned it, which is the race;
-  // one that starts after the other has added the chain just resumes it.
+  // one that starts after the other has added the chain just resumes it. A
+  // process that serialised before planning would never reach the add twice,
+  // and this gate would time out rather than pass.
   let planned = ref(0)
   deployed->Scenario.it(
     "Adds a chain once when two processes name it at the same time",
@@ -208,18 +210,31 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
           switch outcome {
           | Fulfilled(_) => "started"
           | Rejected({reason}) =>
-            let message = (reason->(Utils.magic: exn => {"message": string}))["message"]
-            // Refused at the partition or at the chain's row, whichever the
-            // other process got to first.
-            message->String.includes(`relation "Counter$137" already exists`) ||
-              message->String.includes(`"envio_chains_pkey"`)
-              ? "refused: the other process added the chain"
-              : `refused: ${message}`
+            let error =
+              reason->(
+                Utils.magic: exn => {"message": string, "cause": Nullable.t<{"message": string}>}
+              )
+            // Refused at the partition (42P07) or at the chain's row (23505),
+            // whichever the other process got to first.
+            switch error["cause"]->Nullable.toOption->Option.map(cause => cause["message"]) {
+            | Some("42P07" | "23505") => "refused: the other process added the chain"
+            | _ => `refused: ${error["message"]}`
+            }
           }
         )
         ->Array.toSorted(String.compare),
         (await startBlocks(indexer))->Array.map(((chainId, _)) => chainId),
-      )).toEqual((["refused: the other process added the chain", "started"], ["1", "137"]))
+        await counterPartitions(indexer),
+        (await indexer.queryAddresses())->Array.map(row => (
+          row.chainId->ChainId.toString,
+          row.contractName,
+        )),
+      )).toEqual((
+        ["refused: the other process added the chain", "started"],
+        ["1", "137"],
+        ["Counter$1", "Counter$137"],
+        [("1", "Token"), ("137", "Token")],
+      ))
     },
   )
 

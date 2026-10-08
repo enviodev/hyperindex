@@ -5,6 +5,13 @@ open Vitest
 // operator and value the filter grammar allows. Rather than enumerate the cases
 // by hand, this generates rows and filters from a seeded generator and checks
 // each getWhere a handler runs against the matcher applied to the same rows.
+//
+// Every row a query loads stays in memory and answers later filters through
+// the matcher, so a row one query's SQL missed would be covered up by an
+// earlier query that loaded it. Each filter is therefore pinned to a group of
+// rows no other filter reads, which leaves its own SQL as the only way in.
+// Rows the SQL returns past the filter never reach the handler, since they are
+// matched before any index takes them, so only a missed row can show here.
 let makeRandom: int => unit => float = %raw(`seed => {
   let a = seed >>> 0
   return () => {
@@ -33,6 +40,7 @@ enum Kind {
 
 type Row {
   id: ID!
+  group: Int!
   str: String!
   optStr: String
   int_: Int!
@@ -84,7 +92,7 @@ type column = {
 let allOperators = ["_eq", "_gt", "_lt", "_gte", "_lte", "_in"]
 
 let dates = [0., 1000., 1500., 1501., 2000., 31536000000.]->Array.map(Date.fromTime)
-let strings = ["a", "ab", "b", "ba", "z", "aa", "1a", "a1", ""]
+let strings = ["a", "ab", "b", "ba", "z", "aa", "1a", "a1", "", "a'b", "a\\b"]
 let ints = [0, 1, 2, 3, 4, 5, -1]
 let bigs =
   [0, 1, 2, 3, 4, 5, -1]
@@ -154,16 +162,20 @@ let columns = [
 let pick = (random, items) =>
   items->Array.getUnsafe((random() *. items->Array.length->Int.toFloat)->Float.toInt)
 
+let rowsPerGroup = 12
+
 let makeRow = (random, ~index) => {
   let row = Dict.make()
   row->Dict.set("id", `r${index->Int.toString}`->u)
+  row->Dict.set("group", (index / rowsPerGroup)->u)
   columns->Array.forEach(column => row->Dict.set(column.name, random->pick(column.pool)))
   row
 }
 
-let makeFilter = random => {
+let makeFilter = (random, ~group) => {
   let filter = Dict.make()
-  let fieldsCount = random() < 0.3 ? 2 : 1
+  filter->Dict.set("group", dict{"_eq": group->u})
+  let fieldsCount = random() < 0.3 ? 3 : 2
   while filter->Dict.keysToArray->Array.length < fieldsCount {
     let column = random->pick(columns)
     let values = column.pool->Array.filter(value => !(value->EntityFilter.nullish))
@@ -218,8 +230,11 @@ describe("A getWhere over committed rows", () => {
 
       for seed in 1 to 3 {
         let random = makeRandom(seed)
-        let rows = Array.fromInitializer(~length=60, index => makeRow(random, ~index))
-        let filters = Array.fromInitializer(~length=300, _ => makeFilter(random))
+        let filters = Array.fromInitializer(~length=300, group => makeFilter(random, ~group))
+        let rows = Array.fromInitializer(
+          ~length=filters->Array.length * rowsPerGroup,
+          index => makeRow(random, ~index),
+        )
         let writeBlock = seed * 2 - 1
 
         // Ids repeat across seeds, so each seed's rows replace the previous ones.

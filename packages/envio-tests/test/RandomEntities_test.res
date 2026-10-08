@@ -2,9 +2,12 @@ open Vitest
 
 // Random entities, random rows, set by a handler and read back after the batch
 // commits. What this covers that a case written by hand does not is the
-// combinations: which of the two inserts a table's columns select, where a
-// value lands in the arena, and what the growth of a column's payload does to
-// the rows after it. A failure names the seed and the schema that produced it.
+// combinations: both inserts (a table with a list column renders a parameter
+// per cell, any other is staged into the arena), where a value lands in the
+// arena, and what the growth of a column's payload does to the rows after it.
+// Which insert ran isn't observable from outside, only that each round trips,
+// so the cases are required to include tables of both shapes. A failure names
+// the seed and the schema that produced it.
 
 @val @scope(("process", "env")) external seedEnv: option<string> = "ENVIO_FUZZ_SEED"
 @val @scope(("process", "env")) external casesEnv: option<string> = "ENVIO_FUZZ_CASES"

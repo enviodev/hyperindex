@@ -67,7 +67,8 @@ type rec t = {
   // `envio start --chain` does. The chains left out keep their stored state.
   // `~config` resumes under an edited config.yaml, and later restarts keep it.
   // `~reset` starts over on an emptied schema, the way `envio dev -r` does.
-  // `~asWorker` resumes the way a process a supervisor forked does.
+  // `~asWorker` leaves the resume unannounced, as a process a supervisor forked
+  // does.
   restart: (
     ~config: Config.t=?,
     ~chains: array<ChainId.t>=?,
@@ -76,7 +77,8 @@ type rec t = {
     unit,
   ) => promise<t>,
   // Another process on the same schema, started while this one keeps running,
-  // the way a second `envio start --chain` would be.
+  // the way a second `envio start --chain` would be. The global persistence and
+  // logger are the last one started's, so a handler can't tell siblings apart.
   sibling: (~config: Config.t=?, ~chains: array<ChainId.t>) => promise<t>,
   // Writes the effect cache out to this run's own cache directory, where the
   // next initialize uploads it from.

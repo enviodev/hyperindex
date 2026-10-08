@@ -30,7 +30,7 @@ type Tally {
 let resumeLines = (indexer: IndexerRunner.t) =>
   indexer.logs()
   ->Array.map(entry => entry.msg)
-  ->Array.filter(msg => msg->String.includes("esum"))
+  ->Array.filter(msg => msg->String.toLowerCase->String.includes("resum"))
 
 describe("Announcing a resume", () => {
   scenario->Scenario.it(
