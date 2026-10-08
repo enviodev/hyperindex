@@ -174,7 +174,8 @@ describe("TypeScript handler type check", () => {
     tsconfig = fixtureTsconfig,
     files = {},
   }: {
-    typescript?: string;
+    // `null` leaves typescript uninstalled.
+    typescript?: string | null;
     // A copy can't resolve the packages installed beside the original, so
     // TypeScript 7 finds no native compiler, as after an install that skipped
     // optional dependencies.
@@ -201,11 +202,13 @@ describe("TypeScript handler type check", () => {
         fs.symlinkSync(path.join(e2eModules, name), path.join(modules, name));
       }
     }
-    const typescriptDir = fs.realpathSync(path.join(e2eModules, typescript));
-    if (copyTypescript) {
-      fs.cpSync(typescriptDir, path.join(modules, "typescript"), { recursive: true });
-    } else {
-      fs.symlinkSync(typescriptDir, path.join(modules, "typescript"));
+    if (typescript !== null) {
+      const typescriptDir = fs.realpathSync(path.join(e2eModules, typescript));
+      if (copyTypescript) {
+        fs.cpSync(typescriptDir, path.join(modules, "typescript"), { recursive: true });
+      } else {
+        fs.symlinkSync(typescriptDir, path.join(modules, "typescript"));
+      }
     }
 
     const before = fs.readdirSync(projectDir);
@@ -216,6 +219,8 @@ describe("TypeScript handler type check", () => {
         ENVIO_PG_PORT: String(config.pgPort),
         ENVIO_PG_SCHEMA: `envio_test_${Date.now()}_${process.pid}_typecheck`,
         ENVIO_HASURA: "false",
+        // A globally installed typescript would otherwise resolve.
+        NODE_PATH: "",
       },
       projectDir
     ).finally(() => {
@@ -317,7 +322,7 @@ describe("TypeScript handler type check", () => {
         exitCode: 1,
         typeErrors: null,
         warning: [
-          "Skipped the handler type check: tsc reported errors that can stop it from type-checking the handlers:",
+          "Skipped the handler type check: TypeScript can't check the handlers until these errors are fixed:",
           "",
           "src/lib/broken.ts:1:23 - error TS1109: Expression expected.",
           "",
@@ -354,7 +359,7 @@ describe("TypeScript handler type check", () => {
       exitCode: 1,
       typeErrors: null,
       warning: [
-        "Skipped the handler type check: tsc reported errors that can stop it from type-checking the handlers:",
+        "Skipped the handler type check: TypeScript can't check the handlers until these errors are fixed:",
         "",
         ...error,
         "",
@@ -374,7 +379,8 @@ describe("TypeScript handler type check", () => {
       expect(await startTypeCheckProject({ typescript, tsconfig })).toEqual({
         exitCode: 1,
         typeErrors: null,
-        warning: "Skipped the handler type check for src/handlers/Gravatar.ts: tsconfig.json doesn't include it.",
+        warning:
+          'Skipped the handler type check for src/handlers/Gravatar.ts: tsconfig.json doesn\'t include it. Add it to its "include" to type-check it on start.',
         loadedHandlers: true,
         written: [],
       });
@@ -388,10 +394,23 @@ describe("TypeScript handler type check", () => {
       exitCode: 1,
       typeErrors: null,
       warning: [
-        "Skipped the handler type check: TypeScript's tsc failed without reporting a type error:",
+        "Skipped the handler type check: tsc failed to run:",
         "",
         `Error: Unable to resolve @typescript/typescript-${process.platform}-${process.arch}. Either your platform is unsupported, or you are missing the package on disk.`,
       ].join("\n"),
+      loadedHandlers: true,
+      written: [],
+    });
+  });
+
+  it("is skipped with how to install typescript when the project has none", async () => {
+    const result = await startTypeCheckProject({ typescript: null });
+
+    expect(result).toEqual({
+      exitCode: 1,
+      typeErrors: null,
+      warning:
+        "Skipped the handler type check: typescript isn't installed. Add it to the project's devDependencies to type-check handlers on start.",
       loadedHandlers: true,
       written: [],
     });
