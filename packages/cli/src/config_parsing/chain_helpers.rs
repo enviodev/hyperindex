@@ -707,9 +707,7 @@ mod test {
     fn somnia_testnet_is_supported_by_hypersync() {
         assert_eq!(
             (
-                Network::from_network_id(50312)
-                    .ok()
-                    .map(|network| network.to_string()),
+                Network::from_network_id(50312).map(|n| n.to_string()).ok(),
                 HypersyncChain::from_repr(50312).is_some()
             ),
             (Some("somnia-testnet".to_string()), true)
