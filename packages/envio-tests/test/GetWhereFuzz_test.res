@@ -43,6 +43,7 @@ type Row {
   group: Int!
   str: String!
   optStr: String
+  quoted: String!
   int_: Int!
   optInt: Int
   float_: Float!
@@ -92,7 +93,7 @@ type column = {
 let allOperators = ["_eq", "_gt", "_lt", "_gte", "_lte", "_in"]
 
 let dates = [0., 1000., 1500., 1501., 2000., 31536000000.]->Array.map(Date.fromTime)
-let strings = ["a", "ab", "b", "ba", "z", "aa", "1a", "a1", "", "a'b", "a\\b"]
+let strings = ["a", "ab", "b", "ba", "z", "aa", "1a", "a1", ""]
 let ints = [0, 1, 2, 3, 4, 5, -1]
 let bigs =
   [0, 1, 2, 3, 4, 5, -1]
@@ -104,6 +105,13 @@ let nullable = pool => pool->Array.concat([undefined])
 let columns = [
   {name: "str", pool: strings->Array.map(u), operators: allOperators},
   {name: "optStr", pool: strings->Array.map(u)->nullable, operators: allOperators},
+  {
+    name: "quoted",
+    // Bound as parameters, never spliced in. Equality only: a database with a
+    // linguistic collation orders punctuation apart from how a handler would.
+    pool: ["a'b", "a\\b", "a''b", "'", "\\", "a"]->Array.map(u),
+    operators: ["_eq", "_in"],
+  },
   {name: "int_", pool: ints->Array.map(u), operators: allOperators},
   {name: "optInt", pool: ints->Array.map(u)->nullable, operators: allOperators},
   {name: "float_", pool: [0.5, 1.5, -2.25, 3., 1e10]->Array.map(u), operators: allOperators},
