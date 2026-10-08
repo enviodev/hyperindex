@@ -1472,8 +1472,7 @@ programs:
   // generated TypeScript can carry.
   it("accepts program and instruction names that ReScript reserves", t => {
     let {config} = InternalTestIndexer.fromUserApi(
-      ~configYaml=prefix ++
-      `        - name: type
+      ~configYaml=prefix ++ `        - name: type
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           instructions:
             - {name: switch, discriminator: "0x0f"}
@@ -2132,7 +2131,9 @@ chains:
   it("reports events missing from an ABI", t => {
     expectParseError(
       t,
-      ~files=dict{"abis/Token.json": `[{"type":"event","name":"Approval","inputs":[],"anonymous":false}]`},
+      ~files=dict{
+        "abis/Token.json": `[{"type":"event","name":"Approval","inputs":[],"anonymous":false}]`,
+      },
       evmYaml,
       "Failed parsing abi types for events in contract Token on network 1: Event Transfer not found in ABI file",
     )
@@ -2180,10 +2181,12 @@ programs:
 `,
     )
     t.expect(
-      firstContract(config).events->Array.map(event => {
-        let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-        (svm.name, svm.accounts, svm.args)
-      }),
+      firstContract(config).events->Array.map(
+        event => {
+          let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+          (svm.name, svm.accounts, svm.args)
+        },
+      ),
     ).toEqual([
       ("namesOnly", [Internal.Required("source")], JSON.Null),
       ("argsOnly", [], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
@@ -2270,12 +2273,7 @@ indexer.onInstruction(
 `,
     )
     t.expect(catalog(config)).toEqual([
-      (
-        `say\"hi`,
-        Some("0x07"),
-        ["payer"],
-        JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`),
-      ),
+      (`say\"hi`, Some("0x07"), ["payer"], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
     ])
   })
 
@@ -2342,7 +2340,12 @@ indexer.onInstruction(
     )
     t.expect(catalog(config)).toEqual([
       ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
-      ("swap", Some("0x01"), ["payer", "pool"], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
+      (
+        "swap",
+        Some("0x01"),
+        ["payer", "pool"],
+        JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`),
+      ),
       ("anyCall", None, [], JSON.Null),
     ])
   })
