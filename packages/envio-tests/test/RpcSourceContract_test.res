@@ -511,6 +511,44 @@ describe("RPC source public contract", () => {
     ).toEqual("unservable")
   })
 
+  // A node that hasn't reached the block explains every other bad answer on the
+  // same page, so it is what decides the retry schedule whichever settles last.
+  Async.it("pins a null block winning over a concurrent unusable receipt", async t => {
+    let error = await MockRpcServer.withScenario(
+      ~name="null block alongside a malformed receipt",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~params=getLogsParams(),
+          ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          ~reply=RpcResult(JSON.Null),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getTransactionReceipt",
+          ~params=JSON.Array([JSON.String(transactionHash)]),
+          ~reply=Delayed({
+            millis: 50,
+            reply: RpcResult(JSON.parseOrThrow(`{"gasUsed":"not a quantity"}`)),
+          }),
+        ),
+      ],
+      async mock => {
+        let registration = makeRegistration(~receiptOnly=true)
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        | Error(error) => error
+        | Ok(_) => JsError.throwWithMessage("Expected the page to fail")
+        }
+      },
+    )
+
+    t.expect(error).toEqual(RpcSourcePins.BehindHead({blockNumber: 100}))
+  })
+
   Async.it("pins consecutive response-too-large interval shrinking", async t => {
     let defaultSyncConfig = EvmChain.getSyncConfig({})
     let errors = await MockRpcServer.withScenario(

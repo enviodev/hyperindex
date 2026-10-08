@@ -130,9 +130,12 @@ impl EnrichError {
     /// reports.
     fn severity(&self) -> u8 {
         match self {
-            EnrichError::BehindHead { .. } | EnrichError::Transient(_) => 0,
-            EnrichError::Rpc(_) => 1,
-            EnrichError::FieldSelection { .. } => 2,
+            EnrichError::Transient(_) => 0,
+            // A node that hasn't reached the block explains any bad answer it
+            // gave beside it, and its retry is the one built for that.
+            EnrichError::BehindHead { .. } => 1,
+            EnrichError::Rpc(_) => 2,
+            EnrichError::FieldSelection { .. } => 3,
         }
     }
 

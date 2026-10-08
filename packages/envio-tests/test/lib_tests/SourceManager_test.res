@@ -1448,6 +1448,7 @@ describe("SourceManager wait for new blocks", () => {
   )
 })
 describe("SourceManager.executeQuery", () => {
+  afterEach(() => Vi.useRealTimers())
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let addresses = TestAddresses.setOf([])
 
