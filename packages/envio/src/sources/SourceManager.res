@@ -614,9 +614,21 @@ let backoffBeforeRetry = async (
 // A replica behind its siblings usually catches up within seconds, and failing
 // over demotes an otherwise healthy source for the whole recovery timeout. So
 // the source keeps the query for about 10s (100ms doubling, capped at 1s per
-// attempt) before a failover is tried.
-let behindHeadMaxBackoffMillis = 1_000
+// attempt) before a failover is tried. Past that window the source is behind
+// for real, and with nowhere to fail over to it is polled less and less often,
+// doubling from 1s up to the shared cap.
 let behindHeadFailoverRetries = 12
+
+let behindHeadBackoffMillis = retry =>
+  if retry < behindHeadFailoverRetries {
+    Utils.expBackoff(~base=100, ~exp=retry, ~maxMillis=1_000)
+  } else {
+    Utils.expBackoff(
+      ~base=1_000,
+      ~exp=retry - behindHeadFailoverRetries,
+      ~maxMillis=maxRetryBackoffMillis,
+    )
+  }
 
 // The queried block hasn't reached the backend instance that served the
 // request. Expected around the head of a load-balanced backend, so early
@@ -633,10 +645,20 @@ let retryBehindHead = async (
   ~err: exn,
   ~excludedSources=?,
 ) => {
-  let backoffMillis = Utils.expBackoff(~base=100, ~exp=retry, ~maxMillis=behindHeadMaxBackoffMillis)
-  let log = retry >= behindHeadFailoverRetries ? Logging.childWarn : Logging.childTrace
+  let backoffMillis = retry->behindHeadBackoffMillis
+  let (log, msg) = if retry < behindHeadFailoverRetries {
+    (
+      Logging.childTrace,
+      `Block #${blockNumber->Int.toString} is not available on the ${sourceState.source.name} source yet. Instances of a load-balanced backend drift slightly around the head, so this is expected - indexing continues after an automatic retry.`,
+    )
+  } else {
+    (
+      Logging.childWarn,
+      `Block #${blockNumber->Int.toString} is still not available on the ${sourceState.source.name} source after retrying for several seconds. Switching to another source if one is available, otherwise retrying with a growing delay.`,
+    )
+  }
   logger->log({
-    "msg": `Block #${blockNumber->Int.toString} is not available on the ${sourceState.source.name} source yet. Instances of a load-balanced backend drift slightly around the head, so this is expected - indexing continues after an automatic retry.`,
+    "msg": msg,
     "method": method,
     "retry": retry,
     "backOffMilliseconds": backoffMillis,
@@ -1211,13 +1233,13 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       | Error(exn) => throw(exn)
       }
     } catch {
-    | Source.RateLimited({resetMs, requestStats}) =>
-      sourceState->recordRequestStats(requestStats)
+    // A failure arrives as `res.result`, whose `res.requestStats` is already
+    // recorded above, so the stats the error carries are not recorded again.
+    | Source.RateLimited({resetMs}) =>
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
-    | Source.SourceBehindHead({blockNumber, requestStats}) as err =>
-      sourceState->recordRequestStats(requestStats)
+    | Source.SourceBehindHead({blockNumber}) as err =>
       await sourceManager->retryBehindHead(
         sourceState,
         ~retry,

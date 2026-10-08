@@ -181,9 +181,9 @@ pub struct NextPageResult {
     pub backoff_millis: Option<i64>,
 }
 
-/// A drifting node catches up in its own time, so a transient miss waits longer
-/// with every attempt rather than the configured backoff, which is tuned for a
-/// provider erroring outright.
+/// A node that answered badly once may not again, so a transient miss waits
+/// longer with every attempt rather than the configured backoff, which is tuned
+/// for a provider erroring outright.
 const TRANSIENT_BACKOFF_STEP_MILLIS: i64 = 500;
 const TRANSIENT_BACKOFF_MIN_MILLIS: i64 = 100;
 

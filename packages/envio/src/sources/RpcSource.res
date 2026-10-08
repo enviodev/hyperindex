@@ -199,8 +199,7 @@ let make = (
       Source.result: switch (result.message, result.behindHeadBlock) {
       | (None, _) => Ok(pageBlockStore)
       | (Some(_), Some(blockNumber)) =>
-        // The caller records `requestStats` below for every result already.
-        Error(Source.SourceBehindHead({blockNumber, requestStats: []}))
+        Error(Source.SourceBehindHead({blockNumber, requestStats: result.requestStats}))
       | (Some(message), None) => Error(JsError.make(message)->JsExn.anyToExnInternal)
       },
       requestStats: result.requestStats,

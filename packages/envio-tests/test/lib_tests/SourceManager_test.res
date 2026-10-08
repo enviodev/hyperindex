@@ -1576,6 +1576,48 @@ describe("SourceManager.executeQuery", () => {
     },
   )
 
+  Async.it(
+    "Backs off further once a source stays behind the head past the window and has no alternative",
+    async t => {
+      Vi.useFakeTimers()
+      let sourceMock = MockSource.make([#getItemsOrThrow])
+      let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+      let p =
+        sourceManager->SourceManager.executeQuery(
+          ~query={...mockQuery(), fromBlock: 10},
+          ~isRealtime=false,
+          ~knownHeight=100,
+        )
+
+      let calledAt = []
+      let ticks = ref(0)
+      while calledAt->Array.length < 17 && ticks.contents < 5_000 {
+        switch sourceMock.getItemsOrThrowCalls {
+        | [call] =>
+          calledAt->Array.push(Date.now())
+          if calledAt->Array.length < 17 {
+            call.reject(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
+          } else {
+            call.resolve([])
+          }
+        | _ => ()
+        }
+        await Vi.advanceTimersByTimeAsync(10)
+        ticks := ticks.contents + 1
+      }
+      let _ = await p
+      Vi.useRealTimers()
+
+      // The window keeps attempts a second apart; past it, a source that is
+      // still behind is polled less and less often rather than every second.
+      let gapsAfterWindow = Array.fromInitializer(
+        ~length=4,
+        i => calledAt->Array.getUnsafe(13 + i) -. calledAt->Array.getUnsafe(12 + i),
+      )
+      t.expect(gapsAfterWindow).toEqual([1000., 2000., 4000., 8000.])
+    },
+  )
+
   Async.it("counts the requests a failed getItems still made", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
