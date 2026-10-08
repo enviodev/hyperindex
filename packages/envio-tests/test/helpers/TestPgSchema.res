@@ -27,7 +27,9 @@ let parseCreatedAt = name =>
     None
   }
 
-let drop = (sql, ~pgSchema) => sql->Sql.batch(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+let drop = async (sql, ~pgSchema) => {
+  let _ = await sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+}
 
 let staleAfterMs = 60. *. 60. *. 1000.
 

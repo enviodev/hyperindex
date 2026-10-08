@@ -100,11 +100,4 @@ let query = (client, sql, ~params as values: array<unknown>=[]): promise<array<'
   ->PgClient.query(sql, ~params=params(values))
   ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<'row>>)
 
-let exec = (client, sql, ~params as values: array<unknown>=[]) =>
-  client->PgClient.execute(sql, params(values))
-
-// Statements that take no parameters and return nothing worth reading. More
-// than one may be given at once.
-let batch = (client, sql) => client->PgClient.batch(sql)
-
 let close = client => client->PgClient.close

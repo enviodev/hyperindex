@@ -572,22 +572,6 @@ impl PgStorage {
         self.hold(rows)
     }
 
-    #[napi]
-    pub async fn execute(&self, sql: String, params: Vec<Option<String>>) -> napi::Result<()> {
-        self.inner
-            .client
-            .execute(&sql, &to_params(params))
-            .await
-            .map(|_| ())
-            .map_err(to_napi)
-    }
-
-    /// Statements that take no parameters and return nothing worth reading.
-    #[napi]
-    pub async fn batch(&self, sql: String) -> napi::Result<()> {
-        self.inner.client.batch(&sql).await.map_err(to_napi)
-    }
-
     /// The buffers a result's columns live in. They stay valid until
     /// `releaseResult` takes them back, and reading through one after that is
     /// what detaching prevents.

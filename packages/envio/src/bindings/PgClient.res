@@ -268,10 +268,6 @@ let arena = (client): Staging.arena => {
 
 @send external queryRaw: (t, string, array<Null.t<string>>) => promise<queryResult> = "query"
 
-@send external execute: (t, string, array<Null.t<string>>) => promise<unit> = "execute"
-
-@send external batch: (t, string) => promise<unit> = "batch"
-
 @send external lendResult: (t, int) => array<ArrayBuffer.t> = "lendResult"
 
 @send external releaseResult: (t, int, array<ArrayBuffer.t>) => unit = "releaseResult"

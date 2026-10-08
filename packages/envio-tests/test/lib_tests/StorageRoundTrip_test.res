@@ -59,14 +59,12 @@ let enums =
   )
 
 let enumTypeDeclarations = pgSchema =>
-  enums
-  ->Array.map(config =>
+  enums->Array.map(config =>
     `CREATE TYPE "${pgSchema}".${config.name} AS ENUM(${config.variants
       ->(Utils.magic: array<Table.enum> => array<string>)
       ->Array.map(variant => `'${variant}'`)
       ->Array.join(", ")});`
   )
-  ->Array.join("\n")
 
 let unknown = (value: 'a): unknown => value->(Utils.magic: 'a => unknown)
 
@@ -431,8 +429,10 @@ describe("Rows written and read back", () => {
     async t => {
       let pgSchema = TestPgSchema.make()
       let sql = PgStorage.makeClient(~pgSchema)
-      await sql->Sql.batch(`CREATE SCHEMA "${pgSchema}";`)
-      await sql->Sql.batch(enumTypeDeclarations(pgSchema))
+      let _ = await sql->Sql.query(`CREATE SCHEMA "${pgSchema}";`)
+      for idx in 0 to enums->Array.length - 1 {
+        let _ = await sql->Sql.query(enumTypeDeclarations(pgSchema)->Array.getUnsafe(idx))
+      }
 
       // A generator can quietly stop producing a shape and the run would still
       // pass, proving less than it looks like it proves. Each of these has to
