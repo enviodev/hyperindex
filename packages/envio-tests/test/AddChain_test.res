@@ -172,6 +172,42 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
     },
   )
 
+  // Two `envio start --chain` processes naming the same new chain can both
+  // plan to add it. Only one may: the other would index the chain alongside it.
+  deployed->Scenario.it(
+    "Adds a chain once when two processes name it at the same time",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])
+      let (config, _) = withChain137->edited(~deployedSources=[(1, source(1))], ~autoHeight=100)
+      await indexer.stop()
+
+      let started = await Promise.allSettled([
+        indexer.sibling(~config, ~chains=[ChainId.fromInt(137)]),
+        indexer.sibling(~config, ~chains=[ChainId.fromInt(137)]),
+      ])
+
+      t.expect((
+        started
+        ->Array.map(
+          outcome =>
+            switch outcome {
+            | Fulfilled(_) => "started"
+            | Rejected({reason}) =>
+              reason
+              ->(Utils.magic: exn => {"message": string})
+              ->(error => error["message"])
+              ->String.includes(`relation "Counter$137" already exists`)
+                ? "refused: the chain's partition already exists"
+                : "refused for another reason"
+            },
+        )
+        ->Array.toSorted(String.compare),
+        (await startBlocks(indexer))->Array.map(((chainId, _)) => chainId),
+      )).toEqual((["refused: the chain's partition already exists", "started"], ["1", "137"]))
+    },
+  )
+
   let clickHouseOnly: array<Scenario.unsupported> = [
     {backend: #postgres, reason: "asserts against a ClickHouse server"},
   ]

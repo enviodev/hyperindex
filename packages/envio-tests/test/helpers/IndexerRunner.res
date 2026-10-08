@@ -68,6 +68,9 @@ type rec t = {
   // `~config` resumes under an edited config.yaml, and later restarts keep it.
   // `~reset` starts over on an emptied schema, the way `envio dev -r` does.
   restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, ~reset: bool=?, unit) => promise<t>,
+  // Another process on the same schema, started while this one keeps running,
+  // the way a second `envio start --chain` would be.
+  sibling: (~config: Config.t=?, ~chains: array<ChainId.t>) => promise<t>,
   // Writes the effect cache out to this run's own cache directory, where the
   // next initialize uploads it from.
   dumpEffectCache: unit => promise<unit>,
@@ -593,6 +596,7 @@ let run = async (
             "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",
           )
         },
+      sibling: (~config=baseConfig, ~chains) => make(~reset=false, ~config, ~chains),
       restart: async (~config=baseConfig, ~chains=?, ~reset=false, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
