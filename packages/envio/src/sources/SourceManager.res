@@ -651,12 +651,12 @@ let retryBehindHead = async (
   let (log, msg) = if retry < behindHeadFailoverRetries {
     (
       Logging.childTrace,
-      `${source} hasn't reached block ${block} yet. This is normal near the latest block and resolves by itself - retrying shortly.`,
+      `${source} hasn't reached block ${block} yet. Its servers are slightly out of sync near the latest block, which is normal and resolves by itself - retrying shortly.`,
     )
   } else {
     (
       Logging.childWarn,
-      `${source} is still catching up to block ${block}. Indexing will continue automatically, using another data source if one is configured.`,
+      `${source} is still catching up to block ${block}. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured.`,
     )
   }
   logger->log({

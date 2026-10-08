@@ -1842,7 +1842,7 @@ describe("SourceManager.executeQuery", () => {
       Some((
         "trace",
         dict{
-          "msg": "MockSource hasn't reached block 10 yet. This is normal near the latest block and resolves by itself - retrying shortly."->(
+          "msg": "MockSource hasn't reached block 10 yet. Its servers are slightly out of sync near the latest block, which is normal and resolves by itself - retrying shortly."->(
             Utils.magic: string => unknown
           ),
           "retry": 0->(Utils.magic: int => unknown),
@@ -1852,7 +1852,7 @@ describe("SourceManager.executeQuery", () => {
       Some((
         "warn",
         dict{
-          "msg": "MockSource is still catching up to block 10. Indexing will continue automatically, using another data source if one is configured."->(
+          "msg": "MockSource is still catching up to block 10. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured."->(
             Utils.magic: string => unknown
           ),
           "retry": 12->(Utils.magic: int => unknown),
