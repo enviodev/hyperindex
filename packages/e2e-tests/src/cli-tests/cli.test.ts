@@ -284,6 +284,26 @@ describe("TypeScript handler type check", () => {
   );
 
   it.each(["typescript-5", "typescript", "typescript-7"])(
+    "loads type-correct handlers with %s when the tsconfig.json explains its files",
+    async (typescript) => {
+      const tsconfig = fixtureTsconfig.replace('"noEmit": true', '"noEmit": true, "explainFiles": true');
+      const handler = fs
+        .readFileSync(path.join(fixtureDir, "src/handlers/Gravatar.ts"), "utf8")
+        .replace("id: event.params.id,", "id: event.params.id.toString(),");
+
+      expect(
+        await startTypeCheckProject({ typescript, tsconfig, files: { "src/handlers/Gravatar.ts": handler } })
+      ).toEqual({
+        exitCode: 1,
+        typeErrors: null,
+        warning: null,
+        loadedHandlers: true,
+        written: [],
+      });
+    }
+  );
+
+  it.each(["typescript-5", "typescript", "typescript-7"])(
     "names the handlers %s doesn't check because the tsconfig.json leaves them out",
     async (typescript) => {
       const tsconfig = fixtureTsconfig.replace("{", '{ "include": ["src/types.ts"],');

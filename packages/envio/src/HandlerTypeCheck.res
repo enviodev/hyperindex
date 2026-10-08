@@ -57,7 +57,7 @@ let resolveTsc = (~cwd) =>
   | _ => None
   }
 
-type run = {failed: bool, timedOut: bool, output: string}
+type run = {error: option<NodeJs.ChildProcess.execFileError>, output: string}
 
 let runTsc = (~tsc, ~cwd, args) =>
   Promise.make((resolve, _) =>
@@ -67,8 +67,7 @@ let runTsc = (~tsc, ~cwd, args) =>
       {cwd, timeout: timeoutMinutes * 60 * 1000, maxBuffer: Float.Constants.positiveInfinity},
       (error, stdout, stderr) =>
         resolve({
-          failed: error->Null.toOption->Option.isSome,
-          timedOut: error->Null.toOption->Option.mapOr(false, ({killed}) => killed),
+          error: error->Null.toOption,
           output: NodeJs.Util.stripVTControlCharacters(stdout ++ stderr),
         }),
     )
@@ -105,13 +104,15 @@ let parse = (output, ~cwd) => {
 // Exit codes say nothing here: TypeScript 5 and 6 exit with 2 on type errors,
 // 7 with 1, and 1 is also how its launcher fails when the native compiler
 // isn't installed.
-let failure = ({timedOut, output}) =>
-  timedOut
-    ? `tsc didn't finish within ${timeoutMinutes->Int.toString} minutes.`
-    : output
-      ->lines
-      ->Array.find(line => thrownError->RegExp.test(line))
-      ->Option.getOr(output->String.trim)
+let failure = ({error, output}) =>
+  switch error {
+  | Some({killed: true}) => `tsc didn't finish within ${timeoutMinutes->Int.toString} minutes.`
+  | _ =>
+    output
+    ->lines
+    ->Array.find(line => thrownError->RegExp.test(line))
+    ->Option.getOr(output->String.trim)
+  }
 
 let check = async (~cwd, ~files) => {
   // The ReScript compiler checks a ReScript project's handlers, so it has no
@@ -130,6 +131,8 @@ let check = async (~cwd, ~files) => {
     )
   | (Some(tsc), Some(tsconfig)) =>
     // The project's own `tsc --noEmit`, minus the build info it would write.
+    // `explainFiles` would replace the listed files' absolute paths with
+    // relative ones and the reasons each is included.
     let run = await runTsc(
       ~tsc,
       ~cwd,
@@ -142,6 +145,8 @@ let check = async (~cwd, ~files) => {
         "--composite",
         "false",
         "--listFiles",
+        "--explainFiles",
+        "false",
         "--pretty",
       ],
     )
@@ -153,7 +158,7 @@ let check = async (~cwd, ~files) => {
         handlers->Array.includes(file) ? Some(lines->Array.join("\n")->String.trimEnd) : None
       )
     let unchecked = handlers->Array.filter(file => !(programFiles->Utils.Set.has(file)))
-    if run.failed && diagnostics->Array.length === 0 {
+    if run.error->Option.isSome && diagnostics->Array.length === 0 {
       let reason = failure(run)
       Skipped(
         `Skipped the handler type check: TypeScript's tsc failed without reporting a type error:\n\n${reason}`,
