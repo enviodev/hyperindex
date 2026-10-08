@@ -258,3 +258,28 @@ fn detach_or_abandon<M>(
     }
     detached
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A write that names a batch JavaScript never finished filling is refused,
+    /// and the batch stays registered: its buffers are still lent out, and only
+    /// `abort` may take them back.
+    #[test]
+    fn a_batch_never_committed_is_kept_for_abort() {
+        let stages = Stages::<()>::default();
+        let arena = Arena::new(1, &[ColumnKind::F64]).unwrap();
+        stages.insert(1, Staged { meta: (), arena });
+        let refused = stages
+            .take_sealed(1)
+            .err()
+            .map(|error| error.reason.clone());
+        let kept = stages.count();
+        let _ = stages.abort(1, vec![]);
+        assert_eq!(
+            (refused, kept, stages.count()),
+            (Some("Staged batch 1 was never committed".to_string()), 1, 0)
+        );
+    }
+}

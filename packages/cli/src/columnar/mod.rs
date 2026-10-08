@@ -779,6 +779,21 @@ mod tests {
         );
     }
 
+    /// A second lend of the same result is refused, and the first one's buffers
+    /// stay lent for the release that detaches them.
+    #[test]
+    fn a_batch_is_read_once_and_only_after_sealing() {
+        let mut arena = Arena::new(1, &[ColumnKind::F64]).unwrap();
+        let before_sealing = arena.start_reading().is_ok();
+        arena.seal_for_test().unwrap();
+        let first = arena.start_reading().is_ok();
+        let second = arena.start_reading().is_ok();
+        assert_eq!(
+            (before_sealing, first, second, arena.is_lent()),
+            (false, true, false, true)
+        );
+    }
+
     #[test]
     fn an_empty_batch_is_not_a_batch() {
         assert_eq!(
