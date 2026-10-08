@@ -3,7 +3,7 @@ open Vitest
 // Reproduction for https://github.com/enviodev/hyperindex/issues/1242
 //
 // On startup the indexer loads every registered address for a chain through
-// InternalTable.Chains.getInitialState. Aggregating the whole envio_addresses
+// the storage's resume. Aggregating the whole envio_addresses
 // table into one json column (what it used to do) blows past V8's max string
 // length once a chain has enough addresses, so decoding the row throws and the
 // indexer can never resume. Reading plain rows and grouping them in JS is what
@@ -36,7 +36,7 @@ type Gravatar {
 
 describe("Dynamic contracts startup size", () => {
   Async.it_skip(
-    "getInitialState loads all dynamic contracts when the aggregate exceeds the V8 string limit",
+    "a resume loads all dynamic contracts when the aggregate exceeds the V8 string limit",
     async t => {
       await scenario->Scenario.run(
         ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
@@ -47,15 +47,20 @@ describe("Dynamic contracts startup size", () => {
           let rowCount = 30_000_000
 
           let _ = await sql->Sql.query(
-            `INSERT INTO "${pgSchema}"."${InternalTable.EnvioAddresses.name}" ("chain_id", "address", "contract_id", "registration_block")
+            `INSERT INTO "${pgSchema}"."envio_addresses" ("chain_id", "address", "contract_id", "registration_block")
   SELECT ${chainId->ChainId.toString}, decode(lpad(to_hex(g), 40, '0'), 'hex'), 0, 0
   FROM generate_series(1, ${rowCount->Int.toString}) AS g
   ON CONFLICT DO NOTHING;`,
           )
 
-          let initialStates = await InternalTable.Chains.getInitialState(sql, ~pgSchema)
-          let chainState =
-            initialStates->Array.find(state => state.id === chainId)->Option.getOrThrow
+          let storage = PgStorage.make(~pgSchema, ~ecosystem=Evm)
+          let resumed = await storage.resumeInitialState(
+            ~entities=[],
+            ~chainIds=[chainId],
+            ~contractMapping=ContractMapping.empty,
+          )
+          await storage.close()
+          let chainState = resumed.chains->Array.getUnsafe(0)
 
           t.expect(
             chainState.addressRows.contractIds->Array.length,

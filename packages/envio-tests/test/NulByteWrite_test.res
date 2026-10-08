@@ -98,6 +98,43 @@ describe("A NUL byte in what a handler stores", () => {
     },
   )
 
+  let surrogate = Scenario.captureRefusal()
+  // Half a surrogate pair is no text any encoding carries either, but unlike a
+  // NUL it is replaced rather than dropped.
+  scenario->Scenario.it(
+    "is not what a lone surrogate is: that one is written as a replacement character",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~onError=surrogate.onError,
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Utils.delay(0)
+      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      let lone = String.fromCharCode(0xd800)
+
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 1,
+            logIndex: 0,
+            handler: async args =>
+              (args->contextOf).note.set({
+                id: "lone",
+                text: `a${lone}b`,
+                tags: [`a${lone}b`],
+                payload: JSON.Encode.string(`a${lone}b`),
+              }),
+          },
+        ],
+        ~latestFetchedBlockNumber=1,
+      )
+      await indexer.getBatchWritePromise()
+      let notes: array<note> = await indexer.query("Note")
+      t.expect(notes).toEqual([
+        {id: "lone", text: "a�b", tags: ["a�b"], payload: JSON.Encode.string("a�b")},
+      ])
+    },
+  )
+
   // An effect's output is stored as jsonb in its cache table, so a NUL in it is
   // refused the same way a NUL in an entity is.
   let cachedLookup = Envio.createEffect(

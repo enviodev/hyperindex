@@ -9,10 +9,6 @@ open Vitest
 // before it has read a block — resume, write, stamp their chain's metadata, and
 // build the indexes the schema promises.
 
-let migrateClient = PgStorage.makeClient()
-let firstClient = PgStorage.makeClient()
-let secondClient = PgStorage.makeClient()
-
 let config = TestConfig.fromUserApi(
   ~schema=`
 type Item {
@@ -51,8 +47,11 @@ let enums =
   config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
 let pgSchema = TestPgSchema.make()
 
-let storageOn = sql =>
-  PgStorage.make(~sql, ~pgSchema, ~pgUser=Env.Db.user, ~isHasuraEnabled=false, ~ecosystem=Evm)
+let migrateClient = PgStorage.makeClient(~pgSchema)
+let firstClient = PgStorage.makeClient(~pgSchema)
+let secondClient = PgStorage.makeClient(~pgSchema)
+
+let storageOn = sql => PgStorage.make(~pgSchema, ~sql, ~ecosystem=Evm)
 
 let rowsPerSibling = 200
 
@@ -65,7 +64,8 @@ let sibling = async (~sql, ~chainId) => {
     ~contractMapping=config.contractMapping,
   )
 
-  await sql->PgStorage.setOrThrow(
+  let _ = await TestPgSchema.write(
+    ~pgSchema,
     ~items=Array.fromInitializer(~length=rowsPerSibling, index =>
       {
         "id": `${chainId->ChainId.toString}-${index->Int.toString}`,
@@ -73,9 +73,7 @@ let sibling = async (~sql, ~chainId) => {
       }
     )->(Utils.magic: array<'a> => array<unknown>),
     ~table=entityConfig.table,
-    ~itemSchema=entityConfig->PgStorage.getRowSchema,
-    ~pgSchema,
-    ~setQueryCache=PgStorage.makeSetQueryCache(),
+    ~itemSchema=entityConfig->PgStorage.getRowSchema->S.toUnknown,
   )
 
   let _ = await storage.setChainMeta(
@@ -133,10 +131,16 @@ describe("Two processes indexing one schema", () => {
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
         )
       )->Array.length
+    let meta: array<{
+      "id": int,
+      "first_event_block": Null.t<int>,
+    }> = await migrateClient->Sql.query(
+      `SELECT "id", "first_event_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
+    )
     let meta =
-      (await InternalTable.Chains.getInitialState(migrateClient, ~pgSchema))
-      ->Array.map(chain => (chain.id->ChainId.toString, chain.firstEventBlockNumber->Null.toOption))
-      ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
+      meta->Array.map(
+        chain => (chain["id"]->Int.toString, chain["first_event_block"]->Null.toOption),
+      )
     let readyChains: array<{
       "count": string,
     }> = await migrateClient->Sql.query(

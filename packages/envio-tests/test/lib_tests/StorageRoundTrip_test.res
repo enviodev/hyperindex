@@ -318,12 +318,18 @@ type outcome = Matched({staged: bool}) | Differed({expected: string, actual: str
     }
 )
 
+let attempts = ref(0)
+
 // Writes the rows, reads them back, and says whether what came back is what
-// went in. The table is made and dropped per case so nothing carries over.
+// went in.
 %%private(
   let attempt = async (sql, ~pgSchema, ~columns, ~rows, ~derived) => {
+    // A table of its own per attempt: a connection's prepared statements are
+    // keyed by their text, and the same name over different columns would
+    // hand one attempt's plan to the next.
+    attempts := attempts.contents + 1
     let table = Table.mkTable(
-      "fuzzed",
+      `fuzzed_${attempts.contents->Int.toString}`,
       ~fields=[idField]
       ->Array.concat(columns->Array.map(column => column.field))
       ->Array.concat(derived ? [derivedField] : []),
@@ -340,31 +346,16 @@ type outcome = Matched({staged: bool}) | Differed({expected: string, actual: str
       dict
     })->S.toUnknown
 
-    await sql->Sql.batch(`DROP TABLE IF EXISTS "${pgSchema}"."fuzzed";`)
-    await sql->Sql.batch(
-      PgStorage.makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
-    )
-    // Every case gives the same name a different table, which is the one thing
-    // a connection's prepared statements cannot survive. A reset says this for
-    // itself; here the schema is rebuilt behind the client's back.
-    sql.client->PgClient.forgetPrepared
-
-    let batchSet = PgStorage.makeTableBatchSetQuery(~pgSchema, ~table, ~itemSchema)
-    let staged = switch batchSet.binding {
-    | Staged(_) => true
-    | PerCell(_) => false
-    }
-
-    await sql->PgStorage.setOrThrow(
-      ~items=rows->(Utils.magic: array<dict<unknown>> => array<unknown>),
+    let registered = await TestPgSchema.write(
+      ~pgSchema,
       ~table,
       ~itemSchema,
-      ~pgSchema,
-      ~setQueryCache=PgStorage.makeSetQueryCache(),
+      ~items=rows->(Utils.magic: array<dict<unknown>> => array<unknown>),
+      ~create=true,
     )
 
     let readBack =
-      (await sql->Sql.query(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName="fuzzed")))
+      (await sql->Sql.query(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=table.tableName)))
       ->(Utils.magic: array<unknown> => array<unknown>)
       ->S.parseOrThrow(table->Table.pgRowsSchema)
       ->(Utils.magic: array<unknown> => array<dict<unknown>>)
@@ -381,7 +372,9 @@ type outcome = Matched({staged: bool}) | Differed({expected: string, actual: str
       rows->order->Array.map(shownRow(columns, _))->(Utils.magic: 'a => JSON.t)->JSON.stringify
     let expected = render(rows)
     let actual = render(readBack)
-    expected === actual ? Matched({staged: staged}) : Differed({expected, actual})
+    expected === actual
+      ? Matched({staged: registered.staged->Option.isSome})
+      : Differed({expected, actual})
   }
 )
 
@@ -436,8 +429,8 @@ describe("Rows written and read back", () => {
   Async.it(
     "Come back as what went in, for any table the generator builds",
     async t => {
-      let sql = PgStorage.makeClient()
       let pgSchema = TestPgSchema.make()
+      let sql = PgStorage.makeClient(~pgSchema)
       await sql->Sql.batch(`CREATE SCHEMA "${pgSchema}";`)
       await sql->Sql.batch(enumTypeDeclarations(pgSchema))
 
@@ -574,14 +567,10 @@ describe("Choosing the insert a table's rows go through", () => {
           "doc": s.field("doc", S.json(~validate=false)),
         },
     )->S.toUnknown
-    let staged = switch PgStorage.makeTableBatchSetQuery(
-      ~pgSchema="public",
-      ~table,
-      ~itemSchema,
-    ).binding {
-    | Staged(_) => true
-    | PerCell(_) => false
-    }
+    let staged =
+      (
+        PgStorage.makeClient(~maxConnections=1)->PgStorage.register(~table, ~itemSchema)
+      ).staged->Option.isSome
     t.expect(staged).toBe(true)
   })
 })

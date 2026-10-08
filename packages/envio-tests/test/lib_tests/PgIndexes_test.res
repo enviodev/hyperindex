@@ -45,11 +45,11 @@ let makeFlakyClient: (
 ) => PgClient.t = %raw(`(client, log, shouldFail) => new Proxy(client, {
   get(target, prop, receiver) {
     if (prop === "batch" || prop === "query") {
-      return (transaction, query, ...rest) => {
+      return (query, ...rest) => {
         log.push(query);
         return shouldFail(query)
           ? Promise.reject(new Error("connection terminated unexpectedly"))
-          : target[prop](transaction, query, ...rest);
+          : target[prop](query, ...rest);
       };
     }
     const value = Reflect.get(target, prop, receiver);
@@ -57,13 +57,9 @@ let makeFlakyClient: (
   },
 })`)
 
-let makeFlakySql = (sql: Sql.t, log, shouldFail): Sql.t => {
-  ...sql,
-  client: makeFlakyClient(sql.client, log, shouldFail),
-}
+let makeFlakySql = (sql: Sql.t, log, shouldFail): Sql.t => makeFlakyClient(sql, log, shouldFail)
 
-let makeStorage = (~sql=sql, pgSchema) =>
-  PgStorage.make(~sql, ~pgSchema, ~pgUser=Env.Db.user, ~isHasuraEnabled=false, ~ecosystem=Evm)
+let makeStorage = (~sql=?, pgSchema) => PgStorage.make(~pgSchema, ~sql?, ~ecosystem=Evm)
 
 // A schema of its own per test, so the fixtures below can leave whatever
 // indexes they like behind without disturbing the other suites. `fixtures` run
@@ -83,9 +79,9 @@ Async.afterAll(async () => {
   await sql->Sql.close
 })
 
-let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEntities) => {
+let setup = async (~pgSchema, ~fixtures=[], ~sql as client=?, ~entities=allEntities) => {
   createdSchemas->Array.push(pgSchema)->ignore
-  let storage = makeStorage(~sql=client, pgSchema)
+  let storage = makeStorage(~sql=?client, pgSchema)
   let _ = await storage.initialize(
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
@@ -152,9 +148,31 @@ let readyAtByChainId = async pgSchema => {
     "id": ChainId.t,
     "ready_at": Null.t<Date.t>,
   }> = await sql->Sql.query(
-    `SELECT "id", "ready_at" FROM "${pgSchema}"."${InternalTable.Chains.table.tableName}" ORDER BY "id";`,
+    `SELECT "id", "ready_at" FROM "${pgSchema}"."${InternalTable.Chains.tableName}" ORDER BY "id";`,
   )
   rows->Array.map(row => (row["id"], row["ready_at"]->Null.toOption->Option.isSome))
+}
+
+// An entity of text columns only, its schema built from the same names as its
+// table: storage writes go by the schema's fields, so the two have to agree.
+let textEntity = (~tableName, ~columns): Internal.entityConfig => {
+  ...entityA,
+  name: tableName,
+  schema: S.object(s => {
+    let dict = Dict.make()
+    ["id"]
+    ->Array.concat(columns)
+    ->Array.forEach(column => dict->Dict.set(column, s.field(column, S.string->S.toUnknown)))
+    dict
+  })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
+  table: Table.mkTable(
+    tableName,
+    ~fields=[Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string)]->Array.concat(
+      columns->Array.map(column =>
+        Table.mkField(column, String, ~isIndex=true, ~fieldSchema=S.string)
+      ),
+    ),
+  ),
 }
 
 let catchMessage = promise =>
@@ -290,17 +308,7 @@ describe("Indexes built against a real schema", () => {
   Async.it("Round-trips a table name at Postgres' identifier limit", async t => {
     let pgSchema = testSchema("long_name")
     let tableName = "Entity" ++ "x"->String.repeat(57)
-    let entity: Internal.entityConfig = {
-      ...entityA,
-      name: tableName,
-      table: Table.mkTable(
-        tableName,
-        ~fields=[
-          Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-          Table.mkField("b_id", String, ~isIndex=true, ~fieldSchema=S.string),
-        ],
-      ),
-    }
+    let entity = textEntity(~tableName, ~columns=["b_id"])
     let storage = await setup(~pgSchema, ~entities=[entity])
     let definition = IndexDefinition.single(~tableName, ~column="b_id")
 
@@ -325,7 +333,7 @@ describe("Indexes built against a real schema", () => {
     // failure is armed only once the schema is up.
     let failNextRead = ref(false)
     let flakySql = makeFlakySql(
-      sql,
+      PgStorage.makeClient(~pgSchema),
       queries,
       query =>
         if failNextRead.contents && query->String.includes("FROM pg_index") {
@@ -369,19 +377,7 @@ describe("Indexes built against a real schema", () => {
   Async.it("Keeps the indexes it built when a later one fails, and retries the rest", async t => {
     let pgSchema = testSchema("partial_failure")
     let tableName = "Triple"
-    let entity: Internal.entityConfig = {
-      ...entityA,
-      name: tableName,
-      table: Table.mkTable(
-        tableName,
-        ~fields=[
-          Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-          Table.mkField("first_id", String, ~isIndex=true, ~fieldSchema=S.string),
-          Table.mkField("second_id", String, ~isIndex=true, ~fieldSchema=S.string),
-          Table.mkField("third_id", String, ~isIndex=true, ~fieldSchema=S.string),
-        ],
-      ),
-    }
+    let entity = textEntity(~tableName, ~columns=["first_id", "second_id", "third_id"])
     let indexNames =
       ["first_id", "second_id", "third_id"]->Array.map(
         column => IndexDefinition.single(~tableName, ~column)->IndexDefinition.name,
@@ -391,7 +387,7 @@ describe("Indexes built against a real schema", () => {
     let queries = []
     let failSecondBuild = ref(true)
     let flakySql = makeFlakySql(
-      sql,
+      PgStorage.makeClient(~pgSchema),
       queries,
       query =>
         failSecondBuild.contents &&

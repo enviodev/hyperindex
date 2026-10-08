@@ -24,24 +24,6 @@ type Gravatar {
 `,
 )
 
-let mockRawEventRow: InternalTable.RawEvents.t = {
-  chain_id: 1->ChainId.fromInt,
-  event_id: 1234567890n,
-  contract_name: "NftFactory",
-  event_name: "SimpleNftCreated",
-  block_number: 1000,
-  log_index: 10,
-  transaction_fields: %raw(`{"transactionIndex": 20, "hash": "0x1234567890abcdef"}`),
-  src_address: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
-  block_hash: "0x9876543210fedcba9876543210fedcba987654321",
-  block_timestamp: 1620720000,
-  block_fields: %raw(`{}`),
-  params: {
-    "foo": "bar",
-    "baz": 42,
-  }->Utils.magic,
-}
-
 describe("Raw Events Table Migrations", () => {
   scenario->Scenario.it(
     "Raw events table should migrate successfully",
@@ -74,32 +56,6 @@ describe("Raw Events Table Migrations", () => {
         {"column_name": "params", "data_type": "jsonb"},
         {"column_name": "serial", "data_type": "bigint"},
       ])
-    },
-  )
-
-  //Since the rework of rollbacks in v2.8, rollbacks are not supported for raw events
-  //Duplicates are allowed to stop inserts breaking on rollbacks. If these need to be handled
-  //in the future, raw events can be converted into an entity (with managed history) like dynamic
-  //contracts.
-  scenario->Scenario.it(
-    "Inserting 2 rows with the same pk should pass",
-    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
-    async (~t as _, ~indexer, ~source as _) => {
-      let {sql, pgSchema} = indexer.pg
-      // Shared across both inserts, so the second one exercises the cached
-      // query the way a storage instance would.
-      let setQueryCache = PgStorage.makeSetQueryCache()
-      let insert = () =>
-        sql->PgStorage.setOrThrow(
-          ~items=[mockRawEventRow],
-          ~table=InternalTable.RawEvents.table,
-          ~itemSchema=InternalTable.RawEvents.schema,
-          ~pgSchema,
-          ~setQueryCache,
-        )
-
-      await insert()
-      await insert()
     },
   )
 })

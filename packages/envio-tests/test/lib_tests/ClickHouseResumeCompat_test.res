@@ -48,7 +48,7 @@ type Extra {
 
 let init = async (~schema, ~pgSchema, ~reset) => {
   let config = Config.fromPublic(Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow)
-  let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
+  let storage = PgStorage.makeStorageFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false)
   await PgStorage.makePersistenceFromConfig(~config, ~storage)->Persistence.init(
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,

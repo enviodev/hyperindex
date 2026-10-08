@@ -13,13 +13,7 @@ let makePersistence = () =>
   Persistence.make(
     ~userEntities=config.userEntities,
     ~allEnums=config.allEnums,
-    ~storage=PgStorage.make(
-      ~sql,
-      ~pgSchema,
-      ~pgUser=Env.Db.user,
-      ~isHasuraEnabled=false,
-      ~ecosystem=Evm,
-    ),
+    ~storage=PgStorage.make(~pgSchema, ~ecosystem=Evm),
   )
 
 let initRun = (~isolated, ~announceResume=true) =>

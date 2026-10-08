@@ -162,6 +162,7 @@ let run = async (
   let pgSchema = TestPgSchema.make()
   let cacheDir = NodeJs.Path.resolve([tmpdir(), `envio-cache-${pgSchema}`])
   let clients = []
+  let storages: array<Persistence.storage> = []
   let stops = []
 
   // One capture for the whole run, `restart` included, so a test reads the
@@ -201,8 +202,9 @@ let run = async (
     clients->Array.push(sql)->ignore
     let storage = mapStorage(
       // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir),
+      PgStorage.makeStorageFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir),
     )
+    storages->Array.push(storage)
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
     // `Main.start` does this before handler modules load, so the exported
     // indexer can expose persisted state. Without it every `indexer.chains[N]`
@@ -324,7 +326,10 @@ let run = async (
       ->Sql.query(
         PgStorage.makeLoadAllQuery(
           ~pgSchema,
-          ~tableName=PgStorage.getEntityHistory(~entityConfig).table.tableName,
+          ~tableName=EntityHistory.historyTableName(
+            ~entityName=entityConfig.name,
+            ~entityIndex=entityConfig.index,
+          ),
         ),
       )
       ->Promise.thenResolve(items => {
@@ -333,7 +338,10 @@ let run = async (
         let changes = items->S.parseOrThrow(
           S.array(
             S.union([
-              PgStorage.getEntityHistory(~entityConfig).setChangeSchema,
+              EntityHistory.makeSetUpdateSchema(
+                ~idSchema=entityConfig.table->Table.getIdSchema,
+                entityConfig->PgStorage.getRowSchema,
+              ),
               S.object((s): Change.t<Internal.entity> => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                 Delete({
@@ -493,9 +501,11 @@ let run = async (
         queryEntity(entityConfig)->(Utils.magic: promise<array<unknown>> => promise<array<entity>>),
       queryAddresses: async () => {
         let rows =
-          (await sql->Sql.query(InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema)))->(
-            Utils.magic: array<unknown> => array<AddressRows.row>
-          )
+          (
+            await sql->Sql.query(
+              `SELECT "chain_id" AS "chainId", "address", "contract_id" AS "contractId", "registration_block" AS "registrationBlock" FROM "${pgSchema}"."envio_addresses";`,
+            )
+          )->(Utils.magic: array<unknown> => array<AddressRows.row>)
         let addresses =
           rows->AddressRows.render(
             ~ecosystem=(config.ecosystem.name :> string),
@@ -640,6 +650,12 @@ let run = async (
   for i in 0 to clients->Array.length - 1 {
     switch clients->Array.get(i) {
     | Some(sql) => await attempt(() => sql->Sql.close)
+    | None => ()
+    }
+  }
+  for i in 0 to storages->Array.length - 1 {
+    switch storages->Array.get(i) {
+    | Some(storage) => await attempt(() => storage.close())
     | None => ()
     }
   }

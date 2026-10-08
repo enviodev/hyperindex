@@ -137,6 +137,8 @@ let indexBeforeAndAfter = async (
 }
 
 describe("A rollback", () => {
+  let refusal = Scenario.captureRefusal()
+
   scenario->Scenario.it(
     "restores every column of an entity changed after the target",
     ~sources=[{chain: 1, methods}],
@@ -164,6 +166,32 @@ describe("A rollback", () => {
         [after->render],
         [before->render],
         [{id: 7, value: "before"}],
+      ))
+    },
+  )
+
+  // JSON `null` is a document of its own, so a required Json field holds it
+  // like any other value, and so does the history the rollback restores from.
+  scenario->Scenario.it(
+    "restores a JSON null document in a required Json field",
+    ~sources=[{chain: 1, methods}],
+    ~onError=refusal.onError,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      await indexBeforeAndAfter(
+        ~indexer,
+        ~source,
+        ~below=context => context.item.set({...before, doc: JSON.Encode.null}),
+        ~inside=context => context.item.set({...after, doc: JSON.Encode.null}),
+      )
+      let changed: array<item> = await indexer.query("Item")
+
+      await Scenario.reorgAbove(~indexer, ~source, ~head=300, ~validUpTo=100)
+      let items: array<item> = await indexer.query("Item")
+
+      t.expect((changed->Array.map(item => item.doc), items->Array.map(item => item.doc))).toEqual((
+        [JSON.Encode.null],
+        [JSON.Encode.null],
       ))
     },
   )

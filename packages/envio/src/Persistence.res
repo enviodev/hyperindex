@@ -181,9 +181,7 @@ type storage = {
   ) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
-    ~entityName: string,
-    ~entityIndex: int,
-    ~chainIdColumn: option<string>,
+    ~entityConfig: Internal.entityConfig,
     ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
   ) => promise<unit>,
   // Get rollback target checkpoint

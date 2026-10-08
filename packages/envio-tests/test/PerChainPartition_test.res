@@ -52,36 +52,15 @@ chains:
 let config = InternalTestIndexer.fromUserApi(~configYaml, ~schema).config
 let entityConfig = name => config->IndexerRunner.entityConfigByName(name)
 let counter = entityConfig("Counter")
-let globalCounter = entityConfig("GlobalCounter")
 let longCounter = entityConfig(longName)
 
 let chainIds = [1->ChainId.fromInt, 137->ChainId.fromInt]
 
-let createQueries = entityConfig =>
-  PgStorage.makeCreateEntityTableQueries(
-    entityConfig,
-    ~pgSchema="public",
-    ~isNumericArrayAsText=false,
-    ~chainIds,
-  )
-
-describe("Per-chain entity partition DDL", () => {
-  // The history table trails the partitions and stays plain: it is only ever
-  // read by checkpoint, never by chain.
-  it("Partitions a per-chain entity by chain, one partition per configured chain", t => {
-    t.expect(counter->createQueries).toEqual([
-      `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "owner" TEXT NOT NULL, "chainId" INTEGER NOT NULL, PRIMARY KEY("id", "chainId")) PARTITION BY LIST ("chainId");`,
-      `CREATE TABLE IF NOT EXISTS "public"."Counter$1" PARTITION OF "public"."Counter" FOR VALUES IN (1);`,
-      `CREATE TABLE IF NOT EXISTS "public"."Counter$137" PARTITION OF "public"."Counter" FOR VALUES IN (137);`,
-      `CREATE TABLE IF NOT EXISTS "public"."envio_history_Counter"("id" TEXT NOT NULL, "count" NUMERIC, "owner" TEXT, "chainId" INTEGER NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "public".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "chainId", "envio_checkpoint_id"));`,
-    ])
-  })
-
-  it("Leaves a cross-chain entity unpartitioned", t => {
-    t.expect(globalCounter->createQueries).toEqual([
-      `CREATE TABLE IF NOT EXISTS "public"."GlobalCounter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, PRIMARY KEY("id"));`,
-      `CREATE TABLE IF NOT EXISTS "public"."envio_history_GlobalCounter"("id" TEXT NOT NULL, "count" NUMERIC, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "public".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));`,
-    ])
+describe("Per-chain entity partitions", () => {
+  it("Names one partition per chain, and only for a per-chain entity", t => {
+    t.expect(
+      chainIds->Array.map(chainId => PgStorage.partitionTableName(~entityConfig=counter, ~chainId)),
+    ).toEqual(["Counter$1", "Counter$137"])
   })
 
   // `$` can't appear in a GraphQL entity name, so a partition can never take a
@@ -92,11 +71,8 @@ describe("Per-chain entity partition DDL", () => {
     // down to make room for.
     let suffix = `$${longCounter.index->Int.toString}$137`
     let names =
-      longCounter
-      ->createQueries
-      ->Array.filterMap(
-        query =>
-          query->String.includes("PARTITION OF") ? query->String.split(`"`)->Array.get(3) : None,
+      chainIds->Array.map(
+        chainId => PgStorage.partitionTableName(~entityConfig=longCounter, ~chainId),
       )
     // Chain 1 leaves the name whole under the limit; chain 137 pushes it over,
     // and the result sits exactly on the limit rather than past it.
@@ -265,9 +241,26 @@ let lockScenario = Scenario.make(
   ->Array.joinUnsafe("") ++ "\n",
 )
 
-describe("Reused chain-scoped statements stay pruned", () => {
+// A per-chain entity's table is partitioned by its chain column, and Postgres
+// only prunes a cached plan on a constant: a chain bound as a parameter keeps
+// every partition in the plan, which then gets thrown away and re-planned on
+// every execution. So the chain is written into the statement.
+let recordingClient: (Sql.t, array<string>) => Sql.t = %raw(`(client, log) => new Proxy(client, {
+  get(target, prop, receiver) {
+    if (prop === "query") {
+      return (sql, ...rest) => {
+        log.push(sql);
+        return target.query(sql, ...rest);
+      };
+    }
+    const value = Reflect.get(target, prop, receiver);
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+})`)
+
+describe("A chain-scoped load", () => {
   lockScenario->Scenario.it(
-    "Hold the same locks however often the plan cache reuses them",
+    "names its chain in the statement rather than binding it",
     ~sources=manyChains->Array.map((chain): Scenario.sourceMock => {chain, methods}),
     async (~t, ~indexer, ~source) => {
       await Utils.delay(0)
@@ -275,58 +268,23 @@ describe("Reused chain-scoped statements stay pruned", () => {
       await Utils.delay(0)
       await indexer.stop()
 
-      let {sql, pgSchema} = indexer.pg
+      let {pgSchema} = indexer.pg
       let entityConfig = lockScenario.config->IndexerRunner.entityConfigByName("Counter")
-      let chainId = 137->ChainId.fromInt
-      // A per-chain entity's query: the handler's own filter, narrowed to the
-      // chain the handler runs on.
       let filter =
         dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}}
         ->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table)
-        ->EntityFilter.scoped(~table=entityConfig.table, ~scope=Chain(chainId))
-
-      // One transaction pins one connection, so a statement Postgres decides to
-      // cache is reused across the runs and its locks accumulate where they can
-      // be counted.
-      let lockCounts = await sql->Sql.begin(
-        async sql => {
-          let storage = PgStorage.make(
-            ~sql,
-            ~pgSchema,
-            ~pgUser="",
-            ~isHasuraEnabled=false,
-            ~ecosystem=Evm,
-          )
-          let counts = []
-          for _ in 1 to 8 {
-            let _ = await storage.loadOrThrow(~filter, ~table=entityConfig.table)
-            // Scans the entity table for ids that have no history row yet, and
-            // runs inside the same write transaction as the delete below.
-            await sql->EntityHistory.backfillHistory(
-              ~pgSchema,
-              ~table=entityConfig.table,
-              ~entityIndex=entityConfig.index,
-              ~chainId=Some(chainId),
-              ~ids=["a"]->Array.map(EntityId.unsafeOfString),
-            )
-            await sql->PgStorage.deleteByIdsOrThrow(
-              ~pgSchema,
-              ~ids=["a", "b"]->Array.map(EntityId.unsafeOfString),
-              ~table=entityConfig.table,
-              ~chainId=Some(chainId),
-            )
-            let rows: array<{
-              "count": int,
-            }> = await sql->Sql.query(`SELECT count(*)::int AS count FROM pg_locks
-             WHERE pid = pg_backend_pid() AND locktype = 'relation'`)
-            counts->Array.push(rows->Array.getUnsafe(0)->(row => row["count"]))->ignore
-          }
-          counts
-        },
+        ->EntityFilter.scoped(~table=entityConfig.table, ~scope=Chain(137->ChainId.fromInt))
+      let sent = []
+      let storage = PgStorage.make(
+        ~pgSchema,
+        ~sql=PgStorage.makeClient(~pgSchema)->recordingClient(sent),
+        ~ecosystem=Evm,
       )
+      let _ = await storage.loadOrThrow(~filter, ~table=entityConfig.table)
+      await storage.close()
 
-      t.expect(lockCounts->Utils.Set.fromArray->Utils.Set.toArray).toEqual([
-        lockCounts->Array.getUnsafe(0),
+      t.expect(sent).toEqual([
+        `SELECT * FROM "${pgSchema}"."Counter" WHERE "owner" = $1 AND "chainId" = 137;`,
       ])
     },
   )

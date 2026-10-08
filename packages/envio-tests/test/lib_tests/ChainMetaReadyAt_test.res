@@ -13,13 +13,7 @@ Async.afterAll(async () => {
   await sql->Sql.close
 })
 
-let storage = PgStorage.make(
-  ~sql,
-  ~pgSchema,
-  ~pgUser=Env.Db.user,
-  ~isHasuraEnabled=false,
-  ~ecosystem=Evm,
-)
+let storage = PgStorage.make(~pgSchema, ~ecosystem=Evm)
 
 let readyAt = async () => {
   let rows: array<{

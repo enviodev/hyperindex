@@ -29,13 +29,7 @@ let loggedMessages = async path =>
 
 describe("Finalizing a schema with no indexes", () => {
   Async.it("Says nothing about the indexes it didn't have to build", async t => {
-    let storage = PgStorage.make(
-      ~sql,
-      ~pgSchema,
-      ~pgUser=Env.Db.user,
-      ~isHasuraEnabled=false,
-      ~ecosystem=Evm,
-    )
+    let storage = PgStorage.make(~pgSchema, ~ecosystem=Evm)
     let _ = await storage.initialize(
       ~chainConfigs=config.chainMap->ChainMap.values,
       ~contractMapping=config.contractMapping,

@@ -11,7 +11,7 @@ type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
 type clickHouseSinkCtor
-type pgClientCtor
+type pgStorageCtor
 type addressStoreCtor
 type tuiCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
@@ -47,32 +47,16 @@ type pgColumnInput = {
 
 type pgTableInput = {
   tableName: string,
+  // In the order the table declares them.
   columns: array<pgColumnInput>,
+  // The columns a batch's rows carry, in the order they are laid out.
+  writeColumns: array<string>,
   partitionByColumn?: string,
-}
-
-type pgHistoryQueryInput = {
-  pgSchema: string,
-  historyTable: string,
-  dataColumns: array<string>,
-  keyColumns: array<string>,
+  appendOnly?: bool,
+  // An entity's history table, and the column its chain is in when it is
+  // per-chain.
+  historyTable?: string,
   chainIdColumn?: string,
-  checkpointColumn: string,
-  changeColumn: string,
-  sequence: string,
-}
-
-type pgDeleteRowsInput = {
-  pgSchema: string,
-  historyTable: string,
-  columns: array<string>,
-  idColumn: string,
-  checkpointColumn: string,
-  changeColumn: string,
-  deleteVariant: string,
-  chainIdColumn?: string,
-  idPgType: string,
-  checkpointPgType: string,
 }
 
 type pgIndexColumnInput = {
@@ -92,53 +76,10 @@ type addon = {
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
-  pgCreateTableQuery: (
-    ~table: pgTableInput,
-    ~pgSchema: string,
-    ~isNumericArrayAsText: bool,
-    ~chainIdMode: string,
-  ) => string,
-  pgInsertUnnestQuery: (
-    ~table: pgTableInput,
-    ~pgSchema: string,
-    ~appendOnly: bool,
-    ~chainIdMode: string,
-  ) => string,
-  pgInsertValuesQuery: (~table: pgTableInput, ~pgSchema: string, ~rows: int) => string,
-  pgFieldType: (
-    ~fieldType: string,
-    ~pgSchema: string,
-    ~isArray: bool,
-    ~isNullable: bool,
-    ~isNumericArrayAsText: bool,
-    ~chainIdMode: string,
-    ~precision: Null.t<int>,
-    ~scale: Null.t<int>,
-    ~enumName: Null.t<string>,
-  ) => string,
   pgIndexKey: (~definition: pgIndexInput) => string,
   pgIndexName: (~definition: pgIndexInput) => string,
   pgIndexCreateQuery: (~definition: pgIndexInput, ~pgSchema: string) => string,
   pgIndexDropQuery: (~pgSchema: string, ~indexName: string) => string,
-  pgRollbackPreTargetRowsQuery: (~input: pgHistoryQueryInput) => string,
-  pgRollbackRemovedIdsQuery: (~input: pgHistoryQueryInput) => string,
-  pgInsertDeleteRowsQuery: (~input: pgDeleteRowsInput) => string,
-  pgUpdateByIdQuery: (
-    ~pgSchema: string,
-    ~table: string,
-    ~idColumn: string,
-    ~columns: array<string>,
-    ~keepWhenNull: array<string>,
-  ) => string,
-  pgSetByUnnestQuery: (
-    ~pgSchema: string,
-    ~table: string,
-    ~idColumn: string,
-    ~setColumn: string,
-    ~idArrayType: string,
-    ~valueArrayType: string,
-    ~relation: string,
-  ) => string,
   loadTs: string => string,
   tsCheckHandlerFormat: string => unit,
   tsResolveCandidates: (string, Null.t<string>) => array<string>,
@@ -159,8 +100,8 @@ type addon = {
   addressStore: addressStoreCtor,
   @as("ClickHouseSink")
   clickHouseSink: clickHouseSinkCtor,
-  @as("PgClient")
-  pgClient: pgClientCtor,
+  @as("PgStorage")
+  pgStorage: pgStorageCtor,
   @as("Tui")
   tui: tuiCtor,
   @as("MockHyperSyncServer")
@@ -417,67 +358,8 @@ let runCli = args => {
   addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
 }
 
-let pgCreateTableQuery = (~table, ~pgSchema, ~isNumericArrayAsText, ~chainIdMode) =>
-  getAddon().pgCreateTableQuery(~table, ~pgSchema, ~isNumericArrayAsText, ~chainIdMode)
-
-let pgFieldType = (
-  ~fieldType,
-  ~pgSchema,
-  ~isArray,
-  ~isNullable,
-  ~isNumericArrayAsText,
-  ~chainIdMode,
-  ~precision,
-  ~scale,
-  ~enumName,
-) =>
-  getAddon().pgFieldType(
-    ~fieldType,
-    ~pgSchema,
-    ~isArray,
-    ~isNullable,
-    ~isNumericArrayAsText,
-    ~chainIdMode,
-    ~precision,
-    ~scale,
-    ~enumName,
-  )
-
 let pgIndexKey = (~definition) => getAddon().pgIndexKey(~definition)
 let pgIndexName = (~definition) => getAddon().pgIndexName(~definition)
 let pgIndexCreateQuery = (~definition, ~pgSchema) =>
   getAddon().pgIndexCreateQuery(~definition, ~pgSchema)
 let pgIndexDropQuery = (~pgSchema, ~indexName) => getAddon().pgIndexDropQuery(~pgSchema, ~indexName)
-
-let pgInsertUnnestQuery = (~table, ~pgSchema, ~appendOnly, ~chainIdMode) =>
-  getAddon().pgInsertUnnestQuery(~table, ~pgSchema, ~appendOnly, ~chainIdMode)
-
-let pgInsertValuesQuery = (~table, ~pgSchema, ~rows) =>
-  getAddon().pgInsertValuesQuery(~table, ~pgSchema, ~rows)
-
-let pgRollbackPreTargetRowsQuery = (~input) => getAddon().pgRollbackPreTargetRowsQuery(~input)
-let pgRollbackRemovedIdsQuery = (~input) => getAddon().pgRollbackRemovedIdsQuery(~input)
-
-let pgInsertDeleteRowsQuery = (~input) => getAddon().pgInsertDeleteRowsQuery(~input)
-
-let pgUpdateByIdQuery = (~pgSchema, ~table, ~idColumn, ~columns, ~keepWhenNull=[]) =>
-  getAddon().pgUpdateByIdQuery(~pgSchema, ~table, ~idColumn, ~columns, ~keepWhenNull)
-
-let pgSetByUnnestQuery = (
-  ~pgSchema,
-  ~table,
-  ~idColumn,
-  ~setColumn,
-  ~idArrayType,
-  ~valueArrayType,
-  ~relation,
-) =>
-  getAddon().pgSetByUnnestQuery(
-    ~pgSchema,
-    ~table,
-    ~idColumn,
-    ~setColumn,
-    ~idArrayType,
-    ~valueArrayType,
-    ~relation,
-  )

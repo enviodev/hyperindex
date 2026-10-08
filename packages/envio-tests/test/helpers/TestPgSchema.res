@@ -59,3 +59,54 @@ let sweep = async sql => {
   }
   dropped
 }
+
+let emptyBatch: PgClient.batch = {
+  progress: [],
+  entities: [],
+  chainMeta: [],
+  addresses: {chainIds: [], addresses: [], contractIds: []},
+  frontier: {chainIds: [], checkpointIds: []},
+  checkpoints: {
+    ids: [],
+    chainIds: [],
+    blockNumbers: [],
+    blockHashes: [],
+    eventsProcessed: [],
+  },
+  effectCaches: [],
+}
+
+// Rows written straight into a table, the way an effect cache's write goes:
+// outside any batch, with the table created first when `create` says so. For
+// setting up what a read is tested against.
+let write = async (
+  ~pgSchema,
+  ~table: Table.table,
+  ~itemSchema: S.t<unknown>,
+  ~items: array<unknown>,
+  ~create=false,
+) => {
+  let sql = PgStorage.makeClient(~pgSchema, ~maxConnections=1)
+  let registered = sql->PgStorage.register(~table, ~itemSchema)
+  try {
+    await sql->PgClient.writeBatch(
+      {
+        ...emptyBatch,
+        effectCaches: [
+          {
+            table: registered.handle,
+            create,
+            rows: sql->PgStorage.rowsOrThrow(registered, ~itemSchema, items, ~staged=[]),
+          },
+        ],
+      },
+      Null.null,
+    )
+  } catch {
+  | exn =>
+    await sql->Sql.close
+    throw(exn)
+  }
+  await sql->Sql.close
+  registered
+}

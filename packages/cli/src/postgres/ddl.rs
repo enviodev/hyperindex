@@ -5,6 +5,7 @@ use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
 /// One column of a table, as the caller describes it. `name` is already the
 /// database name — a `column_name_format` rename is resolved before the spec is
 /// built, so nothing here has to know the schema field it came from.
+#[derive(Clone)]
 pub struct ColumnSpec {
     pub name: String,
     pub field_type: FieldType,
@@ -14,6 +15,7 @@ pub struct ColumnSpec {
     pub default_value: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct TableSpec {
     pub table_name: String,
     pub columns: Vec<ColumnSpec>,
@@ -81,6 +83,19 @@ pub fn create_table_query(
         "CREATE TABLE IF NOT EXISTS \"{pg_schema}\".\"{}\"({columns}{primary_key}){partition_by};",
         spec.table_name
     ))
+}
+
+/// One chain's partition of a per-chain entity's table.
+pub fn create_partition_query(
+    pg_schema: &str,
+    table_name: &str,
+    partition_name: &str,
+    chain_id: i64,
+) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS \"{pg_schema}\".\"{partition_name}\" PARTITION OF \
+         \"{pg_schema}\".\"{table_name}\" FOR VALUES IN ({chain_id});"
+    )
 }
 
 #[cfg(test)]
@@ -163,6 +178,15 @@ mod tests {
             "CREATE TABLE IF NOT EXISTS \"test_schema\".\"A\"(\"id\" TEXT NOT NULL, \
              \"chain_id\" INTEGER NOT NULL, PRIMARY KEY(\"id\", \"chain_id\")) \
              PARTITION BY LIST (\"chain_id\");"
+        );
+    }
+
+    #[test]
+    fn a_partition_takes_one_chains_rows() {
+        assert_eq!(
+            create_partition_query("public", "Counter", "Counter$137", 137),
+            "CREATE TABLE IF NOT EXISTS \"public\".\"Counter$137\" PARTITION OF \
+             \"public\".\"Counter\" FOR VALUES IN (137);"
         );
     }
 

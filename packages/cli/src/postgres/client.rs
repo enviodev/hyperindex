@@ -173,6 +173,7 @@ impl Transaction {
             .note(execute_on(self.connection.client(), sql, params).await)
     }
 
+    #[cfg(test)]
     pub async fn query(&self, sql: &str, params: &[Param]) -> Result<(Vec<Row>, Vec<Column>)> {
         let _open = self.connection.open().await?;
         self.connection

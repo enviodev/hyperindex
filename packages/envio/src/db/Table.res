@@ -188,28 +188,6 @@ let pgFieldTypeParts = (fieldType: fieldType) =>
   | Enum({config}) => ("Enum", None, None, Some(config.name))
   }
 
-let getPgFieldType = (
-  ~fieldType: fieldType,
-  ~pgSchema,
-  ~isArray,
-  ~isNumericArrayAsText,
-  ~isNullable,
-  ~chainIdMode: ChainId.mode=Int32,
-) => {
-  let (fieldType, precision, scale, enumName) = pgFieldTypeParts(fieldType)
-  Core.pgFieldType(
-    ~fieldType,
-    ~pgSchema,
-    ~isArray,
-    ~isNullable,
-    ~isNumericArrayAsText,
-    ~chainIdMode=(chainIdMode :> string),
-    ~precision=precision->Null.fromOption,
-    ~scale=scale->Null.fromOption,
-    ~enumName=enumName->Null.fromOption,
-  )
-}
-
 type indexFieldDirection = Asc | Desc
 
 type compositeIndexField = {
@@ -299,15 +277,6 @@ let getIdFieldOrThrow = (table): field =>
   | Some(Field(field)) => field
   | _ => throw(NoIdField(table.tableName))
   }
-
-let getIdPgFieldType = (table, ~pgSchema) =>
-  getPgFieldType(
-    ~fieldType=(table->getIdFieldOrThrow).fieldType,
-    ~pgSchema,
-    ~isArray=false,
-    ~isNumericArrayAsText=false,
-    ~isNullable=false,
-  )
 
 // Schema for a single id value, typed opaquely so id-generic code can serialize
 // ids regardless of the underlying scalar.

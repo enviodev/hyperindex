@@ -1,8 +1,3 @@
-// A column of arrays has no slot: the arena carries one value per row, and an
-// array is a value the row holds rather than a run of them. A table with one
-// binds its parameters as text instead.
-let canStage = (fields: array<Table.field>) => fields->Array.every(field => !field.isArray)
-
 let columns = (fields: array<Table.field>, ~kinds: array<Staging.kind>): array<Staging.column> =>
   fields->Array.mapWithIndex((field, index) => {
     Staging.name: field->Table.getPgDbFieldName,

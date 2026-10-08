@@ -4,16 +4,7 @@ open Vitest
 // type's text form parses to, which is what every schema downstream is written
 // against.
 
-let client = () =>
-  PgClient.make({
-    host: Env.Db.host,
-    port: Env.Db.port,
-    user: Env.Db.user,
-    password: Env.Db.password,
-    database: Env.Db.database,
-    ssl: "false",
-    maxConnections: 2,
-  })
+let client = () => PgStorage.makeClient(~maxConnections=2)
 
 // Every scalar shape a column can take, in one row.
 let scalarQuery = `SELECT
@@ -112,61 +103,6 @@ describe("Reading a result set through the arena", () => {
   })
 })
 
-describe("Running statements in a transaction", () => {
-  Async.it("Commits what the body did and reads it back", async t => {
-    let pg = client()
-    let rows = await pg->PgClient.transaction(
-      async handle => {
-        await pg->PgClient.batch(
-          ~transaction=Null.make(handle),
-          "CREATE TEMPORARY TABLE committed_here (n int4) ON COMMIT DROP",
-        )
-        let _ = await pg->PgClient.execute(
-          ~transaction=Null.make(handle),
-          "INSERT INTO committed_here VALUES ($1::int4)",
-          [Null.make("7")],
-        )
-        await pg->PgClient.query(~transaction=Null.make(handle), "SELECT n FROM committed_here")
-      },
-    )
-    await pg->PgClient.close
-    t.expect(rows->PgValue.rows).toStrictEqual([[("n", "number 7")]])
-  })
-
-  // The transaction holds a connection until it ends, so a body that throws has
-  // to roll back rather than leave it held.
-  Async.it("Rolls back when the body throws, and reports what the body threw", async t => {
-    let pg = client()
-    let thrown = switch await pg->PgClient.transaction(
-      async handle => {
-        await pg->PgClient.batch(
-          ~transaction=Null.make(handle),
-          "CREATE TEMPORARY TABLE undone_here (n int4)",
-        )
-        JsError.throwWithMessage("the body gave up")
-      },
-    ) {
-    | _ => None
-    | exception exn =>
-      Some(
-        exn
-        ->Utils.prettifyExn
-        ->(Utils.magic: exn => {"message": string})
-        ->(error => error["message"]),
-      )
-    }
-
-    // The table went with the transaction, and the connection came back:
-    // another statement on the same client would block otherwise.
-    let rows = await pg->PgClient.query(`SELECT to_regclass('pg_temp.undone_here') IS NULL AS gone`)
-    await pg->PgClient.close
-    t.expect((thrown, rows->PgValue.rows)).toStrictEqual((
-      Some("the body gave up"),
-      [[("gone", "boolean true")]],
-    ))
-  })
-})
-
 describe("A failure the server raised", () => {
   // The message is in the server's `lc_messages`; the SQLSTATE is the same in
   // every language, so it is what a caller tells failures apart by.
@@ -186,7 +122,7 @@ describe("A failure the server raised", () => {
 describe("Lending a result's buffers", () => {
   Async.it("Keeps the result alive when it is lent a second time", async t => {
     let pg = client()
-    let result = await pg->PgClient.queryRaw(~transaction=Null.null, "SELECT 'x'::text AS a", [])
+    let result = await pg->PgClient.queryRaw("SELECT 'x'::text AS a", [])
     let buffers = pg->PgClient.lendResult(result.handle)
     let lentAgain = try {
       let _ = pg->PgClient.lendResult(result.handle)
@@ -206,16 +142,31 @@ describe("Lending a result's buffers", () => {
 describe("Writing a staged batch", () => {
   Async.it("Refuses a batch that was never committed, and can still abort it", async t => {
     let pg = client()
-    let table =
-      pg->PgClient.registerWriteTable(
-        {tableName: "never_committed", columns: [{name: "id", fieldType: "String"}]},
-        ~pgSchema="public",
-        ~appendOnly=true,
-        ~chainIdMode="int32",
-      )
+    let table = pg->PgClient.registerTable({
+      tableName: "never_committed",
+      columns: [{name: "id", fieldType: "String"}],
+      writeColumns: ["id"],
+    })
     let {handle, buffers} = pg->PgClient.beginStage(~table=table.handle, ~rows=1)
     let refused = try {
-      await pg->PgClient.executeStaged(~transaction=Null.null, ~handle)
+      await pg->PgClient.writeBatch(
+        {
+          progress: [],
+          entities: [],
+          chainMeta: [],
+          addresses: {chainIds: [], addresses: [], contractIds: []},
+          frontier: {chainIds: [], checkpointIds: []},
+          checkpoints: {
+            ids: [],
+            chainIds: [],
+            blockNumbers: [],
+            blockHashes: [],
+            eventsProcessed: [],
+          },
+          effectCaches: [{table: table.handle, create: false, rows: {staged: handle, rows: 1}}],
+        },
+        Null.null,
+      )
       false
     } catch {
     | _ => true
@@ -243,23 +194,5 @@ describe("Reading a bytea column", () => {
         ->ArrayBuffer.byteLength,
     )
     t.expect(retained).toEqual([4, 4])
-  })
-})
-
-describe("A statement on a transaction that has ended", () => {
-  // The rejection a sibling of the failure gets, which has to read as the
-  // cascade rather than as the failure itself.
-  Async.it("Carries the aborted-transaction SQLSTATE", async t => {
-    let pg = client()
-    let transaction = await pg->PgClient.begin
-    await pg->PgClient.rollback(transaction)
-    let code = try {
-      let _ = await pg->PgClient.execute(~transaction=Null.make(transaction), "SELECT 1", [])
-      None
-    } catch {
-    | exn => Sql.sqlState(exn)
-    }
-    await pg->PgClient.close
-    t.expect(code).toEqual(Some("25P02"))
   })
 })

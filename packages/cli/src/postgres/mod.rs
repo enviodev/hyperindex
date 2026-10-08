@@ -1,6 +1,7 @@
 pub mod client;
 pub mod ddl;
 pub mod error;
+pub mod history;
 pub mod index_definition;
 pub mod insert;
 pub mod internal;
@@ -8,8 +9,8 @@ pub mod internal;
 mod live_tests;
 pub mod param;
 pub mod pg_type;
-pub mod rollback;
 pub mod rows;
+pub mod storage;
 pub mod write;
 
 // The addon registers these; a test build has no registration and would see

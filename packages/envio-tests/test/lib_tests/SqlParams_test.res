@@ -35,30 +35,29 @@ let columns = [
   ("bigs", "NUMERIC[]", [1n, 2n]->(Utils.magic: array<bigint> => unknown)),
 ]
 
+let pgSchema = TestPgSchema.make()
+
 let createTable =
-  `CREATE TEMPORARY TABLE params (` ++
+  `CREATE SCHEMA "${pgSchema}"; CREATE TABLE "${pgSchema}".params (` ++
   columns
   ->Array.map(((name, pgType, _)) => `"${name}" ${pgType}`)
-  ->Array.join(", ") ++ `) ON COMMIT DROP;`
+  ->Array.join(", ") ++ `);`
 
 let insert =
-  `INSERT INTO params VALUES (` ++
+  `INSERT INTO "${pgSchema}".params VALUES (` ++
   columns
   ->Array.mapWithIndex(((_, pgType, _), index) => `$${(index + 1)->Int.toString}::${pgType}`)
   ->Array.join(", ") ++ `);`
 
-let readBack = `SELECT * FROM params;`
+let readBack = `SELECT * FROM "${pgSchema}".params;`
 
 describe("Binding a parameter", () => {
   Async.it("Stores what each value renders to", async t => {
     let sql = PgStorage.makeClient()
-    let rows = await sql->Sql.begin(
-      async sql => {
-        await sql->Sql.batch(createTable)
-        await sql->Sql.exec(insert, ~params=columns->Array.map(((_, _, value)) => value))
-        await sql->Sql.query(readBack)
-      },
-    )
+    await sql->Sql.batch(createTable)
+    await sql->Sql.exec(insert, ~params=columns->Array.map(((_, _, value)) => value))
+    let rows = await sql->Sql.query(readBack)
+    await sql->TestPgSchema.drop(~pgSchema)
     await sql->Sql.close
 
     t.expect(

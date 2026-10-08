@@ -67,46 +67,19 @@ describe("Storage column naming (snake_case)", () => {
     t.expect(json).toEqual(%raw(`{ "id": "1", "transactionIndex": 5, "tokenOwner_id": "user-1" }`))
   })
 
-  it("creates the Postgres table with db column names", t => {
-    let query = PgStorage.makeCreateTableQuery(
-      snapshotEntity.table,
-      ~pgSchema="test_schema",
-      ~isNumericArrayAsText=false,
-    )
+  // The names the addon creates and writes the table with.
+  it("hands Postgres the db column names", t => {
     t.expect(
-      query,
-    ).toBe(`CREATE TABLE IF NOT EXISTS "test_schema"."Snapshot"("id" TEXT NOT NULL, "transaction_index" INTEGER NOT NULL, "token_owner_id" TEXT NOT NULL, PRIMARY KEY("id"));`)
+      snapshotEntity.table
+      ->Table.getFields
+      ->Array.map(field => (field->PgStorage.pgColumnInput).name),
+    ).toEqual(["id", "transaction_index", "token_owner_id"])
   })
 
   it("creates indexes with db column names", t => {
     let definition = PgStorage.getSchemaIndexes(~entities=[snapshotEntity])->Array.getUnsafe(0)
     t.expect(definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema")).toBe(
       `CREATE INDEX "${definition->IndexDefinition.name}" ON "test_schema"."Snapshot"("transaction_index");`,
-    )
-  })
-
-  it("references db column names in the insert query", t => {
-    let query = PgStorage.makeInsertUnnestSetQuery(
-      ~pgSchema="test_schema",
-      ~table=snapshotEntity.table,
-      ~itemSchema=snapshotEntity.schema->S.toUnknown,
-      ~isRawEvents=false,
-    )
-    t.expect(
-      query,
-    ).toBe(`INSERT INTO "test_schema"."Snapshot" ("id", "transaction_index", "token_owner_id")
-SELECT * FROM unnest($1::TEXT[],$2::INTEGER[],$3::TEXT[])ON CONFLICT("id") DO UPDATE SET "transaction_index" = EXCLUDED."transaction_index","token_owner_id" = EXCLUDED."token_owner_id";`)
-  })
-
-  it("converts entities to insert params by reading API field names", t => {
-    let data = PgStorage.makeTableBatchSetQuery(
-      ~pgSchema="test_schema",
-      ~table=snapshotEntity.table,
-      ~itemSchema=snapshotEntity.schema->S.toUnknown,
-    )
-    let params = data.convertOrThrow([snapshot1->(Utils.magic: snapshot => unknown)])
-    t.expect(params->(Utils.magic: array<array<unknown>> => JSON.t)).toEqual(
-      %raw(`[["1"], [5], ["user-1"]]`),
     )
   })
 
@@ -122,20 +95,6 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[],$3::TEXT[])ON CONFLICT("id") DO UP
     ])
   })
 
-  it("inserts history rows with db column names", t => {
-    let entityHistory = PgStorage.getEntityHistory(~entityConfig=snapshotEntity)
-    let query = PgStorage.makeInsertValuesSetQuery(
-      ~pgSchema="test_schema",
-      ~table=entityHistory.table,
-      ~itemSchema=entityHistory.setChangeSchema->S.toUnknown,
-      ~itemsCount=1,
-    )
-    t.expect(
-      query,
-    ).toBe(`INSERT INTO "test_schema"."envio_history_Snapshot" ("envio_change", "id", "transaction_index", "token_owner_id", "envio_checkpoint_id")
-VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "envio_change" = EXCLUDED."envio_change","transaction_index" = EXCLUDED."transaction_index","token_owner_id" = EXCLUDED."token_owner_id";`)
-  })
-
   it("keeps API field names in ClickHouse when only Postgres renames columns", t => {
     // The spec is what crosses to Rust, so the column names it carries are the
     // ones the history table is created with and written to.
@@ -149,18 +108,15 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
 
   it("renames ClickHouse columns independently from Postgres", t => {
     let tokenEntity = reverseFormatConfig.userEntitiesByName->Dict.getUnsafe("Token")
-    let pgQuery = PgStorage.makeCreateTableQuery(
-      tokenEntity.table,
-      ~pgSchema="test_schema",
-      ~isNumericArrayAsText=false,
-    )
     t.expect({
-      "postgres": pgQuery,
+      "postgres": tokenEntity.table
+      ->Table.getFields
+      ->Array.map(field => (field->PgStorage.pgColumnInput).name),
       "clickhouse": ClickHouse.entitySpec(~entityConfig=tokenEntity).columns->Array.map(
         ({name}) => name,
       ),
     }).toEqual({
-      "postgres": `CREATE TABLE IF NOT EXISTS "test_schema"."Token"("id" TEXT NOT NULL, "tokenId" INTEGER NOT NULL, PRIMARY KEY("id"));`,
+      "postgres": ["id", "tokenId"],
       "clickhouse": ["id", "token_id"],
     })
   })
@@ -189,71 +145,5 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
         "token_owner_id": { "customName": "tokenOwner_id" }
       }`),
     )
-  })
-
-  it("keeps using API field names for tables without renamed columns", t => {
-    let userEntity = config.userEntitiesByName->Dict.getUnsafe("User")
-    let query = PgStorage.makeCreateTableQuery(
-      userEntity.table,
-      ~pgSchema="test_schema",
-      ~isNumericArrayAsText=false,
-    )
-    t.expect(
-      query,
-    ).toBe(`CREATE TABLE IF NOT EXISTS "test_schema"."User"("id" TEXT NOT NULL, PRIMARY KEY("id"));`)
-  })
-
-  Async.it("initializes, writes and reads back entities from a real Postgres", async t => {
-    let pgSchema = "colnaming_test_schema"
-    let sql = PgStorage.makeClient()
-    let storage = PgStorage.make(
-      ~sql,
-      ~pgSchema,
-      ~pgUser=Env.Db.user,
-      ~isHasuraEnabled=false,
-      ~ecosystem=Evm,
-    )
-    let _ = await storage.initialize(
-      ~contractMapping=config.contractMapping,
-      ~entities=config.userEntities,
-      ~enums=config.allEnums->Array.concat([
-        EntityHistory.RowAction.config->Table.fromGenericEnumConfig,
-      ]),
-      ~envioInfo=JSON.Object(Dict.make()),
-    )
-
-    await PgStorage.setOrThrow(
-      sql,
-      ~items=[snapshot1->(Utils.magic: snapshot => unknown)],
-      ~table=snapshotEntity.table,
-      ~itemSchema=snapshotEntity.schema->S.toUnknown,
-      ~pgSchema,
-      ~setQueryCache=PgStorage.makeSetQueryCache(),
-    )
-
-    let rawRows = await sql->Sql.query(`SELECT * FROM "${pgSchema}"."Snapshot";`)
-    let loadedByIds = await storage.loadOrThrow(
-      ~filter=EntityFilter.byIds(["1"]),
-      ~table=snapshotEntity.table,
-    )
-    let loadedByField = await storage.loadOrThrow(
-      ~filter=dict{
-        "transactionIndex": dict{"_eq": 5->(Utils.magic: int => unknown)},
-      }->EntityFilter.parseOrThrow(~entityName=snapshotEntity.name, ~table=snapshotEntity.table),
-      ~table=snapshotEntity.table,
-    )
-
-    let _ = await sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
-    await storage.close()
-
-    t.expect({
-      "rawRows": rawRows->(Utils.magic: array<unknown> => JSON.t),
-      "loadedByIds": loadedByIds->(Utils.magic: array<unknown> => array<snapshot>),
-      "loadedByField": loadedByField->(Utils.magic: array<unknown> => array<snapshot>),
-    }).toEqual({
-      "rawRows": %raw(`[{ "id": "1", "transaction_index": 5, "token_owner_id": "user-1" }]`),
-      "loadedByIds": [snapshot1],
-      "loadedByField": [snapshot1],
-    })
   })
 })

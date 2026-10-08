@@ -20,7 +20,7 @@ let pgSchemas = []
 let makeStorage = () => {
   let pgSchema = TestPgSchema.make()
   pgSchemas->Array.push(pgSchema)->ignore
-  PgStorage.make(~sql, ~pgSchema, ~pgUser=Env.Db.user, ~isHasuraEnabled=false, ~ecosystem=Evm)
+  PgStorage.make(~pgSchema, ~ecosystem=Evm)
 }
 
 let storedOf = (chains: array<Config.chain>): ResumePlan.stored => {

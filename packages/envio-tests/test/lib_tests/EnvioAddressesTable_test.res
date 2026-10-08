@@ -1,7 +1,7 @@
 open Vitest
 
-// envio_addresses is insert-only, one row per (chain, address, contract).
-// Rollback deletes rows by that primary key. These run against a real database.
+// A schema whose addresses are keyed without the contract mapping can't be
+// resumed against.
 let sql = PgStorage.makeClient()
 
 // Two contracts, one of them holding the chain's only config address.
@@ -40,13 +40,7 @@ Async.afterAll(async () => {
 let setup = async () => {
   let pgSchema = TestPgSchema.make()
   createdSchemas->Array.push(pgSchema)->ignore
-  let storage = PgStorage.make(
-    ~sql,
-    ~pgSchema,
-    ~pgUser=Env.Db.user,
-    ~isHasuraEnabled=false,
-    ~ecosystem=Evm,
-  )
+  let storage = PgStorage.make(~pgSchema, ~ecosystem=Evm)
   let _ = await storage.initialize(
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping,
@@ -57,85 +51,14 @@ let setup = async () => {
   (storage, pgSchema)
 }
 
-let address = index => Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(index)
-
-let configAddress =
-  (
-    (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.getUnsafe(0)
-  ).addresses->Array.getUnsafe(0)
-
-let row = (~address: Address.t, ~contractName, ~registrationBlock): AddressRows.row => {
-  {
-    chainId,
-    address: Core.getAddon().encodeAddresses(
-      ~ecosystem="evm",
-      ~addresses=[address],
-    )->Array.getUnsafe(0),
-    contractId: contractMapping->ContractMapping.idOfOrThrow(contractName),
-    registrationBlock,
-  }
-}
-
-let storedRows = async (~pgSchema) => {
-  let rows: array<AddressRows.row> = await sql->Sql.query(
-    InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),
-  )
-  let rendered = rows->AddressRows.render(~ecosystem="evm", ~shouldChecksum=true)
-  rows->Array.mapWithIndex((row, idx) => (
-    rendered->Array.getUnsafe(idx),
-    contractMapping->ContractMapping.nameOfOrThrow(row.contractId),
-    row.registrationBlock,
-  ))
-}
-
 describe("envio_addresses", () => {
-  // https://github.com/enviodev/hyperindex/issues/1187
-  Async.it("deletes one contract's registration of a shared address", async t => {
-    let (_storage, pgSchema) = await setup()
-
-    let sharedForNftFactory = row(
-      ~address=address(1),
-      ~contractName="NftFactory",
-      ~registrationBlock=20,
-    )
-    await sql->InternalTable.EnvioAddresses.insert(
-      ~pgSchema,
-      ~rows=[
-        row(~address=address(1), ~contractName="Gravatar", ~registrationBlock=10),
-        // The same address, registered later for another contract.
-        sharedForNftFactory,
-        row(~address=address(2), ~contractName="NftFactory", ~registrationBlock=20),
-      ],
-    )
-
-    // What a rollback past block 15 leaves the store holding.
-    await sql->InternalTable.EnvioAddresses.delete(
-      ~pgSchema,
-      ~keys=[
-        sharedForNftFactory->AddressRows.keyOf,
-        row(
-          ~address=address(2),
-          ~contractName="NftFactory",
-          ~registrationBlock=20,
-        )->AddressRows.keyOf,
-      ],
-    )
-
-    t.expect(
-      await storedRows(~pgSchema),
-      ~message="the other contract's registration of the same address is untouched",
-    ).toEqual([(configAddress, "Gravatar", -1), (address(1), "Gravatar", 10)])
-  })
-
   // A schema written before the addresses table was reshaped can't be resumed
   // against: the rows in it are keyed differently. That has to surface as the
   // incompatible-storage error, not as a missing column halfway through the
   // resume.
   Async.it("refuses to resume a schema that predates the contract mapping", async t => {
     let (storage, pgSchema) = await setup()
-    let _ = await sql->Sql.query(
-      `DROP TABLE "${pgSchema}"."${InternalTable.EnvioContracts.table.tableName}";`,
-    )
+    let _ = await sql->Sql.query(`DROP TABLE "${pgSchema}"."envio_contracts";`)
     let persistence = Persistence.make(
       ~userEntities=config.userEntities,
       ~allEnums=config.allEnums,
@@ -158,25 +81,5 @@ describe("envio_addresses", () => {
       message->String.includes("storage was initialized by an older envio version"),
       ~message,
     ).toBe(true)
-  })
-
-  Async.it("takes one row per contract and ignores a repeat of one", async t => {
-    let (_storage, pgSchema) = await setup()
-
-    let shared = row(~address=address(1), ~contractName="Gravatar", ~registrationBlock=10)
-    await sql->InternalTable.EnvioAddresses.insert(
-      ~pgSchema,
-      ~rows=[
-        shared,
-        {...shared, contractId: contractMapping->ContractMapping.idOfOrThrow("NftFactory")},
-      ],
-    )
-    // A retried batch write re-inserts what it already wrote.
-    await sql->InternalTable.EnvioAddresses.insert(~pgSchema, ~rows=[shared])
-
-    t.expect(
-      (await storedRows(~pgSchema))->Array.filter(((_, _, block)) => block !== -1),
-      ~message="the address is stored once per contract, however often it is written",
-    ).toEqual([(address(1), "Gravatar", 10), (address(1), "NftFactory", 10)])
   })
 })

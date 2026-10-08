@@ -548,10 +548,13 @@ describe("Per-chain history prune", () => {
       let globalEntityConfig =
         pruneScenario.config->IndexerRunner.entityConfigByName("GlobalCounter")
       let {sql, pgSchema} = indexer.pg
-      let historyTable = PgStorage.getEntityHistory(~entityConfig).table.tableName
-      let globalHistoryTable = PgStorage.getEntityHistory(
-        ~entityConfig=globalEntityConfig,
-      ).table.tableName
+      let historyTableOf = (entityConfig: Internal.entityConfig) =>
+        EntityHistory.historyTableName(
+          ~entityName=entityConfig.name,
+          ~entityIndex=entityConfig.index,
+        )
+      let historyTable = entityConfig->historyTableOf
+      let globalHistoryTable = globalEntityConfig->historyTableOf
 
       // Chain 137 straddles the safe checkpoint (10 below, 40 above), chain 1's
       // "shared" sits entirely below it and its "above" entirely above.
@@ -574,15 +577,10 @@ describe("Per-chain history prune", () => {
                 ('above', 4, 50, 'SET')`,
       )
 
+      let storage = PgStorage.make(~pgSchema, ~ecosystem=Evm)
       let prune = entityConfig =>
-        EntityHistory.pruneStaleEntityHistory(
-          sql,
-          ~pgSchema,
-          ~entityName=(entityConfig: Internal.entityConfig).name,
-          ~entityIndex=entityConfig.index,
-          ~chainIdColumn=entityConfig.table
-          ->Table.getChainIdField
-          ->Option.map(Table.getPgDbFieldName),
+        storage.pruneStaleEntityHistory(
+          ~entityConfig,
           ~safeCheckpoints={
             CheckpointSequence.sequence: SharedAcrossChains,
             byChain: Frontier.fromEntries([(1->ChainId.fromInt, 30n)]),
@@ -590,6 +588,7 @@ describe("Per-chain history prune", () => {
         )
       await prune(entityConfig)
       await prune(globalEntityConfig)
+      await storage.close()
 
       let remaining: array<{
         "chainId": int,

@@ -1,4 +1,4 @@
-type t = {client: PgClient.t, transaction: Null.t<int>}
+type t = PgClient.t
 
 // The SQLSTATE of a failure the server raised. napi keeps an error's `code` for
 // its own statuses, so the addon carries it as the message of the `cause`.
@@ -44,13 +44,18 @@ let sslModeToString = mode =>
 %%private(let isDate: unknown => bool = %raw(`(value) => value instanceof Date`))
 @send external toISOString: unknown => string = "toISOString"
 
-// A document as the text a jsonb column stores. jsonb refuses the NUL character
-// however it is spelled, and `JSON.stringify` spells it `\u0000`: an escape
-// after an even run of backslashes, which leaving out is what lets the rest of
-// the document be stored. A raw NUL byte never reaches here escaped, and the
-// addon leaves those out of every parameter.
+// A document as the text a jsonb column stores. `JSON.stringify` escapes the
+// two characters jsonb refuses however they are spelled: the NUL character,
+// as `\u0000`, which is left out so the rest of the document can be stored;
+// and half a surrogate pair, as `\ud800` and the like, which becomes the
+// replacement character a text column stores for it. Either is an escape only
+// after an even run of backslashes. A raw NUL byte never reaches here escaped,
+// and the addon leaves those out of every parameter.
 let stringifyDocument = (value: unknown): string =>
-  value->stringify->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\u0000/g, "")
+  value
+  ->stringify
+  ->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\u0000/g, "")
+  ->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\ud[89a-f][0-9a-f]{2}/g, "\\ufffd")
 
 // Every parameter reaches the server as text — the statement's own casts say
 // what type to read it back as, so a value only has to render itself.
@@ -103,50 +108,16 @@ let params = (values: array<unknown>): array<Null.t<string>> =>
 
 // The rows come back as plain objects keyed by the column names the statement
 // selected. The server decides what is in them, so the caller names their shape.
-let query = ({client, transaction}, sql, ~params as values: array<unknown>=[]): promise<
-  array<'row>,
-> => {
+let query = (client, sql, ~params as values: array<unknown>=[]): promise<array<'row>> =>
   client
-  ->PgClient.query(~transaction, sql, ~params=params(values))
+  ->PgClient.query(sql, ~params=params(values))
   ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<'row>>)
-}
 
-// A statement with nothing to read back. It goes through the addon's own
-// execute rather than a query whose rows are then dropped: an insert describes
-// no columns at all, and building a result for it would be an arena, a handle
-// and a pair of boundary crossings for nothing.
-let exec = ({client, transaction}, sql, ~params as values: array<unknown>=[]) => {
-  client->PgClient.execute(~transaction, sql, params(values))
-}
-
-// A table's rows as the text the server writes them out as, straight into a
-// file, and the same text read back into a table. Nothing passes through
-// JavaScript on the way.
-let copyOut = ({client}, sql, ~path) => client->PgClient.copyOut(sql, path)
-
-let copyIn = ({client}, sql, ~path) => client->PgClient.copyIn(sql, path)
+let exec = (client, sql, ~params as values: array<unknown>=[]) =>
+  client->PgClient.execute(sql, params(values))
 
 // Statements that take no parameters and return nothing worth reading. More
-// than one may be given at once, which the schema initialization relies on.
-let batch = ({client, transaction}, sql) => client->PgClient.batch(~transaction, sql)
+// than one may be given at once.
+let batch = (client, sql) => client->PgClient.batch(sql)
 
-// Runs `body` in a transaction, committing it unless something throws. A `t`
-// that already carries one stays in it: the statements inside belong to the
-// transaction that is open, and opening a second would put them on a different
-// connection than the work they have to land with.
-let begin = (self, body) =>
-  switch self.transaction {
-  | Value(_) => body(self)
-  | Null =>
-    self.client->PgClient.transaction(handle => body({...self, transaction: Null.make(handle)}))
-  }
-
-let close = ({client}) => client->PgClient.close
-
-@unboxed
-type columnType =
-  | @as("SMALLINT") SmallInt
-  | @as("INTEGER") Integer
-  | @as("BIGINT") BigInt
-  | @as("BYTEA") Bytea
-  | @as("TEXT") Text
+let close = client => client->PgClient.close

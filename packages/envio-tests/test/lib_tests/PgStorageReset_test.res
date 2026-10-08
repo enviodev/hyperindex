@@ -30,13 +30,7 @@ Async.afterAll(async () => {
 
 describe("Resetting Postgres storage", () => {
   Async.it("serves the same query against the schema it built again", async t => {
-    let storage = PgStorage.make(
-      ~sql,
-      ~pgSchema,
-      ~pgUser=Env.Db.user,
-      ~isHasuraEnabled=false,
-      ~ecosystem=Evm,
-    )
+    let storage = PgStorage.make(~pgSchema, ~ecosystem=Evm)
     let table = (entities->Array.getUnsafe(0)).table
     let filter =
       dict{"id": dict{"_eq": "1"->(Utils.magic: string => unknown)}}->EntityFilter.parseOrThrow(

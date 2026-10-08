@@ -184,13 +184,7 @@ describe("EntityFilter matcher against Postgres", () => {
   Async.it("Agrees with the query for every generated filter", async t => {
     let pgSchema = "entity_filter_fuzz"
     let sql = PgStorage.makeClient()
-    let storage = PgStorage.make(
-      ~sql,
-      ~pgSchema,
-      ~pgUser=Env.Db.user,
-      ~isHasuraEnabled=false,
-      ~ecosystem=Evm,
-    )
+    let storage = PgStorage.make(~pgSchema, ~ecosystem=Evm)
     let _ = await storage.initialize(
       ~contractMapping=config.contractMapping,
       ~entities=config.userEntities,
@@ -209,13 +203,11 @@ describe("EntityFilter matcher against Postgres", () => {
 
       // Ids repeat across seeds, so each seed's rows replace the previous ones.
       try {
-        await PgStorage.setOrThrow(
-          sql,
+        let _ = await TestPgSchema.write(
+          ~pgSchema,
           ~items=rows->(Utils.magic: array<dict<unknown>> => array<unknown>),
           ~table,
           ~itemSchema=entityConfig.schema->S.toUnknown,
-          ~pgSchema,
-          ~setQueryCache=PgStorage.makeSetQueryCache(),
         )
       } catch {
       | Persistence.StorageError({message, reason}) =>
