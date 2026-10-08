@@ -99,7 +99,8 @@ let make = (
 
     // The cause travels as a real error so it reaches the logs the way every
     // other source's does. Absent where the message is the whole story.
-    let exn = result.providerMessage->Option.map(message => JsError.make(message)->JsExn.anyToExnInternal)
+    let exn =
+      result.providerMessage->Option.map(message => JsError.make(message)->JsExn.anyToExnInternal)
 
     let failedGettingItems = (decision): exn => Source.GetItemsError(
       FailedGettingItems({
@@ -133,6 +134,16 @@ let make = (
             },
           }),
         ),
+      )
+    | BehindHead =>
+      throw(
+        Source.SourceBehindHead({
+          blockNumber: switch result.blockNumber {
+          | Some(blockNumber) => blockNumber
+          | None => missing("blockNumber")
+          },
+          requestStats: result.requestStats,
+        }),
       )
     | SuggestedToBlock =>
       throw(
@@ -185,9 +196,11 @@ let make = (
   let getBlockHashes = async (~blockNumbers, ~logger as _) => {
     let (result, pageBlockStore) = await rpcClient.getBlockHashes(blockNumbers)
     {
-      Source.result: switch result.message {
-      | None => Ok(pageBlockStore)
-      | Some(message) => Error(JsError.make(message)->JsExn.anyToExnInternal)
+      Source.result: switch (result.message, result.behindHeadBlock) {
+      | (None, _) => Ok(pageBlockStore)
+      | (Some(_), Some(blockNumber)) =>
+        Error(Source.SourceBehindHead({blockNumber, requestStats: result.requestStats}))
+      | (Some(message), None) => Error(JsError.make(message)->JsExn.anyToExnInternal)
       },
       requestStats: result.requestStats,
     }
