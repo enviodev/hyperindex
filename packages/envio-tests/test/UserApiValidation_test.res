@@ -64,6 +64,61 @@ chains:
     }
   })
 
+  it("omits RPC entries whose url interpolates to nothing, quoted or not", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~env=dict{},
+      ~configYaml=`
+name: optional-rpc
+chains:
+  - id: 1
+    rpc:
+      - url: \${ENVIO_RPC_URL_1:-}
+        for: realtime
+        ws: \${ENVIO_WS_URL_1:-}
+      - url: "\${ENVIO_RPC_URL_2:-}"
+        for: fallback
+    start_block: 0
+`,
+    )
+
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.sourceConfig).toEqual(
+      Config.EvmSourceConfig({hypersync: Some("https://1.hypersync.xyz"), rpcs: []}),
+    )
+  })
+
+  it("keeps an RPC entry whose quoted ws interpolates to nothing, without the ws", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~env=dict{"ENVIO_RPC_URL_1": "https://rpc.example.test"},
+      ~configYaml=`
+name: optional-ws
+chains:
+  - id: 1
+    rpc:
+      - url: \${ENVIO_RPC_URL_1:-}
+        for: realtime
+        ws: "\${ENVIO_WS_URL_1:-}"
+    start_block: 0
+`,
+    )
+
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.sourceConfig).toEqual(
+      Config.EvmSourceConfig({
+        hypersync: Some("https://1.hypersync.xyz"),
+        rpcs: [
+          {
+            url: "https://rpc.example.test",
+            sourceFor: Source.Realtime,
+            syncConfig: None,
+            ws: None,
+            headers: None,
+          },
+        ],
+      }),
+    )
+  })
+
   it("resolves ABI paths from caller-provided virtual files", t => {
     let files = dict{
       "abis/token.json": `[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]`,

@@ -767,10 +767,24 @@ pub mod evm {
         Realtime,
     }
 
+    // `url: ${RPC_URL:-}` with the variable unset leaves an empty YAML value,
+    // which is null rather than an empty string. Accept it so the entry can be
+    // dropped during resolution instead of failing to deserialize.
+    fn deserialize_null_as_empty<'de, D>(deserializer: D) -> Result<String, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Option::<String>::deserialize(deserializer).map(Option::unwrap_or_default)
+    }
+
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Rpc {
-        #[schemars(description = "The RPC endpoint URL.")]
+        #[schemars(
+            description = "The RPC endpoint URL. An entry whose url is empty, for example \
+                           `${RPC_URL:-}` with the variable unset, is ignored."
+        )]
+        #[serde(deserialize_with = "deserialize_null_as_empty")]
         pub url: String,
         #[schemars(
             description = "Determines if this RPC is for historical sync, real-time chain \
