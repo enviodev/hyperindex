@@ -388,7 +388,7 @@ describe("RPC source public contract", () => {
     t.expect(ranges).toEqual([ranges->Array.getUnsafe(0), ranges->Array.getUnsafe(0)])
   })
 
-  Async.it("pins missing receipt data as a retryable source error", async t => {
+  Async.it("pins missing receipt data as a source behind the head", async t => {
     let error = await MockRpcServer.withScenario(
       ~name="missing receipt",
       ~calls=[
@@ -421,21 +421,42 @@ describe("RPC source public contract", () => {
           | Error(error) => error
           | Ok(_) => JsError.throwWithMessage("Expected missing receipt data to be retryable")
           }
-        // The wait ramps with the attempt, so the two are read together.
         (await call(~retry=0), await call(~retry=2))
       },
     )
 
-    // A null receipt is the load-balancing symptom, so the source asks for a
-    // retry and says which receipt was missing. The symptom is the whole
-    // story, so it is the retry's message and there is no separate cause.
-    let notFoundMessage = `The RPC returned null for the receipt of transaction ${transactionHash}. The provider may be load-balanced between nodes that drift from the head independently; indexing continues correctly once the query is retried.`
-    let expected = backoffMillis => RpcSourcePins.FailedGettingItems({
-      attemptedToBlock: 100,
-      providerMessage: None,
-      retry: Backoff({message: notFoundMessage, backoffMillis}),
-    })
-    t.expect(error).toEqual((expected(100), expected(1_000)))
+    // A null receipt is a load-balanced provider answering from a node that
+    // hasn't reached the transaction's block yet. SourceManager owns that retry
+    // schedule, so the source names the block and adds no wait of its own.
+    let expected = RpcSourcePins.BehindHead({blockNumber: 100})
+    t.expect(error).toEqual((expected, expected))
+  })
+
+  Async.it("pins a null block in a block-hash query as a source behind the head", async t => {
+    let result = await MockRpcServer.withScenario(
+      ~name="null block hash",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          ~reply=RpcResult(JSON.Null),
+        ),
+      ],
+      async mock => {
+        let registration = makeRegistration()
+        let (source, _) = makeSource(~url=mock.url, ~registration)
+        let {result} = await source.getBlockHashes(
+          ~blockNumbers=[100],
+          ~logger=Logging.createChild(~params={"test": "RPC source contract pin"}),
+        )
+        switch result {
+        | Error(Source.SourceBehindHead({blockNumber})) => Some(blockNumber)
+        | _ => None
+        }
+      },
+    )
+
+    t.expect(result).toEqual(Some(100))
   })
 
   // A page reads its blocks and its transactions at once, and they can fail
@@ -484,7 +505,7 @@ describe("RPC source public contract", () => {
       switch error {
       | RpcSourcePins.FailedGettingFieldSelection({message}) =>
         message->String.includes("gasUsed") ? "unservable" : message
-      | FailedGettingItems(_) => "reported the transient miss instead"
+      | FailedGettingItems(_) | BehindHead(_) => "reported the transient miss instead"
       | UnsupportedSelection(message) => message
       },
     ).toEqual("unservable")
@@ -774,7 +795,7 @@ describe("RPC source public contract", () => {
           ~addresses=[
             {address: addressA, contractName: "ContractA", registrationBlock: -1},
             {address: addressB, contractName: "ContractB", registrationBlock: -1},
-          ]
+          ],
         )
         let options: RpcSource.options = {
           url: mock.url,

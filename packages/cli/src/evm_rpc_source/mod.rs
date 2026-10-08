@@ -151,6 +151,8 @@ pub enum PageOutcome {
     Backoff,
     /// The provider cannot serve the selected fields.
     FieldSelection,
+    /// The node that answered has not reached `block_number` yet.
+    BehindHead,
 }
 
 /// The outcome of a page read.
@@ -170,8 +172,8 @@ pub struct NextPageResult {
     /// The cause logged beside `message`, where there is one distinct from it:
     /// the provider's own words, or the transport's.
     pub provider_message: Option<String>,
-    /// `FieldSelection` only: the block it happened on, which is the one thing
-    /// that makes an unservable selection diagnosable.
+    /// `FieldSelection` and `BehindHead` only: the block it happened on, which
+    /// is the one thing that makes an unservable selection diagnosable.
     pub block_number: Option<i64>,
     /// `SuggestedToBlock` only: the narrower end to ask for instead.
     pub retry_to_block: Option<i64>,
@@ -252,6 +254,9 @@ impl NextPageResult {
 #[napi(object)]
 pub struct BlockHashResult {
     pub message: Option<String>,
+    /// Set alongside `message` when the node that answered has not reached
+    /// this block yet.
+    pub behind_head_block: Option<i64>,
     pub request_stats: Vec<RequestStat>,
 }
 
@@ -419,6 +424,7 @@ impl EvmRpcClient {
             Ok(blocks) => Ok((
                 BlockHashResult {
                     message: None,
+                    behind_head_block: None,
                     request_stats: self.inner.take_stats(),
                 },
                 blocks,
@@ -428,6 +434,10 @@ impl EvmRpcClient {
             Err(err) => Ok((
                 BlockHashResult {
                     message: Some(err.to_string()),
+                    behind_head_block: match err {
+                        EnrichError::BehindHead { block_number, .. } => Some(block_number as i64),
+                        _ => None,
+                    },
                     request_stats: self.inner.take_stats(),
                 },
                 self.empty_stores().0,
@@ -566,6 +576,13 @@ impl EvmRpcClient {
                     message: Some(format!("{error:#}")),
                     block_number: Some(block_number as i64),
                     ..NextPageResult::new(PageOutcome::FieldSelection, to_block, request_stats)
+                },
+                None,
+            ),
+            Err(PageError::Enrich(EnrichError::BehindHead { block_number, .. })) => (
+                NextPageResult {
+                    block_number: Some(block_number as i64),
+                    ..NextPageResult::new(PageOutcome::BehindHead, to_block, request_stats)
                 },
                 None,
             ),
