@@ -28,6 +28,7 @@ type pageOutcome =
   | @as("SuggestedToBlock") SuggestedToBlock
   | @as("Backoff") Backoff
   | @as("FieldSelection") FieldSelection
+  | @as("BehindHead") BehindHead
 
 type nextPageResult = {
   kind: pageOutcome,
@@ -45,6 +46,7 @@ type nextPageResult = {
 // alongside it is empty.
 type blockHashResult = {
   message: option<string>,
+  behindHeadBlock: option<int>,
   requestStats: array<Source.requestStat>,
 }
 

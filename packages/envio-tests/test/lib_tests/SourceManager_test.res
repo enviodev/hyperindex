@@ -1448,6 +1448,7 @@ describe("SourceManager wait for new blocks", () => {
   )
 })
 describe("SourceManager.executeQuery", () => {
+  afterEach(() => Vi.useRealTimers())
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let addresses = TestAddresses.setOf([])
 
@@ -1530,6 +1531,94 @@ describe("SourceManager.executeQuery", () => {
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
+  Async.it(
+    "Keeps retrying a source behind the head for about 10 seconds before failing over",
+    async t => {
+      Vi.useFakeTimers()
+      let syncMock = MockSource.make([#getItemsOrThrow])
+      let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
+      let sourceManager = SourceManager.make(
+        ~isRealtime=false,
+        ~sources=[syncMock.source, fallbackMock.source],
+      )
+      let startedAt = Date.now()
+      let p =
+        sourceManager->SourceManager.executeQuery(
+          ~query={...mockQuery(), fromBlock: 10},
+          ~isRealtime=false,
+          ~knownHeight=100,
+        )
+
+      // The replica answering is only briefly behind its siblings, so a source
+      // that is otherwise healthy must not be traded away within a few retries.
+      let syncRetries = []
+      let failedOverAt = ref(None)
+      let ticks = ref(0)
+      while failedOverAt.contents === None && ticks.contents < 3_000 {
+        switch (syncMock.getItemsOrThrowCalls, fallbackMock.getItemsOrThrowCalls) {
+        | ([call], []) =>
+          syncRetries->Array.push(call.payload["retry"])
+          call.reject(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
+        | ([], [call]) =>
+          failedOverAt := Some((call.payload["retry"], Date.now() -. startedAt))
+          call.resolve([])
+        | _ => ()
+        }
+        await Vi.advanceTimersByTimeAsync(10)
+        ticks := ticks.contents + 1
+      }
+      let _ = await p
+      Vi.useRealTimers()
+
+      t.expect((syncRetries, failedOverAt.contents)).toEqual((
+        Array.fromInitializer(~length=13, i => i),
+        Some((13, 9550.)),
+      ))
+    },
+  )
+
+  Async.it(
+    "Backs off further once a source stays behind the head past the window and has no alternative",
+    async t => {
+      Vi.useFakeTimers()
+      let sourceMock = MockSource.make([#getItemsOrThrow])
+      let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+      let p =
+        sourceManager->SourceManager.executeQuery(
+          ~query={...mockQuery(), fromBlock: 10},
+          ~isRealtime=false,
+          ~knownHeight=100,
+        )
+
+      let calledAt = []
+      let ticks = ref(0)
+      while calledAt->Array.length < 17 && ticks.contents < 5_000 {
+        switch sourceMock.getItemsOrThrowCalls {
+        | [call] =>
+          calledAt->Array.push(Date.now())
+          if calledAt->Array.length < 17 {
+            call.reject(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
+          } else {
+            call.resolve([])
+          }
+        | _ => ()
+        }
+        await Vi.advanceTimersByTimeAsync(10)
+        ticks := ticks.contents + 1
+      }
+      let _ = await p
+      Vi.useRealTimers()
+
+      // The window keeps attempts a second apart; past it, a source that is
+      // still behind is polled less and less often rather than every second.
+      let gapsAfterWindow = Array.fromInitializer(
+        ~length=4,
+        i => calledAt->Array.getUnsafe(13 + i) -. calledAt->Array.getUnsafe(12 + i),
+      )
+      t.expect(gapsAfterWindow).toEqual([1000., 2000., 4000., 8000.])
+    },
+  )
+
   Async.it("counts the requests a failed getItems still made", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
@@ -1592,12 +1681,14 @@ describe("SourceManager.executeQuery", () => {
     t.expect(
       sourceManager
       ->SourceManager.getRequestStatSamples
-      ->Array.map(({method, count, responseBlocks, emptyResponseCount}) => (
-        method,
-        count,
-        responseBlocks,
-        emptyResponseCount,
-      )),
+      ->Array.map(
+        ({method, count, responseBlocks, emptyResponseCount}) => (
+          method,
+          count,
+          responseBlocks,
+          emptyResponseCount,
+        ),
+      ),
     ).toEqual([("getLogs", 2, Some(3), 1)])
   })
 
@@ -1673,23 +1764,22 @@ describe("SourceManager.executeQuery", () => {
   })
 
   // A stall is reported by the level it is logged at, so pinning it means
-  // holding the logger the manager writes to.
-  let captureErrorLogs = async (body: unit => promise<unit>) => {
-    let errors = []
-    let ignoreMessage = (_: Pino.pinoMessageBlob) => ()
+  // holding the logger the manager writes to. Captures every line, in order, as
+  // its level and the fields it was logged with.
+  let captureLogs = async (body: unit => promise<unit>) => {
+    let lines: array<(string, dict<unknown>)> = []
+    let capture = (level, blob: Pino.pinoMessageBlob) =>
+      lines->Array.push((level, blob->(Utils.magic: Pino.pinoMessageBlob => dict<unknown>)))
     // `child` is a method rather than a field of `Pino.t`, and every child logs
     // to the same array, so it answers with another one of these.
     let rec capturing = (): Pino.t =>
       {
-        "trace": ignoreMessage,
-        "debug": ignoreMessage,
-        "info": ignoreMessage,
-        "warn": ignoreMessage,
-        "error": blob =>
-          errors
-          ->Array.push((blob->(Utils.magic: Pino.pinoMessageBlob => {"msg": string}))["msg"])
-          ->ignore,
-        "fatal": ignoreMessage,
+        "trace": blob => capture("trace", blob),
+        "debug": blob => capture("debug", blob),
+        "info": blob => capture("info", blob),
+        "warn": blob => capture("warn", blob),
+        "error": blob => capture("error", blob),
+        "fatal": blob => capture("fatal", blob),
         "child": _ => capturing(),
       }->(Utils.magic: {..} => Pino.t)
 
@@ -1704,9 +1794,73 @@ describe("SourceManager.executeQuery", () => {
     Logging.setLogger(previous)
     switch failure {
     | Some(exn) => throw(exn)
-    | None => errors
+    | None => lines
     }
   }
+
+  let captureErrorLogs = async body =>
+    (await captureLogs(body))->Array.filterMap(((level, fields)) =>
+      level === "error"
+        ? Some(fields->Dict.getUnsafe("msg")->(Utils.magic: unknown => string))
+        : None
+    )
+
+  Async.it("Tells the user a source behind the head is catching up, not failing", async t => {
+    Vi.useFakeTimers()
+    let sourceMock = MockSource.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+
+    let lines = await captureLogs(
+      async () => {
+        let p =
+          sourceManager->SourceManager.executeQuery(
+            ~query={...mockQuery(), fromBlock: 10},
+            ~isRealtime=false,
+            ~knownHeight=100,
+          )
+        // Retries 0 to 12: the quiet window, then the first attempt past it.
+        let attempts = ref(0)
+        while attempts.contents < 14 {
+          switch sourceMock.getItemsOrThrowCalls {
+          | [call] =>
+            attempts := attempts.contents + 1
+            if attempts.contents < 14 {
+              call.reject(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
+            } else {
+              call.resolve([])
+            }
+          | _ => ()
+          }
+          await Vi.advanceTimersByTimeAsync(10)
+        }
+        let _ = await p
+      },
+    )
+
+    let behindHead = lines->Array.filter(((_, fields)) => fields->Dict.get("retry")->Option.isSome)
+    t.expect((behindHead->Array.get(0), behindHead->Array.get(12))).toEqual((
+      Some((
+        "trace",
+        dict{
+          "msg": "MockSource hasn't reached block 10 on all of its servers yet. This is normal near the latest block and resolves by itself - retrying shortly."->(
+            Utils.magic: string => unknown
+          ),
+          "retry": 0->(Utils.magic: int => unknown),
+          "backOffMilliseconds": 100->(Utils.magic: int => unknown),
+        },
+      )),
+      Some((
+        "warn",
+        dict{
+          "msg": "MockSource is still catching up to block 10. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured."->(
+            Utils.magic: string => unknown
+          ),
+          "retry": 12->(Utils.magic: int => unknown),
+          "backOffMilliseconds": 1000->(Utils.magic: int => unknown),
+        },
+      )),
+    ))
+  })
 
   Async.it("Reports a query every source has failed for minutes as an error", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
