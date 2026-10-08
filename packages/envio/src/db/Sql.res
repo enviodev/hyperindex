@@ -44,18 +44,16 @@ let sslModeToString = mode =>
 %%private(let isDate: unknown => bool = %raw(`(value) => value instanceof Date`))
 @send external toISOString: unknown => string = "toISOString"
 
-// A document as the text a jsonb column stores. `JSON.stringify` escapes the
-// two characters jsonb refuses however they are spelled: the NUL character,
-// as `\u0000`, which is left out so the rest of the document can be stored;
-// and half a surrogate pair, as `\ud800` and the like, which becomes the
-// replacement character a text column stores for it. Either is an escape only
-// after an even run of backslashes. A raw NUL byte never reaches here escaped,
+// A document as the text a jsonb column stores. jsonb refuses the NUL
+// character however it is spelled, and `JSON.stringify` spells it `\u0000`: an
+// escape after an even run of backslashes, which leaving out is what lets the
+// rest of the document be stored. A raw NUL byte never reaches here escaped,
 // and the addon leaves those out of every parameter.
 let stringifyDocument = (value: unknown): string =>
   value
   ->stringify
   ->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\u0000/g, "")
-  ->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\ud[89a-f][0-9a-f]{2}/g, "\\ufffd")
+  ->Utils.replaceLoneSurrogateEscapes
 
 // Every parameter reaches the server as text — the statement's own casts say
 // what type to read it back as, so a value only has to render itself.

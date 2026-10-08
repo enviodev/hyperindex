@@ -146,7 +146,11 @@ let toText = (value: unknown, ~replacer=?) =>
   switch value->typeof {
   | #string => value->asString
   | #bigint => value->stringOf
-  | _ => value->(Utils.magic: unknown => JSON.t)->JSON.stringify(~replacer?)
+  | _ =>
+    value
+    ->(Utils.magic: unknown => JSON.t)
+    ->JSON.stringify(~replacer?)
+    ->Utils.replaceLoneSurrogateEscapes
   }
 
 // Copies `text` in as one byte per character, or returns -1 at the first

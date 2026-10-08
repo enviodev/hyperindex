@@ -959,3 +959,10 @@ module Promise = {
   // Detects Thenable-like values at runtime (anything with a `.catch` method).
   let isCatchable: 'any => bool = %raw(`value => value && typeof value.catch === 'function'`)
 }
+
+// `JSON.stringify` writes half a surrogate pair as a `\udXXX` escape, which no
+// JSON parser that decodes to UTF-8 accepts. It becomes the replacement
+// character a text encoder writes for it. An escape only after an even run of
+// backslashes.
+let replaceLoneSurrogateEscapes = (json: string) =>
+  json->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\ud[89a-f][0-9a-f]{2}/g, "\\ufffd")
