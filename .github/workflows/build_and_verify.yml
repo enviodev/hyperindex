@@ -5,6 +5,10 @@ on:
   # secrets. Fork PRs are gated by the `fork-ci` environment which
   # requires manual approval from a reviewer before jobs proceed.
   # Same-repo PRs use the `internal` environment (no restrictions).
+  # That approval is what makes `allow-unsafe-pr-checkout` on the
+  # checkout steps acceptable: approving runs the fork's code with
+  # secrets, so the reviewer must read the whole diff first, especially
+  # lockfiles, package.json scripts, build.rs and .github/.
   pull_request_target:
   push:
     branches:
@@ -65,6 +69,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
 
       # Installs only the toolchain pinned in rust-toolchain.toml. Installing
       # `stable` as well would put it in rust-cache's key, so every Rust
@@ -131,6 +136,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
 
       # Components come from rust-toolchain.toml, which also pins the version.
       - name: Install toolchain
@@ -159,6 +165,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
 
       - name: Install toolchain
         run: rustup toolchain install
@@ -178,6 +185,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Run template tests
@@ -231,6 +239,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Lint test inputs
@@ -285,6 +294,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: CLI subprocess tests
@@ -383,6 +393,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
