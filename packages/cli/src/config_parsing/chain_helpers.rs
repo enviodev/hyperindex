@@ -383,6 +383,9 @@ pub enum Network {
     Somnia = 5031,
 
     #[subenum(HypersyncChain)]
+    SomniaTestnet = 50312,
+
+    #[subenum(HypersyncChain)]
     Soneium = 1868,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -590,6 +593,7 @@ impl Network {
             | Network::Tangle
             | Network::Fraxtal
             | Network::Somnia
+            | Network::SomniaTestnet
             | Network::Soneium
             | Network::Ink
             | Network::Metall2
@@ -696,6 +700,19 @@ mod test {
                 HypersyncChain::from_repr(5031).is_some()
             ),
             ("somnia".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn somnia_testnet_is_supported_by_hypersync() {
+        assert_eq!(
+            (
+                Network::from_network_id(50312)
+                    .ok()
+                    .map(|network| network.to_string()),
+                HypersyncChain::from_repr(50312).is_some()
+            ),
+            (Some("somnia-testnet".to_string()), true)
         );
     }
 
