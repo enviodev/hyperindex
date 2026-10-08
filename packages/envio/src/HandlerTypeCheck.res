@@ -3,7 +3,7 @@ type result =
   | TypeErrors(string)
   | Skipped(string)
 
-let timeoutMinutes = 10
+let timeoutSeconds = 30
 
 // tsc's pretty output reads the same from TypeScript 5 to 7: a diagnostic
 // starts unindented with its location, its code frame and related locations
@@ -64,7 +64,7 @@ let runTsc = (~tsc, ~cwd, args) =>
     NodeJs.ChildProcess.execFile(
       NodeJs.Process.process->NodeJs.Process.execPath,
       [tsc]->Array.concat(args),
-      {cwd, timeout: timeoutMinutes * 60 * 1000, maxBuffer: Float.Constants.positiveInfinity},
+      {cwd, timeout: timeoutSeconds * 1000, maxBuffer: Float.Constants.positiveInfinity},
       (error, stdout, stderr) =>
         resolve({
           error: error->Null.toOption,
@@ -122,7 +122,7 @@ let parse = (output, ~cwd) => {
 let failure = ({error, output}) =>
   switch error {
   | Some({killed: true}) =>
-    `Skipped the handler type check: tsc didn't finish within ${timeoutMinutes->Int.toString} minutes.`
+    `Skipped the handler type check: tsc didn't finish within ${timeoutSeconds->Int.toString} seconds.`
   | _ =>
     let reason =
       output
@@ -144,11 +144,11 @@ let check = async (~cwd, ~files) => {
   switch (resolveTsc(~cwd), findUp(cwd, "tsconfig.json")) {
   | (None, _) =>
     skip(
-      "Skipped the handler type check: typescript isn't installed. Add it to the project's devDependencies to type-check handlers on start.",
+      "Skipped the handler type check: typescript isn't installed. Add it to devDependencies to type-check handlers on start.",
     )
   | (_, None) =>
     skip(
-      "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates.",
+      "Skipped the handler type check: no tsconfig.json found. Add one, like the one envio init creates, to type-check handlers on start.",
     )
   | (Some(tsc), Some(tsconfig)) =>
     // The project's own `tsc --noEmit`, minus the build info it would write.
@@ -191,14 +191,14 @@ let check = async (~cwd, ~files) => {
     } else if stopping->Array.length > 0 {
       let reason = report(stopping)
       Skipped(
-        `Skipped the handler type check: TypeScript can't check the handlers until these errors are fixed:\n\n${reason}`,
+        `Skipped the handler type check: tsc can't check the handlers until these errors are fixed:\n\n${reason}`,
       )
     } else if unchecked->Array.length > 0 {
       let names = unchecked->Array.join(", ")
       let tsconfig = NodeJs.Path.relative(cwd, tsconfig)
       let pronoun = unchecked->Array.length === 1 ? "it" : "them"
       Skipped(
-        `Skipped the handler type check for ${names}: ${tsconfig} doesn't include ${pronoun}. Add ${pronoun} to its "include" to type-check ${pronoun} on start.`,
+        `Skipped the handler type check: ${tsconfig} doesn't include ${names}. Add ${pronoun} to "include" to type-check ${pronoun} on start.`,
       )
     } else {
       Passed

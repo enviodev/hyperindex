@@ -234,7 +234,7 @@ describe("TypeScript handler type check", () => {
     return {
       exitCode: result.exitCode,
       // A log message ends where the logger resets its color.
-      typeErrors: output.match(/Handler files have type errors:[^\x1b]*/)?.[0] ?? null,
+      typeErrors: output.match(/The handler type check found errors[^\x1b]*/)?.[0] ?? null,
       warning: output.match(/Skipped the handler type check[^\x1b]*/)?.[0] ?? null,
       loadedHandlers: output.includes("handler loaded"),
       written,
@@ -247,7 +247,7 @@ describe("TypeScript handler type check", () => {
   // related location's message beside it rather than under its code.
   const typeErrors = (typescript: string) =>
     [
-      "Handler files have type errors:",
+      "The handler type check found errors. Fix them to start the indexer:",
       "",
       "src/handlers/Gravatar.ts:5:5 - error TS2322: Type 'bigint' is not assignable to type 'string'.",
       "",
@@ -322,7 +322,7 @@ describe("TypeScript handler type check", () => {
         exitCode: 1,
         typeErrors: null,
         warning: [
-          "Skipped the handler type check: TypeScript can't check the handlers until these errors are fixed:",
+          "Skipped the handler type check: tsc can't check the handlers until these errors are fixed:",
           "",
           "src/lib/broken.ts:1:23 - error TS1109: Expression expected.",
           "",
@@ -359,7 +359,7 @@ describe("TypeScript handler type check", () => {
       exitCode: 1,
       typeErrors: null,
       warning: [
-        "Skipped the handler type check: TypeScript can't check the handlers until these errors are fixed:",
+        "Skipped the handler type check: tsc can't check the handlers until these errors are fixed:",
         "",
         ...error,
         "",
@@ -380,7 +380,7 @@ describe("TypeScript handler type check", () => {
         exitCode: 1,
         typeErrors: null,
         warning:
-          'Skipped the handler type check for src/handlers/Gravatar.ts: tsconfig.json doesn\'t include it. Add it to its "include" to type-check it on start.',
+          'Skipped the handler type check: tsconfig.json doesn\'t include src/handlers/Gravatar.ts. Add it to "include" to type-check it on start.',
         loadedHandlers: true,
         written: [],
       });
@@ -410,7 +410,7 @@ describe("TypeScript handler type check", () => {
       exitCode: 1,
       typeErrors: null,
       warning:
-        "Skipped the handler type check: typescript isn't installed. Add it to the project's devDependencies to type-check handlers on start.",
+        "Skipped the handler type check: typescript isn't installed. Add it to devDependencies to type-check handlers on start.",
       loadedHandlers: true,
       written: [],
     });
@@ -423,7 +423,7 @@ describe("TypeScript handler type check", () => {
       exitCode: 1,
       typeErrors: null,
       warning:
-        "Skipped the handler type check: no tsconfig.json found. Add one to type-check handlers on start, like the one envio init creates.",
+        "Skipped the handler type check: no tsconfig.json found. Add one, like the one envio init creates, to type-check handlers on start.",
       loadedHandlers: true,
       written: [],
     });
