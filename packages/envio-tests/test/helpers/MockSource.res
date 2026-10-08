@@ -184,6 +184,8 @@ type itemMock = {
   logIndex: int,
   handler?: mockSourceHandler,
   contractRegister?: mockSourceContractRegister,
+  // Block fields beyond the number, timestamp and hash every item carries.
+  blockFields?: dict<unknown>,
 }
 
 // What a test can tell one pending item query from another by.
@@ -680,11 +682,16 @@ let make = (
                         chainId,
                         srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
                         logIndex: item.logIndex,
-                        block: {
-                          "number": item.blockNumber,
-                          "timestamp": item.blockNumber,
-                          "hash": `0x${item.blockNumber->Int.toString}`,
-                        }->Utils.magic,
+                        block: Dict.fromArray([
+                          ("number", item.blockNumber->(Utils.magic: int => unknown)),
+                          ("timestamp", item.blockNumber->(Utils.magic: int => unknown)),
+                          (
+                            "hash",
+                            `0x${item.blockNumber->Int.toString}`->(Utils.magic: string => unknown),
+                          ),
+                        ])
+                        ->Dict.assign(item.blockFields->Option.getOr(Dict.make()))
+                        ->Utils.magic,
                       }
                       let _ = %raw(`Object.defineProperties(payload, {
                         __mockHandler: {value: item.handler},

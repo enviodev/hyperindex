@@ -97,4 +97,57 @@ describe("Raw events", () => {
       ))
     },
   )
+
+  // A row carries what identifies the event and the block it came from, and
+  // every other block and transaction field as JSON — a bigint as its digits.
+  scenario->Scenario.it(
+    "keep the event's identity and its block's fields",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(300)
+      source.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 5,
+            logIndex: 3,
+            handler: async _ => (),
+            blockFields: dict{
+              "gasUsed": 99n->(Utils.magic: bigint => unknown),
+              "miner": "0xminer"->(Utils.magic: string => unknown),
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexer.getBatchWritePromise()
+
+      let {sql, pgSchema} = indexer.pg
+      let rows: array<JSON.t> = await sql->Sql.query(
+        `SELECT "chain_id", "event_id"::text AS "event_id", "event_name", "contract_name",
+                "block_number", "log_index", "src_address", "block_hash", "block_timestamp",
+                "block_fields", "transaction_fields", "params"
+           FROM "${pgSchema}"."raw_events";`,
+      )
+
+      t.expect(rows).toEqual([
+        JSON.parseOrThrow(
+          `{
+          "chain_id": 1,
+          "event_id": "${EventUtils.packEventIndex(~logIndex=3, ~blockNumber=5)->BigInt.toString}",
+          "event_name": "MockEvent",
+          "contract_name": "Gravatar",
+          "block_number": 5,
+          "log_index": 3,
+          "src_address": "0x0000000000000000000000000000000000000000",
+          "block_hash": "0x5",
+          "block_timestamp": 5,
+          "block_fields": {"miner": "0xminer", "gasUsed": "99"},
+          "transaction_fields": {},
+          "params": "null"
+        }`,
+        ),
+      ])
+    },
+  )
 })

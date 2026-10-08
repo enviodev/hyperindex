@@ -174,10 +174,25 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
 
   // Two `envio start --chain` processes naming the same new chain can both
   // plan to add it. Only one may: the other would index the chain alongside it.
+  // Both are held at the add until both have planned it, which is the race;
+  // one that starts after the other has added the chain just resumes it.
+  let planned = ref(0)
   deployed->Scenario.it(
     "Adds a chain once when two processes name it at the same time",
     ~sources=[{chain: 1}],
+    ~mapStorage=storage => {
+      ...storage,
+      addChain: async (~chainConfig, ~entities, ~contractMapping) => {
+        planned := planned.contents + 1
+        await Scenario.waitUntil(
+          () => planned.contents >= 2,
+          ~message="both processes to plan the add",
+        )
+        await storage.addChain(~chainConfig, ~entities, ~contractMapping)
+      },
+    },
     async (~t, ~indexer, ~source) => {
+      planned := 0
       await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])
       let (config, _) = withChain137->edited(~deployedSources=[(1, source(1))], ~autoHeight=100)
       await indexer.stop()
@@ -189,22 +204,22 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
 
       t.expect((
         started
-        ->Array.map(
-          outcome =>
-            switch outcome {
-            | Fulfilled(_) => "started"
-            | Rejected({reason}) =>
-              reason
-              ->(Utils.magic: exn => {"message": string})
-              ->(error => error["message"])
-              ->String.includes(`relation "Counter$137" already exists`)
-                ? "refused: the chain's partition already exists"
-                : "refused for another reason"
-            },
+        ->Array.map(outcome =>
+          switch outcome {
+          | Fulfilled(_) => "started"
+          | Rejected({reason}) =>
+            let message = (reason->(Utils.magic: exn => {"message": string}))["message"]
+            // Refused at the partition or at the chain's row, whichever the
+            // other process got to first.
+            message->String.includes(`relation "Counter$137" already exists`) ||
+              message->String.includes(`"envio_chains_pkey"`)
+              ? "refused: the other process added the chain"
+              : `refused: ${message}`
+          }
         )
         ->Array.toSorted(String.compare),
         (await startBlocks(indexer))->Array.map(((chainId, _)) => chainId),
-      )).toEqual((["refused: the chain's partition already exists", "started"], ["1", "137"]))
+      )).toEqual((["refused: the other process added the chain", "started"], ["1", "137"]))
     },
   )
 
