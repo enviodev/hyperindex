@@ -213,6 +213,7 @@ let makeInternal = (
   ~knownHeight=0,
   ~isResumed=false,
   ~reducedPollingInterval=?,
+  ~newBlockStallTimeoutRealtime=?,
 ): t => {
   // Handler binding + `where`-derived fetch state, and onBlock registrations,
   // are already collected by `HandlerRegister.finishRegistration`, keyed by
@@ -325,7 +326,12 @@ let makeInternal = (
     ~fetchState,
     ~onEventRegistrations,
     ~addressStore,
-    ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
+    ~sourceManager=SourceManager.make(
+      ~sources,
+      ~isRealtime,
+      ~reducedPollingInterval?,
+      ~newBlockStallTimeoutRealtime?,
+    ),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
     ~maxReorgDepth,
     ~isInReorgThreshold,
@@ -361,6 +367,7 @@ let makeFromDbState = (
   ~contractMapping,
   ~registrationsByChainId,
   ~reducedPollingInterval=?,
+  ~newBlockStallTimeoutRealtime=?,
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
@@ -395,6 +402,7 @@ let makeFromDbState = (
     ~knownHeight=resumedChainState.sourceBlockNumber,
     ~isResumed=true,
     ~reducedPollingInterval?,
+    ~newBlockStallTimeoutRealtime?,
   )
 }
 

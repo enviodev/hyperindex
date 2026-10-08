@@ -65,9 +65,7 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       },
     ],
     ~reducedPollingInterval=1,
-    // A 5s wait for the subscription plus a 25s polling fallback doesn't fit
-    // the suite's default budget.
-    ~timeout=60_000,
+    ~newBlockStallTimeoutRealtime=2_000,
     async (~t, ~indexer, ~source) => {
       let stuckChain = source(100)
       let healthyChain = source(1337)
@@ -169,11 +167,11 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       await indexer.getBatchWritePromise()
 
       // The subscription is quiet, so the wait must fall back to REST height
-      // polling within the realtime stall window (10..20s). On v3.3.0 the
+      // polling within the realtime stall window (1..2s here). On v3.3.0 the
       // fallback short-circuits without a single getHeight request and the
       // chain stays stuck at head forever.
       let heightCallsBefore = stuckChain.getHeightOrThrowCalls->Array.length
-      let pollDeadline = Date.now() +. 25_000.
+      let pollDeadline = Date.now() +. 5_000.
       while (
         stuckChain.getHeightOrThrowCalls->Array.length === heightCallsBefore &&
           Date.now() < pollDeadline
