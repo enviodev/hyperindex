@@ -1,5 +1,3 @@
-// The indexes PostgreSQL holds in a schema, read straight from pg_catalog.
-
 type index = {
   tableName: string,
   name: string,
@@ -37,7 +35,6 @@ ORDER BY i.relname;`,
     ~params=[pgSchema->(Utils.magic: string => unknown)],
   )
 
-// The ones on `tableName` whose key starts with `columns`.
 let leadingWith = async (sql, ~pgSchema, ~tableName, ~columns) =>
   (await sql->indexes(~pgSchema))->Array.filter(index =>
     index.tableName === tableName &&

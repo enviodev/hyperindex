@@ -894,8 +894,7 @@ impl Storage {
         finish(transaction, outcome).await
     }
 
-    /// Builds the schema's indexes, then marks the chains ready. Each index
-    /// commits on its own rather than in one transaction with `ready_at`: a
+    /// Each index commits on its own rather than in one transaction with `ready_at`: a
     /// build that dies half way through a large schema would otherwise roll
     /// back every index before it and make the retry start over. Readiness is
     /// stamped only once every one is verified, so a crash either leaves it

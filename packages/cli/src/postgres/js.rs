@@ -739,8 +739,7 @@ impl PgStorage {
         self.inner.set_chain_meta(&chains).await.map_err(to_napi)
     }
 
-    /// Builds the schema's indexes, then marks the chains ready. `readyAt` in
-    /// unix milliseconds.
+    /// `readyAt` in unix milliseconds.
     #[napi]
     pub async fn finalize_backfill(
         &self,

@@ -66,25 +66,28 @@ let logIndexEvent = (~pgSchema, event: PgClient.indexEvent) =>
         | Schema => ""
         }}`,
     })
-  | Failed({purpose: Query, tableName, columns, error}) =>
+  | Failed({purpose: Query, tableName, columns, error, ?code}) =>
     Logging.warn({
       "storage": storageName,
       "msg": `Failed to create an index on "${tableName}"(${columns
         ->Array.map(column => `"${column}"`)
         ->Array.joinUnsafe(", ")}) for a getWhere query. The query runs without it.`,
       "err": error,
+      "code": code,
     })
-  | Failed({purpose: Schema, name, error}) =>
+  | Failed({purpose: Schema, name, error, ?code}) =>
     Logging.warn({
       "storage": storageName,
       "msg": `Failed to restore the schema index "${name}". Queries relying on it run unindexed until the next restart.`,
       "err": error,
+      "code": code,
     })
-  | ResyncFailed({name, error}) =>
+  | ResyncFailed({name, error, ?code}) =>
     Logging.trace({
       "storage": storageName,
       "msg": `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
       "err": error,
+      "code": code,
     })
   | Committed({count, seconds}) =>
     Logging.info({

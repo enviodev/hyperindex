@@ -216,7 +216,6 @@ type batch = {
 // What a build was for, which decides how much an existing index has to match.
 type indexPurpose = | @as("Query") Query | @as("Schema") Schema
 
-// What the indexes are doing, for the logs.
 @tag("kind")
 type indexEvent =
   | Invalid({names: array<string>})
@@ -229,8 +228,9 @@ type indexEvent =
       tableName: string,
       columns: array<string>,
       error: string,
+      code?: string,
     })
-  | ResyncFailed({name: string, error: string})
+  | ResyncFailed({name: string, error: string, code?: string})
   | Committed({count: int, seconds: float})
 
 @send
@@ -308,7 +308,6 @@ let query = async (client, sql, ~params=[]) => client->read(await client->queryR
 
 @send external setChainMeta: (t, array<chainMeta>) => promise<unit> = "setChainMeta"
 
-// Builds the schema's indexes, then marks the chains ready.
 @send
 external finalizeBackfill: (t, array<Core.pgIndexInput>, array<ChainId.t>, float) => promise<unit> =
   "finalizeBackfill"

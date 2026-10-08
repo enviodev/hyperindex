@@ -1,5 +1,3 @@
-//! The indexes the indexer wants, against what PostgreSQL actually holds.
-//!
 //! Postgres stays authoritative: nothing counts as present until it has been
 //! read back from pg_catalog. Builds are serialised per table, so two never
 //! fight over the same one, and concurrent requests for one index share its
@@ -63,9 +61,7 @@ impl Purpose {
 #[derive(Clone, PartialEq, Debug)]
 pub enum IndexEvent {
     /// Indexes PostgreSQL reports as unusable, found on a reload.
-    Invalid {
-        names: Vec<String>,
-    },
+    Invalid { names: Vec<String> },
     /// What a backfill's finalization owes before the indexer is ready.
     Planned {
         declared: u32,
@@ -90,16 +86,16 @@ pub enum IndexEvent {
         table_name: String,
         columns: Vec<String>,
         error: String,
+        /// The SQLSTATE, when the server refused it.
+        code: Option<String>,
     },
     ResyncFailed {
         name: String,
         error: String,
+        code: Option<String>,
     },
     /// A finalization's builds and the ready timestamp are committed.
-    Committed {
-        count: u32,
-        seconds: f64,
-    },
+    Committed { count: u32, seconds: f64 },
 }
 
 pub type Report = Arc<dyn Fn(IndexEvent) + Send + Sync>;
@@ -341,7 +337,6 @@ fn built_by_another(error: &anyhow::Error) -> bool {
     }
 }
 
-/// Where the indexes live: the catalog to read, and the DDL to run.
 pub trait Db: Send + Sync {
     fn run(&self, sql: &str) -> impl Future<Output = Result<()>> + Send;
     /// The schema's indexes, or the one named.
@@ -388,18 +383,18 @@ GROUP BY t.relname, i.relname, am.amname, ix.indisvalid, ix.indisready,
     )
 }
 
-fn entry_from_row(row: &Row) -> Entry {
-    let names: Vec<String> = row.get(8);
-    let descending: Vec<bool> = row.get(9);
-    Entry {
-        table_name: row.get(0),
-        name: row.get(1),
-        method: row.get(2),
-        is_valid: row.get(3),
-        is_unique: row.get(4),
-        is_partial: row.get(5),
-        is_expression: row.get(6),
-        predicate: row.get(7),
+fn entry_from_row(row: &Row) -> Result<Entry> {
+    let names: Vec<String> = row.try_get(8)?;
+    let descending: Vec<bool> = row.try_get(9)?;
+    Ok(Entry {
+        table_name: row.try_get(0)?,
+        name: row.try_get(1)?,
+        method: row.try_get(2)?,
+        is_valid: row.try_get(3)?,
+        is_unique: row.try_get(4)?,
+        is_partial: row.try_get(5)?,
+        is_expression: row.try_get(6)?,
+        predicate: row.try_get(7)?,
         columns: names
             .into_iter()
             .zip(descending)
@@ -412,7 +407,7 @@ fn entry_from_row(row: &Row) -> Entry {
                 },
             })
             .collect(),
-    }
+    })
 }
 
 impl Db for PgClient {
@@ -424,7 +419,7 @@ impl Db for PgClient {
         let mut params = vec![Param::Text(pg_schema.to_string())];
         params.extend(name.map(|name| Param::Text(name.to_string())));
         let (rows, _) = self.query(&catalog_query(name.is_some()), &params).await?;
-        Ok(rows.iter().map(entry_from_row).collect())
+        rows.iter().map(entry_from_row).collect()
     }
 }
 
@@ -576,6 +571,7 @@ impl<D: Db> Indexes<D> {
                         .map(|column| column.name.clone())
                         .collect(),
                     error: message_of(&error),
+                    code: sql_state(&error).map(str::to_string),
                 });
             }
             self.resync(&name).await;
@@ -669,6 +665,7 @@ impl<D: Db> Indexes<D> {
             Err(error) => (self.report)(IndexEvent::ResyncFailed {
                 name: name.to_string(),
                 error: message_of(&error),
+                code: sql_state(&error).map(str::to_string),
             }),
         }
     }
@@ -1059,16 +1056,17 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_requests_for_one_index_share_its_build() {
-        let (indexes, _) = indexes(Fake::knowing(vec![owner()], vec![])).await;
+        let fake = Fake::knowing(vec![owner()], vec![]);
+        fake.refused.lock().unwrap().insert(owner().name());
+        let (indexes, events) = indexes(fake).await;
         join(
             indexes.ensure(vec![owner()], Purpose::Query),
             indexes.ensure(vec![owner()], Purpose::Query),
         )
         .await;
-        indexes.ensure(vec![owner()], Purpose::Query).await;
         assert_eq!(
-            (indexes.db.creates(), names(&indexes)),
-            (1, vec![owner().name()])
+            (indexes.db.creates(), kinds(&events)),
+            (1, vec!["building", "failed"])
         );
     }
 
@@ -1090,7 +1088,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_exact_request_is_not_served_by_a_leading_composite() {
+    async fn a_leading_composite_serves_a_query_but_not_a_declared_index() {
         let wide = composite("Token", &["owner_id", "minted_at"]);
         let (indexes, _) = indexes(Fake::knowing(
             vec![owner()],
@@ -1109,6 +1107,25 @@ mod tests {
                 vec![owner().name(), "Token_owner_id_minted_at".to_string()]
             )
         );
+    }
+
+    /// Both wait behind the composite's build on the same table. The query is
+    /// then served by the composite; had the declared request joined its
+    /// flight, it would have resolved with it and never been built.
+    #[tokio::test]
+    async fn a_declared_index_never_joins_a_query_for_the_same_column() {
+        let wide = composite("Token", &["owner_id", "minted_at"]);
+        let (indexes, _) = indexes(Fake::knowing(vec![owner(), wide.clone()], vec![])).await;
+        futures_util::join!(
+            indexes.ensure(vec![wide.clone()], Purpose::Schema),
+            indexes.ensure(vec![owner()], Purpose::Query),
+            indexes.ensure(vec![owner()], Purpose::Schema),
+        );
+        assert_eq!(names(&indexes), {
+            let mut names = vec![owner().name(), wide.name()];
+            names.sort();
+            names
+        });
     }
 
     #[tokio::test]

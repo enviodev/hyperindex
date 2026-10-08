@@ -112,7 +112,8 @@ describe("A failure the server raised", () => {
       let _ = await pg->PgClient.query("SELECT 1 FROM nothing_is_here")
       None
     } catch {
-    | exn => Sql.sqlState(exn)
+    | JsExn(error) =>
+      (error->(Utils.magic: JsExn.t => {"cause": {"message": string}}))["cause"]["message"]->Some
     }
     await pg->PgClient.close
     t.expect(code).toEqual(Some("42P01"))
