@@ -1,10 +1,7 @@
 open Vitest
 
-// What a database already holds when the indexer starts on it decides what it
-// builds: an index it can use is kept, one it can't is built beside, and a
-// build that fails leaves the ones before it standing. Every case starts the
-// indexer once to create the tables, shapes the indexes by hand, then restarts
-// it the way an operator would and lets it catch up.
+// Each case starts the indexer once to create the tables, shapes the indexes
+// by hand, then restarts it and lets it catch up.
 
 let configYaml = `
 name: index-reconcile
@@ -80,7 +77,6 @@ let describeIndex = (index: PgCatalog.index) => (
   index.isPartial,
 )
 
-// Restarts onto the shaped schema and lets the indexer catch up to the head.
 let restartToReady = async (indexer: IndexerRunner.t, ~source: MockSource.t) => {
   source.setAutoHeight(100)
   let restarted = await indexer.restart()
@@ -89,13 +85,22 @@ let restartToReady = async (indexer: IndexerRunner.t, ~source: MockSource.t) => 
   restarted
 }
 
-let shape = async (indexer: IndexerRunner.t, statements) => {
+let shape = async (indexer: IndexerRunner.t, statement) => {
   let {sql, pgSchema} = indexer.pg
-  for idx in 0 to statements->Array.length - 1 {
-    let statement = statements->Array.getUnsafe(idx)
-    let _ = await sql->Sql.query(statement(pgSchema))
-  }
+  let _ = await sql->Sql.query(statement(pgSchema))
 }
+
+let readyAt = async (indexer: IndexerRunner.t) => {
+  let {sql, pgSchema} = indexer.pg
+  let rows: array<{
+    "ready_at": Null.t<Date.t>,
+  }> = await sql->Sql.query(`SELECT "ready_at" FROM "${pgSchema}"."envio_chains";`)
+  rows->Array.map(row => row["ready_at"]->Null.toOption->Option.isSome)
+}
+
+type a = {id: string, b_id: string}
+type aOps = {set: a => unit, getWhere: {"b_id": {"_eq": string}} => promise<array<a>>}
+type handlerContext = {@as("A") a: aOps}
 
 describe("Indexes on a database that already holds some", () => {
   // A WHERE clause covers only the rows inside its predicate, so it can't
@@ -105,9 +110,9 @@ describe("Indexes on a database that already holds some", () => {
     ~indexer,
     ~source,
   ) => {
-    await indexer->shape([
+    await indexer->shape(
       pgSchema => `CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id") WHERE "b_id" IS NOT NULL;`,
-    ])
+    )
     let restarted = await indexer->restartToReady(~source=source(1337))
 
     t.expect((await restarted->indexesOn(~tableName="A"))->Array.map(describeIndex)).toEqual([
@@ -122,7 +127,7 @@ describe("Indexes on a database that already holds some", () => {
     "keep a usable index the indexer didn't name",
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
-      await indexer->shape([pgSchema => `CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id");`])
+      await indexer->shape(pgSchema => `CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id");`)
       let restarted = await indexer->restartToReady(~source=source(1337))
 
       t.expect((await restarted->indexesOn(~tableName="A"))->Array.map(describeIndex)).toEqual([
@@ -138,10 +143,10 @@ describe("Indexes on a database that already holds some", () => {
     "build a usable index beside one a failed build left invalid",
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
-      await indexer->shape([
+      await indexer->shape(
         pgSchema =>
           `INSERT INTO "${pgSchema}"."A" ("id", "b_id") VALUES ('1', 'dup'), ('2', 'dup');`,
-      ])
+      )
       let {sql, pgSchema} = indexer.pg
       let failed = switch await sql->Sql.query(
         `CREATE UNIQUE INDEX CONCURRENTLY "A_b_id" ON "${pgSchema}"."A"("b_id");`,
@@ -160,8 +165,8 @@ describe("Indexes on a database that already holds some", () => {
     },
   )
 
-  // A second start has to recognise what the first one built. Had the stored
-  // name and the one matched on drifted, it would build another.
+  // A second finalization has to recognise what the first one built. Had the
+  // stored name and the one matched on drifted, it would build another.
   longNameScenario->Scenario.it(
     "recognise what they built on a table at the identifier limit",
     ~sources=[{chain: 1337}],
@@ -172,15 +177,51 @@ describe("Indexes on a database that already holds some", () => {
       await indexer.waitUntilReady()
       let built = await indexer->indexesOn(~tableName=longName)
 
+      // Unstamped, the restart finalizes again rather than resuming ready.
+      await indexer->shape(pgSchema => `UPDATE "${pgSchema}"."envio_chains" SET "ready_at" = NULL;`)
       source.setAutoHeight(100)
       let restarted = await indexer.restart()
-      await restarted.waitUntilIdle()
+      await restarted.waitUntilReady()
 
       t.expect((
-        longName->String.length,
         built->Array.map(index => (index.columns, index.isValid)),
         (await restarted->indexesOn(~tableName=longName))->Array.map(index => index.name),
-      )).toEqual((63, [(["owner"], true)], built->Array.map(index => index.name)))
+      )).toEqual(([(["owner"], true)], built->Array.map(index => index.name)))
+    },
+  )
+
+  // A getWhere on the column the schema indexes builds that index before the
+  // indexer is ready; finalizing then has nothing left to build for it.
+  scenario->Scenario.it(
+    "reuse the index a getWhere already built for a declared one",
+    ~sources=[{chain: 1337}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 10,
+            logIndex: 0,
+            handler: async args => {
+              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+              let _ = await context.a.getWhere({"b_id": {"_eq": "b"}})
+              context.a.set({id: "1", b_id: "b"})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=10,
+      )
+      await indexer.getBatchWritePromise()
+      let beforeReady = await indexer->indexesOn(~tableName="A")
+      await MockSource.waitItemsQuery(source)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+
+      t.expect((
+        beforeReady->Array.map(index => index.name),
+        (await indexer->indexesOn(~tableName="A"))->Array.map(index => index.name),
+      )).toEqual(([aBIdName], [aBIdName]))
     },
   )
 
@@ -193,12 +234,12 @@ describe("Indexes on a database that already holds some", () => {
     ~sources=[{chain: 1337}],
     ~onError=errHandler => failure := Some(errHandler),
     async (~t, ~indexer, ~source) => {
+      failure := None
       let source = source(1337)
-      await indexer->shape([
-        pgSchema =>
-          `INSERT INTO "${pgSchema}"."Triple" ("id", "first", "second", "third")
-           SELECT '1', 'a', string_agg(md5(i::text), ''), 'c' FROM generate_series(1, 1000) i;`,
-      ])
+      await indexer->shape(pgSchema =>
+        `INSERT INTO "${pgSchema}"."Triple" ("id", "first", "second", "third")
+           SELECT '1', 'a', string_agg(md5(i::text), ''), 'c' FROM generate_series(1, 1000) i;`
+      )
       source.setAutoHeight(100)
       let restarted = await indexer.restart()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -208,10 +249,10 @@ describe("Indexes on a database that already holds some", () => {
       )
       let afterFailure = (
         (await restarted->indexesOn(~tableName="Triple"))->Array.map(index => index.columns),
-        await restarted.metric("envio_progress_ready"),
+        await restarted->readyAt,
       )
 
-      await restarted->shape([pgSchema => `UPDATE "${pgSchema}"."Triple" SET "second" = 'b';`])
+      await restarted->shape(pgSchema => `UPDATE "${pgSchema}"."Triple" SET "second" = 'b';`)
       // Progress already sits at the head, so the restart has nothing left to
       // fetch and goes straight back to building.
       let finished = await restarted.restart()
@@ -219,11 +260,11 @@ describe("Indexes on a database that already holds some", () => {
 
       t.expect((
         afterFailure,
-        (await finished->indexesOn(~tableName="Triple"))->Array.map(index => index.columns),
-      )).toEqual((
-        ([["first"]], [{IndexerRunner.value: "0", labels: dict{"chainId": "1337"}}]),
-        [["first"], ["second"], ["third"]],
-      ))
+        (
+          (await finished->indexesOn(~tableName="Triple"))->Array.map(index => index.columns),
+          await finished->readyAt,
+        ),
+      )).toEqual((([["first"]], [false]), ([["first"], ["second"], ["third"]], [true])))
     },
   )
 })

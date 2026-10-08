@@ -36,29 +36,40 @@ let readyAt = async (indexer: IndexerRunner.t) => {
   rows->Array.map(row => row["ready_at"]->Null.toOption->Option.isSome)
 }
 
+type replay = {
+  mutable beforeReady: option<dict<InternalTable.Chains.metaFields>>,
+  mutable done: bool,
+}
+
 describe("A chain metadata snapshot from before the indexer was ready", () => {
-  let lastBeforeReady = ref(None)
-  let replayed = ref(false)
+  let replay = ref({beforeReady: None, done: false})
   scenario->Scenario.it(
     "lands after the ready stamp without clearing it",
     ~sources=[{chain: 1337}],
     ~mapStorage=storage => {
-      ...storage,
-      setChainMeta: meta => {
-        if !replayed.contents {
-          lastBeforeReady := Some(meta)
-        }
-        storage.setChainMeta(meta)
-      },
-      finalizeBackfill: async (~entities, ~chainIds, ~readyAt) => {
-        await storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
-        switch lastBeforeReady.contents {
-        | Some(meta) =>
-          replayed := true
-          let _ = await storage.setChainMeta(meta)
-        | None => ()
-        }
-      },
+      let state = {beforeReady: None, done: false}
+      replay := state
+      {
+        ...storage,
+        // Once the snapshot is replayed nothing else is written, so a later
+        // write that stamps `ready_at` again can't hide one that cleared it.
+        setChainMeta: meta =>
+          if state.done {
+            Promise.resolve(()->(Utils.magic: unit => unknown))
+          } else {
+            state.beforeReady = Some(meta)
+            storage.setChainMeta(meta)
+          },
+        finalizeBackfill: async (~entities, ~chainIds, ~readyAt) => {
+          await storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
+          switch state.beforeReady {
+          | Some(meta) =>
+            state.done = true
+            let _ = await storage.setChainMeta(meta)
+          | None => ()
+          }
+        },
+      }
     },
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -66,7 +77,7 @@ describe("A chain metadata snapshot from before the indexer was ready", () => {
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
 
-      t.expect((replayed.contents, await readyAt(indexer))).toEqual((true, [true]))
+      t.expect((replay.contents.done, await readyAt(indexer))).toEqual((true, [true]))
     },
   )
 })

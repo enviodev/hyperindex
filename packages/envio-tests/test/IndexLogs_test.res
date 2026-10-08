@@ -1,8 +1,7 @@
 open Vitest
 
-// Index builds block writes to their table, so what they do is told in the
-// logs: nothing when there is nothing to build, and the server's own code when
-// a build fails.
+// A build blocks writes to its table, so the logs are where an operator learns
+// what the indexes are doing.
 
 let configYaml = `
 name: index-logs
@@ -56,6 +55,8 @@ describe("Index logs", () => {
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
+      // Index events cross from the addon's threads on a queue of their own.
+      await Utils.delay(10)
 
       t.expect(indexer.logs()->Array.filter(fromStorage)->Array.map(entry => entry.msg)).toEqual([])
     },

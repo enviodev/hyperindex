@@ -1,7 +1,9 @@
 open Vitest
 
 // `envio dev -r` drops the schema and builds it again, enums included, and the
-// handlers of the run after it read and write against the new one.
+// handlers of the run after it read and write against the new one. A storage
+// reused across its own reset is pinned in the addon's live tests: no command
+// does that in one process.
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -63,7 +65,6 @@ describe("A reset run", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
       await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
       source.resolveGetItemsOrThrow(
         [bump(~block=1, ~status="PENDING")],

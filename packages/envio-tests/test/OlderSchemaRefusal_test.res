@@ -33,9 +33,8 @@ describe("Restarting onto a schema an older envio wrote", () => {
   scenario->Scenario.it("refuses, naming the older envio version", ~sources=[{chain: 1}], async (
     ~t,
     ~indexer,
-    ~source,
+    ~source as _,
   ) => {
-    source(1).resolveGetHeightOrThrow(100)
     let {sql, pgSchema} = indexer.pg
     let _ = await sql->Sql.query(`DROP TABLE "${pgSchema}"."envio_contracts";`)
 

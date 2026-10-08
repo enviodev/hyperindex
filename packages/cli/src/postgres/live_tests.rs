@@ -778,6 +778,48 @@ async fn forgetting_what_was_prepared_survives_the_table_changing_shape() {
     );
 }
 
+/// A reset drops the schema's enum types with it. A storage that keeps serving
+/// after its own reset must not run a statement prepared against the old type:
+/// the server would refuse it as a lookup of a type that no longer exists.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_storage_reused_across_its_reset_reads_the_new_schema() {
+    let storage = super::storage::Storage::new(
+        pinned_client(),
+        super::storage::Settings {
+            pg_schema: "live_reset".to_string(),
+            pg_user: "postgres".to_string(),
+            chain_id_mode: super::pg_type::ChainIdMode::Int32,
+            numeric_array_as_text: false,
+        },
+        std::sync::Arc::new(|_| ()),
+    );
+    let create = "CREATE SCHEMA live_reset; \
+                  CREATE TYPE live_reset.status AS ENUM ('A', 'B'); \
+                  CREATE TABLE live_reset.t (s live_reset.status); \
+                  INSERT INTO live_reset.t VALUES ('A')";
+    let read = "SELECT s FROM live_reset.t";
+    storage
+        .client
+        .batch("DROP SCHEMA IF EXISTS live_reset CASCADE")
+        .await
+        .unwrap();
+    storage.client.batch(create).await.unwrap();
+    storage.client.query(read, &[]).await.unwrap();
+
+    storage.reset().await.unwrap();
+    storage.client.batch(create).await.unwrap();
+    let after = storage
+        .client
+        .query(read, &[])
+        .await
+        .map(|(rows, _)| rows.len())
+        .map_err(|error| super::error::message_of(&error));
+    storage.reset().await.unwrap();
+
+    assert_eq!(after, Ok(1));
+}
+
 /// Whether the server says the connection it is answering on is encrypted, or
 /// why there was no connection to ask.
 async fn encrypted(ssl: SslSetting, host: &str) -> String {
