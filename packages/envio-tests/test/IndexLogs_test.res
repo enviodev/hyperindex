@@ -55,7 +55,8 @@ describe("Index logs", () => {
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
-      // Index events cross from the addon's threads on a queue of their own.
+      // Index events cross from the addon's threads on a queue of their own;
+      // nothing marks the end of one that never comes, so this is a lower bound.
       await Utils.delay(10)
 
       t.expect(indexer.logs()->Array.filter(fromStorage)->Array.map(entry => entry.msg)).toEqual([])

@@ -1,8 +1,5 @@
 open Vitest
 
-// Each case starts the indexer once to create the tables, shapes the indexes
-// by hand, then restarts it and lets it catch up.
-
 let configYaml = `
 name: index-reconcile
 chains:
@@ -69,6 +66,13 @@ let indexesOn = async (indexer: IndexerRunner.t, ~tableName) => {
     index.tableName === tableName && !index.isUnique
   )
 }
+
+// What the storage told the operator about its indexes, with build timings
+// left out.
+let storageMessages = (indexer: IndexerRunner.t) =>
+  indexer.logs()
+  ->Array.filter(entry => entry.params->Dict.get("storage") === Some(JSON.String("postgres")))
+  ->Array.map(entry => entry.msg->String.replaceRegExp(/[0-9.]+s\b/g, "Ns"))
 
 let describeIndex = (index: PgCatalog.index) => (
   index.name,
@@ -170,6 +174,7 @@ describe("Indexes on a database that already holds some", () => {
   longNameScenario->Scenario.it(
     "recognise what they built on a table at the identifier limit",
     ~sources=[{chain: 1337}],
+    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)
@@ -178,6 +183,8 @@ describe("Indexes on a database that already holds some", () => {
       let built = await indexer->indexesOn(~tableName=longName)
 
       // Unstamped, the restart finalizes again rather than resuming ready.
+      // Stopped first: its last flush carries the stamp it already holds.
+      await indexer.stop()
       await indexer->shape(pgSchema => `UPDATE "${pgSchema}"."envio_chains" SET "ready_at" = NULL;`)
       source.setAutoHeight(100)
       let restarted = await indexer.restart()
@@ -186,7 +193,16 @@ describe("Indexes on a database that already holds some", () => {
       t.expect((
         built->Array.map(index => (index.columns, index.isValid)),
         (await restarted->indexesOn(~tableName=longName))->Array.map(index => index.name),
-      )).toEqual(([(["owner"], true)], built->Array.map(index => index.name)))
+        restarted->storageMessages,
+      )).toEqual((
+        [(["owner"], true)],
+        built->Array.map(index => index.name),
+        [
+          `Creating the 1 remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. This can take a long time on a large database.`,
+          `Committed 1 schema indexes and the ready timestamp in Ns.`,
+          `All 1 schema indexes are already in place. Marking the indexer ready.`,
+        ],
+      ))
     },
   )
 
@@ -195,6 +211,7 @@ describe("Indexes on a database that already holds some", () => {
   scenario->Scenario.it(
     "reuse the index a getWhere already built for a declared one",
     ~sources=[{chain: 1337}],
+    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)
@@ -218,10 +235,21 @@ describe("Indexes on a database that already holds some", () => {
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
 
+      // The name is the same either way, so the logs are what tell a reuse from
+      // a create that lost to the index already there.
       t.expect((
         beforeReady->Array.map(index => index.name),
         (await indexer->indexesOn(~tableName="A"))->Array.map(index => index.name),
-      )).toEqual(([aBIdName], [aBIdName]))
+        indexer->storageMessages,
+      )).toEqual((
+        [aBIdName],
+        [aBIdName],
+        [
+          `Creating index "${aBIdName}" to serve a getWhere query on "A". Writes to the table are paused until it completes. This can take a long time on a large database.`,
+          `Index "${aBIdName}" is ready after Ns. Resuming indexing.`,
+          `All 1 schema indexes are already in place. Marking the indexer ready.`,
+        ],
+      ))
     },
   )
 
@@ -234,7 +262,6 @@ describe("Indexes on a database that already holds some", () => {
     ~sources=[{chain: 1337}],
     ~onError=errHandler => failure := Some(errHandler),
     async (~t, ~indexer, ~source) => {
-      failure := None
       let source = source(1337)
       await indexer->shape(pgSchema =>
         `INSERT INTO "${pgSchema}"."Triple" ("id", "first", "second", "third")

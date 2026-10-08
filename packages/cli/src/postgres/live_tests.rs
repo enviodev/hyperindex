@@ -778,9 +778,10 @@ async fn forgetting_what_was_prepared_survives_the_table_changing_shape() {
     );
 }
 
-/// A reset drops the schema's enum types with it. A storage that keeps serving
-/// after its own reset must not run a statement prepared against the old type:
-/// the server would refuse it as a lookup of a type that no longer exists.
+/// A reset drops the schema's enum types with it, and the recreated type gets a
+/// new id. A storage that keeps serving after its own reset must not run a
+/// statement prepared against the old one: the server refuses it with "cached
+/// plan must not change result type".
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
 async fn a_storage_reused_across_its_reset_reads_the_new_schema() {
