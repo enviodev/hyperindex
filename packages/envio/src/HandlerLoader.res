@@ -77,15 +77,6 @@ let getAutoLoadFiles = async (~config: Config.t) => {
   }
 }
 
-type typeCheckResult = {
-  skipped?: string,
-  errors?: string,
-}
-
-@module("./HandlerTypeCheck.mjs")
-external checkTypesInWorker: (~cwd: string, ~files: array<string>) => promise<typeCheckResult> =
-  "check"
-
 let typeCheck = async (~config: Config.t, ~autoLoadFiles) => {
   // A contract's `handler:` may also be an auto-loaded file.
   let files =
@@ -96,10 +87,13 @@ let typeCheck = async (~config: Config.t, ~autoLoadFiles) => {
     ->Utils.Set.fromArray
     ->Utils.Set.toArray
   if files->Array.length > 0 {
-    switch await checkTypesInWorker(~cwd=NodeJs.Process.cwd(), ~files) {
-    | {errors} => JsError.throwWithMessage(`Handler files have type errors:\n\n${errors}`)
-    | {skipped} => Logging.warn(skipped)
-    | _ => ()
+    switch await HandlerTypeCheck.check(~cwd=NodeJs.Process.cwd(), ~files) {
+    | TypeErrors(errors) =>
+      JsError.throwWithMessage(
+        `The handler type check found errors. Fix them to start the indexer:\n\n${errors}`,
+      )
+    | Skipped(warning) => Logging.warn(warning)
+    | Passed => ()
     }
   }
 }

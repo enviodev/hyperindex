@@ -39,6 +39,15 @@ module Util = {
   @module("util") external inspect: ('a, inspectOptions) => string = "inspect"
 
   let inspectObj = a => inspect(a, {showHidden: false, depth: Null, colors: true})
+
+  @module("util") external stripVTControlCharacters: string => string = "stripVTControlCharacters"
+}
+
+module Module = {
+  type require
+
+  @module("module") external createRequire: string => require = "createRequire"
+  @send external resolve: (require, string) => string = "resolve"
 }
 
 module Process = {
@@ -165,6 +174,23 @@ module ChildProcess = {
   @module("child_process")
   external execWithOptions: (string, execOptions, callback) => unit = "exec"
 
+  type execFileOptions = {
+    cwd?: string,
+    timeout?: int,
+    maxBuffer?: float,
+  }
+
+  // `killed` is set when the timeout stopped the child.
+  type execFileError = {killed: bool}
+
+  @module("child_process")
+  external execFile: (
+    string,
+    array<string>,
+    execFileOptions,
+    (Null.t<execFileError>, string, string) => unit,
+  ) => unit = "execFile"
+
   // One of a child's stdio slots, present only for a slot the parent asked to
   // pipe rather than inherit.
   module Stream = {
@@ -225,6 +251,8 @@ module Path = {
 
   @module("path") external join: (t, string) => t = "join"
   @module("path") external dirname: string => t = "dirname"
+  @module("path") external relative: (string, string) => string = "relative"
+  @module("path") external isAbsolute: string => bool = "isAbsolute"
 
   external toString: t => string = "%identity"
 
@@ -274,6 +302,9 @@ module Fs = {
     recursive?: bool,
     mode?: int,
   }
+
+  @module("fs") external existsSync: string => bool = "existsSync"
+  @module("fs") external readFileSync: (string, @as("utf8") _) => string = "readFileSync"
 
   module Promises = {
     @module("fs") @scope("promises")

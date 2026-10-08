@@ -5,6 +5,10 @@ on:
   # secrets. Fork PRs are gated by the `fork-ci` environment which
   # requires manual approval from a reviewer before jobs proceed.
   # Same-repo PRs use the `internal` environment (no restrictions).
+  # That approval is what makes `allow-unsafe-pr-checkout` on the
+  # checkout steps acceptable: approving runs the fork's code with
+  # secrets, so the reviewer must read the whole diff first, especially
+  # lockfiles, package.json scripts, build.rs and .github/.
   pull_request_target:
   push:
     branches:
@@ -13,9 +17,11 @@ on:
 permissions:
   contents: read
 
+# ENVIO_API_TOKEN is passed only to the test steps that call HyperSync, never
+# workflow-wide: dependency installs and builds run PR-controlled scripts
+# (lifecycle hooks, build.rs) that must not be able to read it.
 env:
   CARGO_TERM_COLOR: always
-  ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -63,6 +69,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
 
       # Installs only the toolchain pinned in rust-toolchain.toml. Installing
       # `stable` as well would put it in rust-cache's key, so every Rust
@@ -129,6 +136,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
 
       # Components come from rust-toolchain.toml, which also pins the version.
       - name: Install toolchain
@@ -203,6 +211,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
 
       - name: Install toolchain
         run: rustup toolchain install
@@ -222,11 +231,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Run template tests
         working-directory: packages/e2e-tests
         run: pnpm test:templates
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
   # The scenario suite is backend-agnostic, so it runs once per storage
   # backend, one runner each. A scenario that can't run on a backend skips
@@ -273,6 +285,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Lint test inputs
@@ -284,6 +297,7 @@ jobs:
         run: pnpm test
         env:
           ENVIO_TEST_STORAGE: ${{ matrix.storage }}
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@c2597273488aeda841dd1e891321952b51f7996f # v2.2.1
@@ -326,6 +340,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: CLI subprocess tests
@@ -343,6 +358,8 @@ jobs:
         run: |
           pnpm exec envio codegen
           pnpm test
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
       - name: svm_test
         working-directory: scenarios/svm_test
@@ -422,6 +439,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
@@ -436,10 +454,14 @@ jobs:
         run: |
           pnpm exec envio codegen
           pnpm test
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
       - name: Run E2E test
         working-directory: packages/e2e-tests
         run: pnpm test:e2e
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
       - name: Upload TUI screens
         if: always()
@@ -452,6 +474,8 @@ jobs:
       - name: Run dependency completeness tests
         working-directory: packages/e2e-tests
         run: pnpm test:deps
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
       - name: E2E Test Failure Notification
         uses: rjstone/discord-webhook-notify@c2597273488aeda841dd1e891321952b51f7996f # v2.2.1
