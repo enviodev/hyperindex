@@ -12,6 +12,9 @@ type pg = {sql: Sql.t, pgSchema: string}
 // ClickHouse one adds the sink on top. CI runs the suite once per backend.
 type backend = [#postgres | #clickhouse]
 
+@module("node:os") external tmpdir: unit => string = "tmpdir"
+@module("node:fs") external rmSync: (string, {"recursive": bool, "force": bool}) => unit = "rmSync"
+
 let backendName = (backend: backend) =>
   switch backend {
   | #postgres => "postgres"
@@ -63,7 +66,11 @@ type rec t = {
   // `~chains` resumes the same schema driving only those chains, the way
   // `envio start --chain` does. The chains left out keep their stored state.
   // `~config` resumes under an edited config.yaml, and later restarts keep it.
-  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, unit) => promise<t>,
+  // `~reset` starts over on an emptied schema, the way `envio dev -r` does.
+  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, ~reset: bool=?, unit) => promise<t>,
+  // Writes the effect cache out to this run's own cache directory, where the
+  // next initialize uploads it from.
+  dumpEffectCache: unit => promise<unit>,
   // Every line this run has logged so far, in order — the run's own and its
   // chains'. Only for a run started with `~captureLogs`.
   logs: unit => array<logEntry>,
@@ -153,6 +160,7 @@ let run = async (
   // Postgres resources this run owns: one schema, plus every client and
   // indexer built inside it (`restart` adds more).
   let pgSchema = TestPgSchema.make()
+  let cacheDir = NodeJs.Path.resolve([tmpdir(), `envio-cache-${pgSchema}`])
   let clients = []
   let stops = []
 
@@ -193,7 +201,7 @@ let run = async (
     clients->Array.push(sql)->ignore
     let storage = mapStorage(
       // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
+      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir),
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
     // `Main.start` does this before handler modules load, so the exported
@@ -575,13 +583,14 @@ let run = async (
             "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",
           )
         },
-      restart: async (~config=baseConfig, ~chains=?, ()) => {
+      restart: async (~config=baseConfig, ~chains=?, ~reset=false, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        await make(~reset=false, ~config, ~chains?)
+        await make(~reset, ~config, ~chains?)
       },
+      dumpEffectCache: () => storage.dumpEffectCache(),
     }
   }
 
@@ -625,6 +634,9 @@ let run = async (
   | Some(database) => await attempt(() => TestClickHouse.drop(~database))
   | None => ()
   }
+  await attempt(async () =>
+    rmSync(cacheDir->NodeJs.Path.toString, {"recursive": true, "force": true})
+  )
   for i in 0 to clients->Array.length - 1 {
     switch clients->Array.get(i) {
     | Some(sql) => await attempt(() => sql->Sql.close)

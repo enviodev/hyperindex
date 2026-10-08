@@ -62,35 +62,6 @@ let enterThresholdAndIndex = async (~indexer: IndexerRunner.t, ~source: MockSour
   await indexer.getBatchWritePromise()
 }
 
-// Answers whatever the reorg resolution asks for: block hashes for the depth
-// search (blocks past `validUpTo` come back re-orged), and empty responses for
-// the re-fetch queries the rollback schedules.
-let driveRollback = async (~source: MockSource.t, ~validUpTo) => {
-  for _ in 0 to 300 {
-    if source.getBlockHashesCalls->Array.length > 0 {
-      let requested = source.getBlockHashesCalls->Array.copy
-      source.resolveGetBlockHashes(
-        requested
-        ->Array.flat
-        ->Array.map((blockNumber): BlockStore.inputBlock => {
-          blockNumber,
-          // Past `validUpTo` the chain is orphaned, so the hash the source
-          // reports differs from the one the store recorded.
-          blockHash: blockNumber <= validUpTo
-            ? `0x${blockNumber->Int.toString}`
-            : `0x${blockNumber->Int.toString}a`,
-          blockTimestamp: blockNumber,
-        }),
-      )
-      source.getBlockHashesCalls->Utils.Array.clearInPlace
-    }
-    if source.getItemsOrThrowCalls->Array.length > 0 {
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
-    }
-    await Utils.delay(0)
-  }
-}
-
 describe("Scenario rollback and history", () => {
   scenario->Scenario.it(
     "reverts an entity written after the rollback target",
@@ -117,7 +88,7 @@ describe("Scenario rollback and history", () => {
       // The depth search asks which blocks still hold. Only those up to 100 do,
       // so the rollback target is the checkpoint at block 100 and the block-200
       // write has no history at or before it — it's removed rather than restored.
-      await driveRollback(~source, ~validUpTo=100)
+      await Scenario.driveRollback(~source, ~validUpTo=100)
       await indexer.waitUntilIdle()
 
       let counters: array<counter> = await indexer.query("Counter")
@@ -184,7 +155,7 @@ describe("Scenario rollback and history", () => {
         ~latestFetchedBlockNumber=301,
         ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300a"},
       )
-      await driveRollback(~source, ~validUpTo=100)
+      await Scenario.driveRollback(~source, ~validUpTo=100)
       await indexer.waitUntilIdle()
 
       let counters: array<counter> = await indexer.query("Counter")

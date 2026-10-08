@@ -2521,10 +2521,12 @@ let makeStorageFromEnv = (
   ~sql=makeClient(),
   ~pgSchema=Env.Db.publicSchema,
   ~isHasuraEnabled=Env.Hasura.enabled,
+  ~cacheDir=?,
 ) => {
   make(
     ~sql,
     ~pgSchema,
+    ~cacheDir?,
     ~pgUser=Env.Db.user,
     ~chainIdMode=config.chainIdMode,
     ~ecosystem=config.ecosystem.name,

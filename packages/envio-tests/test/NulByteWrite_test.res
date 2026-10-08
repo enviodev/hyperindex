@@ -72,9 +72,9 @@ describe("A NUL byte in what a handler stores", () => {
                 tags: [`tag${nul}one`, "plain"],
                 // Buried in a document, which is where the jsonb refusal comes
                 // from rather than the text one.
-                payload: JSON.Encode.object(
-                  Dict.fromArray([("deep", JSON.Encode.string(`in${nul}side`))]),
-                ),
+                // The escaped literal is six characters of text, not a NUL,
+                // and stays.
+                payload: %raw(`{"deep": "in\u0000side", "k\u0000ey": ["a\u0000b"], "escaped": "\\u0000"}`),
               }),
           },
         ],
@@ -91,7 +91,7 @@ describe("A NUL byte in what a handler stores", () => {
             id: "noteone",
             text: "beforeafter",
             tags: ["tagone", "plain"],
-            payload: JSON.Encode.object(Dict.fromArray([("deep", JSON.Encode.string("inside"))])),
+            payload: %raw(`{"deep": "inside", "key": ["ab"], "escaped": "\\u0000"}`),
           },
         ],
       ))
