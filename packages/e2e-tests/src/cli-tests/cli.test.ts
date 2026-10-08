@@ -303,6 +303,69 @@ describe("TypeScript handler type check", () => {
     }
   );
 
+  // tsc type-checks nothing once any file has a syntax error, so the handler's
+  // type error would otherwise go unreported.
+  it.each(["typescript-5", "typescript", "typescript-7"])(
+    "is skipped with the reason when a syntax error stops %s from type-checking",
+    async (typescript) => {
+      const result = await startTypeCheckProject({
+        typescript,
+        files: { "src/lib/broken.ts": "export const broken = ;\n" },
+      });
+
+      expect(result).toEqual({
+        exitCode: 1,
+        typeErrors: null,
+        warning: [
+          "Skipped the handler type check: tsc reported errors that can stop it from type-checking the handlers:",
+          "",
+          "src/lib/broken.ts:1:23 - error TS1109: Expression expected.",
+          "",
+          "1 export const broken = ;",
+          "                        ~",
+        ].join("\n"),
+        loadedHandlers: true,
+        written: [],
+      });
+    }
+  );
+
+  // TypeScript 6 deprecates `baseUrl` and 7 removes it, and either error stops
+  // tsc from type-checking.
+  it.each([
+    [
+      "typescript",
+      [
+        `tsconfig.json:22:21 - error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.`,
+        "  Visit https://aka.ms/ts6 for migration information.",
+      ],
+    ],
+    [
+      "typescript-7",
+      [
+        "tsconfig.json:22:21 - error TS5102: Option 'baseUrl' has been removed. Please remove it from your configuration.",
+        `  Use '"paths": {"*": ["./*"]}' instead.`,
+      ],
+    ],
+  ])("is skipped with the reason when an option stops %s from type-checking", async (typescript, error) => {
+    const tsconfig = fixtureTsconfig.replace('"noEmit": true', '"noEmit": true, "baseUrl": "."');
+
+    expect(await startTypeCheckProject({ typescript, tsconfig })).toEqual({
+      exitCode: 1,
+      typeErrors: null,
+      warning: [
+        "Skipped the handler type check: tsc reported errors that can stop it from type-checking the handlers:",
+        "",
+        ...error,
+        "",
+        '22     "noEmit": true, "baseUrl": ".",',
+        "                       ~~~~~~~~~",
+      ].join("\n"),
+      loadedHandlers: true,
+      written: [],
+    });
+  });
+
   it.each(["typescript-5", "typescript", "typescript-7"])(
     "names the handlers %s doesn't check because the tsconfig.json leaves them out",
     async (typescript) => {

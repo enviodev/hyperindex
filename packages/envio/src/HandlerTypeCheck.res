@@ -9,8 +9,8 @@ let timeoutMinutes = 10
 // starts unindented with its location, its code frame and related locations
 // follow indented, and `--listFiles` prints the program's files after the
 // last one, before the closing summary.
-let fileDiagnostic = /^(.+):\d+:\d+ - error TS\d+: /
-let globalDiagnostic = /^error TS\d+: /
+let fileDiagnostic = /^(.+):\d+:\d+ - error TS(\d+): /
+let globalDiagnostic = /^error TS(\d+): /
 let summary = /^Found \d+ errors?\b/
 let thrownError = /^\w*Error: /
 
@@ -73,7 +73,12 @@ let runTsc = (~tsc, ~cwd, args) =>
     )
   )
 
-type diagnostic = {file: string, lines: array<string>}
+type diagnostic = {file: option<string>, code: int, lines: array<string>}
+
+// tsc type-checks nothing after a syntax error, an options error or a global
+// error, and an options error is reported at its line in tsconfig.json.
+let canStopTypeChecking = ({file, code}) =>
+  file->Option.isNone || code < 2000 || (code >= 5000 && code < 7000)
 
 // Paths compare relative to the project, which on Windows also ignores the
 // case of a drive letter tsc may print differently.
@@ -83,18 +88,28 @@ let parse = (output, ~cwd) => {
   let diagnostics = []
   let programFiles = Utils.Set.make()
   let current = ref(None)
+  let start = (~file, ~code, line) => {
+    let diagnostic = {
+      file,
+      code: code->Int.fromString->Option.getOr(0),
+      lines: [line],
+    }
+    diagnostics->Array.push(diagnostic)
+    current := Some(diagnostic)
+  }
   output
   ->lines
   ->Array.forEach(line =>
-    switch fileDiagnostic->RegExp.exec(line)->Option.map(RegExp.Result.matches) {
-    | Some([Some(file)]) =>
-      let diagnostic = {file: relative(file), lines: [line]}
-      diagnostics->Array.push(diagnostic)
-      current := Some(diagnostic)
+    switch (
+      fileDiagnostic->RegExp.exec(line)->Option.map(RegExp.Result.matches),
+      globalDiagnostic->RegExp.exec(line)->Option.map(RegExp.Result.matches),
+    ) {
+    | (Some([Some(file), Some(code)]), _) => start(~file=Some(relative(file)), ~code, line)
+    | (_, Some([Some(code)])) => start(~file=None, ~code, line)
     | _ if NodeJs.Path.isAbsolute(line) =>
       programFiles->Utils.Set.add(relative(line))->ignore
       current := None
-    | _ if globalDiagnostic->RegExp.test(line) || summary->RegExp.test(line) => current := None
+    | _ if summary->RegExp.test(line) => current := None
     | _ => current.contents->Option.forEach(diagnostic => diagnostic.lines->Array.push(line))
     }
   )
@@ -151,11 +166,17 @@ let check = async (~cwd, ~files) => {
       ],
     )
     let (diagnostics, programFiles) = run.output->parse(~cwd)
+    let report = diagnostics =>
+      diagnostics
+      ->Array.map(({lines}) => lines->Array.join("\n")->String.trimEnd)
+      ->Array.join("\n\n")
     // Only the handlers' errors count.
     let handlers = files->Array.map(file => NodeJs.Path.relative(cwd, file))
-    let errors =
-      diagnostics->Array.filterMap(({file, lines}) =>
-        handlers->Array.includes(file) ? Some(lines->Array.join("\n")->String.trimEnd) : None
+    let isHandler = ({file}) => file->Option.mapOr(false, file => handlers->Array.includes(file))
+    let errors = diagnostics->Array.filter(isHandler)
+    let stopping =
+      diagnostics->Array.filter(diagnostic =>
+        !isHandler(diagnostic) && canStopTypeChecking(diagnostic)
       )
     let unchecked = handlers->Array.filter(file => !(programFiles->Utils.Set.has(file)))
     if run.error->Option.isSome && diagnostics->Array.length === 0 {
@@ -164,7 +185,12 @@ let check = async (~cwd, ~files) => {
         `Skipped the handler type check: TypeScript's tsc failed without reporting a type error:\n\n${reason}`,
       )
     } else if errors->Array.length > 0 {
-      TypeErrors(errors->Array.join("\n\n"))
+      TypeErrors(report(errors))
+    } else if stopping->Array.length > 0 {
+      let reason = report(stopping)
+      Skipped(
+        `Skipped the handler type check: tsc reported errors that can stop it from type-checking the handlers:\n\n${reason}`,
+      )
     } else if unchecked->Array.length > 0 {
       let names = unchecked->Array.join(", ")
       let tsconfig = NodeJs.Path.relative(cwd, tsconfig)
