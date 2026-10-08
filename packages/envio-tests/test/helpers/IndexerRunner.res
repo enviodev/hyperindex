@@ -67,7 +67,14 @@ type rec t = {
   // `envio start --chain` does. The chains left out keep their stored state.
   // `~config` resumes under an edited config.yaml, and later restarts keep it.
   // `~reset` starts over on an emptied schema, the way `envio dev -r` does.
-  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, ~reset: bool=?, unit) => promise<t>,
+  // `~asWorker` resumes the way a process a supervisor forked does.
+  restart: (
+    ~config: Config.t=?,
+    ~chains: array<ChainId.t>=?,
+    ~reset: bool=?,
+    ~asWorker: bool=?,
+    unit,
+  ) => promise<t>,
   // Another process on the same schema, started while this one keeps running,
   // the way a second `envio start --chain` would be.
   sibling: (~config: Config.t=?, ~chains: array<ChainId.t>) => promise<t>,
@@ -182,7 +189,7 @@ let run = async (
 
   // The builder is only reachable here and from `restart`, so it takes just
   // what differs between them and reads the rest off this call.
-  let rec make = async (~reset, ~config as baseConfig, ~chains=?) => {
+  let rec make = async (~reset, ~config as baseConfig, ~chains=?, ~asWorker=false) => {
     let config = switch chains {
     | Some(chainIds) => baseConfig->Config.isolate(~chainIds)
     | None => baseConfig
@@ -224,7 +231,12 @@ let run = async (
       }
     }
 
-    await persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=true)
+    await persistence->Persistence.initForRun(
+      ~config,
+      ~reset,
+      ~isDevelopmentMode=true,
+      ~announceResume=!asWorker,
+    )
 
     // Same order as `Main.start`: storage is initialized - which is where a
     // `start_block: latest` chain reads its head - before handler modules load,
@@ -597,12 +609,12 @@ let run = async (
           )
         },
       sibling: (~config=baseConfig, ~chains) => make(~reset=false, ~config, ~chains),
-      restart: async (~config=baseConfig, ~chains=?, ~reset=false, ()) => {
+      restart: async (~config=baseConfig, ~chains=?, ~reset=false, ~asWorker=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        await make(~reset, ~config, ~chains?)
+        await make(~reset, ~config, ~chains?, ~asWorker?)
       },
       dumpEffectCache: () => storage.dumpEffectCache(),
     }

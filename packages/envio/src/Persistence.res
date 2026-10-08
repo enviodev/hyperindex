@@ -399,9 +399,16 @@ let init = {
 // a migration command: what a config change prints names the command the
 // operator ran, and an unreachable chain is waited on rather than reported,
 // since somebody is watching the run come up.
-let initForRun = (persistence, ~config: Config.t, ~reset, ~isDevelopmentMode) =>
+// A worker's supervisor announces the resume once for the whole run.
+let initForRun = (
+  persistence,
+  ~config: Config.t,
+  ~reset,
+  ~isDevelopmentMode,
+  ~announceResume=!Worker.isEnabled,
+) =>
   persistence->init(
-    ~announceResume=!Worker.isEnabled,
+    ~announceResume,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
