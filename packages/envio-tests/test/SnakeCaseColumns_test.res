@@ -2,7 +2,8 @@ open Vitest
 
 // `column_name_format: snake_case` renames the columns while handlers keep the
 // schema's field names, so every path between the two has to translate: the
-// write, the history, and the reads a restarted indexer's handlers make.
+// write, the history, the reads a restarted indexer's handlers make, and the
+// indexes the schema promises.
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -96,6 +97,13 @@ describe("Snake-case columns", () => {
         ~latestFetchedBlockNumber=2,
       )
       await restarted.getBatchWritePromise()
+      await MockSource.waitItemsQuery(sourceMock)
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~filter=MockSource.coveringBlock(3),
+        ~latestFetchedBlockNumber=100,
+      )
+      await restarted.waitUntilReady()
 
       let {sql, pgSchema} = restarted.pg
       let raw: array<{
@@ -113,7 +121,12 @@ describe("Snake-case columns", () => {
         `SELECT "id", "transaction_index", "envio_change"::text FROM "${pgSchema}"."envio_history_Snapshot" ORDER BY "id";`,
       )
 
-      t.expect((raw, history)).toEqual((
+      let indexed =
+        (await sql->PgCatalog.indexes(~pgSchema))
+        ->Array.filter(index => index.tableName === "Snapshot" && !index.isUnique)
+        ->Array.map(index => index.columns)
+
+      t.expect((raw, history, indexed)).toEqual((
         [
           {"id": "1", "transaction_index": 5, "token_owner_id": "user-1"},
           {"id": "got", "transaction_index": 5, "token_owner_id": "user-1"},
@@ -124,6 +137,8 @@ describe("Snake-case columns", () => {
           {"id": "got", "transaction_index": 5, "envio_change": "SET"},
           {"id": "where", "transaction_index": 5, "envio_change": "SET"},
         ],
+        // The schema's `@index` lands on the renamed column.
+        [["transaction_index"]],
       ))
     },
   )

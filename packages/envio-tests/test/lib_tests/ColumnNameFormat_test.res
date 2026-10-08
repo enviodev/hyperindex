@@ -68,31 +68,6 @@ describe("Storage column naming (snake_case)", () => {
   })
 
   // The names the addon creates and writes the table with.
-  it("hands Postgres the db column names", t => {
-    t.expect(
-      snapshotEntity.table
-      ->Table.getFields
-      ->Array.map(field => (field->PgStorage.pgColumnInput).name),
-    ).toEqual(["id", "transaction_index", "token_owner_id"])
-  })
-
-  it("creates indexes with db column names", t => {
-    t.expect(
-      PgStorage.getSchemaIndexes(~entities=[snapshotEntity])->Array.map(IndexDefinition.describe),
-    ).toEqual(["Snapshot(transaction_index) using btree"])
-  })
-
-  it("parses rows keyed by db column names into entities", t => {
-    let rows = %raw(`[{ "id": "1", "transaction_index": 5, "token_owner_id": "user-1" }]`)
-    let entities = rows->S.parseOrThrow(
-      snapshotEntity.table
-      ->Table.pgRowsSchema
-      ->(Utils.magic: S.t<array<unknown>> => S.t<array<Internal.entity>>),
-    )
-    t.expect(entities->(Utils.magic: array<Internal.entity> => array<snapshot>)).toEqual([
-      snapshot1,
-    ])
-  })
 
   it("keeps API field names in ClickHouse when only Postgres renames columns", t => {
     // The spec is what crosses to Rust, so the column names it carries are the
@@ -118,22 +93,6 @@ describe("Storage column naming (snake_case)", () => {
       "postgres": ["id", "tokenId"],
       "clickhouse": ["id", "token_id"],
     })
-  })
-
-  it("maps API field names to pg columns for load filters", t => {
-    let mapping =
-      snapshotEntity.table
-      ->Table.queryFields
-      ->Dict.toArray
-      ->Array.map(((apiName, queryField: Table.queryField)) => (apiName, queryField.pgDbFieldName))
-      ->Dict.fromArray
-    t.expect(mapping->(Utils.magic: dict<string> => JSON.t)).toEqual(
-      %raw(`{
-        "id": "id",
-        "transactionIndex": "transaction_index",
-        "tokenOwner_id": "token_owner_id"
-      }`),
-    )
   })
 
   it("exposes renamed columns in Hasura under the original field name", t => {

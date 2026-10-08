@@ -25,10 +25,3 @@ let rec shown = (value: unknown) =>
       }
     }
   }
-
-// A row as an ordered list of its columns, so a missing or extra one shows up
-// as plainly as a wrong value.
-let row = (row: dict<unknown>) =>
-  row->Dict.toArray->Array.map(((name, value)) => (name, shown(value)))
-
-let rows = (rows: array<dict<unknown>>) => rows->Array.map(row)
