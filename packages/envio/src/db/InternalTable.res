@@ -4,9 +4,7 @@ open Table
 let isPrimaryKey = true
 let isNullable = true
 
-// Tables the indexer keeps for itself. Postgres declares and writes them in the
-// addon (`packages/cli/src/postgres/internal.rs`); what is here is what the
-// rest of the indexer reads about them.
+// Names and record types of the tables the indexer keeps for itself.
 
 module Chains = {
   type field = [

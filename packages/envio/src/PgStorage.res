@@ -477,16 +477,15 @@ let renderIds = (table: Table.table, ids: array<EntityId.t>) =>
   ->(Utils.magic: JSON.t => array<unknown>)
   ->Array.map(Sql.render)
 
+let sequenceName = (sequence: CheckpointSequence.t) =>
+  switch sequence {
+  | SharedAcrossChains => "SharedAcrossChains"
+  | PerChain => "PerChain"
+  }
+
 let bounds = ({sequence, byChain}: CheckpointSequence.checkpointBoundsByChain): PgClient.bounds => {
   let (chainIds, checkpointIds) = byChain->Frontier.unnestParams
-  {
-    sequence: switch sequence {
-    | SharedAcrossChains => "SharedAcrossChains"
-    | PerChain => "PerChain"
-    },
-    chainIds,
-    checkpointIds,
-  }
+  {sequence: sequence->sequenceName, chainIds, checkpointIds}
 }
 
 let progress = (chain: InternalTable.Chains.progressedChain): PgClient.progress => {
@@ -785,10 +784,7 @@ let make = (
       )
 
     await sql->PgClient.initialize({
-      sequence: bounds({
-        sequence: CheckpointSequence.fromEntities(entities),
-        byChain: Frontier.empty(),
-      }).sequence,
+      sequence: CheckpointSequence.fromEntities(entities)->sequenceName,
       isEmptySchema,
       tables: [rawEventsTable().handle]->Array.concat(
         pgEntities->Array.map(entityConfig => (entityConfig->entityTable).handle),
@@ -1345,7 +1341,11 @@ let make = (
       (entityConfig->entityTable).handle,
       floors.checkpointBounds->bounds,
     )
-    let removedIdRows = sql->PgClient.read(removed)
+    let removedIdRows = try sql->PgClient.read(removed) catch {
+    | exn =>
+      sql->PgClient.releaseResult(restored.handle, [])
+      throw(exn)
+    }
     let rollbackRows = sql->PgClient.read(restored)
 
     let chainIdSchema = rollbackChainIdSchema(entityConfig.table)
@@ -1590,14 +1590,13 @@ let make = (
                 (
                   {
                     table: table.handle,
-                    create: false,
                     rows: sql->rowsOrThrow(
                       table,
                       ~itemSchema=InternalTable.RawEvents.schema->S.toUnknown,
                       rawEvents->(Utils.magic: array<Internal.rawEvent> => array<unknown>),
                       ~staged,
                     ),
-                  }: PgClient.tableWrite
+                  }: PgClient.rawEventsWrite
                 ),
               )
             }
@@ -1650,17 +1649,18 @@ let make = (
       ->Null.fromOption,
     ) catch {
     | exn =>
-      // A batch the sink refused is rolled back here, and the sink's own error
-      // is the one that says why.
-      switch sinkPromise {
-      | Some(sinkPromise) =>
+      // Batches the addon never took, because it refused the call itself.
+      sql->PgClient.discardStaged(staged)
+      // A batch the sink refused is rolled back, and the sink's own error is
+      // the one that says why. Any other failure is Postgres's, reported as is.
+      switch (exn->Utils.exnMessage, sinkPromise) {
+      | (Some("SinkFailed"), Some(sinkPromise)) =>
         switch await sinkPromise {
         | Some(sinkExn) => throw(sinkExn)
-        | None => ()
+        | None => throw(exn)
         }
-      | None => ()
+      | _ => throw(exn->storageErrorOf)
       }
-      throw(exn->storageErrorOf)
     }
   }
 

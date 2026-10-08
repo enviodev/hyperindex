@@ -411,10 +411,16 @@ pub struct PgEffectCacheWrite {
 }
 
 #[napi(object)]
+pub struct PgTableWrite {
+    pub table: u32,
+    pub rows: PgRows,
+}
+
+#[napi(object)]
 pub struct PgBatch {
     pub rollback: Option<PgRollbackWrite>,
     pub progress: Vec<PgProgress>,
-    pub raw_events: Option<PgEffectCacheWrite>,
+    pub raw_events: Option<PgTableWrite>,
     pub entities: Vec<PgEntityWrite>,
     pub chain_meta: Vec<PgChainMeta>,
     pub addresses: PgAddresses,
@@ -816,10 +822,11 @@ impl PgStorage {
             .rollback_data(&table, &bounds)
             .await
             .map_err(to_napi)?;
-        Ok(PgRollbackData {
-            removed: self.hold(removed)?,
-            restored: self.hold(restored)?,
-        })
+        let removed = self.hold(removed)?;
+        let restored = self.hold(restored).inspect_err(|_| {
+            self.results.lock().unwrap().remove(&removed.handle);
+        })?;
+        Ok(PgRollbackData { removed, restored })
     }
 
     #[napi]
@@ -977,8 +984,8 @@ impl PgStorage {
                 .ok()
         };
         let raw_events = batch.raw_events.and_then(|write| {
-            let table = table(write.table, &mut problems)?;
-            Some((table, self.rows(write.rows, &mut problems)?))
+            let rows = self.rows(write.rows, &mut problems)?;
+            Some((table(write.table, &mut problems)?, rows))
         });
         let entities = batch
             .entities

@@ -199,10 +199,12 @@ type frontier = {chainIds: array<ChainId.t>, checkpointIds: array<string>}
 
 type tableWrite = {table: int, create: bool, rows: rows}
 
+type rawEventsWrite = {table: int, rows: rows}
+
 type batch = {
   rollback?: rollbackWrite,
   progress: array<progress>,
-  rawEvents?: tableWrite,
+  rawEvents?: rawEventsWrite,
   entities: array<entityWrite>,
   chainMeta: array<chainMeta>,
   addresses: addresses,

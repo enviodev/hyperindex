@@ -1303,12 +1303,15 @@ impl Storage {
                     array_literal(history.delete_ids.iter().map(Some)),
                     array_literal(history.delete_checkpoint_ids.iter().map(Some)),
                 ];
-                let with_chain =
-                    entity.history.chain_id_column.is_some() && write.chain_id.is_some();
-                if let (true, Some(chain_id)) = (with_chain, write.chain_id) {
+                let chain_id = write
+                    .chain_id
+                    .filter(|_| entity.history.chain_id_column.is_some());
+                if let Some(chain_id) = chain_id {
                     params.push(Param::Text(chain_id.to_string()));
                 }
-                let sql = entity.history.insert_delete_rows(schema, with_chain);
+                let sql = entity
+                    .history
+                    .insert_delete_rows(schema, chain_id.is_some());
                 statements.push(Box::pin(async move {
                     transaction
                         .execute(&sql, &params)
@@ -1372,6 +1375,7 @@ impl Storage {
                 chunked_cells(cells, *rows, table.write.columns.len(), &[], |count| {
                     insert::values_query(&table.write, self.schema(), &[], count)
                 })
+                .map_err(fail)?
             }
         };
         self.run_all(transaction, statements).await.map_err(fail)
@@ -1387,12 +1391,7 @@ impl Storage {
         rows: &Rows,
         checkpoint_ids: &[String],
     ) -> std::result::Result<(), Failure> {
-        let fail = |error| {
-            Failure::new(
-                format!("Failed writing the history of \"{}\"", table.name()),
-                error,
-            )
-        };
+        let fail = |error| Failure::new(insert_context(&entity.history.history_table), error);
         if checkpoint_ids.len() != rows.len() {
             return Err(fail(anyhow!(
                 "{} history rows came with {} checkpoints",
@@ -1434,6 +1433,7 @@ impl Storage {
                         )
                     },
                 )
+                .map_err(fail)?
             }
         };
         self.run_all(Some(transaction), statements)
@@ -1476,10 +1476,16 @@ fn chunked_cells(
     columns: usize,
     extra: &[Param],
     query: impl Fn(usize) -> String,
-) -> Vec<(String, Vec<Param>)> {
+) -> Result<Vec<(String, Vec<Param>)>> {
+    if cells.len() != rows * columns {
+        bail!(
+            "{} cells came for {rows} rows of {columns} columns",
+            cells.len()
+        );
+    }
     let all_columns = columns + usize::from(!extra.is_empty());
     let per_statement = insert::values_rows_per_statement(all_columns);
-    (0..rows)
+    Ok((0..rows)
         .step_by(per_statement)
         .map(|start| {
             let end = (start + per_statement).min(rows);
@@ -1492,7 +1498,7 @@ fn chunked_cells(
             }
             (query(end - start), params)
         })
-        .collect()
+        .collect::<Vec<_>>())
 }
 
 fn progress_params(progress: &Progress) -> Vec<Param> {
@@ -1677,7 +1683,7 @@ mod tests {
         let text = |value: &str| Param::Text(value.to_string());
         let cells = ["a1", "a2", "a3", "b1", "b2", "b3"].map(text).to_vec();
         let extra = ["c1", "c2", "c3"].map(text).to_vec();
-        let statements = chunked_cells(&cells, 3, 2, &extra, |rows| rows.to_string());
+        let statements = chunked_cells(&cells, 3, 2, &extra, |rows| rows.to_string()).unwrap();
         assert_eq!(
             statements,
             vec![(
@@ -1718,6 +1724,19 @@ mod tests {
         assert_eq!(
             bounds(Sequence::SharedAcrossChains).params(),
             vec![Param::Text("2".to_string())]
+        );
+    }
+
+    /// Rows whose cells don't fill every column would be bound out of place,
+    /// so they are refused rather than sliced.
+    #[test]
+    fn cells_that_dont_fill_the_columns_are_refused() {
+        let cells = vec![Param::Null; 5];
+        assert_eq!(
+            chunked_cells(&cells, 3, 2, &[], |rows| rows.to_string())
+                .unwrap_err()
+                .to_string(),
+            "5 cells came for 3 rows of 2 columns"
         );
     }
 
