@@ -146,6 +146,57 @@ impl Drop for MockHyperSyncServer {
     }
 }
 
+/// A HyperSync address whose connections never complete, like a node
+/// blackholed on the client's network: the socket sits in SYN_SENT until the
+/// client gives up.
+#[napi]
+pub struct UnreachableHyperSyncServer {
+    url: String,
+    // Linux drops SYNs once the accept queue is full, so the listener is kept
+    // open, never accepted from, and filled up.
+    _listener: StdTcpListener,
+    _queued: Vec<std::net::TcpStream>,
+}
+
+#[napi]
+impl UnreachableHyperSyncServer {
+    #[napi(factory)]
+    pub fn new() -> napi::Result<Self> {
+        let listener = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .context("build runtime")
+            .map_err(err)?
+            .block_on(async {
+                let socket = tokio::net::TcpSocket::new_v4()?;
+                socket.bind(([127, 0, 0, 1], 0).into())?;
+                socket.listen(0)?.into_std()
+            })
+            .context("listen")
+            .map_err(err)?;
+        let addr = listener
+            .local_addr()
+            .context("read local addr")
+            .map_err(err)?;
+        let mut queued = Vec::new();
+        while let Ok(stream) =
+            std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500))
+        {
+            queued.push(stream);
+        }
+        Ok(Self {
+            url: format!("http://{addr}"),
+            _listener: listener,
+            _queued: queued,
+        })
+    }
+
+    #[napi]
+    pub fn url(&self) -> String {
+        self.url.clone()
+    }
+}
+
 async fn serve(
     listener: StdTcpListener,
     state: Arc<Mutex<State>>,

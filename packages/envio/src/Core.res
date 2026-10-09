@@ -15,6 +15,7 @@ type addressStoreCtor
 type tuiCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
+type unreachableHyperSyncServerCtor
 type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
@@ -58,6 +59,8 @@ type addon = {
   tui: tuiCtor,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
+  @as("UnreachableHyperSyncServer")
+  unreachableHyperSyncServer: unreachableHyperSyncServerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
   renderAddresses: (
     ~ecosystem: string,
