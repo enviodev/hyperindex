@@ -99,6 +99,18 @@ let redirectConsole: (
   return restore;
 }`)
 
+let drive = (tui: t, ~getMetrics: unit => Metrics.t) => {
+  let update = () => tui->update(getMetrics().chains->Array.map(toChain))
+  update()
+  let interval = setInterval(update, 500)
+  () => {
+    clearInterval(interval)
+    // The frame it stops on stays on screen, so it can't be a poll behind.
+    update()
+    tui->stop
+  }
+}
+
 let start = (~config: Config.t, ~getMetrics: unit => Metrics.t) => {
   let metrics = getMetrics()
   let info = {
@@ -122,11 +134,9 @@ let start = (~config: Config.t, ~getMetrics: unit => Metrics.t) => {
     })
   | tui =>
     let restoreConsole = redirectConsole(consoleClass, writableClass, text => tui->print(text))
-    let update = () => tui->update(getMetrics().chains->Array.map(toChain))
-    update()
-    let _ = setInterval(update, 500)
+    let stop = tui->drive(~getMetrics)
     let finish = () => {
-      tui->stop
+      stop()
       restoreConsole()
     }
     NodeJs.Process.onExit(finish)

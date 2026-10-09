@@ -367,9 +367,8 @@ let releaseIfAtHead = group =>
   }
 
 // The run's chains as an unsplit indexer reports them before it has fetched
-// anything: at their configured blocks, with nothing indexed. A display that
-// hasn't heard from a worker yet draws these, rather than the indexer with no
-// chains at all that an empty merge would render.
+// anything: at their configured blocks, with nothing indexed. A display draws
+// these for a worker it hasn't heard from yet.
 let configuredChains = (config: Config.t): array<Metrics.chainMetrics> =>
   config.chainMap
   ->ChainMap.values
@@ -419,6 +418,22 @@ let configuredChains = (config: Config.t): array<Metrics.chainMetrics> =>
     rateLimitTimeMs: 0.,
     rateLimitResetInMs: None,
   })
+
+// Per worker rather than all or nothing: a worker done within its first report
+// interval is heard from only as it exits, and a display holding just its
+// siblings' finished chains would read as synced while it still indexes.
+let displayedSnapshots = (running: array<running>, ~config, ~empty: Metrics.t) => {
+  let configured = configuredChains(config)
+  running->Array.map(r =>
+    switch r.snapshot {
+    | Some(snapshot) => snapshot
+    | None => {
+        ...empty,
+        chains: configured->Array.filter(chain => r.worker.chainIds->Array.includes(chain.chainId)),
+      }
+    }
+  )
+}
 
 // Runs the group: creates the schema for every chain, forks a worker per plan
 // entry, and serves the run's metrics, console and display from what they
@@ -509,10 +524,7 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
 
   if shouldUseTui {
     Tui.start(~config, ~getMetrics=() =>
-      switch reported() {
-      | [] => {...[]->merge, chains: configuredChains(config)}
-      | snapshots => snapshots->merge
-      }
+      group.running->displayedSnapshots(~config, ~empty=[]->merge)->merge
     )
   }
 

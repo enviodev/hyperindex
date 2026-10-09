@@ -350,3 +350,40 @@ chains:
     ])
   })
 })
+
+describe("Supervisor.displayedSnapshots", () => {
+  it("Draws a worker that hasn't reported yet at its configured chains", t => {
+    let config = config(~schema=perChain)
+    let empty = Metrics.merge(
+      [],
+      ~startTime=Date.make(),
+      ~metricTime=Date.make(),
+      ~elapsedSeconds=0.,
+      ~targetBufferSize=0,
+    )
+    let worker = (chainId, ~snapshot): Supervisor.running => {
+      worker: {chainIds: [chainId->ChainId.fromInt], maxConnections: 2},
+      // Never touched: the display reads only what a worker reported.
+      child: Null.null->(Utils.magic: Null.t<unit> => NodeJs.ChildProcess.Child.t),
+      snapshot,
+      runtime: None,
+      settled: false,
+    }
+    let synced =
+      Supervisor.configuredChains(config)
+      ->Array.filter(chain => chain.chainId == 1->ChainId.fromInt)
+      ->Array.map(chain => {...chain, timestampCaughtUpToHeadOrEndblock: Some(Date.make())})
+
+    t.expect(
+      [worker(1, ~snapshot=Some({...empty, chains: synced})), worker(137, ~snapshot=None)]
+      ->Supervisor.displayedSnapshots(~config, ~empty)
+      ->Array.flatMap(snapshot => snapshot.chains)
+      ->Array.map(
+        chain => (
+          chain.chainId->ChainId.toString,
+          chain.timestampCaughtUpToHeadOrEndblock->Option.isSome,
+        ),
+      ),
+    ).toStrictEqual([("1", true), ("137", false)])
+  })
+})
