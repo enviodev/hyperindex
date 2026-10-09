@@ -12,21 +12,6 @@ Async.afterAll(async () => {
   await sql->Postgres.endSql
 })
 
-let loggedMessages = async path =>
-  switch await NodeJs.Fs.Promises.readFile(~filepath=NodeJs.Path.resolve([path]), ~encoding=Utf8) {
-  | contents =>
-    contents
-    ->String.trim
-    ->String.split("\n")
-    ->Array.filterMap(line =>
-      switch line->JSON.parseOrThrow->JSON.Decode.object {
-      | Some(fields) => fields->Dict.get("msg")->Option.flatMap(JSON.Decode.string)
-      | None => None
-      }
-    )
-  | exception _ => []
-  }
-
 describe("Finalizing a schema with no indexes", () => {
   Async.it("Says nothing about the indexes it didn't have to build", async t => {
     let storage = PgStorage.make(
@@ -68,7 +53,7 @@ describe("Finalizing a schema with no indexes", () => {
     Logging.info("done")
 
     let rec until = async deadline =>
-      switch await loggedMessages(path) {
+      switch await LogFile.messages(path) {
       | messages if messages->Array.includes("done") || Date.now() > deadline => messages
       | _ =>
         await Utils.delay(50)
