@@ -137,8 +137,16 @@ let columns = [
   {
     name: "json",
     // jsonb has an ordering, but not one a handler could sensibly rely on, so
-    // only equality is compared.
-    pool: [{"a": 1}->u, {"a": 2}->u, {"a": 1, "b": [1, 2]}->u, {"b": "x"}->u],
+    // only equality is compared. A document need not be an object.
+    pool: [
+      {"a": 1}->u,
+      {"a": 2}->u,
+      {"a": 1, "b": [1, 2]}->u,
+      {"b": "x"}->u,
+      "abc"->u,
+      true->u,
+      [1, 2]->u,
+    ],
     operators: ["_eq", "_in"],
   },
   {name: "kind", pool: ["ZETA", "ALPHA", "MID"]->Array.map(u), operators: allOperators},

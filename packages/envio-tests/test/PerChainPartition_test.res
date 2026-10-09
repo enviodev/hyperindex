@@ -205,3 +205,37 @@ describe("Per-chain entity partitions against Postgres", () => {
     },
   )
 })
+
+// Postgres prunes a cached plan's partitions only on a constant in the
+// statement, so a chain-scoped load writes its chain id in rather than binding
+// it. A pool of one connection is what lets the test read back the statements
+// that connection prepared.
+describe("A chain-scoped load", () => {
+  scenario->Scenario.it(
+    "names its chain in the statement rather than binding it",
+    ~sources=[{chain: 1, methods}, {chain: 137, methods}],
+    async (~t, ~indexer, ~source) => {
+      source(1).resolveGetHeightOrThrow(300)
+      source(137).resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await indexer.stop()
+
+      let {pgSchema} = indexer.pg
+      let filter =
+        dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}}
+        ->EntityFilter.parseOrThrow(~entityName=counter.name, ~table=counter.table)
+        ->EntityFilter.scoped(~table=counter.table, ~scope=Chain(137->ChainId.fromInt))
+      let client = PgStorage.makeClient(~pgSchema, ~maxConnections=1)
+      let storage = PgStorage.make(~pgSchema, ~sql=client, ~ecosystem=Evm)
+      let _ = await storage.loadOrThrow(~filter, ~table=counter.table)
+      let prepared: array<{
+        "statement": string,
+      }> = await client->Sql.queryForTests(`SELECT statement FROM pg_prepared_statements WHERE statement LIKE 'SELECT * FROM%'`)
+      await storage.close()
+
+      t.expect(prepared->Array.map(row => row["statement"])).toEqual([
+        `SELECT * FROM "${pgSchema}"."Counter" WHERE "owner" = $1 AND "chainId" = 137;`,
+      ])
+    },
+  )
+})

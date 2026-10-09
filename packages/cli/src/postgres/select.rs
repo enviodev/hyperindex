@@ -1,8 +1,6 @@
-//! The statement a get or getWhere loads its rows with in Postgres.
-
 use anyhow::{anyhow, Result};
 
-use crate::entity_filter::{Condition, Operator};
+use crate::entity_filter::{Condition, Operator, ValueKind};
 
 use super::internal::quote_ident;
 use super::param::Param;
@@ -19,7 +17,15 @@ pub fn load_query(
         format!("${}", params.len())
     };
     let mut parts = Vec::with_capacity(conditions.len());
-    for condition in conditions {
+    for mut condition in conditions {
+        // Every other spelling is one Postgres already reads as its type.
+        if condition.kind == ValueKind::Bytes {
+            for element in condition.values.iter_mut().flatten().flatten() {
+                if let Some(hex) = element.strip_prefix("0x") {
+                    *element = format!("\\x{hex}");
+                }
+            }
+        }
         let column = quote_ident(&condition.column);
         let part = match condition.operator {
             // Postgres prunes a cached plan's partitions only on a constant in
@@ -119,6 +125,7 @@ mod tests {
                 .iter()
                 .map(|value| value.iter().map(|text| Some(text.to_string())).collect())
                 .collect(),
+            kind: ValueKind::Text,
             is_list: false,
             enum_name: None,
             is_chain_id: false,
@@ -151,6 +158,11 @@ mod tests {
                     ..condition("path", Operator::Lt, &[&["a", "b"]])
                 },
                 Condition {
+                    kind: ValueKind::Bytes,
+                    is_list: true,
+                    ..condition("hashes", Operator::Eq, &[&["0x01ff", "0x"]])
+                },
+                Condition {
                     is_chain_id: true,
                     ..condition("chain_id", Operator::Eq, &[&["137"]])
                 },
@@ -163,7 +175,7 @@ mod tests {
                 "SELECT * FROM \"public\".\"Token\" WHERE \"owner\" = $1 AND \"amount\" >= $2 \
                  AND \"id\" = ANY($3) AND \"kind\" = ANY($4::TEXT[]::\"public\".Kind[]) \
                  AND (\"tags\" = $5 OR \"tags\" = $6) AND FALSE AND \"path\" < $7 \
-                 AND \"chain_id\" = 137;"
+                 AND \"hashes\" = $8 AND \"chain_id\" = 137;"
                     .to_string(),
                 vec![
                     Param::Text("0xa".to_string()),
@@ -173,6 +185,7 @@ mod tests {
                     Param::Text("{\"x\"}".to_string()),
                     Param::Text("{\"x\",\"y\"}".to_string()),
                     Param::Text("{\"a\",\"b\"}".to_string()),
+                    Param::Text("{\"\\\\x01ff\",\"\\\\x\"}".to_string()),
                 ]
             )
         );

@@ -262,85 +262,6 @@ let getRowSchema = (entityConfig: Internal.entityConfig): S.t<Internal.entity> =
     schema
   }
 
-// The filter as the storage answers it: per field, its column, how it compares
-// and the values it compares against, each rendered to the text the column's
-// own type reads. Which statement that becomes is the storage's to decide.
-let filterConditions = (~filter: EntityFilter.t, ~table: Table.table): array<
-  PgClient.filterCondition,
-> => {
-  // Filters reference fields by API name, while the SQL references columns
-  // by their possibly renamed db names.
-  let getQueryFieldOrThrow = fieldName =>
-    switch table->Table.queryFields->Dict.get(fieldName) {
-    | Some(queryField) => queryField
-    | None =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage. The table doesn't have the field "${fieldName}".`,
-          reason: Table.NonExistingTableField(fieldName),
-        }),
-      )
-    }
-  // A value's elements: one for a scalar column, the list's own for a list.
-  let renderOrThrow = (~queryField: Table.queryField, ~fieldName, ~fieldValue: unknown) => {
-    let converted = try fieldValue->S.reverseConvertOrThrow(queryField.fieldSchema) catch {
-    | exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
-          reason: exn,
-        }),
-      )
-    }
-    queryField.isArray
-      ? converted->(Utils.magic: unknown => array<unknown>)->Sql.params
-      : Sql.params([converted])
-  }
-
-  let conditions = []
-  filter
-  ->EntityFilter.entries
-  ->Utils.Dict.forEachWithKey((operators, fieldName) => {
-    let queryField = getQueryFieldOrThrow(fieldName)
-    operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
-      let render = fieldValue => renderOrThrow(~queryField, ~fieldName, ~fieldValue)
-      let (operator: PgClient.filterOperator, values) = switch operator {
-      | "_eq" => (Eq, [render(fieldValue)])
-      | "_gt" => (Gt, [render(fieldValue)])
-      | "_lt" => (Lt, [render(fieldValue)])
-      | "_gte" => (Gte, [render(fieldValue)])
-      | "_lte" => (Lte, [render(fieldValue)])
-      | "_in" => (In, fieldValue->EntityFilter.asArray->Array.map(render))
-      | _ =>
-        throw(
-          Persistence.StorageError({
-            message: `Failed loading "${table.tableName}" from storage. Unknown filter operator "${operator}".`,
-            reason: Utils.Error.make(`Unknown filter operator "${operator}"`),
-          }),
-        )
-      }
-      conditions
-      ->Array.push(
-        (
-          {
-            column: queryField.pgDbFieldName,
-            operator,
-            values,
-            isList: queryField.isArray,
-            enumName: ?switch queryField.fieldType {
-            | Enum({config}) => Some(config.name)
-            | _ => None
-            },
-            isChainId: queryField.isChainId,
-          }: PgClient.filterCondition
-        ),
-      )
-      ->ignore
-    })
-  })
-  conditions
-}
-
 let makeLoadAllQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}";`
 }
@@ -845,12 +766,12 @@ let make = (
   }
 
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
-    let conditions = filterConditions(~filter, ~table)
+    let conditions = LoadFilter.make(~filter, ~table, ~column=field => field.pgDbFieldName)
     switch await sql->PgClient.loadWhere(~tableName=table.tableName, ~conditions) {
     | exception exn =>
       throw(
         Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage.`,
+          message: `Failed loading "${table.tableName}" from storage by ${conditions->LoadFilter.describe}.`,
           reason: exn,
         }),
       )
@@ -859,7 +780,7 @@ let make = (
       | exn =>
         throw(
           Persistence.StorageError({
-            message: `Failed to parse "${table.tableName}" loaded from storage.`,
+            message: `Failed to parse "${table.tableName}" loaded from storage by ${conditions->LoadFilter.describe}.`,
             reason: exn,
           }),
         )
