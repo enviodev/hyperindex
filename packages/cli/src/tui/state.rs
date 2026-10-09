@@ -128,8 +128,8 @@ impl Chain {
             latest_processed_block,
             caught_up_at,
         };
-        // A chain can reach its end block without ever matching an event, so it
-        // still renders as synced.
+        // A chain can reach its head or end block without ever matching an
+        // event, so it still renders as synced.
         let progress = if m.processed_to_endblock {
             synced(m.timestamp_caught_up_to_head_or_endblock.unwrap_or(now))
         } else {
@@ -137,7 +137,7 @@ impl Chain {
                 m.first_event_block_number,
                 m.timestamp_caught_up_to_head_or_endblock,
             ) {
-                (Some(_), Some(caught_up_at)) => synced(caught_up_at),
+                (_, Some(caught_up_at)) => synced(caught_up_at),
                 (Some(_), None) => Progress::Syncing {
                     first_event_block,
                     latest_processed_block,
@@ -454,6 +454,31 @@ mod tests {
                 latest_processed_block: 500,
                 caught_up_at: 42.,
             }
+        );
+    }
+
+    // https://github.com/enviodev/hyperindex/issues/1691
+    #[test]
+    fn a_chain_caught_up_to_head_without_events_is_synced() {
+        let at_head = TuiChain {
+            progress_block_number: 900,
+            latest_fetched_block_number: 900,
+            known_height: 900,
+            source_block_number: 900,
+            timestamp_caught_up_to_head_or_endblock: Some(30_000.),
+            ..chain_metrics()
+        };
+        let state = state(&[at_head], 42_000.);
+        assert_eq!(
+            (state.chains[0].progress, state.eta(42_000.)),
+            (
+                Progress::Synced {
+                    first_event_block: 100,
+                    latest_processed_block: 900,
+                    caught_up_at: 30_000.,
+                },
+                Eta::Synced("30s".to_string())
+            )
         );
     }
 
