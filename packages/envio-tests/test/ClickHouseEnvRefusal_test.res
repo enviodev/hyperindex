@@ -55,7 +55,7 @@ describe("Starting with ClickHouse storage but no ClickHouse settings", () => {
       ) {
       | () => "the start to fail, but it succeeded"
       | exception JsExn(error) => error->JsExn.message->Option.getOr("")
-      | exception error => `an unexpected failure: ${error->String.make}`
+      | exception error => `an unexpected failure: ${error->JSON.stringifyAny->Option.getOr("")}`
       }
       saved->Array.forEach(
         ((name, value)) =>

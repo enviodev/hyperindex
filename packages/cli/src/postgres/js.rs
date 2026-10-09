@@ -586,10 +586,8 @@ impl PgStorage {
             .get_mut(&handle)
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown result {handle}")))?;
         let lent = columnar::js::lend_for_reading(env, arena);
-        // A lend that fails on a result already lent out leaves those buffers
-        // live, and `releaseResult` still has to detach them.
-        if lent.is_err() && !arena.is_lent() {
-            results.remove(&handle);
+        if lent.is_err() {
+            drop_unless_lent(&mut results, handle);
         }
         lent
     }
@@ -1173,4 +1171,29 @@ fn to_params(params: Vec<Option<String>>) -> Vec<Param> {
             Some(text) => Param::Text(text),
         })
         .collect()
+}
+
+/// After a failed lend. A result already lent out still has JavaScript views
+/// into it, and only `releaseResult` may free it, having detached them; one
+/// that never reached JavaScript has nothing pointing into it and goes now.
+fn drop_unless_lent(results: &mut HashMap<u32, Arena>, handle: u32) {
+    if results.get(&handle).is_some_and(|arena| !arena.is_lent()) {
+        results.remove(&handle);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_lend_frees_only_a_result_javascript_holds_nothing_of() {
+        let lent = Arena::new(1, &[ColumnKind::F64]).unwrap();
+        let mut sealed = Arena::new(1, &[ColumnKind::F64]).unwrap();
+        sealed.seal_for_test().unwrap();
+        let mut results = HashMap::from([(1, lent), (2, sealed)]);
+        drop_unless_lent(&mut results, 1);
+        drop_unless_lent(&mut results, 2);
+        assert_eq!(results.keys().copied().collect::<Vec<_>>(), vec![1]);
+    }
 }

@@ -265,7 +265,8 @@ mod tests {
 
     /// A write that names a batch JavaScript never finished filling is refused,
     /// and the batch stays registered: its buffers are still lent out, and only
-    /// `abort` may take them back.
+    /// `abort` may take them back. With no buffers to detach here, the abort
+    /// abandons the batch rather than freeing memory a view may still reach.
     #[test]
     fn a_batch_never_committed_is_kept_for_abort() {
         let stages = Stages::<()>::default();
@@ -276,10 +277,17 @@ mod tests {
             .err()
             .map(|error| error.reason.clone());
         let kept = stages.count();
-        let _ = stages.abort(1, vec![]);
+        let aborted = stages.abort(1, vec![]).map(|error| error.reason.clone());
         assert_eq!(
-            (refused, kept, stages.count()),
-            (Some("Staged batch 1 was never committed".to_string()), 1, 0)
+            (refused, kept, aborted, stages.count()),
+            (
+                Some("Staged batch 1 was never committed".to_string()),
+                1,
+                Some(
+                    "Buffer 0 of the staged batch was not handed back to be detached.".to_string()
+                ),
+                0
+            )
         );
     }
 }
