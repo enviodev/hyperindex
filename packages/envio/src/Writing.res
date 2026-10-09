@@ -195,8 +195,11 @@ let runWriteLoop = async (state: IndexerState.t) => {
 }
 
 // Kicks the single write fiber if there's pending work and one isn't running.
+// A stopped indexer hands its storage over (a resumed indexer, or a dropped test
+// schema), so a throttled metadata write firing after the stop must not start.
 let schedule = (state: IndexerState.t) =>
   if (
+    !(state->IndexerState.isStopped) &&
     state->IndexerState.writeFiber->Option.isNone &&
     !(state->IndexerState.hasFailedWrite) &&
     state->hasPendingWrite
