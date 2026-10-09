@@ -363,7 +363,8 @@ describe("Supervisor.displayedSnapshots", () => {
     )
     let worker = (chainId, ~snapshot): Supervisor.running => {
       worker: {chainIds: [chainId->ChainId.fromInt], maxConnections: 2},
-      child: %raw(`null`),
+      // Never touched: the display reads only what a worker reported.
+      child: Null.null->(Utils.magic: Null.t<unit> => NodeJs.ChildProcess.Child.t),
       snapshot,
       runtime: None,
       settled: false,
