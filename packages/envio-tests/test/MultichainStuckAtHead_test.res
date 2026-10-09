@@ -4,15 +4,12 @@ open Vitest
 // subscription stopped progressing at head while the other chains kept
 // indexing.
 //
-// The wait loop's REST polling fallback short-circuits forever once the
-// subscription advances the wait's height only partially — reachable on
-// v3.3.0 because sourceState.knownHeight (written only by the subscription
-// callback there) lagged fetchState.knownHeight (raised by getLogs
-// responses). After that, no getHeight request was ever made again
-// ("envio_source_request_total" for getHeight stayed flat) and the chain
-// waited for a new block forever. Since v3.3.1 executeQuery syncs
-// sourceState.knownHeight from response heights, which keeps the gap from
-// opening for a single source.
+// The source's height lagged the chain's (getLogs responses raised the chain's,
+// only the stream raised the source's), so the stream re-emitting the head
+// advanced the wait only partially, and its REST fallback then short-circuited
+// forever: no getHeight request was ever made again. What has to hold is that a
+// stream still claiming to be connected but delivering nothing is distrusted
+// once the stall window passes, and polling takes over.
 let scenario = Scenario.make(
   ~configYaml=`
 name: multichain-stuck-at-head
@@ -65,9 +62,7 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       },
     ],
     ~reducedPollingInterval=1,
-    // A 5s wait for the subscription plus a 25s polling fallback doesn't fit
-    // the suite's default budget.
-    ~timeout=60_000,
+    ~newBlockStallTimeoutRealtime=2_000,
     async (~t, ~indexer, ~source) => {
       let stuckChain = source(100)
       let healthyChain = source(1337)
@@ -126,8 +121,7 @@ describe("Multichain: chain with height subscription stuck at head", () => {
         ~message="the new block from the subscription should be queried",
       ).toEqual([101])
       // The getLogs response's archive height is already 102 — ahead of the
-      // stream. It raises fetchState.knownHeight, while on v3.3.0
-      // sourceState.knownHeight stays at the subscription's last height (101).
+      // stream's last height (101).
       stuckChain.resolveGetItemsOrThrow(
         [{blockNumber: 101, logIndex: 0}],
         ~latestFetchedBlockNumber=101,
@@ -147,10 +141,9 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       )
       await indexer.getBatchWritePromise()
 
-      // The chain is at head again: waiting for a block above 102 while the
-      // wait started from the subscription's last height 101. The stream
-      // re-emits the current head (as it does on reconnect) — a partial
-      // advance within the wait — and then goes quiet for good.
+      // The chain is at head again, waiting for a block above 102. The stream
+      // re-emits the current head (as it does on reconnect) and then goes
+      // quiet for good.
       await Utils.delay(10)
       stuckChain.triggerHeightSubscription(102)
 
@@ -169,11 +162,9 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       await indexer.getBatchWritePromise()
 
       // The subscription is quiet, so the wait must fall back to REST height
-      // polling within the realtime stall window (10..20s). On v3.3.0 the
-      // fallback short-circuits without a single getHeight request and the
-      // chain stays stuck at head forever.
+      // polling within the realtime stall window (1..2s here).
       let heightCallsBefore = stuckChain.getHeightOrThrowCalls->Array.length
-      let pollDeadline = Date.now() +. 25_000.
+      let pollDeadline = Date.now() +. 5_000.
       while (
         stuckChain.getHeightOrThrowCalls->Array.length === heightCallsBefore &&
           Date.now() < pollDeadline

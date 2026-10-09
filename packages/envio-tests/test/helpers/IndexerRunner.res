@@ -146,6 +146,7 @@ let run = async (
   ~resolveRegistrations: (~config: Config.t) => promise<HandlerRegister.registrationsByChainId>,
   ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
+  ~newBlockStallTimeoutRealtime=?,
   ~targetBufferSize=?,
   // Runs the indexer the way a supervised worker runs: it waits to be released
   // before entering the reorg threshold or switching to realtime.
@@ -252,6 +253,7 @@ let run = async (
       ~persistence,
       ~registrationsByChainId,
       ~reducedPollingInterval?,
+      ~newBlockStallTimeoutRealtime?,
       ~targetBufferSize?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,

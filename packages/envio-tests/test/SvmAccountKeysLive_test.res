@@ -62,22 +62,26 @@ import { describe, it } from "vitest";
 import { createTestIndexer } from "envio";
 
 describe("SVM account keys (live)", () => {
-  it("resolves lookup-table addresses into accountKeys", async (t) => {
-    const indexer = createTestIndexer();
-    await indexer.process({ chains: { 7565164: { endBlock: 445900020 } } });
-    const all = await indexer.Accounts.getAll();
-    // 11 static keys and 22 from the lookup tables. The first key stays the
-    // static one, so indexes into the head of the list are unmoved.
-    t.expect(all).toEqual([
-      {
-        id: "2DEzF4JEWLE5zmD4QhkCiiALaXS4qbvN1o5c6jz9Ex4jXFTJMoQwhDg7ZHH2wr35QiXYZgcWMzNqt8u6hTq5YB1B",
-        keyCount: 33,
-        firstKey: "7YtaMGNj4gwMFH7X5U48kvsA1pEJ7GxYn7maY216rGmM",
-        programIsPresent: true,
-        programIndex: 28,
-      },
-    ]);
-  });
+  it(
+    "resolves lookup-table addresses into accountKeys",
+    async (t) => {
+      const indexer = createTestIndexer();
+      await indexer.process({ chains: { 7565164: { endBlock: 445900020 } } });
+      const all = await indexer.Accounts.getAll();
+      // 11 static keys and 22 from the lookup tables. The first key stays the
+      // static one, so indexes into the head of the list are unmoved.
+      t.expect(all).toEqual([
+        {
+          id: "2DEzF4JEWLE5zmD4QhkCiiALaXS4qbvN1o5c6jz9Ex4jXFTJMoQwhDg7ZHH2wr35QiXYZgcWMzNqt8u6hTq5YB1B",
+          keyCount: 33,
+          firstKey: "7YtaMGNj4gwMFH7X5U48kvsA1pEJ7GxYn7maY216rGmM",
+          programIsPresent: true,
+          programIndex: 28,
+        },
+      ]);
+    },
+    300_000,
+  );
 });
 `,
 )

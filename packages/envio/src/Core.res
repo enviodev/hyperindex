@@ -149,7 +149,8 @@ let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
 
 let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
 
-// Runs `cargo build` on every invocation (like `cargo run`).
+// Runs `cargo build` on every invocation (like `cargo run`), unless
+// ENVIO_DEV_ADDON already names a built addon.
 let loadDevAddon: ({..}, string) => Null.t<addon> = %raw(`function(req, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;

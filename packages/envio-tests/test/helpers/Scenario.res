@@ -178,6 +178,7 @@ let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
   ~reducedPollingInterval=?,
+  ~newBlockStallTimeoutRealtime=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -253,6 +254,7 @@ let run = async (
         HandlerRegister.finishRegistration(~config)
       }),
     ~reducedPollingInterval?,
+    ~newBlockStallTimeoutRealtime?,
     ~targetBufferSize?,
     ~holdRealtime?,
     ~superviseRun?,
@@ -283,6 +285,7 @@ let it = (
   name,
   ~sources: array<sourceMock>=[],
   ~reducedPollingInterval=?,
+  ~newBlockStallTimeoutRealtime=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -316,6 +319,7 @@ let it = (
         await scenario->run(
           ~sources,
           ~reducedPollingInterval?,
+          ~newBlockStallTimeoutRealtime?,
           ~targetBufferSize?,
           ~maxAddrInPartition?,
           ~clientFilterAddressThreshold?,
