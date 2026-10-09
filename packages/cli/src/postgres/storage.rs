@@ -741,9 +741,7 @@ impl Storage {
     }
 
     /// Brings a chain the schema doesn't have yet: its partitions, its config
-    /// addresses and its row. No conflict clauses: two processes adding the
-    /// same chain are two processes driving it, and the second one fails on a
-    /// key instead of indexing alongside the first.
+    /// addresses and its row. Only one process ever adds a given chain.
     pub async fn add_chain(&self, input: AddChain) -> Result<()> {
         let transaction = self.client.begin().await?;
         let outcome = async {

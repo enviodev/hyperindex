@@ -77,9 +77,9 @@ type rec t = {
     unit,
   ) => promise<t>,
   // Another process on the same schema, started while this one keeps running,
-  // the way a second `envio start --chain` would be. The global persistence and
+  // the way the workers of a split run share one. The global persistence and
   // logger are the last one started's, so a handler can't tell siblings apart.
-  sibling: (~config: Config.t=?, ~chains: array<ChainId.t>) => promise<t>,
+  sibling: (~chains: array<ChainId.t>) => promise<t>,
   // Writes the effect cache out to this run's own cache directory, where the
   // next initialize uploads it from.
   dumpEffectCache: unit => promise<unit>,
@@ -612,7 +612,7 @@ let run = async (
             "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",
           )
         },
-      sibling: (~config=baseConfig, ~chains) => make(~reset=false, ~config, ~chains),
+      sibling: (~chains) => make(~reset=false, ~config=baseConfig, ~chains),
       restart: async (~config=baseConfig, ~chains=?, ~reset=false, ~asWorker=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
