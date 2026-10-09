@@ -36,7 +36,12 @@ function buildDevAddon(): void {
     ".."
   );
   const cliDir = path.join(repoRoot, "packages", "cli");
-  if (!fs.existsSync(path.join(cliDir, "Cargo.toml"))) {
+  // CI tests the pre-built addon (see .pnpmfile.cjs), which loadAddon picks
+  // before any dev build, so compiling one here would only cost time.
+  if (
+    !fs.existsSync(path.join(cliDir, "Cargo.toml")) ||
+    fs.existsSync(path.join(repoRoot, ".envio-artifacts"))
+  ) {
     return;
   }
 

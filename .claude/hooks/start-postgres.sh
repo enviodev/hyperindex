@@ -10,8 +10,34 @@ DB="envio-dev"
 USER="postgres"
 PASS="testing"
 
-# Already running? Nothing to do.
+CONF=/etc/postgresql/16/main/postgresql.conf
+CERTS=/var/lib/postgresql/tls
+
+# Serves TLS with a certificate signed by a CA this machine trusts, so the live
+# tests can tell a verified connection from an unverified one. The same setup
+# runs in CI, against a container instead of this cluster.
+ensure_tls() {
+  # Every part has to be in place, not just the line naming the certificate: a
+  # cluster stopped half way through this would otherwise start without TLS.
+  if grep -q '^ssl = on' "$CONF" &&
+    grep -q "^ssl_cert_file = '$CERTS/server.crt'" "$CONF" &&
+    grep -q "^ssl_key_file = '$CERTS/server.key'" "$CONF" &&
+    sudo test -s "$CERTS/server.crt" &&
+    sudo test -s "$CERTS/server.key"; then
+    return
+  fi
+  "$(dirname "$0")/../../scripts/pg-tls.sh" "$CERTS" postgres:postgres >/dev/null
+  sudo sed -i "s|^#*ssl = .*|ssl = on|; \
+    s|^#*ssl_cert_file = .*|ssl_cert_file = '$CERTS/server.crt'|; \
+    s|^#*ssl_key_file = .*|ssl_key_file = '$CERTS/server.key'|" "$CONF"
+  if pg_isready -h 127.0.0.1 -p "$PORT" >/dev/null 2>&1; then
+    sudo pg_ctlcluster 16 main reload
+  fi
+}
+
+# Already running? Only the certificate may still be missing.
 if pg_isready -h 127.0.0.1 -p "$PORT" >/dev/null 2>&1; then
+  ensure_tls
   echo "PostgreSQL 16 already running on port $PORT"
   exit 0
 fi
@@ -22,6 +48,8 @@ sudo sed -i "s/^port = .*/port = $PORT/" /etc/postgresql/16/main/postgresql.conf
 # Use trust auth for local dev (password still required by app via connection string)
 sudo sed -i 's/^local\s\+all\s\+postgres\s\+peer$/local   all             postgres                                trust/' /etc/postgresql/16/main/pg_hba.conf 2>/dev/null
 sudo sed -i 's/scram-sha-256/trust/g' /etc/postgresql/16/main/pg_hba.conf 2>/dev/null
+
+ensure_tls
 
 # Start the cluster
 sudo pg_ctlcluster 16 main start 2>/dev/null

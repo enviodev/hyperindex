@@ -548,14 +548,17 @@ describe("Per-chain history prune", () => {
       let globalEntityConfig =
         pruneScenario.config->IndexerRunner.entityConfigByName("GlobalCounter")
       let {sql, pgSchema} = indexer.pg
-      let historyTable = PgStorage.getEntityHistory(~entityConfig).table.tableName
-      let globalHistoryTable = PgStorage.getEntityHistory(
-        ~entityConfig=globalEntityConfig,
-      ).table.tableName
+      let historyTableOf = (entityConfig: Internal.entityConfig) =>
+        EntityHistory.historyTableName(
+          ~entityName=entityConfig.name,
+          ~entityIndex=entityConfig.index,
+        )
+      let historyTable = entityConfig->historyTableOf
+      let globalHistoryTable = globalEntityConfig->historyTableOf
 
       // Chain 137 straddles the safe checkpoint (10 below, 40 above), chain 1's
       // "shared" sits entirely below it and its "above" entirely above.
-      let _ = await sql->Postgres.unsafe(
+      let _ = await sql->Sql.queryForTests(
         `INSERT INTO "${pgSchema}"."${historyTable}"
            ("id", "count", "chainId", "envio_checkpoint_id", "envio_change")
          VALUES ('shared', 1, 137, 10, 'SET'),
@@ -565,7 +568,7 @@ describe("Per-chain history prune", () => {
       )
       // The same three shapes without a chain column, so the cross-chain form of
       // the query is exercised too.
-      let _ = await sql->Postgres.unsafe(
+      let _ = await sql->Sql.queryForTests(
         `INSERT INTO "${pgSchema}"."${globalHistoryTable}"
            ("id", "count", "envio_checkpoint_id", "envio_change")
          VALUES ('straddle', 1, 10, 'SET'),
@@ -574,15 +577,10 @@ describe("Per-chain history prune", () => {
                 ('above', 4, 50, 'SET')`,
       )
 
+      let storage = PgStorage.make(~pgSchema, ~ecosystem=Evm)
       let prune = entityConfig =>
-        EntityHistory.pruneStaleEntityHistory(
-          sql,
-          ~pgSchema,
-          ~entityName=(entityConfig: Internal.entityConfig).name,
-          ~entityIndex=entityConfig.index,
-          ~chainIdColumn=entityConfig.table
-          ->Table.getChainIdField
-          ->Option.map(Table.getPgDbFieldName),
+        storage.pruneStaleEntityHistory(
+          ~entityConfig,
           ~safeCheckpoints={
             CheckpointSequence.sequence: SharedAcrossChains,
             byChain: Frontier.fromEntries([(1->ChainId.fromInt, 30n)]),
@@ -590,23 +588,24 @@ describe("Per-chain history prune", () => {
         )
       await prune(entityConfig)
       await prune(globalEntityConfig)
+      await storage.close()
 
       let remaining: array<{
         "chainId": int,
         "envio_checkpoint_id": string,
-      }> = await sql->Postgres.unsafe(
+      }> = await sql->Sql.queryForTests(
         `SELECT "chainId", "envio_checkpoint_id"::text FROM "${pgSchema}"."${historyTable}"
            ORDER BY "chainId", "envio_checkpoint_id"`,
       )
       let globalRemaining: array<{
         "id": string,
         "envio_checkpoint_id": string,
-      }> = await sql->Postgres.unsafe(
+      }> = await sql->Sql.queryForTests(
         `SELECT "id", "envio_checkpoint_id"::text FROM "${pgSchema}"."${globalHistoryTable}"
            ORDER BY "id", "envio_checkpoint_id"`,
       )
-      let _ = await sql->Postgres.unsafe(`DELETE FROM "${pgSchema}"."${historyTable}"`)
-      let _ = await sql->Postgres.unsafe(`DELETE FROM "${pgSchema}"."${globalHistoryTable}"`)
+      let _ = await sql->Sql.queryForTests(`DELETE FROM "${pgSchema}"."${historyTable}"`)
+      let _ = await sql->Sql.queryForTests(`DELETE FROM "${pgSchema}"."${globalHistoryTable}"`)
 
       t.expect((
         remaining->Array.map(row => (row["chainId"], row["envio_checkpoint_id"])),

@@ -435,3 +435,55 @@ let captureRefusal = () => {
       (await awaitStorageError())->Option.map(((_, reason)) => reason),
   }
 }
+
+// Answers whatever the reorg resolution asks for: block hashes for the depth
+// search (blocks past `validUpTo` come back re-orged), and empty responses for
+// the re-fetch queries the rollback schedules.
+let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetched=[]) => {
+  let refetched = ref(refetched)
+  for _ in 0 to 300 {
+    if source.getBlockHashesCalls->Array.length > 0 {
+      let requested = source.getBlockHashesCalls->Array.copy
+      source.resolveGetBlockHashes(
+        requested
+        ->Array.flat
+        ->Array.map((blockNumber): BlockStore.inputBlock => {
+          blockNumber,
+          // Past `validUpTo` the chain is orphaned, so the hash the source
+          // reports differs from the one the store recorded.
+          blockHash: blockNumber <= validUpTo
+            ? `0x${blockNumber->Int.toString}`
+            : `0x${blockNumber->Int.toString}a`,
+          blockTimestamp: blockNumber,
+        }),
+      )
+      source.getBlockHashesCalls->Utils.Array.clearInPlace
+    }
+    if source.getItemsOrThrowCalls->Array.length > 0 {
+      source.resolveGetItemsOrThrow(refetched.contents, ~latestFetchedBlockNumber=head)
+      refetched := []
+    }
+    await Utils.delay(0)
+  }
+}
+
+// Reorgs the chain above `validUpTo`: the next response arrives with block
+// `head` re-orged, and the rollback that follows is driven to completion. The
+// first refetch after it answers with `refetched`.
+let reorgAbove = async (
+  ~indexer: IndexerRunner.t,
+  ~source: MockSource.t,
+  ~head,
+  ~validUpTo,
+  ~refetched=?,
+) => {
+  source.resolveGetHeightOrThrow(head + 1)
+  await MockSource.waitItemsQuery(source)
+  source.resolveGetItemsOrThrow(
+    [],
+    ~latestFetchedBlockNumber=head + 1,
+    ~prevRangeLastBlock={blockNumber: head, blockHash: `0x${head->Int.toString}a`},
+  )
+  await driveRollback(~source, ~validUpTo, ~head=head + 1, ~refetched?)
+  await indexer.waitUntilIdle()
+}

@@ -5,6 +5,7 @@ mod cli_args;
 mod clickhouse;
 mod client_filtered_contracts;
 mod columnar;
+mod entity_filter;
 pub use cli_args::clap_definitions;
 pub use cli_args::init_config;
 mod commands;
@@ -26,6 +27,7 @@ mod mock_http;
 mod mock_hypersync_server;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
+mod postgres;
 mod project_paths;
 mod registration_start_block;
 mod request_stats;

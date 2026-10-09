@@ -47,22 +47,17 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}${chainYaml(
 // The tables carrying an index on `A.b`, which is one partition per chain. The
 // table name is what distinguishes them, so the assertion reads as the set of
 // chains whose rows are indexed.
-let indexedTables = async (~sql, ~pgSchema) => {
-  let rows =
-    (await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
-      IndexCatalog.rowsSchema,
-    )
-  rows
-  ->Array.filter((row: IndexCatalog.row) => row.columns == ["b_id"])
-  ->Array.map((row: IndexCatalog.row) => row.tableName)
+let indexedTables = async (~sql, ~pgSchema) =>
+  (await sql->PgCatalog.indexes(~pgSchema))
+  ->Array.filter(index => index.columns == ["b_id"])
+  ->Array.map(index => index.tableName)
   ->Array.toSorted(String.compare)
-}
 
 let readyByChainId = async (~sql, ~pgSchema) => {
   let rows: array<{
     "id": ChainId.t,
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.queryForTests(
     `SELECT "id", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (

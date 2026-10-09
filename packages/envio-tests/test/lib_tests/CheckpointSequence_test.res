@@ -49,31 +49,6 @@ describe("CheckpointSequence.forScope", () => {
   })
 })
 
-describe("CheckpointSequence.params", () => {
-  // The two arrays are read positionally by the unnest relation, so a chain
-  // paired with another chain's bound would narrow the wrong rows.
-  it("Pairs each chain with its own id, in one order", t => {
-    t.expect(
-      {CheckpointSequence.sequence: PerChain, byChain: frontier}
-      ->CheckpointSequence.params
-      ->(Utils.magic: unknown => array<array<unknown>>),
-    ).toEqual([
-      [chain1, chain137]->(Utils.magic: array<ChainId.t> => array<unknown>),
-      ["9", "2"]->(Utils.magic: array<string> => array<unknown>),
-    ])
-  })
-
-  // Every chain is held to one id under a shared sequence, and it has to be the
-  // lowest: a higher one would leave another chain's rows above its own bound.
-  it("Collapses to the lowest id under one shared sequence", t => {
-    t.expect(
-      {CheckpointSequence.sequence: SharedAcrossChains, byChain: frontier}
-      ->CheckpointSequence.params
-      ->(Utils.magic: unknown => array<string>),
-    ).toEqual(["2"])
-  })
-})
-
 // The ids a rollback stamps on its diff rows come from this cursor, the same
 // one a batch's checkpoints come from. Under a shared sequence that is what
 // makes them distinct across chains and above every committed id — a chain

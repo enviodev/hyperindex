@@ -95,7 +95,7 @@ let chainRows = async (indexer: IndexerRunner.t) => {
   let rows: array<{
     "id": ChainId.t,
     "progress_block": int,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.queryForTests(
     `SELECT "id", "progress_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (row["id"]->ChainId.toString, row["progress_block"]))
@@ -106,7 +106,7 @@ let startBlocks = async (indexer: IndexerRunner.t) => {
   let rows: array<{
     "id": ChainId.t,
     "start_block": int,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.queryForTests(
     `SELECT "id", "start_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (row["id"]->ChainId.toString, row["start_block"]))
@@ -116,7 +116,7 @@ let counterPartitions = async (indexer: IndexerRunner.t) => {
   let {sql, pgSchema} = indexer.pg
   let rows: array<{
     "name": string,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.queryForTests(
     `SELECT c.relname AS "name"
      FROM pg_inherits inh
      JOIN pg_class c ON c.oid = inh.inhrelid
@@ -241,7 +241,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       await catchUp(~indexer, ~source=source(1), ~items=[])
       await indexer.stop()
       let {sql, pgSchema} = indexer.pg
-      let _ = await sql->Postgres.unsafe(`DROP SCHEMA "${pgSchema}" CASCADE;`)
+      let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${pgSchema}" CASCADE;`)
 
       let outcome = switch await indexer.restart(~chains=[ChainId.fromInt(1)], ()) {
       | restarted => Migration.Resumed(await Migration.storedChainIds(restarted))

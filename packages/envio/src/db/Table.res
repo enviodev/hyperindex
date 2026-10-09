@@ -160,61 +160,33 @@ let fitPgTableName = (fullName, ~uniqueSuffix) =>
     fullName
   }
 
-let getPgFieldType = (
-  ~fieldType: fieldType,
-  ~pgSchema,
-  ~isArray,
-  ~isNumericArrayAsText,
-  ~isNullable,
-  ~chainIdMode: ChainId.mode=Int32,
-) => {
-  let columnType = switch fieldType {
-  | String => (Postgres.Text :> string)
-  | Boolean => (Postgres.Boolean :> string)
-  | Int32 => (Postgres.Integer :> string)
-  | ChainId =>
-    switch chainIdMode {
-    | Int32 => (Postgres.Integer :> string)
-    | Int64 => (Postgres.BigInt :> string)
-    }
-  | Uint32 => (Postgres.BigInt :> string)
-  | UInt52 => (Postgres.BigInt :> string)
-  | SmallInt => (Postgres.SmallInt :> string)
-  | Bytea => (Postgres.Bytea :> string)
-  | UInt64 => (Postgres.BigInt :> string)
-  | Number => (Postgres.DoublePrecision :> string)
-  | BigInt({?precision}) =>
-    (Postgres.Numeric :> string) ++
-    switch precision {
-    | Some(precision) => `(${precision->Int.toString}, 0)` // scale is always 0 for BigInt
-    | None => ""
-    }
-
+// The variant's name and whichever of precision, scale and enum name it
+// carries. They travel to the addon separately because napi has no tagged
+// union of its own.
+let pgFieldTypeParts = (fieldType: fieldType) =>
+  switch fieldType {
+  | String => ("String", None, None, None)
+  | Boolean => ("Boolean", None, None, None)
+  | Uint32 => ("Uint32", None, None, None)
+  | UInt52 => ("UInt52", None, None, None)
+  | SmallInt => ("SmallInt", None, None, None)
+  | Bytea => ("Bytea", None, None, None)
+  | UInt64 => ("UInt64", None, None, None)
+  | Int32 => ("Int32", None, None, None)
+  | ChainId => ("ChainId", None, None, None)
+  | Number => ("Number", None, None, None)
+  | BigInt({?precision}) => ("BigInt", precision, None, None)
   | BigDecimal({?config}) =>
-    (Postgres.Numeric :> string) ++
     switch config {
-    | Some((precision, scale)) => `(${precision->Int.toString}, ${scale->Int.toString})`
-    | None => ""
+    | Some((precision, scale)) => ("BigDecimal", Some(precision), Some(scale), None)
+    | None => ("BigDecimal", None, None, None)
     }
-
-  | Serial => (Postgres.Serial :> string)
-  | BigSerial => (Postgres.BigSerial :> string)
-  | Json => (Postgres.JsonB :> string)
-  | Date =>
-    (isNullable ? Postgres.TimestampWithTimezoneNull : Postgres.TimestampWithTimezone :> string)
-  | Enum({config}) => `"${pgSchema}".${config.name}`
+  | Serial => ("Serial", None, None, None)
+  | BigSerial => ("BigSerial", None, None, None)
+  | Json => ("Json", None, None, None)
+  | Date => ("Date", None, None, None)
+  | Enum({config}) => ("Enum", None, None, Some(config.name))
   }
-
-  // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
-  let isNumericAsText = isArray && isNumericArrayAsText
-  let columnType = if columnType == (Postgres.Numeric :> string) && isNumericAsText {
-    (Postgres.Text :> string)
-  } else {
-    columnType
-  }
-
-  columnType ++ (isArray ? "[]" : "")
-}
 
 type indexFieldDirection = Asc | Desc
 
@@ -306,15 +278,6 @@ let getIdFieldOrThrow = (table): field =>
   | _ => throw(NoIdField(table.tableName))
   }
 
-let getIdPgFieldType = (table, ~pgSchema) =>
-  getPgFieldType(
-    ~fieldType=(table->getIdFieldOrThrow).fieldType,
-    ~pgSchema,
-    ~isArray=false,
-    ~isNumericArrayAsText=false,
-    ~isNullable=false,
-  )
-
 // Schema for a single id value, typed opaquely so id-generic code can serialize
 // ids regardless of the underlying scalar.
 let getIdSchema = (table): S.t<EntityId.t> =>
@@ -350,22 +313,14 @@ let fieldsByApiName: table => dict<fieldOrDerived> = Utils.WeakMap.memoize(table
 let getFieldByApiName = (table, apiFieldName) =>
   table->fieldsByApiName->Utils.Dict.dangerouslyGetNonOption(apiFieldName)
 
-// Both schema instances are created once per field: rescript-schema compiles
-// and caches operations on the schema instance, so building S.array(fieldSchema)
-// per query would recompile the serializer on every call.
 type queryField = {
   fieldType: fieldType,
   isArray: bool,
   fieldSchema: S.t<unknown>,
-  // Serializes the values array of an "in" filter
-  arrayFieldSchema: S.t<unknown>,
-  // The Postgres column referenced in load SQL, which only differs from the
-  // API field name keying this entry when column renaming is configured.
-  // Loads are served by Postgres only (ClickHouse is a write-only sink), so
-  // no ClickHouse counterpart is needed here.
+  // The column a load filters on, which only differs from the API field name
+  // keying this entry when column renaming is configured.
   pgDbFieldName: string,
-  // The chain-id column a per-chain entity's table is partitioned by, which a
-  // filter has to write into the SQL rather than bind. See `makeFilterCondition`.
+  // The chain-id column a per-chain entity's table is partitioned by.
   isChainId: bool,
 }
 let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
@@ -379,10 +334,6 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
           fieldType: field.fieldType,
           isArray: field.isArray,
           fieldSchema: field.fieldSchema,
-          arrayFieldSchema: switch field.fieldType {
-          | Bytea => Utils.Schema.bytesArray->S.toUnknown
-          | _ => S.array(field.fieldSchema)->S.toUnknown
-          },
           pgDbFieldName: field->getPgDbFieldName,
           isChainId: field.isChainId,
         },
@@ -448,24 +399,28 @@ let getUnfilteredCompositeIndexesUnsafe = (table): array<array<compositeIndexFie
   )
 }
 
-type sqlParams<'entity> = {
-  dbSchema: S.t<'entity>,
-  quotedFieldNames: array<string>,
-  quotedNonPrimaryFieldNames: array<string>,
-  arrayFieldTypes: array<string>,
-  byteaColumnIndexes: array<int>,
-  hasArrayField: bool,
-}
+// The table's fields in the order the schema names them, which is the order an
+// insert names its columns and binds its values.
+//
+// A `@derivedFrom` field is not one of them: it is resolved from the other side
+// of the relationship rather than stored, so no row schema carries one and
+// there is no column for it to be.
+let schemaOrderedFields = (table: table, ~schema): array<field> =>
+  switch schema->S.classify {
+  | Object({items}) =>
+    items->Array.map(({location}) =>
+      switch table->getFieldByApiName(location) {
+      | Some(Field(field)) => field
+      | Some(DerivedFrom(_)) | None => throw(NonExistingTableField(location))
+      }
+    )
+  | _ =>
+    JsError.throwWithMessage(
+      `Failed reading the columns of "${table.tableName}". Expected an object schema for a table.`,
+    )
+  }
 
-let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
-  let quotedFieldNames = []
-  let quotedNonPrimaryFieldNames = []
-  let arrayFieldTypes = []
-  // Positions of the bytea columns among the unnest parameters, which the
-  // caller binds as array literals (see `Utils.Bytes.toPgArrayLiteral`).
-  let byteaColumnIndexes = []
-  let hasArrayField = ref(false)
-
+let toDbSchema = (table: table, ~schema): S.t<'entity> => {
   let dbSchema: S.t<dict<unknown>> = S.schema(s =>
     switch schema->S.classify {
     | Object({items}) =>
@@ -477,16 +432,9 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
           | Option(child)
           | Null(child) =>
             Utils.Schema.nullTolerant(child->coerceSchema)->S.toUnknown
-          | Array(child) => {
-              hasArrayField := true
-              S.array(child->coerceSchema)->S.toUnknown
-            }
-          | JSON(_) => {
-              hasArrayField := true
-              schema
-            }
+          | Array(child) => S.array(child->coerceSchema)->S.toUnknown
           | Bool =>
-            // Workaround for https://github.com/porsager/postgres/issues/471
+            // Booleans travel as 1/0; the insert casts them back.
             S.union([
               S.literal(1)->S.shape(_ => true),
               S.literal(0)->S.shape(_ => false),
@@ -494,52 +442,10 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
           | _ => schema
           }
 
-        let field = switch table->getFieldByApiName(location) {
-        | Some(field) => field
-        | None => throw(NonExistingTableField(location))
-        }
-        switch field {
-        | Field({isArray: true}) => hasArrayField := true
-        | Field({fieldType: Bytea}) =>
-          byteaColumnIndexes->Array.push(arrayFieldTypes->Array.length)->ignore
-        | _ => ()
+        if table->getFieldByApiName(location)->Option.isNone {
+          throw(NonExistingTableField(location))
         }
 
-        // Schema locations use API field names, while the SQL references
-        // columns by their possibly renamed db names.
-        let quotedDbName = `"${field->getPgFieldName}"`
-        quotedFieldNames
-        ->Array.push(quotedDbName)
-        ->ignore
-        switch field {
-        | Field({isPrimaryKey: false}) =>
-          quotedNonPrimaryFieldNames
-          ->Array.push(quotedDbName)
-          ->ignore
-        | _ => ()
-        }
-
-        arrayFieldTypes
-        ->Array.push(
-          switch field {
-          | Field(f) =>
-            let pgFieldType = getPgFieldType(
-              ~fieldType=f.fieldType,
-              ~pgSchema,
-              ~isArray=true,
-              ~isNullable=f.isNullable,
-              ~isNumericArrayAsText=false,
-              ~chainIdMode,
-            )
-            switch f.fieldType {
-            | Enum(_) => `${(Text: Postgres.columnType :> string)}[]::${pgFieldType}`
-            | Boolean => `${(Integer: Postgres.columnType :> string)}[]::${pgFieldType}`
-            | _ => pgFieldType
-            }
-          | DerivedFrom(_) => (Text: Postgres.columnType :> string) ++ "[]"
-          },
-        )
-        ->ignore
         dict->Dict.set(location, s.matches(schema->coerceSchema))
       })
       dict
@@ -548,14 +454,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
     }
   )
 
-  {
-    dbSchema: dbSchema->(Utils.magic: S.t<dict<unknown>> => S.t<'entity>),
-    quotedFieldNames,
-    quotedNonPrimaryFieldNames,
-    arrayFieldTypes,
-    byteaColumnIndexes,
-    hasArrayField: hasArrayField.contents,
-  }
+  dbSchema->(Utils.magic: S.t<dict<unknown>> => S.t<'entity>)
 }
 
 /*

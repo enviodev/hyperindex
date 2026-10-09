@@ -72,9 +72,6 @@ importers:
       pino-pretty:
         specifier: 13.1.3
         version: 13.1.3
-      postgres:
-        specifier: 3.4.8
-        version: 3.4.8
       rescript-schema:
         specifier: 9.5.1
         version: 9.5.1(rescript@12.2.0)
