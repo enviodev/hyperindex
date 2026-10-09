@@ -28,7 +28,7 @@ let parseCreatedAt = name =>
   }
 
 let drop = async (sql, ~pgSchema) => {
-  let _ = await sql->Sql.query(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+  let _ = await sql->Sql.queryForTests(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
 }
 
 let staleAfterMs = 60. *. 60. *. 1000.
@@ -38,7 +38,7 @@ let staleAfterMs = 60. *. 60. *. 1000.
 let sweep = async sql => {
   let rows: array<{
     "schema_name": string,
-  }> = await sql->Sql.query(
+  }> = await sql->Sql.queryForTests(
     `SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE '${prefix}%';`,
   )
   let now = Date.now()

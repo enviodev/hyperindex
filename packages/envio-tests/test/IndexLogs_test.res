@@ -75,7 +75,7 @@ describe("Index logs", () => {
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
       let {sql, pgSchema} = indexer.pg
-      let _ = await sql->Sql.query(`ALTER TABLE "${pgSchema}"."Token" DROP COLUMN "owner";`)
+      let _ = await sql->Sql.queryForTests(`ALTER TABLE "${pgSchema}"."Token" DROP COLUMN "owner";`)
 
       source.setAutoHeight(100)
       let restarted = await indexer.restart()

@@ -38,7 +38,7 @@ type row = {
 
 let read = async (indexer: IndexerRunner.t) => {
   let {sql, pgSchema} = indexer.pg
-  let rows: array<row> = await sql->Sql.query(
+  let rows: array<row> = await sql->Sql.queryForTests(
     `SELECT "chain_id", "contract_name", "block_number", "log_index"
        FROM "${pgSchema}"."raw_events" ORDER BY "serial";`,
   )
@@ -130,7 +130,7 @@ describe("Raw events", () => {
       await indexer.getBatchWritePromise()
 
       let {sql, pgSchema} = indexer.pg
-      let rows: array<JSON.t> = await sql->Sql.query(
+      let rows: array<JSON.t> = await sql->Sql.queryForTests(
         `SELECT "chain_id", "event_id"::text AS "event_id", "event_name", "contract_name",
                 "block_number", "log_index", "src_address", "block_hash", "block_timestamp",
                 "block_fields", "transaction_fields", "params"

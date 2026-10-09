@@ -85,7 +85,7 @@ describe("Two processes indexing one schema", () => {
         "id": int,
         "first_event_block": Null.t<int>,
         "ready": bool,
-      }> = await sql->Sql.query(
+      }> = await sql->Sql.queryForTests(
         `SELECT "id", "first_event_block", "ready_at" IS NOT NULL AS "ready" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
       )
 

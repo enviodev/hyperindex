@@ -558,8 +558,10 @@ impl PgStorage {
         }
     }
 
+    /// Any statement at all, for tests to set a database up and read it back.
+    /// The indexer itself only ever calls the operations above.
     #[napi]
-    pub async fn query(
+    pub async fn query_for_tests(
         &self,
         sql: String,
         params: Vec<Option<String>>,

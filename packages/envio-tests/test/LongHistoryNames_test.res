@@ -111,7 +111,7 @@ describe("Two entities whose names truncate alike", () => {
       let {sql, pgSchema} = indexer.pg
       let historyTables: array<{
         "name": string,
-      }> = await sql->Sql.query(
+      }> = await sql->Sql.queryForTests(
         `SELECT table_name AS "name" FROM information_schema.tables
           WHERE table_schema = '${pgSchema}' AND table_name LIKE 'envio_history_BBB%'
           ORDER BY table_name`,

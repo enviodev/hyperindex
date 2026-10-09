@@ -77,12 +77,12 @@ describe("Json documents of every shape", () => {
         "id": string,
         "one": string,
         "many": string,
-      }> = await sql->Sql.query(
+      }> = await sql->Sql.queryForTests(
         `SELECT "id", "one"::text AS "one", "many"::text AS "many" FROM "${pgSchema}"."Doc" ORDER BY "id" COLLATE "C";`,
       )
       let history: array<{
         "count": string,
-      }> = await sql->Sql.query(
+      }> = await sql->Sql.queryForTests(
         `SELECT count(*)::text AS "count" FROM "${pgSchema}"."envio_history_Doc";`,
       )
 

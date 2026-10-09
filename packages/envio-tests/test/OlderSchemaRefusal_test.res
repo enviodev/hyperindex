@@ -36,7 +36,7 @@ describe("Restarting onto a schema an older envio wrote", () => {
     ~source as _,
   ) => {
     let {sql, pgSchema} = indexer.pg
-    let _ = await sql->Sql.query(`DROP TABLE "${pgSchema}"."envio_contracts";`)
+    let _ = await sql->Sql.queryForTests(`DROP TABLE "${pgSchema}"."envio_contracts";`)
 
     let message = switch await indexer.restart() {
     | _ => "the restart to fail, but it succeeded"

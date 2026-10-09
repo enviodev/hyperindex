@@ -72,7 +72,9 @@ describe("A chain id past int32", () => {
       let {sql, pgSchema} = restarted.pg
       let chains: array<{
         "id": string,
-      }> = await sql->Sql.query(`SELECT "id"::text AS "id" FROM "${pgSchema}"."envio_chains";`)
+      }> = await sql->Sql.queryForTests(
+        `SELECT "id"::text AS "id" FROM "${pgSchema}"."envio_chains";`,
+      )
 
       t.expect((rolledBack, chains)).toEqual((
         [{id: "tally", count: 1}],

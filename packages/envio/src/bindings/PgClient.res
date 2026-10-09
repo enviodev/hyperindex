@@ -266,7 +266,9 @@ let arena = (client): Staging.arena => {
   abortStage: (~handle, ~buffers) => client->abortStage(~handle, ~buffers),
 }
 
-@send external queryRaw: (t, string, array<Null.t<string>>) => promise<queryResult> = "query"
+@send
+external queryForTestsRaw: (t, string, array<Null.t<string>>) => promise<queryResult> =
+  "queryForTests"
 
 @send external lendResult: (t, int) => array<ArrayBuffer.t> = "lendResult"
 
@@ -288,7 +290,8 @@ let read = (client, {handle, names, kinds, elementKinds, rows}) => {
   result
 }
 
-let query = async (client, sql, ~params=[]) => client->read(await client->queryRaw(sql, params))
+let queryForTests = async (client, sql, ~params=[]) =>
+  client->read(await client->queryForTestsRaw(sql, params))
 
 // `entity_filter::Condition` in packages/cli/src/entity_filter.rs.
 type filterOperator =

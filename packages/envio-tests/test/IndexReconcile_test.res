@@ -91,14 +91,14 @@ let restartToReady = async (indexer: IndexerRunner.t, ~source: MockSource.t) => 
 
 let shape = async (indexer: IndexerRunner.t, statement) => {
   let {sql, pgSchema} = indexer.pg
-  let _ = await sql->Sql.query(statement(pgSchema))
+  let _ = await sql->Sql.queryForTests(statement(pgSchema))
 }
 
 let readyAt = async (indexer: IndexerRunner.t) => {
   let {sql, pgSchema} = indexer.pg
   let rows: array<{
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.query(`SELECT "ready_at" FROM "${pgSchema}"."envio_chains";`)
+  }> = await sql->Sql.queryForTests(`SELECT "ready_at" FROM "${pgSchema}"."envio_chains";`)
   rows->Array.map(row => row["ready_at"]->Null.toOption->Option.isSome)
 }
 
@@ -152,7 +152,7 @@ describe("Indexes on a database that already holds some", () => {
           `INSERT INTO "${pgSchema}"."A" ("id", "b_id") VALUES ('1', 'dup'), ('2', 'dup');`,
       )
       let {sql, pgSchema} = indexer.pg
-      let failed = switch await sql->Sql.query(
+      let failed = switch await sql->Sql.queryForTests(
         `CREATE UNIQUE INDEX CONCURRENTLY "A_b_id" ON "${pgSchema}"."A"("b_id");`,
       ) {
       | _ => false

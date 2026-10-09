@@ -57,7 +57,7 @@ let readyByChainId = async (~sql, ~pgSchema) => {
   let rows: array<{
     "id": ChainId.t,
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.query(
+  }> = await sql->Sql.queryForTests(
     `SELECT "id", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (

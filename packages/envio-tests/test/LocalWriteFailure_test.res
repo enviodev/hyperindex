@@ -64,15 +64,17 @@ describe("A batch whose write fails in JavaScript", () => {
       let {sql, pgSchema} = indexer.pg
       let checkpoints: array<{
         "count": string,
-      }> = await sql->Sql.query(
+      }> = await sql->Sql.queryForTests(
         `SELECT count(*)::text AS "count" FROM "${pgSchema}"."envio_checkpoints";`,
       )
       let raw: array<{
         "n": string,
-      }> = await sql->Sql.query(`SELECT count(*)::text AS "n" FROM "${pgSchema}"."Tally";`)
+      }> = await sql->Sql.queryForTests(`SELECT count(*)::text AS "n" FROM "${pgSchema}"."Tally";`)
       let progress: array<{
         "progress_block": int,
-      }> = await sql->Sql.query(`SELECT "progress_block" FROM "${pgSchema}"."envio_chains";`)
+      }> = await sql->Sql.queryForTests(
+        `SELECT "progress_block" FROM "${pgSchema}"."envio_chains";`,
+      )
 
       t.expect((
         failure,

@@ -95,9 +95,9 @@ let params = (values: array<unknown>): array<Null.t<string>> =>
 
 // The rows come back as plain objects keyed by the column names the statement
 // selected. The server decides what is in them, so the caller names their shape.
-let query = (client, sql, ~params as values: array<unknown>=[]): promise<array<'row>> =>
+let queryForTests = (client, sql, ~params as values: array<unknown>=[]): promise<array<'row>> =>
   client
-  ->PgClient.query(sql, ~params=params(values))
+  ->PgClient.queryForTests(sql, ~params=params(values))
   ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<'row>>)
 
 let close = client => client->PgClient.close

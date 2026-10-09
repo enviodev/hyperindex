@@ -110,14 +110,14 @@ describe("Snake-case columns", () => {
         "id": string,
         "transaction_index": int,
         "token_owner_id": string,
-      }> = await sql->Sql.query(
+      }> = await sql->Sql.queryForTests(
         `SELECT "id", "transaction_index", "token_owner_id" FROM "${pgSchema}"."Snapshot" ORDER BY "id";`,
       )
       let history: array<{
         "id": string,
         "transaction_index": int,
         "envio_change": string,
-      }> = await sql->Sql.query(
+      }> = await sql->Sql.queryForTests(
         `SELECT "id", "transaction_index", "envio_change"::text FROM "${pgSchema}"."envio_history_Snapshot" ORDER BY "id";`,
       )
 

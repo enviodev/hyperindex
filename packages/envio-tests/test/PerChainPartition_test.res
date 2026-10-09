@@ -143,7 +143,7 @@ describe("Per-chain entity partitions against Postgres", () => {
 
       // Every relation the Counter entity owns: the parent, its partitions, and
       // its history table — with what each one is attached to.
-      let relations: array<relation> = await sql->Sql.query(
+      let relations: array<relation> = await sql->Sql.queryForTests(
         `SELECT c.relname AS "name", c.relkind::text AS "kind", COALESCE(p.relname, '') AS "parent"
          FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -166,7 +166,7 @@ describe("Per-chain entity partitions against Postgres", () => {
 
       let plan: array<{
         "QUERY PLAN": string,
-      }> = await sql->Sql.query(
+      }> = await sql->Sql.queryForTests(
         `EXPLAIN SELECT * FROM "${pgSchema}"."Counter" WHERE "chainId" = 137`,
       )
 

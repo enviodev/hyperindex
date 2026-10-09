@@ -52,12 +52,12 @@ let read = async (indexer: IndexerRunner.t) => {
   let history: array<Change.t<tally>> = await indexer.queryHistory("Tally")
   let checkpoints: array<{
     "count": string,
-  }> = await sql->Sql.query(
+  }> = await sql->Sql.queryForTests(
     `SELECT count(*)::text AS "count" FROM "${pgSchema}"."envio_checkpoints";`,
   )
   let progress: array<{
     "progress_block": int,
-  }> = await sql->Sql.query(`SELECT "progress_block" FROM "${pgSchema}"."envio_chains";`)
+  }> = await sql->Sql.queryForTests(`SELECT "progress_block" FROM "${pgSchema}"."envio_chains";`)
   {
     tallies: tallies->Array.toSorted((a, b) => String.compare(a.id, b.id)),
     history: history->Array.length,

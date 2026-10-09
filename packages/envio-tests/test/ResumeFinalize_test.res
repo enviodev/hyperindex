@@ -83,7 +83,7 @@ let persistedChains = async (~sql, ~pgSchema) => {
     "id": int,
     "progress_block": int,
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.query(
+  }> = await sql->Sql.queryForTests(
     `SELECT "id", "progress_block", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => {
@@ -96,16 +96,18 @@ let persistedChains = async (~sql, ~pgSchema) => {
 let persistedReadyAt = async (~sql, ~pgSchema) => {
   let rows: array<{
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.query(`SELECT "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`)
+  }> = await sql->Sql.queryForTests(
+    `SELECT "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
+  )
   rows->Array.map(row => row["ready_at"]->Null.toOption->Option.map(Date.toISOString))
 }
 
 let dropIndex = async (name, ~sql, ~pgSchema) => {
-  let _ = await sql->Sql.query(`DROP INDEX "${pgSchema}"."${name}";`)
+  let _ = await sql->Sql.queryForTests(`DROP INDEX "${pgSchema}"."${name}";`)
 }
 
 let clearReadyAt = async (~sql, ~pgSchema) => {
-  let _ = await sql->Sql.query(`UPDATE "${pgSchema}"."envio_chains" SET "ready_at" = NULL;`)
+  let _ = await sql->Sql.queryForTests(`UPDATE "${pgSchema}"."envio_chains" SET "ready_at" = NULL;`)
 }
 
 // Rejects the first `failCount` finalize attempts before delegating to the real
@@ -641,7 +643,7 @@ describe("Resuming a backfill that never finalized", () => {
 
       // Stand in for a chain joining a synced indexer: chain 1 keeps the stamp it
       // earned, chain 1337 arrives without one.
-      let _ = await sql->Sql.query(
+      let _ = await sql->Sql.queryForTests(
         `UPDATE "${pgSchema}"."envio_chains" SET "ready_at" = NULL WHERE "id" = 1337;`,
       )
       let readyAtBefore = await persistedReadyAt(~sql, ~pgSchema)

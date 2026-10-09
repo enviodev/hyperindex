@@ -10,7 +10,7 @@ type index = {
 }
 
 let indexes = (sql, ~pgSchema): promise<array<index>> =>
-  sql->Sql.query(
+  sql->Sql.queryForTests(
     `SELECT
   t.relname::text AS "tableName",
   i.relname::text AS "name",

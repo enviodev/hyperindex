@@ -33,7 +33,7 @@ describe("Raw Events Table Migrations", () => {
       let rawEventsColumnsRes: array<{
         "column_name": string,
         "data_type": string,
-      }> = await sql->Sql.query(
+      }> = await sql->Sql.queryForTests(
         `SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type
            FROM INFORMATION_SCHEMA.COLUMNS
            WHERE TABLE_SCHEMA = '${pgSchema}'

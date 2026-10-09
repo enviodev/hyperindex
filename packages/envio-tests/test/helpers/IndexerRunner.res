@@ -338,7 +338,9 @@ let run = async (
     // Rows come back decoded: postgres parses them with the table's field schemas.
     let queryEntity = (entityConfig: Internal.entityConfig) =>
       sql
-      ->Sql.query(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
+      ->Sql.queryForTests(
+        PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+      )
       ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
 
     // Which chain a stored row belongs to, for a table that has chains at all.
@@ -363,7 +365,7 @@ let run = async (
     let queryEntityHistory = (entityConfig: Internal.entityConfig) => {
       let chainIdOfRow = chainIdOfRow(entityConfig)
       sql
-      ->Sql.query(
+      ->Sql.queryForTests(
         PgStorage.makeLoadAllQuery(
           ~pgSchema,
           ~tableName=EntityHistory.historyTableName(
@@ -542,7 +544,7 @@ let run = async (
       queryAddresses: async () => {
         let rows =
           (
-            await sql->Sql.query(
+            await sql->Sql.queryForTests(
               `SELECT "chain_id" AS "chainId", "address", "contract_id" AS "contractId", "registration_block" AS "registrationBlock" FROM "${pgSchema}"."envio_addresses";`,
             )
           )->(Utils.magic: array<unknown> => array<AddressRows.row>)
@@ -564,7 +566,7 @@ let run = async (
         ),
       queryCheckpoints: () =>
         sql
-        ->Sql.query(
+        ->Sql.queryForTests(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
             ~tableName=InternalTable.Checkpoints.table.tableName,
@@ -577,7 +579,7 @@ let run = async (
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
         sql
-        ->Sql.query(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
+        ->Sql.queryForTests(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
         ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {

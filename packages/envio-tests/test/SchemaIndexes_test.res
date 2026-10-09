@@ -111,7 +111,7 @@ let readyAtRows = async (~sql, ~pgSchema) => {
   let rows: array<{
     "id": ChainId.t,
     "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.query(
+  }> = await sql->Sql.queryForTests(
     `SELECT "id", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows
@@ -431,7 +431,7 @@ describe("Deferred schema indexes", () => {
       // and no schema index has been created yet.
       await Utils.delay(0)
 
-      let _ = await sql->Sql.query(`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`)
+      let _ = await sql->Sql.queryForTests(`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`)
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)

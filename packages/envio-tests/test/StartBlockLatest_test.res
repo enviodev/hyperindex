@@ -93,7 +93,7 @@ let persistedStartBlocks = async (~sql, ~pgSchema) => {
   let rows: array<{
     "id": int,
     "start_block": int,
-  }> = await sql->Sql.query(
+  }> = await sql->Sql.queryForTests(
     `SELECT "id", "start_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (row["id"], row["start_block"]))
@@ -144,7 +144,7 @@ describe("start_block: latest", () => {
       let {sql, pgSchema} = indexer.pg
       let rows: array<{
         "seenStartBlock": int,
-      }> = await sql->Sql.query(`SELECT "seenStartBlock" FROM "${pgSchema}"."Seen";`)
+      }> = await sql->Sql.queryForTests(`SELECT "seenStartBlock" FROM "${pgSchema}"."Seen";`)
 
       t.expect(rows->Array.map(row => row["seenStartBlock"])).toEqual([1000])
     },

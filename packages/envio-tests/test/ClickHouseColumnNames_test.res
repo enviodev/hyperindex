@@ -55,7 +55,7 @@ let columns = async (indexer: IndexerRunner.t) => {
   let {sql, pgSchema} = indexer.pg
   let postgres: array<{
     "name": string,
-  }> = await sql->Sql.query(
+  }> = await sql->Sql.queryForTests(
     `SELECT column_name::text AS "name" FROM information_schema.columns
      WHERE table_schema = $1 AND table_name = 'Token' ORDER BY ordinal_position;`,
     ~params=[pgSchema->(Utils.magic: string => unknown)],
