@@ -290,6 +290,29 @@ let read = (client, {handle, names, kinds, elementKinds, rows}) => {
 
 let query = async (client, sql, ~params=[]) => client->read(await client->queryRaw(sql, params))
 
+// `entity_filter::Condition` in packages/cli/src/entity_filter.rs.
+type filterOperator =
+  | @as("Eq") Eq
+  | @as("Gt") Gt
+  | @as("Lt") Lt
+  | @as("Gte") Gte
+  | @as("Lte") Lte
+  | @as("In") In
+type filterCondition = {
+  column: string,
+  operator: filterOperator,
+  values: array<array<Null.t<string>>>,
+  isList: bool,
+  enumName?: string,
+  isChainId: bool,
+}
+
+@send
+external loadWhereRaw: (t, string, array<filterCondition>) => promise<queryResult> = "loadWhere"
+
+let loadWhere = async (client, ~tableName, ~conditions) =>
+  client->read(await client->loadWhereRaw(tableName, conditions))
+
 @send external isInitialized: t => promise<bool> = "isInitialized"
 
 @send external checkSchemaForInitialize: t => promise<bool> = "checkSchemaForInitialize"

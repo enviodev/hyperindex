@@ -313,22 +313,14 @@ let fieldsByApiName: table => dict<fieldOrDerived> = Utils.WeakMap.memoize(table
 let getFieldByApiName = (table, apiFieldName) =>
   table->fieldsByApiName->Utils.Dict.dangerouslyGetNonOption(apiFieldName)
 
-// Both schema instances are created once per field: rescript-schema compiles
-// and caches operations on the schema instance, so building S.array(fieldSchema)
-// per query would recompile the serializer on every call.
 type queryField = {
   fieldType: fieldType,
   isArray: bool,
   fieldSchema: S.t<unknown>,
-  // Serializes the values array of an "in" filter
-  arrayFieldSchema: S.t<unknown>,
-  // The Postgres column referenced in load SQL, which only differs from the
-  // API field name keying this entry when column renaming is configured.
-  // Loads are served by Postgres only (ClickHouse is a write-only sink), so
-  // no ClickHouse counterpart is needed here.
+  // The column a load filters on, which only differs from the API field name
+  // keying this entry when column renaming is configured.
   pgDbFieldName: string,
-  // The chain-id column a per-chain entity's table is partitioned by, which a
-  // filter has to write into the SQL rather than bind. See `makeFilterCondition`.
+  // The chain-id column a per-chain entity's table is partitioned by.
   isChainId: bool,
 }
 let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
@@ -342,10 +334,6 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
           fieldType: field.fieldType,
           isArray: field.isArray,
           fieldSchema: field.fieldSchema,
-          arrayFieldSchema: switch field.fieldType {
-          | Bytea => Utils.Schema.bytesArray->S.toUnknown
-          | _ => S.array(field.fieldSchema)->S.toUnknown
-          },
           pgDbFieldName: field->getPgDbFieldName,
           isChainId: field.isChainId,
         },

@@ -591,10 +591,8 @@ module Schema = {
     serializer: (bytes: Uint8Array.t) => bytes,
   })
 
-  // A bytea[] value: a list column, or the values an `in` filter compares
-  // against — one array per candidate when the column is itself a list. Only a
-  // column is ever read back, so the parser takes the one level a bytea[]
-  // column returns.
+  // A bytea[] column's value. The parser takes the one level a bytea[] column
+  // returns.
   let bytesArray = S.custom("BytesArray", s => {
     parser: unknown =>
       if unknown->Array.isArray {

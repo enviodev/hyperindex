@@ -11,6 +11,7 @@ mod live_tests;
 pub mod param;
 pub mod pg_type;
 pub mod rows;
+pub mod select;
 pub mod storage;
 pub mod write;
 

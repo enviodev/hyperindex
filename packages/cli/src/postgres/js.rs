@@ -9,6 +9,7 @@ use napi::{Env, Status};
 use napi_derive::napi;
 
 use crate::columnar::{self, Arena, ColumnKind};
+use crate::entity_filter::Condition;
 
 use super::client::{self, PgConnectionOptions, SslSetting};
 use super::ddl::{ColumnSpec, TableSpec};
@@ -567,6 +568,20 @@ impl PgStorage {
             .inner
             .client
             .query(&sql, &to_params(params))
+            .await
+            .map_err(to_napi)?;
+        self.hold(rows)
+    }
+
+    #[napi]
+    pub async fn load_where(
+        &self,
+        table_name: String,
+        conditions: Vec<Condition>,
+    ) -> napi::Result<PgQueryResult> {
+        let rows = self
+            .inner
+            .load_where(&table_name, conditions)
             .await
             .map_err(to_napi)?;
         self.hold(rows)

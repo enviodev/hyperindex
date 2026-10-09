@@ -28,7 +28,9 @@ use super::insert::{self, Constant};
 use super::internal::{self, ChainConfig};
 use super::param::Param;
 use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
+use super::select;
 use super::write;
+use crate::entity_filter::Condition;
 
 pub struct Settings {
     pub pg_schema: String,
@@ -1067,6 +1069,15 @@ impl Storage {
             outcome?;
         }
         Ok(())
+    }
+
+    pub async fn load_where(
+        &self,
+        table_name: &str,
+        conditions: Vec<Condition>,
+    ) -> Result<QueryRows> {
+        let (sql, params) = select::load_query(self.schema(), table_name, conditions)?;
+        self.client.query(&sql, &params).await
     }
 
     pub async fn reset(&self) -> Result<()> {

@@ -262,21 +262,12 @@ let getRowSchema = (entityConfig: Internal.entityConfig): S.t<Internal.entity> =
     schema
   }
 
-let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE ${condition};`
-}
-
-// Appends the filter's serialized field values to params (mutated in place)
-// and returns the matching SQL condition referencing them by index.
-// Field names are spliced as quoted identifiers only after the queryFields
-// lookup proves they exist on the table (and they originate from
-// codegen-validated schemas), so the interpolation can't be abused.
-let makeFilterCondition = (
-  ~filter: EntityFilter.t,
-  ~table: Table.table,
-  ~pgSchema,
-  ~params: array<unknown>,
-) => {
+// The filter as the storage answers it: per field, its column, how it compares
+// and the values it compares against, each rendered to the text the column's
+// own type reads. Which statement that becomes is the storage's to decide.
+let filterConditions = (~filter: EntityFilter.t, ~table: Table.table): array<
+  PgClient.filterCondition,
+> => {
   // Filters reference fields by API name, while the SQL references columns
   // by their possibly renamed db names.
   let getQueryFieldOrThrow = fieldName =>
@@ -290,15 +281,9 @@ let makeFilterCondition = (
         }),
       )
     }
-  let serializeParamOrThrow = (
-    ~queryField: Table.queryField,
-    ~fieldName,
-    ~fieldValue: unknown,
-    ~isArray,
-  ) => {
-    let param = try fieldValue->S.reverseConvertOrThrow(
-      isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
-    ) catch {
+  // A value's elements: one for a scalar column, the list's own for a list.
+  let renderOrThrow = (~queryField: Table.queryField, ~fieldName, ~fieldValue: unknown) => {
+    let converted = try fieldValue->S.reverseConvertOrThrow(queryField.fieldSchema) catch {
     | exn =>
       throw(
         Persistence.StorageError({
@@ -307,90 +292,53 @@ let makeFilterCondition = (
         }),
       )
     }
-    params->Array.push(param)->ignore
-    `$${params->Array.length->Int.toString}`
+    queryField.isArray
+      ? converted->(Utils.magic: unknown => array<unknown>)->Sql.params
+      : Sql.params([converted])
   }
 
-  let condition = ref("")
+  let conditions = []
   filter
   ->EntityFilter.entries
   ->Utils.Dict.forEachWithKey((operators, fieldName) => {
     let queryField = getQueryFieldOrThrow(fieldName)
     operators->Utils.Dict.forEachWithKey((fieldValue, operator) => {
-      let column = `"${queryField.pgDbFieldName}"`
-      let part = switch operator {
-      // A per-chain entity's table is partitioned by its chain-id column, and
-      // Postgres can only prune a plan it caches when that column is a constant
-      // in the SQL. Bound, the cached plan has to keep every partition, and the
-      // planner ends up throwing it away and re-planning on every execution
-      // instead — measured at 315us per load against 218us with the id written
-      // in, on 30 chains.
-      //
-      // The cost is that each chain gets its own query text, so Postgres caches
-      // a prepared statement per (entity, chain, filter shape) rather than per
-      // (entity, filter shape). Measured at ~8KB of plan cache each, which is
-      // ~10MB per connection for 40 entities across 30 chains — accepted, since
-      // the alternative is a cached plan that can't prune.
-      //
-      // `EntityFilter.scoped` is what puts this filter here, and the value is
-      // range-checked to a non-negative safe integer, so it can carry nothing
-      // but digits.
-      | "_eq" if queryField.isChainId =>
-        `${column} = ${fieldValue->ChainId.normalizeOrThrow->ChainId.toString}`
-      // Postgres arrays are rectangular, so candidates for a list column can't
-      // be bound as one array unless they all have the same length. One
-      // equality per candidate doesn't care.
-      | "_in" if queryField.isArray =>
-        switch fieldValue->EntityFilter.asArray {
-        | [] => "FALSE"
-        | candidates =>
-          `(${candidates
-            ->Array.map(
-              candidate =>
-                `${column} = ${serializeParamOrThrow(
-                    ~queryField,
-                    ~fieldName,
-                    ~fieldValue=candidate,
-                    ~isArray=false,
-                  )}`,
-            )
-            ->Array.join(" OR ")})`
-        }
-      | "_in" =>
-        let param = serializeParamOrThrow(~queryField, ~fieldName, ~fieldValue, ~isArray=true)
-        switch queryField.fieldType {
-        // A bound array of strings is text[], which has no equality with an
-        // enum. The insert casts the same way.
-        | Enum({config}) => `${column} = ANY(${param}::TEXT[]::"${pgSchema}".${config.name}[])`
-        | _ => `${column} = ANY(${param})`
-        }
+      let render = fieldValue => renderOrThrow(~queryField, ~fieldName, ~fieldValue)
+      let (operator: PgClient.filterOperator, values) = switch operator {
+      | "_eq" => (Eq, [render(fieldValue)])
+      | "_gt" => (Gt, [render(fieldValue)])
+      | "_lt" => (Lt, [render(fieldValue)])
+      | "_gte" => (Gte, [render(fieldValue)])
+      | "_lte" => (Lte, [render(fieldValue)])
+      | "_in" => (In, fieldValue->EntityFilter.asArray->Array.map(render))
       | _ =>
-        let sqlOperator = switch operator {
-        | "_eq" => "="
-        | "_gt" => ">"
-        | "_lt" => "<"
-        | "_gte" => ">="
-        | "_lte" => "<="
-        | _ =>
-          throw(
-            Persistence.StorageError({
-              message: `Failed loading "${table.tableName}" from storage. Unknown filter operator "${operator}".`,
-              reason: Utils.Error.make(`Unknown filter operator "${operator}"`),
-            }),
-          )
-        }
-        `${column} ${sqlOperator} ${serializeParamOrThrow(
-            ~queryField,
-            ~fieldName,
-            ~fieldValue,
-            ~isArray=false,
-          )}`
+        throw(
+          Persistence.StorageError({
+            message: `Failed loading "${table.tableName}" from storage. Unknown filter operator "${operator}".`,
+            reason: Utils.Error.make(`Unknown filter operator "${operator}"`),
+          }),
+        )
       }
-      condition := (condition.contents === "" ? part : condition.contents ++ " AND " ++ part)
+      conditions
+      ->Array.push(
+        (
+          {
+            column: queryField.pgDbFieldName,
+            operator,
+            values,
+            isList: queryField.isArray,
+            enumName: ?switch queryField.fieldType {
+            | Enum({config}) => Some(config.name)
+            | _ => None
+            },
+            isChainId: queryField.isChainId,
+          }: PgClient.filterCondition
+        ),
+      )
+      ->ignore
     })
   })
-
-  condition.contents
+  conditions
 }
 
 let makeLoadAllQuery = (~pgSchema, ~tableName) => {
@@ -897,16 +845,12 @@ let make = (
   }
 
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
-    let params = []
-    let condition = makeFilterCondition(~filter, ~table, ~pgSchema, ~params)
-    switch await sql->Sql.query(
-      makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
-      ~params,
-    ) {
+    let conditions = filterConditions(~filter, ~table)
+    switch await sql->PgClient.loadWhere(~tableName=table.tableName, ~conditions) {
     | exception exn =>
       throw(
         Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by condition: ${condition}`,
+          message: `Failed loading "${table.tableName}" from storage.`,
           reason: exn,
         }),
       )
@@ -915,7 +859,7 @@ let make = (
       | exn =>
         throw(
           Persistence.StorageError({
-            message: `Failed to parse "${table.tableName}" loaded from storage by condition: ${condition}`,
+            message: `Failed to parse "${table.tableName}" loaded from storage.`,
             reason: exn,
           }),
         )
