@@ -1,11 +1,33 @@
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+
+// `Core.loadAddon` prefers the platform package over the dev build, so when
+// one is installed (CI installs the prebuilt artifact) a cargo build here is
+// minutes of work whose output is never loaded.
+function hasPlatformAddon(): boolean {
+  const envioRequire = createRequire(
+    createRequire(import.meta.url).resolve("envio/package.json")
+  );
+  const base = `envio-${process.platform}-${process.arch}`;
+  return [base, `${base}-musl`].some((pkg) => {
+    try {
+      envioRequire.resolve(pkg);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
 
 // Build the addon once before worker forks exist. Each fork otherwise runs
 // `cargo build --lib` and can sit on cargo's lock through vitest's teardown.
 function buildDevAddon(): void {
+  if (hasPlatformAddon()) {
+    return;
+  }
   const repoRoot = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "..",

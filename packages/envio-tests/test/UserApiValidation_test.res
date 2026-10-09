@@ -64,6 +64,61 @@ chains:
     }
   })
 
+  it("omits RPC entries whose url interpolates to nothing, quoted or not", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~env=dict{},
+      ~configYaml=`
+name: optional-rpc
+chains:
+  - id: 1
+    rpc:
+      - url: \${ENVIO_RPC_URL_1:-}
+        for: realtime
+        ws: \${ENVIO_WS_URL_1:-}
+      - url: "\${ENVIO_RPC_URL_2:-}"
+        for: fallback
+    start_block: 0
+`,
+    )
+
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.sourceConfig).toEqual(
+      Config.EvmSourceConfig({hypersync: Some("https://1.hypersync.xyz"), rpcs: []}),
+    )
+  })
+
+  it("keeps an RPC entry whose quoted ws interpolates to nothing, without the ws", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~env=dict{"ENVIO_RPC_URL_1": "https://rpc.example.test"},
+      ~configYaml=`
+name: optional-ws
+chains:
+  - id: 1
+    rpc:
+      - url: \${ENVIO_RPC_URL_1:-}
+        for: realtime
+        ws: "\${ENVIO_WS_URL_1:-}"
+    start_block: 0
+`,
+    )
+
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.sourceConfig).toEqual(
+      Config.EvmSourceConfig({
+        hypersync: Some("https://1.hypersync.xyz"),
+        rpcs: [
+          {
+            url: "https://rpc.example.test",
+            sourceFor: Source.Realtime,
+            syncConfig: None,
+            ws: None,
+            headers: None,
+          },
+        ],
+      }),
+    )
+  })
+
   it("resolves ABI paths from caller-provided virtual files", t => {
     let files = dict{
       "abis/token.json": `[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]`,
@@ -1417,8 +1472,7 @@ programs:
   // generated TypeScript can carry.
   it("accepts program and instruction names that ReScript reserves", t => {
     let {config} = InternalTestIndexer.fromUserApi(
-      ~configYaml=prefix ++
-      `        - name: type
+      ~configYaml=prefix ++ `        - name: type
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           instructions:
             - {name: switch, discriminator: "0x0f"}
@@ -2077,7 +2131,9 @@ chains:
   it("reports events missing from an ABI", t => {
     expectParseError(
       t,
-      ~files=dict{"abis/Token.json": `[{"type":"event","name":"Approval","inputs":[],"anonymous":false}]`},
+      ~files=dict{
+        "abis/Token.json": `[{"type":"event","name":"Approval","inputs":[],"anonymous":false}]`,
+      },
       evmYaml,
       "Failed parsing abi types for events in contract Token on network 1: Event Transfer not found in ABI file",
     )
@@ -2125,10 +2181,12 @@ programs:
 `,
     )
     t.expect(
-      firstContract(config).events->Array.map(event => {
-        let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-        (svm.name, svm.accounts, svm.args)
-      }),
+      firstContract(config).events->Array.map(
+        event => {
+          let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+          (svm.name, svm.accounts, svm.args)
+        },
+      ),
     ).toEqual([
       ("namesOnly", [Internal.Required("source")], JSON.Null),
       ("argsOnly", [], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
@@ -2215,12 +2273,7 @@ indexer.onInstruction(
 `,
     )
     t.expect(catalog(config)).toEqual([
-      (
-        `say\"hi`,
-        Some("0x07"),
-        ["payer"],
-        JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`),
-      ),
+      (`say\"hi`, Some("0x07"), ["payer"], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
     ])
   })
 
@@ -2287,7 +2340,12 @@ indexer.onInstruction(
     )
     t.expect(catalog(config)).toEqual([
       ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
-      ("swap", Some("0x01"), ["payer", "pool"], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
+      (
+        "swap",
+        Some("0x01"),
+        ["payer", "pool"],
+        JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`),
+      ),
       ("anyCall", None, [], JSON.Null),
     ])
   })
