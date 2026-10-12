@@ -148,28 +148,31 @@ let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) 
     `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
   )
 
+let makeSet = (params: entityContextParams, ~scope) =>
+  if params.isPreload {
+    noopSet
+  } else {
+    let committedCheckpointId = params.indexerState->IndexerState.committedCheckpointIdFor(~scope)
+    (entity: Internal.entity) => {
+      params.indexerState
+      ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
+      ->InMemoryTable.Entity.set(
+        ~committedCheckpointId,
+        Set({
+          entityId: entity.id->EntityId.unsafeOfString,
+          checkpointId: params.checkpointId,
+          entity,
+        }),
+      )
+    }
+  }
+
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
     let scope = params->entityScope
-    let committedCheckpointId = params.indexerState->IndexerState.committedCheckpointIdFor(~scope)
-
-    let set = params.isPreload
-      ? noopSet
-      : (entity: Internal.entity) => {
-          params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
-          ->InMemoryTable.Entity.set(
-            ~committedCheckpointId,
-            Set({
-              entityId: entity.id->EntityId.unsafeOfString,
-              checkpointId: params.checkpointId,
-              entity,
-            }),
-          )
-        }
 
     switch prop {
     | "get" =>
@@ -242,6 +245,8 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           (_entity: Internal.entity) => throwClickHouseReadOnly(params.entityConfig, "getOrCreate")
         )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
       } else {
+        let set = params->makeSet(~scope)
+
         (
           (entity: Internal.entity) =>
             LoadLayer.loadById(
@@ -265,11 +270,13 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             })
         )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
       }
-    | "set" => set->(Utils.magic: (Internal.entity => unit) => unknown)
+    | "set" => params->makeSet(~scope)->(Utils.magic: (Internal.entity => unit) => unknown)
     | "deleteUnsafe" =>
       if params.isPreload {
         noopDeleteUnsafe
       } else {
+        let committedCheckpointId =
+          params.indexerState->IndexerState.committedCheckpointIdFor(~scope)
         entityId => {
           params.indexerState
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
