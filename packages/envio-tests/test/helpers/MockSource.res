@@ -208,6 +208,26 @@ type getItemsOrThrowCall = {
   reject: 'exn. 'exn => unit,
 }
 
+type itemsAnswer = {
+  items: array<itemMock>,
+  latestFetchedBlockNumber?: int,
+  latestFetchedBlockHash?: string,
+  knownHeight?: int,
+  prevRangeLastBlock?: ReorgDetection.blockData,
+  requestStats?: array<Source.requestStat>,
+}
+
+type itemsQuerySpec = {
+  fromBlock?: int,
+  toBlock?: option<int>,
+  retry?: int,
+  p?: string,
+  where?: itemsQuery => bool,
+  resolve?: itemsAnswer,
+  resolveFrom?: itemsQuery => itemsAnswer,
+  reject?: exn,
+}
+
 type t = {
   source: Source.t,
   // Use array of bool instead of array of unit,
@@ -249,6 +269,7 @@ type t = {
   // Empty-response every matching pending query. A statement about queries that
   // already exist, so unlike `resolveGetItemsOrThrow` it never waits for one.
   drainItemsQueries: (~filter: itemsQuery => bool=?, ~latestFetchedBlockNumber: int=?) => unit,
+  interceptGetItemsCalls: array<itemsQuerySpec> => promise<unit>,
   getBlockHashesCalls: array<array<int>>,
   // Answers every block-hash lookup in flight, and throws when there is none.
   // Alone among the resolvers it never waits for its call: the rollback depth
@@ -297,6 +318,173 @@ let ambiguousItemsQueries = calls =>
   ->Array.join(
     "\n",
   ) ++ "\nNarrow it with ~filter, or use drainItemsQueries to empty-response them all."
+
+@val external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
+
+let specMatches = (spec: itemsQuerySpec, call: getItemsOrThrowCall) => {
+  let query = call.payload
+  spec.fromBlock->Option.mapOr(true, fromBlock => fromBlock === query["fromBlock"]) &&
+  spec.toBlock->Option.mapOr(true, toBlock => toBlock == query["toBlock"]) &&
+  spec.retry->Option.mapOr(true, retry => retry === query["retry"]) &&
+  spec.p->Option.mapOr(true, p => p === query["p"]) &&
+  spec.where->Option.mapOr(true, where => where(query))
+}
+
+// Every way to give each spec its own pending call, stopping at two: one is
+// the answer, two means the specs leave the choice to arrival order.
+let specAssignments = (specs: array<itemsQuerySpec>, calls: array<getItemsOrThrowCall>) => {
+  let found = []
+  let current = []
+  let rec assign = index =>
+    if found->Array.length < 2 {
+      switch specs->Array.get(index) {
+      | None => found->Array.push(current->Array.copy)->ignore
+      | Some(spec) =>
+        calls->Array.forEach(call =>
+          if !(current->Array.includes(call)) && spec->specMatches(call) {
+            current->Array.push(call)->ignore
+            assign(index + 1)
+            current->Array.pop->ignore
+          }
+        )
+      }
+    }
+  assign(0)
+  found
+}
+
+let describeToBlock = toBlock =>
+  switch toBlock {
+  | Some(toBlock) => `Some(${toBlock->Int.toString})`
+  | None => "None"
+  }
+
+// Pasteable as a spec, so a failure's suggestion can go straight into the test.
+let describeCallAsSpec = (call: getItemsOrThrowCall, ~fields) => {
+  let query = call.payload
+  let field = name =>
+    switch name {
+    | "p" => `p: "${query["p"]}"`
+    | "fromBlock" => `fromBlock: ${query["fromBlock"]->Int.toString}`
+    | "toBlock" => `toBlock: ${query["toBlock"]->describeToBlock}`
+    | _ => `retry: ${query["retry"]->Int.toString}`
+    }
+  `{${fields->Array.map(field)->Array.join(", ")}}`
+}
+
+let allQueryFields = ["p", "fromBlock", "toBlock", "retry"]
+
+let describeSpec = (spec: itemsQuerySpec) => {
+  let fields = Array.filterMap(
+    [
+      spec.p->Option.map(p => `p: "${p}"`),
+      spec.fromBlock->Option.map(fromBlock => `fromBlock: ${fromBlock->Int.toString}`),
+      spec.toBlock->Option.map(toBlock => `toBlock: ${toBlock->describeToBlock}`),
+      spec.retry->Option.map(retry => `retry: ${retry->Int.toString}`),
+      spec.where->Option.map(_ => "where: <fn>"),
+    ],
+    field => field,
+  )
+  `{${fields->Array.join(", ")}}`
+}
+
+let queryField = (call: getItemsOrThrowCall, name) =>
+  switch name {
+  | "p" => call.payload["p"]
+  | "fromBlock" => call.payload["fromBlock"]->Int.toString
+  | "toBlock" => call.payload["toBlock"]->describeToBlock
+  | _ => call.payload["retry"]->Int.toString
+  }
+
+let ambiguousSpecsMessage = (specs: array<itemsQuerySpec>, ~answeringIndices, first, second) => {
+  let ambiguousPositions = answeringIndices->Array.reduceWithIndex([], (positions, _, position) => {
+    if first->Array.getUnsafe(position) !== second->Array.getUnsafe(position) {
+      positions->Array.push(position)->ignore
+    }
+    positions
+  })
+  let ambiguousIndices =
+    ambiguousPositions->Array.map(position => answeringIndices->Array.getUnsafe(position))
+  let calls = []
+  ambiguousPositions->Array.forEach(position =>
+    [first->Array.getUnsafe(position), second->Array.getUnsafe(position)]->Array.forEach(call =>
+      if !(calls->Array.includes(call)) {
+        calls->Array.push(call)->ignore
+      }
+    )
+  )
+  let distinguishing = allQueryFields->Array.find(name => {
+    let values = calls->Array.map(call => call->queryField(name))
+    values->Array.every(value => values->Array.indexOf(value) === values->Array.lastIndexOf(value))
+  })
+  `interceptGetItemsCalls can pair ${ambiguousIndices
+    ->Array.map(index =>
+      `spec #${index->Int.toString} ${specs->Array.getUnsafe(index)->describeSpec}`
+    )
+    ->Array.join(", ")} with more than one pending call:\n` ++
+  calls
+  ->Array.map(call => `  ${call->describeCallAsSpec(~fields=allQueryFields)}`)
+  ->Array.join("\n") ++
+  switch distinguishing {
+  | Some(name) =>
+    `\nGive each call its own spec, told apart by ${name}:\n` ++
+    calls->Array.map(call => `  ${call->describeCallAsSpec(~fields=[name])}`)->Array.join("\n")
+  | None => "\nNo query field tells them apart; tell them apart with `where`, e.g. by addresses."
+  }
+}
+
+let unclaimedCallsMessage = (unclaimed: array<getItemsOrThrowCall>) =>
+  "interceptGetItemsCalls matched every spec, but these pending calls are in no spec:\n" ++
+  unclaimed
+  ->Array.map(call => `  ${call->describeCallAsSpec(~fields=allQueryFields)}`)
+  ->Array.join("\n") ++
+  "\nAnswer them in this list, or list them without an answer to leave them in flight:\n" ++
+  unclaimed
+  ->Array.reduce([], (partitions, call) => {
+    if !(partitions->Array.includes(call.payload["p"])) {
+      partitions->Array.push(call.payload["p"])->ignore
+    }
+    partitions
+  })
+  ->Array.map(p => `  {p: "${p}"}`)
+  ->Array.join("\n")
+
+let timeoutMessage = (
+  specs: array<itemsQuerySpec>,
+  pending: array<getItemsOrThrowCall>,
+  ~answering: option<array<getItemsOrThrowCall>>,
+  ~isAnswering,
+) =>
+  `interceptGetItemsCalls timed out. Specs:\n` ++
+  specs
+  ->Array.mapWithIndex((spec, index) => {
+    let matching = pending->Array.filter(call => spec->specMatches(call))
+    let reason = switch (matching, answering) {
+    | ([], _) => " (matches no pending call)"
+    | (_, None) if isAnswering(spec) => " (no call left for it once the other answered specs pick)"
+    | (_, Some(answering))
+      if !isAnswering(spec) &&
+      matching->Array.every(call =>
+        answering->Array.includes(call)
+      ) => " (every call it matches is taken by an answered spec)"
+    | _ => ""
+    }
+    `  #${index->Int.toString} ${spec->describeSpec}${reason}`
+  })
+  ->Array.join("\n") ++
+  "\nPending calls:\n" ++
+  switch pending {
+  | [] => "  none"
+  | pending =>
+    pending
+    ->Array.map(call => `  ${call->describeCallAsSpec(~fields=allQueryFields)}`)
+    ->Array.join("\n")
+  }
+
+let answerCount = (spec: itemsQuerySpec) =>
+  [spec.resolve->Option.isSome, spec.resolveFrom->Option.isSome, spec.reject->Option.isSome]
+  ->Array.filter(given => given)
+  ->Array.length
 
 let make = (
   methods: array<method>,
@@ -375,6 +563,76 @@ let make = (
     "respond": getItemsOrThrowCall => unit,
   }> = []
   let deferredHeightAnswers: array<{"site": string, "height": int}> = []
+
+  // Calls a spec matched without answering. They stay pending, but a later
+  // list doesn't have to name them again to account for them.
+  let seenItemsCalls: array<getItemsOrThrowCall> = []
+  let arrivalListeners: array<unit => unit> = []
+  let arrivalScheduled = ref(false)
+  // A chain issues one query per partition in a single synchronous loop, so
+  // listeners are told after a microtask, once the whole fan-out has landed.
+  let notifyArrival = () =>
+    if !arrivalScheduled.contents {
+      arrivalScheduled := true
+      queueMicrotask(() => {
+        arrivalScheduled := false
+        let listeners = arrivalListeners->Array.copy
+        arrivalListeners->Utils.Array.clearInPlace
+        listeners->Array.forEach(listener => listener())
+      })
+    }
+  let nextArrival = (~deadline) =>
+    Promise.make((resolve, _reject) => {
+      let timer = setTimeout(
+        () => resolve(false),
+        Math.max(0., deadline -. Date.now())->Float.toInt,
+      )
+      arrivalListeners
+      ->Array.push(() => {
+        clearTimeout(timer)
+        resolve(true)
+      })
+      ->ignore
+    })
+  // Only a spec with an answer needs a call of its own: which call takes an
+  // answer is the one thing arrival order must not decide. A spec without one
+  // hands nothing out, so it accounts for every remaining call it matches.
+  let rec awaitWave = async (specs, ~answeringIndices, ~deadline) => {
+    let answering = answeringIndices->Array.map(index => specs->Array.getUnsafe(index))
+    let checking = specs->Array.filter(spec => spec->answerCount === 0)
+    let wait = async (~answering) =>
+      if await nextArrival(~deadline) {
+        await awaitWave(specs, ~answeringIndices, ~deadline)
+      } else {
+        JsError.throwWithMessage(
+          timeoutMessage(specs, getItemsOrThrowCalls, ~answering, ~isAnswering=spec =>
+            spec->answerCount === 1
+          ),
+        )
+      }
+    switch specAssignments(answering, getItemsOrThrowCalls) {
+    | [] => await wait(~answering=None)
+    | [assignment] =>
+      let remaining =
+        getItemsOrThrowCalls->Array.filter(call => !(assignment->Array.includes(call)))
+      let checked =
+        checking->Array.map(spec => remaining->Array.filter(call => spec->specMatches(call)))
+      if checked->Array.some(Utils.Array.isEmpty) {
+        await wait(~answering=Some(assignment))
+      } else {
+        (assignment, checked->Array.flat)
+      }
+    | ambiguous =>
+      JsError.throwWithMessage(
+        ambiguousSpecsMessage(
+          specs,
+          ~answeringIndices,
+          ambiguous->Array.getUnsafe(0),
+          ambiguous->Array.getUnsafe(1),
+        ),
+      )
+    }
+  }
 
   // With the function we keep only the pending calls,
   // and remove the resolved ones automatically.
@@ -479,6 +737,62 @@ let make = (
       | calls => calls->Array.forEach(call => call.resolve([], ~latestFetchedBlockNumber?))
       }
     },
+    interceptGetItemsCalls: async specs => {
+      specs->Array.forEachWithIndex((spec, index) =>
+        if spec->answerCount > 1 {
+          JsError.throwWithMessage(
+            `interceptGetItemsCalls spec #${index->Int.toString} sets more than one of resolve, resolveFrom and reject`,
+          )
+        }
+      )
+      let answeringIndices = specs->Array.reduceWithIndex([], (indices, spec, index) => {
+        if spec->answerCount === 1 {
+          indices->Array.push(index)->ignore
+        }
+        indices
+      })
+      let (assignment, checked) = await awaitWave(
+        specs,
+        ~answeringIndices,
+        ~deadline=Date.now() +. 2000.,
+      )
+      let unclaimed =
+        getItemsOrThrowCalls->Array.filter(call =>
+          !(assignment->Array.includes(call)) &&
+          !(checked->Array.includes(call)) &&
+          !(seenItemsCalls->Array.includes(call))
+        )
+      if !(unclaimed->Utils.Array.isEmpty) {
+        JsError.throwWithMessage(unclaimedCallsMessage(unclaimed))
+      }
+      checked->Array.forEach(call =>
+        if !(seenItemsCalls->Array.includes(call)) {
+          seenItemsCalls->Array.push(call)->ignore
+        }
+      )
+      assignment->Array.forEachWithIndex((call, index) => {
+        let spec = specs->Array.getUnsafe(answeringIndices->Array.getUnsafe(index))
+        let reply = (answer: itemsAnswer) =>
+          call.resolve(
+            answer.items,
+            ~latestFetchedBlockNumber=?answer.latestFetchedBlockNumber,
+            ~latestFetchedBlockHash=?answer.latestFetchedBlockHash,
+            ~knownHeight=?answer.knownHeight,
+            ~prevRangeLastBlock=?answer.prevRangeLastBlock,
+            ~requestStats=?answer.requestStats,
+          )
+        switch (spec.resolve, spec.resolveFrom, spec.reject) {
+        | (Some(answer), _, _) => reply(answer)
+        | (_, Some(answerFrom), _) => reply(answerFrom(call.payload))
+        | (_, _, Some(exn)) => call.reject(exn)
+        | (None, None, None) => ()
+        }
+      })
+      let stillPending =
+        seenItemsCalls->Array.filter(call => getItemsOrThrowCalls->Array.includes(call))
+      seenItemsCalls->Utils.Array.clearInPlace
+      seenItemsCalls->Array.pushMany(stillPending)
+    },
     getBlockHashesCalls,
     resolveGetBlockHashes: blockHashes => {
       let blockStore = BlockStore.fromJs(
@@ -510,6 +824,7 @@ let make = (
       },
     dropPendingCalls: () => {
       getItemsOrThrowCalls->Utils.Array.clearInPlace
+      seenItemsCalls->Utils.Array.clearInPlace
       pendingHeightCallIndices()->Array.forEach(index =>
         getHeightOrThrowPending->Array.set(index, None)
       )
@@ -726,6 +1041,7 @@ let make = (
               reject: reject->Utils.magic,
             }
           })
+          notifyArrival()
           switch getItemsOrThrowCalls->Array.at(-1) {
           | Some(call) =>
             switch deferredItemsAnswers->Array.findIndex(answer => answer["match"](call)) {
@@ -794,3 +1110,5 @@ let waitItemsQuery = (sourceMock: t) =>
     ~arrived=() => sourceMock.getItemsOrThrowCalls->Array.length > 0,
     ~message="a getItemsOrThrow call",
   )
+
+let interceptGetItemsCalls = (mock: t, specs) => mock.interceptGetItemsCalls(specs)

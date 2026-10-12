@@ -374,12 +374,9 @@ let enterReorgThreshold = async (
   ~fromBlock=1,
 ) => {
   await resolveInitialHeight(~t, ~source, ~head)
-
-  t.expect(
-    source.getItemsOrThrowCalls->Array.map(call => call.payload),
-    ~message="Should request items until reorg threshold",
-  ).toEqual([{"fromBlock": fromBlock, "toBlock": Some(preThresholdTo), "retry": 0, "p": "0"}])
-  source.resolveGetItemsOrThrow([])
+  await source->MockSource.interceptGetItemsCalls([
+    {fromBlock, toBlock: Some(preThresholdTo), retry: 0, p: "0", resolve: {items: []}},
+  ])
   await indexer.getBatchWritePromise()
 }
 

@@ -179,17 +179,33 @@ let driveBothChainsToBlock102 = async (
 
   // Chain 100 leads (the progress tie breaks by ascending chain id), so its
   // post-threshold query is the one holding the fetch budget.
-  source100.resolveGetItemsOrThrow([item(~block=101, ~count=100n)], ~latestFetchedBlockNumber=101)
-  await MockSource.waitItemsQuery(source1337)
-  source1337.resolveGetItemsOrThrow([item(~block=101, ~count=1337n)], ~latestFetchedBlockNumber=101)
+  await source100->MockSource.interceptGetItemsCalls([
+    {
+      fromBlock: 101,
+      resolve: {items: [item(~block=101, ~count=100n)], latestFetchedBlockNumber: 101},
+    },
+  ])
+  await source1337->MockSource.interceptGetItemsCalls([
+    {
+      fromBlock: 101,
+      resolve: {items: [item(~block=101, ~count=1337n)], latestFetchedBlockNumber: 101},
+    },
+  ])
   await indexer.getBatchWritePromise()
 
-  source1337.resolveGetItemsOrThrow(
-    [item(~block=102, ~count=13372n)],
-    ~latestFetchedBlockNumber=102,
-  )
+  await source1337->MockSource.interceptGetItemsCalls([
+    {
+      fromBlock: 102,
+      resolve: {items: [item(~block=102, ~count=13372n)], latestFetchedBlockNumber: 102},
+    },
+  ])
   await indexer.getBatchWritePromise()
-  source100.resolveGetItemsOrThrow([item(~block=102, ~count=1002n)], ~latestFetchedBlockNumber=102)
+  await source100->MockSource.interceptGetItemsCalls([
+    {
+      fromBlock: 102,
+      resolve: {items: [item(~block=102, ~count=1002n)], latestFetchedBlockNumber: 102},
+    },
+  ])
   await indexer.getBatchWritePromise()
 }
 
@@ -209,13 +225,23 @@ let reorgAt = async (
   ~sibling: option<MockSource.t>=?,
   ~atBlock,
   ~scanned: array<(int, [#valid | #orphaned])>=[],
+  // The chunks above the reorged one, still in flight when the rollback voids them.
+  ~chunksAbove=true,
 ) => {
   sibling->Option.forEach(sibling => sibling.dropPendingCalls())
   let reorgsBefore = source.reorgCallCount()
-  source.resolveGetItemsOrThrow(
-    [],
-    ~filter=MockSource.coveringBlock(atBlock + 1),
-    ~prevRangeLastBlock={blockNumber: atBlock, blockHash: `0x${atBlock->Int.toString}a`},
+  let chunksAbove: array<MockSource.itemsQuerySpec> = chunksAbove ? [{p: "0"}] : []
+  await source->MockSource.interceptGetItemsCalls(
+    [
+      {
+        MockSource.where: MockSource.coveringBlock(atBlock + 1),
+        resolve: {
+          items: [],
+          prevRangeLastBlock: {blockNumber: atBlock, blockHash: `0x${atBlock->Int.toString}a`},
+        },
+      },
+      ...chunksAbove,
+    ],
   )
   // The depth search drops the source's orphaned-chain state before it reads
   // any hash, so this is the one point both shapes of the search pass through —
@@ -838,6 +864,7 @@ describe("Isolated multichain rollback", () => {
         ~sibling=source100,
         ~atBlock=150,
         ~scanned=[(100, #valid), (150, #orphaned)],
+        ~chunksAbove=false,
       )
 
       t.expect(
@@ -849,7 +876,13 @@ describe("Isolated multichain rollback", () => {
       // is no longer the reorg chain, so its progress is recomputed from the
       // block-150 checkpoint still in the database — 49 blocks above where the
       // superseded rollback left it.
-      await reorgAt(~indexer, ~source=source100, ~sibling=source1337, ~atBlock=100)
+      await reorgAt(
+        ~indexer,
+        ~source=source100,
+        ~sibling=source1337,
+        ~atBlock=100,
+        ~chunksAbove=false,
+      )
 
       t.expect(
         (await progressByChain(indexer), await eventsByChain(indexer)),
@@ -894,6 +927,7 @@ describe("Isolated multichain rollback", () => {
         ~sibling=source100,
         ~atBlock=150,
         ~scanned=[(100, #valid), (150, #orphaned)],
+        ~chunksAbove=false,
       )
 
       t.expect(
