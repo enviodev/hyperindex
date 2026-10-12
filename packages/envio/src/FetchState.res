@@ -1004,9 +1004,11 @@ let isSameLog = (a: Internal.item, b: Internal.item): bool =>
 
 // Merge a maybe-unsorted `newItems` run into the already-sorted, already-deduped
 // `buffer`, dropping items equal on every component of `compareBufferItem`.
-// Single linear pass over both runs after ordering `newItems` in place; every
-// comparison is a direct `compareBufferItem` call (V8 inlines it) rather than a
-// callback through `Array.sort`.
+// After ordering `newItems` in place, the buffer prefix sorting at or below the
+// first new item is copied as-is: it holds only buffer items, already sorted and
+// deduped. Only the rest is merged item by item. Every comparison is a direct
+// `compareBufferItem` call (V8 inlines it) rather than a callback through
+// `Array.sort`.
 let mergeIntoBuffer = (buffer: array<Internal.item>, newItems: array<Internal.item>): array<
   Internal.item,
 > => {
@@ -1024,8 +1026,32 @@ let mergeIntoBuffer = (buffer: array<Internal.item>, newItems: array<Internal.it
   }
 
   let m = buffer->Array.length
-  let merged = []
-  let last = ref(None)
+  // First buffer index sorting strictly after the first new item. A response
+  // usually lands past the buffer tail, so that is checked before searching.
+  let splitAt = if n === 0 {
+    m
+  } else {
+    let first = newItems->Array.getUnsafe(0)
+    if m === 0 || compareBufferItem(buffer->Array.getUnsafe(m - 1), first) <= 0 {
+      m
+    } else {
+      let lo = ref(0)
+      let hi = ref(m - 1)
+      while lo.contents < hi.contents {
+        let mid = (lo.contents + hi.contents) / 2
+        if compareBufferItem(buffer->Array.getUnsafe(mid), first) <= 0 {
+          lo := mid + 1
+        } else {
+          hi := mid
+        }
+      }
+      lo.contents
+    }
+  }
+
+  let merged = buffer->Array.slice(~start=0, ~end=splitAt)
+  // Seeded with the prefix's last item, so a new item equal to it is dropped.
+  let last = ref(splitAt > 0 ? Some(buffer->Array.getUnsafe(splitAt - 1)) : None)
   let push = item =>
     switch last.contents {
     | Some(l) if compareBufferItem(l, item) === 0 => ()
@@ -1035,7 +1061,7 @@ let mergeIntoBuffer = (buffer: array<Internal.item>, newItems: array<Internal.it
       }
     }
 
-  let i = ref(0)
+  let i = ref(splitAt)
   let j = ref(0)
   while i.contents < m && j.contents < n {
     let a = buffer->Array.getUnsafe(i.contents)
