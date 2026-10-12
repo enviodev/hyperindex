@@ -15,6 +15,10 @@ type options = {
   addressStore: AddressStore.t,
 }
 
+// HyperSync ends a query that has no max_num_logs well short of its to_block.
+// A cap that never binds lets it scan up to its own response limits instead.
+let maxNumLogsWithoutItemsTarget = 10_000_000
+
 let make = (
   {
     chainId,
@@ -78,7 +82,7 @@ let make = (
       ~client,
       ~fromBlock,
       ~toBlock,
-      ~maxNumLogs=itemsTarget,
+      ~maxNumLogs=Some(itemsTarget->Option.getOr(maxNumLogsWithoutItemsTarget)),
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressSet,
       ~clientFilteredContracts=selection.clientFilteredContracts,

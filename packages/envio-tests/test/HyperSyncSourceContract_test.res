@@ -113,6 +113,7 @@ let fetch = (
   ~fromBlock=10,
   ~toBlock=Some(11),
   ~includeAllBlocks=false,
+  ~itemsTarget=Some(5_000),
 ) =>
   source.getItemsOrThrow(
     ~fromBlock,
@@ -127,7 +128,7 @@ let fetch = (
         Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
       ),
     },
-    ~itemsTarget=Some(5_000),
+    ~itemsTarget,
     ~retry=0,
     ~logger=Logging.createChild(~params={"test": "HyperSync source contract"}),
   )
@@ -273,6 +274,31 @@ describe("HyperSync source contract", () => {
           ->Option.getOr(JSON.Encode.null),
       ),
     ).toEqual([JSON.Encode.bool(true)])
+  })
+
+  // https://github.com/enviodev/hyperindex/issues/1699
+  // A bounded chunk carries no items target. HyperSync ends a query that has no
+  // max_num_logs well short of its to_block, so the source still sends one.
+  Async.it("asks HyperSync for the whole range when the query has no items target", async t => {
+    let queries = await MockHyperSyncServer.withServer(
+      ~height=100,
+      async server => {
+        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse(page)
+        let _ = await source->fetch(~addressSet, ~itemsTarget=None)
+        server->MockHyperSyncServer.takeQueries
+      },
+    )
+
+    t.expect(
+      queries->Array.map(
+        query =>
+          query
+          ->JSON.Decode.object
+          ->Option.flatMap(o => o->Dict.get("max_num_logs"))
+          ->Option.getOr(JSON.Encode.null),
+      ),
+    ).toEqual([JSON.Encode.int(10_000_000)])
   })
 
   Async.it("materialises the selected fields onto the page's items", async t => {
