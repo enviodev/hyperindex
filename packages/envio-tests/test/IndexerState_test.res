@@ -140,7 +140,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
-
     ~isRealtime=false,
     ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
   )
@@ -150,11 +149,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
 let getItemKey = (item: Internal.item) =>
   switch item {
-  | Event({chainId, blockNumber, logIndex}) => (
-      chainId,
-      blockNumber,
-      logIndex,
-    )
+  | Event({chainId, blockNumber, logIndex}) => (chainId, blockNumber, logIndex)
   | Block({onBlockRegistration: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
   }
 
@@ -168,6 +163,52 @@ let advanceChains = (state: IndexerState.t, ~batch) =>
   )
 
 describe("IndexerState", () => {
+  // https://github.com/enviodev/hyperindex/issues/1695
+  it("Reads a cross-chain scope's committed id from the latest commit", t => {
+    let configFor = (~perChain) =>
+      TestConfig.fromUserApi(
+        `
+name: committed-cross-chain
+disable_default_cross_chain: ${perChain ? "true" : "false"}
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+  - id: 137
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+`,
+      )
+    let committedIds = config => {
+      let indexerState = TestIndexerState.make(~config)
+      let read = () => indexerState->IndexerState.committedCheckpointIdFor(~scope=CrossChain)
+      let initial = read()
+      indexerState->IndexerState.markCommitted(
+        ~writtenFrontier=Frontier.fromEntries([
+          (1->ChainId.fromInt, 4n),
+          (137->ChainId.fromInt, 9n),
+        ]),
+      )
+      let afterBoth = read()
+      indexerState->IndexerState.markCommitted(
+        ~writtenFrontier=Frontier.fromEntries([(1->ChainId.fromInt, 12n)]),
+      )
+      (config.checkpointSequence, initial, afterBoth, read())
+    }
+
+    t.expect((
+      configFor(~perChain=false)->committedIds,
+      configFor(~perChain=true)->committedIds,
+    )).toEqual((
+      (CheckpointSequence.SharedAcrossChains, 0n, 9n, 12n),
+      (CheckpointSequence.PerChain, 0n, 4n, 9n),
+    ))
+  })
+
   //Test was previously popBlockBatchItems
   describe("createBatch", () => {
     it(
@@ -192,10 +233,7 @@ describe("IndexerState", () => {
         let allEventsRead = []
         let continue = ref(true)
         while continue.contents {
-          let batch =
-            state->IndexerState.createBatch(
-              ~batchSizeTarget=10000,
-            )
+          let batch = state->IndexerState.createBatch(~batchSizeTarget=10000)
           let {items, totalBatchSize} = batch
 
           // ensure that the events are ordered correctly
@@ -283,7 +321,7 @@ describe("IndexerState", () => {
                   ~latestFetchedBlock=blockNumber,
                   ~newItems=[
                     Internal.Event({
-                      chainId: chainId,
+                      chainId,
                       blockNumber,
                       logIndex: 0,
                       transactionIndex: 0,
@@ -325,7 +363,6 @@ describe("IndexerState", () => {
             ~config,
             ~persistence=TestIndexerState.defaultPersistence(),
             ~chainStates,
-
             ~isRealtime=false,
             ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
           )
@@ -333,10 +370,7 @@ describe("IndexerState", () => {
 
         // The batch is created while each chain has fetched up to block 5.
         let state = makeState(~eventBlocks=[5])
-        let batch =
-          state->IndexerState.createBatch(
-            ~batchSizeTarget=10000,
-          )
+        let batch = state->IndexerState.createBatch(~batchSizeTarget=10000)
 
         let chainId = config.chainMap->ChainMap.keys->Array.getUnsafe(0)
 
