@@ -131,6 +131,9 @@ type t = {
   mutable processingStalledOnFetchSince: option<Performance.timeRef>,
   mutable processingStalledOnStorageWriteSeconds: float,
   handlerStats: dict<handlerStat>,
+  // Identity lookup into handlerStats for the per-event hot path. Each chain has
+  // its own eventConfig, so several of them can map to one stat.
+  handlerStatByEventConfig: Utils.Map.t<Internal.eventConfig, handlerStat>,
   storageLoadStats: dict<storageLoadStat>,
   storageWriteStats: dict<storageWriteStat>,
   historyPruneStats: dict<historyPruneStat>,
@@ -210,6 +213,7 @@ let make = (
     processingStalledOnFetchSince: None,
     processingStalledOnStorageWriteSeconds: 0.,
     handlerStats: Dict.make(),
+    handlerStatByEventConfig: Utils.Map.make(),
     storageLoadStats: Dict.make(),
     storageWriteStats: Dict.make(),
     historyPruneStats: Dict.make(),
@@ -674,36 +678,43 @@ let recordBatchDurations = (state: t, ~loadDuration, ~handlerDuration) => {
   state.processingSeconds = state.processingSeconds +. handlerDuration
 }
 
-let getHandlerStat = (state: t, ~contract, ~event) => {
-  // Length-prefixed so names containing the separator can't collide.
-  let key = contract->String.length->Int.toString ++ ":" ++ contract ++ event
-  switch state.handlerStats->Utils.Dict.dangerouslyGetNonOption(key) {
+let getHandlerStat = (state: t, ~eventConfig: Internal.eventConfig) => {
+  switch state.handlerStatByEventConfig->Utils.Map.get(eventConfig) {
   | Some(stat) => stat
   | None =>
-    let stat: handlerStat = {
-      contract,
-      event,
-      processingSeconds: 0.,
-      processingCount: 0.,
-      preloadSeconds: 0.,
-      preloadCount: 0.,
-      preloadSecondsTotal: 0.,
-      preloadPendingCount: 0,
-      preloadPendingTimerRef: %raw(`null`),
+    let {contractName: contract, name: event} = eventConfig
+    // Length-prefixed so names containing the separator can't collide.
+    let key = contract->String.length->Int.toString ++ ":" ++ contract ++ event
+    let stat = switch state.handlerStats->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(stat) => stat
+    | None =>
+      let stat: handlerStat = {
+        contract,
+        event,
+        processingSeconds: 0.,
+        processingCount: 0.,
+        preloadSeconds: 0.,
+        preloadCount: 0.,
+        preloadSecondsTotal: 0.,
+        preloadPendingCount: 0,
+        preloadPendingTimerRef: %raw(`null`),
+      }
+      state.handlerStats->Dict.set(key, stat)
+      stat
     }
-    state.handlerStats->Dict.set(key, stat)
+    state.handlerStatByEventConfig->Utils.Map.set(eventConfig, stat)->ignore
     stat
   }
 }
 
-let recordHandlerDuration = (state: t, ~contract, ~event, ~duration) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let recordHandlerDuration = (state: t, ~eventConfig, ~duration) => {
+  let stat = state->getHandlerStat(~eventConfig)
   stat.processingSeconds = stat.processingSeconds +. duration
   stat.processingCount = stat.processingCount +. 1.
 }
 
-let startPreloadHandler = (state: t, ~contract, ~event) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let startPreloadHandler = (state: t, ~eventConfig) => {
+  let stat = state->getHandlerStat(~eventConfig)
   if stat.preloadPendingCount === 0 {
     stat.preloadPendingTimerRef = Performance.now()
   }
@@ -711,8 +722,8 @@ let startPreloadHandler = (state: t, ~contract, ~event) => {
   Performance.now()
 }
 
-let endPreloadHandler = (state: t, timerRef, ~contract, ~event) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let endPreloadHandler = (state: t, timerRef, ~eventConfig) => {
+  let stat = state->getHandlerStat(~eventConfig)
   stat.preloadPendingCount = stat.preloadPendingCount - 1
   if stat.preloadPendingCount === 0 {
     stat.preloadSeconds =

@@ -124,9 +124,9 @@ let toMetrics: t => Metrics.t
 // Metric counters.
 let recordBatchDurations: (t, ~loadDuration: float, ~handlerDuration: float) => unit
 let recordStalledOnStorageWrite: (t, ~seconds: float) => unit
-let recordHandlerDuration: (t, ~contract: string, ~event: string, ~duration: float) => unit
-let startPreloadHandler: (t, ~contract: string, ~event: string) => Performance.timeRef
-let endPreloadHandler: (t, Performance.timeRef, ~contract: string, ~event: string) => unit
+let recordHandlerDuration: (t, ~eventConfig: Internal.eventConfig, ~duration: float) => unit
+let startPreloadHandler: (t, ~eventConfig: Internal.eventConfig) => Performance.timeRef
+let endPreloadHandler: (t, Performance.timeRef, ~eventConfig: Internal.eventConfig) => unit
 let startStorageLoad: (t, ~storage: string, ~operation: string) => Performance.timeRef
 let endStorageLoad: (
   t,

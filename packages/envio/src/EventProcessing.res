@@ -73,10 +73,8 @@ let runEventHandlerOrThrow = async (
     )
   }
   let handlerDuration = timeBeforeHandler->Performance.secondsSince
-  let eventConfig = eventItem.onEventRegistration.eventConfig
   indexerState->IndexerState.recordHandlerDuration(
-    ~contract=eventConfig.contractName,
-    ~event=eventConfig.name,
+    ~eventConfig=eventItem.onEventRegistration.eventConfig,
     ~duration=handlerDuration,
   )
 }
@@ -163,18 +161,12 @@ let preloadBatchOrThrow = async (
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
       | Event(_) =>
-        let {handler, eventConfig: {contractName, name: eventName}} = (
-          item->Internal.castUnsafeEventItem
-        ).onEventRegistration
+        let {handler, eventConfig} = (item->Internal.castUnsafeEventItem).onEventRegistration
         switch handler {
         | None => ()
         | Some(handler) =>
           try {
-            let timerRef =
-              indexerState->IndexerState.startPreloadHandler(
-                ~contract=contractName,
-                ~event=eventName,
-              )
+            let timerRef = indexerState->IndexerState.startPreloadHandler(~eventConfig)
             promises->Array.push(
               handler({
                 event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
@@ -191,11 +183,7 @@ let preloadBatchOrThrow = async (
                 }),
               })
               ->Promise.thenResolve(_ => {
-                indexerState->IndexerState.endPreloadHandler(
-                  timerRef,
-                  ~contract=contractName,
-                  ~event=eventName,
-                )
+                indexerState->IndexerState.endPreloadHandler(timerRef, ~eventConfig)
               })
               ->Utils.Promise.silentCatch,
               // Must have Promise.catch as well as normal catch,
