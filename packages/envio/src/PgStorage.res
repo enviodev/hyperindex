@@ -388,6 +388,35 @@ let converterOf = (registered, ~itemSchema) =>
     convert
   }
 
+// Staging refuses a non-finite float for a staged table. A table bound a cell
+// at a time has to refuse it too: the server would store it, and the field's
+// schema would then refuse it on every load.
+%%private(
+  let refuseNonFinite = (values: array<array<unknown>>, ~fields: array<Table.field>) =>
+    fields->Array.forEachWithIndex((field, index) =>
+      if field.fieldType === Table.Number {
+        let column = field->Table.getPgDbFieldName
+        let check = (value: Nullable.t<float>) =>
+          switch value {
+          | Value(number) => number->Staging.finiteOrThrow(~column)->ignore
+          | Null | Undefined => ()
+          }
+        values
+        ->Array.getUnsafe(index)
+        ->Array.forEach(value =>
+          if field.isArray {
+            switch value->(Utils.magic: unknown => Nullable.t<array<Nullable.t<float>>>) {
+            | Value(elements) => elements->Array.forEach(check)
+            | Null | Undefined => ()
+            }
+          } else {
+            check(value->(Utils.magic: unknown => Nullable.t<float>))
+          }
+        )
+      }
+    )
+)
+
 // Lays rows out for the addon. A staged batch is handed back by handle, and
 // recorded in `staged` so a write that fails before reaching the addon can free
 // it.
@@ -409,7 +438,9 @@ let rowsOrThrow = (
         ->PgWriting.stage(~table=registered.handle, ~columns, ~values, ~rows)
       staged->Array.push(handle)
       {staged: handle, rows}
-    | None => {
+    | None =>
+      values->refuseNonFinite(~fields=registered.fields)
+      {
         cells: values->Utils.Array.flatten->Sql.params,
         rows,
       }

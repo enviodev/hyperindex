@@ -19,7 +19,9 @@ use super::param::Param;
 /// exponent notation: Postgres refuses that for an integer column.
 fn write_cell(into: &mut String, column: &Column, row: usize) -> Result<()> {
     match column.kind() {
-        ColumnKind::F64 => write_number(into, column.f64_at(row)),
+        ColumnKind::F64 => {
+            let _ = write!(into, "{}", column.f64_at(row));
+        }
         ColumnKind::U64 => {
             let _ = write!(into, "{}", column.u64_at(row));
         }
@@ -45,16 +47,6 @@ fn write_cell(into: &mut String, column: &Column, row: usize) -> Result<()> {
         ColumnKind::List => bail!("a list column has no single value to render"),
     }
     Ok(())
-}
-
-fn write_number(into: &mut String, value: f64) {
-    if value.is_finite() {
-        let _ = write!(into, "{value}");
-    } else {
-        // Postgres spells these out for the float types and refuses them
-        // everywhere else, which is the error the column should give.
-        into.push_str(&format!("{value}").replace("inf", "Infinity"));
-    }
 }
 
 /// The parameters for an insert that unnests one array per column.
