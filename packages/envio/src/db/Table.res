@@ -209,14 +209,6 @@ let mkTable = (tableName, ~compositeIndexes=[], ~fields, ~description=?) => {
   description,
 }
 
-let getPgPrimaryKeyFieldNames = table =>
-  table.fields->Array.filterMap(field =>
-    switch field {
-    | Field({isPrimaryKey: true} as field) => Some(field->getPgDbFieldName)
-    | _ => None
-    }
-  )
-
 let getFields = table =>
   table.fields->Array.filterMap(field =>
     switch field {
@@ -362,10 +354,6 @@ let makeRowsSchema = (table, ~rowFieldName, ~skipChainId=false) =>
       dict
     })->(Utils.magic: S.t<dict<unknown>> => S.t<unknown>),
   )
-
-let rowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
-  table->makeRowsSchema(~rowFieldName=getApiFieldName)
-)
 
 // Rows loaded from Postgres are keyed by the possibly renamed column names.
 // Lives here rather than in PgStorage because InMemoryStore also parses

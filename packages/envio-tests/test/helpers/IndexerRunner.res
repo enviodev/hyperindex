@@ -8,6 +8,8 @@ type metric = {
 // client the run won't clean up.
 type pg = {sql: Sql.t, pgSchema: string}
 
+let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
+
 // Which persistence a run is exercised against. Both are Postgres-backed; the
 // ClickHouse one adds the sink on top. CI runs the suite once per backend.
 type backend = [#postgres | #clickhouse]
@@ -338,9 +340,7 @@ let run = async (
     // Rows come back decoded: postgres parses them with the table's field schemas.
     let queryEntity = (entityConfig: Internal.entityConfig) =>
       sql
-      ->Sql.queryForTests(
-        PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-      )
+      ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
       ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
 
     // Which chain a stored row belongs to, for a table that has chains at all.
@@ -366,7 +366,7 @@ let run = async (
       let chainIdOfRow = chainIdOfRow(entityConfig)
       sql
       ->Sql.queryForTests(
-        PgStorage.makeLoadAllQuery(
+        loadAllQuery(
           ~pgSchema,
           ~tableName=EntityHistory.historyTableName(
             ~entityName=entityConfig.name,
@@ -567,10 +567,7 @@ let run = async (
       queryCheckpoints: () =>
         sql
         ->Sql.queryForTests(
-          PgStorage.makeLoadAllQuery(
-            ~pgSchema,
-            ~tableName=InternalTable.Checkpoints.table.tableName,
-          ),
+          loadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.table.tableName),
         )
         ->Promise.thenResolve(rows =>
           rows->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
@@ -579,7 +576,7 @@ let run = async (
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
         sql
-        ->Sql.queryForTests(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
+        ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName))
         ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {

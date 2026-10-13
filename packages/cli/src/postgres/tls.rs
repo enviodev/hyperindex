@@ -17,10 +17,10 @@ use tokio_rustls::TlsConnector;
 
 /// TLS for the pool, on rustls.
 ///
-/// A verifying connection trusts what postgres.js did under Node — the Mozilla
-/// roots and `NODE_EXTRA_CA_CERTS` — and the operating system's store besides,
-/// so a CA an operator installed the usual way is trusted too. Nothing here
-/// depends on where a C library was told to look at build time.
+/// A verifying connection trusts what Node does — the Mozilla roots and
+/// `NODE_EXTRA_CA_CERTS` — and the operating system's store besides, so a CA an
+/// operator installed the usual way is trusted too. Nothing here depends on
+/// where a C library was told to look at build time.
 #[derive(Clone)]
 pub struct MakeRustlsConnect {
     config: Arc<ClientConfig>,

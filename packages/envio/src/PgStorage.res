@@ -262,10 +262,6 @@ let getRowSchema = (entityConfig: Internal.entityConfig): S.t<Internal.entity> =
     schema
   }
 
-let makeLoadAllQuery = (~pgSchema, ~tableName) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}";`
-}
-
 // A table as the addon writes it: its handle, and how a batch of its rows
 // crosses over — staged into an arena column by column, or rendered a
 // parameter per cell when it has an array column.

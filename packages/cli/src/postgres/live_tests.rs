@@ -1000,9 +1000,8 @@ async fn a_connection_the_server_dropped_is_not_handed_out_again() {
 
 /// The statement that was in flight when the connection went is the one failure
 /// there is no hiding: it may have reached the server or not, so it is reported
-/// rather than repeated. The driver this replaced failed it too, as `read
-/// ECONNRESET`, which says nothing about what happened; here the server's own
-/// parting message is what comes back.
+/// rather than repeated — as the server's own parting message, rather than a
+/// socket error that says nothing about what happened.
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
 async fn a_statement_cut_off_mid_flight_reports_what_ended_it() {
@@ -1111,10 +1110,9 @@ async fn a_statement_waits_for_the_transaction_holding_the_only_connection() {
 /// A timestamp is the same instant whatever the server has been told about
 /// where it is and how it writes dates down.
 ///
-/// The driver this replaced read timestamps from the text the server rendered,
-/// which both of these settings change. This one reads the binary, which is
-/// always microseconds from 2000 in UTC — so the column moves with neither,
-/// while the text beside it moves with both.
+/// Both settings change the text the server renders a timestamp as. The binary
+/// read here is always microseconds from 2000 in UTC — so the column moves with
+/// neither, while the text beside it moves with both.
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
 async fn a_timestamp_is_the_same_instant_in_any_session_the_server_keeps() {

@@ -308,7 +308,9 @@ fn build_config(options: &PgConnectionOptions) -> Config {
         .password(&options.password)
         .dbname(&options.database)
         .ssl_mode(options.ssl.ssl_mode())
-        // What postgres.js probed at; the driver's own default is two hours.
+        // A NAT or load balancer drops an idle connection after a few minutes
+        // without telling either end; the driver's default of two hours would
+        // first notice on the next statement, once TCP gives up retransmitting.
         .keepalives_idle(std::time::Duration::from_secs(60));
     if let Some(application_name) = &options.application_name {
         config.application_name(application_name);
