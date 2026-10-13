@@ -286,7 +286,9 @@ fn build_config(options: &PgConnectionOptions) -> Config {
         .user(&options.user)
         .password(&options.password)
         .dbname(&options.database)
-        .ssl_mode(options.ssl.ssl_mode());
+        .ssl_mode(options.ssl.ssl_mode())
+        // What postgres.js probed at; the driver's own default is two hours.
+        .keepalives_idle(std::time::Duration::from_secs(60));
     if let Some(application_name) = &options.application_name {
         config.application_name(application_name);
     }
@@ -508,6 +510,28 @@ mod tests {
             SslSetting::parse("verify-ca").unwrap_err().to_string(),
             "`verify-ca` is not an SSL mode. Use one of false, true, require, allow, prefer, \
              verify-full."
+        );
+    }
+
+    /// An idle pooled connection behind a NAT or load balancer is dropped
+    /// silently after a few minutes; without a probe sooner than that, the next
+    /// statement on it waits out TCP's retransmissions before failing.
+    #[test]
+    fn an_idle_connection_is_probed_every_minute() {
+        let config = build_config(&PgConnectionOptions {
+            host: "localhost".to_string(),
+            port: 5432,
+            user: "postgres".to_string(),
+            password: "unused".to_string(),
+            database: "unused".to_string(),
+            ssl: SslSetting::Disable,
+            max_connections: 1,
+            application_name: None,
+            connect_timeout: std::time::Duration::from_secs(30),
+        });
+        assert_eq!(
+            (config.get_keepalives(), config.get_keepalives_idle()),
+            (true, std::time::Duration::from_secs(60))
         );
     }
 

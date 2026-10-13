@@ -442,7 +442,7 @@ impl PgStorage {
             database: options.database,
             ssl: SslSetting::parse(&options.ssl).map_err(to_napi)?,
             max_connections: options.max_connections as usize,
-            application_name: None,
+            application_name: Some("envio".to_string()),
             connect_timeout: std::time::Duration::from_secs(30),
         })
         .map_err(to_napi)?;
