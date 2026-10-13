@@ -1420,6 +1420,7 @@ impl Storage {
                     self.settings.chain_id_mode,
                 ),
                 write::unnest_params(arena).map_err(fail)?,
+                Shape::Recurring,
             )],
             Rows::Cells { cells, rows } => {
                 chunked_cells(cells, *rows, table.write.columns.len(), &[], |count| {
@@ -1462,6 +1463,7 @@ impl Storage {
                         self.settings.chain_id_mode,
                     ),
                     params,
+                    Shape::Recurring,
                 )]
             }
             Rows::Cells { cells, rows } => {
@@ -1494,12 +1496,14 @@ impl Storage {
     async fn run_all(
         &self,
         transaction: Option<&Transaction>,
-        statements: Vec<(String, Vec<Param>)>,
+        statements: Vec<(String, Vec<Param>, Shape)>,
     ) -> Result<()> {
-        let outcomes = join_all(statements.iter().map(|(sql, params)| async move {
-            match transaction {
-                Some(transaction) => transaction.execute(sql, params).await,
-                None => self.client.execute(sql, params).await,
+        let outcomes = join_all(statements.iter().map(|(sql, params, shape)| async move {
+            match (transaction, shape) {
+                (Some(transaction), Shape::Recurring) => transaction.execute(sql, params).await,
+                (Some(transaction), Shape::Once) => transaction.execute_once(sql, params).await,
+                (None, Shape::Recurring) => self.client.execute(sql, params).await,
+                (None, Shape::Once) => self.client.execute_once(sql, params).await,
             }
         }))
         .await;
@@ -1514,19 +1518,28 @@ fn insert_context(table_name: &str) -> String {
     format!("Failed to insert items into table \"{table_name}\"")
 }
 
+/// Whether a statement's text recurs. One that does is kept prepared on its
+/// connection; one that doesn't is sent unnamed, so the server keeps no plan for
+/// a shape it won't see again.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Shape {
+    Recurring,
+    Once,
+}
+
 /// The statements for rows bound a parameter per cell, as many rows to each
 /// as its parameters allow. `cells` holds every row's first column, then every
 /// row's second; `extra` is one more column, appended after them.
 ///
-/// A short last chunk is a statement of its own, which the connection has to
-/// prepare once more; the full ones reuse the text it already prepared.
+/// Only a full chunk recurs: a short last one spells out however many rows the
+/// batch had left, and there are as many such statements as chunk lengths.
 fn chunked_cells(
     cells: &[Param],
     rows: usize,
     columns: usize,
     extra: &[Param],
     query: impl Fn(usize) -> String,
-) -> Result<Vec<(String, Vec<Param>)>> {
+) -> Result<Vec<(String, Vec<Param>, Shape)>> {
     if cells.len() != rows * columns {
         bail!(
             "{} cells came for {rows} rows of {columns} columns",
@@ -1546,7 +1559,12 @@ fn chunked_cells(
             if !extra.is_empty() {
                 params.extend_from_slice(&extra[start..end]);
             }
-            (query(end - start), params)
+            let shape = if end - start == per_statement {
+                Shape::Recurring
+            } else {
+                Shape::Once
+            };
+            (query(end - start), params, shape)
         })
         .collect::<Vec<_>>())
 }
@@ -1740,9 +1758,22 @@ mod tests {
                 "3".to_string(),
                 ["a1", "a2", "a3", "b1", "b2", "b3", "c1", "c2", "c3"]
                     .map(text)
-                    .to_vec()
+                    .to_vec(),
+                Shape::Once,
             )]
         );
+    }
+
+    #[test]
+    fn only_a_full_chunk_is_kept_prepared() {
+        let rows = insert::values_rows_per_statement(2) + 1;
+        let cells = vec![Param::Null; rows * 2];
+        let shapes = chunked_cells(&cells, rows, 2, &[], |rows| rows.to_string())
+            .unwrap()
+            .into_iter()
+            .map(|(_, _, shape)| shape)
+            .collect::<Vec<_>>();
+        assert_eq!(shapes, vec![Shape::Recurring, Shape::Once]);
     }
 
     fn bounds(sequence: Sequence) -> Bounds {

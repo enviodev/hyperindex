@@ -778,6 +778,29 @@ async fn forgetting_what_was_prepared_survives_the_table_changing_shape() {
     );
 }
 
+/// A cell-bound insert's short last chunk is a shape of its own. Kept prepared,
+/// every chunk length would hold a plan on the server for the life of the
+/// connection; sent unnamed, the server lets it go once it has run.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_statement_run_once_leaves_nothing_prepared() {
+    let client = pinned_client();
+    let once = "SELECT $1::int4 + 1";
+    let ran = client
+        .execute_once(once, &[Param::Text("1".to_string())])
+        .await
+        .unwrap();
+    let (rows, _) = client
+        .query(
+            "SELECT count(*)::int4 FROM pg_prepared_statements WHERE statement = $1",
+            &[Param::Text(once.to_string())],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!((ran, rows[0].get::<_, i32>(0)), (1, 0));
+}
+
 /// A reset drops the schema's enum types with it, and the recreated type gets a
 /// new id. A storage that keeps serving after its own reset must not run a
 /// statement prepared against the old one: the server refuses it with "cached
