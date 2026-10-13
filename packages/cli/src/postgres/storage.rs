@@ -23,6 +23,7 @@ use super::history::{
     History, Sequence, CHANGE_COLUMN, CHANGE_TYPE, CHECKPOINT_COLUMN, DELETE, SET,
 };
 use super::index_definition::IndexDefinition;
+use super::index_row;
 use super::indexes::{IndexEvent, Indexes, Report};
 use super::insert::{self, Constant};
 use super::internal::{self, ChainConfig};
@@ -1440,7 +1441,79 @@ impl Storage {
                 .map_err(fail)?
             }
         };
-        self.run_all(transaction, statements).await.map_err(fail)
+        self.run_all(transaction, statements)
+            .await
+            .map_err(
+                |error| match self.oversized_index_key(&error, table, rows) {
+                    Some(oversized) => Failure::new(
+                        format!("{}: {}", insert_context(table.name()), oversized.explain()),
+                        error,
+                    ),
+                    None => fail(error),
+                },
+            )
+    }
+
+    /// The row an index refused for its size. Only looked for once the server
+    /// has refused one: the search reads every indexed value in the batch.
+    fn oversized_index_key(
+        &self,
+        error: &anyhow::Error,
+        table: &Table,
+        rows: &Rows,
+    ) -> Option<index_row::Oversized> {
+        if sql_state(error) != Some(index_row::PROGRAM_LIMIT_EXCEEDED) {
+            return None;
+        }
+        let columns = &table.write.columns;
+        let names = columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>();
+        let id_column = names.iter().position(|name| *name == "id")?;
+        let is_bytes = columns
+            .iter()
+            .map(|column| insert::staged_kind(&column.field_type) == ColumnKind::Bytes)
+            .collect::<Vec<_>>();
+        let keys = self.indexes.btree_keys(table.name());
+        match rows {
+            Rows::Staged(arena) => {
+                let arena_columns = arena.columns();
+                index_row::find(
+                    &keys,
+                    &names,
+                    arena.rows(),
+                    |column, row| {
+                        let column = &arena_columns[column];
+                        match column.kind() {
+                            ColumnKind::Text | ColumnKind::Bytes if !column.is_null(row) => {
+                                column.bytes_at(row).len()
+                            }
+                            _ => 0,
+                        }
+                    },
+                    |row| {
+                        String::from_utf8_lossy(arena_columns[id_column].bytes_at(row)).into_owned()
+                    },
+                )
+            }
+            // Column-major, every value rendered as text: bytes as `\x` and
+            // two hex digits a byte.
+            Rows::Cells { cells, rows } => index_row::find(
+                &keys,
+                &names,
+                *rows,
+                |column, row| match &cells[column * rows + row] {
+                    Param::Null => 0,
+                    Param::Text(text) if is_bytes[column] => text.len().saturating_sub(2) / 2,
+                    Param::Text(text) => text.len(),
+                },
+                |row| match &cells[id_column * rows + row] {
+                    Param::Text(id) => id.clone(),
+                    Param::Null => String::new(),
+                },
+            ),
+        }
     }
 
     /// A set's history row: the same values the entity's insert takes, plus

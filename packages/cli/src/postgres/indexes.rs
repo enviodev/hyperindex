@@ -14,8 +14,9 @@ use tokio::sync::watch;
 use tokio_postgres::Row;
 
 use super::client::PgClient;
-use super::error::{message_of, sql_state};
-use super::index_definition::{drop_query, Direction, IndexColumn, IndexDefinition};
+use super::error::{message_of, sql_state, Explained};
+use super::index_definition::{drop_query, Direction, IndexColumn, IndexDefinition, BTREE};
+use super::index_row;
 use super::param::Param;
 
 /// How much of an existing index has to line up before it counts as coverage.
@@ -475,6 +476,27 @@ impl<D: Db> Indexes<D> {
         Ok(())
     }
 
+    /// The key columns of every plain btree index on the table, whatever
+    /// declared it: the schema, a getWhere filter or the primary key.
+    pub fn btree_keys(&self, table_name: &str) -> Vec<Vec<String>> {
+        self.catalog
+            .lock()
+            .unwrap()
+            .by_name
+            .values()
+            .filter(|entry| {
+                entry.table_name == table_name && entry.method == BTREE && !entry.is_expression
+            })
+            .map(|entry| {
+                entry
+                    .columns
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect()
+            })
+            .collect()
+    }
+
     pub fn covers_all(&self, definitions: &[IndexDefinition], coverage: Coverage) -> bool {
         let mut catalog = self.catalog.lock().unwrap();
         definitions
@@ -641,7 +663,13 @@ impl<D: Db> Indexes<D> {
     /// CREATE.
     async fn build(&self, prepared: &Prepared) -> Result<()> {
         for query in &prepared.queries {
-            self.db.run(query).await?;
+            self.db.run(query).await.map_err(|error| {
+                if sql_state(&error) == Some(index_row::PROGRAM_LIMIT_EXCEEDED) {
+                    error.context(Explained(index_row::explain_build(&prepared.definition)))
+                } else {
+                    error
+                }
+            })?;
         }
         let entry = self
             .db
