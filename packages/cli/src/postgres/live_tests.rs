@@ -850,6 +850,106 @@ async fn a_statement_run_once_leaves_nothing_prepared() {
     assert_eq!((ran, rows[0].get::<_, i32>(0)), (1, 0));
 }
 
+/// A process killed while building an index leaves the `CREATE INDEX` running
+/// on the server, which only notices the client is gone once it finishes. The
+/// restarted indexer reads a catalog without that index, creates it again, and
+/// loses to the orphan when it commits. The index is there, valid, under the
+/// name the indexer wanted, so finishing the backfill must not fail over it.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_backfill_that_loses_its_index_to_an_orphaned_build_still_finishes() {
+    use super::index_definition::{Direction, IndexColumn, IndexDefinition, BTREE};
+
+    let schema = "live_lost_create";
+    let setup = client();
+    setup
+        .batch(&format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema}; \
+             CREATE TABLE {schema}.t (owner text); INSERT INTO {schema}.t VALUES ('a')"
+        ))
+        .await
+        .unwrap();
+    let storage = super::storage::Storage::new(
+        client(),
+        super::storage::Settings {
+            pg_schema: schema.to_string(),
+            pg_user: "postgres".to_string(),
+            chain_id_mode: super::pg_type::ChainIdMode::Int32,
+            numeric_array_as_text: false,
+        },
+        std::sync::Arc::new(|_| ()),
+    );
+    let definition = IndexDefinition {
+        table_name: "t".to_string(),
+        columns: vec![IndexColumn {
+            name: "owner".to_string(),
+            direction: Direction::Asc,
+        }],
+        method: BTREE.to_string(),
+    };
+    storage.indexes.reload().await.unwrap();
+
+    // The orphan: the same index, built and not yet committed.
+    let orphan = setup.begin().await.unwrap();
+    orphan
+        .batch(&definition.create_query(schema))
+        .await
+        .unwrap();
+    let finalizing = tokio::spawn({
+        let indexes = storage.indexes.clone();
+        let definition = definition.clone();
+        async move {
+            indexes
+                .finalize(vec![definition])
+                .await
+                .map_err(|error| super::error::message_of(&error))
+        }
+    });
+    // Commits only once the indexer's own create is waiting on it, so the two
+    // are certain to meet.
+    let watcher = client();
+    for _ in 0..200 {
+        let (rows, _) = watcher
+            .query(
+                "SELECT count(*)::int4 FROM pg_stat_activity \
+                 WHERE wait_event_type = 'Lock' AND query LIKE 'CREATE INDEX%'",
+                &[],
+            )
+            .await
+            .unwrap();
+        if rows[0].get::<_, i32>(0) > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    orphan.commit().await.unwrap();
+    let finalized = finalizing.await.unwrap();
+
+    let (rows, _) = watcher
+        .query(
+            "SELECT i.relname::text, x.indisvalid FROM pg_index x \
+             JOIN pg_class i ON i.oid = x.indexrelid JOIN pg_class t ON t.oid = x.indrelid \
+             JOIN pg_namespace n ON n.oid = t.relnamespace \
+             WHERE n.nspname = $1 AND t.relname = 't'",
+            &[Param::Text(schema.to_string())],
+        )
+        .await
+        .unwrap();
+    let indexes = rows
+        .iter()
+        .map(|row| (row.get::<_, String>(0), row.get::<_, bool>(1)))
+        .collect::<Vec<_>>();
+    setup
+        .batch(&format!("DROP SCHEMA {schema} CASCADE"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        (finalized, indexes),
+        (Ok(1), vec![(definition.name(), true)])
+    );
+}
+
 /// A reset drops the schema's enum types with it, and the recreated type gets a
 /// new id. A storage that keeps serving after its own reset must not run a
 /// statement prepared against the old one: the server refuses it with "cached
