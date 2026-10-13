@@ -4,13 +4,23 @@
 //! SQLSTATE as the message of the error's `cause`. The storage layer classifies
 //! on the code: the message is translated into the server's `lc_messages`.
 
-/// The server's own message, where the failure came from the server.
+/// The server's own message, where the failure came from the server, laid out
+/// the way psql prints it.
 ///
 /// Anything else — a connection that would not open, a pool that timed out —
 /// has no server message and is reported with the context it was given.
 pub fn message_of(error: &anyhow::Error) -> String {
     match database_error(error) {
-        Some(database) => database.message().to_string(),
+        Some(database) => {
+            let mut message = database.message().to_string();
+            if let Some(detail) = database.detail() {
+                message.push_str(&format!("\nDETAIL:  {detail}"));
+            }
+            if let Some(hint) = database.hint() {
+                message.push_str(&format!("\nHINT:  {hint}"));
+            }
+            message
+        }
         None => chain_of(error),
     }
 }

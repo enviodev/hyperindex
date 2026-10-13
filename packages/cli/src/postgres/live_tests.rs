@@ -778,6 +778,56 @@ async fn forgetting_what_was_prepared_survives_the_table_changing_shape() {
     );
 }
 
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_stored_value_of_another_type_names_its_column() {
+    let (rows, _) = client()
+        .query("SELECT 1::int4 AS ready_at", &[])
+        .await
+        .unwrap();
+    let read = super::storage::cell::<String>(&rows[0], 0).map_err(|error| format!("{error:#}"));
+
+    assert_eq!(
+        read,
+        Err(
+            "Failed reading the stored \"ready_at\" column: error deserializing column 0: \
+             cannot convert between the Rust type `alloc::string::String` and the Postgres \
+             type `int4`"
+                .to_string()
+        )
+    );
+}
+
+/// The server's DETAIL is often the only part that names the row: a unique
+/// violation's message names the constraint, its detail the key.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_server_failure_keeps_its_detail() {
+    let client = client();
+    client
+        .batch(
+            "DROP TABLE IF EXISTS live_detail; \
+             CREATE TABLE live_detail (id int4 PRIMARY KEY); \
+             INSERT INTO live_detail VALUES (1)",
+        )
+        .await
+        .unwrap();
+    let error = client
+        .execute(
+            "INSERT INTO live_detail VALUES ($1)",
+            &[Param::Text("1".to_string())],
+        )
+        .await
+        .unwrap_err();
+    client.batch("DROP TABLE live_detail").await.unwrap();
+
+    assert_eq!(
+        super::error::message_of(&error),
+        "duplicate key value violates unique constraint \"live_detail_pkey\"\n\
+         DETAIL:  Key (id)=(1) already exists."
+    );
+}
+
 /// A cell-bound insert's short last chunk is a shape of its own. Kept prepared,
 /// every chunk length would hold a plan on the server for the life of the
 /// connection; sent unnamed, the server lets it go once it has run.

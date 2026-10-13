@@ -615,8 +615,8 @@ impl Storage {
             .await?;
         let names = rows
             .iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect::<Vec<_>>();
+            .map(|row| cell::<String>(row, 0))
+            .collect::<Result<Vec<_>>>()?;
         if !names.is_empty()
             && !names
                 .iter()
@@ -775,8 +775,12 @@ impl Storage {
             missing_as_none(self.client.query(&read_info, &[])),
             missing_as_none(self.client.query(&read_contracts, &[])),
         )?;
-        let envio_info = info.and_then(|(rows, _)| rows.first().map(|row| row.get(0)));
-        let contract_names = contracts.map(|(rows, _)| rows.iter().map(|row| row.get(0)).collect());
+        let envio_info = info
+            .and_then(|(rows, _)| rows.first().map(|row| cell(row, 0)))
+            .transpose()?;
+        let contract_names = contracts
+            .map(|(rows, _)| rows.iter().map(|row| cell(row, 0)).collect::<Result<_>>())
+            .transpose()?;
         // Both join the schema in one transaction. Without either, an older
         // envio wrote it, and the address rows are shaped differently.
         if envio_info.is_none() || contract_names.is_none() {
@@ -803,14 +807,16 @@ impl Storage {
                 contract_names,
                 chains: chains
                     .iter()
-                    .map(|row| StoredChain {
-                        id: row.get(0),
-                        ecosystem: row.get(1),
-                        start_block: row.get(2),
-                        end_block: row.get(3),
-                        max_reorg_depth: row.get(4),
+                    .map(|row| {
+                        Ok(StoredChain {
+                            id: cell(row, 0)?,
+                            ecosystem: cell(row, 1)?,
+                            start_block: cell(row, 2)?,
+                            end_block: cell(row, 3)?,
+                            max_reorg_depth: cell(row, 4)?,
+                        })
                     })
-                    .collect(),
+                    .collect::<Result<_>>()?,
             },
             addresses,
         ))
@@ -832,30 +838,34 @@ impl Storage {
         Ok((
             chains
                 .iter()
-                .map(|row| ResumedChain {
-                    id: row.get(0),
-                    start_block: row.get(1),
-                    end_block: row.get(2),
-                    max_reorg_depth: row.get(3),
-                    first_event_block: row.get(4),
-                    ready_at: row.get(5),
-                    events_processed: row.get(6),
-                    progress_block: row.get(7),
-                    progress_block_time: row.get(8),
-                    source_block: row.get(9),
-                    checkpoint_id: row.get(10),
+                .map(|row| {
+                    Ok(ResumedChain {
+                        id: cell(row, 0)?,
+                        start_block: cell(row, 1)?,
+                        end_block: cell(row, 2)?,
+                        max_reorg_depth: cell(row, 3)?,
+                        first_event_block: cell(row, 4)?,
+                        ready_at: cell(row, 5)?,
+                        events_processed: cell(row, 6)?,
+                        progress_block: cell(row, 7)?,
+                        progress_block_time: cell(row, 8)?,
+                        source_block: cell(row, 9)?,
+                        checkpoint_id: cell(row, 10)?,
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
             addresses,
             checkpoints
                 .iter()
-                .map(|row| ReorgCheckpoint {
-                    id: row.get(0),
-                    chain_id: row.get(1),
-                    block_number: row.get(2),
-                    block_hash: row.get(3),
+                .map(|row| {
+                    Ok(ReorgCheckpoint {
+                        id: cell(row, 0)?,
+                        chain_id: cell(row, 1)?,
+                        block_number: cell(row, 2)?,
+                        block_hash: cell(row, 3)?,
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
         ))
     }
 
@@ -956,7 +966,7 @@ impl Storage {
                 ],
             )
             .await?;
-        Ok(rows.first().map(|row| row.get(0)))
+        rows.first().map(|row| cell(row, 0)).transpose()
     }
 
     pub async fn rollback_progress_diff(&self, bounds: &Bounds) -> Result<Vec<ProgressDiff>> {
@@ -967,14 +977,15 @@ impl Storage {
                 &bounds.params(),
             )
             .await?;
-        Ok(rows
-            .iter()
-            .map(|row| ProgressDiff {
-                chain_id: row.get(0),
-                events_processed: row.get(1),
-                progress_block: row.get(2),
+        rows.iter()
+            .map(|row| {
+                Ok(ProgressDiff {
+                    chain_id: cell(row, 0)?,
+                    events_processed: cell(row, 1)?,
+                    progress_block: cell(row, 2)?,
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// The ids a rollback removes, and the history rows it restores from.
@@ -1001,8 +1012,8 @@ impl Storage {
             .await?;
         let names = rows
             .iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect::<Vec<_>>();
+            .map(|row| cell::<String>(row, 0))
+            .collect::<Result<Vec<_>>>()?;
         let counts_sql = names
             .iter()
             .map(|name| internal::count_rows(schema, name))
@@ -1015,7 +1026,7 @@ impl Storage {
                 let (rows, _) = counted?;
                 Ok(CacheTable {
                     table_name,
-                    rows: rows.first().map_or(0, |row| row.get(0)),
+                    rows: rows.first().map_or(Ok(0), |row| cell(row, 0))?,
                 })
             })
             .collect()
@@ -1512,6 +1523,19 @@ impl Storage {
             None => Ok(()),
         }
     }
+}
+
+/// A cell as the type its reader expects, or an error naming the column. A
+/// schema holding something else would otherwise panic, which reaches
+/// JavaScript as "Panic in async function" and nothing more.
+pub(super) fn cell<'a, T: tokio_postgres::types::FromSql<'a>>(
+    row: &'a Row,
+    index: usize,
+) -> Result<T> {
+    row.try_get(index).with_context(|| {
+        let column = row.columns().get(index).map_or("?", |column| column.name());
+        format!("Failed reading the stored \"{column}\" column")
+    })
 }
 
 fn insert_context(table_name: &str) -> String {
