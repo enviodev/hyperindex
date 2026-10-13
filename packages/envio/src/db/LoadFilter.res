@@ -34,7 +34,7 @@ let render = (value: unknown, ~kind) =>
     Null.make(
       switch kind {
       // A document is its JSON text even when it is a bare string or number.
-      | Json => stringify(value)
+      | Json => stringify(value)->Utils.replaceLoneSurrogateEscapes
       | _ =>
         switch value->typeof {
         | #boolean => value->(Utils.magic: unknown => bool) ? "true" : "false"

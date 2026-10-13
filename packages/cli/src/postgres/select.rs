@@ -26,6 +26,11 @@ pub fn load_query(
                 }
             }
         }
+        if condition.kind == ValueKind::Json {
+            for element in condition.values.iter_mut().flatten().flatten() {
+                *element = without_nul_escapes(element);
+            }
+        }
         let column = quote_ident(&condition.column);
         let part = match condition.operator {
             // Postgres prunes a cached plan's partitions only on a constant in
@@ -113,6 +118,29 @@ fn scalar(value: Vec<Option<String>>) -> Option<String> {
     value.into_iter().next().flatten()
 }
 
+/// jsonb refuses the NUL character however it is spelled, so a document is
+/// written with its `\u0000` escapes left out (`Sql.stringifyDocument`). A
+/// filter by that document leaves them out too. Escapes are consumed whole, so
+/// an escaped backslash followed by `u0000` is text and stays.
+fn without_nul_escapes(json: &str) -> String {
+    let mut kept = String::with_capacity(json.len());
+    let mut rest = json;
+    while let Some(at) = rest.find('\\') {
+        kept.push_str(&rest[..at]);
+        let escape = &rest[at..];
+        let length = if escape.starts_with("\\u0000") {
+            6
+        } else {
+            let length = 1 + escape[1..].chars().next().map_or(0, char::len_utf8);
+            kept.push_str(&escape[..length]);
+            length
+        };
+        rest = &escape[length..];
+    }
+    kept.push_str(rest);
+    kept
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +158,14 @@ mod tests {
             enum_name: None,
             is_chain_id: false,
         }
+    }
+
+    #[test]
+    fn a_documents_nul_escapes_are_left_out_and_an_escaped_backslash_is_not() {
+        assert_eq!(
+            without_nul_escapes(r#"{"a":"x\u0000y","b":"\\u0000","c":"\u00001"}"#),
+            r#"{"a":"xy","b":"\\u0000","c":"1"}"#
+        );
     }
 
     #[test]
