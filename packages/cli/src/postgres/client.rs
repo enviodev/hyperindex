@@ -68,6 +68,8 @@ pub struct PgConnectionOptions {
     pub ssl: SslSetting,
     pub max_connections: usize,
     pub application_name: Option<String>,
+    /// More CAs a verifying connection trusts, as `NODE_EXTRA_CA_CERTS` names.
+    pub extra_ca_file: Option<std::path::PathBuf>,
     /// How long opening a connection may take, handshake included.
     pub connect_timeout: std::time::Duration,
 }
@@ -331,7 +333,8 @@ impl PgClient {
         let manager = if options.ssl == SslSetting::Disable {
             Manager::from_config(config, NoTls, manager_config)
         } else {
-            let connector = MakeRustlsConnect::new(options.ssl.verifies())?;
+            let connector =
+                MakeRustlsConnect::new(options.ssl.verifies(), options.extra_ca_file.as_deref())?;
             Manager::from_config(config, connector, manager_config)
         };
 
@@ -555,6 +558,7 @@ mod tests {
             ssl: SslSetting::Disable,
             max_connections: 1,
             application_name: None,
+            extra_ca_file: None,
             connect_timeout: std::time::Duration::from_secs(30),
         });
         assert_eq!(
@@ -588,6 +592,7 @@ mod tests {
             ssl: SslSetting::Disable,
             max_connections: 1,
             application_name: None,
+            extra_ca_file: None,
             connect_timeout: std::time::Duration::from_millis(300),
         })
         .unwrap();

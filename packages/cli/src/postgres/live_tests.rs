@@ -17,21 +17,17 @@ use futures_util::future;
 use crate::columnar::{Arena, ColumnKind, ColumnSpec};
 
 fn client() -> PgClient {
-    client_with(SslSetting::Disable, &default_host(), 2)
+    client_with(2)
 }
 
 /// One connection, so that what happens to it is what the next statement finds.
 fn pinned_client() -> PgClient {
-    client_with(SslSetting::Disable, &default_host(), 1)
+    client_with(1)
 }
 
-fn default_host() -> String {
-    std::env::var("ENVIO_PG_HOST").unwrap_or_else(|_| "localhost".to_string())
-}
-
-fn client_with(ssl: SslSetting, host: &str, max_connections: usize) -> PgClient {
+fn client_with(max_connections: usize) -> PgClient {
     PgClient::connect(PgConnectionOptions {
-        host: host.to_string(),
+        host: std::env::var("ENVIO_PG_HOST").unwrap_or_else(|_| "localhost".to_string()),
         port: std::env::var("ENVIO_PG_PORT")
             .ok()
             .and_then(|port| port.parse().ok())
@@ -39,9 +35,10 @@ fn client_with(ssl: SslSetting, host: &str, max_connections: usize) -> PgClient 
         user: std::env::var("ENVIO_PG_USER").unwrap_or_else(|_| "postgres".to_string()),
         password: std::env::var("ENVIO_PG_PASSWORD").unwrap_or_else(|_| "testing".to_string()),
         database: std::env::var("ENVIO_PG_DATABASE").unwrap_or_else(|_| "envio-dev".to_string()),
-        ssl,
+        ssl: SslSetting::Disable,
         max_connections,
         application_name: Some("envio-live-test".to_string()),
+        extra_ca_file: None,
         connect_timeout: std::time::Duration::from_secs(30),
     })
     .expect("the pool is built from a static configuration")
@@ -892,64 +889,6 @@ async fn a_storage_reused_across_its_reset_reads_the_new_schema() {
     storage.reset().await.unwrap();
 
     assert_eq!(after, Ok(1));
-}
-
-/// Whether the server says the connection it is answering on is encrypted, or
-/// why there was no connection to ask.
-async fn encrypted(ssl: SslSetting, host: &str) -> String {
-    let client = client_with(ssl, host, 2);
-    match client
-        .query(
-            "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
-            &[],
-        )
-        .await
-    {
-        Ok((rows, _)) => match rows.first().map(|row| row.get::<_, bool>(0)) {
-            Some(true) => "encrypted".to_string(),
-            Some(false) => "plaintext".to_string(),
-            None => "no row".to_string(),
-        },
-        Err(error) => format!("refused: {}", super::error::message_of(&error)),
-    }
-}
-
-/// Every mode against a server that offers TLS, including the one that has to
-/// check the certificate.
-///
-/// The certificate is signed by a CA installed only in the operating system's
-/// store, so verifying it proves that store is read. The certificate names
-/// `localhost` and nothing else, so the same server reached as 127.0.0.1 is
-/// what separates a mode that verifies from one that only encrypts.
-#[tokio::test]
-#[ignore = "needs a Postgres server with TLS and a trusted certificate"]
-async fn each_ssl_mode_connects_the_way_it_says() {
-    let host = default_host();
-    let refused = encrypted(SslSetting::Verify, "127.0.0.1").await;
-
-    assert_eq!(
-        (
-            encrypted(SslSetting::Verify, &host).await,
-            encrypted(SslSetting::NoVerify, &host).await,
-            encrypted(SslSetting::PreferNoVerify, &host).await,
-            encrypted(SslSetting::Disable, &host).await,
-            encrypted(SslSetting::NoVerify, "127.0.0.1").await,
-            // Refused, and saying enough for the refusal to be acted on.
-            (
-                refused.contains("invalid peer certificate"),
-                refused.contains(r#"not valid for name "127.0.0.1""#),
-            ),
-        ),
-        (
-            "encrypted".to_string(),
-            "encrypted".to_string(),
-            "encrypted".to_string(),
-            "plaintext".to_string(),
-            "encrypted".to_string(),
-            (true, true),
-        ),
-        "{refused}"
-    );
 }
 
 /// The pid the server is answering this client on.

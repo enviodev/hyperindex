@@ -444,6 +444,7 @@ impl PgStorage {
             ssl: SslSetting::parse(&options.ssl).map_err(to_napi)?,
             max_connections: options.max_connections as usize,
             application_name: Some(options.application_name),
+            extra_ca_file: std::env::var_os("NODE_EXTRA_CA_CERTS").map(Into::into),
             connect_timeout: std::time::Duration::from_secs(30),
         })
         .map_err(to_napi)?;
