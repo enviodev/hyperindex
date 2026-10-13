@@ -17,6 +17,7 @@ chains:
 type Item {
   id: ID!
   createdAt: Timestamp! @index
+  tags: [String!]!
 }
 
 type Probe {
@@ -31,6 +32,15 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
     return;
   }
   const bad = { createdAt: { _eq: "2020-01-01" as unknown as Date } };
+  if (event.params.testCase === "list") {
+    try {
+      await context.Item.getWhere({ tags: { _eq: "x" as unknown as string[] } });
+      context.Probe.set({ id: "accepted" });
+    } catch (error) {
+      context.Probe.set({ id: (error as Error).message });
+    }
+    return;
+  }
   if (event.params.testCase === "rejects") {
     try {
       await context.Item.getWhere(bad);
@@ -57,7 +67,7 @@ import { createTestIndexer } from "envio";
 describe("getWhere filter value type", () => {
   it("rejects a value that isn't a Date on a Timestamp column", async (t) => {
     const indexer = createTestIndexer();
-    indexer.Item.set({ id: "item", createdAt: new Date(1000) });
+    indexer.Item.set({ id: "item", createdAt: new Date(1000), tags: [] });
 
     const result = await indexer.process({
       chains: {
@@ -87,9 +97,40 @@ describe("getWhere filter value type", () => {
     });
   });
 
+  it("rejects a value that isn't an array on a list column", async (t) => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: {
+                contract: "0x1234567890123456789012345678901234567890",
+                testCase: "list",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    t.expect(result.changes[0]?.Probe).toEqual({
+      sets: [
+        {
+          id: \`Invalid value passed to context.Item.getWhere({ tags: { _eq: ... } }). The field "tags" expects an array.\`,
+        },
+      ],
+    });
+  });
+
   it("fails only the rejected call, not the ones batched with it", async (t) => {
     const indexer = createTestIndexer();
-    indexer.Item.set({ id: "item", createdAt: new Date(1000) });
+    indexer.Item.set({ id: "item", createdAt: new Date(1000), tags: [] });
 
     const result = await indexer.process({
       chains: {

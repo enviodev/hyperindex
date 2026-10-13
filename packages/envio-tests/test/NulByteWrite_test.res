@@ -1,0 +1,185 @@
+open Vitest
+
+// A NUL byte reaches an entity whenever a contract's bytes are read as text,
+// and Postgres takes it in neither a text column nor a jsonb one, so it is left
+// out on the way and the rest of the value is stored.
+
+let scenario = Scenario.make(
+  ~configYaml=`
+name: nul-byte-write
+chains:
+  - id: 1337
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "TestEvent()"
+`,
+  ~schema=`
+type Note {
+  id: ID!
+  text: String!
+  tags: [String!]!
+  payload: Json!
+}
+`,
+)
+
+let nul = String.fromCharCode(0)
+
+type note = {id: string, text: string, tags: array<string>, payload: JSON.t}
+type noteOps = {set: note => unit}
+type handlerContext = {
+  @as("Note") note: noteOps,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+}
+
+let contextOf = (args: Internal.handlerArgs) =>
+  args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+
+describe("A NUL byte in what a handler stores", () => {
+  // The indexer exits on a write it cannot make. Recording what reaches its
+  // error boundary keeps a failure to recover from reading as an empty table.
+  let refused = []
+
+  scenario->Scenario.it(
+    "is stripped and the row is written",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~onError=errHandler =>
+      refused
+      ->Array.push(
+        (errHandler.exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
+      )
+      ->ignore,
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Utils.delay(0)
+      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 1,
+            logIndex: 0,
+            handler: async args =>
+              (args->contextOf).note.set({
+                id: `note${nul}one`,
+                text: `before${nul}after`,
+                tags: [`tag${nul}one`, "plain"],
+                // Buried in a document, which is where the jsonb refusal comes
+                // from rather than the text one.
+                // The escaped literal is six characters of text, not a NUL,
+                // and stays.
+                payload: %raw(`{"deep": "in\u0000side", "k\u0000ey": ["a\u0000b"], "escaped": "\\u0000"}`),
+              }),
+          },
+        ],
+        ~latestFetchedBlockNumber=1,
+      )
+      await indexer.getBatchWritePromise()
+
+      let notes: array<note> = await indexer.query("Note")
+
+      t.expect((refused, notes)).toEqual((
+        [],
+        [
+          {
+            id: "noteone",
+            text: "beforeafter",
+            tags: ["tagone", "plain"],
+            payload: %raw(`{"deep": "inside", "key": ["ab"], "escaped": "\\u0000"}`),
+          },
+        ],
+      ))
+    },
+  )
+
+  let surrogate = Scenario.captureRefusal()
+  // Half a surrogate pair is no text any encoding carries either, but unlike a
+  // NUL it is replaced rather than dropped.
+  scenario->Scenario.it(
+    "is not what a lone surrogate is: that one is written as a replacement character",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~onError=surrogate.onError,
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Utils.delay(0)
+      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      let lone = String.fromCharCode(0xd800)
+
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 1,
+            logIndex: 0,
+            handler: async args =>
+              (args->contextOf).note.set({
+                id: "lone",
+                text: `a${lone}b`,
+                tags: [`a${lone}b`],
+                payload: JSON.Encode.string(`a${lone}b`),
+              }),
+          },
+        ],
+        ~latestFetchedBlockNumber=1,
+      )
+      await indexer.getBatchWritePromise()
+      let notes: array<note> = await indexer.query("Note")
+      t.expect(notes).toEqual([
+        {id: "lone", text: "a�b", tags: ["a�b"], payload: JSON.Encode.string("a�b")},
+      ])
+    },
+  )
+
+  // An effect's output is stored as jsonb in its cache table, so a NUL in it is
+  // refused the same way a NUL in an entity is.
+  let cachedLookup = Envio.createEffect(
+    {
+      name: "nulLookup",
+      input: S.string,
+      output: S.string,
+      rateLimit: Disable,
+      cache: true,
+    },
+    async ({input}) => `${input}${nul}out`,
+  )
+
+  scenario->Scenario.it(
+    "is stripped from a cached effect's output too",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~onError=errHandler =>
+      refused
+      ->Array.push(
+        (errHandler.exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
+      )
+      ->ignore,
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Utils.delay(0)
+      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 1,
+            logIndex: 0,
+            handler: async args => {
+              let _ = await (args->contextOf).effect(cachedLookup, "in")
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=1,
+      )
+      await indexer.getBatchWritePromise()
+
+      t.expect((refused, await indexer.queryEffectCache(cachedLookup, ~scope=CrossChain))).toEqual((
+        [],
+        [{"id": `"in"`, "output": %raw(`"inout"`)}],
+      ))
+    },
+  )
+})

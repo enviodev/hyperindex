@@ -129,7 +129,13 @@ describe.skipIf(!reachable)("E2E: a split run is one indexer", () => {
 
       const [runtime, metrics] = await Promise.all([
         // Each worker's readings, told apart by label.
-        scrapeUntil("/metrics/runtime", (body) => body.includes('worker="8453"')),
+        scrapeUntil(
+          "/metrics/runtime",
+          (body) =>
+            ["1", "8453"].every((worker) =>
+              body.includes(`nodejs_heap_size_used_bytes{worker="${worker}"}`)
+            )
+        ),
         // Both chains on one endpoint, whichever process drives each.
         scrapeUntil(
           "/metrics",

@@ -26,7 +26,7 @@ let storedChainIds = async (indexer: IndexerRunner.t) => {
   let {sql, pgSchema} = indexer.pg
   let rows: array<{
     "id": ChainId.t,
-  }> = await sql->Postgres.unsafe(`SELECT "id" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`)
+  }> = await sql->Sql.queryForTests(`SELECT "id" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`)
   rows->Array.map(row => row["id"]->ChainId.normalizeOrThrow->ChainId.toInt)
 }
 

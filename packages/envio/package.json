@@ -55,8 +55,7 @@
     "@rescript/runtime": "12.2.0",
     "rescript-schema": "9.5.1",
     "viem": "2.54.0",
-    "dotenv": "16.4.5",
-    "postgres": "3.4.8"
+    "dotenv": "16.4.5"
   },
   "devDependencies": {
     "rescript": "12.2.0",

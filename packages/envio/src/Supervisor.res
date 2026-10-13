@@ -251,7 +251,7 @@ let syncCache = {
 // `envio dev` asks for a dump, and the alternative is pausing the indexing to
 // free one.
 let dumpCache = (~config) => {
-  let storage = PgStorage.makeStorageFromEnv(~config, ~sql=PgStorage.makeClient(~maxConnections=1))
+  let storage = PgStorage.makeStorageFromEnv(~config, ~maxConnections=1)
   storage.dumpEffectCache()->Promise.finally(() => storage.close()->Promise.ignore)
 }
 

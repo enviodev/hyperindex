@@ -25,53 +25,12 @@ let numericIdTable = Table.mkTable(
 )
 
 describe("Non-string entity id support", () => {
-  it("resolves the id column Postgres type per entity", t => {
-    t.expect((
-      numericIdTable->Table.getIdPgFieldType(~pgSchema="public"),
-      bigParentTable->Table.getIdPgFieldType(~pgSchema="public"),
-    )).toEqual(("INTEGER", "NUMERIC"))
-  })
-
-  it("creates id and foreign-key columns with matching numeric types", t => {
-    t.expect(
-      PgStorage.makeCreateTableQuery(
-        numericIdTable,
-        ~pgSchema="public",
-        ~isNumericArrayAsText=false,
-      ),
-    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."NumericId"("id" INTEGER NOT NULL, "value" TEXT NOT NULL, "parent_id" NUMERIC NOT NULL, PRIMARY KEY("id"));`)
-  })
-
-  it("casts delete-by-ids to the id column type instead of text", t => {
-    t.expect(
-      PgStorage.makeDeleteByIdsQuery(
-        ~pgSchema="public",
-        ~tableName="NumericId",
-        ~idPgType=numericIdTable->Table.getIdPgFieldType(~pgSchema="public"),
-        ~chainIdCondition="",
-      ),
-    ).toBe(`DELETE FROM "public"."NumericId" WHERE id = ANY($1::INTEGER[]);`)
-  })
-
-  it("casts history backfill unnest to the id column type", t => {
-    t.expect(
-      EntityHistory.makeBackfillHistoryQuery(
-        ~pgSchema="public",
-        ~entityName="BigParent",
-        ~entityIndex=0,
-        ~idPgType=bigParentTable->Table.getIdPgFieldType(~pgSchema="public"),
-        ~chainIdColumn=None,
-        ~chainId=None,
-      )->String.includes("UNNEST($1::NUMERIC[])"),
-    ).toBe(true)
-  })
-
   // Which of these becomes a Decimal and which falls back to String is Rust's
   // to decide from the precision; what this side owes it is the precision.
   it("carries a numeric id's precision to the ClickHouse sink", t => {
     t.expect(
-      [Table.Int32, BigInt({precision: 20}), BigInt({})]->Array.map(fieldType =>
-        ClickHouse.makeColumnSpec(~name="id", ~fieldType)
+      [Table.Int32, BigInt({precision: 20}), BigInt({})]->Array.map(
+        fieldType => ClickHouse.makeColumnSpec(~name="id", ~fieldType),
       ),
     ).toEqual([
       {name: "id", fieldName: "id", fieldType: "Int32", isNullable: false, isArray: false},

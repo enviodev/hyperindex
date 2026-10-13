@@ -65,6 +65,14 @@ convert_case = "0.6.0"
 bollard = "0.20"
 futures-util = "0.3"
 tar = "0.4"
+tokio-postgres = "0.7"
+deadpool-postgres = "0.14"
+# ring rather than rustls's default aws-lc-rs: the provider reqwest already
+# builds on every release target, with no C toolchain beyond a compiler.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+webpki-roots = "1"
 napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
 oxc = { version = "0.144.0", features = ["ast_visit", "transformer", "codegen", "semantic"] }
@@ -104,6 +112,7 @@ pretty_assertions = "1.4.1"
 insta = "1.48.0"
 vt100 = "0.16.2"
 proptest = "1"
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
 
 # NOTE: this is needed for aarch64 linux, since linking of openssl has caused issues via the package manager
 #       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored

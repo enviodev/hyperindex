@@ -34,30 +34,6 @@ let multichainConfig = parse(
 )
 let maxSafeConfig = parse(~name="max-safe", ~chains=evmChain(~id="9007199254740991"))
 
-let chainsDdl = (config: Config.t) =>
-  PgStorage.makeCreateTableQuery(
-    InternalTable.Chains.table,
-    ~pgSchema="test_schema",
-    ~isNumericArrayAsText=false,
-    ~chainIdMode=config.chainIdMode,
-  )
-
-let addressesDdl = (config: Config.t) =>
-  PgStorage.makeCreateTableQuery(
-    InternalTable.EnvioAddresses.table,
-    ~pgSchema="test_schema",
-    ~isNumericArrayAsText=false,
-    ~chainIdMode=config.chainIdMode,
-  )
-
-let rawEventsDdl = (config: Config.t) =>
-  PgStorage.makeCreateTableQuery(
-    InternalTable.RawEvents.table,
-    ~pgSchema="test_schema",
-    ~isNumericArrayAsText=false,
-    ~chainIdMode=config.chainIdMode,
-  )
-
 describe("ChainIdMode resolution", () => {
   it("keeps Int32 at the int32 boundary and widens one above it", t => {
     t.expect((
@@ -141,51 +117,6 @@ ${evmChain(~id)}
       rawConfigJson(~id="2147483647")->chainIdModeKey,
       rawConfigJson(~id="2147483648")->chainIdModeKey,
     )).toEqual((None, Some(JSON.String("int64"))))
-  })
-})
-
-describe("ChainIdMode Postgres schema", () => {
-  it("keeps INTEGER chain-id columns for small-id projects", t => {
-    t.expect((
-      maxInt32Config->chainsDdl,
-      maxInt32Config->addressesDdl,
-      maxInt32Config->rawEventsDdl,
-    )).toEqual((
-      `CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "progress_block_time" TIMESTAMP WITH TIME ZONE NULL, "checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id"));`,
-      `CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));`,
-      `CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));`,
-    ))
-  })
-
-  it("widens every chain-id column to BIGINT in Int64 mode", t => {
-    t.expect((tronConfig->chainsDdl, tronConfig->addressesDdl, tronConfig->rawEventsDdl)).toEqual((
-      maxInt32Config->chainsDdl->String.replace(`"id" INTEGER`, `"id" BIGINT`),
-      maxInt32Config->addressesDdl->String.replace(`"chain_id" INTEGER`, `"chain_id" BIGINT`),
-      maxInt32Config->rawEventsDdl->String.replace(`"chain_id" INTEGER`, `"chain_id" BIGINT`),
-    ))
-  })
-
-  it("selects the array cast for chain-id parameters from the mode", t => {
-    t.expect((
-      InternalTable.Checkpoints.makeInsertCheckpointQuery(
-        ~pgSchema="test_schema",
-        ~chainIdMode=maxInt32Config.chainIdMode,
-      ),
-      InternalTable.Checkpoints.makeInsertCheckpointQuery(
-        ~pgSchema="test_schema",
-        ~chainIdMode=tronConfig.chainIdMode,
-      ),
-      InternalTable.EnvioAddresses.makeInsertQuery(
-        ~pgSchema="test_schema",
-        ~chainIdMode=tronConfig.chainIdMode,
-      )->String.includes("$1::BIGINT[]"),
-    )).toEqual((
-      `INSERT INTO "test_schema"."envio_checkpoints" ("id", "chain_id", "block_number", "block_hash", "events_processed")
-SELECT * FROM unnest($1::BIGINT[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INTEGER[]);`,
-      `INSERT INTO "test_schema"."envio_checkpoints" ("id", "chain_id", "block_number", "block_hash", "events_processed")
-SELECT * FROM unnest($1::BIGINT[],$2::BIGINT[],$3::INTEGER[],$4::TEXT[],$5::INTEGER[]);`,
-      true,
-    ))
   })
 })
 

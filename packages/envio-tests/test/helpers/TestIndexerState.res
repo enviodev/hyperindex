@@ -13,7 +13,6 @@ let defaultPersistence = (~config=config) =>
       ~config,
       ~storage=PgStorage.makeStorageFromEnv(
         ~config,
-        ~sql=PgStorage.makeClient(),
         ~pgSchema=TestPgSchema.make(),
         ~isHasuraEnabled=false,
       ),

@@ -4,7 +4,7 @@
 let setup = async () => {
   let sql = PgStorage.makeClient()
   let cleanup = async () => {
-    let _ = await sql->Postgres.endSql
+    let _ = await sql->Sql.close
   }
   switch await TestPgSchema.sweep(sql) {
   | _ => await cleanup()

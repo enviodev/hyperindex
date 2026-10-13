@@ -181,9 +181,7 @@ type storage = {
   ) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
-    ~entityName: string,
-    ~entityIndex: int,
-    ~chainIdColumn: option<string>,
+    ~entityConfig: Internal.entityConfig,
     ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
   ) => promise<unit>,
   // Get rollback target checkpoint
@@ -249,15 +247,8 @@ exception StorageError({message: string, reason: exn})
 // need, so it's printed once, without a stack trace.
 exception Refused(string)
 
-let make = (
-  ~userEntities,
-  // TODO: Should only pass userEnums and create internal config in runtime
-  ~allEnums,
-  ~storage,
-) => {
+let make = (~userEntities, ~allEnums, ~storage) => {
   let allEntities = userEntities
-  let allEnums =
-    allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
     userEntities,
     allEntities,
@@ -408,9 +399,15 @@ let init = {
 // a migration command: what a config change prints names the command the
 // operator ran, and an unreachable chain is waited on rather than reported,
 // since somebody is watching the run come up.
-let initForRun = (persistence, ~config: Config.t, ~reset, ~isDevelopmentMode) =>
+let initForRun = (
+  persistence,
+  ~config: Config.t,
+  ~reset,
+  ~isDevelopmentMode,
+  ~announceResume=!Worker.isEnabled,
+) =>
   persistence->init(
-    ~announceResume=!Worker.isEnabled,
+    ~announceResume,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,

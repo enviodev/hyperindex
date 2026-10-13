@@ -13,10 +13,6 @@ describe("Test Persistence layer init", () => {
       persistence.allEntities,
       ~message=`The indexer's own tables aren't entities, so the user's list is untouched`,
     ).toEqual([])
-    t.expect(
-      persistence.allEnums,
-      ~message=`All enums should automatically include the indexer core ones`,
-    ).toEqual([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
     t.expect(persistence.storageStatus, ~message=`Intial storage status should be unknown`).toEqual(
       Persistence.Unknown,
     )

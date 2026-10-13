@@ -122,7 +122,7 @@ module Db = {
   )
   let ssl = envSafe->EnvSafe.get(
     "ENVIO_PG_SSL_MODE",
-    Postgres.sslOptionsSchema,
+    Sql.sslModeSchema,
     //this is a dev fallback option for local deployments, shouldn't run in the prod env
     //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
     ~devFallback=Bool(false),

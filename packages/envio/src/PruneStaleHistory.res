@@ -126,12 +126,7 @@ let pruneEntity = async (
   // Recorded for failures too, so a failing prune retries on the same
   // interval instead of on every write.
   state->IndexerState.lastPrunedAtMillis->Dict.set(entityConfig.name, Date.now())
-  switch await persistence.storage.pruneStaleEntityHistory(
-    ~entityName=entityConfig.name,
-    ~entityIndex=entityConfig.index,
-    ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
-    ~safeCheckpoints,
-  ) {
+  switch await persistence.storage.pruneStaleEntityHistory(~entityConfig, ~safeCheckpoints) {
   | () =>
     state->IndexerState.recordHistoryPrune(
       ~timeSeconds=Performance.secondsSince(timeRef),
