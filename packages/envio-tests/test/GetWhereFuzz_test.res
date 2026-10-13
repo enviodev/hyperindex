@@ -11,7 +11,8 @@ open Vitest
 // earlier query that loaded it. Each filter is therefore pinned to a group of
 // rows no other filter reads, which leaves its own SQL as the only way in.
 // Rows the SQL returns past the filter never reach the handler, since they are
-// matched before any index takes them, so only a missed row can show here.
+// matched before any index takes them; they show instead in how many rows the
+// loads brought back, which has to be exactly the rows the filters describe.
 let makeRandom: int => unit => float = %raw(`seed => {
   let a = seed >>> 0
   return () => {
@@ -230,6 +231,7 @@ let inHandler = (~block, run: handlerContext => promise<unit>): MockSource.itemM
 }
 
 type mismatch = {seed: int, filter: string, expected: array<string>, actual: array<string>}
+type overLoad = {seed: int, loaded: int, expected: int}
 
 describe("A getWhere over committed rows", () => {
   scenario->Scenario.it(
@@ -242,6 +244,7 @@ describe("A getWhere over committed rows", () => {
       await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
       let running = ref(indexer)
       let mismatches = []
+      let overLoads = []
       let matched = ref(0)
 
       for seed in 1 to 3 {
@@ -286,6 +289,13 @@ describe("A getWhere over committed rows", () => {
           ~latestFetchedBlockNumber=writeBlock + 1,
         )
         await running.contents.getBatchWritePromise()
+        // Restarted, so these are the reads above and nothing else.
+        let loaded =
+          (await running.contents.metric("envio_storage_load_size"))->Array.reduce(
+            0,
+            (sum, sample) => sum + sample.value->Int.fromString->Option.getOr(0),
+          )
+        let expectedLoaded = ref(0)
 
         let entities = rows->(Utils.magic: array<dict<unknown>> => array<Internal.entity>)
         filters->Array.forEachWithIndex(
@@ -297,6 +307,7 @@ describe("A getWhere over committed rows", () => {
               ->(Utils.magic: array<Internal.entity> => array<unknown>)
               ->ids
             let actual = results->Array.get(idx)->Option.getOr(["missing"])
+            expectedLoaded := expectedLoaded.contents + expected->Array.length
             if expected->Array.length > 0 {
               matched := matched.contents + 1
             }
@@ -307,9 +318,12 @@ describe("A getWhere over committed rows", () => {
             }
           },
         )
+        if loaded !== expectedLoaded.contents {
+          overLoads->Array.push({seed, loaded, expected: expectedLoaded.contents})->ignore
+        }
       }
 
-      t.expect((mismatches, matched.contents > 200)).toEqual(([], true))
+      t.expect((mismatches, overLoads, matched.contents > 200)).toEqual(([], [], true))
     },
   )
 })
