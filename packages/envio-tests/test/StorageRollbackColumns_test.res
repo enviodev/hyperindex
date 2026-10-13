@@ -45,6 +45,11 @@ type Numbered {
   id: Int!
   value: String!
 }
+
+type BigNumbered {
+  id: BigInt! @config(precision: 20)
+  value: String!
+}
 `,
 )
 
@@ -62,9 +67,15 @@ type item = {
   bigs: array<bigint>,
 }
 type numbered = {id: int, value: string}
+type bigNumbered = {id: bigint, value: string}
 type itemOps = {set: item => unit, deleteUnsafe: string => unit}
-type numberedOps = {set: numbered => unit}
-type handlerContext = {@as("Item") item: itemOps, @as("Numbered") numbered: numberedOps}
+type numberedOps = {set: numbered => unit, deleteUnsafe: int => unit}
+type bigNumberedOps = {set: bigNumbered => unit, deleteUnsafe: bigint => unit}
+type handlerContext = {
+  @as("Item") item: itemOps,
+  @as("Numbered") numbered: numberedOps,
+  @as("BigNumbered") bigNumbered: bigNumberedOps,
+}
 
 let at = (~block, write: handlerContext => unit): MockSource.itemMock => {
   blockNumber: block,
@@ -215,6 +226,45 @@ describe("A rollback", () => {
       t.expect((deleted->Array.map(render), items->Array.map(render))).toEqual((
         [],
         [before->render],
+      ))
+    },
+  )
+
+  // The ids a rollback removes and the history rows it restores from are read
+  // and bound as the id column's own type, which for these is not text.
+  scenario->Scenario.it(
+    "removes and brings back entities keyed by an Int or a BigInt id",
+    ~sources=[{chain: 1, methods}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      await indexBeforeAndAfter(
+        ~indexer,
+        ~source,
+        ~below=context => {
+          context.numbered.set({id: 7, value: "kept"})
+          context.bigNumbered.set({id: 90000000000000000001n, value: "kept"})
+        },
+        ~inside=context => {
+          context.numbered.deleteUnsafe(7)
+          context.numbered.set({id: 8, value: "new"})
+          context.bigNumbered.deleteUnsafe(90000000000000000001n)
+          context.bigNumbered.set({id: 90000000000000000002n, value: "new"})
+        },
+      )
+      let changed: (array<numbered>, array<bigNumbered>) = (
+        await indexer.query("Numbered"),
+        await indexer.query("BigNumbered"),
+      )
+
+      await Scenario.reorgAbove(~indexer, ~source, ~head=300, ~validUpTo=100)
+      let restored: (array<numbered>, array<bigNumbered>) = (
+        await indexer.query("Numbered"),
+        await indexer.query("BigNumbered"),
+      )
+
+      t.expect((changed, restored)).toEqual((
+        ([{id: 8, value: "new"}], [{id: 90000000000000000002n, value: "new"}]),
+        ([{id: 7, value: "kept"}], [{id: 90000000000000000001n, value: "kept"}]),
       ))
     },
   )

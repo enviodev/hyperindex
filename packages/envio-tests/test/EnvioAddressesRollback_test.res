@@ -111,3 +111,42 @@ describe("A rollback of an address registration", () => {
     },
   )
 })
+
+describe("An address registered again for the same contract", () => {
+  scenario->Scenario.it(
+    "is stored once, at the block it was first registered",
+    ~sources=[{chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await MockSource.waitItemsQuery(source)
+      source.resolveGetItemsOrThrow(
+        [
+          registering(
+            ~blockNumber=50,
+            ~register=context => {
+              context.chain["Gravatar"].add(shared)
+              context.chain["Gravatar"].add(shared)
+            },
+          ),
+        ],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexer.getBatchWritePromise()
+      source.drainItemsQueries(~latestFetchedBlockNumber=100)
+      await MockSource.waitItemsQuery(source)
+      source.resolveGetItemsOrThrow(
+        [registering(~blockNumber=200, ~register=context => context.chain["Gravatar"].add(shared))],
+        ~filter=query => query["p"] === "0",
+        ~latestFetchedBlockNumber=300,
+      )
+      await indexer.getBatchWritePromise()
+      source.drainItemsQueries(~latestFetchedBlockNumber=300)
+      await indexer.waitUntilIdle()
+
+      t.expect(await registered(indexer)).toEqual([(shared, "Gravatar", 50)])
+    },
+  )
+})
