@@ -5,8 +5,6 @@ use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use futures_util::{pin_mut, SinkExt, StreamExt};
-use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-use postgres_openssl::MakeTlsConnector;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_postgres::config::SslMode;
 use tokio_postgres::types::{ToSql, Type};
@@ -14,6 +12,7 @@ use tokio_postgres::{Config, NoTls, Row, Statement};
 
 use super::error::Aborted;
 use super::param::Param;
+use super::tls::MakeRustlsConnect;
 
 /// What `ENVIO_PG_SSL_MODE` asks for.
 ///
@@ -307,20 +306,7 @@ impl PgClient {
         let manager = if options.ssl == SslSetting::Disable {
             Manager::from_config(config, NoTls, manager_config)
         } else {
-            let mut builder = SslConnector::builder(SslMethod::tls())
-                .context("Failed preparing the TLS connector")?;
-            if !options.ssl.verifies() {
-                builder.set_verify(SslVerifyMode::NONE);
-            }
-            let mut connector = MakeTlsConnector::new(builder.build());
-            if !options.ssl.verifies() {
-                // Without this the hostname is still checked even though the
-                // certificate is not, which is not what not-verifying means.
-                connector.set_callback(|config, _| {
-                    config.set_verify_hostname(false);
-                    Ok(())
-                });
-            }
+            let connector = MakeRustlsConnect::new(options.ssl.verifies())?;
             Manager::from_config(config, connector, manager_config)
         };
 

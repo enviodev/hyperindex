@@ -844,12 +844,10 @@ async fn encrypted(ssl: SslSetting, host: &str) -> String {
 /// Every mode against a server that offers TLS, including the one that has to
 /// check the certificate.
 ///
-/// A hosted database is reached over TLS and nothing short of a handshake says
-/// whether the trust store the addon carries can be reached at all — the
-/// OpenSSL it links is vendored, and its idea of where the CAs live is
-/// compiled in. The certificate names `localhost` and nothing else, so the same
-/// server reached as 127.0.0.1 is what separates a mode that verifies from one
-/// that only encrypts.
+/// The certificate is signed by a CA installed only in the operating system's
+/// store, so verifying it proves that store is read. The certificate names
+/// `localhost` and nothing else, so the same server reached as 127.0.0.1 is
+/// what separates a mode that verifies from one that only encrypts.
 #[tokio::test]
 #[ignore = "needs a Postgres server with TLS and a trusted certificate"]
 async fn each_ssl_mode_connects_the_way_it_says() {
@@ -865,8 +863,8 @@ async fn each_ssl_mode_connects_the_way_it_says() {
             encrypted(SslSetting::NoVerify, "127.0.0.1").await,
             // Refused, and saying enough for the refusal to be acted on.
             (
-                refused.contains("certificate verify failed"),
-                refused.contains("IP address mismatch"),
+                refused.contains("invalid peer certificate"),
+                refused.contains(r#"not valid for name "127.0.0.1""#),
             ),
         ),
         (

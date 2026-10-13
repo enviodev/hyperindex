@@ -13,6 +13,7 @@ pub mod pg_type;
 pub mod rows;
 pub mod select;
 pub mod storage;
+mod tls;
 pub mod write;
 
 // The addon registers these; a test build has no registration and would see
