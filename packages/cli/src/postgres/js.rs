@@ -163,6 +163,7 @@ pub struct PgStorageOptions {
     /// As `ENVIO_PG_SSL_MODE` spells it.
     pub ssl: String,
     pub max_connections: u32,
+    pub application_name: String,
     pub pg_schema: String,
     /// `Int32` or `Int64`.
     pub chain_id_mode: String,
@@ -442,7 +443,7 @@ impl PgStorage {
             database: options.database,
             ssl: SslSetting::parse(&options.ssl).map_err(to_napi)?,
             max_connections: options.max_connections as usize,
-            application_name: Some("envio".to_string()),
+            application_name: Some(options.application_name),
             connect_timeout: std::time::Duration::from_secs(30),
         })
         .map_err(to_napi)?;

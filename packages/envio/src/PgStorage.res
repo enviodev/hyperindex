@@ -113,6 +113,9 @@ let makeClient = (
       database: Env.Db.database,
       ssl: Env.Db.ssl->Sql.sslModeToString,
       maxConnections,
+      // What pg_stat_activity, and a pooler's or provider's list of who is
+      // connected, shows the indexer's connections as.
+      applicationName: `hyperindex/${Utils.EnvioPackage.value.version}`,
       pgSchema,
       chainIdMode: (chainIdMode :> string),
       isHasuraEnabled,

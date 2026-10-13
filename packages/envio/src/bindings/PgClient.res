@@ -19,6 +19,7 @@ type options = {
   // As `ENVIO_PG_SSL_MODE` spells it.
   ssl: string,
   maxConnections: int,
+  applicationName: string,
   pgSchema: string,
   chainIdMode: string,
   isHasuraEnabled: bool,
