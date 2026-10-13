@@ -1,12 +1,14 @@
-//! Checks the decoding against a real server.
+//! The client against a real server: the decoding, and what happens when a
+//! connection dies or a statement fails mid-transaction.
 //!
-//! Every case asks Postgres for a value twice: once in the binary this decodes,
-//! and once as the text it renders itself. The schemas on the JavaScript side
-//! are written against the text form, so anywhere the two disagree is a value
-//! they would misread.
+//! A decoding case asks Postgres for a value twice: once in the binary this
+//! decodes, and once as the text it renders itself. The schemas on the
+//! JavaScript side are written against the text form, so anywhere the two
+//! disagree is a value they would misread.
 //!
-//! Ignored by default — CI's `cargo test` job has no database. Run against a
-//! local one with `cargo test --lib postgres::live -- --ignored`.
+//! Ignored by a plain `cargo test`, which needs no database. CI runs them
+//! against the Postgres its `cargo-test` job starts; locally, run
+//! `cargo test --lib postgres::live -- --ignored --test-threads=1`.
 
 use super::client::{PgClient, PgConnectionOptions, SslSetting, MAX_PREPARED_STATEMENTS};
 use super::param::Param;
