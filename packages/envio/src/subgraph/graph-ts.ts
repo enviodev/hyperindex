@@ -2779,7 +2779,9 @@ export class YAMLValue {
     return new YAMLValue(YAMLValueKind.ARRAY, data);
   }
   static newObject(data: TypedMap<YAMLValue, YAMLValue>): YAMLValue {
-    return new YAMLValue(YAMLValueKind.OBJECT, data);
+    const map = new YAMLMap();
+    for (const entry of data.entries) map.set(entry.key, entry.value);
+    return new YAMLValue(YAMLValueKind.OBJECT, map);
   }
   static newTagged(tag: string, value: YAMLValue): YAMLValue {
     return new YAMLValue(YAMLValueKind.TAGGED, new YAMLTaggedValue(tag, value));
@@ -2889,6 +2891,13 @@ export class YAMLValue {
   }
 }
 
+/** AssemblyScript's `==` on YAML keys compares their content, which is how `toObject().get(newString("k"))` finds "k". */
+class YAMLMap extends TypedMap<YAMLValue, YAMLValue> {
+  getEntry(key: YAMLValue): TypedMapEntry<YAMLValue, YAMLValue> | null {
+    return this.entries.find((entry) => YAMLValue.eq(entry.key, key)) ?? null;
+  }
+}
+
 export class YAMLTaggedValue {
   constructor(
     public tag: string,
@@ -2924,7 +2933,7 @@ function yamlFromNode(node: unknown, document: Document): YAMLValue {
     return yamlFromNode(node.resolve(document), document);
   }
   if (isMap(node)) {
-    const map = new TypedMap<YAMLValue, YAMLValue>();
+    const map = new YAMLMap();
     for (const pair of node.items) {
       map.set(yamlFromNode(pair.key, document), yamlFromNode(pair.value, document));
     }
