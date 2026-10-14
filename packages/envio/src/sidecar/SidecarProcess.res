@@ -6,8 +6,19 @@ type handle = {close: unit => promise<unit>}
 type startOptions = {entities: array<Internal.entityConfig>}
 type runtime = {start: startOptions => promise<handle>}
 
-// A close that never settles must not keep a pod in Terminating forever.
-let closeGraceMs = 5_000
+// How long a signalled `envio sidecar` waits for `close()` before exiting
+// anyway, so a close that never settles cannot keep a pod in Terminating. The
+// runtime drains for up to ENVIO_SIDECAR_GRACE_MS (20 s by default); the 2 s
+// margin lets that finish, and the 28 s cap exits ahead of the pod's 30 s
+// termination grace and its SIGKILL. Read raw, not through Env: an invalid
+// value already fails the runtime's own start.
+let closeCapMs = (~graceMs: option<string>) => {
+  let graceMs = switch graceMs->Option.flatMap(raw => raw->Int.fromString) {
+  | Some(graceMs) if graceMs >= 0 => graceMs
+  | _ => 20_000
+  }
+  Math.Int.min(graceMs, 26_000) + 2_000
+}
 
 let runtimeOf = (entryModule: unknown): option<runtime> => {
   let default = (
@@ -58,9 +69,12 @@ let closeOnSignals = (started: promise<handle>) => {
           Promise.resolve()
         })
       let _ =
-        Promise.race([closed, Utils.delay(closeGraceMs)])->Promise.thenResolve(() =>
-          NodeJs.process->NodeJs.exitWithCode(Success)
-        )
+        Promise.race([
+          closed,
+          Utils.delay(
+            closeCapMs(~graceMs=NodeJs.Process.process.env->Dict.get("ENVIO_SIDECAR_GRACE_MS")),
+          ),
+        ])->Promise.thenResolve(() => NodeJs.process->NodeJs.exitWithCode(Success))
     }
   NodeJs.Process.onSignal("SIGTERM", close)
   NodeJs.Process.onSignal("SIGINT", close)
