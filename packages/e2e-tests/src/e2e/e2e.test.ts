@@ -535,7 +535,8 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse", ()
   it("ClickHouse history table has the schema-declared skipping indexes", async () => {
     // Transfer declares two bloom-filter skipping indexes via
     // @storage(clickhouse: {skippingIndexes: [...]}). An omitted granularity falls
-    // back to ClickHouse's default of 1.
+    // back to ClickHouse's default of 1. Every history table also carries a
+    // minmax index on its checkpoint column.
     const result = await queryClickHouse<
       ClickHouseResult<{ name: string; type_full: string; granularity: number }>
     >(
@@ -547,6 +548,7 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse", ()
     );
 
     expect(result.data).toEqual([
+      { name: "envio_checkpoint_minmax", type_full: "minmax", granularity: 1 },
       { name: "idx_from", type_full: "bloom_filter(0.01)", granularity: 4 },
       { name: "idx_to", type_full: "bloom_filter(0.01)", granularity: 1 },
     ]);
