@@ -50,6 +50,8 @@ export {
   type ReadOps,
   type QueryOpts,
   type IterateOpts,
+  type FieldSelection,
+  type Projected,
   type OrderBy,
   type GetWhereFilter,
   type GetWhereOperator,
