@@ -18,6 +18,8 @@ const REQUIRED_FILES = [
   "rescript.json",
   "index.d.ts",
   "index.js",
+  "sidecar.d.ts",
+  "sidecar.js",
   "README.md",
   "licenses",
   "src",
@@ -38,6 +40,9 @@ const REQUIRED_COMPILED = [
   "src/Main.res.mjs",
   "src/Bin.res.mjs",
 ];
+
+// tsc emit for the sidecar runtime, which the top-level sidecar.js/sidecar.d.ts re-export
+const REQUIRED_SIDECAR_EMIT = ["src/sidecar/index.js", "src/sidecar/index.d.ts"];
 
 function verify(dir: string): void {
   const errors: string[] = [];
@@ -70,6 +75,24 @@ function verify(dir: string): void {
   for (const file of REQUIRED_COMPILED) {
     if (!fs.existsSync(path.join(dir, file))) {
       errors.push(`Missing compiled file: ${file}`);
+    }
+  }
+
+  for (const file of REQUIRED_SIDECAR_EMIT) {
+    if (!fs.existsSync(path.join(dir, file))) {
+      errors.push(`Missing sidecar TypeScript emit: ${file}`);
+    }
+  }
+
+  // TypeScript resolves `./x.js` to `x.ts` before `x.d.ts`, so a shipped source
+  // would be compiled under the user's own compiler settings instead of the
+  // declaration being read.
+  const sidecarDir = path.join(dir, "src", "sidecar");
+  if (fs.existsSync(sidecarDir)) {
+    for (const entry of fs.readdirSync(sidecarDir)) {
+      if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) {
+        errors.push(`Sidecar TypeScript source must not ship: src/sidecar/${entry}`);
+      }
     }
   }
 

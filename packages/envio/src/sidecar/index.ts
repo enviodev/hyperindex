@@ -1,0 +1,56 @@
+export {
+  defineSidecar,
+  isSidecarContract,
+  type SidecarContract,
+  type SidecarContractDef,
+  type SidecarCaller,
+  type SidecarFunctionInput,
+  type SidecarFunctionName,
+  type SidecarWebhookBody,
+  type SidecarWebhookName,
+} from "./contract.js";
+export {
+  createSidecar,
+  parseEvery,
+  type Sidecar,
+  type SidecarImpl,
+  type SidecarCall,
+  type SidecarFunction,
+  type SidecarFunctionArgs,
+  type SidecarFunctionImpl,
+  type SidecarJob,
+  type SidecarJobArgs,
+  type SidecarRoutesApp,
+  type SidecarStats,
+  type StartOptions,
+  type RunningSidecar,
+  type RollbackNotice,
+} from "./runtime.js";
+export {
+  createEmit,
+  SidecarEmitError,
+  DEFAULT_RETRY,
+  type Emit,
+  type EmitOptions,
+  type EmitResult,
+  type RetryPolicy,
+} from "./emit.js";
+export {
+  createIndexerClient,
+  testIndexerClient,
+  toEntityMeta,
+  IndexerClientError,
+  type IndexerClient,
+  type IndexerClientOptions,
+  type EntityMeta,
+  type EntityMetaInput,
+  type ReadOps,
+  type QueryOpts,
+  type IterateOpts,
+  type OrderBy,
+  type GetWhereFilter,
+  type GetWhereOperator,
+  type ChainMeta,
+} from "./client.js";
+export { readEnv, type SidecarEnv } from "./env.js";
+export { type SidecarLogger, type LogParams } from "./log.js";
