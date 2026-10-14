@@ -1187,19 +1187,41 @@ function registerWrite(scope: Scope, entityType: string, id: string, row: Record
   scope.writes.set(registerStoreKey(scope.dataSource.chainId, entityType, id), row);
 }
 
+/**
+ * A file data source reaches the types its manifest entry lists, as graph-node
+ * enforces, and only what it wrote itself. Returns whether the entity is one it
+ * wrote; `false` for a scope that isn't a file data source's.
+ */
+function fileAccess(scope: Scope, entityType: string, id: string): boolean | null {
+  const file = scope.file;
+  if (!file) return null;
+  if (!file.entities.has(entityType)) {
+    throw new Error(
+      `entity type \`${entityType}\` is not on the 'entities' list for data source ` +
+        `\`${scope.dataSource.name}\`. Hint: Add \`${entityType}\` to the 'entities' list, which ` +
+        `currently is: \`${[...file.entities].join(", ")}\`.`,
+    );
+  }
+  return file.written.has(`${entityType}\u0000${id}`);
+}
+
 const storeImpl = {
   get(entityType: string, id: string): Entity | null {
     const scope = currentScope();
+    if (fileAccess(scope, entityType, id) === false) return null;
     if (scope.mode === "register") return registerRead(scope, entityType, id, false);
     return toEntity(entityType, entityContext(entityType).getSync(id));
   },
   get_in_block(entityType: string, id: string): Entity | null {
     const scope = currentScope();
+    if (fileAccess(scope, entityType, id) === false) return null;
     if (scope.mode === "register") return registerRead(scope, entityType, id, true);
     return toEntity(entityType, entityContext(entityType).getInBlockSync(id));
   },
   set(entityType: string, id: string, data: Entity): void {
     const scope = currentScope();
+    const own = fileAccess(scope, entityType, id);
+    if (scope.file) scope.file.written.add(`${entityType}\u0000${id}`);
     const row = toRow(entityType, data);
     row.id = id;
     // graph-node merges a save onto the stored entity (EntityCache::set is an
@@ -1211,11 +1233,14 @@ const storeImpl = {
       return registerWrite(scope, entityType, id, stored ? { ...toRow(entityType, stored), ...row } : row);
     }
     const table = entityContext(entityType);
-    const stored = table.getSync(id);
+    // A file data source's first write of an id is a new entity of its own,
+    // whatever a chain handler stored under the same id.
+    const stored = own === false ? undefined : table.getSync(id);
     table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {
     const scope = currentScope();
+    if (fileAccess(scope, entityType, id) === false) return;
     if (scope.mode === "register") return registerWrite(scope, entityType, id, null);
     entityContext(entityType).deleteUnsafe(id);
   },
@@ -1225,8 +1250,9 @@ const storeImpl = {
    * filtered on the field that points back — is resolved from the schema.
    */
   loadRelated(entityType: string, id: string, field: string): Entity[] {
-    const { mode, schema } = currentScope();
+    const { mode, schema, file } = currentScope();
     if (mode === "register") return [];
+    if (file && !file.entities.has(entityType)) fileAccess(currentScope(), entityType, id);
     const declared = schema.entityFieldTypes[entityType]?.[field];
     if (!declared?.target || !declared.derivedFrom) {
       throw unknown(`the derived field ${entityType}.${field}`, "a mapping handler");
@@ -1245,7 +1271,11 @@ const storeImpl = {
       ? `${declared.derivedFrom}_id`
       : declared.derivedFrom;
     const rows = entityContext(target).getWhereSync({ [back]: { _eq: id } });
-    return rows.map((row: any) => toEntity(target, row) as Entity);
+    // A file data source sees the related entities it wrote, and no others.
+    const visible = file
+      ? rows.filter((row: any) => file.entities.has(target) && file.written.has(`${target}\u0000${row.id}`))
+      : rows;
+    return visible.map((row: any) => toEntity(target, row) as Entity);
   },
 };
 
@@ -2103,8 +2133,44 @@ export function installRegisterHook(hook: typeof registerHook) {
   registerHook = hook;
 }
 
+/** The manifest's file templates: `create` queues these instead of registering an address. */
+let fileTemplates = new Map<string, "ipfs" | "arweave">();
+
+export function installFileTemplates(templates: Map<string, "ipfs" | "arweave">) {
+  fileTemplates = templates;
+}
+
+/** A context, as a string that two equal contexts share (graph-node dedupes on it). */
+function contextKey(context: DataSourceContext | undefined): string {
+  if (!context || context.entries.length === 0) return "";
+  const entries = context.entries.map((entry) => [entry.key, entry.value.kind, String(entry.value.data)]);
+  return JSON.stringify(entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
+}
+
+/** Two creations of the same file with the same context are one data source. */
+export function fileCreateId(create: { template: string; source: string; context?: unknown }): string {
+  const key = contextKey(create.context as DataSourceContext | undefined);
+  return key === "" ? `${create.template}:${create.source}` : `${create.template}:${create.source}:${key}`;
+}
+
+function createFile(name: string, params: string[], context?: DataSourceContext): void {
+  const scope = currentScope();
+  const source = params[0];
+  if (!source) {
+    throw new Error(`${name}.create() was called without a file parameter`);
+  }
+  // Only the handler pass runs a file's handler; the register pass exists to
+  // collect contract addresses.
+  if (scope.mode === "register") return;
+  const create = { template: name, source, context };
+  const key = fileCreateId(create);
+  scope.fileCreates ??= new Map();
+  if (!scope.fileCreates.has(key)) scope.fileCreates.set(key, create);
+}
+
 export class DataSourceTemplate {
   static create(name: string, params: string[]): void {
+    if (fileTemplates.has(name)) return createFile(name, params);
     const { mode, registered } = currentScope();
     const address = params[0];
     if (!address) {
@@ -2118,6 +2184,7 @@ export class DataSourceTemplate {
     registerHook?.(name, address);
   }
   static createWithContext(name: string, params: string[], context: DataSourceContext): void {
+    if (fileTemplates.has(name)) return createFile(name, params, context);
     // The created data source would have to carry the context to every event it
     // ever sees, and there is nowhere to keep it — `dataSource.context()` in the
     // template's handlers would quietly come back empty.
@@ -2158,13 +2225,21 @@ function contextValue(kind: string, data: string, key: string): Value {
 
 const dataSourceImpl = {
   address(): Address {
-    return Address.fromString(currentScope().dataSource.address);
+    const scope = currentScope();
+    if (scope.file) {
+      throw unsupported("dataSource.address() in a file data source, which has no contract", scope.dataSource.name);
+    }
+    return Address.fromString(scope.dataSource.address);
   },
   network(): string {
     return currentScope().dataSource.network;
   },
   context(): DataSourceContext {
     const context = new DataSourceContext();
+    const created = currentScope().file?.context as DataSourceContext | undefined;
+    if (created) {
+      for (const entry of created.entries) context.set(entry.key, entry.value);
+    }
     for (const [key, entry] of Object.entries(currentScope().dataSource.context ?? {})) {
       context.set(key, contextValue(entry.type, entry.data, key));
     }
@@ -2370,7 +2445,7 @@ function hostsOrThrow(): Hosts {
   return hosts;
 }
 
-function decodeBase64(encoded: string | null): Bytes | null {
+export function decodeBase64(encoded: string | null): Bytes | null {
   return encoded === null ? null : new Bytes(Buffer.from(encoded, "base64"));
 }
 

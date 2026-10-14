@@ -54,7 +54,7 @@ by name. Newer than 0.0.9 is a §7 error.
 | Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
 | A template sharing a data source's name | graph-node keeps the two namespaces apart; envio has one, and one contract with a static address plus dynamically registered ones is the same thing — folded together, events unioned. The handlers stay apart: the data source's run for its static address, the template's for the addresses it created | ✅ |
 | Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass, which resolves host ops by suspend-and-replay of its own (§5) so a mapping can read a contract before deciding what to create. A new address's events in the block that created it run after that block's other events and block handlers, as graph-node runs a new data source's creation-block triggers — a constructor's logs precede the factory event that announces it | ✅ |
-| File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
+| File data sources (0.0.7): `kind: file/ipfs`, `file/arweave` templates, `DataSourceTemplate.create("X", [cid])` / `createWithContext` | No contract, no chain: the translator leaves them out of the envio config. `create()` queues the file; once the creating handler returns, the file is fetched (`envio_subgraph_file` effect, `cache: true`, so on disk) and the template's `handler(content: Bytes)` runs in the same block and checkpoint. See "File data sources" below | ⚠️ timing differs |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
 | `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` with a non-empty context → §7 error (nowhere to keep it per created address) | ⚠️ |
@@ -140,8 +140,38 @@ query and is dropped; stored, it is an error.
 | `dataSource.create/createWithContext` | captured in register pass (below) |
 | `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup |
 | `dataSource.context()` | persisted in an internal entity table |
-| `ipfs.cat/map`, `arweave.*` | effect + gateway, `cache: true`, suspend; a 404 is the cached `null`, a failing gateway is asked again |
+| `ipfs.cat/map`, `arweave.*` | effect + gateway (`ENVIO_SUBGRAPH_IPFS_URL`, default `https://ipfs.io/ipfs/`; `ENVIO_SUBGRAPH_ARWEAVE_URL`, default `https://arweave.net/`), `cache: true`, suspend; a 404 is the cached `null`, a failing gateway is asked again. `ipfs.map` calls the callback once per non-blank line of the file (a JSON value each), refuses flags without `"json"`, and names the callback and line in a failure, as graph-node does |
 | `ens.nameByHash` | effect against ENSRainbow (`ENVIO_SUBGRAPH_ENS_RAINBOW_URL`, default the public `api.ensrainbow.io/v1/heal/`), `cache: true`, at most 32 lookups in flight; `null` when its table lacks the hash (its "Label not found" 404), as graph-node's does; a failing lookup is asked again, up to 5 attempts. A service that stays down — or a 404 that isn't ENSRainbow's — answers `null` for 5 minutes, as graph-node without a rainbow table does, with one warning and without caching those nulls. `off` skips lookups |
+
+**File data sources.** graph-node runs a file data source when its file arrives, in a
+later block, with a causality region of its own. Here:
+
+- *When.* Right after the creating handler (chain event, block handler, or another
+  file handler), in the creating block. Deterministic where graph-node's timing isn't;
+  the entities land with the block that created the data source. (Deviation: graph-node
+  writes them at whichever block it processes when the file turns up.)
+- *Once.* Per template, file and context, recorded in an internal table
+  (`EnvioFileDataSource`, added to the schema only when a file template exists), so a
+  second `create()` is ignored, a restart doesn't rerun it and a reorg rolls it back
+  with the entities.
+- *Isolation.* The handler may read and write only the entities its manifest
+  `entities:` list names (any other is an error, as graph-node's); it reads only what
+  it wrote itself, never a chain entity or another file's. (Deviation: graph-node keys
+  an entity by causality region too, so a file entity and a chain entity of one type
+  and id are two rows; here they share the table, and the file one overwrites.)
+  `dataSource.stringParam()` is the CID, `dataSource.context()` the
+  `createWithContext` context; `dataSource.address()` is a §7 error.
+- *Fetching.* `ENVIO_SUBGRAPH_IPFS_URL` (a gateway, with or without `/ipfs/`) and
+  `ENVIO_SUBGRAPH_ARWEAVE_URL`; at most 16 fetches in flight; during preload a
+  batch's files download concurrently. The fetch is an effect with `cache: true`, so
+  files live in the on-disk effect cache.
+- *Not found.* A 404, or a gateway that keeps failing, is asked again
+  `ENVIO_SUBGRAPH_FILE_ATTEMPTS` times (default 4; first wait `ENVIO_SUBGRAPH_FILE_RETRY_MS`,
+  default 2000, doubling), then the handler is skipped with a warning and indexing goes
+  on. (Deviation: graph-node polls with backoff up to 10 minutes, indefinitely.) A definite
+  404 is cached as `null`; a gateway that never answered is not, so a later create asks again.
+- *Bad CID.* A source that doesn't parse as a CID is ignored with a warning, as graph-node does.
+- Arweave sources are the transaction id (with an optional path).
 
 **Register pass.** `dataSource.create` must reach envio's `contractRegister`,
 which runs at fetch time — before any entities exist. For each

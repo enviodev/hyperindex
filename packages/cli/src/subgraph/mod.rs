@@ -405,6 +405,10 @@ fn contract_config(
     }
 }
 
+/// The table that records which file data sources have run. Not a subgraph
+/// entity: the user's schema never names it.
+pub const FILE_DATA_SOURCE_ENTITY: &str = "EnvioFileDataSource";
+
 /// Builds the envio config a translated manifest indexes with.
 pub fn translate(
     manifest_yaml: &str,
@@ -422,7 +426,22 @@ pub fn translate(
         report.into_result()?;
         return Err(anyhow!("Failed to read subgraph.yaml"));
     };
-    let schema = schema::translate(schema_text, &mut report);
+    let mut schema = schema::translate(schema_text, &mut report);
+    // A file data source runs once per (template, CID, context). The record that
+    // it has lives in a table of its own, so a reorg rolls it back with the
+    // entities the handler wrote, and a restart doesn't run it twice.
+    if manifest
+        .templates
+        .iter()
+        .any(|template| template.kind.is_file())
+    {
+        schema.text.push_str(&format!(
+            "\n\ntype {FILE_DATA_SOURCE_ENTITY} {{\n  id: ID!\n}}"
+        ));
+        schema
+            .entity_fields
+            .insert(FILE_DATA_SOURCE_ENTITY.to_string(), vec!["id".to_string()]);
+    }
 
     let rpc = match rpc_env {
         Some(raw) => Some(parse_rpc_env(raw)?),
@@ -440,6 +459,10 @@ pub fn translate(
 
     let mut manifest = manifest;
     for source in manifest.data_sources.iter_mut() {
+        // Refused by the manifest parser: a file data source belongs in `templates`.
+        if source.kind.is_file() {
+            continue;
+        }
         contracts.push(GlobalContract {
             name: source.name.clone(),
             config: contract_config(source, files, &usage, &mut report),
@@ -494,6 +517,11 @@ pub fn translate(
         chains.keys().cloned().collect()
     };
     for source in manifest.templates.iter_mut() {
+        // A file template has no contract, address or chain: the runtime runs
+        // its handler when a mapping creates it (`runtime.ts`, file data sources).
+        if source.kind.is_file() {
+            continue;
+        }
         let config = contract_config(source, files, &usage, &mut report);
 
         // graph-node keeps `dataSources` and `templates` in separate namespaces,
@@ -992,6 +1020,101 @@ type Gravatar @entity {
             ),
             (false, true, true, true)
         );
+    }
+
+    const FILE_TEMPLATE: &str = r#"
+  - kind: file/ipfs
+    name: Metadata
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Gravatar
+      handler: handleMetadata
+      file: ./src/metadata.ts
+"#;
+
+    // A file template has no chain, contract or events: the translation leaves it
+    // out of the envio config, keeps it for the runtime, and adds the table that
+    // records which files have run.
+    #[test]
+    fn keeps_a_file_template_out_of_the_envio_config() {
+        let manifest = format!("{MANIFEST}{FILE_TEMPLATE}");
+        let translation = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        let contracts = translation.human_config.contracts.as_ref().unwrap();
+        let names: Vec<_> = contracts.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Gravity", "Wallet"]);
+        let file = translation
+            .runtime
+            .manifest
+            .templates
+            .iter()
+            .find(|template| template.name == "Metadata")
+            .unwrap();
+        assert_eq!(
+            (
+                file.kind,
+                file.entities.clone(),
+                file.event_handlers
+                    .iter()
+                    .map(|handler| handler.handler.clone())
+                    .collect::<Vec<_>>()
+            ),
+            (
+                manifest::DataSourceKind::FileIpfs,
+                vec!["Gravatar".to_string()],
+                vec!["handleMetadata".to_string()]
+            )
+        );
+        assert!(translation.schema_text.contains("type EnvioFileDataSource"));
+        assert!(translation
+            .runtime
+            .entity_accessors
+            .contains_key(FILE_DATA_SOURCE_ENTITY));
+    }
+
+    #[test]
+    fn adds_no_file_table_without_a_file_template() {
+        let translation = translate(
+            MANIFEST,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        assert!(!translation.schema_text.contains("EnvioFileDataSource"));
+    }
+
+    #[test]
+    fn refuses_a_file_data_source_outside_templates() {
+        let manifest = MANIFEST.replace(
+            "dataSources:\n",
+            "dataSources:\n  - kind: file/ipfs\n    name: Static\n    mapping:\n      kind: ethereum/events\n      apiVersion: 0.0.7\n      language: wasm/assemblyscript\n      entities: []\n      handler: h\n      file: ./src/s.ts\n",
+        );
+        let err = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("file data sources outside `templates`"));
     }
 
     // Balancer names FXPoolDeployer both a data source and a template over the
