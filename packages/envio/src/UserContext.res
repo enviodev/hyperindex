@@ -293,10 +293,12 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   },
 }
 
-// `chainId:blockNumber:logIndex:seq`, the same in the preload and the real
-// pass, so the sidecar can dedupe a redelivery. A block handler has no log
-// index and takes its registration's index instead; an SVM instruction shares
-// its transaction's log index, so its position in the CPI tree is appended.
+// `chainId:blockNumber:<position>:seq`, the same in the preload and the real
+// pass, so the sidecar can dedupe a redelivery. One log can feed several
+// registrations, each counting its calls from 0, so an event's position is its
+// log index plus `r<registration index>`. An SVM instruction shares its
+// transaction's log index, so its position in the CPI tree goes in between
+// (`3.0.2r1`). A block handler has no log and takes `b<registration index>`.
 let nextSidecarCallId = (params: contextParams) => {
   let seq = params.sidecarSeq
   params.sidecarSeq = seq + 1
@@ -304,12 +306,13 @@ let nextSidecarCallId = (params: contextParams) => {
   let blockNumber = params.item->Internal.getItemBlockNumber->Int.toString
   let position = switch params.item {
   | Block({onBlockRegistration: {index}}) => `b${index->Int.toString}`
-  | Event({logIndex}) =>
-    switch params.item->Internal.getItemOrderPath->Nullable.toOption {
+  | Event({logIndex, onEventRegistration: {index}}) =>
+    let log = switch params.item->Internal.getItemOrderPath->Nullable.toOption {
     | Some(path) =>
       `${logIndex->Int.toString}.${path->Array.map(step => step->Int.toString)->Array.join(".")}`
     | None => logIndex->Int.toString
     }
+    `${log}r${index->Int.toString}`
   }
   `${chainId}:${blockNumber}:${position}:${seq->Int.toString}`
 }

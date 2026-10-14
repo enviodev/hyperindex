@@ -48,6 +48,12 @@ indexer.onEvent({ contract: "Gravatar", event: "NewGravatar" }, async ({ event, 
     context.sidecar.notify({ text: 1 });
   }
 });
+
+// The same log feeds a second registration, whose own call count starts at 0
+// again: the registration index keeps its ids apart from the first one's.
+indexer.onEvent({ contract: "Gravatar", event: "NewGravatar" }, async ({ event, context }) => {
+  context.sidecar.notify({ text: \`again \${event.params.displayName}\` });
+});
 `,
   ~test=`
 import { describe, it } from "vitest";
@@ -83,11 +89,12 @@ describe("context.sidecar through a test indexer", () => {
         eventsProcessed: 1,
         sidecar: {
           calls: [
-            { id: "1:5:3:0", fn: "priceSwap", input: { owner, amount: "7" } },
-            { id: "1:5:3:1", fn: "notify", input: { text: "hi" } },
+            { id: "1:5:3r2:0", fn: "priceSwap", input: { owner, amount: "7" } },
+            { id: "1:5:3r2:1", fn: "notify", input: { text: "hi" } },
+            { id: "1:5:3r3:0", fn: "notify", input: { text: "again hi" } },
           ],
         },
-        Probe: { sets: [{ id: "1:5:3:0", callIds: "1:5:3:1,1:5:3:2" }] },
+        Probe: { sets: [{ id: "1:5:3r2:0", callIds: "1:5:3r2:1,1:5:3r2:2" }] },
       },
     ]);
   });
