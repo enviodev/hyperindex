@@ -140,9 +140,28 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
 let noopSet = (_entity: Internal.entity) => ()
 let noopDeleteUnsafe = (_entityId: EntityId.t) => ()
 
+// A TTL drops an entity's rows whenever ClickHouse merges them, so for one kept
+// there alone a read would turn on merge timing rather than on the events.
+let expiresUnread = (entityConfig: Internal.entityConfig) =>
+  !entityConfig.storage.postgres &&
+  entityConfig.storage.clickhouseOptions
+  ->Option.flatMap(options => options.ttl)
+  ->Option.isSome
+
+let throwExpiringRead = (entityConfig: Internal.entityConfig, op: string) =>
+  JsError.throwWithMessage(
+    `context.${entityConfig.name}.${op}() is unavailable: ${entityConfig.name} is kept in ClickHouse alone with a ttl, which drops its rows whenever ClickHouse merges them, so a handler would read it differently from one run to the next. Keep it in Postgres too, with @storage(postgres: true, clickhouse: {...}), or drop the ttl.`,
+  )
+
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
+
+    switch prop {
+    | "get" | "getWhere" | "getOrThrow" | "getOrCreate" if params.entityConfig->expiresUnread =>
+      throwExpiringRead(params.entityConfig, prop)
+    | _ => ()
+    }
 
     let scope = params->entityScope
     let committedCheckpointId = params.indexerState->IndexerState.committedCheckpointIdFor(~scope)

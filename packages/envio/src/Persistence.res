@@ -104,7 +104,7 @@ type rollbackRemoval = {
   scope: Internal.chainScope,
 }
 
-type holding = StorageClient.holding = Nothing | Initialized | Stranded | Diverged
+type holding = StorageClient.holding = Nothing | Initialized | Stranded | Diverged | Outdated
 
 type storage = {
   // Identifier used as the `storage` label on Prometheus metrics.
@@ -368,6 +368,17 @@ let init = {
             )
           // Behind a config change, which names what to revert.
           | _ if holding === Diverged => throw(Refused(Config.divergedMessage(~resetCommand)))
+          | _ if holding === Outdated =>
+            throw(
+              Refused(
+                ResumePlan.incompatibleMessage(
+                  [ResumePlan.olderEnvio],
+                  ~envioInfo,
+                  ~resetCommand,
+                  ~runCommand,
+                ),
+              ),
+            )
           | Resume => ()
           | AddChain(chainConfig) =>
             Logging.info({

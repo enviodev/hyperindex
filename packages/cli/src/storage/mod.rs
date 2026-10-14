@@ -167,6 +167,9 @@ pub enum Holding {
     Stranded,
     /// Postgres holds indexed data the ClickHouse beside it doesn't.
     Diverged,
+    /// Postgres was built by an older envio, which kept no instance to pair
+    /// it with the ClickHouse beside it.
+    Outdated,
 }
 
 /// A failed write, and what it was doing.
@@ -407,6 +410,7 @@ impl Storage {
         }
         Ok(match (self.postgres.instance().await?, built) {
             (Some(instance), Some(built)) if instance == built => Holding::Initialized,
+            (None, _) => Holding::Outdated,
             _ => Holding::Diverged,
         })
     }

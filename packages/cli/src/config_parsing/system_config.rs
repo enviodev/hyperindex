@@ -372,19 +372,23 @@ impl Storage {
                  `storage` config."
             ));
         }
+        let clickhouse_default = clickhouse_enabled
+            && clickhouse_config
+                .and_then(|c| c.entity_default())
+                .unwrap_or(false);
         Ok(Self {
             postgres: Some(StorageBackend {
+                // Entities stay in Postgres unless ClickHouse is made their
+                // default: enabling it alone keeps only those that opt in.
                 entity_default: postgres_config
                     .and_then(|c| c.entity_default())
-                    .unwrap_or(!clickhouse_enabled),
+                    .unwrap_or(!clickhouse_default),
                 column_name_format: postgres_config
                     .and_then(|c| c.column_name_format())
                     .unwrap_or(human_config::ColumnNameFormat::Original),
             }),
             clickhouse: clickhouse_enabled.then(|| StorageBackend {
-                entity_default: clickhouse_config
-                    .and_then(|c| c.entity_default())
-                    .unwrap_or(false),
+                entity_default: clickhouse_default,
                 column_name_format: clickhouse_config
                     .and_then(|c| c.column_name_format())
                     .unwrap_or(human_config::ColumnNameFormat::Original),
@@ -3324,8 +3328,8 @@ chains:
             }
         );
 
-        // Both enabled -> ok; with multiple backends none is an implicit
-        // entity default
+        // ClickHouse enabled keeps the entities that opt in with @storage;
+        // the rest stay in Postgres
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
                 postgres: enabled(true),
@@ -3333,7 +3337,18 @@ chains:
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(false, ColumnNameFormat::Original),
+                postgres: backend(true, ColumnNameFormat::Original),
+                clickhouse: backend(false, ColumnNameFormat::Original),
+            }
+        );
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: None,
+                clickhouse: enabled(true),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: backend(true, ColumnNameFormat::Original),
                 clickhouse: backend(false, ColumnNameFormat::Original),
             }
         );
@@ -3426,7 +3441,7 @@ chains:
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(false, ColumnNameFormat::Original),
+                postgres: backend(true, ColumnNameFormat::Original),
                 clickhouse: backend(false, ColumnNameFormat::SnakeCase),
             }
         );
@@ -3439,7 +3454,7 @@ chains:
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(false, ColumnNameFormat::SnakeCase),
+                postgres: backend(true, ColumnNameFormat::SnakeCase),
                 clickhouse: backend(false, ColumnNameFormat::Original),
             }
         );

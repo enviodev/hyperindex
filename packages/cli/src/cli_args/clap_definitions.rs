@@ -133,14 +133,14 @@ pub enum JsonSchema {
 
 #[derive(Debug, Args)]
 pub struct DevArgs {
-    ///Force restart: clear the database and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state.
+    ///Force restart: clear the database, and the ClickHouse database when one is configured, and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state.
     #[arg(short = 'r', long, action)]
     pub restart: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct StartArgs {
-    ///Clear your database and restart indexing from scratch
+    ///Clear your database, and the ClickHouse database when one is configured, and restart indexing from scratch
     #[arg(short = 'r', long, action)]
     pub restart: bool,
 
@@ -188,9 +188,9 @@ pub enum LocalDockerSubcommands {
 pub enum DbMigrateSubcommands {
     ///Migrate latest schema to database
     Up,
-    ///Drop database schema
+    ///Drop database schema, and empty the ClickHouse database when one is configured
     Down,
-    ///Setup database by dropping schema and then running migrations
+    ///Setup database by dropping schema, and emptying the ClickHouse database when one is configured, and then running migrations
     Setup,
 }
 

@@ -1460,7 +1460,8 @@ let keepBoth = "keep the existing data and index from scratch"
 let strandedMessage = (~resetCommand) =>
   `ClickHouse holds indexed data that Postgres has none of: ENVIO_PG_SCHEMA names another schema than the one it was indexed alongside, or that schema was dropped.\n\nPick one:\n${pickOne([
       ("Point ENVIO_PG_SCHEMA at the schema it was indexed alongside", resume),
-      (resetCommand, startOver),
+      // The ClickHouse may be another indexer's, still running.
+      (resetCommand, "delete what ClickHouse holds, whichever indexer wrote it, and start over"),
       ("Point ENVIO_CLICKHOUSE_DATABASE at a new database", keepBoth),
     ])}`
 

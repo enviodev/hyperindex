@@ -373,6 +373,80 @@ let makeTableConfigs = (~userEntities: array<Internal.entityConfig>) => {
   [exposedInternalTableConfigs, userTableConfigs]->Array.flat
 }
 
+type relationship = {
+  tableName: string,
+  relationshipType: string,
+  isDerivedFrom: bool,
+  objectName: string,
+  relationalKey: string,
+  mappedEntity: string,
+  chainIdColumn: option<string>,
+  comment: option<string>,
+}
+
+// The relationships between the entities Hasura tracks. Relationships to an
+// @internal entity can't exist here: codegen rejects a reference from an
+// exposed entity to an @internal one.
+let makeRelationships = (~userEntities: array<Internal.entityConfig>, ~schema) => {
+  let tracked = (entityName: string) =>
+    userEntities->Array.find((e: Internal.entityConfig) => e.name === entityName)
+
+  // Both sides of a relationship must be per-chain for the chain to be part of
+  // the join; a per-chain entity referencing a cross-chain one resolves by id
+  // alone. The reverse (cross-chain referencing per-chain) is rejected at
+  // codegen, so it can't reach here.
+  let chainIdColumnOf = (entityName: string) =>
+    tracked(entityName)
+    ->Option.flatMap(e => e.table->Table.getChainIdField)
+    ->Option.map(Table.getPgDbFieldName)
+
+  userEntities
+  ->Array.filter(e => !e.internal)
+  ->Array.flatMap(entityConfig => {
+    let {tableName} = entityConfig.table
+    let ownChainIdColumn =
+      entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+    let sharedChainIdColumn = mappedEntity =>
+      switch (ownChainIdColumn, chainIdColumnOf(mappedEntity)) {
+      | (Some(column), Some(_)) => Some(column)
+      | _ => None
+      }
+
+    let arrays =
+      entityConfig.table
+      ->Table.getDerivedFromFields
+      ->Array.map(derivedFromField => {
+        tableName,
+        relationshipType: "array",
+        isDerivedFrom: true,
+        objectName: derivedFromField.fieldName,
+        //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
+        relationalKey: schema
+        ->Schema.getDerivedFromPgFieldName(derivedFromField)
+        ->Utils.unwrapResultExn,
+        mappedEntity: derivedFromField.derivedFromEntity,
+        chainIdColumn: sharedChainIdColumn(derivedFromField.derivedFromEntity),
+        comment: derivedFromField.description,
+      })
+    // An entity kept in ClickHouse alone has no table here to point at.
+    let objects =
+      entityConfig.table
+      ->Table.getLinkedEntityFields
+      ->Array.filter(((_, linkedEntityName)) => tracked(linkedEntityName)->Option.isSome)
+      ->Array.map(((field, linkedEntityName)) => {
+        tableName,
+        relationshipType: "object",
+        isDerivedFrom: false,
+        objectName: field.fieldName,
+        relationalKey: field->Table.getPgDbFieldName,
+        mappedEntity: linkedEntityName,
+        chainIdColumn: sharedChainIdColumn(linkedEntityName),
+        comment: field.description,
+      })
+    arrays->Array.concat(objects)
+  })
+}
+
 let trackDatabase = async (
   ~endpoint,
   ~auth,
@@ -408,71 +482,22 @@ let trackDatabase = async (
     )
   }
 
-  // Both sides of a relationship must be per-chain for the chain to be part of
-  // the join; a per-chain entity referencing a cross-chain one resolves by id
-  // alone. The reverse (cross-chain referencing per-chain) is rejected at
-  // codegen, so it can't reach here.
-  let chainIdColumnOf = (entityName: string) =>
-    userEntities
-    ->Array.find((e: Internal.entityConfig) => e.name === entityName)
-    ->Option.flatMap(e => e.table->Table.getChainIdField)
-    ->Option.map(Table.getPgDbFieldName)
-
-  // Relationships to an @internal entity can't exist here: codegen rejects a
-  // reference from an exposed entity to an @internal one.
-  let exposedEntities = userEntities->Array.filter(e => !e.internal)
-  for i in 0 to exposedEntities->Array.length - 1 {
-    let entityConfig = exposedEntities->Array.getUnsafe(i)
-    let {tableName} = entityConfig.table
-    let ownChainIdColumn =
-      entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
-    let sharedChainIdColumn = mappedEntity =>
-      switch (ownChainIdColumn, chainIdColumnOf(mappedEntity)) {
-      | (Some(column), Some(_)) => Some(column)
-      | _ => None
-      }
-
-    //Set array relationships
-    let derivedFromFields = entityConfig.table->Table.getDerivedFromFields
-    for j in 0 to derivedFromFields->Array.length - 1 {
-      let derivedFromField = derivedFromFields->Array.getUnsafe(j)
-      //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
-      let relationalFieldName =
-        schema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
-
-      await createEntityRelationship(
-        ~endpoint,
-        ~auth,
-        ~pgSchema,
-        ~tableName,
-        ~relationshipType="array",
-        ~isDerivedFrom=true,
-        ~objectName=derivedFromField.fieldName,
-        ~relationalKey=relationalFieldName,
-        ~mappedEntity=derivedFromField.derivedFromEntity,
-        ~chainIdColumn=sharedChainIdColumn(derivedFromField.derivedFromEntity),
-        ~comment=?derivedFromField.description,
-      )
-    }
-
-    //Set object relationships
-    let linkedEntityFields = entityConfig.table->Table.getLinkedEntityFields
-    for j in 0 to linkedEntityFields->Array.length - 1 {
-      let (field, linkedEntityName) = linkedEntityFields->Array.getUnsafe(j)
-      await createEntityRelationship(
-        ~endpoint,
-        ~auth,
-        ~pgSchema,
-        ~tableName,
-        ~relationshipType="object",
-        ~isDerivedFrom=false,
-        ~objectName=field.fieldName,
-        ~relationalKey=field->Table.getPgDbFieldName,
-        ~mappedEntity=linkedEntityName,
-        ~chainIdColumn=sharedChainIdColumn(linkedEntityName),
-        ~comment=?field.description,
-      )
-    }
+  let relationships = makeRelationships(~userEntities, ~schema)
+  for i in 0 to relationships->Array.length - 1 {
+    let relationship = relationships->Array.getUnsafe(i)
+    await createEntityRelationship(
+      ~endpoint,
+      ~auth,
+      ~pgSchema,
+      ~tableName=relationship.tableName,
+      ~relationshipType=relationship.relationshipType,
+      ~isDerivedFrom=relationship.isDerivedFrom,
+      ~objectName=relationship.objectName,
+      ~relationalKey=relationship.relationalKey,
+      ~mappedEntity=relationship.mappedEntity,
+      ~chainIdColumn=relationship.chainIdColumn,
+      ~comment=?relationship.comment,
+    )
   }
 
   Logging.info("Hasura configuration completed")

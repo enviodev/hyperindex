@@ -72,6 +72,8 @@ let withChains = (envioInfo: JSON.t, ~chains: array<(ChainId.t, JSON.t)>) =>
   | _ => envioInfo
   }
 
+let olderEnvio = "storage was initialized by an older envio version"
+
 // `envioInfo` is the running config's, `chainConfigs` the chains this process
 // drives. An isolated process answers for `envioInfo` and its own chains only:
 // the ones it leaves out are checked, and added, by the processes that drive
@@ -85,7 +87,7 @@ let make = (
   ~isolated: bool,
 ) =>
   switch stored.envioInfo {
-  | None => Incompatible(["storage was initialized by an older envio version"])
+  | None => Incompatible([olderEnvio])
   | Some(storedEnvioInfo) =>
     let storedChainOf = chainId => stored.chains->Array.find(chain => chain.id == chainId)
     let added = switch (isolated, chainConfigs) {

@@ -319,7 +319,7 @@ Pick one:
 
 Pick one:
   1. Point ENVIO_PG_SCHEMA at the schema it was indexed alongside  # resume indexing where it left off
-  2. envio dev -r                                                  # delete all indexed data and start over
+  2. envio dev -r                                                  # delete what ClickHouse holds, whichever indexer wrote it, and start over
   3. Point ENVIO_CLICKHOUSE_DATABASE at a new database             # keep the existing data and index from scratch`),
       )
     },

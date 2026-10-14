@@ -402,6 +402,9 @@ type holding =
   | Stranded
   // Postgres holds indexed data the ClickHouse beside it doesn't.
   | Diverged
+  // Postgres was built by an older envio, which kept nothing to pair it with
+  // the ClickHouse beside it.
+  | Outdated
 
 @send external holding: t => promise<holding> = "holding"
 
