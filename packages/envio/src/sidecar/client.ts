@@ -15,25 +15,43 @@ export type GetWhereOperator<T> = {
 };
 export type GetWhereFilter<E> = { readonly [K in keyof E]?: GetWhereOperator<E[K]> };
 export type OrderBy<E> = { readonly [K in keyof E]?: "asc" | "desc" };
-export type QueryOpts<E> = {
+/** Entity fields to select; `id` is always selected. */
+export type FieldSelection<E> = readonly (keyof E & string)[];
+/** The row type for a selection: the selected fields plus `id`, or the whole entity. */
+export type Projected<E, F extends FieldSelection<E> | undefined> = F extends readonly (infer K)[]
+  ? Pick<E, Extract<K | "id", keyof E>>
+  : E;
+export type QueryOpts<E, F extends FieldSelection<E> | undefined = undefined> = {
   readonly orderBy?: OrderBy<E>;
   /** Rows per call; defaults to and is capped at the GraphQL response limit. */
   readonly limit?: number;
   readonly offset?: number;
+  /** Select only these fields (plus `id`) instead of every column. */
+  readonly fields?: F;
 };
-export type IterateOpts<E> = {
+export type IterateOpts<E, F extends FieldSelection<E> | undefined = undefined> = {
   readonly pageSize?: number;
   readonly orderBy?: OrderBy<E>;
+  /** Select only these fields (plus `id`) instead of every column. */
+  readonly fields?: F;
 };
 
 export type ReadOps<E> = {
   readonly get: (id: EntityId<E>) => Promise<E | undefined>;
   readonly getOrThrow: (id: EntityId<E>, message?: string) => Promise<E>;
   /** One bounded page, never the whole table; use `iterate` for that. */
-  readonly getAll: (opts?: QueryOpts<E>) => Promise<E[]>;
-  readonly getWhere: (filter: GetWhereFilter<E>, opts?: QueryOpts<E>) => Promise<E[]>;
+  readonly getAll: <F extends FieldSelection<E> | undefined = undefined>(
+    opts?: QueryOpts<E, F>,
+  ) => Promise<Projected<E, F>[]>;
+  readonly getWhere: <F extends FieldSelection<E> | undefined = undefined>(
+    filter: GetWhereFilter<E>,
+    opts?: QueryOpts<E, F>,
+  ) => Promise<Projected<E, F>[]>;
   /** Every matching row, fetched a page at a time. */
-  readonly iterate: (filter?: GetWhereFilter<E>, opts?: IterateOpts<E>) => AsyncIterable<E>;
+  readonly iterate: <F extends FieldSelection<E> | undefined = undefined>(
+    filter?: GetWhereFilter<E>,
+    opts?: IterateOpts<E, F>,
+  ) => AsyncIterable<Projected<E, F>>;
 };
 
 export type ChainMeta = {
@@ -89,6 +107,36 @@ export class IndexerClientError extends Error {
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+type AnyRow = Record<string, unknown>;
+type AnyQueryOpts = QueryOpts<AnyRow, readonly string[] | undefined>;
+// The typed surface is generic per call; inside, rows are plain records.
+type AnyReadOps = {
+  readonly get: (id: unknown) => Promise<AnyRow | undefined>;
+  readonly getOrThrow: (id: unknown, message?: string) => Promise<AnyRow>;
+  readonly getAll: (opts?: AnyQueryOpts) => Promise<AnyRow[]>;
+  readonly getWhere: (filter: AnyRow, opts?: AnyQueryOpts) => Promise<AnyRow[]>;
+  readonly iterate: (filter?: AnyRow, opts?: IterateOpts<AnyRow, readonly string[] | undefined>) => AsyncIterable<AnyRow>;
+};
+
+// Per-field schemas of an entity's object schema, to decode a projected row.
+// `t` is what rescript-schema's `S.classify` reads (the ReScript side uses it in
+// PgStorage); a schema of another shape decodes nothing and values stay raw.
+const fieldSchemaCache = new WeakMap<EntityMeta, Map<string, S.Schema<unknown>>>();
+const fieldSchemasOf = (meta: EntityMeta): Map<string, S.Schema<unknown>> => {
+  let schemas = fieldSchemaCache.get(meta);
+  if (schemas === undefined) {
+    schemas = new Map();
+    const tagged = (meta.schema as { t?: { TAG?: unknown; items?: unknown } } | undefined)?.t;
+    if (isPlainObject(tagged) && tagged.TAG === "object" && Array.isArray(tagged.items)) {
+      for (const item of tagged.items as Array<{ location: string; schema: S.Schema<unknown> }>) {
+        schemas.set(item.location, item.schema);
+      }
+    }
+    fieldSchemaCache.set(meta, schemas);
+  }
+  return schemas;
+};
 
 type RescriptField =
   | { TAG: "Field"; _0: { fieldName: string; isChainId: boolean; linkedEntity?: string | undefined } }
@@ -246,11 +294,43 @@ export function createIndexerClient<Entities extends Record<string, object> = Co
     return parsed;
   };
 
+  const decodeSelected = (meta: EntityMeta, row: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> => {
+    const schemas = fieldSchemasOf(meta);
+    const out: Record<string, unknown> = {};
+    for (const field of fields) {
+      const schema = schemas.get(field);
+      out[field] = schema === undefined ? row[field] : S.parseOrThrow(row[field], schema);
+    }
+    return out;
+  };
+
+  const decodeRow = (meta: EntityMeta, row: Record<string, unknown>, fields: readonly string[] | undefined) =>
+    (fields === undefined ? decode(meta, row) : decodeSelected(meta, row, fields)) as Record<string, unknown>;
+
+  // `id` always, plus the chain column when the keyset cursor needs it.
+  const selectionOf = (meta: EntityMeta, fields: readonly string[] | undefined, keyset: boolean) => {
+    if (fields === undefined) return { select: meta.fields, output: undefined };
+    for (const field of fields) {
+      if (!meta.fields.includes(field)) {
+        throw new Error(`Entity \`${meta.name}\` has no field \`${field}\` to select (it has ${meta.fields.join(", ")})`);
+      }
+    }
+    const output = [...new Set(["id", ...fields])];
+    const select = keyset && meta.chainIdField !== undefined ? [...new Set([...output, meta.chainIdField])] : output;
+    return { select, output };
+  };
+
   const page = async (
     meta: EntityMeta,
-    args: { where?: unknown; orderBy?: Array<Record<string, string>> | undefined; limit: number; offset?: number | undefined },
+    args: {
+      where?: unknown;
+      orderBy?: Array<Record<string, string>> | undefined;
+      limit: number;
+      offset?: number | undefined;
+      select?: readonly string[] | undefined;
+    },
   ): Promise<Record<string, unknown>[]> => {
-    const document = `query ($where: ${meta.name}_bool_exp, $order_by: [${meta.name}_order_by!], $limit: Int, $offset: Int) { ${meta.name}(where: $where, order_by: $order_by, limit: $limit, offset: $offset) { ${meta.fields.join(" ")} } }`;
+    const document = `query ($where: ${meta.name}_bool_exp, $order_by: [${meta.name}_order_by!], $limit: Int, $offset: Int) { ${meta.name}(where: $where, order_by: $order_by, limit: $limit, offset: $offset) { ${(args.select ?? meta.fields).join(" ")} } }`;
     const data = await query<Record<string, Record<string, unknown>[]>>(document, {
       where: args.where ?? {},
       order_by: args.orderBy,
@@ -270,16 +350,18 @@ export function createIndexerClient<Entities extends Record<string, object> = Co
     return Math.min(limit, responseLimit);
   };
 
-  const opsFor = (name: string): ReadOps<Record<string, unknown>> => {
-    const list = async (filter: Record<string, unknown>, opts: QueryOpts<Record<string, unknown>> = {}) => {
+  const opsFor = (name: string): AnyReadOps => {
+    const list = async (filter: Record<string, unknown>, opts: AnyQueryOpts = {}) => {
       const meta = await metaFor(name);
+      const { select, output } = selectionOf(meta, opts.fields, false);
       const rows = await page(meta, {
         where: filter,
         orderBy: orderByList(opts.orderBy as Record<string, "asc" | "desc"> | undefined),
         limit: capLimit(opts.limit),
         offset: opts.offset,
+        select,
       });
-      return rows.map((row) => decode(meta, row) as Record<string, unknown>);
+      return rows.map((row) => decodeRow(meta, row, output));
     };
     const get = async (id: unknown) => {
       const meta = await metaFor(name);
@@ -301,18 +383,19 @@ export function createIndexerClient<Entities extends Record<string, object> = Co
         return row;
       },
       getAll: (opts) => list({}, opts),
-      getWhere: (filter, opts) => list(filter as Record<string, unknown>, opts),
+      getWhere: (filter, opts) => list(filter, opts),
       iterate: (filter = {}, opts = {}) => ({
         [Symbol.asyncIterator]: async function* () {
           const meta = await metaFor(name);
           const pageSize = capLimit(opts.pageSize);
           if (pageSize === 0) return;
           const orderBy = opts.orderBy as Record<string, "asc" | "desc"> | undefined;
+          const { select, output } = selectionOf(meta, opts.fields, orderBy === undefined);
           if (orderBy !== undefined) {
             const order = [...(orderByList(orderBy) ?? []), { id: "asc" }];
             for (let offset = 0; ; offset += pageSize) {
-              const rows = await page(meta, { where: filter, orderBy: order, limit: pageSize, offset });
-              for (const row of rows) yield decode(meta, row) as Record<string, unknown>;
+              const rows = await page(meta, { where: filter, orderBy: order, limit: pageSize, offset, select });
+              for (const row of rows) yield decodeRow(meta, row, output);
               if (rows.length < pageSize) return;
             }
           }
@@ -333,8 +416,8 @@ export function createIndexerClient<Entities extends Record<string, object> = Co
                     };
               where = { _and: [filter, after] };
             }
-            const rows = await page(meta, { where, orderBy: order, limit: pageSize });
-            for (const row of rows) yield decode(meta, row) as Record<string, unknown>;
+            const rows = await page(meta, { where, orderBy: order, limit: pageSize, select });
+            for (const row of rows) yield decodeRow(meta, row, output);
             if (rows.length < pageSize) return;
             cursor = rows[rows.length - 1];
           }
@@ -358,7 +441,7 @@ export function createIndexerClient<Entities extends Record<string, object> = Co
       }));
     },
   };
-  const cache = new Map<string, ReadOps<Record<string, unknown>>>();
+  const cache = new Map<string, AnyReadOps>();
   return new Proxy(base as IndexerClient<Entities>, {
     get: (target, prop, receiver) => {
       if (typeof prop !== "string" || prop in target || prop === "then") return Reflect.get(target, prop, receiver);
@@ -396,7 +479,7 @@ export function testIndexerClient<Entities extends Record<string, object> = Conf
   testIndexer: object,
 ): IndexerClient<Entities> {
   const ti = testIndexer as Record<string, TestEntityOps>;
-  const apply = (rows: unknown[], opts: QueryOpts<Record<string, unknown>>): unknown[] => {
+  const apply = (rows: unknown[], opts: AnyQueryOpts): unknown[] => {
     let out = [...rows];
     const orderBy = opts.orderBy as Record<string, "asc" | "desc"> | undefined;
     if (orderBy !== undefined) {
@@ -411,9 +494,12 @@ export function testIndexerClient<Entities extends Record<string, object> = Conf
     }
     const offset = opts.offset ?? 0;
     out = out.slice(offset, opts.limit === undefined ? undefined : offset + opts.limit);
-    return out;
+    const fields = opts.fields;
+    if (fields === undefined) return out;
+    const output = [...new Set(["id", ...fields])];
+    return out.map((row) => Object.fromEntries(output.map((field) => [field, (row as Record<string, unknown>)[field]])));
   };
-  const opsFor = (name: string): ReadOps<Record<string, unknown>> => {
+  const opsFor = (name: string): AnyReadOps => {
     const entity = ti[name];
     if (entity === undefined || typeof entity.getAll !== "function") {
       throw new Error(`Test indexer has no entity '${name}'`);
@@ -427,7 +513,7 @@ export function testIndexerClient<Entities extends Record<string, object> = Conf
         [Symbol.asyncIterator]: async function* () {
           const rows =
             Object.keys(filter).length === 0 ? await entity.getAll() : await entity.getWhere(filter);
-          for (const row of apply(rows, { orderBy: opts.orderBy })) yield row as Record<string, unknown>;
+          for (const row of apply(rows, { orderBy: opts.orderBy, fields: opts.fields })) yield row as Record<string, unknown>;
         },
       }),
     };
@@ -436,7 +522,7 @@ export function testIndexerClient<Entities extends Record<string, object> = Conf
     meta: async () => [],
     query: () => Promise.reject(new Error("query() is not available on a test indexer")),
   };
-  const cache = new Map<string, ReadOps<Record<string, unknown>>>();
+  const cache = new Map<string, AnyReadOps>();
   return new Proxy(base as IndexerClient<Entities>, {
     get: (target, prop, receiver) => {
       if (typeof prop !== "string" || prop in target || prop === "then") return Reflect.get(target, prop, receiver);

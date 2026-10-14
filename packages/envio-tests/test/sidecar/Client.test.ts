@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BigDecimal, S } from "envio";
 import { Schema as UtilsSchema } from "envio/src/Utils.res.mjs";
 import { createIndexerClient, IndexerClientError, testIndexerClient, toEntityMeta, type EntityMeta } from "envio/sidecar";
-import { fakeGraphql as fakeHasura, type HasuraType, type Responder } from "./fakeHasura.js";
+import { fakeGraphql as fakeHasura, tableResponder, type HasuraType, type Responder } from "./fakeHasura.js";
 
 // Nullable entity columns use the same null-tolerant wrapper as the generated
 // entity schemas, so a GraphQL `null` decodes to `undefined` like a DB row does.
@@ -136,6 +136,50 @@ describe("indexer read client over GraphQL", () => {
     });
   });
 
+  it("fields narrows the selection to those columns plus id, decoded, on getWhere, getAll and iterate", async () => {
+    const swaps = [
+      { id: "x", amount: "1", usd: "2.5", seenAt: null, chainId: 1 },
+      { id: "y", amount: "20", usd: null, seenAt: "today", chainId: 2 },
+    ];
+    const graphql = await fakeGraphql(tableResponder({ Swap: swaps, Token: [{ id: "t", symbol: "T" }] }));
+    cleanups.push(graphql.close);
+    const client = createIndexerClient<Entities>({ url: graphql.url, entities: [swapMeta, tokenMeta] });
+    const where = await client.Swap.getWhere({ amount: { _gt: 5n } }, { fields: ["amount"] });
+    const all = await client.Swap.getAll({ fields: ["usd", "chainId"], orderBy: { amount: "asc" } });
+    const iterated: unknown[] = [];
+    for await (const swap of client.Swap.iterate({}, { fields: ["seenAt"], pageSize: 1 })) iterated.push(swap);
+    const ordered: unknown[] = [];
+    for await (const swap of client.Swap.iterate({}, { fields: ["amount"], orderBy: { amount: "desc" } })) ordered.push(swap);
+    const unknownField = await client.Swap.getWhere({}, { fields: ["nope" as "amount"] }).then(
+      () => "no error",
+      (error: Error) => error.message,
+    );
+    expect({
+      where,
+      all: all.map((swap) => ({ ...swap, usd: swap.usd?.toString() })),
+      iterated,
+      ordered,
+      unknownField,
+      selections: graphql.requests.map((request) => /\{ Swap\(.*\) \{ ([^}]*) \} \}$/.exec(request.query)?.[1]),
+    }).toEqual({
+      where: [{ id: "y", amount: 20n }],
+      all: [
+        { id: "x", usd: "2.5", chainId: 1 },
+        { id: "y", usd: undefined, chainId: 2 },
+      ],
+      iterated: [
+        { id: "x", seenAt: undefined },
+        { id: "y", seenAt: "today" },
+      ],
+      ordered: [
+        { id: "y", amount: 20n },
+        { id: "x", amount: 1n },
+      ],
+      unknownField: "Entity `Swap` has no field `nope` to select (it has id, amount, usd, seenAt, chainId)",
+      selections: ["id amount", "id usd chainId", "id seenAt chainId", "id seenAt chainId", "id seenAt chainId", "id amount"],
+    });
+  });
+
   it("meta reads chain freshness and query is the raw escape hatch", async () => {
     const graphql = await fakeGraphql((request) =>
       request.query.includes("_meta")
@@ -254,7 +298,10 @@ describe("testIndexerClient", () => {
     for await (const token of client.Token.iterate({}, { orderBy: { id: "desc" } })) iterated.push(token.id);
     const one = await client.Token.get("a");
     const meta = await client.meta();
-    expect({ page, where, iterated, one, meta }).toEqual({
+    const narrowed = await client.Token.getWhere({ id: { _in: ["a"] } }, { fields: ["symbol"] });
+    const narrowedIds: unknown[] = [];
+    for await (const token of client.Token.iterate({}, { fields: [] })) narrowedIds.push(token);
+    expect({ page, where, iterated, one, meta, narrowed, narrowedIds }).toEqual({
       page: [
         { id: "b", symbol: "BBB" },
         { id: "c", symbol: "CCC" },
@@ -266,6 +313,8 @@ describe("testIndexerClient", () => {
       iterated: ["c", "b", "a"],
       one: { id: "a", symbol: "AAA" },
       meta: [],
+      narrowed: [{ id: "a", symbol: "AAA" }],
+      narrowedIds: [{ id: "b" }, { id: "a" }, { id: "c" }],
     });
   });
 });

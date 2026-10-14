@@ -80,6 +80,7 @@ const readAll = async (client: ReturnType<typeof createIndexerClient<Entities>>)
     byStat: await client.Position.getWhere({ accountStat_id: { _eq: "a" } }, { orderBy: { id: "asc" } }),
     all: await client.Position.getAll({ orderBy: { size: "desc" } }),
     iterated,
+    narrowed: await client.Position.getWhere({ size: { _gt: 1n } }, { fields: ["accountStat_id"] }),
   };
 };
 
@@ -100,14 +101,15 @@ describe("read client on entities with relation and @derivedFrom fields", () => 
 
     const p1 = { id: "p1", size: 1n, accountStat_id: "a", previous_id: undefined };
     const p2 = { id: "p2", size: 2n, accountStat_id: "a", previous_id: "p1" };
+    const narrowed = [{ id: "p2", accountStat_id: "a" }];
     expect({
       overGraphql,
       sameAsTestIndexer: overTestIndexer,
       selections: [...new Set(graphql.requests.map((request) => /\{ (\w+)\(.*\) \{ ([^}]*) \} \}$/.exec(request.query)?.slice(1).join(": ")))],
     }).toEqual({
-      overGraphql: { position: p2, stat: { id: "a", volume: 500n }, byStat: [p1, p2], all: [p2, p1], iterated: [p1, p2] },
-      sameAsTestIndexer: { position: p2, stat: { id: "a", volume: 500n }, byStat: [p1, p2], all: [p2, p1], iterated: [p1, p2] },
-      selections: ["Position: id size accountStat_id previous_id", "AccountStat: id volume"],
+      overGraphql: { position: p2, stat: { id: "a", volume: 500n }, byStat: [p1, p2], all: [p2, p1], iterated: [p1, p2], narrowed },
+      sameAsTestIndexer: { position: p2, stat: { id: "a", volume: 500n }, byStat: [p1, p2], all: [p2, p1], iterated: [p1, p2], narrowed },
+      selections: ["Position: id size accountStat_id previous_id", "AccountStat: id volume", "Position: id accountStat_id"],
     });
   });
 
@@ -130,6 +132,7 @@ describe("read client on entities with relation and @derivedFrom fields", () => 
         { id: "p1", size: "1", accountStat_id: "a", previous_id: null },
         { id: "p2", size: "2", accountStat_id: "a", previous_id: "p1" },
       ],
+      narrowed: [{ id: "p2", accountStat_id: "a" }],
     });
   });
 });
