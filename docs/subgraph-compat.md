@@ -534,6 +534,47 @@ graph-cli rewrites it (every data source moves to the network and takes its
 `source` fields from its entry; every template moves to the network; a data
 source without an entry is an error).
 
+## 6c. Proving a migration: `envio subgraph diff`
+
+```
+envio subgraph diff <graph-node endpoint> [--json] [--ours <graph endpoint>]
+```
+
+Run inside the subgraph project. It compares the indexer's Postgres (same
+`ENVIO_PG_*` settings, one `REPEATABLE READ READ ONLY` snapshot) with the
+endpoint the subgraph ran on before, at the block the indexer has processed
+(`envio_chains.progress_block`): the reference is pinned with
+`block: {number: N}`. Ours keeps no history, so that block is the only one it
+can answer for — `--block` only asserts it, and a reference that hasn't
+reached it, or reports `hasIndexingErrors`, is refused. `--ours` compares a
+Graph endpoint of ours instead (envio-serve), read unpinned at its `_meta`
+block.
+
+Per `@entity` type (timeseries and aggregations skipped): every reference id
+is paged in by `id_gt` cursor, the id sets are diffed, and a deterministic
+sample (`--sample`, default 100; first by sha256 of the id) is compared field
+by field. Both sides are normalized to graph-node's encodings first: BigInt,
+Int8 and Timestamp (µs) as integers, BigDecimal plain at 34 significant
+digits, Bytes as lowercase `0x` hex, relations by id, stored entity lists as
+sorted id sets. `@derivedFrom` fields aren't stored on either side and aren't
+compared; a field the reference can't resolve (graph-node fails the whole
+query over a non-null relation to a missing entity) is dropped and listed
+under "Not compared". A relation ours stores as an id with no entity behind
+it is read the way graph-node serves it — a nullable one as `null`, a list
+without that id — and counted under "Notes" (`danglingRelations` in the
+JSON), not as a mismatch. Before an id counts as on one side only, or a
+sampled entity as different, the reference is asked for it again by `id_in`
+at the same block (a gateway's paged listing can come back short, and the
+indexers behind it can answer one pinned query differently); what that
+settled is under "Notes" (`recheck` in the JSON).
+
+Exit 0: every type within `--tolerance` (percent of the reference count,
+default 0.1) and at most `--max-field-mismatches` (default 0) across the run.
+Exit 1: a mismatch. Exit 2: couldn't compare (`status: error`), or a type
+was only partly compared (`status: incomplete`: `--max-entities` capped the
+reference listing and nothing seen so far differs). `--json` prints the same
+report with `schemaVersion: 1`.
+
 ## 7. Unsupported & unknown errors
 
 Two error kinds, one factory each, shared tail. Translation reports **all**

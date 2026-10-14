@@ -8,6 +8,7 @@ pub mod abi;
 pub mod assemblyscript;
 pub mod codegen;
 pub mod creates;
+pub mod diff;
 pub mod errors;
 pub mod manifest;
 pub mod schema;

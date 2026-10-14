@@ -77,6 +77,10 @@ pub enum CommandType {
     #[command(subcommand)]
     Config(ConfigSubcommand),
 
+    ///Tools for subgraph projects (a directory with subgraph.yaml)
+    #[command(subcommand)]
+    Subgraph(SubgraphSubcommand),
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
@@ -86,6 +90,79 @@ pub enum CommandType {
 pub enum ConfigSubcommand {
     ///Print the resolved indexer config as JSON
     View,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SubgraphSubcommand {
+    ///Prove a migration: compare this indexer's data with the subgraph's graph-node endpoint
+    ///(The Graph Studio, Goldsky, Ormi, ...) at one block, and print a parity report.
+    ///
+    ///Ours is the project's Postgres (the same ENVIO_PG_* settings the indexer uses), at the
+    ///block the indexer has processed; the reference is queried at that block with
+    ///`block: {number: N}`. Per entity type it compares the full id sets and a deterministic
+    ///sample of entities field by field, in graph-node's encodings.
+    ///
+    ///Exit code: 0 when everything matches within the tolerances, 1 on a mismatch, 2 when the
+    ///comparison couldn't run or was incomplete.
+    Diff(SubgraphDiffArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct SubgraphDiffArgs {
+    ///The reference graph-node GraphQL endpoint, e.g.
+    ///https://api.goldsky.com/api/public/<project>/subgraphs/<name>/<version>/gn
+    pub endpoint: String,
+
+    ///Compare a Graph endpoint of ours (e.g. envio-serve's) instead of the project's Postgres.
+    ///It's read at its latest block, which pins the reference.
+    #[arg(long, value_name = "GRAPH_ENDPOINT")]
+    pub ours: Option<String>,
+
+    ///Fail unless ours is at exactly this block. Ours keeps no history, so it can only be
+    ///compared at the block it has reached.
+    #[arg(long)]
+    pub block: Option<u64>,
+
+    ///Entities per type compared field by field
+    #[arg(long, default_value_t = 100)]
+    pub sample: usize,
+
+    ///Only compare these entity types (repeat, or separate with commas)
+    #[arg(long = "type", value_name = "ENTITY", value_delimiter = ',')]
+    pub types: Vec<String>,
+
+    ///Allowed difference per type between the entity sets, in percent of the reference's count
+    #[arg(long, default_value_t = 0.1)]
+    pub tolerance: f64,
+
+    ///Allowed sampled field mismatches, across all types
+    #[arg(long, default_value_t = 0)]
+    pub max_field_mismatches: usize,
+
+    ///Requests in flight per endpoint
+    #[arg(long, default_value_t = 4)]
+    pub concurrency: usize,
+
+    ///Stop listing a type's reference ids after this many (the count is then a lower bound and
+    ///the type is inconclusive unless ours falls short of it). 0 lists them all.
+    #[arg(long, default_value_t = 0)]
+    pub max_entities: usize,
+
+    ///Extra HTTP header for the reference, as `Name: value` (repeatable)
+    #[arg(long = "header", value_name = "HEADER")]
+    pub headers: Vec<String>,
+
+    ///Compare even when the reference reports indexing errors
+    #[arg(long)]
+    pub allow_indexing_errors: bool,
+
+    ///Per-request timeout, in seconds
+    #[arg(long, default_value_t = 60)]
+    pub timeout: u64,
+
+    ///Print the report as JSON (stable shape, `schemaVersion: 1`) instead of a table
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Subcommand)]
