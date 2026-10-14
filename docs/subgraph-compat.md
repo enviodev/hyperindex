@@ -141,7 +141,7 @@ query and is dropped; stored, it is an error.
 | `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup |
 | `dataSource.context()` | persisted in an internal entity table |
 | `ipfs.cat/map`, `arweave.*` | effect + gateway, `cache: true`, suspend; a 404 is the cached `null`, a failing gateway is asked again |
-| `ens.nameByHash` | effect against the public ENSRainbow API, `cache: true`; `null` when its table lacks the hash (its 404), as graph-node's does; a failing lookup is asked again rather than cached as a miss |
+| `ens.nameByHash` | effect against ENSRainbow (`ENVIO_SUBGRAPH_ENS_RAINBOW_URL`, default the public `api.ensrainbow.io/v1/heal/`), `cache: true`, at most 32 lookups in flight; `null` when its table lacks the hash (its "Label not found" 404), as graph-node's does; a failing lookup is asked again, up to 5 attempts. A service that stays down — or a 404 that isn't ENSRainbow's — answers `null` for 5 minutes, as graph-node without a rainbow table does, with one warning and without caching those nulls. `off` skips lookups |
 
 **Register pass.** `dataSource.create` must reach envio's `contractRegister`,
 which runs at fetch time — before any entities exist. For each
@@ -342,6 +342,7 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 | HyperSync token | `ENVIO_API_TOKEN` (process env or `.env`, loaded in subgraph mode) | required for the default HyperSync source; missing → setup error at startup |
 | RPC for sync fallback + contract calls | `ENVIO_SUBGRAPH_RPC` | optional for sync (HyperSync is primary), required for contract calls — HyperRPC doesn't support `eth_call`. Required at startup when the manifest declares `eth_calls` (1.2.0); otherwise lazily, at the first call |
 | Host op request deadline | `ENVIO_SUBGRAPH_REQUEST_TIMEOUT_MS` | optional, default 30000: how long one attempt of a contract call, balance, block timestamp, IPFS/Arweave fetch or ENS lookup may take before it's given up on and asked again |
+| ENSRainbow heal endpoint for `ens.nameByHash` | `ENVIO_SUBGRAPH_ENS_RAINBOW_URL` | optional, default `https://api.ensrainbow.io/v1/heal/` (no hosted instance has stayed up; self-host ENSRainbow for healed names); `off` → every lookup is `null`, as on graph-node without a rainbow table |
 | Host op retry backoff | `ENVIO_SUBGRAPH_RETRY_BACKOFF_MS` | optional, default 500: the first wait before asking again after a transient failure, doubling up to 30 s |
 
 - **`ENVIO_SUBGRAPH_RPC` value = envio's rpc config**, not just a URL:

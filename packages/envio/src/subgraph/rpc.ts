@@ -20,11 +20,11 @@ const MAX_IN_FLIGHT = 16;
  * keep it for good, and a handful of those stall every call behind them with
  * no connection doing anything.
  */
-function gate() {
+export function gate(maxInFlight = MAX_IN_FLIGHT) {
   let inFlight = 0;
   const queued: (() => void)[] = [];
   return async <T>(request: () => Promise<T>): Promise<T> => {
-    if (inFlight < MAX_IN_FLIGHT) inFlight++;
+    if (inFlight < maxInFlight) inFlight++;
     // A finishing request hands its slot straight over.
     else await new Promise<void>((resolve) => queued.push(resolve));
     try {

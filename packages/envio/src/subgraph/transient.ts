@@ -97,16 +97,21 @@ export async function withDeadline<T>(
   }
 }
 
-/** Tries `attempt` until it answers, backing off exponentially between transient failures. */
+/**
+ * Tries `attempt` until it answers, backing off exponentially between transient
+ * failures. With `maxTries`, the last transient failure is thrown once that
+ * many attempts have failed.
+ */
 export async function untilAnswered<T>(
   what: string,
   attempt: (signal: AbortSignal) => Promise<T>,
+  { maxTries = Infinity }: { maxTries?: number } = {},
 ): Promise<T> {
   for (let tries = 0; ; tries++) {
     try {
       return await withDeadline(what, attempt);
     } catch (error) {
-      if (!isTransient(error)) throw error;
+      if (!isTransient(error) || tries + 1 >= maxTries) throw error;
       const wait = Math.min(firstBackoffMs() * 2 ** tries, MAX_BACKOFF_MS);
       const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
       warn(`Envio Subgraph: ${what} failed (${reason}); asking again in ${wait}ms.`);
