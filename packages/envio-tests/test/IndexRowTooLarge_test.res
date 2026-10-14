@@ -77,7 +77,7 @@ describe("An indexed String field given a value too large to index", () => {
 
       t.expect(await refusal.awaitStorageError()).toEqual(
         Some((
-          `Failed to insert items into table "Domain": the "name" column of id "spam" holds 24000 bytes, more than the 2704 bytes PostgreSQL can index. Remove @index from the field, along with any composite @index or getWhere filter covering it, or keep values that long out of it, for example by truncating them in the handler.`,
+          "Failed to insert items into table \"Domain\": \"name\" of id \"spam\" is 24000 bytes, over the 2704 bytes a PostgreSQL index can hold. Truncate long values in the handler, e.g. `value.slice(0, 512)`, or stop indexing the field with @index or getWhere.",
           "index row requires 24016 bytes, maximum size is 8191",
         )),
       )
@@ -106,8 +106,9 @@ describe("An indexed String field given a value too large to index", () => {
           (exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"]
         ),
       ).toEqual(
-        Some(`Failed to build an index on "Domain"("name"): a stored value is larger than the 2704 bytes PostgreSQL can index. Remove @index from the field, along with any composite @index or getWhere filter covering it, or keep values that long out of it, for example by truncating them in the handler.
-index row requires 24016 bytes, maximum size is 8191`),
+        Some(
+          "Failed to build an index on \"Domain\"(\"name\"): a stored value is over the 2704 bytes a PostgreSQL index can hold. Truncate long values in the handler, e.g. `value.slice(0, 512)`, or stop indexing the field with @index or getWhere.\nindex row requires 24016 bytes, maximum size is 8191",
+        ),
       )
     },
   )

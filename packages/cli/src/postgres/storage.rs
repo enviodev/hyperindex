@@ -1443,77 +1443,39 @@ impl Storage {
         };
         self.run_all(transaction, statements)
             .await
-            .map_err(
-                |error| match self.oversized_index_key(&error, table, rows) {
-                    Some(oversized) => Failure::new(
-                        format!("{}: {}", insert_context(table.name()), oversized.explain()),
-                        error,
-                    ),
-                    None => fail(error),
-                },
-            )
+            .map_err(|error| {
+                if sql_state(&error) == Some(index_row::PROGRAM_LIMIT_EXCEEDED) {
+                    let oversized = self.oversized_value(table, rows);
+                    Failure::new(index_row::explain_insert(table.name(), oversized), error)
+                } else {
+                    fail(error)
+                }
+            })
     }
 
-    /// The row an index refused for its size. Only looked for once the server
-    /// has refused one: the search reads every indexed value in the batch.
-    fn oversized_index_key(
-        &self,
-        error: &anyhow::Error,
-        table: &Table,
-        rows: &Rows,
-    ) -> Option<index_row::Oversized> {
-        if sql_state(error) != Some(index_row::PROGRAM_LIMIT_EXCEEDED) {
+    /// The first indexed value in the batch over the btree limit. Only staged
+    /// rows are searched: a table with a list column writes its rows as cells,
+    /// and is explained without naming the value.
+    fn oversized_value(&self, table: &Table, rows: &Rows) -> Option<index_row::Oversized> {
+        let Rows::Staged(arena) = rows else {
             return None;
-        }
-        let columns = &table.write.columns;
-        let names = columns
-            .iter()
-            .map(|column| column.name.as_str())
-            .collect::<Vec<_>>();
-        let id_column = names.iter().position(|name| *name == "id")?;
-        let is_bytes = columns
-            .iter()
-            .map(|column| insert::staged_kind(&column.field_type) == ColumnKind::Bytes)
-            .collect::<Vec<_>>();
-        let keys = self.indexes.btree_keys(table.name());
-        match rows {
-            Rows::Staged(arena) => {
-                let arena_columns = arena.columns();
-                index_row::find(
-                    &keys,
-                    &names,
-                    arena.rows(),
-                    |column, row| {
-                        let column = &arena_columns[column];
-                        match column.kind() {
-                            ColumnKind::Text | ColumnKind::Bytes if !column.is_null(row) => {
-                                column.bytes_at(row).len()
-                            }
-                            _ => 0,
-                        }
-                    },
-                    |row| {
-                        String::from_utf8_lossy(arena_columns[id_column].bytes_at(row)).into_owned()
+        };
+        let indexed = self.indexes.btree_columns(table.name());
+        let columns = table.write.columns.iter().zip(arena.columns());
+        let id = table.write.columns.iter().position(|c| c.name == "id")?;
+        (0..arena.rows()).find_map(|row| {
+            columns.clone().find_map(|(spec, column)| {
+                // A fixed-width or null cell has no bytes to count.
+                let bytes = column.bytes_at(row).len();
+                (bytes > index_row::BTREE_MAX_ITEM_BYTES && indexed.contains(&spec.name)).then(
+                    || index_row::Oversized {
+                        column: spec.name.clone(),
+                        id: String::from_utf8_lossy(arena.columns()[id].bytes_at(row)).into_owned(),
+                        bytes,
                     },
                 )
-            }
-            // Column-major, every value rendered as text: bytes as `\x` and
-            // two hex digits a byte.
-            Rows::Cells { cells, rows } => index_row::find(
-                &keys,
-                &names,
-                *rows,
-                |column, row| match &cells[column * rows + row] {
-                    Param::Null => 0,
-                    Param::Text(text) if is_bytes[column] => text.len().saturating_sub(2) / 2,
-                    Param::Text(text) => text.len(),
-                },
-                |row| match &cells[id_column * rows + row] {
-                    Param::Text(id) => id.clone(),
-                    Param::Null => String::new(),
-                },
-            ),
-        }
+            })
+        })
     }
 
     /// A set's history row: the same values the entity's insert takes, plus

@@ -3,7 +3,7 @@
 //! fight over the same one, and concurrent requests for one index share its
 //! build.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -476,24 +476,16 @@ impl<D: Db> Indexes<D> {
         Ok(())
     }
 
-    /// The key columns of every plain btree index on the table, whatever
-    /// declared it: the schema, a getWhere filter or the primary key.
-    pub fn btree_keys(&self, table_name: &str) -> Vec<Vec<String>> {
+    /// Every column a btree index on the table keys on, whatever declared it:
+    /// the schema, a getWhere filter or the primary key.
+    pub fn btree_columns(&self, table_name: &str) -> HashSet<String> {
         self.catalog
             .lock()
             .unwrap()
             .by_name
             .values()
-            .filter(|entry| {
-                entry.table_name == table_name && entry.method == BTREE && !entry.is_expression
-            })
-            .map(|entry| {
-                entry
-                    .columns
-                    .iter()
-                    .map(|column| column.name.clone())
-                    .collect()
-            })
+            .filter(|entry| entry.table_name == table_name && entry.method == BTREE)
+            .flat_map(|entry| entry.columns.iter().map(|column| column.name.clone()))
             .collect()
     }
 
