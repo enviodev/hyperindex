@@ -50,6 +50,7 @@ import {
 import { makeHostEffects } from "./hosts.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
+import { runSyncCounted } from "./stats.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
 
@@ -697,7 +698,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         async ({ event, context }: any) => {
           if ((skipPreload && context.isPreload) || !owns(event)) return;
           const graphEvent = makeEvent(event);
-          await (context as any).runSync(() =>
+          await runSyncCounted(context, () =>
             runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
           );
         },
@@ -769,7 +770,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             block.number,
             `data source "${source.name}" → "${handler.handler}"`,
           );
-          await (context as any).runSync(() =>
+          await runSyncCounted(context, () =>
             runInScope(
               {
                 context,
