@@ -2,7 +2,8 @@
 // every request the indexer sends and answers the way the runtime does, unless
 // the test says otherwise.
 type request = {path: string, body: JSON.t}
-type reply = {status: int, body: JSON.t}
+// `text`, when given, is sent as is instead of `body` (the runtime's /metrics).
+type reply = {status: int, body: JSON.t, text?: string}
 
 type t = {
   url: string,
@@ -32,13 +33,22 @@ let start = (~respond: request => promise<reply>=runtimeReply): promise<t> => {
     req->MockRpcServer.setEncoding("utf8")
     req->MockRpcServer.onData(chunk => body := body.contents ++ chunk)
     req->MockRpcServer.onEnd(() => {
-      let request = {path: req->MockRpcServer.reqUrl, body: body.contents->JSON.parseOrThrow}
+      let request = {
+        path: req->MockRpcServer.reqUrl,
+        // GET /readyz and /metrics come without a body.
+        body: body.contents === "" ? JSON.Null : body.contents->JSON.parseOrThrow,
+      }
       requests->Array.push(request)->ignore
       let _ = respond(request)->Promise.thenResolve(
-        reply => {
-          res->MockRpcServer.writeHead(reply.status, dict{"content-type": "application/json"})
-          res->MockRpcServer.end_(reply.body->JSON.stringify)
-        },
+        reply =>
+          switch reply.text {
+          | Some(text) =>
+            res->MockRpcServer.writeHead(reply.status, dict{"content-type": "text/plain"})
+            res->MockRpcServer.end_(text)
+          | None =>
+            res->MockRpcServer.writeHead(reply.status, dict{"content-type": "application/json"})
+            res->MockRpcServer.end_(reply.body->JSON.stringify)
+          },
       )
     })
   })
