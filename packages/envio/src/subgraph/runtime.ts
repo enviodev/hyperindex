@@ -15,7 +15,7 @@ import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
-import { currentScope, runInScope, type Scope, type SubgraphSchema } from "./scope.ts";
+import { currentScope, runInScope, runInScopeUntilSettled, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
   Address,
   assemblyScriptPrimitives,
@@ -260,7 +260,7 @@ async function loadMapping(
     // context already in place, so a mapping may read `dataSource.network()`
     // at module top level — Balancer's constants do. The import runs inside a
     // scope carrying that data source for the same reason.
-    return await runInScope(scope, () => import(url));
+    return await runInScopeUntilSettled(scope, () => import(url));
   } catch (exn) {
     const message = exn instanceof Error ? exn.message : String(exn);
     // Only reachable when codegen couldn't run up front, so this reports why
