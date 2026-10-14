@@ -238,6 +238,54 @@ pub fn graph_codegen_failed_message() -> String {
         .to_string()
 }
 
+/// The envio contract name for each data source and template name. graph-node
+/// takes any string (Giveth's `WETH/GIV LP`, Sablier's `SablierV1.0.0`); envio
+/// generates code from it, so anything but an identifier is spelled with `_`
+/// instead, suffixed if that collides. A data source and a template sharing a
+/// name share it here too, which is what folds them together.
+fn contract_names(manifest: &Manifest) -> HashMap<String, String> {
+    let is_identifier = |name: &str| {
+        name.chars()
+            .next()
+            .is_some_and(|first| !first.is_ascii_digit())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    let mut taken: HashSet<String> = manifest
+        .all_sources()
+        .filter(|source| is_identifier(&source.name))
+        .map(|source| source.name.clone())
+        .collect();
+    let mut names = HashMap::new();
+    for source in manifest.all_sources() {
+        if names.contains_key(&source.name) {
+            continue;
+        }
+        let name = if is_identifier(&source.name) {
+            source.name.clone()
+        } else {
+            let mut base: String = source
+                .name
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            if !is_identifier(&base) {
+                base = format!("_{base}");
+            }
+            let name = (1..)
+                .map(|ordinal| match ordinal {
+                    1 => base.clone(),
+                    _ => format!("{base}_{ordinal}"),
+                })
+                .find(|name| !taken.contains(name))
+                .unwrap_or(base);
+            taken.insert(name.clone());
+            name
+        };
+        names.insert(source.name.clone(), name);
+    }
+    names
+}
+
 /// The name envio routes an event by: its own unless one was minted.
 fn envio_event_name(event: &EventConfig) -> String {
     event
@@ -406,9 +454,11 @@ pub fn translate(
     let mut chains: BTreeMap<u64, Chain> = BTreeMap::new();
 
     let mut manifest = manifest;
+    let contract_names = contract_names(&manifest);
+    let contract_name = |source: &DataSource| contract_names[&source.name].clone();
     for source in manifest.data_sources.iter_mut() {
         contracts.push(GlobalContract {
-            name: source.name.clone(),
+            name: contract_name(source),
             config: contract_config(source, files, &usage, &mut report),
         });
 
@@ -443,7 +493,7 @@ pub fn translate(
         }
         if let Some(chain_contracts) = chain.contracts.as_mut() {
             chain_contracts.push(ChainContract {
-                name: source.name.clone(),
+                name: contract_name(source),
                 address: NormalizedList::from(
                     source.address.clone().into_iter().collect::<Vec<_>>(),
                 ),
@@ -477,7 +527,7 @@ pub fn translate(
         // together and only the events are unioned.
         match contracts
             .iter_mut()
-            .find(|contract| contract.name == source.name)
+            .find(|contract| contract.name == contract_name(source))
         {
             Some(existing) => {
                 // The template's own names were minted against its handlers
@@ -520,7 +570,7 @@ pub fn translate(
                 continue;
             }
             None => contracts.push(GlobalContract {
-                name: source.name.clone(),
+                name: contract_name(source),
                 config,
             }),
         }
@@ -544,7 +594,7 @@ pub fn translate(
             };
             if let Some(chain_contracts) = chain.contracts.as_mut() {
                 chain_contracts.push(ChainContract {
-                    name: source.name.clone(),
+                    name: contract_name(source),
                     address: NormalizedList::from(Vec::<String>::new()),
                     start_block: None,
                     config: None,
@@ -640,7 +690,12 @@ pub fn translate(
     let entity_accessors = schema.entity_fields.keys().map(accessor).collect();
     let contract_accessors = manifest
         .all_sources()
-        .map(|source| accessor(&source.name))
+        .map(|source| {
+            (
+                source.name.clone(),
+                contract_names[&source.name].capitalize(),
+            )
+        })
         .collect();
 
     Ok(Translation {
@@ -1451,6 +1506,48 @@ type Transfer implements Event @entity {
             .collect();
         columns.sort();
         assert_eq!(columns, vec!["created_id", "id", "nft"]);
+    }
+
+    // Giveth names a data source `WETH/GIV LP`, Sablier `SablierV1.0.0`: any
+    // string to graph-node, an invalid contract name to envio.
+    #[test]
+    fn names_a_contract_after_a_data_source_whatever_it_is_called() {
+        let manifest = format!(
+            "{GRAVITY_MANIFEST}{}",
+            GRAVITY_MANIFEST
+                .split("dataSources:")
+                .nth(1)
+                .unwrap()
+                .replacen("    name: Gravity\n", "    name: WETH_GIV_LP\n", 1)
+        )
+        .replacen("    name: Gravity\n", "    name: WETH/GIV LP\n", 1);
+        let files = std::collections::HashMap::from([(
+            "./abis/Gravity.json".to_string(),
+            GRAVITY_ABI.to_string(),
+        )]);
+        let config = SystemConfig::parse_subgraph(
+            &manifest,
+            "type Gravatar @entity {\n  id: ID!\n}\n",
+            "gravatar",
+            &std::collections::HashMap::new(),
+            &files,
+            ".",
+            &[],
+        )
+        .unwrap();
+        let mut contracts: Vec<String> = config.contracts.keys().cloned().collect();
+        contracts.sort();
+
+        assert_eq!(
+            (contracts, config.subgraph.unwrap().contract_accessors),
+            (
+                vec!["WETH_GIV_LP".to_string(), "WETH_GIV_LP_2".to_string()],
+                std::collections::BTreeMap::from([
+                    ("WETH/GIV LP".to_string(), "WETH_GIV_LP_2".to_string()),
+                    ("WETH_GIV_LP".to_string(), "WETH_GIV_LP".to_string()),
+                ])
+            )
+        );
     }
 
     // ENS app queries through a Graph endpoint took 1.3-5.7 s: `Domain.parent_id`
