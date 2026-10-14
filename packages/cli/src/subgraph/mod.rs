@@ -284,6 +284,21 @@ pub fn graph_codegen_failed_message() -> String {
         .to_string()
 }
 
+/// A subgraph names its data sources freely (dodoex's `DODOFeeRouteProxy-widgit`);
+/// envio's contract names become identifiers in generated code. The runtime
+/// reaches a contract through `contractAccessors`, keyed by the subgraph's name.
+fn envio_contract_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 /// The name envio routes an event by: its own unless one was minted.
 fn envio_event_name(event: &EventConfig) -> String {
     event
@@ -469,7 +484,7 @@ pub fn translate(
     let mut manifest = manifest;
     for source in manifest.data_sources.iter_mut() {
         contracts.push(GlobalContract {
-            name: source.name.clone(),
+            name: envio_contract_name(&source.name),
             config: contract_config(source, files, &usage, &mut report),
         });
 
@@ -504,7 +519,7 @@ pub fn translate(
         }
         if let Some(chain_contracts) = chain.contracts.as_mut() {
             chain_contracts.push(ChainContract {
-                name: source.name.clone(),
+                name: envio_contract_name(&source.name),
                 address: NormalizedList::from(
                     source.address.clone().into_iter().collect::<Vec<_>>(),
                 ),
@@ -532,7 +547,7 @@ pub fn translate(
         // together and only the events are unioned.
         match contracts
             .iter_mut()
-            .find(|contract| contract.name == source.name)
+            .find(|contract| contract.name == envio_contract_name(&source.name))
         {
             Some(existing) => {
                 // The template's own names were minted against its handlers
@@ -575,7 +590,7 @@ pub fn translate(
                 continue;
             }
             None => contracts.push(GlobalContract {
-                name: source.name.clone(),
+                name: envio_contract_name(&source.name),
                 config,
             }),
         }
@@ -603,7 +618,7 @@ pub fn translate(
             };
             if let Some(chain_contracts) = chain.contracts.as_mut() {
                 chain_contracts.push(ChainContract {
-                    name: source.name.clone(),
+                    name: envio_contract_name(&source.name),
                     address: NormalizedList::from(Vec::<String>::new()),
                     start_block: None,
                     config: None,
@@ -698,7 +713,7 @@ pub fn translate(
         bytes_type: Some(BytesType::Uint8Array),
     };
 
-    let accessor = |name: &String| (name.clone(), name.capitalize());
+    let accessor = |name: &String| (name.clone(), envio_contract_name(name).capitalize());
     let entity_accessors = schema.entity_fields.keys().map(accessor).collect();
     let contract_accessors = manifest
         .all_sources()
@@ -1076,6 +1091,33 @@ type Gravatar @entity {
                 batch_size("store.set('A', 'b', entity);"),
             ),
             (Some(CALLING_BATCH_SIZE), None)
+        );
+    }
+
+    #[test]
+    fn a_data_source_name_that_is_not_an_identifier_is_made_one() {
+        let manifest = MANIFEST.replace("name: Gravity", "name: Gravity-widget");
+        let translation = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        let contracts = translation.human_config.contracts.unwrap();
+        assert_eq!(
+            (
+                contracts[0].name.as_str(),
+                translation
+                    .runtime
+                    .contract_accessors
+                    .get("Gravity-widget")
+                    .map(String::as_str),
+            ),
+            ("Gravity_widget", Some("Gravity_widget"))
         );
     }
 
