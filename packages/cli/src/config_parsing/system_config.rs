@@ -1560,6 +1560,19 @@ impl SystemConfig {
             }
         }
 
+        let manifest = match env.var(crate::subgraph::NETWORK_ENV_VAR) {
+            Some(network) => {
+                let networks_path = root.join("networks.json");
+                let networks = std::fs::read_to_string(&networks_path).context(format!(
+                    "{} is set, so the manifest's addresses come from {}, which can't be read",
+                    crate::subgraph::NETWORK_ENV_VAR,
+                    networks_path.display()
+                ))?;
+                crate::subgraph::apply_network(&manifest, &networks, &network)?
+            }
+            None => manifest,
+        };
+
         // The manifest names its own schema file, so it's read before the
         // translation rather than through the usual `schema:` config field.
         let schema_file = serde_yaml::from_str::<serde_yaml::Value>(&manifest)

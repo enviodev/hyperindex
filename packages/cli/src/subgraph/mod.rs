@@ -102,6 +102,83 @@ pub struct SubgraphRuntimeConfig {
 
 pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
 
+/// `graph build --network <name>`: which entry of `networks.json` the manifest
+/// is built for.
+pub const NETWORK_ENV_VAR: &str = "ENVIO_SUBGRAPH_NETWORK";
+
+/// The manifest `graph build --network <network>` writes from `networks.json`
+/// (graph-cli `updateSubgraphNetwork`): every data source moves to the network
+/// and takes its `source` fields from its entry there, and every template moves
+/// to the network.
+pub fn apply_network(manifest_yaml: &str, networks_json: &str, network: &str) -> Result<String> {
+    use serde_yaml::Value;
+    let networks: serde_json::Value = serde_json::from_str(networks_json)
+        .map_err(|err| anyhow!("networks.json is not valid JSON: {err}"))?;
+    let Some(entries) = networks.get(network).and_then(|value| value.as_object()) else {
+        return Err(anyhow!(
+            "{NETWORK_ENV_VAR} names the network '{network}', which networks.json has no entry \
+             for. It has: {}.",
+            networks
+                .as_object()
+                .map(|all| all.keys().cloned().collect::<Vec<_>>().join(", "))
+                .unwrap_or_default()
+        ));
+    };
+    let mut manifest: Value = serde_yaml::from_str(manifest_yaml)
+        .map_err(|err| anyhow!("Failed to read the subgraph manifest: {err}"))?;
+    let network_value = Value::String(network.to_string());
+
+    if let Some(sources) = manifest
+        .get_mut("dataSources")
+        .and_then(Value::as_sequence_mut)
+    {
+        for source in sources {
+            let name = source
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let entry = entries
+                .get(&name)
+                .and_then(|entry| entry.as_object())
+                .ok_or_else(|| {
+                    anyhow!(
+                    "The data source '{name}' has no entry under '{network}' in networks.json, \
+                     which `graph build --network {network}` requires too."
+                )
+                })?;
+            let changed = source.get("network") != Some(&network_value)
+                || entry.iter().any(|(key, value)| {
+                    source.get("source").and_then(|fields| fields.get(key))
+                        != serde_yaml::to_value(value).ok().as_ref()
+                });
+            if !changed {
+                continue;
+            }
+            let mut fields = serde_yaml::Mapping::new();
+            if let Some(abi) = source.get("source").and_then(|fields| fields.get("abi")) {
+                fields.insert(Value::String("abi".to_string()), abi.clone());
+            }
+            for (key, value) in entry {
+                fields.insert(Value::String(key.clone()), serde_yaml::to_value(value)?);
+            }
+            if let Some(map) = source.as_mapping_mut() {
+                map.insert(Value::String("network".to_string()), network_value.clone());
+                map.insert(Value::String("source".to_string()), Value::Mapping(fields));
+            }
+        }
+    }
+    if let Some(templates) = manifest
+        .get_mut("templates")
+        .and_then(Value::as_sequence_mut)
+    {
+        for template in templates.iter_mut().filter_map(Value::as_mapping_mut) {
+            template.insert(Value::String("network".to_string()), network_value.clone());
+        }
+    }
+    Ok(serde_yaml::to_string(&manifest)?)
+}
+
 /// The ABI files the manifest's data sources and templates decode with that
 /// aren't among `files`, as one message naming each, or `None`. envio's own
 /// check names only a "Virtual config file", once per run.
@@ -1726,6 +1803,43 @@ type Renewal implements Event @entity {
                 config.schema.entities.contains_key("Gravatar"),
             ),
             (true, true)
+        );
+    }
+
+    // Ekubo's manifest names no network; `graph build --network <name>` fills
+    // each data source in from networks.json.
+    #[test]
+    fn builds_the_manifest_for_the_network_networks_json_names() {
+        let dir = tempdir::TempDir::new("envio-subgraph-network").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("    network: mainnet\n", ""),
+        )
+        .unwrap();
+        fs::write(
+            root.join("networks.json"),
+            r#"{
+  "mainnet": {"Gravity": {"address": "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC", "startBlock": 6175244}},
+  "arbitrum-one": {"Gravity": {"address": "0x00000000000014aA86C5d3c41765bb24e11bd701", "startBlock": 416469410}}
+}"#,
+        )
+        .unwrap();
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=arbitrum-one\n").unwrap();
+
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let chain = config.get_chains().into_iter().next().unwrap();
+        let contract = &chain.contracts[0];
+
+        assert_eq!(
+            (chain.id, chain.start_block, contract.addresses.clone(),),
+            (
+                42161,
+                crate::config_parsing::human_config::StartBlock::Number(416469410),
+                vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()],
+            )
         );
     }
 

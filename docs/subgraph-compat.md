@@ -396,6 +396,12 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 A subgraph.yaml says *what* to index; these two vars are the only
 envio-side *how*.
 
+`ENVIO_SUBGRAPH_NETWORK=<name>` is `graph build --network <name>`: the
+manifest is rewritten from `networks.json` beside it before translation, as
+graph-cli rewrites it (every data source moves to the network and takes its
+`source` fields from its entry; every template moves to the network; a data
+source without an entry is an error).
+
 ## 7. Unsupported & unknown errors
 
 Two error kinds, one factory each, shared tail. Translation reports **all**
