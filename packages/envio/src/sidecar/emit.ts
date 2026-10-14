@@ -49,6 +49,10 @@ export type RetryPolicy = {
 /** wiki 09 sections 3 and 4: 250 ms doubling to 5 s, for up to 10 min. */
 export const DEFAULT_RETRY: RetryPolicy & { readonly maxMs: number } = { maxMs: 600_000, baseMs: 250, capMs: 5_000 };
 
+/** Why `emit` rejected: refused by the indexer (4xx), out of retry budget,
+ * abandoned on timeout or shutdown, or a bad name or body (nothing sent). */
+export type EmitFailure = "rejected" | "undeliverable" | "abandoned" | "invalid";
+
 export type EmitTransport = {
   readonly indexerInternalUrl: string;
   readonly webhookSecret?: string | undefined;
@@ -56,8 +60,10 @@ export type EmitTransport = {
   readonly retry?: RetryPolicy;
   readonly timeoutMs?: number;
   readonly log: SidecarLogger;
-  readonly onSent?: () => void;
-  readonly onFailed?: () => void;
+  readonly onSent?: (webhook: string) => void;
+  readonly onFailed?: (webhook: string, outcome: EmitFailure) => void;
+  /** Called before each retry wait. */
+  readonly onRetry?: (webhook: string) => void;
   /** Handed every delivery in progress, so shutdown can wait for retries. */
   readonly onPending?: (sending: Promise<unknown>) => void;
   /** Aborted when the sidecar stops waiting for deliveries (grace period over). */
@@ -128,14 +134,19 @@ export function createEmit<C extends SidecarContract>(
 
   const send = async (name: string, json: unknown, opts: EmitOptions): Promise<EmitResult> => {
     if (!WEBHOOK_NAME.test(name) || name.startsWith("sidecar.")) {
+      transport.onFailed?.(name, "invalid");
       throw new SidecarEmitError(name, "invalid webhook name");
     }
     const early = abandoned(name);
-    if (early !== undefined) throw early;
+    if (early !== undefined) {
+      transport.onFailed?.(name, "abandoned");
+      throw early;
+    }
     let payload: string;
     try {
       payload = JSON.stringify(json);
     } catch (cause) {
+      transport.onFailed?.(name, "invalid");
       throw new SidecarEmitError(name, "body is not JSON serialisable (use the contract schema for bigint)", { cause });
     }
     const chainId = opts.chainId ?? binding.chainId;
@@ -167,7 +178,7 @@ export function createEmit<C extends SidecarContract>(
       }
       if (response?.ok === true) {
         const body = await readJson(response);
-        transport.onSent?.();
+        transport.onSent?.(name);
         const result =
           typeof body === "object" && body !== null
             ? (body as { id?: unknown; chainId?: unknown })
@@ -182,7 +193,7 @@ export function createEmit<C extends SidecarContract>(
         // 4xx (other than 429) means the indexer understood and refused: a schema
         // or chain problem that a retry cannot fix.
         if (response.status < 500 && response.status !== 429) {
-          transport.onFailed?.();
+          transport.onFailed?.(name, "rejected");
           throw new SidecarEmitError(name, `indexer rejected it (${response.status})`, {
             status: response.status,
             detail,
@@ -193,7 +204,7 @@ export function createEmit<C extends SidecarContract>(
       }
       const stop = abandoned(name);
       if (stop !== undefined) {
-        transport.onFailed?.();
+        transport.onFailed?.(name, "abandoned");
         throw stop;
       }
       const remaining = deadline - Date.now();
@@ -205,14 +216,15 @@ export function createEmit<C extends SidecarContract>(
       // The last wait is cut to the deadline, so one final attempt lands on it.
       const delay = Math.min(wait, remaining);
       transport.log.warn("webhook delivery failed, retrying", { webhook: name, attempt, delay, reason: lastFailure });
+      transport.onRetry?.(name);
       await sleep(delay, signals);
       const aborted = abandoned(name);
       if (aborted !== undefined) {
-        transport.onFailed?.();
+        transport.onFailed?.(name, "abandoned");
         throw aborted;
       }
     }
-    transport.onFailed?.();
+    transport.onFailed?.(name, "undeliverable");
     throw new SidecarEmitError(
       name,
       `undeliverable after ${attempt} attempts in ${Date.now() - startedAt} ms: ${lastFailure}`,
@@ -236,6 +248,7 @@ export function createEmit<C extends SidecarContract>(
         // JSON is parsed back the way the indexer will parse it.
         S.parseOrThrow(json, def.body);
       } catch (cause) {
+        transport.onFailed?.(name, "invalid");
         return Promise.reject(
           new SidecarEmitError(name, `body does not match the contract: ${cause instanceof Error ? cause.message : String(cause)}`, {
             cause,

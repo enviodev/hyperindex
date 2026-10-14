@@ -6,6 +6,7 @@ import { createEmit, DEFAULT_RETRY, type Emit, type EmitTransport, type RetryPol
 import { readEnv } from "./env.js";
 import { createRootLogger, toUserLogger, type SidecarLogger } from "./log.js";
 import { createIndexerClient, type EntityMetaInput, type IndexerClient } from "./client.js";
+import { createMetricsRegistry, PROMETHEUS_CONTENT_TYPE } from "./metrics.js";
 
 export type SidecarCall = {
   readonly id: string;
@@ -297,6 +298,42 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     const pendingEmits = new Set<Promise<unknown>>();
     let runningJobs = 0;
     let closing = false;
+    let ready = false;
+
+    // Names stay clear of the indexer's own envio_sidecar_* series (calls_total,
+    // queue_depth, up: the indexer's view of delivery), which mean something else.
+    const metrics = createMetricsRegistry();
+    const callsTotal = metrics.counter(
+      "envio_sidecar_function_calls_total",
+      "Calls by function and outcome (accepted, duplicate, rejected, succeeded, failed, timed_out).",
+    );
+    const durations = metrics.histogram(
+      "envio_sidecar_function_duration_seconds",
+      "Time a sidecar function call ran, up to its timeout.",
+    );
+    metrics.gauge("envio_sidecar_function_queue_depth", "Calls accepted and waiting to run.", () =>
+      [...queues].map(([fn, queue]) => [{ fn }, queue.length] as const),
+    );
+    metrics.gauge("envio_sidecar_function_running", "Calls running now.", () =>
+      [...running].map(([fn, n]) => [{ fn }, n] as const),
+    );
+    const droppedTotal = metrics.counter(
+      "envio_sidecar_dropped_total",
+      "Accepted calls dropped before running, by reason (rollback, shutdown).",
+    );
+    metrics.gauge("envio_sidecar_dedupe_ids", "Call ids remembered to dedupe redelivery.", () => [[{}, seen.size]]);
+    const emitTotal = metrics.counter(
+      "envio_sidecar_emit_total",
+      "Webhooks by outcome (sent, rejected, undeliverable, abandoned, invalid).",
+    );
+    const emitRetries = metrics.counter("envio_sidecar_emit_retries_total", "Webhook delivery retries.");
+    metrics.gauge("envio_sidecar_emits_pending", "Webhook deliveries in progress.", () => [[{}, pendingEmits.size]]);
+    const jobRuns = metrics.counter("envio_sidecar_job_runs_total", "Job ticks by outcome (succeeded, failed, skipped).");
+    const jobDurations = metrics.histogram("envio_sidecar_job_duration_seconds", "Time a job run took.");
+    metrics.gauge("envio_sidecar_ready", "1 while the sidecar takes calls, 0 while starting or closing.", () => [
+      [{}, ready ? 1 : 0],
+    ]);
+
     const stopEmits = new AbortController();
     const transport: EmitTransport = {
       indexerInternalUrl: options.indexerInternalUrl ?? env.indexerInternalUrl,
@@ -305,11 +342,16 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       retry: { ...DEFAULT_RETRY, maxMs: env.emitRetryMaxMs, ...options.retry },
       signal: stopEmits.signal,
       log,
-      onSent: () => {
+      onSent: (webhook) => {
         counters.webhooksSent++;
+        emitTotal.inc({ webhook, outcome: "sent" });
       },
-      onFailed: () => {
-        counters.webhooksFailed++;
+      onFailed: (webhook, outcome) => {
+        if (outcome !== "invalid") counters.webhooksFailed++;
+        emitTotal.inc({ webhook, outcome });
+      },
+      onRetry: (webhook) => {
+        emitRetries.inc({ webhook });
       },
       onPending: (sending) => {
         pendingEmits.add(sending);
@@ -394,6 +436,8 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         signal: controller.signal,
       });
       let timer: NodeJS.Timeout | undefined;
+      let outcome: "succeeded" | "failed" | "timed_out" = "failed";
+      const startedAt = performance.now();
       try {
         const work = Promise.resolve().then(() =>
           run({
@@ -405,7 +449,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             signal: controller.signal,
           }),
         );
-        const outcome =
+        const finished =
           timeoutMs > 0
             ? await Promise.race([
                 work.then(() => "done" as const),
@@ -414,7 +458,8 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
                 }),
               ])
             : await work.then(() => "done" as const);
-        if (outcome === "timeout") {
+        if (finished === "timeout") {
+          outcome = "timed_out";
           controller.abort(new Error(`function '${item.fn}' timed out after ${timeoutMs} ms`));
           counters.timedOut++;
           callLog.error("sidecar function timed out, freeing its slot", { timeoutMs });
@@ -425,12 +470,15 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
           });
           return;
         }
+        outcome = "succeeded";
         counters.ran++;
       } catch (error) {
         counters.failed++;
         callLog.error("sidecar function failed", error instanceof Error ? error : { error: String(error) });
       } finally {
         clearTimeout(timer);
+        callsTotal.inc({ fn: item.fn, outcome });
+        durations.observe({ fn: item.fn }, (performance.now() - startedAt) / 1_000);
       }
     };
 
@@ -452,12 +500,15 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
 
     const internal = express();
     internal.use(express.json({ limit: "10mb" }));
-    let ready = false;
     internal.get("/healthz", (_req, res) => {
       res.status(200).json({ status: "ok" });
     });
     internal.get("/readyz", (_req, res) => {
       res.status(ready ? 200 : 503).json({ status: ready ? "ok" : closing ? "closing" : "starting" });
+    });
+    internal.get("/metrics", (_req, res) => {
+      res.writeHead(200, { "content-type": PROMETHEUS_CONTENT_TYPE });
+      res.end(metrics.render());
     });
     internal.post("/envio/calls", (req, res) => {
       if (closing) {
@@ -478,6 +529,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         if (problem !== null) {
           const id = isPlainObject(raw) && typeof raw.id === "string" ? raw.id : "";
           rejected.push({ id, reason: `malformed call: ${problem}` });
+          callsTotal.inc({ fn: "_unknown", outcome: "rejected" });
           continue;
         }
         const wire = raw as WireCall;
@@ -485,15 +537,18 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         const queue = queues.get(wire.fn);
         if (def === undefined || queue === undefined) {
           rejected.push({ id: wire.id, reason: `unknown function: ${wire.fn}` });
+          callsTotal.inc({ fn: "_unknown", outcome: "rejected" });
           continue;
         }
         if (seen.has(wire.id)) {
           counters.duplicates++;
+          callsTotal.inc({ fn: wire.fn, outcome: "duplicate" });
           accepted.push(wire.id);
           continue;
         }
         if (queue.length >= settingsOf(wire.fn).maxQueue) {
           rejected.push({ id: wire.id, reason: "queue full" });
+          callsTotal.inc({ fn: wire.fn, outcome: "rejected" });
           continue;
         }
         let input: unknown;
@@ -504,6 +559,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             id: wire.id,
             reason: `invalid input: ${error instanceof Error ? error.message : String(error)}`,
           });
+          callsTotal.inc({ fn: wire.fn, outcome: "rejected" });
           continue;
         }
         queue.push({
@@ -518,6 +574,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
           },
         });
         remember(wire.id, wire.chainId, wire.blockNumber);
+        callsTotal.inc({ fn: wire.fn, outcome: "accepted" });
         accepted.push(wire.id);
         touched.add(wire.fn);
       }
@@ -549,6 +606,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         queues.set(name, kept);
       }
       counters.dropped += dropped;
+      if (dropped > 0) droppedTotal.inc({ reason: "rollback" }, dropped);
       const forgotten = forgetAbove(notice.chainId, notice.rollbackToBlock);
       log.info("rollback notice", { ...notice, dropped, forgottenCallIds: forgotten });
       Promise.resolve()
@@ -597,16 +655,25 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         const tick = () => {
           if (inFlight) {
             jobLog.warn("job still running, skipping this tick");
+            jobRuns.inc({ job: name, outcome: "skipped" });
             return;
           }
           inFlight = true;
           runningJobs++;
+          const startedAt = performance.now();
           Promise.resolve()
             .then(() => job.run({ emit: jobEmit, indexer, log: jobLog }))
-            .catch((error: unknown) => {
-              jobLog.error("job failed", error instanceof Error ? error : { error: String(error) });
-            })
+            .then(
+              () => {
+                jobRuns.inc({ job: name, outcome: "succeeded" });
+              },
+              (error: unknown) => {
+                jobRuns.inc({ job: name, outcome: "failed" });
+                jobLog.error("job failed", error instanceof Error ? error : { error: String(error) });
+              },
+            )
             .finally(() => {
+              jobDurations.observe({ job: name }, (performance.now() - startedAt) / 1_000);
               inFlight = false;
               runningJobs--;
               settle();
@@ -650,6 +717,9 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       if (!drained) {
         // Running functions cannot be cancelled; queued ones must not start
         // once the process is on its way out.
+        const droppedQueued = [...queues.values()].reduce((sum, queue) => sum + queue.length, 0);
+        counters.dropped += droppedQueued;
+        if (droppedQueued > 0) droppedTotal.inc({ reason: "shutdown" }, droppedQueued);
         for (const queue of queues.values()) queue.length = 0;
         log.warn("sidecar grace period over, abandoning unfinished work", { graceMs, ...abandoned });
       }

@@ -849,6 +849,101 @@ describe("sidecar runtime: close with retrying emits", () => {
   });
 });
 
+describe("sidecar runtime: /metrics", () => {
+  it("serves Prometheus text on the internal port: calls, queue, durations, emits, drops, jobs", async () => {
+    const indexer = await fakeIndexer((_received, n) => (n === 1 ? { status: 503 } : undefined));
+    cleanups.push(indexer.close);
+    const gate = deferred();
+    cleanups.push(async () => gate.resolve());
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          priceSwap: async ({ input, emit }) => {
+            await emit.swapPriced({ swapId: input.swapId, usd: 1, amount: input.amount });
+          },
+          notify: async ({ input }) => {
+            if (input.text === "boom") throw new Error("boom");
+            if (input.text === "slow") await gate.promise;
+          },
+        },
+      },
+      { env: { ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS: "30" } },
+    );
+    const base = `http://127.0.0.1:${running.internalPort}`;
+    await postJson(`${base}/envio/calls`, {
+      batchId: "b-22",
+      calls: [
+        call("1:1:1:0", "priceSwap", { swapId: "s1", amount: "1" }),
+        call("1:1:1:0", "priceSwap", { swapId: "s1", amount: "1" }),
+        call("1:1:2:0", "notify", { text: "ok" }),
+        call("1:1:3:0", "notify", { text: "boom" }),
+        call("1:1:4:0", "notify", { text: "slow" }),
+        call("1:1:5:0", "nope", { text: "?" }),
+      ],
+    });
+    await running.waitIdle();
+    const response = await fetch(`${base}/metrics`);
+    const text = await response.text();
+    const samples = Object.fromEntries(
+      text
+        .split("\n")
+        .filter((line) => line !== "" && !line.startsWith("#") && !line.includes("_bucket{"))
+        .map((line) => {
+          const at = line.lastIndexOf(" ");
+          return [line.slice(0, at), Number(line.slice(at + 1))];
+        }),
+    );
+    const types = text.split("\n").filter((line) => line.startsWith("# TYPE "));
+    expect({
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      types,
+      samples,
+    }).toEqual({
+      status: 200,
+      contentType: "text/plain; version=0.0.4; charset=utf-8",
+      types: [
+        "# TYPE envio_sidecar_function_calls_total counter",
+        "# TYPE envio_sidecar_function_duration_seconds histogram",
+        "# TYPE envio_sidecar_function_queue_depth gauge",
+        "# TYPE envio_sidecar_function_running gauge",
+        "# TYPE envio_sidecar_dropped_total counter",
+        "# TYPE envio_sidecar_dedupe_ids gauge",
+        "# TYPE envio_sidecar_emit_total counter",
+        "# TYPE envio_sidecar_emit_retries_total counter",
+        "# TYPE envio_sidecar_emits_pending gauge",
+        "# TYPE envio_sidecar_job_runs_total counter",
+        "# TYPE envio_sidecar_job_duration_seconds histogram",
+        "# TYPE envio_sidecar_ready gauge",
+      ],
+      samples: {
+        'envio_sidecar_function_calls_total{fn="priceSwap",outcome="accepted"}': 1,
+        'envio_sidecar_function_calls_total{fn="priceSwap",outcome="duplicate"}': 1,
+        'envio_sidecar_function_calls_total{fn="notify",outcome="accepted"}': 3,
+        'envio_sidecar_function_calls_total{fn="_unknown",outcome="rejected"}': 1,
+        'envio_sidecar_function_calls_total{fn="priceSwap",outcome="succeeded"}': 1,
+        'envio_sidecar_function_calls_total{fn="notify",outcome="succeeded"}': 1,
+        'envio_sidecar_function_calls_total{fn="notify",outcome="failed"}': 1,
+        'envio_sidecar_function_calls_total{fn="notify",outcome="timed_out"}': 1,
+        'envio_sidecar_function_duration_seconds_sum{fn="priceSwap"}': expect.any(Number),
+        'envio_sidecar_function_duration_seconds_count{fn="priceSwap"}': 1,
+        'envio_sidecar_function_duration_seconds_sum{fn="notify"}': expect.any(Number),
+        'envio_sidecar_function_duration_seconds_count{fn="notify"}': 3,
+        'envio_sidecar_function_queue_depth{fn="priceSwap"}': 0,
+        'envio_sidecar_function_queue_depth{fn="notify"}': 0,
+        'envio_sidecar_function_running{fn="priceSwap"}': 0,
+        'envio_sidecar_function_running{fn="notify"}': 0,
+        envio_sidecar_dedupe_ids: 4,
+        'envio_sidecar_emit_total{webhook="swapPriced",outcome="sent"}': 1,
+        'envio_sidecar_emit_retries_total{webhook="swapPriced"}': 1,
+        envio_sidecar_emits_pending: 0,
+        envio_sidecar_ready: 1,
+      },
+    });
+  });
+});
+
 describe("sidecar runtime: LOG_LEVEL", () => {
   it("accepts the indexer's u-levels and falls back to info on anything else", async () => {
     const indexer = await fakeIndexer();
