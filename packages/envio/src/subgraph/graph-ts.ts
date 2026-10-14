@@ -1588,8 +1588,12 @@ const ethereumConverter: (type: string) => Converter<EthereumValue> = memoised((
   }
   if (type.startsWith("(")) {
     const components = tupleComponents(type).map(ethereumConverter);
-    return (raw) =>
-      EthereumValue.fromTuple(components.map((component, index) => component((raw as unknown[])[index])));
+    return (raw) => {
+      // envio's decoder keys a tuple by its components' names when the ABI
+      // gives them, in ABI order; viem and unnamed ABIs give an array.
+      const values = Array.isArray(raw) ? raw : Object.values(raw as object);
+      return EthereumValue.fromTuple(components.map((component, index) => component(values[index])));
+    };
   }
   if (type === "address") return (raw) => EthereumValue.fromAddress(Address.fromString(raw as string));
   if (type === "bool") return (raw) => EthereumValue.fromBoolean(raw as boolean);
