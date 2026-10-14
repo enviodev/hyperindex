@@ -341,9 +341,10 @@ describe("What a refused restart tells the operator", () => {
       | exception JsExn(e) => e->JsExn.message
       }
 
-      let clickHouseLine = switch IndexerRunner.selectedBackend {
-      | #clickhouse => "\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
-      | #postgres => ""
+      let storageLines = switch IndexerRunner.selectedBackend {
+      | #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\"
+      | #clickhouse => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
+      | #clickhouseOnly => "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
       }
       t.expect(
         (refusal, indexer.logs()->Array.slice(~start=logged)),
@@ -359,7 +360,7 @@ Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
-       ENVIO_PG_SCHEMA=<new_schema> \\${clickHouseLine}
+${storageLines}
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`,
         ),
@@ -399,9 +400,10 @@ Pick one:
       | exception JsExn(e) => e->JsExn.message
       }
 
-      let clickHouseLine = switch IndexerRunner.selectedBackend {
-      | #clickhouse => "\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
-      | #postgres => ""
+      let storageLines = switch IndexerRunner.selectedBackend {
+      | #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\"
+      | #clickhouse => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
+      | #clickhouseOnly => "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
       }
       t.expect(refusal).toEqual(
         Some(
@@ -413,7 +415,7 @@ Pick one:
   1. Revert the changes above                           # resume indexing where it left off
   2. envio dev -r -d indexer --config config.head.yaml  # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
-       ENVIO_PG_SCHEMA=<new_schema> \\${clickHouseLine}
+${storageLines}
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev -d indexer --config config.head.yaml`,
         ),

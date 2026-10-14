@@ -30,6 +30,9 @@ let chainYaml = (chainId, address) =>
 `
 
 let scenario = Scenario.make(
+  ~unsupported=[
+    {backend: #clickhouseOnly, reason: "asserts the Postgres indexes finalizing builds"},
+  ],
   ~configYaml=`
 name: chain-filter-finalize
 disable_default_cross_chain: true

@@ -947,7 +947,9 @@ module Promise = {
 
 // `JSON.stringify` writes half a surrogate pair as a `\udXXX` escape, which no
 // JSON parser that decodes to UTF-8 accepts. It becomes the replacement
-// character a text encoder writes for it. An escape only after an even run of
-// backslashes.
+// character a text encoder writes for it, as the character rather than its
+// escape: that is how `JSON.stringify` spells the document read back, so a
+// store comparing documents as text finds it. An escape only after an even run
+// of backslashes.
 let replaceLoneSurrogateEscapes = (json: string) =>
-  json->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\ud[89a-f][0-9a-f]{2}/g, "\\ufffd")
+  json->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\ud[89a-f][0-9a-f]{2}/g, "�")

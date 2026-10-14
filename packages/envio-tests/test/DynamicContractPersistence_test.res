@@ -49,11 +49,7 @@ let queryAddresses = (indexer: IndexerRunner.t) =>
 let dcAddress = "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow
 let lateDcAddress = "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow
 
-let row = (address, contractName, registrationBlock) => (
-  address,
-  contractName,
-  registrationBlock,
-)
+let row = (address, contractName, registrationBlock) => (address, contractName, registrationBlock)
 
 type contractOps = {add: Address.t => unit}
 type registerContext = {chain: {"Gravatar": contractOps, "NftFactory": contractOps}}
@@ -67,23 +63,25 @@ let registeringItem = (~blockNumber, ~register): MockSource.itemMock => {
     register(args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)),
 }
 
-let withIndexer = body =>
-  scenario->Scenario.run(
-    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
-    async (~indexer, ~source) => {
-      let sourceMock = source(1337)
+let withIndexer = (t, body) =>
+  t->Scenario.skippingPostgresReads(() =>
+    scenario->Scenario.run(
+      ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
+      async (~indexer, ~source) => {
+        let sourceMock = source(1337)
 
-      sourceMock.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+        sourceMock.resolveGetHeightOrThrow(1000)
+        await Utils.delay(0)
+        await Utils.delay(0)
 
-      await body(sourceMock, indexer)
-    },
+        await body(sourceMock, indexer)
+      },
+    )
   )
 
 describe("Dynamic contract persistence", () => {
   Async.it("writes one row for an address registered by several events", async t => {
-    await withIndexer(
+    await t->withIndexer(
       async (sourceMock, indexer) => {
         // Two events in different blocks register the same address. The second is a
         // duplicate the store rejects, so only the first is ever written.
@@ -116,7 +114,7 @@ describe("Dynamic contract persistence", () => {
 
   // https://github.com/enviodev/hyperindex/issues/1187
   Async.it("writes one row per contract for a shared address", async t => {
-    await withIndexer(
+    await t->withIndexer(
       async (sourceMock, indexer) => {
         // One address indexed by two contracts: each registration is its own
         // row, so a resume restores both.
@@ -148,7 +146,7 @@ describe("Dynamic contract persistence", () => {
   })
 
   Async.it("writes a registration the first batch didn't progress past", async t => {
-    await withIndexer(
+    await t->withIndexer(
       async (sourceMock, indexer) => {
         // Both registrations happen at fetch time, but registering the block 10
         // address spawns a partition that hasn't fetched yet — so the first batch

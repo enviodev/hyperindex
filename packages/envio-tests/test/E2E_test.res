@@ -43,6 +43,12 @@ type SimpleEntity {
 
 let scenario = makeScenario(~name="e2e", ~chains=chainYaml(1337))
 
+// The store keeping the indexer's own tables, the effect caches among them.
+let storeOfRecord = switch IndexerRunner.selectedBackend {
+| #clickhouseOnly => "clickhouse"
+| #clickhouse | #postgres => "postgres"
+}
+
 // Partition ids and the chain's range-cost budget follow the contract set, so
 // this scenario keeps the address-less contracts alongside the addressed ones.
 let partitionScenario = Scenario.make(
@@ -479,19 +485,19 @@ describe("E2E tests", () => {
       [
         {
           value: "2",
-          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
+          labels: dict{"operation": "testEffectWithCache.effect", "storage": storeOfRecord},
         },
       ],
       [
         {
           value: "2",
-          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
+          labels: dict{"operation": "testEffectWithCache.effect", "storage": storeOfRecord},
         },
       ],
       [
         {
           value: "1",
-          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
+          labels: dict{"operation": "testEffectWithCache.effect", "storage": storeOfRecord},
         },
       ],
     ))
@@ -574,10 +580,11 @@ describe("E2E tests", () => {
       )
       await indexer.getBatchWritePromise()
 
-      // Postgres keeps the effect cache, whether or not ClickHouse writes too.
+      // The store of record keeps the effect cache, whether or not another
+      // store writes too.
       t.expect(
         (await indexer.metric("envio_storage_write_seconds"))
-        ->Array.find(({labels}) => labels->Dict.get("storage") === Some("postgres"))
+        ->Array.find(({labels}) => labels->Dict.get("storage") === Some(storeOfRecord))
         ->Option.map(
           ({value}) => value->Float.fromString->Option.getOr(0.) *. 1000. >= serializeMillis,
         ),
@@ -1484,9 +1491,11 @@ describe("E2E tests", () => {
 
       // Both items should now be in DB
       t.expect(
-        await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
+        (await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>))->Array.toSorted(
+          (a, b) => String.compare(a.id, b.id),
+        ),
         ~message="Both items should be in DB after chunk1 fully completes",
-      ).toEqual([{id: "item-850", value: "from-chunk1"}, {id: "item-2000", value: "from-chunk3"}])
+      ).toEqual([{id: "item-2000", value: "from-chunk3"}, {id: "item-850", value: "from-chunk1"}])
     },
   )
 

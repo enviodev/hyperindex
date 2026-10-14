@@ -15,8 +15,13 @@ chains:
           - event: "TestEvent()"
 `
 
+let unsupported: array<Scenario.unsupported> = [
+  {backend: #clickhouseOnly, reason: "builds Postgres indexes"},
+]
+
 let scenario = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~configYaml,
   ~schema=`
 type A {
@@ -36,6 +41,7 @@ type B {
 let longName = `Entity${"x"->String.repeat(57)}`
 let longNameScenario = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~configYaml,
   ~schema=`
 type ${longName} {
@@ -47,6 +53,7 @@ type ${longName} {
 
 let tripleScenario = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~configYaml,
   ~schema=`
 type Triple {

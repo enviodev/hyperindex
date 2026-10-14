@@ -79,15 +79,8 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}${chainYaml(
   ~schema,
 )
 
-let readyAtByChainId = async (~sql, ~pgSchema) => {
-  let rows: array<{
-    "id": ChainId.t,
-    "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.queryForTests(
-    `SELECT "id", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => (row["id"]->ChainId.toString, row["ready_at"]->Null.toOption))
-}
+let readyAtByChainId = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(row => (row.id->ChainId.toString, row.readyAt))
 
 let catchUp = (~source: MockSource.t) => {
   source.resolveGetHeightOrThrow(100)
@@ -100,13 +93,12 @@ describe("A supervised worker", () => {
     ~sources=[{chain: 1}, {chain: 137}],
     ~holdRealtime=true,
     async (~t, ~indexer, ~source) => {
-      let {sql, pgSchema} = indexer.pg
       catchUp(~source=source(1))
       catchUp(~source=source(137))
       await indexer.waitUntilIdle()
 
       t.expect(
-        (await readyAtByChainId(~sql, ~pgSchema), await indexer.metric("envio_progress_ready")),
+        (await readyAtByChainId(indexer), await indexer.metric("envio_progress_ready")),
         ~message="Both chains are at the head, but the run has not said so",
       ).toEqual((
         [("1", None), ("137", None)],
@@ -116,7 +108,7 @@ describe("A supervised worker", () => {
       indexer.releaseRealtime()
       await indexer.waitUntilReady()
 
-      let readyAt = await readyAtByChainId(~sql, ~pgSchema)
+      let readyAt = await readyAtByChainId(indexer)
       let stamps = readyAt->Array.filterMap(((_, at)) => at->Option.map(Date.getTime))
       t.expect(
         (
@@ -138,13 +130,12 @@ describe("A supervised worker at its end block", () => {
     ~sources=[{chain: 1}],
     ~holdRealtime=true,
     async (~t, ~indexer, ~source) => {
-      let {sql, pgSchema} = indexer.pg
       catchUp(~source=source(1))
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
       t.expect(
-        (exited.contents, await readyAtByChainId(~sql, ~pgSchema)),
+        (exited.contents, await readyAtByChainId(indexer)),
         ~message="Its chain is done, but it still owes the schema the indexes it deferred",
       ).toEqual((false, [("1", None)]))
 
@@ -152,7 +143,7 @@ describe("A supervised worker at its end block", () => {
       await indexer.waitUntilReady()
 
       t.expect(
-        (await readyAtByChainId(~sql, ~pgSchema))->Array.map(((chainId, readyAt)) => (
+        (await readyAtByChainId(indexer))->Array.map(((chainId, readyAt)) => (
           chainId,
           readyAt->Option.isSome,
         )),
@@ -192,7 +183,6 @@ describe("A supervised worker on a chain with a reorg depth", () => {
     ~sources=[{chain: 1}, {chain: 137}],
     ~holdRealtime=true,
     async (~t, ~indexer, ~source) => {
-      let {sql, pgSchema} = indexer.pg
       // Each chain fetches the whole finalized range, which is all it may fetch
       // until the indexer enters the reorg threshold.
       let catchUpToSafeBlock = (~source: MockSource.t) => {
@@ -204,7 +194,7 @@ describe("A supervised worker on a chain with a reorg depth", () => {
       await indexer.waitUntilIdle()
 
       t.expect(
-        (await indexer.metric("envio_reorg_threshold"), await readyAtByChainId(~sql, ~pgSchema)),
+        (await indexer.metric("envio_reorg_threshold"), await readyAtByChainId(indexer)),
         ~message="Both chains are as far as they can fetch, and the run has not said so",
       ).toEqual(([{value: "0", labels: Dict.make()}], [("1", None), ("137", None)]))
 

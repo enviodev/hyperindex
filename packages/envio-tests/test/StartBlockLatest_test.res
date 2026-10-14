@@ -89,15 +89,8 @@ indexer.onBlock({
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
-let persistedStartBlocks = async (~sql, ~pgSchema) => {
-  let rows: array<{
-    "id": int,
-    "start_block": int,
-  }> = await sql->Sql.queryForTests(
-    `SELECT "id", "start_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => (row["id"], row["start_block"]))
-}
+let persistedStartBlocks = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(row => (row.id->ChainId.toInt, row.startBlock))
 
 describe("start_block: latest", () => {
   scenario->Scenario.it(
@@ -105,13 +98,12 @@ describe("start_block: latest", () => {
     ~sources=[{chain: 1337, methods, autoHeight: 1000}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=1000)
       await indexer.getBatchWritePromise()
 
       t.expect(
-        await persistedStartBlocks(~sql, ~pgSchema),
+        await persistedStartBlocks(indexer),
         ~message="latest resolves to the head observed at first deploy",
       ).toEqual([(1337, 1000)])
 
@@ -127,7 +119,7 @@ describe("start_block: latest", () => {
       await restarted.waitUntilReady()
 
       t.expect(
-        await persistedStartBlocks(~sql, ~pgSchema),
+        await persistedStartBlocks(indexer),
         ~message="start_block is reused from the first deploy, not re-resolved to the new head",
       ).toEqual([(1337, 1000)])
     },
@@ -141,10 +133,7 @@ describe("start_block: latest", () => {
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=1000)
       await indexer.getBatchWritePromise()
 
-      let {sql, pgSchema} = indexer.pg
-      let rows: array<{
-        "seenStartBlock": int,
-      }> = await sql->Sql.queryForTests(`SELECT "seenStartBlock" FROM "${pgSchema}"."Seen";`)
+      let rows: array<{"seenStartBlock": int}> = await indexer.query("Seen")
 
       t.expect(rows->Array.map(row => row["seenStartBlock"])).toEqual([1000])
     },
@@ -156,14 +145,13 @@ describe("start_block: latest", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source1337 = source(1337)
-      let {sql, pgSchema} = indexer.pg
 
       source1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=10)
       source1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=2000)
       await indexer.getBatchWritePromise()
 
       t.expect(
-        await persistedStartBlocks(~sql, ~pgSchema),
+        await persistedStartBlocks(indexer),
         ~message="chain 1 keeps its configured start block; only chain 1337 resolves latest",
       ).toEqual([(1, 5), (1337, 2000)])
     },

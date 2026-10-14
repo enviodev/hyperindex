@@ -203,21 +203,20 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
     });
   });
 
-  // The view reads rows up to `max(id)` in the checkpoints table, so a history
+  // The view reads rows up to the frontier `envio_chains` holds, so a history
   // row above it is invisible — the failure mode of a batch whose rows landed
-  // but whose checkpoints did not. Postgres is not compared here: it writes no
-  // checkpoints during a backfill, while ClickHouse always needs them.
-  it("leaves no ClickHouse history row above the last checkpoint", async () => {
+  // but whose chains' rows did not.
+  it("leaves no ClickHouse history row above the committed frontier", async () => {
     const above = await chRows(
       `SELECT sum(rows_above) FROM (
          SELECT count() AS rows_above FROM ${CH_DATABASE}.\`envio_history_Transfer\`
-         WHERE envio_checkpoint_id > (SELECT max(id) FROM ${CH_DATABASE}.envio_checkpoints)
+         WHERE envio_checkpoint_id > (SELECT max(checkpoint_id) FROM ${CH_DATABASE}.envio_chains FINAL)
          UNION ALL
          SELECT count() AS rows_above FROM ${CH_DATABASE}.\`envio_history_Holder\`
-         WHERE envio_checkpoint_id > (SELECT max(id) FROM ${CH_DATABASE}.envio_checkpoints)
+         WHERE envio_checkpoint_id > (SELECT max(checkpoint_id) FROM ${CH_DATABASE}.envio_chains FINAL)
          UNION ALL
          SELECT count() AS rows_above FROM ${CH_DATABASE}.\`envio_history_ChainTransfer\`
-         WHERE envio_checkpoint_id > (SELECT max(id) FROM ${CH_DATABASE}.envio_checkpoints)
+         WHERE envio_checkpoint_id > (SELECT max(checkpoint_id) FROM ${CH_DATABASE}.envio_chains FINAL)
        )`
     );
     expect(above).toEqual([["0"]]);

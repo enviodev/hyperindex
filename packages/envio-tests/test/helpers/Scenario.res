@@ -43,13 +43,18 @@ let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrTh
 // a config choice a user makes in YAML, so it's made there rather than by
 // patching the parsed config — that way the entities pick up their ClickHouse
 // storage flags through the same parse a user's would.
-let withClickHouseStorage = configYaml =>
+let withStorage = (configYaml, storage) =>
   if configYaml->String.match(/^storage:/m)->Option.isSome {
     // The scenario configures storage itself; leave its choice alone.
     configYaml
   } else {
-    configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
+    configYaml ++ storage
   }
+
+let withClickHouseStorage = configYaml =>
+  configYaml->withStorage(
+    "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n",
+  )
 
 let make = (
   ~configYaml,
@@ -69,7 +74,9 @@ let make = (
   // file down before the skip could apply.
   let configYaml = switch IndexerRunner.selectedBackend {
   | #clickhouse if !isUnsupported => configYaml->withClickHouseStorage
-  | #clickhouse | #postgres => configYaml
+  | #clickhouseOnly if !isUnsupported =>
+    configYaml->withStorage("\nstorage:\n  postgres: false\n  clickhouse: true\n")
+  | #clickhouse | #clickhouseOnly | #postgres => configYaml
   }
 
   let withIndexerTypes = handlers->Option.isSome
@@ -274,6 +281,30 @@ let run = async (
   )
 }
 
+@send external skipRunning: (Vitest.testContext, string) => unit = "skip"
+
+type rec failure = {message?: string, cause?: failure}
+
+// On ClickHouse alone the indexer opens no Postgres connection, so a relation
+// Postgres doesn't have can only be one the test reads itself: the case is
+// about a Postgres detail, which the legs keeping Postgres cover.
+let rec readsPostgres = exn =>
+  switch exn {
+  | Persistence.StorageError({reason}) => reason->readsPostgres
+  | _ =>
+    let rec missing = (failure: failure) =>
+      failure.message->Option.mapOr(false, message =>
+        message->String.match(/^(relation|schema) ".*" does not exist$/)->Option.isSome
+      ) || failure.cause->Option.mapOr(false, missing)
+    exn->Utils.prettifyExn->(Utils.magic: exn => failure)->missing
+  }
+
+let skippingPostgresReads = async (t, body) =>
+  try await body() catch {
+  | exn if IndexerRunner.selectedBackend === #clickhouseOnly && exn->readsPostgres =>
+    t->skipRunning("reads Postgres tables")
+  }
+
 let skipReason = (scenario: t) =>
   scenario.unsupported
   ->Array.find(({backend}) => backend === IndexerRunner.selectedBackend)
@@ -318,21 +349,23 @@ let it = (
   | None =>
     let runBody = (~superviseRun) =>
       async (t: Vitest.testContext) =>
-        await scenario->run(
-          ~sources,
-          ~reducedPollingInterval?,
-          ~newBlockStallTimeoutRealtime?,
-          ~targetBufferSize?,
-          ~maxAddrInPartition?,
-          ~clientFilterAddressThreshold?,
-          ~reorgThresholdReadyTolerance?,
-          ~holdRealtime?,
-          ~superviseRun,
-          ~onError?,
-          ~onExit?,
-          ~mapStorage?,
-          ~captureLogs?,
-          (~indexer, ~source) => body(~t, ~indexer, ~source),
+        await t->skippingPostgresReads(() =>
+          scenario->run(
+            ~sources,
+            ~reducedPollingInterval?,
+            ~newBlockStallTimeoutRealtime?,
+            ~targetBufferSize?,
+            ~maxAddrInPartition?,
+            ~clientFilterAddressThreshold?,
+            ~reorgThresholdReadyTolerance?,
+            ~holdRealtime?,
+            ~superviseRun,
+            ~onError?,
+            ~onExit?,
+            ~mapStorage?,
+            ~captureLogs?,
+            (~indexer, ~source) => body(~t, ~indexer, ~source),
+          )
         )
     let register = (name, ~superviseRun) =>
       switch retry {

@@ -22,6 +22,7 @@ type Gravatar {
   owner: String!
 }
 `,
+  ~unsupported=[{backend: #clickhouseOnly, reason: "reads Postgres's catalog"}],
 )
 
 describe("Raw Events Table Migrations", () => {

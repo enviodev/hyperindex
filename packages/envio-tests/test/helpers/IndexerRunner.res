@@ -10,11 +10,11 @@ type pg = {sql: StorageClient.t, pgSchema: string}
 
 let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
 
-// Which persistence a run is exercised against. Both keep Postgres as the store
-// of record; the ClickHouse one adds ClickHouse alongside it. A scenario whose
-// config sets its own storage keeps it on either. CI runs the suite once per
+// Which persistence a run is exercised against: Postgres, ClickHouse alongside
+// Postgres as the store of record, or ClickHouse alone. A scenario whose config
+// sets its own storage keeps it on every one. CI runs the suite once per
 // backend.
-type backend = [#postgres | #clickhouse]
+type backend = [#postgres | #clickhouse | #clickhouseOnly]
 
 @module("node:os") external tmpdir: unit => string = "tmpdir"
 @module("node:fs") external rmSync: (string, {"recursive": bool, "force": bool}) => unit = "rmSync"
@@ -23,14 +23,16 @@ let backendName = (backend: backend) =>
   switch backend {
   | #postgres => "postgres"
   | #clickhouse => "clickhouse"
+  | #clickhouseOnly => "clickhouse-only"
   }
 
 let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nullable.toOption {
 | None | Some("") | Some("postgres") => #postgres
 | Some("clickhouse") => #clickhouse
+| Some("clickhouse-only") => #clickhouseOnly
 | Some(other) =>
   JsError.throwWithMessage(
-    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres or clickhouse.`,
+    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres, clickhouse or clickhouse-only.`,
   )
 }
 
@@ -40,6 +42,15 @@ type addressRow = {
   address: Address.t,
   contractName: string,
   registrationBlock: int,
+}
+
+// A chain's `envio_chains` row, as the store of record keeps it.
+type chainRow = {
+  id: ChainId.t,
+  startBlock: int,
+  progressBlock: int,
+  firstEventBlock: option<int>,
+  readyAt: option<Date.t>,
 }
 
 // A logged line as a test reads it: what was said, and the fields said with it
@@ -58,6 +69,8 @@ type rec t = {
   // stored key is rendered back here, the only place a test needs a string.
   queryAddresses: unit => promise<array<addressRow>>,
   queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
+  // Ordered by chain id.
+  queryChains: unit => promise<array<chainRow>>,
   queryEffectCache: 'input 'output. (
     Envio.effect<'input, 'output>,
     ~scope: Internal.chainScope,
@@ -212,10 +225,11 @@ let run = async (
       JsError.throwWithMessage("Can't start an indexer once the run is tearing down.")
     }
 
-  // ClickHouse writes into a database of this run's own, on the ClickHouse leg
+  // ClickHouse writes into a database of this run's own, on the ClickHouse legs
   // and for a config that enables it itself.
   let clickHouseDatabase = switch (backend, config.storage.clickhouse) {
-  | (#clickhouse, _) | (_, true) if provideClickHouse => Some(TestClickHouse.make())
+  | (#clickhouse | #clickhouseOnly, _) | (_, true) if provideClickHouse =>
+    Some(TestClickHouse.make())
   | _ => None
   }
 
@@ -597,12 +611,79 @@ let run = async (
         ->Promise.thenResolve(rows =>
           rows->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         ),
+      queryChains: async () =>
+        switch (config.storage.postgres, clickHouseDatabase) {
+        | (false, Some(database)) =>
+          (
+            await TestClickHouse.query(
+              `SELECT toString(chain_id) AS id, start_block AS startBlock, progress_block AS progressBlock, first_event_block AS firstEventBlock, toUnixTimestamp64Milli(ready_at) AS readyAt FROM \`${database}\`.envio_chains FINAL ORDER BY chain_id FORMAT JSONEachRow SETTINGS output_format_json_quote_64bit_integers = 0`,
+            )
+          )
+          ->String.split("\n")
+          ->Array.filter(line => line->String.trim !== "")
+          ->Array.map(line => {
+            let row =
+              line
+              ->JSON.parseOrThrow
+              ->(
+                Utils.magic: JSON.t => {
+                  "id": string,
+                  "startBlock": int,
+                  "progressBlock": int,
+                  "firstEventBlock": Null.t<int>,
+                  "readyAt": Null.t<float>,
+                }
+              )
+            {
+              id: row["id"]->ChainId.normalizeOrThrow,
+              startBlock: row["startBlock"],
+              progressBlock: row["progressBlock"],
+              firstEventBlock: row["firstEventBlock"]->Null.toOption,
+              readyAt: row["readyAt"]->Null.toOption->Option.map(Date.fromTime),
+            }
+          })
+        | _ =>
+          let rows: array<{
+            "id": unknown,
+            "startBlock": int,
+            "progressBlock": int,
+            "firstEventBlock": Null.t<int>,
+            "readyAt": Null.t<Date.t>,
+          }> = await sql->Sql.queryForTests(
+            `SELECT "id", "start_block" AS "startBlock", "progress_block" AS "progressBlock", "first_event_block" AS "firstEventBlock", "ready_at" AS "readyAt" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
+          )
+          rows->Array.map(row => {
+            id: row["id"]->ChainId.normalizeOrThrow,
+            startBlock: row["startBlock"],
+            progressBlock: row["progressBlock"],
+            firstEventBlock: row["firstEventBlock"]->Null.toOption,
+            readyAt: row["readyAt"]->Null.toOption,
+          })
+        },
       queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
-        sql
-        ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName))
-        ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": JSON.t}>>)
+        switch (config.storage.postgres, clickHouseDatabase) {
+        | (false, Some(database)) =>
+          TestClickHouse.query(
+            `SELECT id, output FROM \`${database}\`.\`${tableName}\` FINAL ORDER BY id FORMAT JSONEachRow`,
+          )->Promise.thenResolve(answer =>
+            answer
+            ->String.split("\n")
+            ->Array.filter(line => line->String.trim !== "")
+            ->Array.map(line => {
+              let row =
+                line->JSON.parseOrThrow->(Utils.magic: JSON.t => {"id": string, "output": string})
+              {"id": row["id"], "output": row["output"]->JSON.parseOrThrow}
+            })
+          )
+        | _ =>
+          sql
+          ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName))
+          ->(
+            Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": JSON.t}>>
+          )
+        }
       },
       metric: async name => {
         // Parse the metric's samples back out of the rendered /metrics text.

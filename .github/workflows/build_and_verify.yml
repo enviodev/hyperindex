@@ -236,9 +236,10 @@ jobs:
   # The scenario suite is backend-agnostic, so it runs once per storage
   # backend, one runner each. A scenario that can't run on a backend skips
   # itself with a reason. The ClickHouse leg keeps Postgres as the store of
-  # record with ClickHouse alongside it; a scenario whose config leaves
-  # Postgres out runs on ClickHouse alone on either leg, which is why both
-  # have a ClickHouse server.
+  # record with ClickHouse alongside it, the ClickHouse-only leg keeps
+  # everything in ClickHouse; a scenario whose config sets its own storage
+  # keeps it on every leg, which is why each has both servers. On the
+  # ClickHouse-only leg a case that reads Postgres tables itself skips there.
   envio-tests:
     runs-on: ubuntu-latest
     needs: build-envio-package
@@ -247,7 +248,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        storage: [postgres, clickhouse]
+        storage: [postgres, clickhouse, clickhouse-only]
 
     services:
       postgres:

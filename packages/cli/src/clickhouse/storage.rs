@@ -1423,7 +1423,9 @@ impl Storage {
                 };
                 rows.push(Box::pin(self.insert_staged(table, arena)));
             }
-            let mut checkpoint_rows = Self::checkpoint_values(&checkpoints);
+            // Only those a rollback can reach: one past the reorg threshold would
+            // count toward a rollback's progress diff as if it could be undone.
+            let mut checkpoint_rows = Self::checkpoint_values(&checkpoints.keeping_history());
             let mut address_rows = if self.settings.primary {
                 Self::address_values(&addresses, SET)
             } else {
@@ -1856,7 +1858,7 @@ mod tests {
                         block_numbers: vec![10],
                         block_hashes: vec![None],
                         events_processed: vec![1],
-                        keeps_history: vec![false],
+                        keeps_history: vec![true],
                     },
                     effect_caches: Vec::new(),
                 },

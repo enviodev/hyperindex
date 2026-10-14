@@ -55,8 +55,14 @@ fn put_bytes(out: &mut Vec<u8>, value: &[u8]) {
     out.extend_from_slice(value);
 }
 
+/// Without its NUL bytes: Postgres keeps none in text, and both stores have to
+/// hold the same value for one entity.
 fn put_string(out: &mut Vec<u8>, value: &str) {
-    put_bytes(out, value.as_bytes());
+    if value.contains('\0') {
+        put_bytes(out, value.replace('\0', "").as_bytes());
+    } else {
+        put_bytes(out, value.as_bytes());
+    }
 }
 
 fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {

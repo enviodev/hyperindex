@@ -175,7 +175,7 @@ let makeTable = (~handle, ~name, {names, kinds, nullable}: StorageClient.clickHo
 %%private(
   let documentText = (value: unknown) =>
     switch value->(Utils.magic: unknown => Nullable.t<JSON.t>) {
-    | Value(document) => document->JSON.stringify->(Utils.magic: string => unknown)
+    | Value(_) => value->Sql.stringifyDocument->(Utils.magic: string => unknown)
     | Null | Undefined => "null"->(Utils.magic: string => unknown)
     }
 )
