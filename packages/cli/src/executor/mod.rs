@@ -96,13 +96,23 @@ impl Command {
 
 /// Envio Cloud runs `envio sidecar` with no flags from the image directory and
 /// names the tenant's config file only in `CONFIG_FILE`, so a sidecar there
-/// would otherwise look for a `config.yaml` that may not exist.
-fn sidecar_config_path(config: &str, config_file_env: Option<&str>) -> String {
-    match config_file_env {
-        Some(config_file) if config == DEFAULT_CONFIG_PATH && !config_file.is_empty() => {
-            config_file.to_string()
+/// would otherwise look for a `config.yaml` that may not exist. Only clap's
+/// default gives way: a `--config` or `ENVIO_CONFIG`, even `config.yaml`,
+/// always wins, which only the matches can tell apart from the default.
+pub fn use_hosted_sidecar_config_file(
+    command_line_args: &mut CommandLineArgs,
+    matches: &clap::ArgMatches,
+    config_file_env: Option<&str>,
+) {
+    let config_is_default =
+        matches.value_source("config") == Some(clap::parser::ValueSource::DefaultValue);
+    match (&command_line_args.command, config_file_env) {
+        (CommandType::Sidecar, Some(config_file))
+            if config_is_default && !config_file.is_empty() =>
+        {
+            command_line_args.project_paths.config = config_file.to_string();
         }
-        _ => config.to_string(),
+        _ => (),
     }
 }
 
@@ -110,13 +120,7 @@ async fn execute_command(
     command_line_args: CommandLineArgs,
     envio_package_dir: Option<&str>,
 ) -> Result<Option<Command>> {
-    let mut global_project_paths = command_line_args.project_paths;
-    if matches!(command_line_args.command, CommandType::Sidecar) {
-        global_project_paths.config = sidecar_config_path(
-            &global_project_paths.config,
-            std::env::var("CONFIG_FILE").ok().as_deref(),
-        );
-    }
+    let global_project_paths = command_line_args.project_paths;
     let parsed_project_paths = ParsedProjectPaths::try_from(global_project_paths.clone())
         .context("Failed parsing project paths")?;
 
@@ -195,8 +199,9 @@ async fn execute_command(
                 .context("Failed parsing config")?;
             if config.human_config.get_base_config().sidecar.is_none() {
                 anyhow::bail!(
-                    "`envio sidecar` has nothing to run: config.yaml has no `sidecar:` key. Add \
-                     `sidecar: {{ contract: src/sidecar/contract.ts, entry: src/sidecar/index.ts }}`."
+                    "`envio sidecar` has nothing to run: {} has no `sidecar:` key. Add \
+                     `sidecar: {{ contract: src/sidecar/contract.ts, entry: src/sidecar/index.ts }}`.",
+                    config.parsed_project_paths.config_relative_to_root().display()
                 );
             }
             Ok(Some(build_sidecar_command(&config)?))
@@ -537,9 +542,9 @@ mod project_flags_tests {
 
 #[cfg(test)]
 mod sidecar_command_tests {
-    use super::{execute, sidecar_config_path};
+    use super::{execute, use_hosted_sidecar_config_file};
     use crate::cli_args::clap_definitions::CommandLineArgs;
-    use clap::Parser;
+    use clap::{CommandFactory, FromArgMatches, Parser};
 
     // Bin.res decodes exactly this shape; the sidecar needs no codegen or Docker.
     #[tokio::test]
@@ -579,20 +584,64 @@ mod sidecar_command_tests {
         );
     }
 
+    // A hosted tenant's config is rarely named config.yaml.
+    #[tokio::test]
+    async fn names_the_config_file_that_has_no_sidecar() {
+        let directory = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let error = execute(
+            CommandLineArgs::parse_from([
+                "envio",
+                "sidecar",
+                "-d",
+                &directory,
+                "--config",
+                "configs/config1.yaml",
+            ]),
+            None,
+        )
+        .await
+        .expect_err("a config without a sidecar has nothing to run");
+        assert_eq!(
+            error.to_string(),
+            "`envio sidecar` has nothing to run: configs/config1.yaml has no `sidecar:` key. Add \
+             `sidecar: { contract: src/sidecar/contract.ts, entry: src/sidecar/index.ts }`."
+        );
+    }
+
+    fn config_with_hosted_env(args: &[&str], config_file_env: Option<&str>) -> String {
+        let matches = CommandLineArgs::command()
+            .try_get_matches_from(args)
+            .expect("the arguments should parse");
+        let mut command_line_args =
+            CommandLineArgs::from_arg_matches(&matches).expect("the matches should decode");
+        use_hosted_sidecar_config_file(&mut command_line_args, &matches, config_file_env);
+        command_line_args.project_paths.config
+    }
+
     // Envio Cloud runs `pnpm envio sidecar` with no flags and names the tenant's
     // config file only in CONFIG_FILE (hosted-service-controller sidecar.go).
     #[test]
     fn falls_back_to_the_hosted_config_file_only_when_no_config_was_given() {
+        let hosted = Some("config.base.yaml");
         assert_eq!(
             (
-                sidecar_config_path("config.yaml", Some("config.base.yaml")),
-                sidecar_config_path("config.head.yaml", Some("config.base.yaml")),
-                sidecar_config_path("config.yaml", Some("")),
-                sidecar_config_path("config.yaml", None),
+                config_with_hosted_env(&["envio", "sidecar"], hosted),
+                config_with_hosted_env(
+                    &["envio", "sidecar", "--config", "config.head.yaml"],
+                    hosted
+                ),
+                config_with_hosted_env(&["envio", "sidecar", "--config", "config.yaml"], hosted),
+                config_with_hosted_env(&["envio", "--config", "config.yaml", "sidecar"], hosted),
+                config_with_hosted_env(&["envio", "sidecar"], Some("")),
+                config_with_hosted_env(&["envio", "sidecar"], None),
+                config_with_hosted_env(&["envio", "codegen"], hosted),
             ),
             (
                 "config.base.yaml".to_string(),
                 "config.head.yaml".to_string(),
+                "config.yaml".to_string(),
+                "config.yaml".to_string(),
+                "config.yaml".to_string(),
                 "config.yaml".to_string(),
                 "config.yaml".to_string(),
             )

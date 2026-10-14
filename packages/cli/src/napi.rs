@@ -138,9 +138,14 @@ pub async fn run_cli(
         Err(e) => return Err(napi::Error::from_reason(format!("{e}"))),
     };
 
-    let command_line_args = CommandLineArgs::from_arg_matches(&matches)
+    let mut command_line_args = CommandLineArgs::from_arg_matches(&matches)
         .context("Failed parsing command line arguments")
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
+    crate::executor::use_hosted_sidecar_config_file(
+        &mut command_line_args,
+        &matches,
+        std::env::var("CONFIG_FILE").ok().as_deref(),
+    );
 
     let command = crate::executor::execute(command_line_args, envio_package_dir.as_deref())
         .await

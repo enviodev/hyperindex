@@ -469,9 +469,10 @@ describe("envio sidecar", () => {
     child.stderr?.on("data", (data) => output.push(data.toString()));
     const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
     await waitForOutput(child, "fake sidecar started", 30_000);
+    const signalledAt = Date.now();
     child.kill("SIGTERM");
     const exitCode = await exited;
-    return { exitCode, output: output.join("") };
+    return { exitCode, output: output.join(""), closeMs: Date.now() - signalledAt };
   };
 
   it("runs the configured entry with the indexer's entities and closes it on SIGTERM", async () => {
@@ -493,6 +494,21 @@ describe("envio sidecar", () => {
       exitCode: result.exitCode,
       started: result.output.includes("config=sidecar.config.yaml"),
     }).toEqual({ exitCode: 0, started: true });
+  });
+
+  // The runtime drains for up to ENVIO_SIDECAR_GRACE_MS; `envio sidecar` waits
+  // that plus a 2 s margin for close() and then exits anyway, so a pod never
+  // sits in Terminating until its 30 s grace ends in a SIGKILL.
+  it("exits a margin after ENVIO_SIDECAR_GRACE_MS when close never settles", async () => {
+    const result = await runSidecarUntilStarted(["--config", "sidecar.config.yaml"], {
+      FAKE_SIDECAR_CLOSE_HANGS: "true",
+      ENVIO_SIDECAR_GRACE_MS: "500",
+    });
+
+    expect({
+      exitCode: result.exitCode,
+      closedAfterGraceAndMargin: result.closeMs >= 2_400 && result.closeMs < 4_500,
+    }).toEqual({ exitCode: 0, closedAfterGraceAndMargin: true });
   });
 
   it("says what to add when config.yaml has no sidecar", async () => {

@@ -19,6 +19,9 @@ const sidecar = {
       internalPort: 9901,
       publicPort: 9900,
       close: async () => {
+        if (process.env.FAKE_SIDECAR_CLOSE_HANGS === "true") {
+          return new Promise<void>(() => {});
+        }
         clearInterval(keepAlive);
         console.log("fake sidecar closed");
       },

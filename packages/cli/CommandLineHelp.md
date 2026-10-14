@@ -388,7 +388,9 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 
 ## `envio sidecar`
 
-Run the sidecar declared by `sidecar:` in config.yaml: your long-running process next to the indexer. `envio dev` starts it for you
+Run the sidecar declared by `sidecar:` in config.yaml: your long-running process next to the indexer. `envio dev` starts it for you.
+
+Without `--config` or `ENVIO_CONFIG`, it reads the config file named by the `CONFIG_FILE` environment variable when that is set, as Envio Cloud does.
 
 **Usage:** `envio sidecar`
 

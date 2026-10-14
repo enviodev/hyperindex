@@ -168,7 +168,7 @@ let startServer = (
     if code === "EADDRINUSE" {
       Logging.error(
         `Port ${Env.serverPort->Int.toString} is already in use. To fix this either:` ++
-        `\n  1. Kill the process using the port: lsof -ti :${Env.serverPort->Int.toString} | xargs kill -9` ++ `\n  2. Use a different port by setting the ENVIO_INDEXER_PORT environment variable: ENVIO_INDEXER_PORT=9899 envio start`,
+        `\n  1. Kill the process using the port: lsof -ti :${Env.serverPort->Int.toString} | xargs kill -9` ++ `\n  2. Use a different port by setting the ENVIO_INDEXER_PORT environment variable: ENVIO_INDEXER_PORT=9897 envio start`,
       )
     } else {
       Logging.errorWithExn(err, "Failed to start indexer server")

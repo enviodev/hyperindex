@@ -26,7 +26,7 @@ port in the project's `.env`, so plain `pnpm dev` picks them up:
 ```bash
 # .env of each additional indexer project
 ENVIO_PG_SCHEMA=myproject   # unique per project, [a-z0-9_]
-ENVIO_INDEXER_PORT=9899     # unique per project, default is 9898
+ENVIO_INDEXER_PORT=9897     # unique per project, default is 9898
 ```
 
 All projects then share the one `envio-postgres` container, each project's data
