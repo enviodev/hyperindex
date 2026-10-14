@@ -132,23 +132,39 @@ const RELATIVE_IMPORT = /\bfrom\s*["'](\.\.?\/[^"']+)["']/g;
  * tree has a `schema.ts`, and a template's a `templates.ts`.
  */
 export function generatedDir(root: string, mappingFiles: string[]): string {
-  for (const mappingFile of new Set(mappingFiles)) {
-    const file = path.resolve(root, mappingFile);
+  // Breadth first from the manifest's files: an entry file may only re-export
+  // handlers written elsewhere (Uniswap v4's do), and those import the code.
+  const queue = [...new Set(mappingFiles)].map((mappingFile) => path.resolve(root, mappingFile));
+  const seen = new Set(queue);
+  for (let index = 0; index < queue.length && index < MAX_SCANNED_FILES; index++) {
+    const file = queue[index];
     let source: string;
     try {
       source = readFileSync(file, "utf8");
     } catch {
       continue;
     }
+    const next: string[] = [];
     for (const [, specifier] of source.matchAll(RELATIVE_IMPORT)) {
       const base = path.basename(specifier).replace(/\.ts$/, "");
       if (base === "schema" || base === "templates") {
         return path.resolve(path.dirname(file), path.dirname(specifier));
       }
+      const target = path.resolve(path.dirname(file), specifier);
+      for (const candidate of [target, `${target}.ts`, path.join(target, "index.ts")]) {
+        if (!seen.has(candidate) && existsSync(candidate) && statSync(candidate).isFile()) {
+          seen.add(candidate);
+          next.push(candidate);
+          break;
+        }
+      }
     }
+    queue.push(...next);
   }
   return path.join(root, "generated");
 }
+
+const MAX_SCANNED_FILES = 2_000;
 
 export function missingGeneratedCode(root: string, dir: string): Error {
   const relative = path.relative(root, dir);
