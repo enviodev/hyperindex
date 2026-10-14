@@ -410,9 +410,10 @@ under "Not compared".
 
 Exit 0: every type within `--tolerance` (percent of the reference count,
 default 0.1) and at most `--max-field-mismatches` (default 0) across the run.
-Exit 1: a mismatch. Exit 2: couldn't compare, or a type was only partly
-compared (`--max-entities` caps the reference listing). `--json` prints the
-same report with `schemaVersion: 1`.
+Exit 1: a mismatch. Exit 2: couldn't compare (`status: error`), or a type
+was only partly compared (`status: incomplete`: `--max-entities` capped the
+reference listing and nothing seen so far differs). `--json` prints the same
+report with `schemaVersion: 1`.
 
 ## 7. Unsupported & unknown errors
 

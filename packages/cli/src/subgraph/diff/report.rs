@@ -11,7 +11,10 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub enum Status {
     Match,
     Mismatch,
-    /// Couldn't compare, or only partly.
+    /// Compared only partly: the reference listing stopped at
+    /// `--max-entities` and nothing seen so far differs.
+    Incomplete,
+    /// Couldn't compare.
     Error,
 }
 
@@ -20,7 +23,7 @@ impl Status {
         match self {
             Status::Match => 0,
             Status::Mismatch => 1,
-            Status::Error => 2,
+            Status::Incomplete | Status::Error => 2,
         }
     }
 }
@@ -72,6 +75,7 @@ pub struct Summary {
     pub types: usize,
     pub matched: usize,
     pub mismatched: usize,
+    pub incomplete: usize,
     pub errored: usize,
     pub field_mismatches: usize,
     pub sampled: usize,
@@ -147,7 +151,7 @@ impl EntityReport {
         } else if self.sets_differ(tolerance) || (fields_over && self.field_mismatches > 0) {
             Status::Mismatch
         } else if !self.theirs_complete {
-            Status::Error
+            Status::Incomplete
         } else {
             Status::Match
         });
@@ -183,6 +187,7 @@ impl Report {
             match entity.status {
                 Some(Status::Match) => summary.matched += 1,
                 Some(Status::Mismatch) => summary.mismatched += 1,
+                Some(Status::Incomplete) => summary.incomplete += 1,
                 _ => summary.errored += 1,
             }
             summary.sampled += entity.sampled;
@@ -193,6 +198,8 @@ impl Report {
             Status::Mismatch
         } else if summary.errored > 0 {
             Status::Error
+        } else if summary.incomplete > 0 {
+            Status::Incomplete
         } else {
             Status::Match
         };
@@ -275,6 +282,7 @@ impl Report {
                         match entity.status {
                             Some(Status::Match) => "ok".to_string(),
                             Some(Status::Mismatch) => "MISMATCH".to_string(),
+                            Some(Status::Incomplete) => "partial".to_string(),
                             _ => "ERROR".to_string(),
                         },
                     ]
@@ -380,17 +388,19 @@ impl Report {
         }
 
         out.push_str(&format!(
-            "\nResult: {} (exit {}) — {} types: {} match, {} mismatch, {} not compared; {} \
-             entities sampled, {} field mismatches; {:.1}s\n",
+            "\nResult: {} (exit {}) — {} types: {} match, {} mismatch, {} partial, {} not \
+             compared; {} entities sampled, {} field mismatches; {:.1}s\n",
             match self.status {
                 Status::Match => "MATCH",
                 Status::Mismatch => "MISMATCH",
+                Status::Incomplete => "INCOMPLETE",
                 Status::Error => "COULD NOT COMPARE",
             },
             self.exit_code,
             self.summary.types,
             self.summary.matched,
             self.summary.mismatched,
+            self.summary.incomplete,
             self.summary.errored,
             self.summary.sampled,
             self.summary.field_mismatches,

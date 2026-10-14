@@ -358,6 +358,52 @@ async fn drops_a_field_the_reference_cannot_resolve() {
     );
 }
 
+#[tokio::test]
+async fn calls_a_capped_listing_incomplete_not_a_match() {
+    let many: Vec<Value> = (0..1500)
+        .map(|i| {
+            json!({"id": format!("t{i:05}"), "minter": {"id": "0xaa"}, "supply": "1",
+                "decimals": 18, "hash": "0x01", "frozen": null, "labels": null})
+        })
+        .collect();
+    let data = || {
+        let mut data = reference_data();
+        data.insert("tokens", many.clone());
+        data
+    };
+    let reference = graph_node(data(), BLOCK).await;
+    let ours = graph_node(data(), BLOCK).await;
+    let dir = project();
+    let mut options = options(&reference.url, Some(&ours.url));
+    options.max_entities = Some(1000);
+    let report = run(dir.path(), &options).await;
+    assert_eq!(
+        (
+            report.status,
+            report.exit_code,
+            report
+                .entities
+                .iter()
+                .map(|e| (
+                    e.name.as_str(),
+                    e.status,
+                    e.theirs,
+                    e.theirs_complete,
+                    e.delta_pct
+                ))
+                .collect::<Vec<_>>()
+        ),
+        (
+            Status::Incomplete,
+            2,
+            vec![
+                ("Account", Some(Status::Match), Some(2), true, Some(0.0)),
+                ("Token", Some(Status::Incomplete), Some(1000), false, None),
+            ]
+        )
+    );
+}
+
 #[test]
 fn pins_the_block_ours_has_reached() {
     let messages = [
