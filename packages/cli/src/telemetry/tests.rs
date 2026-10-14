@@ -55,6 +55,7 @@ fn fixed_context() -> Context {
         node_major: Some(22),
         ci: false,
         environment: Environment::Docker,
+        agent: Agent::Codex,
     }
 }
 
@@ -79,11 +80,12 @@ fn batch() -> Batch {
                 outcome: Outcome::Success,
                 error_class: None,
                 duration: DurationBucket::OneToFiveSeconds,
-                init: Some(InitChoice {
-                    ecosystem: event::Ecosystem::Evm,
-                    flow: event::InitFlow::Template,
+                init: Some(InitDetails {
+                    agentic: true,
+                    ecosystem: Some(event::Ecosystem::Evm),
+                    flow: Some(event::InitFlow::Template),
                     template: Some(event::InitTemplate::Erc20),
-                    language: event::Language::Typescript,
+                    language: Some(event::Language::Typescript),
                 }),
             }),
             Event::Heartbeat(heartbeat_event(
@@ -117,7 +119,8 @@ fn batch_has_the_documented_shape() {
                 "arch": "x86_64",
                 "node_major": 22,
                 "ci": false,
-                "environment": "docker"
+                "environment": "docker",
+                "agent": "codex"
             },
             "events": [
                 {
@@ -128,6 +131,7 @@ fn batch_has_the_documented_shape() {
                     "error_class": null,
                     "duration": "1-5s",
                     "init": {
+                        "agentic": true,
                         "ecosystem": "evm",
                         "flow": "template",
                         "template": "erc20",
@@ -213,6 +217,7 @@ fn batch_carries_nothing_the_user_wrote() {
         "node_major",
         "ci",
         "environment",
+        "agent",
         "events",
         "type",
         "indexer_id",
@@ -221,6 +226,7 @@ fn batch_carries_nothing_the_user_wrote() {
         "error_class",
         "duration",
         "init",
+        "agentic",
         "ecosystem",
         "flow",
         "template",
@@ -256,5 +262,26 @@ fn node_major_reads_process_versions_node() {
     assert_eq!(
         (node_major("22.18.0"), node_major("v24.1.0"), node_major("")),
         (Some(22), Some(24), None)
+    );
+}
+
+#[test]
+fn context_names_the_coding_agent_and_never_its_variable() {
+    let thread_id = "019a2b3c-codex-thread-SECRET";
+    let env = Env::from_vars(
+        |name| match name {
+            "CODEX_THREAD_ID" => Some(thread_id.to_string()),
+            "CURSOR_AGENT" => Some("1".to_string()),
+            _ => None,
+        },
+        false,
+    );
+    let payload = serde_json::to_value(context(&env, None, "session", Some(22))).unwrap();
+    assert_eq!(
+        (
+            payload["agent"].clone(),
+            payload.to_string().contains(thread_id)
+        ),
+        (json!("codex"), false)
     );
 }

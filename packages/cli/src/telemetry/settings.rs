@@ -1,3 +1,4 @@
+use crate::utils::coding_agent::{self, CodingAgent};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -31,12 +32,19 @@ pub struct Env {
     pub ci: bool,
     pub kubernetes: bool,
     pub docker: bool,
+    pub agent: Option<CodingAgent>,
     pub config_dir: Option<PathBuf>,
 }
 
 impl Env {
     pub fn from_process() -> Self {
-        let var = |name: &str| std::env::var(name).ok();
+        Self::from_vars(
+            |name| std::env::var(name).ok(),
+            Path::new("/.dockerenv").exists() || Path::new("/run/.containerenv").exists(),
+        )
+    }
+
+    pub fn from_vars(var: impl Fn(&str) -> Option<String>, docker: bool) -> Self {
         Self {
             do_not_track: var("DO_NOT_TRACK"),
             disabled: var("ENVIO_TELEMETRY_DISABLED"),
@@ -44,7 +52,8 @@ impl Env {
             endpoint: var("ENVIO_TELEMETRY_ENDPOINT").filter(|v| !v.trim().is_empty()),
             ci: CI_VARS.iter().any(|name| is_on(var(name).as_deref())),
             kubernetes: var("KUBERNETES_SERVICE_HOST").is_some(),
-            docker: Path::new("/.dockerenv").exists() || Path::new("/run/.containerenv").exists(),
+            docker,
+            agent: coding_agent::detect(&var),
             config_dir: user_config_dir(var("XDG_CONFIG_HOME"), var("HOME")),
         }
     }

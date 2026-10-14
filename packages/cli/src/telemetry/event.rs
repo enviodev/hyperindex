@@ -16,6 +16,7 @@ use crate::{
         hypersync_endpoints,
         system_config::{self, DataSource, MainEvmDataSource, SystemConfig},
     },
+    utils::coding_agent::CodingAgent,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -42,6 +43,7 @@ pub struct Context {
     pub node_major: Option<u32>,
     pub ci: bool,
     pub environment: Environment,
+    pub agent: Agent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -50,6 +52,28 @@ pub enum Environment {
     Local,
     Docker,
     Kubernetes,
+}
+
+/// The AI coding agent running envio, by name only: `CODEX_THREAD_ID` says
+/// Codex is running, and its value is never read past that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Agent {
+    Claude,
+    Codex,
+    Cursor,
+    None,
+}
+
+impl From<Option<CodingAgent>> for Agent {
+    fn from(agent: Option<CodingAgent>) -> Self {
+        match agent {
+            Some(CodingAgent::Claude) => Self::Claude,
+            Some(CodingAgent::Codex) => Self::Codex,
+            Some(CodingAgent::Cursor) => Self::Cursor,
+            None => Self::None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -67,7 +91,7 @@ pub struct CommandEvent {
     pub error_class: Option<ErrorClass>,
     pub duration: DurationBucket,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub init: Option<InitChoice>,
+    pub init: Option<InitDetails>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -294,12 +318,18 @@ impl From<&init_config::Language> for Language {
     }
 }
 
+/// What `envio init` did. The choices are `None` when it stopped before they
+/// were made: an agent prompt, or a cancelled prompt.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct InitChoice {
-    pub ecosystem: Ecosystem,
-    pub flow: InitFlow,
+pub struct InitDetails {
+    /// Took the path for AI agents and other non-interactive runs (no TTY,
+    /// a detected agent, CI, `TERM=dumb`, `ENVIO_TUI=false`) instead of
+    /// prompting.
+    pub agentic: bool,
+    pub ecosystem: Option<Ecosystem>,
+    pub flow: Option<InitFlow>,
     pub template: Option<InitTemplate>,
-    pub language: Language,
+    pub language: Option<Language>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -319,8 +349,18 @@ pub enum InitTemplate {
     UsdcTransfers,
 }
 
-impl InitChoice {
-    pub fn of(init_config: &InitConfig) -> Self {
+impl InitDetails {
+    pub fn new(agentic: bool) -> Self {
+        Self {
+            agentic,
+            ecosystem: None,
+            flow: None,
+            template: None,
+            language: None,
+        }
+    }
+
+    pub fn with_choices(self, init_config: &InitConfig) -> Self {
         use init_config::{evm, fuel, svm, Ecosystem as Chosen};
         let (ecosystem, template) = match &init_config.ecosystem {
             Chosen::Evm { init_flow } => (
@@ -351,14 +391,15 @@ impl InitChoice {
             } => (Ecosystem::Svm, Some(InitTemplate::UsdcTransfers)),
         };
         Self {
-            ecosystem,
-            flow: if template.is_some() {
+            ecosystem: Some(ecosystem),
+            flow: Some(if template.is_some() {
                 InitFlow::Template
             } else {
                 InitFlow::ContractImport
-            },
+            }),
             template,
-            language: Language::from(&init_config.language),
+            language: Some(Language::from(&init_config.language)),
+            ..self
         }
     }
 }

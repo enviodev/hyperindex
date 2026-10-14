@@ -18,9 +18,9 @@ use crate::{
     project_paths::ParsedProjectPaths,
 };
 use event::{
-    Batch, CommandEvent, CommandName, Context, DurationBucket, Environment, Event, EventsBucket,
-    Feature, HeartbeatEvent, HeartbeatReason, IndexerProfile, InitChoice, SyncState, UptimeBucket,
-    SCHEMA_VERSION,
+    Agent, Batch, CommandEvent, CommandName, Context, DurationBucket, Environment, Event,
+    EventsBucket, Feature, HeartbeatEvent, HeartbeatReason, IndexerProfile, InitDetails, SyncState,
+    UptimeBucket, SCHEMA_VERSION,
 };
 use settings::{Env, Mode, Stored};
 use std::collections::{BTreeMap, HashMap};
@@ -40,7 +40,7 @@ Opt out with `envio telemetry disable` or ENVIO_TELEMETRY_DISABLED=1.";
 struct Pending {
     command: CommandName,
     started: Instant,
-    init: Option<InitChoice>,
+    init: Option<InitDetails>,
 }
 
 struct Session {
@@ -113,6 +113,16 @@ pub fn begin(args: &CommandLineArgs, node_version: Option<&str>) {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(session);
 }
 
+/// Set before `envio init` prompts or prints its agent steps, so even a run
+/// that stops there says which path it took.
+pub fn set_init_agentic(agentic: bool) {
+    with_session(|session| {
+        if let Some(pending) = session.pending.as_mut() {
+            pending.init = Some(InitDetails::new(agentic));
+        }
+    });
+}
+
 /// `envio init` learns what was chosen, and where the project lives, only
 /// after its prompts.
 pub fn set_init(init_config: &InitConfig, project: &ParsedProjectPaths) {
@@ -120,7 +130,8 @@ pub fn set_init(init_config: &InitConfig, project: &ParsedProjectPaths) {
         session.project = Some(project.clone());
         session.indexer_id = None;
         if let Some(pending) = session.pending.as_mut() {
-            pending.init = Some(InitChoice::of(init_config));
+            let details = pending.init.take().unwrap_or(InitDetails::new(false));
+            pending.init = Some(details.with_choices(init_config));
         }
     });
 }
@@ -333,6 +344,7 @@ fn context(
         } else {
             Environment::Local
         },
+        agent: Agent::from(env.agent),
     }
 }
 

@@ -43,6 +43,7 @@ pub async fn run_init_args(
     // `Logging.error`, which wraps the message in pino's JSON envelope and
     // buries the steps the agent needs to read.
     let is_non_interactive = is_agentic_init_mode(&AgenticEnv::from_process());
+    crate::telemetry::set_init_agentic(is_non_interactive);
     if init_args.init_commands.is_none() && is_non_interactive {
         let prompt = agentic_init_prompt(init_args.api_token.is_some());
         let mut stderr = std::io::stderr().lock();
@@ -380,7 +381,8 @@ impl AgenticEnv {
         Self {
             envio_tui: std::env::var("ENVIO_TUI").ok(),
             stdout_is_tty: std::io::stdout().is_terminal(),
-            claudecode: std::env::var("CLAUDECODE").is_ok(),
+            claudecode: crate::utils::coding_agent::from_process()
+                == Some(crate::utils::coding_agent::CodingAgent::Claude),
             ci: std::env::var("CI").is_ok(),
             term: std::env::var("TERM").ok(),
         }

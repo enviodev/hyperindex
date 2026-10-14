@@ -1,3 +1,4 @@
+pub mod coding_agent;
 pub mod dotenv;
 pub mod file_system;
 pub mod normalized_list;

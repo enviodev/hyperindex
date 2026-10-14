@@ -486,6 +486,8 @@ describe("Telemetry", () => {
     node_major: expect.any(Number),
     ci: expect.any(Boolean),
     environment: expect.stringMatching(/^(local|docker|kubernetes)$/),
+    // Whichever agent runs this suite, if any.
+    agent: expect.stringMatching(/^(claude|codex|cursor|none)$/),
   };
 
   it("prints a command's event in debug mode, and stores nothing", async () => {
@@ -546,6 +548,34 @@ describe("Telemetry", () => {
           duration: expect.any(String),
         },
       ],
+    });
+  });
+
+  // Without a TTY, a bare `envio init` prints its steps for an agent and stops
+  // before any choice is made.
+  it("reports an init that took the agentic path", async () => {
+    const result = await isolated(async ({ configHome }) => {
+      const run = await runEnvio(["init"], { XDG_CONFIG_HOME: configHome, ENVIO_TELEMETRY_DEBUG: "1" }, configHome);
+      return { exitCode: run.exitCode, batch: debugBatch(run.stderr) };
+    });
+
+    expect(result).toEqual({
+      exitCode: 2,
+      batch: {
+        schema_version: 1,
+        context,
+        events: [
+          {
+            type: "command",
+            indexer_id: null,
+            command: "init",
+            outcome: "agent_prompt",
+            error_class: null,
+            duration: expect.any(String),
+            init: { agentic: true, ecosystem: null, flow: null, template: null, language: null },
+          },
+        ],
+      },
     });
   });
 
