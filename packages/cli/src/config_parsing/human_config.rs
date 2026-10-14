@@ -166,10 +166,11 @@ pub struct BaseConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "Storage backends the indexer writes data to. Defaults to Postgres when \
-                       omitted. Set `clickhouse: true` to additionally sync the indexed data to \
-                       ClickHouse. Mark a backend with `default: true` to store entities that \
-                       don't have an @storage directive in the schema, e.g. `clickhouse: \
-                       {default: true}`."
+                       omitted. Set `clickhouse: true` with `postgres: true` to additionally \
+                       sync the indexed data to ClickHouse, or with `postgres: false` to use \
+                       ClickHouse as the only storage. Mark a backend with `default: true` to \
+                       store entities that don't have an @storage directive in the schema, e.g. \
+                       `clickhouse: {default: true}`."
     )]
     pub storage: Option<StorageConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,8 +302,8 @@ impl StorageBackendConfig {
 }
 
 // Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
-// constraints Storage::resolve enforces at codegen time: ClickHouse requires
-// Postgres, and at least one backend must be enabled. Without this, an IDE
+// constraints Storage::resolve enforces at codegen time: ClickHouse needs an
+// explicit `postgres`, and at least one backend must be enabled. Without this, an IDE
 // validating against the schema would accept configs the CLI later rejects.
 impl JsonSchema for StorageConfig {
     fn schema_name() -> Cow<'static, str> {
@@ -353,40 +354,45 @@ impl JsonSchema for StorageConfig {
                      (default: true when Postgres is the only enabled backend, false otherwise)."
                 )),
                 "clickhouse": (backend(
-                    "Whether to additionally sync the indexed data to ClickHouse. Requires \
-                     Postgres to be enabled (default: false). Accepts a boolean or an options \
+                    "Whether to store the indexed data in ClickHouse (default: false). With \
+                     `postgres: true` the data is stored in both; with `postgres: false` \
+                     ClickHouse is the indexer's only storage. Accepts a boolean or an options \
                      object (the object form implies the backend is enabled).",
                     "Whether entities without an @storage directive are stored in this backend \
-                     (default: false)."
+                     (default: true when ClickHouse is the only enabled backend, false \
+                     otherwise)."
                 ))
             },
             "additionalProperties": false,
             // Storage::resolve rejects two shapes:
-            //   1. `postgres: false` (with any clickhouse value) — either
-            //      fails as "ClickHouse not supported as a single storage
-            //      yet" or resolves to all-backends-disabled.
-            //   2. ClickHouse enabled without an explicitly enabled
-            //      postgres — the user must opt in to Postgres alongside
-            //      ClickHouse.
+            //   1. `postgres: false` without ClickHouse — no backend at all.
+            //   2. ClickHouse enabled without an explicit `postgres` — whether
+            //      Postgres stays is the user's call, never a default.
             "allOf": [
                 {
-                    "not": {
+                    "if": {
                         "properties": {
                             "postgres": { "const": false }
                         },
                         "required": ["postgres"]
+                    },
+                    "then": {
+                        "properties": {
+                            "clickhouse": (enabled.clone())
+                        },
+                        "required": ["clickhouse"]
                     }
                 },
                 {
                     "if": {
                         "properties": {
-                            "clickhouse": (enabled.clone())
+                            "clickhouse": (enabled)
                         },
                         "required": ["clickhouse"]
                     },
                     "then": {
                         "properties": {
-                            "postgres": (enabled)
+                            "postgres": { "type": ["boolean", "object"] }
                         },
                         "required": ["postgres"]
                     }

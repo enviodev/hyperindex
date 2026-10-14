@@ -233,9 +233,17 @@ fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
     Ok(())
 }
 
+fn put_int256(out: &mut Vec<u8>, text: &str) -> Result<()> {
+    let value = alloy_primitives::I256::from_dec_str(text)
+        .with_context(|| format!("`{text}` is not an integer an Int256 column can hold"))?;
+    out.extend_from_slice(&value.into_raw().to_le_bytes::<32>());
+    Ok(())
+}
+
 fn encode_text_scalar(out: &mut Vec<u8>, ch_type: &ChType, text: &str) -> Result<()> {
     match ch_type {
         ChType::String => put_string(out, text),
+        ChType::Int256 => put_int256(out, text)?,
         ChType::Decimal { scale, .. } => put_int(out, decimal_to_i128(text, *scale)?, ch_type)?,
         ChType::Enum { .. } => {
             let numeric = ch_type
@@ -308,8 +316,11 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
                 .collect::<Result<Vec<u8>>>()?;
             put_bytes(out, &bytes)
         }
-        (ChType::Enum { .. } | ChType::Decimal { .. }, Value::String(text)) => {
+        (ChType::Enum { .. } | ChType::Decimal { .. } | ChType::Int256, Value::String(text)) => {
             encode_text_scalar(out, ch_type, text)?
+        }
+        (ChType::Int256, Value::Number(number)) if number.is_i64() || number.is_u64() => {
+            put_int256(out, &number.to_string())?
         }
         (ChType::Decimal { scale, .. }, Value::Number(number)) => {
             let scaled = match number
@@ -340,6 +351,7 @@ fn fixed_width(ch_type: &ChType) -> Result<usize> {
         ChType::Int32 | ChType::UInt32 => 4,
         ChType::Int64 | ChType::UInt64 | ChType::DateTime64 => 8,
         ChType::Float64 => 8,
+        ChType::Int256 => 32,
         ChType::Decimal { precision, .. } => super::ch_type::decimal_bytes(*precision)?,
         ChType::Enum { variants } => ChType::enum_bytes(variants),
         other => bail!("{other:?} has no fixed width"),
@@ -671,6 +683,33 @@ mod tests {
         let mut expected = 150i32.to_le_bytes().to_vec();
         expected.extend_from_slice(&(-42i128).to_le_bytes());
         assert_eq!(encoded.body, expected);
+    }
+
+    #[test]
+    fn encodes_int256_as_its_two_complement_bytes_and_refuses_what_overflows() {
+        let encoded = encode(
+            &[text_column(
+                "a",
+                "Int256",
+                &["-2", "340282366920938463463374607431768211456"],
+            )],
+            2,
+        )
+        .unwrap();
+        let mut expected = vec![0xFE];
+        expected.extend(std::iter::repeat_n(0xFF, 31));
+        expected.extend(std::iter::repeat_n(0, 16));
+        expected.push(1);
+        expected.extend(std::iter::repeat_n(0, 15));
+        let overflow = encode(
+            &[text_column(
+                "a",
+                "Int256",
+                &["115792089237316195423570985008687907853269984665640564039457584007913129639935"],
+            )],
+            1,
+        );
+        assert_eq!((encoded.body.to_vec(), overflow.is_err()), (expected, true));
     }
 
     #[test]

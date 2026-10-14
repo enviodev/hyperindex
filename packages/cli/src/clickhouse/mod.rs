@@ -165,6 +165,9 @@ pub struct InitializeInput {
     pub checkpoint_columns: Vec<ColumnSpecInput>,
     pub replicated: bool,
     pub database_engine: Option<String>,
+    /// ClickHouse is the indexer's only storage: each entity gets a current
+    /// table instead of a view, and the internal tables Postgres would hold.
+    pub primary: Option<bool>,
 }
 
 #[napi(object)]
@@ -206,6 +209,9 @@ pub struct ResumeInput {
     /// The history tables this schema owns. A table no entity claims is one an
     /// older schema left behind, and a schema change means a resync anyway.
     pub history_tables: Vec<HistoryTableInput>,
+    /// Set when ClickHouse is the only storage: the entities whose current
+    /// tables an interrupted batch may have reached past the checkpoint.
+    pub current_tables: Option<Vec<EntitySpecInput>>,
 }
 
 struct ColumnSchema {
@@ -376,6 +382,14 @@ impl ClickHouseSink {
             .map_err(to_napi)
     }
 
+    /// Runs one statement and answers its body as text. A ClickHouse-only
+    /// indexer reads and keeps its internal state through this, on the node the
+    /// writes are pinned to.
+    #[napi]
+    pub async fn query(&self, statement: String) -> napi::Result<String> {
+        self.post_statement(statement).await.map_err(to_napi)
+    }
+
     /// Allocates a batch's columns and lends them to JavaScript as
     /// `ArrayBuffer`s to fill in place, in the order the table was registered.
     /// Returns `{ handle, buffers }`; the handle goes to `commitStage` and then
@@ -535,7 +549,9 @@ impl ClickHouseSink {
             checkpoint_columns,
             replicated: env_replicated,
             database_engine,
+            primary,
         } = input;
+        let primary = primary.unwrap_or(false);
         let entities: Vec<ddl::EntitySpec> = entities.into_iter().map(Into::into).collect();
         let checkpoint_columns =
             self.checkpoint_column_types(checkpoint_columns.into_iter().map(Into::into).collect())?;
@@ -573,7 +589,11 @@ impl ClickHouseSink {
             .iter()
             .map(|entity| {
                 ddl::create_history_table(
-                    entity,
+                    &if primary {
+                        entity.without_table_options()
+                    } else {
+                        entity.clone()
+                    },
                     &self.database,
                     &self.history,
                     topology,
@@ -581,6 +601,22 @@ impl ClickHouseSink {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
+        let current_tables = if primary {
+            entities
+                .iter()
+                .map(|entity| {
+                    ddl::create_current_table(
+                        entity,
+                        &self.database,
+                        &self.history,
+                        topology,
+                        self.chain_id_mode,
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
 
         if has_replicated_engine {
             // TRUNCATE DATABASE is unsupported on Replicated databases, so a
@@ -647,6 +683,32 @@ impl ClickHouseSink {
             topology,
         ))
         .await?;
+
+        if primary {
+            // The current tables exist before the views that feed them, and the
+            // views before anything writes history.
+            futures_util::future::try_join_all(
+                current_tables
+                    .into_iter()
+                    .chain(ddl::create_primary_internal_tables(
+                        &self.database,
+                        chain_id_type,
+                        topology,
+                    ))
+                    .map(|query| self.post_statement(query)),
+            )
+            .await?;
+            futures_util::future::try_join_all(entities.iter().map(|entity| {
+                self.post_statement(ddl::create_current_view(
+                    entity,
+                    &self.database,
+                    &self.history,
+                    topology,
+                ))
+            }))
+            .await?;
+            return Ok(());
+        }
 
         futures_util::future::try_join_all(entities.iter().map(|entity| {
             self.post_statement(ddl::create_view(
@@ -804,7 +866,13 @@ impl ClickHouseSink {
             per_chain,
             chain_progress,
             history_tables,
+            current_tables,
         } = input;
+        let current_tables: Vec<ddl::EntitySpec> = current_tables
+            .unwrap_or_default()
+            .into_iter()
+            .map(Into::into)
+            .collect();
         // No chain, no rows to hold to anything. Postgres inserts every chain's
         // row in the transaction that creates the schema, so an empty list here
         // means a config without chains, never a row that went missing with a
@@ -843,16 +911,48 @@ impl ClickHouseSink {
             Some(&self.history.checkpoint_chain_id_column),
             &self.history.id_column,
         )?;
+        let currents_above = current_tables
+            .iter()
+            .map(|entity| -> Result<(String, String)> {
+                Ok((
+                    entity.name.clone(),
+                    bounds.above(
+                        entity.chain_id_column.as_deref(),
+                        &self.history.checkpoint_id_column,
+                    )?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let above_by_table: Vec<(String, String)> = histories_above
             .iter()
             .cloned()
+            .chain(currents_above.iter().cloned())
             .chain(std::iter::once((
                 self.history.checkpoints_table.clone(),
                 checkpoints_above.clone(),
             )))
             .collect();
         let holding = self.tables_holding_rows_above(&above_by_table).await?;
+
+        // Before history is trimmed: the repair restores each touched key from
+        // the history rows at or below the checkpoint, and finds the keys by the
+        // current rows above it.
+        futures_util::future::try_join_all(
+            current_tables
+                .iter()
+                .zip(currents_above.iter())
+                .filter(|(entity, _)| holding.contains(entity.name.as_str()))
+                .map(|(entity, (_, above))| async move {
+                    for statement in
+                        ddl::repair_current_table(entity, &self.database, &self.history, above)
+                    {
+                        self.post_statement(statement).await?;
+                    }
+                    anyhow::Ok(())
+                }),
+        )
+        .await?;
 
         futures_util::future::try_join_all(
             histories_above
@@ -1418,6 +1518,7 @@ mod tests {
                     chain_id_column: Some("chain_id".to_string()),
                 })
                 .collect(),
+            current_tables: None,
         }
     }
 
@@ -1660,6 +1761,7 @@ mod tests {
                     name: "envio_history_a".to_string(),
                     chain_id_column: None,
                 }],
+                current_tables: None,
             })
             .await
             .unwrap_err();

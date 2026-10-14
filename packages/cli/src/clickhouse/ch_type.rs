@@ -32,6 +32,10 @@ pub enum ChType {
         precision: u32,
         scale: u32,
     },
+    /// An unbounded `BigInt` in a ClickHouse-only indexer, where ClickHouse
+    /// answers the queries and a `String` column would sort and compare the
+    /// digits as text. A value outside `Int256` is refused rather than wrapped.
+    Int256,
     /// Variants in the order they are numbered: RowBinary carries a variant's
     /// number rather than its name, and the number is its position.
     Enum {
@@ -127,6 +131,7 @@ impl FieldSpec {
                 ChainIdMode::Int64 => ChType::UInt64,
             },
             "BigInt" => decimal_or_string(self.precision, 0),
+            "Int256" => ChType::Int256,
             "BigDecimal" => match (self.precision, self.scale) {
                 (Some(precision), Some(scale)) => decimal_or_string(Some(precision), scale),
                 _ => ChType::String,
@@ -180,6 +185,7 @@ impl fmt::Display for ChType {
             ChType::String | ChType::Bytes => f.write_str("String"),
             ChType::DateTime64 => f.write_str("DateTime64(3, 'UTC')"),
             ChType::Decimal { precision, scale } => write!(f, "Decimal({precision},{scale})"),
+            ChType::Int256 => f.write_str("Int256"),
             ChType::Enum { variants } => {
                 let width = if ChType::enum_bytes(variants) == 1 {
                     8
@@ -216,9 +222,11 @@ impl ChType {
             ChType::UInt64 => ColumnKind::U64,
             ChType::Int64 => ColumnKind::I64,
             ChType::Bytes => ColumnKind::Bytes,
-            ChType::String | ChType::Decimal { .. } | ChType::Enum { .. } | ChType::Array(_) => {
-                ColumnKind::Text
-            }
+            ChType::String
+            | ChType::Decimal { .. }
+            | ChType::Int256
+            | ChType::Enum { .. }
+            | ChType::Array(_) => ColumnKind::Text,
         }
     }
 }
@@ -259,6 +267,7 @@ pub(crate) mod test_support {
                 "Float64" => ChType::Float64,
                 "Bool" => ChType::Bool,
                 "String" => ChType::String,
+                "Int256" => ChType::Int256,
                 other => panic!("test type `{other}` is not one the DDL emits"),
             };
         };

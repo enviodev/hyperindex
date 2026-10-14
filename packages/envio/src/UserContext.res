@@ -152,7 +152,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
 
-    let isClickHouseOnly = !params.entityConfig.storage.postgres
+    // Only a sink-only entity: a ClickHouse-only indexer reads its entities
+    // back from ClickHouse.
+    let isClickHouseOnly = params.config.storage.postgres && !params.entityConfig.storage.postgres
     let scope = params->entityScope
     let committedCheckpointId = params.indexerState->IndexerState.committedCheckpointIdFor(~scope)
 

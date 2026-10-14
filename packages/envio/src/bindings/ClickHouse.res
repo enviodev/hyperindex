@@ -46,10 +46,16 @@ let makeColumnSpec = (
   ~fieldType: Table.fieldType,
   ~isNullable=false,
   ~isArray=false,
+  // ClickHouse answers the queries of a ClickHouse-only indexer, so a BigInt
+  // too wide for a Decimal the encoder carries gets Int256, which holds every
+  // value of up to 76 digits, rather than its digits as text. An unbounded one
+  // stays text: a uint256 can outgrow Int256.
+  ~primary=false,
 ): ClickHouseSink.columnSpec => {
   name,
   fieldName,
   fieldType: switch fieldType {
+  | BigInt({precision}) if primary && precision > 38 && precision <= 76 => "Int256"
   | String => "String"
   | Boolean => "Boolean"
   | Uint32 => "Uint32"
@@ -114,7 +120,7 @@ let checkpointColumns = InternalTable.Checkpoints.columns->Array.filterMap(({
 
 let checkpointColumnSpecs = checkpointColumns->Array.map(({spec}) => spec)
 
-let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySpec => {
+let entitySpec = (~entityConfig: Internal.entityConfig, ~primary=false): ClickHouseSink.entitySpec => {
   let options = entityConfig.storage.clickhouseOptions
   {
     name: entityConfig.name,
@@ -132,6 +138,7 @@ let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySp
             ~fieldType=f.fieldType,
             ~isNullable=f.isNullable,
             ~isArray=f.isArray,
+            ~primary,
           ),
         )
       | DerivedFrom(_) => None
@@ -171,12 +178,16 @@ type registry = {
   entities: dict<ClickHouseSink.table>,
   mutable checkpoints: option<ClickHouseSink.table>,
   converters: dict<converters>,
+  // The column types a write encodes to have to be the ones initialize
+  // created, so a ClickHouse-only registry registers primary specs.
+  primary: bool,
 }
 
-let makeRegistry = () => {
+let makeRegistry = (~primary=false) => {
   entities: Dict.make(),
   checkpoints: None,
   converters: Dict.make(),
+  primary,
 }
 
 @get external changeEntity: Change.t<Internal.entity> => dict<unknown> = "entity"
@@ -281,7 +292,7 @@ let entityTable = (sink, ~registry, ~entityConfig: Internal.entityConfig) =>
   switch registry.entities->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
   | Some(table) => table
   | None =>
-    let spec = entitySpec(~entityConfig)
+    let spec = entitySpec(~entityConfig, ~primary=registry.primary)
     let table =
       sink
       ->ClickHouseSink.registerEntityTable(spec)

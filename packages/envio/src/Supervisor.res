@@ -250,8 +250,10 @@ let syncCache = {
 // its own and puts the run one connection over its budget — deliberately: only
 // `envio dev` asks for a dump, and the alternative is pausing the indexing to
 // free one.
-let dumpCache = (~config) => {
-  let storage = PgStorage.makeStorageFromEnv(~config, ~maxConnections=1)
+let dumpCache = (~config: Config.t) => {
+  let storage = config.storage.postgres
+    ? PgStorage.makeStorageFromEnv(~config, ~maxConnections=1)
+    : ClickHouseStorage.makeFromEnv(~config)
   storage.dumpEffectCache()->Promise.finally(() => storage.close()->Promise.ignore)
 }
 

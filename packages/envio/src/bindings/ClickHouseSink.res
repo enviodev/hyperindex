@@ -67,6 +67,7 @@ type initializeInput = {
   checkpointColumns: array<columnSpec>,
   replicated: bool,
   databaseEngine?: string,
+  primary?: bool,
 }
 
 // A history table and the column naming the chain its rows belong to. Absent
@@ -77,6 +78,7 @@ type resumeInput = {
   perChain: bool,
   chainProgress: array<chainProgressInput>,
   historyTables: array<historyTableInput>,
+  currentTables?: array<entitySpec>,
 }
 
 type registeredTable = {
@@ -97,6 +99,8 @@ external registerCheckpointsTable: (t, array<columnSpec>) => registeredTable =
 
 @send
 external resume: (t, resumeInput) => promise<unit> = "resume"
+
+@send external query: (t, string) => promise<string> = "query"
 
 @send
 external beginStage: (t, ~table: int, ~rows: int) => Staging.begun = "beginStage"

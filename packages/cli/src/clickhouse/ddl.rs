@@ -520,6 +520,260 @@ pub fn create_view(
     )
 }
 
+/// Marks a current-state row as a delete. `ReplacingMergeTree` takes it as its
+/// `is_deleted` column, so a `FINAL` read leaves the entity out.
+pub const IS_DELETED_COLUMN: &str = "envio_is_deleted";
+
+impl EntitySpec {
+    /// Identity of a row: what a `LIMIT 1 BY` dedups history on, and what
+    /// closes the current table's sorting key.
+    fn key_columns(&self, history: &HistorySchema) -> Vec<String> {
+        let mut key = vec![history.id_column.clone()];
+        key.extend(self.chain_id_column.iter().cloned());
+        key
+    }
+
+    /// The table options a ClickHouse-only indexer applies to the current table,
+    /// stripped from its history: history is only ever read by key, for a
+    /// rollback or a crash repair, whatever shape the queries over the entity
+    /// take.
+    pub fn without_table_options(&self) -> EntitySpec {
+        EntitySpec {
+            partition_by: None,
+            order_by: None,
+            ttl: None,
+            skipping_indexes: Vec::new(),
+            ..self.clone()
+        }
+    }
+}
+
+/// The entity's current state in a ClickHouse-only indexer, which answers both
+/// handler loads and API queries. `ReplacingMergeTree` keeps the row with the
+/// highest checkpoint per sorting key, so the key has to end in the entity's
+/// identity: a configured `orderBy` leads it, and its fields must never change
+/// once set, or an update would land as a second row rather than replacing the
+/// first.
+pub fn create_current_table(
+    entity: &EntitySpec,
+    database: &str,
+    history: &HistorySchema,
+    topology: Topology,
+    chain_id_mode: ChainIdMode,
+) -> Result<String> {
+    let context = format!("entity `{}`", entity.name);
+    let mut definitions = entity
+        .columns
+        .iter()
+        .map(|column| {
+            column
+                .typed(chain_id_mode, &context)
+                .map(|(name, ch_type)| format!("{} {ch_type}", quoted(&name)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    definitions.push(format!("{} UInt64", quoted(&history.checkpoint_id_column)));
+    definitions.push(format!("{} UInt8", quoted(IS_DELETED_COLUMN)));
+
+    let by_field_name = entity.column_by_field_name();
+    let mut sorting_key: Vec<String> = Vec::new();
+    for field_name in entity.order_by.iter().flatten() {
+        match by_field_name.get(field_name.as_str()) {
+            Some(column) => sorting_key.push(column.to_string()),
+            None => bail!(
+                "ClickHouse orderBy field \"{field_name}\" is not defined on entity \"{}\"",
+                entity.name
+            ),
+        }
+    }
+    for key in entity.key_columns(history) {
+        if !sorting_key.contains(&key) {
+            sorting_key.push(key);
+        }
+    }
+    let sorting_key: Vec<String> = sorting_key.iter().map(|column| quoted(column)).collect();
+
+    let renamed = entity.renamed_column_by_field_name();
+    let partition_by = match &entity.partition_by {
+        Some(expression) => format!(
+            "\nPARTITION BY {}",
+            resolve_expression_columns(expression, &renamed)
+        ),
+        None => String::new(),
+    };
+    let ttl = match &entity.ttl {
+        Some(expression) => format!("\nTTL {}", resolve_expression_columns(expression, &renamed)),
+        None => String::new(),
+    };
+    let mut indexes = String::new();
+    for index in &entity.skipping_indexes {
+        let granularity = match index.granularity {
+            Some(granularity) => format!(" GRANULARITY {granularity}"),
+            None => String::new(),
+        };
+        write!(
+            indexes,
+            ",\n  INDEX {} {} TYPE {}{granularity}",
+            quoted(&index.name),
+            resolve_expression_columns(&index.expr, &renamed),
+            index.index_type
+        )
+        .expect("writing to a String cannot fail");
+    }
+
+    let engine = if topology.replicated {
+        "ReplicatedReplacingMergeTree"
+    } else {
+        "ReplacingMergeTree"
+    };
+    Ok(format!(
+        "CREATE TABLE IF NOT EXISTS {}.{}{} (\n  {}{indexes}\n)\nENGINE = {engine}({}, {}){partition_by}\nORDER BY ({}){ttl}{}",
+        quoted(database),
+        quoted(&entity.name),
+        topology.on_cluster(),
+        definitions.join(",\n  "),
+        quoted(&history.checkpoint_id_column),
+        quoted(IS_DELETED_COLUMN),
+        sorting_key.join(", "),
+        topology.settings(),
+    ))
+}
+
+fn current_view_name(entity: &EntitySpec) -> String {
+    format!("envio_mv_{}", entity.name)
+}
+
+fn current_columns(entity: &EntitySpec, history: &HistorySchema) -> Vec<String> {
+    let mut columns: Vec<String> = entity
+        .columns
+        .iter()
+        .map(|column| quoted(&column.name))
+        .collect();
+    columns.push(quoted(&history.checkpoint_id_column));
+    columns
+}
+
+/// The history rows an insert lands, as current-state rows: the same insert
+/// that writes history fills the current table, so the two never drift apart
+/// by more than an interrupted batch, which a resume repairs.
+fn history_as_current_rows(entity: &EntitySpec, history: &HistorySchema) -> String {
+    format!(
+        "{}, toUInt8({} != {}) AS {}",
+        current_columns(entity, history).join(", "),
+        quoted(&history.change_column),
+        literal(&history.set_variant),
+        quoted(IS_DELETED_COLUMN),
+    )
+}
+
+pub fn create_current_view(
+    entity: &EntitySpec,
+    database: &str,
+    history: &HistorySchema,
+    topology: Topology,
+) -> String {
+    format!(
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS {db}.{}{} TO {db}.{} AS\nSELECT {}\nFROM {db}.{}",
+        quoted(&current_view_name(entity)),
+        topology.on_cluster(),
+        quoted(&entity.name),
+        history_as_current_rows(entity, history),
+        quoted(&entity.history_table),
+        db = quoted(database),
+    )
+}
+
+/// Undoes an interrupted batch in a current table, given the predicate matching
+/// the rows above the checkpoint being resumed from. Every key such a row
+/// touched gets back its newest history row at or below the checkpoint — none
+/// when the batch created it — and only then are the rows above masked, so a
+/// repair cut short by another crash still finds the keys it has to restore.
+/// History is append-only, which is what keeps the restored row available even
+/// once a merge collapsed it out of the current table.
+pub fn repair_current_table(
+    entity: &EntitySpec,
+    database: &str,
+    history: &HistorySchema,
+    above: &str,
+) -> [String; 2] {
+    let key = entity
+        .key_columns(history)
+        .iter()
+        .map(|column| quoted(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let current = format!("{}.{}", quoted(database), quoted(&entity.name));
+    [
+        format!(
+            "INSERT INTO {current} ({}, {})\nSELECT {}\nFROM {}.{}\nWHERE ({key}) IN (SELECT {key} FROM {current} WHERE {above})\n  AND NOT ({above})\nORDER BY {key}, {} DESC\nLIMIT 1 BY {key}",
+            current_columns(entity, history).join(", "),
+            quoted(IS_DELETED_COLUMN),
+            history_as_current_rows(entity, history),
+            quoted(database),
+            quoted(&entity.history_table),
+            quoted(&history.checkpoint_id_column),
+        ),
+        format!("DELETE FROM {current} WHERE {above} SETTINGS lightweight_deletes_sync = 1"),
+    ]
+}
+
+/// What a ClickHouse-only indexer keeps for itself besides the checkpoints:
+/// the tables Postgres would otherwise hold. Each row is replaced whole, by the
+/// highest `envio_version`, since nothing here can be updated in place. A
+/// chain's row is the indexer's commit marker — written after everything a
+/// batch carries — so the checkpoint it names is the one a resume trims back to.
+pub fn create_primary_internal_tables(
+    database: &str,
+    chain_id_type: &ChType,
+    topology: Topology,
+) -> Vec<String> {
+    let engine = if topology.replicated {
+        "ReplicatedReplacingMergeTree"
+    } else {
+        "ReplacingMergeTree"
+    };
+    let table = |name: &str, columns: &str, engine_args: &str, order_by: &str| {
+        format!(
+            "CREATE TABLE IF NOT EXISTS {}.{}{} (\n  {columns}\n)\nENGINE = {engine}({engine_args})\nORDER BY ({order_by}){}",
+            quoted(database),
+            quoted(name),
+            topology.on_cluster(),
+            topology.settings(),
+        )
+    };
+    vec![
+        table(
+            "envio_chain_state",
+            &format!(
+                "`id` {chain_id_type},\n  `ecosystem` String,\n  `start_block` Int64,\n  \
+                 `end_block` Nullable(Int64),\n  `max_reorg_depth` Int32,\n  `source_block` \
+                 Int64,\n  `first_event_block` Nullable(Int64),\n  `buffer_block` Int64,\n  \
+                 `progress_block` Int64,\n  `progress_block_time` Nullable(Int64),\n  \
+                 `ready_at` Nullable(Int64),\n  `events_processed` Float64,\n  \
+                 `_is_hyper_sync` Bool,\n  `checkpoint_id` UInt64,\n  `envio_version` UInt64"
+            ),
+            "`envio_version`",
+            "`id`",
+        ),
+        table(
+            "envio_addresses",
+            &format!(
+                "`chain_id` {chain_id_type},\n  `address` String,\n  `contract_id` Int32,\n  \
+                 `registration_block` Int64,\n  `envio_version` UInt64,\n  `envio_is_deleted` \
+                 UInt8"
+            ),
+            "`envio_version`, `envio_is_deleted`",
+            "`chain_id`, `address`, `contract_id`",
+        ),
+        table(
+            "envio_info",
+            "`id` UInt8,\n  `config` String,\n  `contract_names` Array(String),\n  \
+             `envio_version` UInt64",
+            "`envio_version`",
+            "`id`",
+        ),
+    ]
+}
+
 pub fn insert_query(
     database: &str,
     table: &str,
@@ -982,6 +1236,82 @@ mod tests {
              LIMIT 1 BY `id`, `chainId`\n\
              )\n\
              WHERE `envio_change` = 'SET'"
+        );
+    }
+
+    #[test]
+    fn a_current_table_replaces_by_checkpoint_and_closes_its_key_with_the_identity() {
+        let entity = EntitySpec {
+            chain_id_column: Some("chainId".to_string()),
+            order_by: Some(vec!["blockNumber".to_string()]),
+            ..entity(
+                "Transfer",
+                vec![
+                    column("id", "String"),
+                    column("chainId", "ChainId"),
+                    column("blockNumber", "Int32"),
+                    column("value", "Int256"),
+                ],
+            )
+        };
+        assert_eq!(
+            (
+                create_current_table(
+                    &entity,
+                    "test_db",
+                    &history_schema(),
+                    plain(),
+                    ChainIdMode::Int32
+                )
+                .unwrap(),
+                create_current_view(&entity, "test_db", &history_schema(), plain()),
+            ),
+            (
+                "CREATE TABLE IF NOT EXISTS `test_db`.`Transfer` (\n  \
+                 `id` String,\n  `chainId` Int32,\n  `blockNumber` Int32,\n  `value` Int256,\n  \
+                 `envio_checkpoint_id` UInt64,\n  `envio_is_deleted` UInt8\n)\n\
+                 ENGINE = ReplacingMergeTree(`envio_checkpoint_id`, `envio_is_deleted`)\n\
+                 ORDER BY (`blockNumber`, `id`, `chainId`)"
+                    .to_string(),
+                "CREATE MATERIALIZED VIEW IF NOT EXISTS `test_db`.`envio_mv_Transfer` TO \
+                 `test_db`.`Transfer` AS\n\
+                 SELECT `id`, `chainId`, `blockNumber`, `value`, `envio_checkpoint_id`, \
+                 toUInt8(`envio_change` != 'SET') AS `envio_is_deleted`\n\
+                 FROM `test_db`.`envio_history_Transfer`"
+                    .to_string(),
+            )
+        );
+    }
+
+    #[test]
+    fn a_repair_restores_the_touched_keys_before_masking_the_rows_above() {
+        let entity = entity(
+            "Account",
+            vec![column("id", "String"), column("balance", "Int32")],
+        );
+        assert_eq!(
+            repair_current_table(
+                &entity,
+                "test_db",
+                &history_schema(),
+                "`envio_checkpoint_id` > 7"
+            ),
+            [
+                "INSERT INTO `test_db`.`Account` (`id`, `balance`, `envio_checkpoint_id`, \
+                 `envio_is_deleted`)\n\
+                 SELECT `id`, `balance`, `envio_checkpoint_id`, toUInt8(`envio_change` != 'SET') \
+                 AS `envio_is_deleted`\n\
+                 FROM `test_db`.`envio_history_Account`\n\
+                 WHERE (`id`) IN (SELECT `id` FROM `test_db`.`Account` WHERE \
+                 `envio_checkpoint_id` > 7)\n  \
+                 AND NOT (`envio_checkpoint_id` > 7)\n\
+                 ORDER BY `id`, `envio_checkpoint_id` DESC\n\
+                 LIMIT 1 BY `id`"
+                    .to_string(),
+                "DELETE FROM `test_db`.`Account` WHERE `envio_checkpoint_id` > 7 SETTINGS \
+                 lightweight_deletes_sync = 1"
+                    .to_string(),
+            ]
         );
     }
 
