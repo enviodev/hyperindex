@@ -3115,7 +3115,29 @@ function integerNamespace(name: string, bits: number, signed: boolean) {
     const wrapped = ((truncated % span) + span) % span;
     return wrapped > max ? wrapped - span : wrapped;
   };
-  return strictNamespace(name, Object.assign(cast, { MIN_VALUE: min, MAX_VALUE: max }));
+  return strictNamespace(
+    name,
+    Object.assign(cast, { MIN_VALUE: min, MAX_VALUE: max, parseInt: (text: string, radix = 0) => cast(parseAsInteger(text, radix) as number) }),
+  );
+}
+
+/** AssemblyScript's `I32.parseInt(text, radix)`: radix 0 reads a 0x/0b/0o prefix; garbage is 0. */
+function parseAsInteger(text: string, radix: number): number {
+  let rest = String(text).trim();
+  let sign = 1;
+  if (rest.startsWith("-")) {
+    sign = -1;
+    rest = rest.slice(1);
+  } else if (rest.startsWith("+")) rest = rest.slice(1);
+  let base = radix;
+  const prefixed = /^0([xXbBoO])/.exec(rest);
+  if (prefixed && (base === 0 || base === { x: 16, b: 2, o: 8 }[prefixed[1].toLowerCase() as "x" | "b" | "o"])) {
+    base = { x: 16, b: 2, o: 8 }[prefixed[1].toLowerCase() as "x" | "b" | "o"];
+    rest = rest.slice(2);
+  }
+  if (base === 0) base = 10;
+  const parsed = Number.parseInt(rest, base);
+  return Number.isNaN(parsed) ? 0 : sign * parsed;
 }
 
 function bigIntegerNamespace(name: string, signed: boolean) {
@@ -3126,7 +3148,10 @@ function bigIntegerNamespace(name: string, signed: boolean) {
     // AssemblyScript truncates a cast to the target width rather than widening.
     return signed ? BigInt.asIntN(64, raw) : BigInt.asUintN(64, raw);
   };
-  return strictNamespace(name, Object.assign(cast, { MIN_VALUE: min, MAX_VALUE: max }));
+  return strictNamespace(
+    name,
+    Object.assign(cast, { MIN_VALUE: min, MAX_VALUE: max, parseInt: (text: string, radix = 0) => cast(BigInt(parseAsInteger(text, radix))) }),
+  );
 }
 
 function floatNamespace(name: string, single: boolean) {
@@ -3162,6 +3187,11 @@ export const assemblyScriptPrimitives: Record<string, unknown> = {
   f32: floatNamespace("f32", true),
   f64: floatNamespace("f64", false),
 };
+// The wrapper classes (`I32.parseInt(...)`, `U64.MAX_VALUE`) are the same
+// namespaces under their capitalised names.
+for (const name of Object.keys(assemblyScriptPrimitives)) {
+  if (/^[iuf]\d+$/.test(name)) assemblyScriptPrimitives[name.toUpperCase()] = assemblyScriptPrimitives[name];
+}
 
 // ---------------------------------------------------------------------------
 // Host namespaces the generated declarations re-export
