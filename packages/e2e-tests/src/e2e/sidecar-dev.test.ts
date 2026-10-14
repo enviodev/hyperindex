@@ -60,6 +60,11 @@ describe.skipIf(!dockerAvailable)("envio dev with a sidecar", () => {
           ENVIO_TUI: "false",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
           ENVIO_PG_SCHEMA: `envio_test_${Date.now()}_${process.pid}_sidecardev`,
+          // Tracking tables starts with clear_metadata, which would untrack
+          // what e2e.test.ts left in the shared Hasura for the dependency
+          // tests that run after this suite. The sidecar's ENVIO_GRAPHQL_URL
+          // comes from the Hasura endpoint setting either way.
+          ENVIO_HASURA: "false",
           // Off the default 9898, which e2e.test.ts's indexer may hold.
           ENVIO_INDEXER_PORT: "9897",
         },
