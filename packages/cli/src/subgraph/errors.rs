@@ -4,6 +4,8 @@
 
 use std::fmt::{self, Display};
 
+use super::RPC_ENV_VAR;
+
 const ISSUES_URL: &str = "https://github.com/enviodev/hyperindex/issues";
 
 /// Subgraph mode ships under its own npm dist-tag (see `publish.yml`), so
@@ -62,10 +64,28 @@ impl Display for Finding {
     }
 }
 
+/// The chain id in envio's "Failed to automatically find HyperSync endpoint for
+/// the chain N" error, which says to edit a config.yaml a subgraph doesn't have.
+fn hypersync_missing_chain(message: &str) -> Option<u64> {
+    let rest = message
+        .split("find HyperSync endpoint for the chain ")
+        .nth(1)?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
 /// An error from envio's own schema and config checks, run over what the
 /// translation produced. Their messages speak about envio's config, so they are
 /// framed as a translation gap: something the subgraph didn't do wrong.
 pub fn envio_rejected_translation(error: anyhow::Error) -> anyhow::Error {
+    if let Some(chain_id) = hypersync_missing_chain(&format!("{error:#}")) {
+        return anyhow::anyhow!(
+            "HyperSync doesn't serve chain {chain_id}, so Envio Subgraph has to index it over RPC.\n  \
+             Set an RPC endpoint for chain {chain_id} in .env or the environment:\n  \
+             {RPC_ENV_VAR}=https://...\n\
+             It is one endpoint for the whole subgraph, so it suits a subgraph on this one chain."
+        );
+    }
     anyhow::anyhow!(
         "Envio Subgraph translated this subgraph, but envio can't index the result:\n  \
          {error:#}\n\

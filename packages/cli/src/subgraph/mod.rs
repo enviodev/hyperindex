@@ -405,6 +405,30 @@ fn contract_config(
     }
 }
 
+/// `ENVIO_SUBGRAPH_RPC` is one setting for every chain, so it can't say which
+/// chains HyperSync serves. On one it stays what the user wrote (a fallback by
+/// default); on a chain HyperSync doesn't serve, a `fallback` entry would leave
+/// the chain with no source at all, so it becomes the sync source.
+fn rpc_for_chain(rpc: &RpcSelection, chain_id: u64) -> RpcSelection {
+    use crate::config_parsing::human_config::evm::{For, Rpc};
+    if crate::config_parsing::hypersync_endpoints::get_default_hypersync_endpoint(chain_id).is_ok()
+    {
+        return rpc.clone();
+    }
+    let sync = |entry: &Rpc| Rpc {
+        source_for: match entry.source_for {
+            Some(For::Fallback) => Some(For::Sync),
+            ref other => other.clone(),
+        },
+        ..entry.clone()
+    };
+    match rpc {
+        RpcSelection::Url(_) => rpc.clone(),
+        RpcSelection::Single(entry) => RpcSelection::Single(sync(entry)),
+        RpcSelection::List(entries) => RpcSelection::List(entries.iter().map(sync).collect()),
+    }
+}
+
 /// Builds the envio config a translated manifest indexes with.
 pub fn translate(
     manifest_yaml: &str,
@@ -453,7 +477,7 @@ pub fn translate(
         let chain = chains.entry(chain_id).or_insert_with(|| Chain {
             id: chain_id,
             skip: None,
-            rpc: rpc.clone(),
+            rpc: rpc.as_ref().map(|rpc| rpc_for_chain(rpc, chain_id)),
             hypersync_config: None,
             max_reorg_depth: None,
             block_lag: None,
@@ -708,6 +732,7 @@ mod generated_code_tests {
 mod tests {
     use super::*;
     use crate::config_parsing::human_config::evm::{For, Rpc};
+    use crate::config_parsing::system_config::SystemConfig;
 
     /// Mapping source the usage scan can't account for, so these cases see the
     /// full selection rather than a narrowed one.
@@ -1171,6 +1196,91 @@ type Gravatar @entity {
             message.contains("the template \"Wallet\" on network \"matic\""),
             "unexpected error: {message}"
         );
+    }
+
+    // Filecoin (314) is a Goldsky chain HyperSync doesn't serve: the one
+    // ENVIO_SUBGRAPH_RPC the docs show says `fallback`, and on a chain with no
+    // HyperSync that would leave it with no source.
+    #[test]
+    fn makes_the_rpc_the_sync_source_on_a_chain_hypersync_does_not_serve() {
+        let yaml = MANIFEST
+            .split("templates:")
+            .next()
+            .unwrap()
+            .replace("network: mainnet", "network: filecoin");
+        let translation = translate(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            Some(r#"[{"url":"https://rpc.example.test","for":"fallback"}]"#),
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        assert_eq!(translation.human_config.chains[0].id, 314);
+        let Some(RpcSelection::List(rpcs)) = translation.human_config.chains[0].rpc.clone() else {
+            panic!("expected a list of rpcs");
+        };
+        assert_eq!(rpcs[0].source_for, Some(For::Sync));
+    }
+
+    // Without any RPC, the error names the env var instead of config.yaml.
+    #[test]
+    fn names_the_rpc_env_var_when_hypersync_does_not_serve_the_chain() {
+        let yaml = MANIFEST
+            .split("templates:")
+            .next()
+            .unwrap()
+            .replace("network: mainnet", "network: filecoin");
+        let files = HashMap::from([(
+            "./abis/Gravity.json".to_string(),
+            r#"[{"type":"event","name":"NewGravatar","anonymous":false,"inputs":[
+              {"name":"id","type":"uint256","indexed":false},
+              {"name":"owner","type":"address","indexed":false},
+              {"name":"displayName","type":"string","indexed":false},
+              {"name":"imageUrl","type":"string","indexed":false}]},
+              {"type":"event","name":"UpdatedGravatar","anonymous":false,"inputs":[
+              {"name":"id","type":"uint256","indexed":false},
+              {"name":"owner","type":"address","indexed":false},
+              {"name":"displayName","type":"string","indexed":false},
+              {"name":"imageUrl","type":"string","indexed":false}]}]"#
+                .to_string(),
+        )]);
+        let err = SystemConfig::parse_subgraph(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            &HashMap::new(),
+            &files,
+            ".",
+            &ambiguous(),
+        )
+        .expect_err("expected a chain without HyperSync and without RPC to be refused");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("HyperSync doesn't serve chain 314")
+                && message.contains("ENVIO_SUBGRAPH_RPC=https://")
+                && !message.contains("config.yaml")
+                && !message.contains("hypersync_config"),
+            "unexpected error: {message}"
+        );
+
+        // And with the endpoint set, it translates.
+        let env = HashMap::from([(
+            "ENVIO_SUBGRAPH_RPC".to_string(),
+            "https://rpc.example.test".to_string(),
+        )]);
+        SystemConfig::parse_subgraph(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            &env,
+            &files,
+            ".",
+            &ambiguous(),
+        )
+        .expect("filecoin over RPC");
     }
 
     #[test]
