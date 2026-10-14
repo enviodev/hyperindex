@@ -90,7 +90,14 @@ export class IndexerClientError extends Error {
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-type RescriptField = { TAG: "Field"; _0: { fieldName: string; isChainId: boolean } } | { TAG: "DerivedFrom" };
+type RescriptField =
+  | { TAG: "Field"; _0: { fieldName: string; isChainId: boolean; linkedEntity?: string | undefined } }
+  | { TAG: "DerivedFrom" };
+
+// `Table.getApiFieldName`: Hasura and the entity types name a reference column
+// `<field>_id`; the bare field name is the relationship, which needs a selection set.
+const apiFieldName = (field: { fieldName: string; linkedEntity?: string | undefined }): string =>
+  field.linkedEntity === undefined || field.linkedEntity === null ? field.fieldName : `${field.fieldName}_id`;
 
 export const toEntityMeta = (input: EntityMetaInput): EntityMeta => {
   if ("fields" in input) return input;
@@ -102,7 +109,7 @@ export const toEntityMeta = (input: EntityMetaInput): EntityMeta => {
   let chainIdField: string | undefined;
   for (const field of table.fields) {
     if (field.TAG !== "Field") continue;
-    fields.push(field._0.fieldName);
+    fields.push(apiFieldName(field._0));
     if (field._0.isChainId) chainIdField = field._0.fieldName;
   }
   return { name: input.name, fields, chainIdField, schema: input.schema as S.Schema<unknown> };
