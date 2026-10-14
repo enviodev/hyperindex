@@ -26,7 +26,6 @@ import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-en
 import { parseSignature, splitTypes } from "./abi-types.ts";
 import {
   PROTOTYPE_PASSTHROUGH,
-  refusedGetter,
   strictNamespace,
   unsupported,
   unknown,
@@ -526,6 +525,22 @@ export class TypedMapEntry<K, V> {
   ) {}
 }
 
+/**
+ * AssemblyScript's `==` on a `Bytes`, `BigInt` or `BigDecimal` key compares the
+ * values, which is how Lido looks a log's topic up in a `TypedMap<Bytes, …>`
+ * built from other `Bytes` instances.
+ */
+function sameKey(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a === "object" && a !== null && typeof b === "object" && b !== null) {
+    const equals = (a as { equals?: (other: unknown) => unknown }).equals;
+    if (typeof equals === "function" && a instanceof Uint8Array === b instanceof Uint8Array) {
+      return equals.call(a, b) === true;
+    }
+  }
+  return false;
+}
+
 export class TypedMap<K, V> {
   entries: TypedMapEntry<K, V>[] = [];
 
@@ -538,7 +553,7 @@ export class TypedMap<K, V> {
     }
   }
   getEntry(key: K): TypedMapEntry<K, V> | null {
-    return this.entries.find((entry) => entry.key === key) ?? null;
+    return this.entries.find((entry) => sameKey(entry.key, key)) ?? null;
   }
   get(key: K): V | null {
     const entry = this.getEntry(key);
@@ -1662,10 +1677,8 @@ class EthereumEventParam {
 }
 
 /**
- * Only reachable through `event.receipt.logs`, which the runtime refuses on
- * access — envio's receipt selection carries the scalars, not the log list.
- * Declared so a mapping that names the type still compiles the way it does
- * against graph-ts.
+ * Only reachable through `event.receipt.logs`: envio's receipt selection
+ * carries the scalars, so the log list is read when the mapping asks.
  */
 class EthereumLog {
   constructor(
@@ -1681,6 +1694,49 @@ class EthereumLog {
     public logType: string,
     public removed: { inner: boolean } | null,
   ) {}
+}
+
+/** A transaction's logs as `receipts.ts` read them, in graph-ts' shape. */
+function receiptLogsOf(json: string, blockHash: Bytes, blockNumber: number): EthereumLog[] {
+  const raw = JSON.parse(json) as {
+    address: string;
+    topics: string[];
+    data: string;
+    logIndex: number;
+    transactionIndex: number;
+    transactionHash: string;
+  }[];
+  return raw.map(
+    (log) =>
+      new EthereumLog(
+        Address.fromString(log.address),
+        log.topics.map((topic) => Bytes.fromHexString(topic)),
+        Bytes.fromHexString(log.data),
+        blockHash,
+        // graph-ts types it `Bytes`; graph-node fills it with the number's
+        // signed little-endian bytes.
+        Bytes.fromHexString("0x" + bigintToLittleEndianHex(BigInt(blockNumber))),
+        Bytes.fromHexString(log.transactionHash),
+        BigInt_.fromI32(log.transactionIndex),
+        BigInt_.fromI32(log.logIndex),
+        // Where no client sets it, graph-node falls back to the log index.
+        BigInt_.fromI32(log.logIndex),
+        null as unknown as string,
+        new Wrapped(false),
+      ),
+  );
+}
+
+function bigintToLittleEndianHex(value: bigint): string {
+  const bytes: string[] = [];
+  let rest = value;
+  do {
+    bytes.push((Number(rest & 0xffn)).toString(16).padStart(2, "0"));
+    rest >>= 8n;
+  } while (rest > 0n);
+  // Signed: a set top bit would read as negative, so a zero byte follows.
+  if (parseInt(bytes[bytes.length - 1], 16) & 0x80) bytes.push("00");
+  return bytes.join("");
 }
 
 class EthereumTransactionReceipt {
@@ -1989,7 +2045,26 @@ class EthereumEvent {
     const receipt = shaped(blank(EthereumTransactionReceipt), RECEIPT_SHAPE, this._raw.transaction);
     receipt.blockHash = this.block.hash;
     receipt.blockNumber = this.block.number;
-    refusedGetter(receipt, "logs", "event.receipt.logs", this._kind.location);
+    // The transaction's other logs aren't part of envio's event: read from
+    // HyperSync (or the RPC) when the mapping first asks.
+    const blockHash = receipt.blockHash;
+    const blockNumber = Number(this._raw.block.number);
+    const transactionIndex = Number(this._raw.transaction?.transactionIndex ?? this._raw.transactionIndex);
+    const transactionHash = this._raw.transaction?.hash ?? this._raw.transactionHash;
+    let logs: EthereumLog[] | undefined;
+    Object.defineProperty(receipt, "logs", {
+      enumerable: true,
+      configurable: true,
+      get: () =>
+        (logs ??= receiptLogsOf(
+          hostsOrThrow().receiptLogs(JSON.stringify({ blockNumber, transactionIndex, transactionHash })),
+          blockHash,
+          blockNumber,
+        )),
+      set: (value: EthereumLog[]) => {
+        logs = value;
+      },
+    });
     return (this._receipt = receipt);
   }
   set receipt(value: EthereumTransactionReceipt | null) {
@@ -2355,6 +2430,10 @@ export type Hosts = {
   getBalance: (address: string) => string;
   hasCode: (address: string) => boolean;
   blockTimestamp: (blockNumber: number) => string;
+  /** The block's header as JSON, fields named as envio decodes them. */
+  blockHeader: (blockNumber: number) => string;
+  /** The logs of one transaction as JSON, given `{ blockNumber, transactionIndex, transactionHash }`. */
+  receiptLogs: (transaction: string) => string;
 };
 
 let hosts: Hosts | null = null;
@@ -2404,32 +2483,31 @@ const ensImpl = {
 
 export const ens = strictNamespace("ens", ensImpl);
 
-/** graph-ts hands a block handler an `ethereum.Block`; only `number` is free. */
-export function makeBlockHandlerBlock(blockNumber: number, location: string): EthereumBlock {
+/**
+ * graph-ts hands a block handler an `ethereum.Block`. envio hands the handler
+ * only the number, so the rest is fetched when the mapping first reads it:
+ * `timestamp` on its own, narrowly; any other field as the whole header, once.
+ * A header is only served from below the chain's reorg window (blocks.ts).
+ */
+export function makeBlockHandlerBlock(blockNumber: number, _location: string): EthereumBlock {
   const block = blank(EthereumBlock);
   block.number = BigInt_.fromI32(blockNumber);
   Object.defineProperty(block, "timestamp", {
     enumerable: true,
-    get: () => BigInt_.fromString(hostsOrThrow().blockTimestamp(blockNumber)),
+    configurable: true,
+    // A header fetched for another field already carries it.
+    get: () => (header ? header.timestamp : BigInt_.fromString(hostsOrThrow().blockTimestamp(blockNumber))),
   });
-  // A post-hoc fetch of the rest can't be made reorg-consistent, so the other
-  // fields are refused rather than guessed.
-  for (const field of [
-    "hash",
-    "parentHash",
-    "unclesHash",
-    "author",
-    "stateRoot",
-    "transactionsRoot",
-    "receiptsRoot",
-    "gasUsed",
-    "gasLimit",
-    "difficulty",
-    "totalDifficulty",
-    "size",
-    "baseFeePerGas",
-  ]) {
-    refusedGetter(block, field, `block.${field} in a block handler`, location);
+  let header: EthereumBlock | undefined;
+  const fetched = () =>
+    (header ??= shaped(blank(EthereumBlock), BLOCK_SHAPE, JSON.parse(hostsOrThrow().blockHeader(blockNumber))));
+  for (const field of Object.keys(BLOCK_SHAPE) as (keyof EthereumBlock)[]) {
+    if (field === "number" || field === "timestamp") continue;
+    Object.defineProperty(block, field, {
+      enumerable: true,
+      configurable: true,
+      get: () => fetched()[field],
+    });
   }
   return block;
 }

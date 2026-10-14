@@ -28,7 +28,6 @@ dataSources:
           handler: handlePairCreated
         - event: Probe(uint256)
           handler: handleProbe
-          receipt: true
       file: ./src/factory.ts
 templates:
   - kind: ethereum/contract
@@ -82,9 +81,7 @@ export function handlePairCreated(event: any): void {
 // only shows up at access time.
 export function handleProbe(event: any): void {
   let kind = event.params.kind.toI32();
-  if (kind === 1) {
-    event.receipt!.logs;
-  } else if (kind === 2) {
+  if (kind === 2) {
     (store as any).timeTravel();
   } else if (kind === 3) {
     let entity = new Entity();
@@ -152,20 +149,6 @@ describe("subgraph runtime", () => {
       createdAt: "2023-11-14T22:13:20.000Z",
       score: 7n,
     });
-  });
-
-  // The runtime writes its own copy of the translator's refusal text; the
-  // whole of it is pinned so the two can't drift apart.
-  it("refuses event.receipt.logs", async () => {
-    await expect(createTestIndexer().process(probe(1n))).rejects.toThrow(
-      \`Envio Subgraph doesn't support event.receipt.logs yet.
-  Found in data source "Factory" → "Probe".
-First, make sure you're on the newest Envio Subgraph release — support may have landed:
-  pnpm add -D envio@subgraph
-If you're up to date and need this feature, please open an issue (existing
-issues welcome a 👍 — demand drives prioritization):
-  https://github.com/enviodev/hyperindex/issues\`,
-    );
   });
 
   // graph-node answers the log's index in its block (Aave reads it at 54 call

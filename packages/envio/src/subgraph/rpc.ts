@@ -12,15 +12,27 @@
 import { createPublicClient, fallback, http, type Transport } from "viem";
 import { requestTimeoutMs, withDeadline } from "./transient.ts";
 
-const MAX_IN_FLIGHT = 16;
+/**
+ * Requests in flight at once, per set of endpoints. A handler's calls run one
+ * after another (a decimals call, then a name, then a price), so a batch's
+ * throughput is this many divided by the endpoint's latency: at 16 and a
+ * second a call — a shared or distant endpoint — a batch of five thousand
+ * events took minutes to commit. `ENVIO_SUBGRAPH_RPC_CONCURRENCY` overrides it.
+ */
+const DEFAULT_MAX_IN_FLIGHT = 48;
+
+function maxInFlightFromEnv(): number {
+  const value = Number(process.env.ENVIO_SUBGRAPH_RPC_CONCURRENCY);
+  return Number.isInteger(value) && value > 0 ? value : DEFAULT_MAX_IN_FLIGHT;
+}
 
 /**
- * Runs at most `MAX_IN_FLIGHT` requests at once, queueing the rest. A slot is
+ * Runs at most `the limit at once, queueing the rest. A slot is
  * held at most the request deadline: one that never settles would otherwise
  * keep it for good, and a handful of those stall every call behind them with
  * no connection doing anything.
  */
-export function gate(maxInFlight = MAX_IN_FLIGHT) {
+export function gate(maxInFlight = maxInFlightFromEnv()) {
   let inFlight = 0;
   const queued: (() => void)[] = [];
   return async <T>(request: () => Promise<T>): Promise<T> => {

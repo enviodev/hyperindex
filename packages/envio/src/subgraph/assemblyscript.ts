@@ -87,6 +87,14 @@ export const operators = {
   mul: binary("times", widened((a, b) => a * b)),
   div: binary("div", integerDivision),
   rem: binary("mod", widened((a, b) => a % b)),
+  // `10 ** decimals.toI64()` is an i64 power, and graph-ts' `BigInt ** u8` its
+  // `pow`: JavaScript's `**` refuses to mix a bigint with a number.
+  pow: (a: unknown, b: unknown): unknown => {
+    const declared = isObject(a) ? overload(a, "pow") : undefined;
+    if (declared) return declared.call(a, typeof b === "bigint" ? Number(b) : b);
+    if (typeof a === "bigint" || typeof b === "bigint") return BigInt(a as bigint | number) ** BigInt(b as bigint | number);
+    return (a as number) ** (b as number);
+  },
   eq: equals,
   ne: (a: unknown, b: unknown) => !equals(a, b),
   lt: binary("lt", (a, b) => a < b),

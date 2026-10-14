@@ -119,7 +119,7 @@ describe("contract calls from a batch", () => {
     });
 
     // Unbounded, preload has every call in flight at once.
-    t.expect({ slots: (await indexer.Slot.getAll()).length, bounded: peak <= 16 }).toEqual({
+    t.expect({ slots: (await indexer.Slot.getAll()).length, bounded: peak <= 48 }).toEqual({
       slots: EVENTS,
       bounded: true,
     });
