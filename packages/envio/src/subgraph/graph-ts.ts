@@ -1726,15 +1726,130 @@ class EthereumTransactionReceipt {
   }
 }
 
+/** What every call to one function shares. */
+export type CallKind = {
+  /** `data source "X" → "function(...)"`, for what a refusal names. */
+  location: string;
+  inputs: { name: string; type: string }[];
+  outputs: { name: string; type: string }[];
+};
+
+const FROM_ENVIO_CALL = Symbol("envio.subgraph.call");
+
+/** What a mapping-built call is, for anything that names where it came from. */
+const BUILT_CALL: CallKind = { location: "an ethereum.Call the mapping built", inputs: [], outputs: [] };
+
+/**
+ * graph-ts' `ethereum.Call`, over one call item. A handler typed with a
+ * generated call class receives an instance of that class — it extends this
+ * one — so graph codegen's `inputs` and `outputs` getters read `inputValues` and
+ * `outputValues` as written. Deferred like an event: a mapping that reads one
+ * input shouldn't pay to convert the block, the transaction and every value.
+ */
 class EthereumCall {
+  private _raw: any = null;
+  private _kind: CallKind = BUILT_CALL;
+  private _to: Address | undefined;
+  private _from: Address | undefined;
+  private _block: EthereumBlock | undefined;
+  private _transaction: EthereumTransaction | undefined;
+  private _inputValues: EthereumEventParam[] | undefined;
+  private _outputValues: EthereumEventParam[] | undefined;
+
   constructor(
-    public to: Address,
-    public from: Address,
-    public block: EthereumBlock,
-    public transaction: EthereumTransaction,
-    public inputValues: EthereumEventParam[],
-    public outputValues: EthereumEventParam[],
-  ) {}
+    to: Address,
+    from: Address,
+    block: EthereumBlock,
+    transaction: EthereumTransaction,
+    inputValues: EthereumEventParam[],
+    outputValues: EthereumEventParam[],
+  ) {
+    if ((to as unknown) === FROM_ENVIO_CALL) {
+      this._raw = from;
+      this._kind = block as unknown as CallKind;
+      return;
+    }
+    this._to = to;
+    this._from = from;
+    this._block = block;
+    this._transaction = transaction;
+    this._inputValues = inputValues ?? [];
+    this._outputValues = outputValues ?? [];
+  }
+
+  /** The called contract. */
+  get to(): Address {
+    return (this._to ??= Address.fromString(this._raw.srcAddress));
+  }
+  set to(value: Address) {
+    this._to = value;
+  }
+  /** The immediate caller, which is not the transaction's sender for an internal call. */
+  get from(): Address {
+    return (this._from ??= Address.fromString(this._raw.params.callFrom));
+  }
+  set from(value: Address) {
+    this._from = value;
+  }
+  get block(): EthereumBlock {
+    return (this._block ??= shaped(blank(EthereumBlock), BLOCK_SHAPE, this._raw.block));
+  }
+  set block(value: EthereumBlock) {
+    this._block = value;
+  }
+  get transaction(): EthereumTransaction {
+    return (this._transaction ??= shaped(blank(EthereumTransaction), TRANSACTION_SHAPE, this._raw.transaction));
+  }
+  set transaction(value: EthereumTransaction) {
+    this._transaction = value;
+  }
+  get inputValues(): EthereumEventParam[] {
+    return (this._inputValues ??= decodeCallValues(this._kind.inputs, this._raw.params.callInput, true));
+  }
+  set inputValues(value: EthereumEventParam[]) {
+    this._inputValues = value;
+  }
+  get outputValues(): EthereumEventParam[] {
+    return (this._outputValues ??= decodeCallValues(this._kind.outputs, this._raw.params.callOutput, false));
+  }
+  set outputValues(value: EthereumEventParam[]) {
+    this._outputValues = value;
+  }
+}
+
+/** The call the runtime hands a handler, as the generated class the handler declares. */
+export function makeCall(raw: unknown, kind: CallKind, CallClass: Function): EthereumCall {
+  return Reflect.construct(EthereumCall, [FROM_ENVIO_CALL, raw, kind], CallClass) as EthereumCall;
+}
+
+/**
+ * A call's inputs or outputs, which the ABI types and the bytes carry. An input
+ * is the calldata past its 4-byte selector; an output is the return data.
+ */
+function decodeCallValues(
+  params: { name: string; type: string }[],
+  data: string,
+  isInput: boolean,
+): EthereumEventParam[] {
+  if (params.length === 0) return [];
+  const bytes = (isInput ? `0x${data.slice(10)}` : data) as `0x${string}`;
+  const decoded = decodeAbiParameters(parseAbiParameters(params.map((param) => param.type).join(",")), bytes);
+  return params.map(
+    (param, index) => new EthereumEventParam(param.name, ethereumConverter(param.type)(decoded[index])),
+  );
+}
+
+/**
+ * Whether a call's input decodes against its function — graph-node skips a call
+ * whose calldata doesn't (it warns), and fails on an output that doesn't.
+ */
+export function callInputDecodes(kind: CallKind, input: string): boolean {
+  try {
+    decodeCallValues(kind.inputs, input, true);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** One of an event's parameters, as the translator read it off the ABI. */
@@ -2403,6 +2518,11 @@ const ensImpl = {
 };
 
 export const ens = strictNamespace("ens", ensImpl);
+
+/** The whole block a call item carries, for a `filter: call` block handler. */
+export function makeCallBlock(raw: unknown): EthereumBlock {
+  return shaped(blank(EthereumBlock), BLOCK_SHAPE, raw as Record<string, unknown>);
+}
 
 /** graph-ts hands a block handler an `ethereum.Block`; only `number` is free. */
 export function makeBlockHandlerBlock(blockNumber: number, location: string): EthereumBlock {

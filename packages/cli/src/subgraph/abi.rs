@@ -242,7 +242,12 @@ pub fn function_params(
 ) -> Option<(Vec<CallParam>, Vec<CallParam>)> {
     let wanted: String = manifest_signature.split_whitespace().collect();
     abi_entries(abi_json).iter().find_map(|entry| {
-        if entry.get("type").and_then(Value::as_str).unwrap_or("function") != "function" {
+        if entry
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("function")
+            != "function"
+        {
             return None;
         }
         let name = entry.get("name").and_then(Value::as_str)?;

@@ -941,7 +941,10 @@ type Gravatar @entity {
             1,
         );
         let mut files = HashMap::new();
-        files.insert("./abis/Gravity.json".to_string(), SET_GRAVATAR_ABI.to_string());
+        files.insert(
+            "./abis/Gravity.json".to_string(),
+            SET_GRAVATAR_ABI.to_string(),
+        );
         let translation = translate(
             &manifest,
             SCHEMA,
@@ -1003,10 +1006,21 @@ type Gravatar @entity {
             1,
         );
         let mut files = HashMap::new();
-        files.insert("./abis/Gravity.json".to_string(), SET_GRAVATAR_ABI.to_string());
-        let error = translate(&manifest, SCHEMA, "gravatar", None, ".", &files, &ambiguous())
-            .unwrap_err()
-            .to_string();
+        files.insert(
+            "./abis/Gravity.json".to_string(),
+            SET_GRAVATAR_ABI.to_string(),
+        );
+        let error = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &files,
+            &ambiguous(),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             error.contains("setGravatar(uint256)") && error.contains("handleSetGravatar"),
             "{error}"

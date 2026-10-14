@@ -1163,7 +1163,11 @@ dataSources:
                 token.call_handlers[0].handler.as_str(),
                 token.block_handlers[0].filter.clone(),
             ),
-            ("approve(address,uint256)", "handleApprove", BlockFilter::Call)
+            (
+                "approve(address,uint256)",
+                "handleApprove",
+                BlockFilter::Call
+            )
         );
         // graph-node refuses a call trigger on a data source with no address.
         let rendered = report.to_string();
