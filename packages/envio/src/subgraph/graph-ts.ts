@@ -2050,6 +2050,14 @@ function interpolate(message: string, args: string[]): string {
   return message.replace(/\{\}/g, () => args[index++] ?? "{}");
 }
 
+// The register pass runs the mapping against a store that reads null, so what
+// it would log describes a world that doesn't exist; the handler pass logs it
+// for real.
+function userLog(level: "debug" | "info" | "warn" | "error", message: string, args: string[]) {
+  const scope = currentScope();
+  if (scope.mode === "register") return;
+  scope.context.log?.[level](interpolate(message, args));
+}
 
 const logImpl = {
   Level: LogLevel,
@@ -2068,16 +2076,16 @@ const logImpl = {
     }
   },
   debug(message: string, args: string[] = []) {
-    currentScope().context.log?.debug(interpolate(message, args));
+    userLog("debug", message, args);
   },
   info(message: string, args: string[] = []) {
-    currentScope().context.log?.info(interpolate(message, args));
+    userLog("info", message, args);
   },
   warning(message: string, args: string[] = []) {
-    currentScope().context.log?.warn(interpolate(message, args));
+    userLog("warn", message, args);
   },
   error(message: string, args: string[] = []) {
-    currentScope().context.log?.error(interpolate(message, args));
+    userLog("error", message, args);
   },
   // graph-node halts the subgraph on critical.
   critical(message: string, args: string[] = []): never {
