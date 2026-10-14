@@ -78,6 +78,8 @@ function fitted(value: bigint, min: bigint, max: bigint, target: string): bigint
   return value;
 }
 
+const utf8Decoder = new TextDecoder("utf-8");
+
 export class ByteArray extends Uint8Array {
   static fromHexString(hex: string): ByteArray {
     const normalized = hex.startsWith("0x") ? hex : "0x" + hex;
@@ -113,8 +115,13 @@ export class ByteArray extends Uint8Array {
   toHexString(): string {
     return toHex(this as Uint8Array);
   }
+  /**
+   * graph-node's `bytes_to_string`: UTF-8, invalid sequences replaced, and the
+   * trailing NULs of a fixed-size buffer trimmed — a bytes32 symbol (MKR) reads
+   * as `MKR`, and Aave's `id.toString() == "POOL"` holds.
+   */
   toString(): string {
-    return this.toHexString();
+    return utf8Decoder.decode(this).replace(/\u0000+$/, "");
   }
   toBase58(): string {
     throw unsupported("ByteArray.toBase58", "a mapping handler");
@@ -736,6 +743,7 @@ export class Value {
     return this.toMatrix().map((row) => row.map((value) => value.toI64()));
   }
   displayData(): string {
+    if (this.data instanceof ByteArray) return this.data.toHexString();
     return String(this.data);
   }
   displayKind(): string {
