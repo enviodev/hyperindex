@@ -283,6 +283,16 @@ pub fn block_handlers_read_headers(sources: &[String], handlers: &[String]) -> b
     })
 }
 
+/// The code with its string literals and comments emptied: a `"block-"` in an
+/// id is not a use of the handler's `block`.
+fn strip_literals(code: &str) -> String {
+    let literals = regex::Regex::new(
+        r#""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|//[^\n]*|/\*(?s:.*?)\*/"#,
+    )
+    .expect("valid literal pattern");
+    literals.replace_all(code, "\"\"").into_owned()
+}
+
 fn handler_reads_headers(source: &str, handler: &str) -> bool {
     let signature = regex::Regex::new(&format!(
         r"function\s+{}\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)",
@@ -314,7 +324,8 @@ fn handler_reads_headers(source: &str, handler: &str) -> bool {
             _ => {}
         }
     }
-    let body = &rest[open..end];
+    let body = strip_literals(&rest[open..end]);
+    let body = body.as_str();
     let uses = regex::Regex::new(&format!(
         r"(^|[^A-Za-z0-9_$.]){}\b(\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*))?",
         regex::escape(param)
@@ -512,6 +523,13 @@ mod block_handler_tests {
         ));
         assert!(reads(
             "export function handleBlock(b: ethereum.Block): void { x.parent = b.parentHash; }"
+        ));
+    }
+
+    #[test]
+    fn a_block_named_in_a_string_is_not_a_use() {
+        assert!(!reads(
+            "export function handleBlock(block: ethereum.Block): void { store.set('P', \"block-\" + block.number.toString()); } // block"
         ));
     }
 
