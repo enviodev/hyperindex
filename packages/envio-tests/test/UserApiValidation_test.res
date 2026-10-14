@@ -1896,7 +1896,7 @@ type enum { id: ID! }
     it(name, t => expectParseError(t, ~schema, baseYaml, message))
   })
 
-  it("rejects entities without a storage route when multiple backends have no default", t => {
+  it("rejects entities without a storage route when no backend is a default", t => {
     expectParseError(
       t,
       ~schema=`
@@ -1907,7 +1907,8 @@ type Mango { id: ID! }
       `
 name: missing-storage-route
 storage:
-  postgres: true
+  postgres:
+    default: false
   clickhouse: true
 chains:
   - id: 1
