@@ -782,9 +782,12 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
         async ({ event, context }: any) => {
           if ((skipPreload && context.isPreload) || !owns(event) || !live(event)) return;
-          const graphEvent = makeEvent(event);
           await (context as any).runSync(() =>
-            runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
+            // A fresh event per run: the handler is replayed while it waits on
+            // calls, and one that edits its event (Seamless rewrites
+            // `event.parameters[2]` into the newer shape) must not meet its own
+            // edit on the next round.
+            runInScope(makeScope(event, context, "handler"), () => fn(makeEvent(event))),
           );
         },
       );
@@ -800,12 +803,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           async ({ event, context }: any) => {
             if (!owns(event) || !live(event)) return;
             await primeOnceHandlers(event.chainId, context);
-            const graphEvent = makeEvent(event);
             const scope = makeScope(event, context, "register");
             const { pass, settle } = startRegisterPass(scope.position ?? 0);
             scope.pass = pass;
             try {
-              await runRegisterRounds(scope, () => fn(graphEvent));
+              await runRegisterRounds(scope, () => fn(makeEvent(event)));
             } finally {
               settle();
             }
