@@ -87,7 +87,9 @@ its type and stores raw bytes, see §6b), `Int8` → `BigInt` (Int8 is a
 only safe to 2^53, so `BigInt` is the lossless fit), `Timestamp` → envio's
 `Timestamp` (graph-ts sees an i64 of microseconds, envio stores a Postgres
 timestamp — the shim converts micros ↔ date at the store boundary, keyed
-off the entity schema, §4), stored entity lists → `[String!]!` id arrays,
+off the entity schema, §4), stored entity lists → `[String!]!` id arrays
+(also when written with nullable elements, `[Mint]!` as Uniswap v2 forks do:
+a mapping stores ids there, never nulls),
 `_Schema_ @fulltext` stripped, and every `@derivedFrom` field → `[T!]!`
 whatever nullability it was written with, including the one-to-one
 `Registration @derivedFrom(...)` the ENS subgraph uses. The lookup is the

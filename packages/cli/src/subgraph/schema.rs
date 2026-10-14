@@ -142,6 +142,17 @@ fn is_list(wrappers: &[Wrapper]) -> bool {
     wrappers.contains(&Wrapper::List)
 }
 
+fn non_null_elements(wrappers: &[Wrapper]) -> Vec<Wrapper> {
+    let mut out = Vec::with_capacity(wrappers.len() + 1);
+    for (index, wrapper) in wrappers.iter().enumerate() {
+        out.push(*wrapper);
+        if *wrapper == Wrapper::List && wrappers.get(index + 1) != Some(&Wrapper::NonNull) {
+            out.push(Wrapper::NonNull);
+        }
+    }
+    out
+}
+
 /// A list graph-node stores and envio's store can't, as the feature to report.
 fn unstorable_list(base: &str, wrappers: &[Wrapper]) -> Option<&'static str> {
     let nullable_element = wrappers.iter().enumerate().any(|(index, wrapper)| {
@@ -361,6 +372,15 @@ fn render_fields(
             ));
             continue;
         }
+
+        // The original Uniswap v2 schema, and most of its forks, declare
+        // `mints: [Mint]!`. A list of entities holds their ids, which a mapping
+        // never leaves null, so its elements are stored as the ids they are.
+        let wrappers = if entity_names.contains(&base) {
+            non_null_elements(&wrappers)
+        } else {
+            wrappers
+        };
 
         if let Some(shape) = unstorable_list(&base, &wrappers) {
             report.unsupported(shape, location.clone());
@@ -879,6 +899,45 @@ type Transfer implements DomainEvent @entity {
                id: ID!\n  \
                domain: Domain! @index\n\
              }"
+        );
+    }
+
+    // PancakeSwap and most Uniswap v2 forks: `Transaction.mints: [Mint]!`.
+    #[test]
+    fn stores_an_entity_list_with_nullable_elements_as_ids() {
+        let (translation, report) = translate_ok(
+            r#"
+type Transaction @entity {
+  id: ID!
+  mints: [Mint]!
+  burns: [Burn]
+}
+
+type Mint @entity {
+  id: ID!
+}
+
+type Burn @entity {
+  id: ID!
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            (
+                translation.text.as_str(),
+                translation.entity_list_fields.get("Transaction").cloned(),
+            ),
+            (
+                "type Transaction {\n  \
+                   id: ID!\n  \
+                   mints: [String!]!\n  \
+                   burns: [String!]\n\
+                 }\n\n\
+                 type Mint {\n  id: ID!\n}\n\n\
+                 type Burn {\n  id: ID!\n}",
+                Some(vec!["mints".to_string(), "burns".to_string()]),
+            )
         );
     }
 
