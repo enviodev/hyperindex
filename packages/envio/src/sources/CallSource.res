@@ -166,9 +166,7 @@ let wrap = (
           isWildcard: registration.isWildcard,
           startBlock: registration.startBlock->Nullable.fromOption,
         }),
-        addresses: addresses->(
-          Utils.magic: dict<array<Address.t>> => dict<array<string>>
-        ),
+        addresses: addresses->(Utils.magic: dict<array<Address.t>> => dict<array<string>>),
         rpcUrls: installed.rpcUrls,
       }) catch {
       | exn =>
@@ -203,8 +201,7 @@ let wrap = (
         // The partition's own slice of the contract's addresses, as a log's
         // router applies it; a client-filtered contract answers to the store.
         let ownsCall =
-          registration.isWildcard ||
-          {
+          registration.isWildcard || {
             let address = callItem.payload->Internal.getPayloadSrcAddress
             if clientFiltered(contractName) {
               addressStore->AddressStore.isIndexedAt(address, contractName, callItem.blockNumber)
@@ -237,7 +234,9 @@ let wrap = (
         {
           ...logs,
           parsedQueueItems: Array.concat(
-            logs.parsedQueueItems->Array.filter(item => item->Internal.getItemBlockNumber <= latest),
+            logs.parsedQueueItems->Array.filter(item =>
+              item->Internal.getItemBlockNumber <= latest
+            ),
             callItems,
           ),
           latestFetchedBlockNumber: Math.Int.min(logs.latestFetchedBlockNumber, latest),
@@ -266,7 +265,8 @@ let wrapSources = (
   ~ecosystem,
 ) =>
   switch installed.contents {
-  | Some(installed) if onEventRegistrations->Array.some(registration => registration->callRankOf->Option.isSome) =>
+  | Some(installed)
+    if onEventRegistrations->Array.some(registration => registration->callRankOf->Option.isSome) =>
     sources->Array.map(source => source->wrap(~addressStore, ~ecosystem, installed))
   | _ => sources
   }

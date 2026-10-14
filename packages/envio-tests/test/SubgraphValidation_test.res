@@ -97,13 +97,12 @@ describe("subgraph translation: unsupported features", () => {
   it("refuses a call handler on a data source without an address, as graph-node does", t => {
     translate(
       ~schema=baseSchema,
-      ~manifest=manifestWith(`${plainEventHandler}
+      ~manifest=manifestWith(
+        `${plainEventHandler}
       callHandlers:
         - function: transfer(address,uint256)
-          handler: handleTransferCall`)->String.replace(
-        "      address: \"0x1111111111111111111111111111111111111111\"\n",
-        "",
-      ),
+          handler: handleTransferCall`,
+      )->String.replace("      address: \"0x1111111111111111111111111111111111111111\"\n", ""),
       ~extraAbi=`{"type":"function","name":"transfer","stateMutability":"nonpayable","inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"outputs":[{"name":"","type":"bool"}]}`,
     )->expectFindingHelper(
       t,
@@ -503,10 +502,11 @@ issue so we can add it: https://github.com/enviodev/hyperindex/issues`)
   })
 
   it("reports every finding in one run", t => {
-    let manifest = manifestWith(plainEventHandler)->String.replace(
-      "dataSources:",
-      "features:\n  - teleportation\ngraft:\n  base: QmBase\n  block: 100\ndataSources:",
-    )
+    let manifest =
+      manifestWith(plainEventHandler)->String.replace(
+        "dataSources:",
+        "features:\n  - teleportation\ngraft:\n  base: QmBase\n  block: 100\ndataSources:",
+      )
     let message = translate(
       ~manifest,
       ~schema=`

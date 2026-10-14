@@ -464,17 +464,16 @@ fn contract_config(
         handler.name = call_event_name(&handler.function);
         events.push(call_event_config(&handler.name));
     }
-    let mut block_calls = 0;
-    for handler in source
+    for (ordinal, handler) in source
         .block_handlers
         .iter_mut()
         .filter(|handler| handler.filter == manifest::BlockFilter::Call)
+        .enumerate()
     {
-        handler.call_event = match block_calls {
+        handler.call_event = match ordinal {
             0 => CALL_ANY_EVENT.to_string(),
             n => format!("{CALL_ANY_EVENT}_{n}"),
         };
-        block_calls += 1;
         events.push(call_event_config(&handler.call_event));
     }
 
@@ -994,6 +993,40 @@ type Gravatar @entity {
                 "__envio_call_9a6e09c9_setGravatar(bytes callInput, bytes callOutput, address \
                  callFrom, uint256 callValue, uint256 callGasUsed)"
             ]
+        );
+    }
+
+    #[test]
+    fn gives_a_call_filtered_block_handler_its_call_trigger() {
+        let manifest = MANIFEST.replacen(
+            "      eventHandlers:",
+            "      blockHandlers:\n        - handler: handleBlockCall\n          filter:\n            \
+             kind: call\n      eventHandlers:",
+            1,
+        );
+        let translation = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        let source = &translation.runtime.manifest.data_sources[0];
+        let contract = &translation.human_config.contracts.as_ref().unwrap()[0];
+        assert_eq!(
+            (
+                source.block_handlers[0].call_event.as_str(),
+                contract
+                    .config
+                    .events
+                    .iter()
+                    .filter(|event| event.event.starts_with(CALL_ANY_EVENT))
+                    .count(),
+            ),
+            ("__envio_call_any", 1)
         );
     }
 
