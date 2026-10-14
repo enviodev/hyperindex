@@ -1825,10 +1825,7 @@ type Gravatar @entity {
                 &ambiguous(),
             )
         };
-        assert_eq!(
-            (with(&own).is_ok(), with(&"0x".repeat(1)).is_ok()),
-            (true, false)
-        );
+        assert_eq!((with(&own).is_ok(), with("0x").is_ok()), (true, false));
     }
 
     #[test]
