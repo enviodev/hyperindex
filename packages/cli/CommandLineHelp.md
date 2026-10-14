@@ -27,6 +27,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate up`↴](#envio-local-db-migrate-up)
 * [`envio local db-migrate down`↴](#envio-local-db-migrate-down)
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
+* [`envio subgraph-codegen`↴](#envio-subgraph-codegen)
 * [`envio start`↴](#envio-start)
 * [`envio metrics`↴](#envio-metrics)
 * [`envio metrics runtime`↴](#envio-metrics-runtime)
@@ -49,6 +50,7 @@ This document contains the help content for the `envio` command-line program.
 * `stop` — Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
 * `codegen` — Generate indexing code from user-defined configuration & schema files
 * `local` — Prepare local environment for envio testing
+* `subgraph-codegen` — Write a subgraph's generated/ tree (schema entities, ABI bindings, templates) without graph-cli. Reads the manifest named by --config (default subgraph.yaml)
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
@@ -366,6 +368,18 @@ Drop database schema
 Setup database by dropping schema and then running migrations
 
 **Usage:** `envio local db-migrate setup`
+
+
+
+## `envio subgraph-codegen`
+
+Write a subgraph's generated/ tree (schema entities, ABI bindings, templates) without graph-cli. Reads the manifest named by --config (default subgraph.yaml)
+
+**Usage:** `envio subgraph-codegen [OPTIONS]`
+
+###### **Options:**
+
+* `--output-dir <OUTPUT_DIR>` — Where to write the generated tree. Defaults to where the mappings import it from, else ./generated
 
 
 
