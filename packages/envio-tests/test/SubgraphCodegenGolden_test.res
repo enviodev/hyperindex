@@ -100,12 +100,12 @@ describe("graph codegen goldens", () => {
         },
       },
     });
-    t.expect(await indexer.Probe.getAll()).toEqual([
-      { id: "ratio", name: "100" },
+    t.expect((await indexer.Probe.getAll()).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
       { id: "decimals", name: "18" },
+      { id: "kinds", name: "8,0,4|9,0,7" },
       { id: "members", name: "0x00000000000000000000000000000000000000bb/7" },
       { id: "parameters", name: "2" },
-      { id: "kinds", name: "8,0,4|9,0,7" },
+      { id: "ratio", name: "100" },
     ]);
   });
 });

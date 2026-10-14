@@ -1166,8 +1166,17 @@ const storeImpl = {
     const scope = currentScope();
     const row = toRow(entityType, data);
     row.id = id;
-    if (scope.mode === "register") return registerWrite(scope, entityType, id, row);
-    entityContext(entityType).set(row);
+    // graph-node merges a save onto the stored entity (EntityCache::set is an
+    // Update, merged by merge_remove_null_fields): a field this instance
+    // doesn't set keeps its stored value, an explicit null clears it. ENS's
+    // handleAddrChanged saves a fresh `new Resolver(id)` and relies on it.
+    if (scope.mode === "register") {
+      const stored = registerRead(scope, entityType, id, false);
+      return registerWrite(scope, entityType, id, stored ? { ...toRow(entityType, stored), ...row } : row);
+    }
+    const table = entityContext(entityType);
+    const stored = table.getSync(id);
+    table.set(stored ? { ...stored, ...row } : row);
   },
   remove(entityType: string, id: string): void {
     const scope = currentScope();

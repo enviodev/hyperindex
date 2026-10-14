@@ -121,7 +121,7 @@ query and is dropped; stored, it is an error.
 
 | API | Mapping |
 |---|---|
-| `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides. A relation is the related id under the field's own name in graph-ts and `<field>_id` in envio, renamed at the boundary |
+| `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides. A save merges onto the stored entity, as graph-node's does: a field the instance doesn't set keeps its stored value, an explicit null clears it. A relation is the related id under the field's own name in graph-ts and `<field>_id` in envio, renamed at the boundary |
 | Integer division | AssemblyScript divides two integers as integers and JavaScript doesn't, and the difference travels into ids and `Int` columns. Each `a / b` and `a /= b` in a project file is rewritten as it loads (§6a) to a helper that truncates only when both operands really are integers |
 | A handler the mapping doesn't export | skipped, as `graph build` does — it doesn't check either, and Aave's mainnet manifest names one its mappings renamed years ago |
 | A field the schema declares that nothing has set | graph-node's store returns every column, envio's returns what was written — the shim answers `null` rather than refusing, so a mapping's null check reads the same |
