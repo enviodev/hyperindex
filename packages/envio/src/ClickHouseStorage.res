@@ -347,7 +347,7 @@ let make = (
 
   // Lookup tables are local to the node, so a replicated deployment does
   // without them.
-  let lookupsEnabled = !Env.ClickHouse.replicated()
+  let lookupsEnabled = !Env.ClickHouse.replicated() && Env.ClickHouse.lookupTables()
   let lookups: dict<lookup> = Dict.make()
   let entitiesByTable: dict<Internal.entityConfig> = Dict.make()
   let rememberEntities = (entities: array<Internal.entityConfig>) =>

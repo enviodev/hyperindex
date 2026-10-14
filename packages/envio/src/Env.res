@@ -165,6 +165,17 @@ module ClickHouse = {
       )
     }
   let databaseEngine = () => read("ENVIO_CLICKHOUSE_DATABASE_ENGINE")
+  // A ClickHouse-only indexer answers handler loads by id from RocksDB tables,
+  // which not every deployment offers (ClickHouse Cloud doesn't).
+  let lookupTables = () =>
+    switch read("ENVIO_CLICKHOUSE_LOOKUP_TABLES") {
+    | None | Some("true") => true
+    | Some("false") => false
+    | Some(other) =>
+      JsError.throwWithMessage(
+        `Invalid ENVIO_CLICKHOUSE_LOOKUP_TABLES value: "${other}". Expected "true" or "false".`,
+      )
+    }
 }
 
 module Hasura = {
