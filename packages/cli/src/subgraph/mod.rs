@@ -457,8 +457,14 @@ pub fn translate(
     } else {
         chains.keys().cloned().collect()
     };
+    let mut template_chains: HashSet<u64> = HashSet::new();
     for source in manifest.templates.iter_mut() {
         let config = contract_config(source, files, &usage, &mut report);
+        let ids = match source.chain_id {
+            Some(id) => vec![id],
+            None => template_chain_ids.clone(),
+        };
+        template_chains.extend(ids.iter().copied());
 
         // graph-node keeps `dataSources` and `templates` in separate namespaces,
         // so a name can appear in both — Balancer's FXPoolDeployer is a fixed
@@ -516,10 +522,6 @@ pub fn translate(
             }),
         }
 
-        let ids = match source.chain_id {
-            Some(id) => vec![id],
-            None => template_chain_ids.clone(),
-        };
         for chain_id in ids {
             // A template's network has to be one a data source already put on
             // the config: only `dataSources` open a chain. Naming any other
@@ -545,6 +547,33 @@ pub fn translate(
                     config: None,
                 });
             }
+        }
+    }
+
+    // graph-node stops at its data sources' last endBlock only when nothing
+    // else can produce a trigger, and an instance of a template has no end of
+    // its own (core/src/subgraph/instance_manager.rs, `max_end_block`).
+    for chain_id in &template_chains {
+        if let Some(chain) = chains.get_mut(chain_id) {
+            chain.end_block = None;
+        }
+    }
+    // envio ends whole chains, not single contracts, so a data source stops at
+    // its endBlock only if its chain stops there too. Past it, graph-node runs
+    // none of its handlers; envio would keep running them all.
+    for source in &manifest.data_sources {
+        let (Some(end_block), Some(chain_id)) = (source.end_block, source.chain_id) else {
+            continue;
+        };
+        if chains.get(&chain_id).and_then(|chain| chain.end_block) != Some(end_block) {
+            report.unsupported(
+                "a data source endBlock while other data sources or templates on its network \
+                 keep indexing",
+                format!(
+                    "subgraph.yaml → dataSources → {} → source.endBlock ({end_block})",
+                    source.name
+                ),
+            );
         }
     }
 
@@ -842,8 +871,9 @@ type Gravatar @entity {
 
     #[test]
     fn carries_a_data_source_end_block_onto_its_chain() {
+        let without_templates = MANIFEST.split("templates:").next().unwrap();
         let single = translate(
-            MANIFEST,
+            without_templates,
             SCHEMA,
             "gravatar",
             None,
@@ -853,7 +883,7 @@ type Gravatar @entity {
         )
         .unwrap();
 
-        let bounded_source = MANIFEST.replace(
+        let bounded_source = without_templates.replace(
             "      startBlock: 6175244",
             "      startBlock: 6175244\n      endBlock: 6180000",
         );
@@ -877,6 +907,65 @@ type Gravatar @entity {
         );
     }
 
+    // graph-node keeps indexing a template's instances after the data source
+    // that created them ends, and stops nothing else at a data source's
+    // endBlock; envio can only end the whole chain. Uniswap v3: Factory with an
+    // endBlock, Pool template; autonolas predict-polymarket: the retired v1
+    // exchange next to open-ended sources.
+    #[test]
+    fn refuses_an_end_block_that_would_stop_more_than_its_data_source() {
+        let bounded = MANIFEST.replace(
+            "      startBlock: 6175244",
+            "      startBlock: 6175244\n      endBlock: 6180000",
+        );
+        let with_template = translate(
+            &bounded,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap_err()
+        .to_string();
+
+        let one_source = bounded.split("templates:").next().unwrap();
+        let open_ended = MANIFEST
+            .split("templates:")
+            .next()
+            .unwrap()
+            .split("dataSources:")
+            .nth(1)
+            .unwrap()
+            .replace("name: Gravity", "name: GravityV2");
+        let beside_an_open_source = translate(
+            &format!("{one_source}{open_ended}"),
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap_err()
+        .to_string();
+
+        let refusal = "doesn't support a data source endBlock while other data sources or \
+                       templates on its network keep indexing";
+        let location = "dataSources → Gravity → source.endBlock (6180000)";
+        assert_eq!(
+            (
+                with_template.contains(refusal),
+                with_template.contains(location),
+                beside_an_open_source.contains(refusal),
+                beside_an_open_source.contains(location),
+                beside_an_open_source.contains("GravityV2"),
+            ),
+            (true, true, true, true, false),
+            "{with_template}\n{beside_an_open_source}"
+        );
+    }
     #[test]
     fn selects_receipt_fields_only_where_declared() {
         let translation = translate(

@@ -43,7 +43,8 @@ by name. Newer than 0.0.9 is a §7 error.
 
 | Feature | Mapping | Status |
 |---|---|---|
-| Data source (`address`, `abi`, `startBlock`, `endBlock`) | `contracts` + `chains[].contracts`, `start_block`/`end_block` | ✅ |
+| Data source (`address`, `abi`, `startBlock`) | `contracts` + `chains[].contracts`, `start_block` | ✅ |
+| Data source `endBlock` | the chain's `end_block` when every data source on the network has one and no template is on it (graph-node's `max_end_block` rule); envio ends whole chains, so an endBlock that would stop only its own data source (beside open-ended sources or templates, or before another source's) is a §7 error | ⚠️ |
 | `network: mainnet` | `chains[].id` through a snapshot of The Graph's networks registry (ids and aliases; `scripts/sync-graph-networks.mjs`, drift reported in CI), then Envio's own chain names | ✅ |
 | Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper | ✅ |
 | `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — the receipt-only ones are HyperSync fields (§6b); `receipt.logs` → §7 error on access | ⚠️ |
