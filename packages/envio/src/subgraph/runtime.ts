@@ -96,6 +96,8 @@ type SubgraphConfig = {
 
 let hooksInstalled = false;
 let projectRoot: string | null = null;
+/** Every project file the load hook has compiled, so their exports can be read back. */
+const projectModules = new Set<string>();
 
 /**
  * Mappings resolve `@graphprotocol/graph-ts` to the shim. The project's own
@@ -146,6 +148,7 @@ function installResolveHook(root: string) {
         return nextLoad(url, context);
       }
       const file = fileURLToPath(url);
+      projectModules.add(url);
       return {
         format: "module",
         source: subgraphFileToJavascript(readFileSync(file, "utf8"), file),
@@ -235,6 +238,35 @@ async function loadMapping(
     // An unknown named import fails at Node's ESM link step, before any Proxy
     // in the shim can see it — rewrap it with the mapping that caused it.
     throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}`);
+  }
+}
+
+/**
+ * The generated event class each handler declares, keyed by the handler
+ * function itself. A manifest's mapping file may re-export handlers written in
+ * other files (SSV's does), and the class is exported only by the module the
+ * handler is written in.
+ */
+const eventClasses = new Map<Function, Function>();
+const indexedModules = new Set<string>();
+
+async function indexEventClasses(): Promise<void> {
+  for (const url of projectModules) {
+    if (indexedModules.has(url)) continue;
+    indexedModules.add(url);
+    let module: Record<string, any>;
+    try {
+      // Already evaluated: this only reads its namespace back.
+      module = await import(url);
+    } catch {
+      continue;
+    }
+    const classes = module[EVENT_CLASSES_EXPORT];
+    if (!classes) continue;
+    for (const [name, Class] of Object.entries(classes)) {
+      const handler = module[name];
+      if (typeof handler === "function" && typeof Class === "function") eventClasses.set(handler, Class);
+    }
   }
 }
 
@@ -553,6 +585,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       mappingExports: {},
     });
 
+    await indexEventClasses();
     const owns = ownerOf(source);
     // After codegen, so the analysis can follow the mapping into
     // `generated/templates.ts`.
@@ -586,7 +619,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       };
       // Built as the generated class the handler declares, when it declares
       // one: its `params` getters are graph codegen's own.
-      const EventClass = mapping[EVENT_CLASSES_EXPORT]?.[handler.handler] ?? ethereum.Event;
+      const EventClass = mapping[EVENT_CLASSES_EXPORT]?.[handler.handler] ?? eventClasses.get(fn) ?? ethereum.Event;
       const makeEvent = (event: unknown) => makeGraphEvent(event, kind, EventClass);
 
       const makeScope = (event: any, context: any, mode: Scope["mode"]): Scope => ({
