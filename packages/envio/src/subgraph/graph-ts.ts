@@ -21,7 +21,7 @@ import {
   parseAbiParameters,
   type AbiParameter,
 } from "viem";
-import { currentScope } from "./scope.ts";
+import { currentScope, type Scope } from "./scope.ts";
 import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-enums.ts";
 import { parseSignature, splitTypes } from "./abi-types.ts";
 import {
@@ -1073,29 +1073,96 @@ function entityContext(entityType: string) {
   return table;
 }
 
+/**
+ * What the register passes have written, at the position of the event that
+ * wrote it. Nothing is in envio's store at fetch time, so this is the register
+ * pass's only notion of state: a handler that loads an entity an earlier
+ * creating handler saved — Aave's `handleReserveInitialized` before
+ * `ATokenContract.create()`, Venus's `getOrCreateMarket` — sees it, as it
+ * would on graph-node, instead of null. A read only sees writes from strictly
+ * earlier events on its chain; anything older than the cap, or written by a
+ * handler that creates nothing (and so gets no register pass), reads null as
+ * before.
+ */
+const registerStore = new Map<string, { position: number; row: Record<string, unknown> | null }[]>();
+const REGISTER_STORE_LIMIT = 200_000;
+const REGISTER_STORE_VERSIONS = 8;
+
+function registerStoreKey(chainId: number, entityType: string, id: string): string {
+  return `${chainId}\u0000${entityType}\u0000${id}`;
+}
+
+function registerRead(scope: Scope, entityType: string, id: string, sameBlock: boolean) {
+  const key = registerStoreKey(scope.dataSource.chainId, entityType, id);
+  if (scope.writes?.has(key)) return toEntity(entityType, scope.writes.get(key));
+  const position = scope.position ?? 0;
+  const versions = registerStore.get(key) ?? [];
+  for (let index = versions.length - 1; index >= 0; index--) {
+    const version = versions[index];
+    if (version.position >= position) continue;
+    if (sameBlock && Math.floor(version.position / POSITION_BLOCK) !== Math.floor(position / POSITION_BLOCK)) {
+      return null;
+    }
+    return toEntity(entityType, version.row);
+  }
+  return null;
+}
+
+/** An event's place in its chain: block, then log index. */
+export const POSITION_BLOCK = 1_000_000;
+
+/** Keeps a completed register round's writes for the passes after it. */
+export function commitRegisterWrites(scope: Scope): void {
+  const writes = scope.writes;
+  scope.writes = undefined;
+  if (!writes || writes.size === 0) return;
+  const position = scope.position ?? 0;
+  for (const [key, row] of writes) {
+    let versions = registerStore.get(key);
+    if (!versions) {
+      if (registerStore.size >= REGISTER_STORE_LIMIT) registerStore.clear();
+      versions = [];
+      registerStore.set(key, versions);
+    }
+    const at = versions.findIndex((version) => version.position >= position);
+    if (at === -1) versions.push({ position, row });
+    else if (versions[at].position === position) versions[at] = { position, row };
+    else versions.splice(at, 0, { position, row });
+    if (versions.length > REGISTER_STORE_VERSIONS) versions.shift();
+  }
+}
+
+/** Between test indexers, whose chains restart at block zero. */
+export function resetRegisterStore(): void {
+  registerStore.clear();
+}
+
+function registerWrite(scope: Scope, entityType: string, id: string, row: Record<string, unknown> | null) {
+  scope.writes ??= new Map();
+  scope.writes.set(registerStoreKey(scope.dataSource.chainId, entityType, id), row);
+}
+
 const storeImpl = {
   get(entityType: string, id: string): Entity | null {
-    const { mode } = currentScope();
-    // Nothing has been written at fetch time, so the register pass reads null
-    // rather than a value that would differ between the two passes.
-    if (mode === "register") return null;
+    const scope = currentScope();
+    if (scope.mode === "register") return registerRead(scope, entityType, id, false);
     return toEntity(entityType, entityContext(entityType).getSync(id));
   },
   get_in_block(entityType: string, id: string): Entity | null {
-    const { mode } = currentScope();
-    if (mode === "register") return null;
+    const scope = currentScope();
+    if (scope.mode === "register") return registerRead(scope, entityType, id, true);
     return toEntity(entityType, entityContext(entityType).getInBlockSync(id));
   },
   set(entityType: string, id: string, data: Entity): void {
-    const { mode } = currentScope();
-    if (mode === "register") return;
+    const scope = currentScope();
     const row = toRow(entityType, data);
     row.id = id;
+    if (scope.mode === "register") return registerWrite(scope, entityType, id, row);
     entityContext(entityType).set(row);
   },
   remove(entityType: string, id: string): void {
-    const { mode } = currentScope();
-    if (mode === "register") return;
+    const scope = currentScope();
+    if (scope.mode === "register") return registerWrite(scope, entityType, id, null);
     entityContext(entityType).deleteUnsafe(id);
   },
   /**

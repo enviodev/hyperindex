@@ -30,6 +30,9 @@ import {
   json as jsonNamespace,
   makeBlockHandlerBlock,
   makeEvent as makeGraphEvent,
+  commitRegisterWrites,
+  resetRegisterStore,
+  POSITION_BLOCK,
   ethereumValueToJs,
 } from "./graph-ts.ts";
 import { encodeArg, decodeArg, makeCallEffect } from "./calls.ts";
@@ -317,6 +320,8 @@ const maxRegisterRounds = 100;
 async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
   for (let round = 1; round <= maxRegisterRounds; round++) {
     scope.awaiting = undefined;
+    // A suspended round is replayed from the top, so its writes are dropped.
+    scope.writes = undefined;
     let suspended = false;
     try {
       runInScope(scope, fn);
@@ -325,21 +330,25 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
         // A host op that failed is never forgiven: the mapping was about to
         // decide what to create from its answer, and the handler pass cannot
         // repair a missed registration — addresses are registered at fetch
-        // time. Fail the batch and let the retry get a real answer.
+        // time. `untilAnswered` has already outlasted anything transient.
         if (error instanceof RegisterHostFailure) throw error;
         // This pass exists to collect `dataSource.create()` calls, and it runs
-        // against a context that reads null for everything — so a handler that
-        // assumes its entities exist throws here even though it is perfectly
-        // correct. Nothing was registered, so there is nothing this pass could
-        // have been for; the same mapping runs again with a real store, and any
-        // error that is genuinely the mapping's surfaces there.
-        if (scope.registered.size === 0) return;
-        throw error;
+        // against a store that only holds what earlier register passes wrote —
+        // so a handler that assumes its entities exist can throw here even
+        // though it is perfectly correct, before or after a create. What it
+        // registered until then stands; the same mapping runs again with the
+        // real store, and any error that is genuinely the mapping's surfaces
+        // there.
+        commitRegisterWrites(scope);
+        return;
       }
       suspended = true;
     }
     const awaiting = scope.awaiting;
-    if (!suspended) return;
+    if (!suspended) {
+      commitRegisterWrites(scope);
+      return;
+    }
     if (!awaiting || awaiting.length === 0) {
       throw new Error(
         "Envio Subgraph suspended the register pass with nothing to wait for. " +
@@ -357,6 +366,7 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook(config.root);
   resetRpcClients();
+  resetRegisterStore();
 
   // One effect for every contract call: envio already batches and dedupes
   // effect calls in preload, and the block number in the input is what keeps
@@ -552,6 +562,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         },
         registered: new Set(),
         blockNumber: event.block.number,
+        position: event.block.number * POSITION_BLOCK + event.logIndex,
         mappingExports: mapping,
       });
 

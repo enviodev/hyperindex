@@ -147,10 +147,16 @@ query and is dropped; stored, it is an error.
 which runs at fetch time — before any entities exist. For each
 template-creating event the shim registers a wrapper that reruns the same
 mapping in register mode: `create()` → `context.chain.<Name>.add(addr)`
-(deduped, so replays are idempotent); writes/logs → no-ops; **reads → `null`**
-(no entity state exists at fetch time — a `create()` conditioned on loaded
-state can mis-register; documented caveat, rare in practice); host ops
-(`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
+(deduped, so replays are idempotent); logs → no-ops; **writes go to the
+register pass's own store, and reads see what an earlier register pass wrote**
+(no envio entity state exists at fetch time). A read sees only writes from
+strictly earlier events on its chain, kept up to 200k entities (then dropped,
+reading `null` again); an entity saved only by a handler that creates
+nothing — which gets no register pass — reads `null`, so a `create()`
+conditioned on such state can still mis-register. A mapping that throws in the
+pass (usually on a `null` it would never see on graph-node) keeps whatever it
+registered before the throw; the handler pass surfaces its real errors. Host
+ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
 suspend-and-replay, capped at 100 rounds; a host op that fails fails the
 batch rather than dropping the registration. Safe because graph-node already
 requires mappings to be deterministic.

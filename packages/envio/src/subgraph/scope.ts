@@ -44,6 +44,10 @@ export type Scope = {
   awaiting?: Promise<unknown>[];
   /** The block a contract call is evaluated against, as graph-node does. */
   blockNumber: number;
+  /** Where the event sits in its chain, for what the register pass may read. */
+  position?: number;
+  /** The register round's own writes, kept only once the round completes. */
+  writes?: Map<string, Record<string, unknown> | null>;
   /** The mapping module, so `ipfs.map` can reach the callback it names. */
   mappingExports: Record<string, any>;
 };
