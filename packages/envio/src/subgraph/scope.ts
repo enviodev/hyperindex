@@ -1,3 +1,5 @@
+import type { AggregationDef } from "./aggregations.ts";
+
 import { AsyncLocalStorage } from "node:async_hooks";
 
 /** What a wrapper is doing when it runs the mapping. */
@@ -16,6 +18,9 @@ export type SubgraphSchema = {
   >;
   /** The context accessor envio generated for each entity, by schema name. */
   entityAccessors: Record<string, string>;
+  /** `@entity(timeseries: true)` types: saved with an automatic id and timestamp. */
+  timeseriesEntities: string[];
+  aggregations: AggregationDef[];
 };
 
 /** One event's register pass while it runs. */
@@ -53,6 +58,10 @@ export type Scope = {
   awaiting?: Promise<unknown>[];
   /** The block a contract call is evaluated against, as graph-node does. */
   blockNumber: number;
+  /** The block's time in seconds: what a timeseries entity is stamped with. */
+  blockSeconds?: () => number | string;
+  /** Timeseries entities saved so far by this run of the handler. */
+  timeseriesSequence?: number;
   /** Where the event sits in its chain, for what the register pass may read. */
   position?: number;
   /** The register round's own writes, kept only once the round completes. */
