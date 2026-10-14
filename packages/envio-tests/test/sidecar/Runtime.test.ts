@@ -687,6 +687,72 @@ describe("sidecar runtime: webhooks from outside a call", () => {
   });
 });
 
+describe("sidecar runtime: jobs with runOnStart", () => {
+  it("runs a runOnStart job once right after start, then on its interval without overlap, and close waits for it", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const gate = deferred();
+    cleanups.push(async () => gate.resolve());
+    const hourlyRan = deferred();
+    const busyStarted = deferred();
+    const counts = { hourly: 0, busy: 0, plain: 0 };
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: noop,
+        jobs: {
+          hourly: {
+            every: "1h",
+            runOnStart: true,
+            run: () => {
+              counts.hourly++;
+              hourlyRan.resolve();
+            },
+          },
+          busy: {
+            every: "20ms",
+            runOnStart: true,
+            run: async ({ emit }) => {
+              counts.busy++;
+              busyStarted.resolve();
+              await gate.promise;
+              await emit.tick({ at: 1 }, { chainId: 1 });
+            },
+          },
+          plain: {
+            every: "1h",
+            run: () => {
+              counts.plain++;
+            },
+          },
+        },
+      },
+      { startJobs: true },
+    );
+    await Promise.all([hourlyRan.promise, busyStarted.promise]);
+    // The busy job holds its start-up run: its interval ticks are skipped, not stacked.
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const whileHeld = { ...counts };
+    const metrics = await (await fetch(`http://127.0.0.1:${running.internalPort}/metrics`)).text();
+    const skipped = Number(/envio_sidecar_job_runs_total\{job="busy",outcome="skipped"\} (\d+)/.exec(metrics)?.[1] ?? 0);
+    const closing = running.close({ graceMs: 2_000 });
+    setTimeout(() => gate.resolve(), 30);
+    const report = await closing;
+    expect({ whileHeld, skippedTicks: skipped >= 2, report, ticks: indexer.received.map((r) => r.name) }).toEqual({
+      whileHeld: { hourly: 1, busy: 1, plain: 0 },
+      skippedTicks: true,
+      report: { drained: true, graceMs: 2_000, abandoned: { running: { priceSwap: 0, notify: 0 }, queued: { priceSwap: 0, notify: 0 }, emits: 0, jobs: 0 } },
+      ticks: ["tick"],
+    });
+  });
+
+  it("does not run jobs on start unless asked, and refuses a non-boolean runOnStart", () => {
+    expect(() =>
+      createSidecar(contract, { functions: noop, jobs: { bad: { every: "1m", runOnStart: "yes" as unknown as boolean, run: () => {} } } }),
+    ).toThrow("createSidecar: job 'bad' runOnStart must be true or false");
+  });
+});
+
 describe("sidecar runtime: close", () => {
   it("stops taking calls, then lets running and queued functions and their emits finish", async () => {
     // The first webhook meets a busy indexer, so the emit is still retrying when close starts.

@@ -69,6 +69,7 @@ export default createSidecar(contract, {
   jobs: {
     refreshPrices: {
       every: "5m",
+      runOnStart: true,
       run: async ({ emit, indexer }) => {
         const tokens = await indexer.Token.getAll({ limit: 100 });
         for (const token of tokens) await emit.pricesRefreshed({ token: "0xabc", usd: 1, at: Date.now() }, { chainId: 1 });

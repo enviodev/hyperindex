@@ -55,6 +55,9 @@ export type SidecarJobArgs<C extends SidecarContract> = {
 export type SidecarJob<C extends SidecarContract> = {
   /** `"30s"`, `"5m"`, `"1h"` or milliseconds. */
   readonly every: string | number;
+  /** Also run once as soon as the sidecar is listening, instead of waiting a
+   * full interval for the first run. Default false. */
+  readonly runOnStart?: boolean;
   readonly run: (args: SidecarJobArgs<C>) => Promise<void> | void;
 };
 
@@ -274,6 +277,9 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       throw new Error(`createSidecar: job '${name}' must be { every, run }`);
     }
     parseEvery(job.every);
+    if (job.runOnStart !== undefined && typeof job.runOnStart !== "boolean") {
+      throw new Error(`createSidecar: job '${name}' runOnStart must be true or false`);
+    }
   }
 
   const start = async (options: StartOptions = {}): Promise<RunningSidecar> => {
@@ -647,6 +653,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     }
 
     const timers: NodeJS.Timeout[] = [];
+    const startupTicks: Array<() => void> = [];
     if (options.startJobs ?? true) {
       for (const [name, job] of Object.entries(jobs)) {
         const jobLog = toUserLogger(rootLogger.child({ job: name }));
@@ -680,9 +687,13 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             });
         };
         timers.push(setInterval(tick, parseEvery(job.every)));
+        if (job.runOnStart === true) startupTicks.push(tick);
       }
     }
     ready = true;
+    // Same tick as the interval's, so the start-up run counts as in flight: an
+    // interval tick during it is skipped and close() waits for it.
+    for (const tick of startupTicks) tick();
     log.info("sidecar started", {
       internalPort: portOf(internalServer),
       publicPort: portOf(publicServer),
