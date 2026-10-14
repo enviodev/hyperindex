@@ -94,6 +94,8 @@ type SubgraphConfig = {
   isDev: boolean;
 } & SubgraphSchema;
 
+const AS_DATE = Symbol.for("envio.subgraph.date");
+
 let hooksInstalled = false;
 let projectRoot: string | null = null;
 /** Every project file the load hook has compiled, so their exports can be read back. */
@@ -168,6 +170,26 @@ function installResolveHook(root: string) {
   };
   for (const [name, namespace] of Object.entries(assemblyScriptPrimitives)) {
     globals[name] ??= namespace;
+  }
+
+  // AssemblyScript's Date takes and sets its time as an i64, which the shim
+  // holds as a bigint; JavaScript's refuses one.
+  if (!(globals.Date as any)[AS_DATE]) {
+    const JsDate: DateConstructor = globals.Date;
+    const toNumber = (value: unknown) => (typeof value === "bigint" ? Number(value) : value);
+    class AsDate extends JsDate {
+      constructor(...args: unknown[]) {
+        super(...(args.map(toNumber) as []));
+      }
+      setTime(time: number | bigint): number {
+        return super.setTime(Number(time));
+      }
+      static fromString(text: string): Date {
+        return new AsDate(JsDate.parse(text));
+      }
+    }
+    Object.defineProperty(AsDate, AS_DATE, { value: true });
+    globals.Date = AsDate;
   }
 
   // AssemblyScript's DataView reads and writes a 64-bit integer as `u64`/`i64`

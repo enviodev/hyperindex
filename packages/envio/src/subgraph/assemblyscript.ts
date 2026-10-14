@@ -22,16 +22,30 @@ export function integerDivision(a: unknown, b: unknown): unknown {
   const integral = (v: unknown) =>
     typeof v === "bigint" || (typeof v === "number" && Number.isInteger(v));
   if (integral(left) && integral(right)) {
-    // Only i64 / i64 stays 64-bit; anything narrower is an i32 in AssemblyScript
-    // and must come back as a number, or the bigint spreads through every
-    // arithmetic that follows.
-    if (typeof left === "bigint" && typeof right === "bigint") {
-      return left / right;
+    // An i64 on either side makes it an i64 division (the other side is a
+    // literal or a widened integer); anything narrower is an i32 in
+    // AssemblyScript and must come back as a number, or the bigint spreads
+    // through every arithmetic that follows.
+    if (typeof left === "bigint" || typeof right === "bigint") {
+      return BigInt(left as bigint | number) / BigInt(right as bigint | number);
     }
     return Math.trunc(Number(left) / Number(right));
   }
   return (left as number) / (right as number);
 }
+
+/**
+ * An i64 with an integer on the other side is i64 arithmetic in
+ * AssemblyScript — `timestamp.toI64() * 1000` — where JavaScript refuses to
+ * mix a bigint with a number.
+ */
+const widened =
+  (op: (a: any, b: any) => unknown) =>
+  (a: unknown, b: unknown): unknown => {
+    if (typeof a === "bigint" && typeof b === "number" && Number.isInteger(b)) return op(a, BigInt(b));
+    if (typeof b === "bigint" && typeof a === "number" && Number.isInteger(a)) return op(BigInt(a), b);
+    return op(a, b);
+  };
 
 /** The graph-ts operator overload `value` declares under `method`, if any. */
 function overload(value: unknown, method: string): Function | undefined {
@@ -67,11 +81,11 @@ const equals = (a: unknown, b: unknown): boolean => {
  * `address == ZERO_ADDRESS` would always be false.
  */
 export const operators = {
-  add: binary("plus", (a, b) => a + b),
-  sub: binary("minus", (a, b) => a - b),
-  mul: binary("times", (a, b) => a * b),
+  add: binary("plus", widened((a, b) => a + b)),
+  sub: binary("minus", widened((a, b) => a - b)),
+  mul: binary("times", widened((a, b) => a * b)),
   div: binary("div", integerDivision),
-  rem: binary("mod", (a, b) => a % b),
+  rem: binary("mod", widened((a, b) => a % b)),
   eq: equals,
   ne: (a: unknown, b: unknown) => !equals(a, b),
   lt: binary("lt", (a, b) => a < b),

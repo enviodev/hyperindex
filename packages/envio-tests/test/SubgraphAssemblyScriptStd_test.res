@@ -1,10 +1,13 @@
-// Two things AssemblyScript accepts that Node didn't:
+// Things AssemblyScript accepts that Node didn't:
 // - AssemblyScript's DataView takes a u64 in `setUint64`/`getUint64` (Ekubo
 //   builds its ids that way); JavaScript's spells it `setBigUint64`, and has no
 //   `setUint64` at all.
 // - `matchstick-as` re-exports graph-ts' `log`, and Beefy's mappings import it
 //   from there. Only `@graphprotocol/graph-ts` reached the shim, so the import
 //   failed at link time.
+// - An i64 times an integer literal is an i64, and `new Date(ms)` takes one:
+//   p2p.me's `timestamp.toI64() * 1000` mixed a bigint with a number, which
+//   JavaScript refuses, and `new Date()` refuses a bigint too.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.5
@@ -36,6 +39,7 @@ dataSources:
 type Init @entity {
   id: ID!
   back: BigInt!
+  month: String!
 }
 `,
   ~files=Dict.fromArray([
@@ -59,8 +63,13 @@ export function handlePoolInitialized(event: any): void {
   view.setUint32(12, event.logIndex.toU32(), false);
   log.info("initialized {}", [id.toHexString()]);
 
+  let ms = event.block.timestamp.toI64() * 1000;
+  let date = new Date(ms);
+  let seconds = date.getTime() / 1000;
+
   let entity = new Entity();
   entity.setBigInt("back", BigInt.fromU64(view.getUint64(0, false)));
+  entity.setString("month", date.getUTCFullYear().toString() + "-" + (date.getUTCMonth() + 1).toString() + ":" + seconds.toString());
   store.set("Init", id.toHexString(), entity);
 }
 `,
@@ -77,13 +86,19 @@ describe("AssemblyScript's standard library and helper imports", () => {
       chains: {
         1: {
           simulate: [
-            { contract: "Core", event: "PoolInitialized", params: { poolId: 1n }, block: { number: 258 }, logIndex: 3 },
+            {
+              contract: "Core",
+              event: "PoolInitialized",
+              params: { poolId: 1n },
+              block: { number: 258, timestamp: 1760400000 },
+              logIndex: 3,
+            },
           ],
         },
       },
     });
     t.expect(await indexer.Init.getAll()).toEqual([
-      { id: "0x00000000000001020000000700000003", back: 258n },
+      { id: "0x00000000000001020000000700000003", back: 258n, month: "2025-10:1760400000" },
     ]);
   });
 });
