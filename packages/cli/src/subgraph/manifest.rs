@@ -855,8 +855,11 @@ fn parse_event_handler(
     // signature's own hash changes nothing; any other value selects logs envio
     // can't ask for by event, Balancer's anonymous LOG_CALL among them.
     if let Some(topic0) = obj.string("topic0") {
-        let signature = alloy_primitives::keccak256(event.replace("indexed ", "").as_bytes());
-        if !topic0.eq_ignore_ascii_case(&signature.to_string()) {
+        let own = canonical_event_hash(&event);
+        if own
+            .as_deref()
+            .is_some_and(|own| !own.eq_ignore_ascii_case(topic0.trim()))
+        {
             report.unsupported(
                 "event handlers whose topic0 is not the event signature's hash (anonymous \
                  events)",
@@ -890,6 +893,47 @@ fn parse_event_handler(
         topics,
         inputs: Vec::new(),
     })
+}
+
+/// `keccak256` of an event signature as the manifest spells it: `indexed` and
+/// parameter names dropped. `None` when the signature isn't one this reads.
+pub fn canonical_event_hash(event: &str) -> Option<String> {
+    let open = event.find('(')?;
+    let close = event.rfind(')')?;
+    let name = event[..open].trim();
+    let mut types = Vec::new();
+    let (mut depth, mut start) = (0usize, open + 1);
+    let params = &event[..close];
+    for (at, c) in params.char_indices().skip(open + 1) {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                types.push(&params[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    if !params[start..].trim().is_empty() {
+        types.push(&params[start..]);
+    }
+    let types: Option<Vec<String>> = types
+        .into_iter()
+        .map(|param| {
+            // A tuple is `(a,b)[]`-shaped: only a plain parameter loses its words.
+            let param = param.trim();
+            if param.starts_with('(') {
+                return None;
+            }
+            param
+                .split_whitespace()
+                .find(|word| *word != "indexed")
+                .map(str::to_string)
+        })
+        .collect();
+    let signature = format!("{name}({})", types?.join(","));
+    Some(alloy_primitives::keccak256(signature.as_bytes()).to_string())
 }
 
 fn parse_block_handler(
@@ -1530,6 +1574,24 @@ dataSources:
                 "event handlers whose topic0 is not the event signature's hash (anonymous events)",
                 "data source \"Token\" → eventHandlers → \"handleTransfer\" → topic0",
             )]
+        );
+    }
+}
+
+#[cfg(test)]
+mod topic0_tests {
+    use super::*;
+
+    #[test]
+    fn hashes_a_signature_without_indexed_or_names() {
+        assert_eq!(
+            canonical_event_hash("Deposit(indexed bytes32,address,address,uint256)").as_deref(),
+            Some("0xc95ddcaddf83340b68d0d44c01b1703f5d28d0611a3fd87e69d79ba7e2ac21d3")
+        );
+        assert_eq!(
+            canonical_event_hash("Deposit(indexed bytes32 id, address a, address b, uint256 c)")
+                .as_deref(),
+            Some("0xc95ddcaddf83340b68d0d44c01b1703f5d28d0611a3fd87e69d79ba7e2ac21d3")
         );
     }
 }

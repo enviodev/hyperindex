@@ -8,7 +8,8 @@
 import { gate, rpcClient } from "./rpc.ts";
 import * as Sury from "rescript-schema";
 import { createEffect } from "../Envio.res.mjs";
-import { configureBlockTimestamps, requestBlockTimestamp } from "./blocks.ts";
+import { configureBlockTimestamps, requestBlockHeader, requestBlockTimestamp } from "./blocks.ts";
+import { configureReceiptLogs, requestReceiptLogs } from "./receipts.ts";
 import { missingRpcMessage } from "./errors.ts";
 import { HttpStatusError, untilAnswered } from "./transient.ts";
 import { warn } from "../Logging.res.mjs";
@@ -94,8 +95,9 @@ function fetchBase64(url: string): Promise<string | null> {
 
 export type HostEffects = ReturnType<typeof makeHostEffects>;
 
-export function makeHostEffects(rpcUrls: string[]) {
-  configureBlockTimestamps(rpcUrls);
+export function makeHostEffects(rpcUrls: string[], headerLag: Record<number, number> = {}) {
+  configureBlockTimestamps(rpcUrls, headerLag);
+  configureReceiptLogs(rpcUrls);
 
   const clientOrThrow = (callSite: string) => {
     if (rpcUrls.length === 0) {
@@ -252,5 +254,35 @@ export function makeHostEffects(rpcUrls: string[]) {
     },
   );
 
-  return { ipfsCat, arweaveData, ensName, getBalance, hasCode, blockTimestamp };
+  // A block handler's `block.hash` and the rest of the header, as one JSON
+  // object. Uncached for the same reason as the timestamp.
+  const blockHeader = createEffect(
+    {
+      name: "envio_subgraph_block_header",
+      input: Sury.number,
+      output: Sury.string,
+      rateLimit: false,
+      cache: false,
+      crossChain: false,
+    },
+    async ({ input, context }: { input: number; context: { chain: { id: number } } }) =>
+      JSON.stringify(await requestBlockHeader(context.chain.id, input)),
+  );
+
+  // `event.receipt.logs`: the logs of one transaction, as a JSON array. Input
+  // is `{ blockNumber, transactionIndex, transactionHash }`.
+  const receiptLogs = createEffect(
+    {
+      name: "envio_subgraph_receipt_logs",
+      input: Sury.string,
+      output: Sury.string,
+      rateLimit: false,
+      cache: false,
+      crossChain: false,
+    },
+    async ({ input, context }: { input: string; context: { chain: { id: number } } }) =>
+      JSON.stringify(await requestReceiptLogs({ ...JSON.parse(input), chainId: context.chain.id })),
+  );
+
+  return { ipfsCat, arweaveData, ensName, getBalance, hasCode, blockTimestamp, blockHeader, receiptLogs };
 }

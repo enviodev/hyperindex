@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 
+use crate::config_parsing::chain_helpers::get_max_reorg_depth_from_id;
 use crate::config_parsing::human_config::{
     evm::{
         AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, HumanConfig,
@@ -35,6 +36,12 @@ use schema::SchemaTranslation;
 /// The env var carrying an RPC endpoint. subgraph.yaml has no place for
 /// provider config — graph-node keeps it in its own config, not the project.
 pub const RPC_ENV_VAR: &str = "ENVIO_SUBGRAPH_RPC";
+/// envio's `maxReorgDepth` for a chain it has no figure for.
+const DEFAULT_MAX_REORG_DEPTH: u32 = 200;
+pub const BATCH_SIZE_ENV_VAR: &str = "ENVIO_SUBGRAPH_BATCH_SIZE";
+/// Events per batch for a mapping that calls contracts.
+const CALLING_BATCH_SIZE: u64 = 500;
+pub const BLOCK_LAG_ENV_VAR: &str = "ENVIO_SUBGRAPH_BLOCK_LAG";
 pub const API_TOKEN_ENV_VAR: &str = "ENVIO_API_TOKEN";
 
 /// The transaction fields graph-ts exposes on `event.receipt`. A mapping can
@@ -100,6 +107,9 @@ pub struct SubgraphRuntimeConfig {
     pub rpc_urls: Vec<String>,
     /// The manifest's file name within `root`, which `graph codegen` is run on.
     pub manifest_file: String,
+    /// How far, per chain, a block handler that reads header fields trails the
+    /// head: the runtime refuses to serve a header from inside that distance.
+    pub block_header_lag: BTreeMap<u64, u32>,
 }
 
 pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
@@ -775,6 +785,24 @@ fn contract_config(
     }
 }
 
+/// A mapping that calls contracts commits a batch only once every call in it has
+/// been answered, and a handler's calls run one after another. At envio's 5,000
+/// events a batch, an endpoint a second away took minutes to commit the first,
+/// with nothing to show for it meanwhile (harvest-base, dhedge, gooddollar). A
+/// smaller batch commits sooner and costs no calls: they all run concurrently
+/// either way. `ENVIO_SUBGRAPH_BATCH_SIZE` overrides it.
+fn calling_batch_size(mapping_sources: &[String]) -> Option<u64> {
+    let configured = std::env::var(BATCH_SIZE_ENV_VAR)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|size| *size > 0);
+    configured.or_else(|| {
+        usage::rpc_call_site(mapping_sources)
+            .is_some()
+            .then_some(CALLING_BATCH_SIZE)
+    })
+}
+
 /// Builds the envio config a translated manifest indexes with.
 pub fn translate(
     manifest_yaml: &str,
@@ -1001,13 +1029,47 @@ pub fn translate(
         ));
     }
 
+    // A block handler gets only the block number from envio; its header is
+    // fetched afterwards, outside the reorg guard that validates event blocks
+    // (spec/BLOCK_HASH.md). So a chain whose block handlers read the header
+    // trails its head by the reorg depth, where envio itself assumes nothing
+    // reorgs. `ENVIO_SUBGRAPH_BLOCK_LAG` overrides the depth; 0 turns it off.
+    let mut block_header_lag: BTreeMap<u64, u32> = BTreeMap::new();
+    for source in manifest.all_sources() {
+        let handlers: Vec<String> = source
+            .block_handlers
+            .iter()
+            .map(|handler| handler.handler.clone())
+            .collect();
+        if handlers.is_empty() || !usage::block_handlers_read_headers(mapping_sources, &handlers) {
+            continue;
+        }
+        let chain_ids: Vec<u64> = match source.chain_id {
+            Some(id) => vec![id],
+            None => chains.keys().cloned().collect(),
+        };
+        for id in chain_ids {
+            let lag = std::env::var(BLOCK_LAG_ENV_VAR)
+                .ok()
+                .and_then(|raw| raw.trim().parse::<u32>().ok())
+                .or_else(|| get_max_reorg_depth_from_id(id))
+                .unwrap_or(DEFAULT_MAX_REORG_DEPTH);
+            if lag > 0 {
+                block_header_lag.insert(id, lag);
+                if let Some(chain) = chains.get_mut(&id) {
+                    chain.block_lag = Some(chain.block_lag.unwrap_or(0).max(lag));
+                }
+            }
+        }
+    }
+
     let human_config = HumanConfig {
         base: BaseConfig {
             name: project_name.to_string(),
             description: None,
             schema: None,
             handlers: None,
-            full_batch_size: None,
+            full_batch_size: calling_batch_size(mapping_sources),
             storage: None,
             disable_default_cross_chain: None,
         },
@@ -1048,6 +1110,7 @@ pub fn translate(
             root: root.to_string(),
             rpc_urls,
             manifest_file: DEFAULT_MANIFEST.to_string(),
+            block_header_lag,
         },
         human_config,
     })
@@ -1374,6 +1437,120 @@ type Gravatar @entity {
         .unwrap();
 
         assert_eq!(with_template.human_config.chains[0].end_block, None);
+    }
+
+    #[test]
+    fn a_block_handler_that_reads_the_header_holds_its_chain_back() {
+        let manifest = MANIFEST.replacen(
+            "      file: ./src/gravity.ts",
+            "      blockHandlers:\n        - handler: handleBlock\n      file: ./src/gravity.ts",
+            1,
+        );
+        let lag = |source: &str| {
+            let translation = translate(
+                &manifest,
+                SCHEMA,
+                "gravatar",
+                None,
+                ".",
+                &HashMap::new(),
+                &[source.to_string()],
+            )
+            .unwrap();
+            (
+                translation.human_config.chains[0].block_lag,
+                translation.runtime.block_header_lag.get(&1).copied(),
+            )
+        };
+        let depth = Some(DEFAULT_MAX_REORG_DEPTH);
+
+        assert_eq!(
+            lag("export function handleBlock(block: ethereum.Block): void { block.number; block.timestamp; }"),
+            (None, None)
+        );
+        assert_eq!(
+            lag("export function handleBlock(block: ethereum.Block): void { new Block(block.hash); }"),
+            (depth, depth)
+        );
+    }
+
+    #[test]
+    fn a_mapping_that_calls_contracts_batches_fewer_events() {
+        let batch_size = |source: &str| {
+            translate(
+                MANIFEST,
+                SCHEMA,
+                "gravatar",
+                None,
+                ".",
+                &HashMap::new(),
+                &[source.to_string()],
+            )
+            .unwrap()
+            .human_config
+            .base
+            .full_batch_size
+        };
+        assert_eq!(
+            (
+                batch_size("let token = Token.bind(event.address); token.try_decimals();"),
+                batch_size("store.set('A', 'b', entity);"),
+            ),
+            (Some(CALLING_BATCH_SIZE), None)
+        );
+    }
+
+    #[test]
+    fn a_data_source_name_that_is_not_an_identifier_is_made_one() {
+        let manifest = MANIFEST.replace("name: Gravity", "name: Gravity-widget");
+        let translation = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        let contracts = translation.human_config.contracts.unwrap();
+        assert_eq!(
+            (
+                contracts[0].name.as_str(),
+                translation
+                    .runtime
+                    .contract_accessors
+                    .get("Gravity-widget")
+                    .map(String::as_str),
+            ),
+            ("Gravity_widget", Some("Gravity_widget"))
+        );
+    }
+
+    #[test]
+    fn accepts_topic0_when_it_is_the_signatures_hash_and_refuses_it_otherwise() {
+        let own =
+            manifest::canonical_event_hash("NewGravatar(uint256,address,string,string)").unwrap();
+        let with = |topic0: &str| {
+            let manifest = MANIFEST.replacen(
+                "          handler: handleNewGravatar",
+                &format!("          topic0: \"{topic0}\"\n          handler: handleNewGravatar"),
+                1,
+            );
+            translate(
+                &manifest,
+                SCHEMA,
+                "gravatar",
+                None,
+                ".",
+                &HashMap::new(),
+                &ambiguous(),
+            )
+        };
+        assert_eq!(
+            (with(&own).is_ok(), with(&"0x".repeat(1)).is_ok()),
+            (true, false)
+        );
     }
 
     #[test]

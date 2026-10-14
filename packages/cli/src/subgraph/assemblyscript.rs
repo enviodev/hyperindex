@@ -254,6 +254,7 @@ fn binary_helper(operator: BinaryOperator) -> Option<&'static str> {
         BinaryOperator::Multiplication => "mul",
         BinaryOperator::Division => "div",
         BinaryOperator::Remainder => "rem",
+        BinaryOperator::Exponential => "pow",
         BinaryOperator::Equality => "eq",
         BinaryOperator::Inequality => "ne",
         BinaryOperator::LessThan => "lt",
@@ -271,6 +272,7 @@ fn assignment_helper(operator: AssignmentOperator) -> Option<&'static str> {
         AssignmentOperator::Multiplication => "mul",
         AssignmentOperator::Division => "div",
         AssignmentOperator::Remainder => "rem",
+        AssignmentOperator::Exponential => "pow",
         _ => return None,
     })
 }
@@ -640,6 +642,19 @@ mod tests {
 \treturn __envio_op.rem(bucket, 7);
 }
 "
+        );
+    }
+
+    #[test]
+    fn routes_a_power_through_the_helper() {
+        let out = js("export function f(b: i64): i64 {
+  let c = 10 ** b;
+  c **= 2;
+  return c;
+}");
+        assert!(
+            out.contains("__envio_op.pow(10, b)") && out.contains("c = __envio_op.pow(c, 2)"),
+            "{out}"
         );
     }
 
