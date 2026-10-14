@@ -13,6 +13,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -22,6 +23,7 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { subgraphBundledCodegen } from "../Core.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
+import { fetchGraphCli, graphCliVersions } from "./toolchain.ts";
 
 const WORKER = new URL("./graph-cli-worker.mjs", import.meta.url);
 
@@ -35,16 +37,62 @@ const HEAP_MB = Math.floor(
 
 /**
  * Where Node would resolve graph-cli from the project: its own node_modules,
- * then each parent's — a yarn or npm workspace hoists it to the root.
+ * then each parent's — a yarn or npm workspace hoists it to the root. A
+ * package directory left half-installed (an install that died on a dead git
+ * dependency) doesn't count: it can't run.
  */
 function graphCliPackage(root: string): string | null {
   for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
     const candidate = path.join(dir, "node_modules", "@graphprotocol", "graph-cli");
     // pnpm links the package in; its own plugins resolve only from where it lives.
-    if (existsSync(path.join(candidate, "package.json"))) return realpathSync(candidate);
+    if (existsSync(path.join(candidate, "package.json"))) {
+      const packageDir = realpathSync(candidate);
+      if (runnable(packageDir)) return packageDir;
+    }
     if (path.dirname(dir) === dir) return null;
   }
 }
+
+function runnable(packageDir: string): boolean {
+  const bin = legacyBin(packageDir);
+  return existsSync(path.join(packageDir, "dist", "commands", "codegen.js")) || (bin !== null && existsSync(bin));
+}
+
+/**
+ * One place `graph codegen` can come from. The project's own graph-cli is one;
+ * a pinned one envio fetches into its own cache is another; a codegen bundled
+ * in envio, with no graph-cli at all, slots in here as a third.
+ */
+export interface CodegenProvider {
+  readonly name: string;
+  /** Whether using it downloads something: only done when the mappings import generated code. */
+  readonly fetches?: boolean;
+  /** graph-cli package directories to try, best first; empty when this provider has none. */
+  locate(root: string): Promise<string[]>;
+}
+
+const projectGraphCli: CodegenProvider = {
+  name: "the project's graph-cli",
+  locate: async (root) => {
+    const found = graphCliPackage(root);
+    return found ? [found] : [];
+  },
+};
+
+const fetchedGraphCli: CodegenProvider = {
+  name: "a graph-cli fetched by envio",
+  fetches: true,
+  locate: async (root) => {
+    const found: string[] = [];
+    for (const version of graphCliVersions(root)) {
+      const packageDir = await fetchGraphCli(version);
+      if (packageDir) found.push(packageDir);
+    }
+    return found;
+  },
+};
+
+export const codegenProviders: CodegenProvider[] = [projectGraphCli, fetchedGraphCli];
 
 type Outcome = "ok" | "failed" | "outOfMemory";
 
@@ -117,14 +165,71 @@ async function runOrThrow(
     outputDir,
     "--skip-migrations",
   ]);
-  if (outcome === "outOfMemory") {
+  if (outcome === "outOfMemory") throw outOfMemory(command);
+  if (outcome === "failed") throw new Error(failure);
+}
+
+function outOfMemory(command: string): Error {
+  return new Error(
+    `Envio Subgraph ran \`graph ${command}\` with a ${HEAP_MB} MB heap, three\n` +
+      "quarters of this machine's memory, and it ran out. Run it on a machine\n" +
+      "with more memory, then start envio again.",
+  );
+}
+
+/**
+ * graph-cli skips migrations here (they rewrite the developer's manifest), and
+ * 0.5x then refuses a mapping below apiVersion 0.0.5, which is what an old
+ * subgraph says. Codegen reads only the ABIs and the schema, so it is run on a
+ * copy beside the manifest with those versions raised.
+ */
+async function withCodegenManifest<T>(manifest: string, use: (file: string) => Promise<T>): Promise<T> {
+  let source: string;
+  try {
+    source = readFileSync(manifest, "utf8");
+  } catch {
+    return use(manifest);
+  }
+  const patched = source.replace(/(\bapiVersion:\s*["']?)0\.0\.[0-4]\b/g, "$10.0.5");
+  if (patched === source) return use(manifest);
+  const copy = path.join(path.dirname(manifest), `.envio-codegen-${path.basename(manifest)}`);
+  writeFileSync(copy, patched);
+  try {
+    return await use(copy);
+  } finally {
+    rmSync(copy, { force: true });
+  }
+}
+
+/**
+ * `graph codegen` from the first provider that has a graph-cli, trying each of
+ * its candidates in turn: a fetched graph-cli is a ladder (the project's
+ * declared version, then two pins), since no one version reads every manifest.
+ * Returns false when no provider has one.
+ */
+async function runCodegen(root: string, manifestFile: string, outputDir: string, needed: boolean): Promise<boolean> {
+  for (const provider of codegenProviders) {
+    if (provider.fetches && !needed) continue;
+    const candidates = await provider.locate(root);
+    if (candidates.length === 0) continue;
+    for (const [index, graphCli] of candidates.entries()) {
+      const outcome = await withCodegenManifest(path.resolve(root, manifestFile), (manifest) =>
+        runGraphCli(graphCli, root, "codegen", [manifest, "--output-dir", outputDir, "--skip-migrations"]),
+      );
+      if (outcome === "ok") return true;
+      if (outcome === "outOfMemory") throw outOfMemory("codegen");
+      if (index < candidates.length - 1) {
+        info(`Envio Subgraph: \`graph codegen\` failed with ${provider.name} at ${graphCli}; trying the next version.`);
+      }
+    }
     throw new Error(
-      `Envio Subgraph ran \`graph ${command}\` with a ${HEAP_MB} MB heap, three\n` +
-        "quarters of this machine's memory, and it ran out. Run it on a machine\n" +
-        "with more memory, then start envio again.",
+      "Envio Subgraph ran `graph codegen` to build the generated code, but it\n" +
+        `failed with ${provider.name} (${candidates.length} version${candidates.length === 1 ? "" : "s"} tried) — the error above comes from The Graph's own codegen, so fix it\n` +
+        "there and rerun. If `graph codegen` succeeds on its own but fails through\n" +
+        "envio, please open an issue: https://github.com/enviodev/hyperindex/issues",
     );
   }
-  if (outcome === "failed") throw new Error(failure);
+  return false;
 }
 
 const RELATIVE_IMPORT = /\bfrom\s*["'](\.\.?\/[^"']+)["']/g;
@@ -197,6 +302,16 @@ export function missingGeneratedFiles(root: string, mappingFiles: string[], dir:
 }
 
 const MAX_SCANNED_FILES = 2_000;
+
+/** Whether any file the mappings reach imports something from `dir`. */
+function importsFrom(root: string, mappingFiles: string[], dir: string): boolean {
+  for (const { file, specifiers } of scanImports(root, mappingFiles)) {
+    for (const specifier of specifiers) {
+      if (path.resolve(path.dirname(file), specifier).startsWith(dir + path.sep)) return true;
+    }
+  }
+  return false;
+}
 
 export function missingGeneratedCode(root: string, dir: string): Error {
   const relative = path.relative(root, dir);
@@ -330,41 +445,47 @@ export async function ensureGeneratedCode(
     }
     return;
   }
-  if (!graphCli) {
+  let bundledFailed = false;
+  if (!graphCli && mode === "auto") {
     // Nothing to build when no mapping imports a generated file.
-    if (mode === "auto" && missingGeneratedFiles(root, mappingFiles, dir).length > 0) {
-      info("Envio Subgraph found no @graphprotocol/graph-cli in the project; writing the generated code itself.");
-      try {
-        bundledCodegen(root, dir, manifestFile);
-        await runOtherSteps(root);
-      } catch (error) {
-        // The mapping that imports it fails next and names itself.
-        warn(`Envio Subgraph couldn't write the generated code itself: ${error instanceof Error ? error.message : error}`);
-      }
+    if (missingGeneratedFiles(root, mappingFiles, dir).length === 0) return;
+    info("Envio Subgraph found no @graphprotocol/graph-cli in the project; writing the generated code itself.");
+    try {
+      bundledCodegen(root, dir, manifestFile);
+      await runOtherSteps(root);
+      return;
+    } catch (error) {
+      bundledFailed = true;
+      warn(
+        `Envio Subgraph couldn't write the generated code itself: ${error instanceof Error ? error.message : error}. ` +
+          "Trying a graph-cli fetched with npm.",
+      );
     }
-    return;
   }
 
   try {
     for (const step of codegenSteps(root) ?? ["graph codegen"]) {
       if (!GRAPH_CODEGEN.test(step)) {
-        await runScriptStep(root, step);
+        try {
+          await runScriptStep(root, step);
+        } catch (error) {
+          // A step that needs the project's own tools (truffle, a mustache
+          // render) can't run when its install never worked; `graph codegen`
+          // still can, so the failure is reported rather than fatal.
+          if (binDirs(root).some((dir) => existsSync(dir))) throw error;
+          warn(
+            `Envio Subgraph skipped the codegen script step \`${step}\`: the project's dependencies aren't installed, so ` +
+              "its tools are missing. Running graph codegen without it.",
+          );
+        }
         continue;
       }
-      await runOrThrow(
-        graphCli,
-        root,
-        manifestFile,
-        "codegen",
-        dir,
-        "Envio Subgraph ran `graph codegen` to build the generated code, but it\n" +
-          "failed — the error above comes from The Graph's own codegen, so fix it\n" +
-          "there and rerun. If `graph codegen` succeeds on its own but fails through\n" +
-          "envio, please open an issue: https://github.com/enviodev/hyperindex/issues",
-      );
+      // With no graph-cli anywhere, the mapping that imports the missing code
+      // reports it, naming that mapping.
+      if (!(await runCodegen(root, manifestFile, dir, importsFrom(root, mappingFiles, dir)))) return;
     }
   } catch (error) {
-    if (mode === "graph-cli") throw error;
+    if (mode === "graph-cli" || bundledFailed) throw error;
     warn(
       "Envio Subgraph: the project's `graph codegen` failed (see above); writing the generated code " +
         "itself. Set ENVIO_SUBGRAPH_CODEGEN=graph-cli to stop at the failure instead.",

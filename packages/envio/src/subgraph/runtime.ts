@@ -59,6 +59,7 @@ import {
 import { makeHostEffects } from "./hosts.ts";
 import { advanceRollup } from "./rollup.ts";
 import { graftBaseNotice } from "./graft.ts";
+import { fetchMappingPackages, missingMappingPackages } from "./toolchain.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
 import { runSyncCounted } from "./stats.ts";
@@ -129,6 +130,13 @@ const AS_DATE = Symbol.for("envio.subgraph.date");
 
 let hooksInstalled = false;
 let projectRoot: string | null = null;
+/**
+ * `node_modules` envio fetched for packages the mappings import and the
+ * project can't resolve (its own install failed or never ran). A parent URL
+ * inside it is where those specifiers are resolved from, and so are the
+ * packages' own dependencies.
+ */
+let fetchedModulesParent: string | null = null;
 /** Every project file the load hook has compiled, so their exports can be read back. */
 const projectModules = new Set<string>();
 
@@ -158,7 +166,18 @@ function installResolveHook(root: string) {
       ) {
         return { url: SHIM_URL, shortCircuit: true };
       }
-      const resolved = nextResolve(specifier, context);
+      let resolved;
+      try {
+        resolved = nextResolve(specifier, context);
+      } catch (error: any) {
+        const bare = !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.includes(":");
+        if (!fetchedModulesParent || !bare || error?.code !== "ERR_MODULE_NOT_FOUND") throw error;
+        try {
+          resolved = nextResolve(specifier, { ...context, parentURL: fetchedModulesParent });
+        } catch {
+          throw error;
+        }
+      }
       // A subgraph project's package.json has no `type`, so its mappings and
       // its `generated/` would load as CommonJS and reach the shim — a real ES
       // module — through `require()`, which Node refuses inside a cycle. They
@@ -767,6 +786,16 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     config.root,
     sources.map((source) => source.mappingFile),
   );
+  const fetchedModules = await fetchMappingPackages(
+    config.root,
+    missingMappingPackages(
+      config.root,
+      sources.map((source) => source.mappingFile),
+    ),
+  );
+  fetchedModulesParent = fetchedModules
+    ? pathToFileURL(path.join(path.dirname(fetchedModules), "resolve-from.mjs")).href
+    : null;
   await ensureGeneratedCode(
     config.root,
     generated,

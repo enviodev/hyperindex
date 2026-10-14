@@ -556,10 +556,16 @@ pub fn graph_cli_installed(root: &std::path::Path) -> bool {
     })
 }
 
+/// Whether an `npm` executable is on `path`, the one the runtime fetches graph-cli with.
+pub fn npm_on_path(path: Option<&std::ffi::OsStr>) -> bool {
+    path.is_some_and(|path| std::env::split_paths(path).any(|dir| dir.join("npm").is_file()))
+}
+
 /// `envio codegen` and `envio start` build the generated code when it is
 /// missing and graph-cli can't (Envio Cloud's builder has none, and leaves the
 /// directory behind empty). `ENVIO_SUBGRAPH_CODEGEN=bundled` always writes it;
-/// `graph-cli` is the one mode with nothing to fall back to, so it refuses.
+/// `graph-cli` mode falls back only to the graph-cli the runtime fetches with
+/// npm when the project has none (`subgraph/toolchain.ts`); without npm it refuses.
 pub fn check_generated_code(
     runtime: &SubgraphRuntimeConfig,
     manifest_file: &std::path::Path,
@@ -580,10 +586,23 @@ pub fn check_generated_code(
     if mode == codegen::CodegenMode::Bundled
         || (mode == codegen::CodegenMode::Auto && missing && !graph_cli_installed(root))
     {
-        codegen::generate(manifest_file, &generated)?;
-        return Ok(());
+        // In auto mode the runtime still has a graph-cli fetched with npm to
+        // fall back on, and reports the bundled failure itself.
+        return match codegen::generate(manifest_file, &generated) {
+            Err(_)
+                if mode == codegen::CodegenMode::Auto
+                    && npm_on_path(std::env::var_os("PATH").as_deref()) =>
+            {
+                Ok(())
+            }
+            result => result.map(|_| ()),
+        };
     }
-    if !missing || graph_cli_installed(root) || mode != codegen::CodegenMode::GraphCli {
+    if !missing
+        || graph_cli_installed(root)
+        || mode != codegen::CodegenMode::GraphCli
+        || npm_on_path(std::env::var_os("PATH").as_deref())
+    {
         return Ok(());
     }
     let relative = pathdiff_relative(&generated, root);
@@ -1172,6 +1191,16 @@ mod generated_code_tests {
         )
         .unwrap();
         assert!(graph_cli_installed(&root));
+    }
+
+    #[test]
+    fn npm_found_on_path_only_when_present() {
+        let dir = TempDir::new("envio_subgraph_npm").unwrap();
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        assert!(!npm_on_path(Some(&path)));
+        assert!(!npm_on_path(None));
+        std::fs::write(dir.path().join("npm"), "").unwrap();
+        assert!(npm_on_path(Some(&path)));
     }
 }
 
