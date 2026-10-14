@@ -76,6 +76,29 @@ const equals = (a: unknown, b: unknown): boolean => {
 };
 
 /**
+ * AssemblyScript's `Array#indexOf`, `lastIndexOf` and `includes` compare each
+ * element with `==`, so with graph-ts' overload: ENS's
+ * `if (!coinTypes.includes(coinType))` finds a BigInt already there. A
+ * string, a typed array, or a search for a primitive is JavaScript's own.
+ */
+const search =
+  (method: "indexOf" | "lastIndexOf" | "includes") =>
+  (receiver: any, value: unknown, from?: number): unknown => {
+    if (!Array.isArray(receiver) || !overload(value, "equals")) {
+      return from === undefined ? receiver[method](value) : receiver[method](value, from);
+    }
+    const length = receiver.length;
+    if (method === "lastIndexOf") {
+      let index = from === undefined ? length - 1 : from < 0 ? length + from : Math.min(from, length - 1);
+      for (; index >= 0; index--) if (equals(receiver[index], value)) return index;
+      return -1;
+    }
+    let index = from === undefined ? 0 : from < 0 ? Math.max(length + from, 0) : from;
+    for (; index < length; index++) if (equals(receiver[index], value)) return method === "includes" ? true : index;
+    return method === "includes" ? false : -1;
+  };
+
+/**
  * graph-ts overloads the arithmetic and comparison operators on `BigInt`,
  * `BigDecimal` and `ByteArray`, and AssemblyScript calls the overload: a
  * JavaScript operator would coerce them, or compare their identity — so
@@ -97,4 +120,7 @@ export const operators = {
     const declared = overload(a, "neg");
     return declared ? declared.call(a) : -(a as number);
   },
+  indexOf: search("indexOf"),
+  lastIndexOf: search("lastIndexOf"),
+  includes: search("includes"),
 };

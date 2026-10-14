@@ -264,6 +264,31 @@ fn binary_helper(operator: BinaryOperator) -> Option<&'static str> {
     })
 }
 
+/// The `OPERATORS_HELPER` method standing in for `x.indexOf(v)` and its kin:
+/// AssemblyScript's array searches compare with `==`, so graph-ts' overload.
+fn search_helper(call: &CallExpression<'_>) -> Option<&'static str> {
+    let Expression::StaticMemberExpression(member) = &call.callee else {
+        return None;
+    };
+    if call.optional
+        || member.optional
+        || matches!(member.object, Expression::Super(_))
+        || !(1..=2).contains(&call.arguments.len())
+        || call
+            .arguments
+            .iter()
+            .any(|argument| matches!(argument, Argument::SpreadElement(_)))
+    {
+        return None;
+    }
+    Some(match member.property.name.as_str() {
+        "includes" => "includes",
+        "indexOf" => "indexOf",
+        "lastIndexOf" => "lastIndexOf",
+        _ => return None,
+    })
+}
+
 fn assignment_helper(operator: AssignmentOperator) -> Option<&'static str> {
     Some(match operator {
         AssignmentOperator::Addition => "add",
@@ -420,6 +445,28 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 *expr = self.call(span, RETAG_HELPER, [ctor, value, keep]);
             }
             Expression::CallExpression(call) => {
+                if let Some(method) = search_helper(call) {
+                    let span = call.span;
+                    let Expression::StaticMemberExpression(member) = &mut call.callee else {
+                        return;
+                    };
+                    let mut args = vec![member.object.take_in(&self.ast)];
+                    args.extend(
+                        call.arguments
+                            .iter_mut()
+                            .map(|argument| argument.to_expression_mut().take_in(&self.ast)),
+                    );
+                    let object = Expression::new_identifier(span, OPERATORS_HELPER, &self.ast);
+                    let property = IdentifierName::new(span, method, &self.ast);
+                    let callee = Expression::new_static_member_expression(
+                        span, object, property, false, &self.ast,
+                    );
+                    let args =
+                        ArenaVec::from_iter_in(args.into_iter().map(Argument::from), &self.ast);
+                    *expr =
+                        Expression::new_call_expression(span, callee, None, args, false, &self.ast);
+                    return;
+                }
                 if let Some((class_span, class)) = self.element_retag_target(call) {
                     let span = call.span;
                     let value = expr.take_in(&self.ast);
@@ -592,6 +639,21 @@ mod tests {
 \t\treturn -1;
 \t}
 \treturn __envio_op.rem(bucket, 7);
+}
+"
+        );
+    }
+
+    #[test]
+    fn routes_array_searches_through_the_helper() {
+        assert_eq!(
+            js("export function has(resolver: Resolver, coinType: BigInt): bool {
+  let at = resolver.coinTypes!.indexOf(coinType, 1);
+  return resolver.coinTypes!.includes(coinType) || names().lastIndexOf(\"a\") > at || list.find(coinType);
+}"),
+            "export function has(resolver, coinType) {
+\tlet at = __envio_op.indexOf(resolver.coinTypes, coinType, 1);
+\treturn __envio_op.includes(resolver.coinTypes, coinType) || __envio_op.gt(__envio_op.lastIndexOf(names(), \"a\"), at) || list.find(coinType);
 }
 "
         );
