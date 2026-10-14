@@ -113,7 +113,7 @@ type Meta @entity {
     (
       "src/registry.ts",
       `
-import { Bytes, DataSourceContext, DataSourceTemplate, Entity, JSONValue, Value, dataSource, ipfs, store } from "@graphprotocol/graph-ts";
+import { Bytes, YAMLValue, yaml, DataSourceContext, DataSourceTemplate, Entity, JSONValue, Value, dataSource, ipfs, store } from "@graphprotocol/graph-ts";
 
 let runs: i32 = 0;
 
@@ -132,6 +132,27 @@ export function handlePublished(event: any): void {
     meta.setString("content", Bytes.fromUTF8("hello world").toBase58() + "," + Bytes.fromHexString("0x000001").toBase58() + "," + Bytes.fromHexString("0x1220" + "00".repeat(32)).toBase58());
     meta.setBoolean("sawChain", false);
     store.set("Meta", "b58", meta);
+  } else if (hash == "yaml") {
+    // The shape graph-network's manifest file handler reads.
+    let root = yaml.fromBytes(Bytes.fromUTF8("specVersion: 1.2.0\\nschema:\\n  file:\\n    /: /ipfs/QmSchema\\nstartBlock: 12345678901234567890\\nratio: 1.0\\nflags: [true, null, 'x']\\nref: !Ref thing\\n"));
+    let schema = root.toObject().get(YAMLValue.newString("schema"))!.toObject().get(YAMLValue.newString("file"))!.toObject().get(YAMLValue.newString("/"))!.toString();
+    let flags = root.toObject().get(YAMLValue.newString("flags"))!.toArray();
+    let ref = root.toObject().get(YAMLValue.newString("ref"))!.toTagged();
+    let bad = yaml.try_fromString("a: [1, 2");
+    let missing = root.toObject().get(YAMLValue.newString("nope"));
+    let meta = new Entity();
+    meta.setString("content", [
+      root.toObject().get(YAMLValue.newString("specVersion"))!.toString(),
+      schema,
+      root.toObject().get(YAMLValue.newString("startBlock"))!.toNumber(),
+      root.toObject().get(YAMLValue.newString("ratio"))!.toNumber(),
+      flags.length.toString() + (flags[0].toBool() ? "t" : "f") + (flags[1].isNull() ? "n" : "-") + flags[2].toString(),
+      ref.tag + "=" + ref.value.toString(),
+      bad.isError ? "bad" : "ok",
+      missing === null ? "absent" : "present",
+    ].join("|"));
+    meta.setBoolean("sawChain", false);
+    store.set("Meta", "yaml", meta);
   } else if (hash.startsWith("tx:")) {
     DataSourceTemplate.create("Tx", [hash.slice(3)]);
   } else if (hash.startsWith("lines:")) {
@@ -326,6 +347,13 @@ describe("file data sources", () => {
     await indexer.process({ chains: { 1: { simulate: [published("b58")] } } });
     const row = (await indexer.Meta.getAll()).find((meta: any) => meta.id === "b58");
     t.expect(row.content).toBe("StV1DL6CwTryKyV,112,QmNLei78zWmzUdbeRB3CiUfAizWUrbeeZh5K1rhAQKCh51");
+  });
+
+  it("parses YAML as graph-node does", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({ chains: { 1: { simulate: [published("yaml")] } } });
+    const row = (await indexer.Meta.getAll()).find((meta: any) => meta.id === "yaml");
+    t.expect(row.content).toBe("1.2.0|/ipfs/QmSchema|12345678901234567890|1.0|3tnx|!Ref=thing|bad|absent");
   });
 
   it("runs the data sources a file handler creates", async (t) => {

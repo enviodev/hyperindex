@@ -58,7 +58,8 @@
     "rescript-schema": "9.5.1",
     "viem": "2.54.0",
     "dotenv": "16.4.5",
-    "postgres": "3.4.8"
+    "postgres": "3.4.8",
+    "yaml": "2.8.1"
   },
   "devDependencies": {
     "rescript": "12.2.0",

@@ -11,6 +11,7 @@
  */
 
 import BigNumber from "bignumber.js";
+import { type Document, isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
 import * as GraphNodeDecimal from "./graph-node-decimal.ts";
 import {
   keccak256 as viemKeccak256,
@@ -2742,31 +2743,247 @@ export enum YAMLValueKind {
   TAGGED = 6,
 }
 
+/**
+ * graph-ts' YAML value, over graph-node's `serde_yaml::Value`: numbers are kept
+ * as the text they print as, an object's keys are YAML values themselves, and a
+ * `!tag` wraps its value.
+ */
 export class YAMLValue {
-  constructor(_kind: YAMLValueKind, _data: unknown) {
-    throw unsupported("the yaml API", "a mapping handler");
+  constructor(
+    public kind: YAMLValueKind,
+    public data: any,
+  ) {}
+
+  static newNull(): YAMLValue {
+    return new YAMLValue(YAMLValueKind.NULL, 0);
+  }
+  static newBool(data: boolean): YAMLValue {
+    return new YAMLValue(YAMLValueKind.BOOL, data);
+  }
+  static newI64(data: bigint): YAMLValue {
+    return new YAMLValue(YAMLValueKind.NUMBER, data.toString());
+  }
+  static newU64(data: bigint): YAMLValue {
+    return new YAMLValue(YAMLValueKind.NUMBER, data.toString());
+  }
+  static newF64(data: number): YAMLValue {
+    return new YAMLValue(YAMLValueKind.NUMBER, String(data));
+  }
+  static newBigInt(data: BigInt_): YAMLValue {
+    return new YAMLValue(YAMLValueKind.STRING, data.toString());
+  }
+  static newString(data: string): YAMLValue {
+    return new YAMLValue(YAMLValueKind.STRING, data);
+  }
+  static newArray(data: YAMLValue[]): YAMLValue {
+    return new YAMLValue(YAMLValueKind.ARRAY, data);
+  }
+  static newObject(data: TypedMap<YAMLValue, YAMLValue>): YAMLValue {
+    return new YAMLValue(YAMLValueKind.OBJECT, data);
+  }
+  static newTagged(tag: string, value: YAMLValue): YAMLValue {
+    return new YAMLValue(YAMLValueKind.TAGGED, new YAMLTaggedValue(tag, value));
+  }
+
+  isNull(): boolean {
+    return this.kind === YAMLValueKind.NULL;
+  }
+  isBool(): boolean {
+    return this.kind === YAMLValueKind.BOOL;
+  }
+  isNumber(): boolean {
+    return this.kind === YAMLValueKind.NUMBER;
+  }
+  isString(): boolean {
+    return this.kind === YAMLValueKind.STRING;
+  }
+  isArray(): boolean {
+    return this.kind === YAMLValueKind.ARRAY;
+  }
+  isObject(): boolean {
+    return this.kind === YAMLValueKind.OBJECT;
+  }
+  isTagged(): boolean {
+    return this.kind === YAMLValueKind.TAGGED;
+  }
+
+  toBool(): boolean {
+    assertYaml(this.isBool(), "YAML value is not a boolean");
+    return this.data === true;
+  }
+  toNumber(): string {
+    assertYaml(this.isNumber(), "YAML value is not a number");
+    return this.data as string;
+  }
+  toI64(): bigint {
+    return BigInt.asIntN(64, BigInt(this.toNumber()));
+  }
+  toU64(): bigint {
+    return BigInt.asUintN(64, BigInt(this.toNumber()));
+  }
+  toF64(): number {
+    return Number(this.toNumber());
+  }
+  toBigInt(): BigInt_ {
+    assertYaml(this.isNumber() || this.isString(), "YAML value is not numeric");
+    return BigInt_.fromString(this.data as string);
+  }
+  toString(): string {
+    assertYaml(this.isString(), "YAML value is not a string");
+    return this.data as string;
+  }
+  toArray(): YAMLValue[] {
+    assertYaml(this.isArray(), "YAML value is not an array");
+    return this.data as YAMLValue[];
+  }
+  toObject(): TypedMap<YAMLValue, YAMLValue> {
+    assertYaml(this.isObject(), "YAML value is not an object");
+    return this.data as TypedMap<YAMLValue, YAMLValue>;
+  }
+  toTagged(): YAMLTaggedValue {
+    assertYaml(this.isTagged(), "YAML value is not tagged");
+    return this.data as YAMLTaggedValue;
+  }
+
+  /** graph-ts' `==` overload: structural, so a `TypedMap` keyed by YAML values finds its key. */
+  equals(other: YAMLValue): boolean {
+    return YAMLValue.eq(this, other);
+  }
+  static eq(a: YAMLValue, b: YAMLValue): boolean {
+    if (a.isBool() && b.isBool()) return a.data === b.data;
+    if (a.isNumber() && b.isNumber()) return a.data === b.data;
+    if (a.isString() && b.isString()) return a.data === b.data;
+    if (a.isArray() && b.isArray()) {
+      const left = a.toArray();
+      const right = b.toArray();
+      return left.length === right.length && left.every((item, index) => YAMLValue.eq(item, right[index]));
+    }
+    if (a.isObject() && b.isObject()) {
+      const left = a.toObject();
+      const right = b.toObject();
+      return (
+        left.entries.length === right.entries.length &&
+        left.entries.every((entry) => {
+          const other = right.get(entry.key);
+          return other !== null && YAMLValue.eq(entry.value, other);
+        })
+      );
+    }
+    if (a.isTagged() && b.isTagged()) return YAMLTaggedValue.eq(a.toTagged(), b.toTagged());
+    return false;
+  }
+  static ne(a: YAMLValue | null, b: YAMLValue | null): boolean {
+    if (!a || !b) return true;
+    return !YAMLValue.eq(a, b);
+  }
+
+  /** `value["key"]` on an object, `value["0"]` on an array; aborts when the key is absent. */
+  get(index: string): YAMLValue {
+    assertYaml(this.isArray() || this.isObject(), "YAML value can not be accessed by index");
+    if (this.isArray()) {
+      const item = this.toArray()[Number.parseInt(index, 10)];
+      assertYaml(item !== undefined, "Array index out of range");
+      return item;
+    }
+    return this.toObject().mustGet(YAMLValue.newString(index));
   }
 }
 
 export class YAMLTaggedValue {
-  constructor(_tag: string, _value: YAMLValue) {
-    throw unsupported("the yaml API", "a mapping handler");
+  constructor(
+    public tag: string,
+    public value: YAMLValue,
+  ) {}
+  equals(other: YAMLTaggedValue): boolean {
+    return YAMLTaggedValue.eq(this, other);
+  }
+  static eq(a: YAMLTaggedValue, b: YAMLTaggedValue): boolean {
+    return a.tag === b.tag && YAMLValue.eq(a.value, b.value);
+  }
+  static ne(a: YAMLTaggedValue | null, b: YAMLTaggedValue | null): boolean {
+    if (!a || !b) return true;
+    return !YAMLTaggedValue.eq(a, b);
   }
 }
 
+function assertYaml(condition: boolean, message: string): void {
+  if (!condition) throw new Error(message);
+}
+
+/** graph-node refuses a document over this many bytes. */
+const YAML_MAX_SIZE_BYTES = 10_000_000;
+
+/**
+ * A parsed node as graph-node hands it to the mapping. Numbers keep the text
+ * serde_yaml prints them as (an integer as its digits, a float with its
+ * fraction), a mapping key is a YAML value of its own, and an alias is its
+ * target.
+ */
+function yamlFromNode(node: unknown, document: Document): YAMLValue {
+  if (isAlias(node)) {
+    return yamlFromNode(node.resolve(document), document);
+  }
+  if (isMap(node)) {
+    const map = new TypedMap<YAMLValue, YAMLValue>();
+    for (const pair of node.items) {
+      map.set(yamlFromNode(pair.key, document), yamlFromNode(pair.value, document));
+    }
+    return taggedOr(node, YAMLValue.newObject(map));
+  }
+  if (isSeq(node)) {
+    return taggedOr(node, YAMLValue.newArray(node.items.map((item) => yamlFromNode(item, document))));
+  }
+  if (isScalar(node)) {
+    const value = node.value;
+    let result: YAMLValue;
+    if (value === null || value === undefined) result = YAMLValue.newNull();
+    else if (typeof value === "boolean") result = YAMLValue.newBool(value);
+    else if (typeof value === "bigint") result = new YAMLValue(YAMLValueKind.NUMBER, value.toString());
+    else if (typeof value === "number") {
+      const source = (node as { srcToken?: { source?: string } }).srcToken?.source ?? "";
+      // YAML `1.0` is the float 1.0, which serde_yaml prints as such.
+      const isFloat = /[.eE]/.test(source) && Number.isFinite(value);
+      const text = Number.isNaN(value)
+        ? "NaN"
+        : value === Infinity
+          ? "inf"
+          : value === -Infinity
+            ? "-inf"
+            : isFloat && Number.isInteger(value)
+              ? `${value}.0`
+              : String(value);
+      result = new YAMLValue(YAMLValueKind.NUMBER, text);
+    } else result = YAMLValue.newString(String(value));
+    return taggedOr(node, result);
+  }
+  return YAMLValue.newNull();
+}
+
+/** A local tag (`!Ref x`) wraps its value; the core tags (`!!str`) are the value itself. */
+function taggedOr(node: unknown, value: YAMLValue): YAMLValue {
+  const tag = (node as { tag?: string }).tag;
+  if (typeof tag === "string" && tag.startsWith("!") && !tag.startsWith("!!")) {
+    return YAMLValue.newTagged(tag, value);
+  }
+  return value;
+}
+
+function parseYaml(text: string): YAMLValue {
+  if (Buffer.byteLength(text) > YAML_MAX_SIZE_BYTES) {
+    throw new Error(`YAML size exceeds max size of ${YAML_MAX_SIZE_BYTES} bytes`);
+  }
+  const document = parseDocument(text, { intAsBigInt: true, keepSourceTokens: true });
+  if (document.errors.length > 0) {
+    throw new Error(`failed to parse YAML from bytes: ${document.errors[0].message}`);
+  }
+  return yamlFromNode(document.contents, document);
+}
+
 const yamlImpl = {
-  fromBytes: (_: Bytes): YAMLValue => {
-    throw unsupported("yaml.fromBytes", "a mapping handler");
-  },
-  try_fromBytes: (_: Bytes): unknown => {
-    throw unsupported("yaml.try_fromBytes", "a mapping handler");
-  },
-  fromString: (_: string): YAMLValue => {
-    throw unsupported("yaml.fromString", "a mapping handler");
-  },
-  try_fromString: (_: string): unknown => {
-    throw unsupported("yaml.try_fromString", "a mapping handler");
-  },
+  fromBytes: (bytes: Bytes): YAMLValue => parseYaml(utf8Decoder.decode(bytes)),
+  try_fromBytes: (bytes: Bytes): Result<YAMLValue, boolean> => tryParse(() => parseYaml(utf8Decoder.decode(bytes))),
+  fromString: (text: string): YAMLValue => parseYaml(text),
+  try_fromString: (text: string): Result<YAMLValue, boolean> => tryParse(() => parseYaml(text)),
 };
 
 export const yaml = strictNamespace("yaml", yamlImpl);
