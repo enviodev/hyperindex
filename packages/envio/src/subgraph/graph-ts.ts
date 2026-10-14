@@ -1211,9 +1211,21 @@ function fromValue(value: Value, isId = false): unknown {
       return value.toBigDecimal().value;
     case ValueKind.ARRAY:
       return value.toArray().map((item) => fromValue(item, isId));
+    case ValueKind.STRING:
+      return withoutNul(value.data as string);
     default:
       return value.data;
   }
+}
+
+/**
+ * graph-node drops every NUL from a string that crosses from the mapping to the
+ * host ("Strip null characters since they are not accepted by Postgres",
+ * `FromAscObj<AscString> for String`), so a bytes32 symbol padded with NULs and
+ * decoded as a string is stored without them. Postgres refuses 0x00 in text.
+ */
+function withoutNul(text: string): string {
+  return text.includes("\u0000") ? text.replaceAll("\u0000", "") : text;
 }
 
 /** envio rows -> graph-ts `Value`s. */
@@ -1417,12 +1429,14 @@ function fileAccess(scope: Scope, entityType: string, id: string): boolean | nul
 
 const storeImpl = {
   get(entityType: string, id: string): Entity | null {
+    id = withoutNul(id);
     const scope = currentScope();
     if (fileAccess(scope, entityType, id) === false) return null;
     if (scope.mode === "register") return registerRead(scope, entityType, id, false);
     return toEntity(entityType, entityContext(entityType).getSync(id));
   },
   get_in_block(entityType: string, id: string): Entity | null {
+    id = withoutNul(id);
     const scope = currentScope();
     if (fileAccess(scope, entityType, id) === false) return null;
     if (scope.mode === "register") return registerRead(scope, entityType, id, true);
@@ -1433,7 +1447,7 @@ const storeImpl = {
     const own = fileAccess(scope, entityType, id);
     if (scope.file) scope.file.written.add(`${entityType}\u0000${id}`);
     const row = toRow(entityType, data);
-    row.id = id;
+    row.id = withoutNul(id);
     // graph-node merges a save onto the stored entity (EntityCache::set is an
     // Update, merged by merge_remove_null_fields): a field this instance
     // doesn't set keeps its stored value, an explicit null clears it. ENS's
@@ -1457,6 +1471,7 @@ const storeImpl = {
     table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {
+    id = withoutNul(id);
     const scope = currentScope();
     if (fileAccess(scope, entityType, id) === false) return;
     if (scope.mode === "register") return registerWrite(scope, entityType, id, null);
