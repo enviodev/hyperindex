@@ -219,6 +219,21 @@ let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds, ~tar
         sent: stats->Array.reduce(0, (acc, s) => acc + s.sent),
         rollbacksSent: stats->Array.reduce(0, (acc, s) => acc + s.rollbacksSent),
         dropped,
+        // Each worker sends its own chains' calls, so the sidecar is up for
+        // the run while any of them can reach it.
+        up: stats->Array.some(s => s.up == Some(true))
+          ? Some(true)
+          : stats->Array.some(s => s.up == Some(false))
+          ? Some(false)
+          : None,
+        lastAckSeconds: stats->Array.reduce(None, (acc, s) =>
+          switch (acc, s.lastAckSeconds) {
+          | (Some(a), Some(b)) => Some(Math.max(a, b))
+          | (None, last) | (last, None) => last
+          }
+        ),
+        // Every worker holds its own queue, bounded the same.
+        queueMax: stats->Array.reduce(0, (acc, s) => acc + s.queueMax),
       })
     },
     rollbackEventsCount: sumFloat(s => s.rollbackEventsCount),
@@ -767,6 +782,32 @@ let renderMetrics = (b: builder, metrics: t) => {
       ~value=sidecar.queued->Int.toFloat,
     )
     b->single(
+      ~name="envio_sidecar_queue_max",
+      ~help="The most sidecar calls the queue holds before dropping the oldest (ENVIO_SIDECAR_QUEUE_MAX).",
+      ~kind="gauge",
+      ~value=sidecar.queueMax->Int.toFloat,
+    )
+    switch sidecar.up {
+    | Some(up) =>
+      b->single(
+        ~name="envio_sidecar_up",
+        ~help="1 when the sidecar's last answer to a delivery or readiness check was a success, 0 when it failed.",
+        ~kind="gauge",
+        ~value=up ? 1. : 0.,
+      )
+    | None => ()
+    }
+    switch sidecar.lastAckSeconds {
+    | Some(seconds) =>
+      b->single(
+        ~name="envio_sidecar_last_ack_timestamp_seconds",
+        ~help="Unix time the sidecar last accepted a POST of calls or a rollback notice.",
+        ~kind="gauge",
+        ~value=seconds,
+      )
+    | None => ()
+    }
+    b->single(
       ~name="envio_sidecar_rollbacks_sent_total",
       ~help="Rollback notices the sidecar acknowledged.",
       ~kind="counter",
@@ -1006,6 +1047,45 @@ let collect = (~metrics: option<t>) => {
   | None => ()
   }
   b.out ++ "\n"
+}
+
+// Another exporter's text (the sidecar's own /metrics, D-008) after ours, in
+// one valid exposition: a family we already render is left out whole, since a
+// second HELP/TYPE for a name makes Prometheus reject the entire scrape.
+let appendExposition = (own: string, other: string) => {
+  let familyName = line =>
+    switch line->String.split(" ")->Array.slice(~start=0, ~end=3) {
+    | ["#", "HELP" | "TYPE", name] => Some(name)
+    | _ => None
+    }
+  let ownNames = Set.make()
+  own
+  ->String.split("\n")
+  ->Array.forEach(line => line->familyName->Option.forEach(name => ownNames->Set.add(name)))
+  let sampleName = line =>
+    switch line->String.search(/[{ ]/) {
+    | -1 => line
+    | i => line->String.slice(~start=0, ~end=i)
+    }
+  let skipping = ref(false)
+  let kept =
+    other
+    ->String.split("\n")
+    ->Array.filter(line => {
+      let line = line->String.trim
+      switch line->familyName {
+      | Some(name) =>
+        skipping := ownNames->Set.has(name)
+        !skipping.contents
+      | None if line === "" || line === "# EOF" => false
+      | None if line->String.startsWith("#") => !skipping.contents
+      | None => !skipping.contents && !(ownNames->Set.has(line->sampleName))
+      }
+    })
+  switch kept {
+  | [] => own
+  | kept => own ++ "\n" ++ kept->Array.join("\n") ++ "\n"
+  }
 }
 
 // Node.js runtime metrics for /metrics/runtime, read from process/perf_hooks
