@@ -42,6 +42,10 @@ type blobFilter = {tag?: Envio.whereOperator<Uint8Array.t>}
 type blobOps = {set: blob => unit, getWhere: blobFilter => promise<array<blob>>}
 type handlerContext = {@as("Blob") blob: blobOps}
 
+// What the store keeping the entity holds beyond its current state: Postgres a
+// history row per change, ClickHouse the bytes exactly as they were written.
+type stored = History(array<Change.t<blob>>) | ClickHouseRows(array<JSON.t>)
+
 let first = {
   id: "1",
   data: Uint8Array.fromArray([0, 1, 254, 255]),
@@ -103,35 +107,41 @@ describe("Bytes as Uint8Array", () => {
       )
       await indexer.getBatchWritePromise()
 
-      t.expect((
-        await (indexer.query("Blob"): promise<array<blob>>),
-        queried,
-        await (indexer.queryHistory("Blob"): promise<array<Change.t<blob>>>),
-      )).toEqual((
-        [first, second],
-        dict{"eq": [first], "in": [second]},
-        [
-          Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
-          Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
-        ],
-      ))
-
-      switch IndexerRunner.selectedBackend {
-      | #postgres => ()
+      let stored = switch IndexerRunner.selectedBackend {
+      | #postgres => History(await indexer.queryHistory("Blob"))
       | #clickhouse =>
         let database = TestClickHouse.currentDatabase()
         let rows = await TestClickHouse.query(
           `SELECT id, hex(data) AS data, hex(optData) AS optData, arrayMap(x -> hex(x), chunks) AS chunks, hex(tag) AS tag FROM \`${database}\`.\`Blob\` ORDER BY id FORMAT JSONEachRow`,
         )
-        t.expect(
+        ClickHouseRows(
           rows->String.trim->String.split("\n")->Array.map(row => row->JSON.parseOrThrow),
-        ).toStrictEqual(
-          %raw(`[
-            { id: "1", data: "0001FEFF", optData: "5C782722", chunks: ["0102", "", "03"], tag: "AA" },
-            { id: "2", data: "", optData: null, chunks: [], tag: "BB" },
-          ]`),
         )
       }
+
+      let blobs: array<blob> = await indexer.query("Blob")
+      t.expect((
+        blobs->Array.toSorted((a, b) => String.compare(a.id, b.id)),
+        queried,
+        stored,
+      )).toEqual((
+        [first, second],
+        dict{"eq": [first], "in": [second]},
+        switch IndexerRunner.selectedBackend {
+        | #postgres =>
+          History([
+            Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
+            Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
+          ])
+        | #clickhouse =>
+          ClickHouseRows(
+            %raw(`[
+              { id: "1", data: "0001FEFF", optData: "5C782722", chunks: ["0102", "", "03"], tag: "AA" },
+              { id: "2", data: "", optData: null, chunks: [], tag: "BB" },
+            ]`),
+          )
+        },
+      ))
     },
   )
 })

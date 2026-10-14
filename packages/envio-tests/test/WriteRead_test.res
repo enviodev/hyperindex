@@ -238,6 +238,7 @@ let reachFirstQuery = async (~t: Vitest.testContext, ~source: MockSource.t) => {
 describe("Write/read tests", () => {
   scenario->Scenario.it(
     "Test writing and reading entities with special cases",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -382,6 +383,7 @@ describe("Write/read tests", () => {
 
   scenario->Scenario.it(
     "Keeps committed entities across batches without rewriting their history",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
