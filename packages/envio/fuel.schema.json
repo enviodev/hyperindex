@@ -107,7 +107,7 @@
       "type": "object",
       "properties": {
         "postgres": {
-          "description": "Whether to use Postgres as a storage backend (default: true). Accepts a boolean or an options object (the object form implies the backend is enabled).",
+          "description": "Whether to use Postgres as a storage backend (default: true). Required when ClickHouse is enabled. Accepts a boolean or an options object (the object form implies the backend is enabled).",
           "anyOf": [
             {
               "type": [
@@ -143,7 +143,7 @@
           ]
         },
         "clickhouse": {
-          "description": "Whether to additionally sync the indexed data to ClickHouse. Requires Postgres to be enabled (default: false). Accepts a boolean or an options object (the object form implies the backend is enabled).",
+          "description": "Whether to use ClickHouse as a storage backend (default: false). Alongside Postgres it keeps the entities that opt into it; with `postgres: false` it keeps everything. Accepts a boolean or an options object (the object form implies the backend is enabled).",
           "anyOf": [
             {
               "type": [
@@ -155,7 +155,7 @@
               "type": "object",
               "properties": {
                 "default": {
-                  "description": "Whether entities without an @storage directive are stored in this backend (default: false).",
+                  "description": "Whether entities without an @storage directive are stored in this backend (default: true when ClickHouse is the only enabled backend, false otherwise).",
                   "type": [
                     "boolean",
                     "null"
@@ -182,7 +182,7 @@
       "additionalProperties": false,
       "allOf": [
         {
-          "not": {
+          "if": {
             "properties": {
               "postgres": {
                 "const": false
@@ -190,6 +190,23 @@
             },
             "required": [
               "postgres"
+            ]
+          },
+          "then": {
+            "properties": {
+              "clickhouse": {
+                "anyOf": [
+                  {
+                    "const": true
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "clickhouse"
             ]
           }
         },
@@ -212,18 +229,6 @@
             ]
           },
           "then": {
-            "properties": {
-              "postgres": {
-                "anyOf": [
-                  {
-                    "const": true
-                  },
-                  {
-                    "type": "object"
-                  }
-                ]
-              }
-            },
             "required": [
               "postgres"
             ]

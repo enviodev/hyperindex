@@ -124,19 +124,23 @@ ${evmChain(~id)}
 // Rust derives. The wire kind it resolves is how that reaches this side, and
 // picking the wrong one would hand the column the wrong typed array.
 describe("ChainIdMode ClickHouse schema", () => {
-  it("maps the checkpoints chain_id column from the mode", t => {
+  it("maps the raw events chain_id column from the mode", t => {
     let chainIdKind = (config: Config.t) => {
-      let sink = ClickHouse.makeSink(
-        ~host="http://127.0.0.1:1",
-        ~username="default",
-        ~password="",
-        ~database="unused",
+      let name = InternalTable.RawEvents.table.tableName
+      let table = TestClickHouse.offlineClient(
         ~chainIdMode=config.chainIdMode,
-      )
-      let specs = ClickHouse.checkpointColumnSpecs
-      let {kinds} = sink->ClickHouseSink.registerCheckpointsTable(specs)
-      let column = specs->Array.findIndexOpt(({name}) => name === "chain_id")->Option.getOrThrow
-      kinds->Array.getUnsafe(column)->Staging.kindOfOrdinal
+      )->TestClickHouse.registered({
+        name,
+        kind: RawEvents,
+        clickhouse: ClickHouse.ownTable(
+          ~kind=RawEvents,
+          ~name,
+          ~fields=InternalTable.RawEvents.table->Table.schemaOrderedFields(
+            ~schema=InternalTable.RawEvents.schema->S.toUnknown,
+          ),
+        ),
+      })
+      (table.columns->Array.find(column => column.name === "chain_id")->Option.getOrThrow).kind
     }
     t.expect((maxInt32Config->chainIdKind, tronConfig->chainIdKind)).toEqual((
       Staging.F64,

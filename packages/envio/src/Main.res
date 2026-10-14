@@ -413,7 +413,7 @@ let getGlobalIndexer = (): 'indexer => {
 
 let migrate = async (~reset) => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = Storage.makePersistenceFromConfig(~config)
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -431,7 +431,7 @@ let migrate = async (~reset) => {
 
 let dropSchema = async () => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = Storage.makePersistenceFromConfig(~config)
   await persistence.storage.reset()
   await persistence.storage.close()
 }
@@ -461,7 +461,7 @@ exception FatalError(exn)
     // module top level).
     let persistence = switch persistence {
     | Some(p) => p
-    | None => PgStorage.makePersistenceFromConfig(~config)
+    | None => Storage.makePersistenceFromConfig(~config)
     }
     setGlobalPersistence(persistence)
     let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)

@@ -988,7 +988,11 @@ impl Storage {
             None => {
                 self.load_chains().await?;
                 let rows = self.chain_rows().into_values().collect::<Vec<_>>();
-                let frontier = self.frontier();
+                let frontier = self
+                    .frontier()
+                    .into_iter()
+                    .filter(|(chain_id, _)| input.chain_ids.contains(chain_id))
+                    .collect();
                 self.trim_above(input.sequence, &frontier, &tables).await?;
                 let (addresses, reorg_checkpoints) = futures_util::try_join!(
                     self.read_addresses(false),
@@ -1745,6 +1749,7 @@ mod tests {
                 // shared sequence bounds.
                 sequence: Sequence::SharedAcrossChains,
                 tables: vec![account],
+                chain_ids: vec![1],
                 committed: Some(vec![ResumedChain {
                     id: 1.0,
                     ecosystem: "evm".to_string(),

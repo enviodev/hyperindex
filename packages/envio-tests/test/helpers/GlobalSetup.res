@@ -2,7 +2,7 @@
 // A worker killed mid-test leaves its schema behind; collecting the old ones
 // here is what stops them piling up in a developer's database.
 let setup = async () => {
-  let sql = PgStorage.makeClient()
+  let sql = Storage.makePgClient()
   let cleanup = async () => {
     let _ = await sql->Sql.close
   }

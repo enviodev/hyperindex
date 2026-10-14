@@ -62,7 +62,7 @@ let sweep = async sql => {
   dropped
 }
 
-let emptyBatch: PgClient.batch = {
+let emptyBatch: StorageClient.batch = {
   progress: [],
   entities: [],
   chainMeta: [],
@@ -74,6 +74,7 @@ let emptyBatch: PgClient.batch = {
     blockNumbers: [],
     blockHashes: [],
     eventsProcessed: [],
+    keepsHistory: [],
   },
   effectCaches: [],
 }
@@ -88,22 +89,19 @@ let write = async (
   ~items: array<unknown>,
   ~create=false,
 ) => {
-  let sql = PgStorage.makeClient(~pgSchema, ~maxConnections=1)
-  let registered = sql->PgStorage.register(~table, ~itemSchema)
+  let sql = Storage.makePgClient(~pgSchema, ~maxConnections=1)
+  let registered = sql->Storage.register(~kind=EffectCache, ~table, ~itemSchema)
   try {
-    await sql->PgClient.writeBatch(
-      {
-        ...emptyBatch,
-        effectCaches: [
-          {
-            table: registered.handle,
-            create,
-            rows: sql->PgStorage.rowsOrThrow(registered, ~itemSchema, items, ~staged=[]),
-          },
-        ],
-      },
-      Null.null,
-    )
+    let _ = await sql->StorageClient.writeBatch({
+      ...emptyBatch,
+      effectCaches: [
+        {
+          table: registered.handle,
+          create,
+          rows: sql->Storage.rowsOrThrow(registered, ~itemSchema, items, ~staged=[]),
+        },
+      ],
+    })
   } catch {
   | exn =>
     await sql->Sql.close

@@ -196,8 +196,9 @@ describe("ClickHouse stores every schema type", () => {
           // back as the text of JSON null rather than as an absent value.
           optJson: "null",
           optJsonNull: "null",
-          // A String element holds whatever text it is given.
-          arrayOfJson: ['{"a":1}', "2", "true", "s"],
+          // Each element is its document's text, so one that is a string
+          // keeps its quotes and parses back to the string it was.
+          arrayOfJson: ['{"a":1}', "2", "true", '"s"'],
           enumField: "ADMIN",
           optEnumField: null,
         }`),

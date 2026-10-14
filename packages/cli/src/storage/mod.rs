@@ -212,6 +212,9 @@ pub struct Resume {
     pub sequence: Sequence,
     /// Every entity table, whose rows a store may have to trim back.
     pub tables: Vec<Arc<Table>>,
+    /// The chains this run drives. Only their rows are trimmed: a sibling
+    /// process driving another chain may be mid-write above its frontier.
+    pub chain_ids: Vec<i64>,
     /// What the store of record committed, for a store that follows it: it
     /// trims back to these rather than to what it has itself.
     pub committed: Option<Vec<ResumedChain>>,
@@ -363,12 +366,18 @@ impl Storage {
     /// Resumes the store of record, and then the follower to what it
     /// committed: a batch the follower wrote but the store of record never
     /// did is trimmed away.
-    pub async fn resume(&self, sequence: Sequence, tables: Vec<Arc<Table>>) -> Result<Resumed> {
+    pub async fn resume(
+        &self,
+        sequence: Sequence,
+        tables: Vec<Arc<Table>>,
+        chain_ids: Vec<i64>,
+    ) -> Result<Resumed> {
         let resumed = self
             .primary()
             .resume(&Resume {
                 sequence,
                 tables: tables.clone(),
+                chain_ids: chain_ids.clone(),
                 committed: None,
             })
             .await?;
@@ -377,7 +386,15 @@ impl Storage {
                 .resume(&Resume {
                     sequence,
                     tables,
-                    committed: Some(resumed.chains.clone()),
+                    committed: Some(
+                        resumed
+                            .chains
+                            .iter()
+                            .filter(|chain| chain_ids.contains(&(chain.id as i64)))
+                            .cloned()
+                            .collect(),
+                    ),
+                    chain_ids,
                 })
                 .await?;
         }

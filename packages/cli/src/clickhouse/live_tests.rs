@@ -476,6 +476,7 @@ async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
         .resume(&Resume {
             sequence: Sequence::SharedAcrossChains,
             tables: vec![account.clone()],
+            chain_ids: vec![1],
             committed: None,
         })
         .await
@@ -667,6 +668,7 @@ async fn addresses_follow_registrations_and_the_rollbacks_that_drop_them() {
         .resume(&Resume {
             sequence: Sequence::SharedAcrossChains,
             tables: vec![account],
+            chain_ids: vec![1],
             committed: None,
         })
         .await
@@ -711,6 +713,7 @@ async fn chain_state_survives_a_restart() {
         .resume(&Resume {
             sequence: Sequence::SharedAcrossChains,
             tables: vec![account],
+            chain_ids: vec![1],
             committed: None,
         })
         .await
@@ -850,6 +853,7 @@ async fn a_follower_resumes_to_what_the_store_of_record_committed() {
         .resume(&Resume {
             sequence: Sequence::SharedAcrossChains,
             tables: vec![account.clone()],
+            chain_ids: vec![1],
             committed: Some(vec![crate::storage::types::ResumedChain {
                 id: 1.0,
                 ecosystem: "evm".to_string(),

@@ -346,48 +346,51 @@ impl JsonSchema for StorageConfig {
             "type": "object",
             "properties": {
                 "postgres": (backend(
-                    "Whether to use Postgres as a storage backend (default: true). Accepts a \
-                     boolean or an options object (the object form implies the backend is \
-                     enabled).",
+                    "Whether to use Postgres as a storage backend (default: true). Required \
+                     when ClickHouse is enabled. Accepts a boolean or an options object (the \
+                     object form implies the backend is enabled).",
                     "Whether entities without an @storage directive are stored in this backend \
                      (default: true when Postgres is the only enabled backend, false otherwise)."
                 )),
                 "clickhouse": (backend(
-                    "Whether to additionally sync the indexed data to ClickHouse. Requires \
-                     Postgres to be enabled (default: false). Accepts a boolean or an options \
-                     object (the object form implies the backend is enabled).",
+                    "Whether to use ClickHouse as a storage backend (default: false). Alongside \
+                     Postgres it keeps the entities that opt into it; with `postgres: false` it \
+                     keeps everything. Accepts a boolean or an options object (the object form \
+                     implies the backend is enabled).",
                     "Whether entities without an @storage directive are stored in this backend \
-                     (default: false)."
+                     (default: true when ClickHouse is the only enabled backend, false \
+                     otherwise)."
                 ))
             },
             "additionalProperties": false,
             // Storage::resolve rejects two shapes:
-            //   1. `postgres: false` (with any clickhouse value) — either
-            //      fails as "ClickHouse not supported as a single storage
-            //      yet" or resolves to all-backends-disabled.
-            //   2. ClickHouse enabled without an explicitly enabled
-            //      postgres — the user must opt in to Postgres alongside
-            //      ClickHouse.
+            //   1. `postgres: false` without ClickHouse enabled, which leaves
+            //      no storage at all.
+            //   2. ClickHouse enabled with `postgres` unset, which could mean
+            //      either store keeps the data.
             "allOf": [
                 {
-                    "not": {
+                    "if": {
                         "properties": {
                             "postgres": { "const": false }
                         },
                         "required": ["postgres"]
+                    },
+                    "then": {
+                        "properties": {
+                            "clickhouse": (enabled.clone())
+                        },
+                        "required": ["clickhouse"]
                     }
                 },
                 {
                     "if": {
                         "properties": {
-                            "clickhouse": (enabled.clone())
+                            "clickhouse": (enabled)
                         },
                         "required": ["clickhouse"]
                     },
                     "then": {
-                        "properties": {
-                            "postgres": (enabled)
-                        },
                         "required": ["postgres"]
                     }
                 }

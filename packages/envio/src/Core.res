@@ -10,8 +10,7 @@ type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
-type clickHouseSinkCtor
-type pgStorageCtor
+type storageCtor
 type addressStoreCtor
 type tuiCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
@@ -94,10 +93,8 @@ type addon = {
   blockStore: blockStoreCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
-  @as("ClickHouseSink")
-  clickHouseSink: clickHouseSinkCtor,
-  @as("PgStorage")
-  pgStorage: pgStorageCtor,
+  @as("Storage")
+  storage: storageCtor,
   @as("Tui")
   tui: tuiCtor,
   @as("MockHyperSyncServer")

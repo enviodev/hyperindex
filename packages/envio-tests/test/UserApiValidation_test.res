@@ -394,6 +394,25 @@ chains:
     ))
   })
 
+  it("keeps every entity in ClickHouse when it is the only storage", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~schema=`type User { id: ID! }`,
+      ~configYaml=`
+name: clickhouse-only
+storage:
+  postgres: false
+  clickhouse: true
+chains:
+  - id: 1
+    start_block: 0
+`,
+    )
+    t.expect((
+      (config.storage.postgres, config.storage.clickhouse),
+      (config.userEntitiesByName->Dict.getUnsafe("User")).storage,
+    )).toEqual(((false, true), {Internal.postgres: false, clickhouse: true}))
+  })
+
   it("preserves per-backend column names across the public config boundary", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`
@@ -734,16 +753,16 @@ chains:
 
   [
     (
-      "rejects ClickHouse without Postgres",
+      "asks whether Postgres stays when only ClickHouse is named",
       `
-name: clickhouse-only
+name: clickhouse-without-postgres
 storage:
   clickhouse: true
 chains:
   - id: 1
     start_block: 0
 `,
-      "ClickHouse is not supported as a single storage yet. Please enable Postgres alongside ClickHouse in the \`storage\` config.",
+      "With ClickHouse enabled, the \`storage\` config has to say whether Postgres stays: set \`postgres: true\` to keep it alongside ClickHouse, or \`postgres: false\` to keep everything in ClickHouse.",
     ),
     (
       "rejects a config with every storage disabled",

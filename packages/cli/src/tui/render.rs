@@ -578,19 +578,19 @@ fn links(info: &TuiInfo, inner: usize, palette: Palette) -> Vec<Line<'static>> {
             span(url.to_string(), palette.link()),
         ]
     };
-    let graphql = link("GraphQL", &info.graphql_url);
+    let graphql = info.graphql_url.as_ref().map(|url| link("GraphQL", url));
     let secret = info
         .graphql_password
         .as_ref()
         .map(|password| format!("admin secret: {password}"));
-    let graphql_with_secret = match &secret {
+    let graphql_with_secret = graphql.as_ref().map(|graphql| match &secret {
         Some(secret) => [
             graphql.clone(),
             vec![span(format!(" ({secret})"), palette.faint())],
         ]
         .concat(),
         None => graphql.clone(),
-    };
+    });
     let others: Vec<Spans> = [
         info.dev_console_url
             .as_ref()
@@ -603,18 +603,26 @@ fn links(info: &TuiInfo, inner: usize, palette: Palette) -> Vec<Line<'static>> {
     .flatten()
     .collect();
 
+    let all: Vec<&Spans> = graphql_with_secret.iter().chain(&others).collect();
+    if all.is_empty() {
+        return vec![];
+    }
     let one_line =
-        width(&graphql_with_secret) + others.iter().map(|other| 3 + width(other)).sum::<usize>();
+        all.iter().map(|part| width(part)).sum::<usize>() + 3 * all.len().saturating_sub(1);
     if one_line <= inner {
-        let mut spans = graphql_with_secret;
-        for other in others {
-            spans.push(Span::raw("   "));
-            spans.extend(other);
+        let mut spans = Vec::new();
+        for (index, part) in all.into_iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::raw("   "));
+            }
+            spans.extend(part.iter().cloned());
         }
         return vec![Line::from(spans)];
     }
-    let mut lines = match secret {
-        Some(secret) if width(&graphql_with_secret) > inner => {
+    let mut lines = match (graphql, graphql_with_secret, secret) {
+        (Some(graphql), Some(graphql_with_secret), Some(secret))
+            if width(&graphql_with_secret) > inner =>
+        {
             // Under the URL, unless that's what would make it wrap.
             let indent = "GraphQL ".len();
             let indent = if indent + secret.len() <= inner {
@@ -630,7 +638,7 @@ fn links(info: &TuiInfo, inner: usize, palette: Palette) -> Vec<Line<'static>> {
                 ]),
             ]
         }
-        _ => vec![Line::from(graphql_with_secret)],
+        (_, graphql_with_secret, _) => graphql_with_secret.into_iter().map(Line::from).collect(),
     };
     lines.extend(others.into_iter().map(Line::from));
     lines
@@ -790,8 +798,11 @@ pub fn frame(
         body.push(Line::default());
     }
     body.extend(summary(state, now, tick, inner, palette));
-    body.push(Line::default());
-    body.extend(links(&state.info, inner, palette));
+    let links = links(&state.info, inner, palette);
+    if !links.is_empty() {
+        body.push(Line::default());
+        body.extend(links);
+    }
     let notices = notices(state, inner, palette);
     if !notices.is_empty() {
         body.push(Line::default());
@@ -882,7 +893,7 @@ mod tests {
             version: "2.32.0".to_string(),
             project_dir: "~/code/projects/envio/uniswap-indexer".to_string(),
             start_time: START,
-            graphql_url: "http://localhost:8080".to_string(),
+            graphql_url: Some("http://localhost:8080".to_string()),
             graphql_password: Some("testing".to_string()),
             dev_console_url: Some("https://envio.dev/console".to_string()),
             clickhouse_url: None,
@@ -1057,6 +1068,17 @@ mod tests {
         );
         state.info.clickhouse_url = Some("http://localhost:8123/play".to_string());
         assert_screen("synced", &state, 100, ColorLevel::TrueColor);
+    }
+
+    // Without Postgres there is no Hasura, so nothing serves GraphQL.
+    #[test]
+    fn leaves_out_the_graphql_link_when_nothing_serves_it() {
+        let mut state = state(&[synced(ethereum(), Some(21_000_000))], Messages::Failed);
+        state.info.graphql_url = None;
+        state.info.graphql_password = None;
+        state.info.dev_console_url = None;
+        state.info.clickhouse_url = Some("http://localhost:8123/play".to_string());
+        assert_screen("clickhouse_only", &state, 100, ColorLevel::TrueColor);
     }
 
     #[test]

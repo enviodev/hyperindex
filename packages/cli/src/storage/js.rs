@@ -326,6 +326,8 @@ pub struct ResumeInput {
     pub sequence: String,
     /// Every entity table.
     pub tables: Vec<u32>,
+    /// The chains this run drives.
+    pub chain_ids: Vec<f64>,
 }
 
 #[napi(object)]
@@ -637,6 +639,12 @@ impl JsStorage {
         })
     }
 
+    /// The store everything but an entity's own rows is kept in.
+    #[napi(getter)]
+    pub fn store_of_record(&self) -> &'static str {
+        self.inner.primary().name()
+    }
+
     /// Registers a table with every store that keeps it. A Postgres table's
     /// batches are staged when it has no column of arrays: unnesting one
     /// spreads it across the rows instead of keeping it as a value, so such a
@@ -902,7 +910,12 @@ impl JsStorage {
     pub async fn resume(&self, input: ResumeInput) -> napi::Result<ResumedOutput> {
         let sequence = Sequence::parse(&input.sequence).map_err(to_napi)?;
         let tables = self.tables_of(&input.tables)?;
-        let resumed = self.inner.resume(sequence, tables).await.map_err(to_napi)?;
+        let chain_ids = input.chain_ids.into_iter().map(chain_id).collect();
+        let resumed = self
+            .inner
+            .resume(sequence, tables, chain_ids)
+            .await
+            .map_err(to_napi)?;
         Ok(ResumedOutput {
             chains: resumed
                 .chains

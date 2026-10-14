@@ -1,55 +1,11 @@
-let clickHouseFieldSchema = (f: Table.field) => {
-  let shaped = baseSchema =>
-    if f.isNullable {
-      Utils.Schema.nullTolerant(baseSchema)->S.toUnknown
-    } else if f.isArray {
-      S.array(baseSchema)->S.toUnknown
-    } else {
-      baseSchema
-    }
-  switch f.fieldType {
-  | Date => shaped(Utils.Schema.clickHouseDate->S.toUnknown)
-  | Bytea => shaped(S.json(~validate=false)->S.toUnknown)
-  | ChainId => ChainId.schema->S.toUnknown
-  | Json if !f.isArray => Utils.Schema.clickHouseJson->S.toUnknown
-  | _ => f.fieldSchema
-  }
-}
+// The indexer's tables and rows as the ClickHouse store takes them. Rows read
+// back keyed by their Postgres column names, so one set of row schemas parses
+// what either store returns.
 
-let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
-  S.object(s => {
-    let dict = Dict.make()
-    table.fields->Array.forEach(field => {
-      switch field {
-      | Field(f) =>
-        dict->Dict.set(
-          f->Table.getApiFieldName,
-          s.field(f->Table.getClickHouseDbFieldName, clickHouseFieldSchema(f)),
-        )
-      | DerivedFrom(_) => ()
-      }
-    })
-    dict->(Utils.magic: dict<unknown> => Internal.entity)
-  })
-}
+let logger = Logging.createChild(~params={"storage": "clickhouse"})
 
-let logger = Logging.createChild(~params={"context": "ClickHouse"})
-
-let makeSink = (~host, ~username, ~password, ~database, ~chainIdMode) =>
-  ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~chainIdMode, ~onWarning=msg =>
-    logger->Logging.childWarn({"msg": msg})
-  )
-
-let makeColumnSpec = (
-  ~name,
-  ~fieldName=name,
-  ~fieldType: Table.fieldType,
-  ~isNullable=false,
-  ~isArray=false,
-): ClickHouseSink.columnSpec => {
-  name,
-  fieldName,
-  fieldType: switch fieldType {
+let fieldTypeName = (fieldType: Table.fieldType) =>
+  switch fieldType {
   | String => "String"
   | Boolean => "Boolean"
   | Uint32 => "Uint32"
@@ -68,7 +24,20 @@ let makeColumnSpec = (
   | BigInt(_) => "BigInt"
   | BigDecimal(_) => "BigDecimal"
   | Enum(_) => "Enum"
-  },
+  }
+
+let column = (
+  ~name,
+  ~rowName=?,
+  ~fieldName=?,
+  ~fieldType: Table.fieldType,
+  ~isNullable=false,
+  ~isArray=false,
+): StorageClient.clickHouseColumn => {
+  name,
+  ?rowName,
+  ?fieldName,
+  fieldType: fieldType->fieldTypeName,
   isNullable,
   isArray,
   precision: ?switch fieldType {
@@ -87,36 +56,20 @@ let makeColumnSpec = (
   },
 }
 
-type checkpointColumn = {
-  spec: ClickHouseSink.columnSpec,
-  valuesOf: Batch.t => array<unknown>,
-  diffValuesOf: array<InternalTable.Checkpoints.diffCheckpoint> => array<unknown>,
-}
+let fieldColumn = (field: Table.field) =>
+  column(
+    ~name=field->Table.getClickHouseDbFieldName,
+    ~rowName=field->Table.getPgDbFieldName,
+    ~fieldName=field.fieldName,
+    ~fieldType=field.fieldType,
+    ~isNullable=field.isNullable,
+    ~isArray=field.isArray,
+  )
 
-// Registration and staging both read this one list, so the column a batch's
-// values are written to is the column that was registered in its place.
-let checkpointColumns = InternalTable.Checkpoints.columns->Array.filterMap(({
-  field,
-  clickHouseFieldType,
-  valuesOf,
-  diffValuesOf,
-}) =>
-  switch field {
-  | Table.Field({fieldName, isNullable}) =>
-    Some({
-      spec: makeColumnSpec(~name=fieldName, ~fieldType=clickHouseFieldType, ~isNullable),
-      valuesOf,
-      diffValuesOf,
-    })
-  | DerivedFrom(_) => None
-  }
-)
-
-let checkpointColumnSpecs = checkpointColumns->Array.map(({spec}) => spec)
-
-let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySpec => {
+let entityTable = (entityConfig: Internal.entityConfig): StorageClient.clickHouseTable => {
   let options = entityConfig.storage.clickhouseOptions
   {
+    kind: Entity,
     name: entityConfig.name,
     historyTable: EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
@@ -124,16 +77,7 @@ let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySp
     ),
     columns: entityConfig.table.fields->Array.filterMap(field =>
       switch field {
-      | Table.Field(f) =>
-        Some(
-          makeColumnSpec(
-            ~name=f->Table.getClickHouseDbFieldName,
-            ~fieldName=f.fieldName,
-            ~fieldType=f.fieldType,
-            ~isNullable=f.isNullable,
-            ~isArray=f.isArray,
-          ),
-        )
+      | Table.Field(f) => Some(fieldColumn(f))
       | DerivedFrom(_) => None
       }
     ),
@@ -147,7 +91,7 @@ let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySp
       options->Option.flatMap(options =>
         options.skippingIndexes->Option.map(indexes =>
           indexes->Array.map(
-            (index): ClickHouseSink.skippingIndexSpec => {
+            (index): StorageClient.skippingIndex => {
               name: index.name,
               expr: index.expr,
               indexType: index.type_,
@@ -160,28 +104,83 @@ let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySp
   }
 }
 
+// A table of the indexer's own: the columns a batch of its rows carries.
+let ownTable = (
+  ~kind: StorageClient.tableKind,
+  ~name,
+  ~fields: array<Table.field>,
+): StorageClient.clickHouseTable => {
+  kind,
+  name,
+  columns: fields->Array.map(fieldColumn),
+}
+
+// Visits every node on the way into JSON text. A bigint would make
+// `JSON.stringify` throw and fail the whole batch, so it travels as its digits.
+%%private(
+  let jsonSafe = (~column) =>
+    (_, value: JSON.t) =>
+      switch value->typeof {
+      | #bigint =>
+        value->(Utils.magic: JSON.t => unknown)->Staging.stringOf->(Utils.magic: string => JSON.t)
+      // A Uint8Array inside a list column travels as its byte values, which the
+      // addon reads back into raw bytes.
+      | #object =>
+        switch value->(Utils.magic: JSON.t => unknown)->Utils.Bytes.asUint8Array {
+        | Some(bytes) =>
+          bytes
+          ->(Utils.magic: Uint8Array.t => Array.arrayLike<int>)
+          ->Array.fromArrayLike
+          ->(Utils.magic: array<int> => JSON.t)
+        | None => value
+        }
+      | #number =>
+        let _ = value->(Utils.magic: JSON.t => float)->Staging.finiteOrThrow(~column)
+        value
+      | _ => value
+      }
+)
+
 type cell = Change.t<Internal.entity> => unknown
 
-type converters = {
+type historyCells = {
   setCells: array<cell>,
   deleteCells: array<cell>,
 }
 
-type registry = {
-  entities: dict<ClickHouseSink.table>,
-  mutable checkpoints: option<ClickHouseSink.table>,
-  converters: dict<converters>,
+type table = {
+  handle: int,
+  name: string,
+  columns: array<Staging.column>,
+  // An entity's history cells, by the scope whose chain id they stamp.
+  historyCells: dict<historyCells>,
+  mutable rowCells: option<array<unknown => unknown>>,
 }
 
-let makeRegistry = () => {
-  entities: Dict.make(),
-  checkpoints: None,
-  converters: Dict.make(),
+let makeTable = (~handle, ~name, {names, kinds, nullable}: StorageClient.clickHouseRegistered) => {
+  handle,
+  name,
+  columns: names->Array.mapWithIndex((name, index): Staging.column => {
+    name,
+    kind: kinds->Array.getUnsafe(index)->Staging.kindOfOrdinal,
+    isNullable: nullable->Array.getUnsafe(index),
+    replacer: Replacer(jsonSafe(~column=name)),
+  }),
+  historyCells: Dict.make(),
+  rowCells: None,
 }
 
-@get external changeEntity: Change.t<Internal.entity> => dict<unknown> = "entity"
-
-%%private(let absent: unknown = %raw(`undefined`))
+// A Json column holds the document's text. Staging writes a string as is, so a
+// document that is a string has to become its own JSON text here, or it would
+// read back as something JSON can't parse. JSON `null` and an absent value are
+// both stored as `null`: the column is never Nullable.
+%%private(
+  let documentText = (value: unknown) =>
+    switch value->(Utils.magic: unknown => Nullable.t<JSON.t>) {
+    | Value(document) => document->JSON.stringify->(Utils.magic: string => unknown)
+    | Null | Undefined => "null"->(Utils.magic: string => unknown)
+    }
+)
 
 %%private(
   let compileSerializer = schema =>
@@ -190,13 +189,44 @@ let makeRegistry = () => {
     )
 )
 
+// What a field's value is staged as.
 %%private(
-  let makeConverters = (
+  let serializerOf = (f: Table.field): (unknown => unknown) => {
+    let shaped = baseSchema =>
+      if f.isNullable {
+        Utils.Schema.nullTolerant(baseSchema)->S.toUnknown
+      } else if f.isArray {
+        S.array(baseSchema)->S.toUnknown
+      } else {
+        baseSchema
+      }
+    switch f.fieldType {
+    | Json if f.isArray =>
+      value =>
+        switch value->(Utils.magic: unknown => Nullable.t<array<unknown>>) {
+        | Value(documents) =>
+          documents->Array.map(documentText)->(Utils.magic: array<unknown> => unknown)
+        | Null | Undefined => value
+        }
+    | Json => documentText
+    | Date => compileSerializer(shaped(Utils.Schema.clickHouseDate->S.toUnknown))
+    | Bytea => compileSerializer(shaped(S.json(~validate=false)->S.toUnknown))
+    | ChainId => compileSerializer(ChainId.schema->S.toUnknown)
+    | _ => compileSerializer(f.fieldSchema)
+    }
+  }
+)
+
+@get external changeEntity: Change.t<Internal.entity> => dict<unknown> = "entity"
+
+%%private(let absent: unknown = %raw(`undefined`))
+
+%%private(
+  let makeHistoryCells = (
+    table,
     ~entityConfig: Internal.entityConfig,
     ~scope: Internal.chainScope,
-    ~table: ClickHouseSink.table,
-  ): converters => {
-    let {name: tableName, columns} = table
+  ): historyCells => {
     let sourceTable = entityConfig.table
     let chainIdTag = switch (
       sourceTable->Table.getChainIdField,
@@ -216,8 +246,8 @@ let makeRegistry = () => {
 
     let setCells = []
     let deleteCells = []
-    let registeredNames = columns->Array.map(column => column.name)->Utils.Set.fromArray
-    columns->Array.forEach(({name}) => {
+    let registeredNames = table.columns->Array.map(column => column.name)->Utils.Set.fromArray
+    table.columns->Array.forEach(({name}) => {
       let (set, delete) = if name === EntityHistory.checkpointIdFieldName {
         let cell = change => change->Change.getCheckpointId->(Utils.magic: bigint => unknown)
         (cell, cell)
@@ -230,7 +260,7 @@ let makeRegistry = () => {
         switch (chainIdTag, fieldsByColumn->Utils.Dict.dangerouslyGetNonOption(name)) {
         | (Some((column, chainId)), _) if column === name => (_ => chainId, _ => chainId)
         | (_, Some(f)) =>
-          let serialize = compileSerializer(clickHouseFieldSchema(f))
+          let serialize = serializerOf(f)
           let apiName = f->Table.getApiFieldName
           if apiName === Table.idFieldName {
             let cell = change =>
@@ -241,7 +271,7 @@ let makeRegistry = () => {
           }
         | (_, None) =>
           JsError.throwWithMessage(
-            `ClickHouse table "${tableName}" registered a column "${name}" that entity "${entityConfig.name}" has no value for`,
+            `ClickHouse table "${table.name}" registered a column "${name}" that entity "${entityConfig.name}" has no value for`,
           )
         }
       }
@@ -252,7 +282,7 @@ let makeRegistry = () => {
     fieldsByColumn->Dict.forEachWithKey((f, column) =>
       if !(registeredNames->Utils.Set.has(column)) {
         JsError.throwWithMessage(
-          `ClickHouse table "${tableName}" registered no column for field "${f.fieldName}" of entity "${entityConfig.name}"`,
+          `ClickHouse table "${table.name}" registered no column for field "${f.fieldName}" of entity "${entityConfig.name}"`,
         )
       }
     )
@@ -262,189 +292,112 @@ let makeRegistry = () => {
 )
 
 %%private(
-  let fillStage = (stage, ~converters, ~changes: array<Change.t<Internal.entity>>) => {
-    let columns = stage->Staging.columnCount
-    for row in 0 to changes->Array.length - 1 {
-      let change = changes->Array.getUnsafe(row)
-      let (cells, write) = switch change {
-      | Change.Set(_) => (converters.setCells, Staging.writeValue)
-      | Delete(_) => (converters.deleteCells, Staging.writeDeletedValue)
-      }
-      for column in 0 to columns - 1 {
-        stage->write(~column, ~row, (cells->Array.getUnsafe(column))(change))
-      }
+  let stageOrThrow = (arena, table, ~rows, ~fill) => {
+    let stage = arena->Staging.begin(~table=table.handle, ~rows, ~columns=table.columns)
+    try {
+      fill(stage)
+      stage->Staging.commit
+    } catch {
+    | exn =>
+      stage->Staging.abort
+      throw(
+        Persistence.StorageError({
+          message: `Failed to convert items for ClickHouse table "${table.name}"`,
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
     }
   }
 )
 
-let entityTable = (sink, ~registry, ~entityConfig: Internal.entityConfig) =>
-  switch registry.entities->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
-  | Some(table) => table
-  | None =>
-    let spec = entitySpec(~entityConfig)
-    let table =
-      sink
-      ->ClickHouseSink.registerEntityTable(spec)
-      ->ClickHouseSink.makeTable(~name=spec.historyTable)
-    registry.entities->Dict.set(entityConfig.name, table)
-    table
-  }
-
-let checkpointsTable = (sink, ~registry) =>
-  switch registry.checkpoints {
-  | Some(table) => table
-  | None =>
-    let table =
-      sink
-      ->ClickHouseSink.registerCheckpointsTable(checkpointColumnSpecs)
-      ->ClickHouseSink.makeTable(~name=InternalTable.Checkpoints.table.tableName)
-    registry.checkpoints = Some(table)
-    table
-  }
-
-let stageCheckpointsOrThrow = (
-  sink,
-  ~registry,
-  ~batch: Batch.t,
-  ~diffCheckpoints: array<InternalTable.Checkpoints.diffCheckpoint>,
-) => {
-  let rows = batch.checkpointIds->Array.length + diffCheckpoints->Array.length
-  if rows === 0 {
-    Null.null
-  } else {
-    let table = sink->checkpointsTable(~registry)
-    let stage =
-      sink->ClickHouseSink.arena->Staging.begin(~table=table.handle, ~rows, ~columns=table.columns)
-    try {
-      // The table was registered from `checkpointColumns`, in this order.
-      table.columns->Array.forEachWithIndex((_, column) => {
-        let source = checkpointColumns->Array.getUnsafe(column)
-        let columnValues =
-          source.valuesOf(batch)->Array.concat(source.diffValuesOf(diffCheckpoints))
-        for row in 0 to rows - 1 {
-          stage->Staging.writeValue(~column, ~row, columnValues->Array.getUnsafe(row))
-        }
-      })
-      Null.make(stage->Staging.commit)
-    } catch {
-    | exn =>
-      stage->Staging.abort
-      throw(
-        Persistence.StorageError({
-          message: `Failed to convert checkpoints for ClickHouse table "${table.name}"`,
-          reason: exn->Utils.prettifyExn,
-        }),
-      )
-    }
-  }
-}
-
-let stageUpdatesOrThrow = (
-  sink,
-  ~registry,
-  ~changes: array<Change.t<Internal.entity>>,
+// Every change as a row of the entity's history: a deletion keeps only the
+// columns that say which entity it removed.
+let stageChangesOrThrow = (
+  arena,
+  table,
   ~entityConfig: Internal.entityConfig,
   ~scope: Internal.chainScope,
-) => {
-  let rows = changes->Array.length
-  if rows === 0 {
-    None
-  } else {
-    let table = sink->entityTable(~registry, ~entityConfig)
-    let tableName = table.name
-    let cacheKey = `${entityConfig.name}|${scope->Internal.chainScopeToString}`
-    let stage =
-      sink->ClickHouseSink.arena->Staging.begin(~table=table.handle, ~rows, ~columns=table.columns)
-    try {
-      let converters = switch registry.converters->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
-      | Some(cached) => cached
-      | None =>
-        let cached = makeConverters(~entityConfig, ~scope, ~table)
-        registry.converters->Dict.set(cacheKey, cached)
-        cached
-      }
-      stage->fillStage(~converters, ~changes)
-      Some(stage->Staging.commit)
-    } catch {
-    | exn =>
-      stage->Staging.abort
-      throw(
-        Persistence.StorageError({
-          message: `Failed to convert items for ClickHouse table "${tableName}"`,
-          reason: exn->Utils.prettifyExn,
-        }),
-      )
+  ~changes: array<Change.t<Internal.entity>>,
+) =>
+  arena->stageOrThrow(table, ~rows=changes->Array.length, ~fill=stage => {
+    let cacheKey = scope->Internal.chainScopeToString
+    let cells = switch table.historyCells->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
+    | Some(cached) => cached
+    | None =>
+      let cells = table->makeHistoryCells(~entityConfig, ~scope)
+      table.historyCells->Dict.set(cacheKey, cells)
+      cells
     }
-  }
-}
+    let columns = stage->Staging.columnCount
+    changes->Array.forEachWithIndex((change, row) => {
+      let (cells, write) = switch change {
+      | Change.Set(_) => (cells.setCells, Staging.writeValue)
+      | Delete(_) => (cells.deleteCells, Staging.writeDeletedValue)
+      }
+      for column in 0 to columns - 1 {
+        stage->write(~column, ~row, (cells->Array.getUnsafe(column))(change))
+      }
+    })
+  })
 
-let writeStagedOrThrow = async (sink, ~entities, ~checkpoints) =>
-  try await sink->ClickHouseSink.writeBatch(~entities, ~checkpoints) catch {
-  | exn =>
-    throw(
-      Persistence.StorageError({
-        message: "Failed to write a batch to ClickHouse",
-        reason: exn->Utils.prettifyExn,
-      }),
+// Rows of one of the indexer's own tables, each column read from the item's
+// field of the same name.
+let stageRowsOrThrow = (arena, table, ~fields: array<Table.field>, items: array<unknown>) =>
+  arena->stageOrThrow(table, ~rows=items->Array.length, ~fill=stage => {
+    let cells = switch table.rowCells {
+    | Some(cells) => cells
+    | None =>
+      let cells = table.columns->Array.map(({name}) =>
+        switch fields->Array.find(field => field->Table.getClickHouseDbFieldName === name) {
+        | Some(field) =>
+          let serialize = serializerOf(field)
+          let fieldName = field->Table.getApiFieldName
+          item =>
+            serialize(item->(Utils.magic: unknown => dict<unknown>)->Dict.getUnsafe(fieldName))
+        | None =>
+          JsError.throwWithMessage(
+            `ClickHouse table "${table.name}" registered a column "${name}" its rows have no value for`,
+          )
+        }
+      )
+      table.rowCells = Some(cells)
+      cells
+    }
+    items->Array.forEachWithIndex((item, row) =>
+      cells->Array.forEachWithIndex(
+        (cell, column) => stage->Staging.writeValue(~column, ~row, cell(item)),
+      )
+    )
+  })
+
+// Every connection setting has to be there: an unset one would otherwise reach
+// the server as an empty value and fail there, for a reason naming neither.
+let optionsFromEnvOrThrow = (): StorageClient.clickHouseOptions => {
+  let missing = []
+  let required = (value, name) =>
+    switch value {
+    | Some(value) => value
+    | None =>
+      missing->Array.push(name)
+      ""
+    }
+  let url = Env.ClickHouse.host()->required("ENVIO_CLICKHOUSE_HOST")
+  let username = Env.ClickHouse.username()->required("ENVIO_CLICKHOUSE_USERNAME")
+  let password = Env.ClickHouse.password()->required("ENVIO_CLICKHOUSE_PASSWORD")
+  let database = Env.ClickHouse.database()->required("ENVIO_CLICKHOUSE_DATABASE")
+  if missing->Utils.Array.notEmpty {
+    JsError.throwWithMessage(
+      `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
+          ", ",
+        )}. Please set them, disable clickhouse in the \`storage\` config, or run \`envio dev\` for a pre-configured local ClickHouse.`,
     )
   }
-
-// Tables are not registered here: an indexer that finds an existing storage
-// never runs this, so the write path registers them on first use either way.
-let initialize = async (sink, ~entities: array<Internal.entityConfig>) => {
-  try {
-    await sink->ClickHouseSink.initialize({
-      entities: entities->Array.map(entityConfig => entitySpec(~entityConfig)),
-      checkpointColumns: checkpointColumnSpecs,
-      replicated: Env.ClickHouse.replicated(),
-      databaseEngine: ?Env.ClickHouse.databaseEngine(),
-    })
-
-    Logging.trace("ClickHouse storage initialization completed successfully")
-  } catch {
-  | exn => {
-      Logging.errorWithExn(exn, "Failed to initialize ClickHouse storage")
-      throw(
-        Persistence.StorageError({
-          message: "Failed to initialize ClickHouse storage",
-          reason: exn->Utils.prettifyExn,
-        }),
-      )
-    }
-  }
-}
-
-let resume = async (
-  sink,
-  ~sequence: CheckpointSequence.t,
-  ~frontier: Frontier.t,
-  ~chains: array<Persistence.initialChainState>,
-  ~entities: array<Internal.entityConfig>,
-) => {
-  let chainProgress = chains->Array.map(chain => {
-    ClickHouseSink.chainId: chain.id->ChainId.toString,
-    progressBlockNumber: chain.progressBlockNumber,
-    committedCheckpointId: frontier->Frontier.get(chain.id)->BigInt.toString,
-  })
-  try await sink->ClickHouseSink.resume({
-    perChain: switch sequence {
-    | PerChain => true
-    | SharedAcrossChains => false
-    },
-    chainProgress,
-    historyTables: entities->Array.map(entityConfig => {
-      let spec = entitySpec(~entityConfig)
-      {ClickHouseSink.name: spec.historyTable, chainIdColumn: ?spec.chainIdColumn}
-    }),
-  }) catch {
-  | exn => {
-      Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")
-      throw(
-        Persistence.StorageError({
-          message: "Failed to resume ClickHouse storage",
-          reason: exn->Utils.prettifyExn,
-        }),
-      )
-    }
+  {
+    url,
+    username,
+    password,
+    database,
+    replicated: Env.ClickHouse.replicated(),
+    databaseEngine: ?Env.ClickHouse.databaseEngine(),
   }
 }

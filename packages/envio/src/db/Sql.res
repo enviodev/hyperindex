@@ -1,4 +1,4 @@
-type t = PgClient.t
+type t = StorageClient.t
 
 // As `SslSetting::parse` in packages/cli/src/postgres/client.rs spells them.
 @unboxed
@@ -97,7 +97,7 @@ let params = (values: array<unknown>): array<Null.t<string>> =>
 // selected. The server decides what is in them, so the caller names their shape.
 let queryForTests = (client, sql, ~params as values: array<unknown>=[]): promise<array<'row>> =>
   client
-  ->PgClient.queryForTests(sql, ~params=params(values))
+  ->StorageClient.queryForTests(sql, ~params=params(values))
   ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<'row>>)
 
-let close = client => client->PgClient.close
+let close = client => client->StorageClient.close

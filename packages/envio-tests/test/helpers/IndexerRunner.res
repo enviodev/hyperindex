@@ -170,6 +170,10 @@ let run = async (
   // installed when its chain state was built, so this has to be in place
   // before the indexer starts rather than set from the body.
   ~captureLogs=false,
+  // Leaves the `ENVIO_CLICKHOUSE_*` settings to the environment rather than
+  // pointing them at a database of the run's own, for a test about a run that
+  // has none.
+  ~provideClickHouse=true,
   body: t => promise<unit>,
 ) => {
   // Postgres resources this run owns: one schema, plus every client and
@@ -206,11 +210,11 @@ let run = async (
       JsError.throwWithMessage("Can't start an indexer once the run is tearing down.")
     }
 
-  // The ClickHouse leg writes through the sink Postgres storage attaches, into
-  // a database of this run's own.
-  let clickHouseDatabase = switch backend {
-  | #clickhouse => Some(TestClickHouse.make())
-  | #postgres => None
+  // ClickHouse writes into a database of this run's own, on the ClickHouse leg
+  // and for a config that enables it itself.
+  let clickHouseDatabase = switch (backend, config.storage.clickhouse) {
+  | (#clickhouse, _) | (_, true) if provideClickHouse => Some(TestClickHouse.make())
+  | _ => None
   }
 
   // The builder is only reachable here and from `restart`, so it takes just
@@ -235,14 +239,15 @@ let run = async (
     | Some(database) => TestClickHouse.use(~database)
     | None => ()
     }
-    let sql = PgStorage.makeClient()
+    let sql = Storage.makePgClient()
     clients->Array.push(sql)->ignore
+    // Tracking tables in Hasura costs ~1.9 seconds per indexer.
+    let client = Storage.clientFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false)
     let storage = mapStorage(
-      // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-      PgStorage.makeStorageFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir),
+      Storage.makeStorageFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir, ~client),
     )
     storages->Array.push(storage)
-    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+    let persistence = Storage.makePersistenceFromConfig(~config, ~storage)
     // `Main.start` does this before handler modules load, so the exported
     // indexer can expose persisted state. Without it every `indexer.chains[N]`
     // getter silently falls back to static config.
@@ -337,11 +342,31 @@ let run = async (
       }
     stops->Array.push(stop)->ignore
 
-    // Rows come back decoded: postgres parses them with the table's field schemas.
+    // An entity Postgres doesn't keep is read from ClickHouse through the run's
+    // own client, which sees what the indexer has committed. Registered once
+    // per client: the handle is what a read names the table by.
+    let clickHouseTables = Dict.make()
+    let clickHouseRows = (entityConfig: Internal.entityConfig) => {
+      let handle = switch clickHouseTables->Dict.get(entityConfig.name) {
+      | Some(handle) => handle
+      | None =>
+        let handle = (client->Storage.registerEntity(entityConfig)).handle
+        clickHouseTables->Dict.set(entityConfig.name, handle)
+        handle
+      }
+      client
+      ->StorageClient.loadWhere(~table=handle, ~conditions=[])
+      ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<unknown>>)
+    }
+
+    // Rows come back decoded: both stores' rows parse with the table's field
+    // schemas.
     let queryEntity = (entityConfig: Internal.entityConfig) =>
-      sql
-      ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
-      ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
+      if entityConfig.storage.postgres {
+        sql->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
+      } else {
+        clickHouseRows(entityConfig)
+      }->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
 
     // Which chain a stored row belongs to, for a table that has chains at all.
     // Read off the row rather than the change decoded from it: a delete keeps
@@ -382,7 +407,7 @@ let run = async (
             S.union([
               EntityHistory.makeSetUpdateSchema(
                 ~idSchema=entityConfig.table->Table.getIdSchema,
-                entityConfig->PgStorage.getRowSchema,
+                entityConfig->Storage.getRowSchema,
               ),
               S.object((s): Change.t<Internal.entity> => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
@@ -566,9 +591,7 @@ let run = async (
         ),
       queryCheckpoints: () =>
         sql
-        ->Sql.queryForTests(
-          loadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.table.tableName),
-        )
+        ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.tableName))
         ->Promise.thenResolve(rows =>
           rows->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         ),

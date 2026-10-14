@@ -1,0 +1,6 @@
+---
+source: packages/cli/src/tui/testing.rs
+expression: emulator.svg().into_bytes()
+extension: svg
+snapshot_kind: binary
+---

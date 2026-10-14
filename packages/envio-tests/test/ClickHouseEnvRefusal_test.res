@@ -51,6 +51,7 @@ describe("Starting with ClickHouse storage but no ClickHouse settings", () => {
       names->Array.forEach(name => env->Dict.delete(name))
       let message = switch await scenario->Scenario.run(
         ~sources=[{chain: 1}],
+        ~provideClickHouse=false,
         async (~indexer as _, ~source as _) => (),
       ) {
       | () => "the start to fail, but it succeeded"

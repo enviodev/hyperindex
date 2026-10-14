@@ -74,6 +74,36 @@ let drop = async (~database) => {
   let _ = await query(`DROP DATABASE IF EXISTS \`${database}\``)
 }
 
+// A storage with ClickHouse alone that never reaches a server: registering a
+// table only parses its column types, which is all a staging test needs.
+let offlineClient = (~chainIdMode=ChainId.Int32) =>
+  Storage.makeClient(
+    ~chainIdMode,
+    ~clickhouse={
+      url: "http://127.0.0.1:1",
+      username: "default",
+      password: "",
+      database: "unused",
+      replicated: false,
+    },
+  )
+
+let registered = (client, input: StorageClient.tableInput) => {
+  let registered = client->StorageClient.registerTable(input)
+  ClickHouse.makeTable(
+    ~handle=registered.handle,
+    ~name=input.name,
+    registered.clickhouse->Option.getOrThrow,
+  )
+}
+
+let entityTable = (client, entityConfig: Internal.entityConfig) =>
+  client->registered({
+    name: entityConfig.table.tableName,
+    kind: Entity,
+    clickhouse: ClickHouse.entityTable(entityConfig),
+  })
+
 // The database the current run is pointed at, set by `use`.
 let currentDatabase = () =>
   switch %raw(`process.env.ENVIO_CLICKHOUSE_DATABASE`)->Nullable.toOption {

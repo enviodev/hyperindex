@@ -143,7 +143,7 @@ pub fn lay_out(cells: &[Cell<'_>], columns: Vec<ColumnRead>) -> Result<ResultSet
     let rows = if width == 0 {
         0
     } else {
-        if cells.len() % width != 0 {
+        if !cells.len().is_multiple_of(width) {
             bail!("{} cells do not fill rows of {width} columns", cells.len());
         }
         cells.len() / width
