@@ -1093,7 +1093,14 @@ function registerStoreKey(chainId: number, entityType: string, id: string): stri
   return `${chainId}\u0000${entityType}\u0000${id}`;
 }
 
-function registerRead(scope: Scope, entityType: string, id: string, sameBlock: boolean) {
+let registerMissHook: ((scope: Scope, key: string) => void) | null = null;
+
+/** Called on a register-store miss; may suspend the pass to wait on another. */
+export function installRegisterMissHook(hook: typeof registerMissHook) {
+  registerMissHook = hook;
+}
+
+function registerRead(scope: Scope, entityType: string, id: string, sameBlock: boolean, wait = true) {
   const key = registerStoreKey(scope.dataSource.chainId, entityType, id);
   if (scope.writes?.has(key)) return toEntity(entityType, scope.writes.get(key));
   const position = scope.position ?? 0;
@@ -1110,6 +1117,7 @@ function registerRead(scope: Scope, entityType: string, id: string, sameBlock: b
     }
     return toEntity(entityType, version.row);
   }
+  if (wait) registerMissHook?.(scope, key);
   return null;
 }
 
@@ -1185,7 +1193,7 @@ const storeImpl = {
     // doesn't set keeps its stored value, an explicit null clears it. ENS's
     // handleAddrChanged saves a fresh `new Resolver(id)` and relies on it.
     if (scope.mode === "register") {
-      const stored = registerRead(scope, entityType, id, false);
+      const stored = registerRead(scope, entityType, id, false, false);
       return registerWrite(scope, entityType, id, stored ? { ...toRow(entityType, stored), ...row } : row);
     }
     const table = entityContext(entityType);

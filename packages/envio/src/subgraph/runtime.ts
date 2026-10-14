@@ -15,7 +15,7 @@ import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
-import { currentScope, runInScope, type Scope, type SubgraphSchema } from "./scope.ts";
+import { currentScope, runInScope, type RegisterPass, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
   Address,
   assemblyScriptPrimitives,
@@ -27,6 +27,7 @@ import {
   installCallHook,
   installHosts,
   installRegisterHook,
+  installRegisterMissHook,
   ethereum,
   type EventInput,
   type EventKind,
@@ -401,6 +402,58 @@ function registerHostSync(scope: Scope, effect: Effect, input: unknown) {
   throw REGISTER_SUSPEND;
 }
 
+/**
+ * A batch's register passes run concurrently, and a pass's writes reach the
+ * register store only when it completes. Every Comptroller event in Venus's
+ * first batch missed the Market an earlier event was still creating, and
+ * repeated its ~20 creation calls at its own block. So a pass that misses an
+ * entity an earlier pass of its chain also missed, and is still running,
+ * waits for the earliest such pass once and reads again — the per-key order
+ * graph-node's sequential processing gives. Independent events stay
+ * concurrent; a key nobody ends up writing costs one wait.
+ */
+const missers = new Map<string, RegisterPass[]>();
+
+function startRegisterPass(position: number): { pass: RegisterPass; settle: () => void } {
+  let resolve!: () => void;
+  const pass: RegisterPass = {
+    position,
+    done: new Promise<void>((done) => (resolve = done)),
+    settled: false,
+    missed: [],
+  };
+  const settle = () => {
+    pass.settled = true;
+    for (const key of pass.missed) {
+      const remaining = (missers.get(key) ?? []).filter((other) => other !== pass);
+      if (remaining.length === 0) missers.delete(key);
+      else missers.set(key, remaining);
+    }
+    resolve();
+  };
+  return { pass, settle };
+}
+
+function onRegisterMiss(scope: Scope, key: string) {
+  const pass = scope.pass;
+  if (!pass) return;
+  const list = missers.get(key) ?? [];
+  if (!scope.waitedKeys?.has(key)) {
+    const earlier = list.find((other) => other.position < pass.position && !other.settled);
+    if (earlier) {
+      (scope.waitedKeys ??= new Set()).add(key);
+      (scope.awaiting ??= []).push(earlier.done);
+      throw REGISTER_SUSPEND;
+    }
+  }
+  if (!list.includes(pass)) {
+    list.push(pass);
+    list.sort((a, b) => a.position - b.position);
+    missers.set(key, list);
+    pass.missed.push(key);
+  }
+}
+
 const maxRegisterRounds = 100;
 
 async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
@@ -529,6 +582,8 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
 
   // Reads the scope rather than closing over one context: register passes for
   // the items in a batch run concurrently, and this hook is process-wide.
+  installRegisterMissHook(onRegisterMiss);
+
   installRegisterHook((templateName, address) => {
     const accessor = config.contractAccessors[templateName];
     if (accessor === undefined) throw unknown(`the template ${templateName}`, "a mapping handler");
@@ -721,7 +776,14 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             if (!owns(event) || !live(event)) return;
             await primeOnceHandlers(event.chainId, context);
             const graphEvent = makeEvent(event);
-            await runRegisterRounds(makeScope(event, context, "register"), () => fn(graphEvent));
+            const scope = makeScope(event, context, "register");
+            const { pass, settle } = startRegisterPass(scope.position ?? 0);
+            scope.pass = pass;
+            try {
+              await runRegisterRounds(scope, () => fn(graphEvent));
+            } finally {
+              settle();
+            }
           },
         );
       }
