@@ -13,7 +13,7 @@ let transferAbi = `[{"type":"event","name":"Transfer","anonymous":false,"inputs"
 // The ABI travels with every case: without it translation fails on the ABI
 // rather than on what the case is about, and a case expecting acceptance would
 // never see it.
-let translate = (~manifest, ~schema) =>
+let translate = (~manifest, ~schema, ~extraAbi=?) =>
   try {
     InternalTestIndexer.fromSubgraph(
       ~manifest=manifest->String.replace(
@@ -21,7 +21,15 @@ let translate = (~manifest, ~schema) =>
         "      abis:\n        - name: Token\n          file: ./abis/Token.json",
       ),
       ~schema,
-      ~files=Dict.fromArray([("./abis/Token.json", transferAbi)]),
+      ~files=Dict.fromArray([
+        (
+          "./abis/Token.json",
+          switch extraAbi {
+          | Some(entry) => transferAbi->String.replace("[{", "[" ++ entry ++ ",{")
+          | None => transferAbi
+          },
+        ),
+      ]),
     )->ignore
     accepted
   } catch {
@@ -71,7 +79,9 @@ let expectFindingHelper = (message, t, ~headline, ~location) =>
   ).toEqual((true, true))
 
 describe("subgraph translation: unsupported features", () => {
-  it("refuses call handlers", t => {
+  // The manifest's function has to be one the contract's ABI declares, as
+  // graph-node's validation requires of a call handler.
+  it("refuses a call handler whose function the ABI lacks", t => {
     translate(
       ~schema=baseSchema,
       ~manifest=manifestWith(`      callHandlers:
@@ -79,38 +89,26 @@ describe("subgraph translation: unsupported features", () => {
           handler: handleApprove`),
     )->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support call handlers yet.",
+      ~headline=`Envio Subgraph doesn't know a function "approve(address,uint256)" in the ABI.`,
       ~location=`data source "Token" → callHandlers → "handleApprove"`,
     )
   })
 
-  it("does not run when events and call handlers are on the same data source", t => {
+  it("refuses a call handler on a data source without an address, as graph-node does", t => {
     translate(
       ~schema=baseSchema,
-      ~manifest=manifestWith(
-        `${plainEventHandler}
+      ~manifest=manifestWith(`${plainEventHandler}
       callHandlers:
-        - function: approve(address,uint256)
-          handler: handleApprove`,
+        - function: transfer(address,uint256)
+          handler: handleTransferCall`)->String.replace(
+        "      address: \"0x1111111111111111111111111111111111111111\"\n",
+        "",
       ),
+      ~extraAbi=`{"type":"function","name":"transfer","stateMutability":"nonpayable","inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"outputs":[{"name":"","type":"bool"}]}`,
     )->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support call handlers yet.",
-      ~location=`data source "Token" → callHandlers → "handleApprove"`,
-    )
-  })
-
-  it("refuses a call-filtered block handler", t => {
-    translate(
-      ~schema=baseSchema,
-      ~manifest=manifestWith(`      blockHandlers:
-        - handler: handleCall
-          filter:
-            kind: call`),
-    )->expectFindingHelper(
-      t,
-      ~headline="Envio Subgraph doesn't support block handlers with `filter: call` yet.",
-      ~location=`data source "Token" → blockHandlers → "handleCall"`,
+      ~headline="Envio Subgraph doesn't know a call handler on a data source without `source.address`, which graph-node refuses as well.",
+      ~location=`data source "Token" → callHandlers`,
     )
   })
 
@@ -472,13 +470,14 @@ describe("subgraph translation: reporting", () => {
   // subgraph project off it.
   it("points an unsupported feature at the subgraph release", t => {
     let message = translate(
-      ~manifest=manifestWith(`      callHandlers:
-        - function: approve(address,uint256)
-          handler: handleApprove`),
+      ~manifest=manifestWith(plainEventHandler)->String.replace(
+        "dataSources:",
+        "graft:\n  base: QmBase\n  block: 100\ndataSources:",
+      ),
       ~schema=baseSchema,
     )
-    t.expect(message).toEqual(`Envio Subgraph doesn't support call handlers yet.
-  Found in data source "Token" → callHandlers → "handleApprove".
+    t.expect(message).toEqual(`Envio Subgraph doesn't support grafting yet.
+  Found in graft.
 First, make sure you're on the newest Envio Subgraph release — support may have landed:
   pnpm add -D envio@subgraph
 If you're up to date and need this feature, please open an issue (existing
@@ -504,11 +503,9 @@ issue so we can add it: https://github.com/enviodev/hyperindex/issues`)
   })
 
   it("reports every finding in one run", t => {
-    let manifest = manifestWith(`      callHandlers:
-        - function: approve(address,uint256)
-          handler: handleApprove`)->String.replace(
+    let manifest = manifestWith(plainEventHandler)->String.replace(
       "dataSources:",
-      "features:\n  - teleportation\ndataSources:",
+      "features:\n  - teleportation\ngraft:\n  base: QmBase\n  block: 100\ndataSources:",
     )
     let message = translate(
       ~manifest,
@@ -521,7 +518,7 @@ type Token @entity {
     )
     t.expect((
       message->String.includes(`doesn't know the feature "teleportation"`),
-      message->String.includes("doesn't support call handlers"),
+      message->String.includes("doesn't support grafting"),
       message->String.includes("doesn't know the type NotAType"),
     )).toEqual((true, true, true))
   })
