@@ -59,6 +59,9 @@ export type EmitTransport = {
 export type EmitBinding = {
   readonly chainId?: number;
   readonly callId?: string;
+  /** Aborted when the function that owns this emitter times out: later sends
+   * and pending retries reject instead of delivering a stale result. */
+  readonly signal?: AbortSignal;
 };
 
 const WEBHOOK_NAME = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
@@ -85,10 +88,20 @@ export function createEmit<C extends SidecarContract>(
   const timeoutMs = transport.timeoutMs ?? 5_000;
   let seq = 0;
 
+  const abortedBy = (name: string, signal: AbortSignal | undefined): SidecarEmitError | undefined => {
+    if (signal?.aborted !== true) return undefined;
+    const reason: unknown = signal.reason;
+    return new SidecarEmitError(name, `abandoned: ${reason instanceof Error ? reason.message : String(reason)}`, {
+      cause: reason,
+    });
+  };
+
   const send = async (name: string, json: unknown, opts: EmitOptions): Promise<EmitResult> => {
     if (!WEBHOOK_NAME.test(name) || name.startsWith("sidecar.")) {
       throw new SidecarEmitError(name, "invalid webhook name");
     }
+    const early = abortedBy(name, binding.signal);
+    if (early !== undefined) throw early;
     let payload: string;
     try {
       payload = JSON.stringify(json);
@@ -110,6 +123,11 @@ export function createEmit<C extends SidecarContract>(
         const delay = Math.min(retry.capMs, retry.baseMs * 2 ** (attempt - 1));
         transport.log.warn("webhook delivery failed, retrying", { webhook: name, attempt, delay, reason: lastFailure });
         await sleep(delay);
+        const aborted = abortedBy(name, binding.signal);
+        if (aborted !== undefined) {
+          transport.onFailed?.();
+          throw aborted;
+        }
       }
       let response: Response;
       try {

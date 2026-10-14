@@ -188,6 +188,7 @@ describe("sidecar runtime: calls", () => {
         duplicates: 1,
         ran: 1,
         failed: 0,
+        timedOut: 0,
         dropped: 0,
         queued: { priceSwap: 0, notify: 0 },
         webhooksSent: 0,
@@ -292,6 +293,65 @@ describe("sidecar runtime: calls", () => {
       calls: 2,
       secondStatus: 202,
       failed: 2,
+    });
+  });
+
+  it("times out a slow function: counted, its slot freed, its late emit refused (per function or ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS)", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const gate = deferred();
+    cleanups.push(async () => gate.resolve());
+    const lateEmit = deferred<string>();
+    const events: string[] = [];
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          priceSwap: {
+            timeout: "40ms",
+            run: async ({ input, call, emit, signal }) => {
+              events.push(`start ${call.id}`);
+              if (input.swapId !== "slow") return;
+              signal.addEventListener("abort", () => events.push(`aborted ${call.id}`));
+              await gate.promise;
+              try {
+                await emit.swapPriced({ swapId: input.swapId, usd: 1, amount: input.amount });
+                lateEmit.resolve("sent");
+              } catch (error) {
+                lateEmit.resolve(error instanceof SidecarEmitError ? error.message : "wrong error");
+              }
+            },
+          },
+          // No per-function timeout: the env default applies.
+          notify: async () => {
+            await gate.promise;
+          },
+        },
+      },
+      { env: { ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS: "20" } },
+    );
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-16",
+      calls: [
+        call("1:100:1:0", "priceSwap", { swapId: "slow", amount: "1" }),
+        call("1:100:2:0", "priceSwap", { swapId: "fast", amount: "1" }),
+        call("1:100:3:0", "notify", { text: "stuck" }),
+      ],
+    });
+    // Both functions run one call at a time, so the fast call can only start
+    // once the slow one's slot is freed by the timeout.
+    await running.waitIdle();
+    gate.resolve();
+    expect({
+      events,
+      lateEmit: await lateEmit.promise,
+      received: indexer.received.length,
+      stats: running.stats(),
+    }).toEqual({
+      events: ["start 1:100:1:0", "aborted 1:100:1:0", "start 1:100:2:0"],
+      lateEmit: "Webhook 'swapPriced': abandoned: function 'priceSwap' timed out after 40 ms",
+      received: 0,
+      stats: expect.objectContaining({ ran: 1, failed: 0, timedOut: 2 }),
     });
   });
 
@@ -740,6 +800,7 @@ describe("sidecar runtime: public server", () => {
       () => createSidecar(contract, { functions: { ...noop, extra: async () => {} } } as never),
       () => createSidecar({ functions: {} } as never, { functions: {} }),
       () => createSidecar(contract, { functions: noop, jobs: { j: { every: "5x", run: async () => {} } } }),
+      () => createSidecar(contract, { functions: { ...noop, notify: { timeout: "soon", run: async () => {} } } }),
     ].map((make) => {
       try {
         make();
@@ -753,6 +814,7 @@ describe("sidecar runtime: public server", () => {
       "createSidecar: function 'extra' is implemented but not in the contract",
       "createSidecar: first argument must come from defineSidecar(...)",
       'Job interval \'5x\' is not like "30s", "5m", "1h" or a number of ms',
+      'createSidecar: function \'notify\' timeout \'soon\' is not like "30s", "5m" or a number of ms',
     ]);
   });
 });

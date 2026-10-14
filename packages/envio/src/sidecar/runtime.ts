@@ -22,6 +22,9 @@ export type SidecarFunctionArgs<C extends SidecarContract, K extends keyof C["fu
   readonly emit: Emit<C>;
   readonly indexer: IndexerClient;
   readonly log: SidecarLogger;
+  /** Aborted when the call times out. JavaScript cannot stop a running
+   * function, so long work should check it (or pass it to `fetch`). */
+  readonly signal: AbortSignal;
 };
 
 export type SidecarFunction<C extends SidecarContract, K extends keyof C["functions"]> = (
@@ -35,6 +38,10 @@ export type SidecarFunctionImpl<C extends SidecarContract, K extends keyof C["fu
       readonly concurrency?: number;
       /** Queued calls this function may hold before new ones are rejected. Default 10000. */
       readonly maxQueue?: number;
+      /** Longest one call may run: ms or `"30s"`, `"5m"`. Default
+       * `ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS` (60 s); 0 turns it off. A timed out
+       * call is logged and counted as an error, not retried, and frees its slot. */
+      readonly timeout?: string | number;
       readonly run: SidecarFunction<C, K>;
     };
 
@@ -81,6 +88,8 @@ export type StartOptions = {
   readonly retry?: RetryPolicy;
   /** Longest `close()` waits for running work. Default `ENVIO_SIDECAR_GRACE_MS`, else 20000. */
   readonly graceMs?: number;
+  /** Default per-function timeout in ms. Default `ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS`, else 60000; 0 for none. */
+  readonly functionTimeoutMs?: number;
 };
 
 export type CloseOptions = {
@@ -107,6 +116,8 @@ export type SidecarStats = {
   readonly duplicates: number;
   readonly ran: number;
   readonly failed: number;
+  /** Calls that ran past their timeout (not counted in `failed`). */
+  readonly timedOut: number;
   readonly dropped: number;
   readonly queued: Readonly<Record<string, number>>;
   readonly webhooksSent: number;
@@ -157,6 +168,21 @@ const malformedCall = (raw: unknown): string | null => {
     return "`blockTimestamp` must be a number";
   }
   return null;
+};
+
+const parseDuration = (value: string | number): number | null => {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? value : null;
+  const match = /^(\d+)(ms|s|m|h)$/.exec(value);
+  if (match === null) return null;
+  return Number(match[1]) * { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 }[match[2] as "ms" | "s" | "m" | "h"];
+};
+
+const parseTimeout = (name: string, timeout: string | number): number => {
+  const ms = parseDuration(timeout);
+  if (ms === null) {
+    throw new Error(`createSidecar: function '${name}' timeout '${timeout}' is not like "30s", "5m" or a number of ms`);
+  }
+  return ms;
 };
 
 export const parseEvery = (every: string | number): number => {
@@ -232,6 +258,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     if (typeof fn !== "function" && !(isPlainObject(fn) && typeof fn.run === "function")) {
       throw new Error(`createSidecar: function '${name}' is in the contract but not implemented`);
     }
+    if (typeof fn !== "function" && fn.timeout !== undefined) parseTimeout(name, fn.timeout);
   }
   for (const name of Object.keys(functions)) {
     if (!(name in contractFunctions)) {
@@ -260,6 +287,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       duplicates: 0,
       ran: 0,
       failed: 0,
+      timedOut: 0,
       dropped: 0,
       webhooksSent: 0,
       webhooksFailed: 0,
@@ -338,33 +366,68 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       if (isDrained()) for (const resolve of drainWaiters.splice(0)) resolve();
     };
 
+    const defaultTimeoutMs = options.functionTimeoutMs ?? env.functionTimeoutMs;
     const settingsOf = (name: string) => {
       const fn = functions[name];
-      if (typeof fn === "function") return { run: fn, concurrency: 1, maxQueue: DEFAULT_MAX_QUEUE };
+      if (typeof fn === "function") {
+        return { run: fn, concurrency: 1, maxQueue: DEFAULT_MAX_QUEUE, timeoutMs: defaultTimeoutMs };
+      }
       if (fn === undefined) throw new Error(`unreachable: no implementation for '${name}'`);
       return {
         run: fn.run,
         concurrency: Math.max(1, fn.concurrency ?? 1),
         maxQueue: Math.max(1, fn.maxQueue ?? DEFAULT_MAX_QUEUE),
+        timeoutMs: fn.timeout === undefined ? defaultTimeoutMs : parseTimeout(name, fn.timeout),
       };
     };
 
     const runOne = async (item: QueuedCall) => {
-      const { run } = settingsOf(item.fn);
+      const { run, timeoutMs } = settingsOf(item.fn);
       const callLog = toUserLogger(rootLogger.child({ fn: item.fn, callId: item.call.id, chainId: item.call.chainId }));
-      const emit = createEmit(contract, transport, { chainId: item.call.chainId, callId: item.call.id });
+      const controller = new AbortController();
+      const emit = createEmit(contract, transport, {
+        chainId: item.call.chainId,
+        callId: item.call.id,
+        signal: controller.signal,
+      });
+      let timer: NodeJS.Timeout | undefined;
       try {
-        await run({
-          input: item.input as SidecarFunctionInput<C, keyof C["functions"]>,
-          call: item.call,
-          emit,
-          indexer,
-          log: callLog,
-        });
+        const work = Promise.resolve().then(() =>
+          run({
+            input: item.input as SidecarFunctionInput<C, keyof C["functions"]>,
+            call: item.call,
+            emit,
+            indexer,
+            log: callLog,
+            signal: controller.signal,
+          }),
+        );
+        const outcome =
+          timeoutMs > 0
+            ? await Promise.race([
+                work.then(() => "done" as const),
+                new Promise<"timeout">((resolve) => {
+                  timer = setTimeout(() => resolve("timeout"), timeoutMs);
+                }),
+              ])
+            : await work.then(() => "done" as const);
+        if (outcome === "timeout") {
+          controller.abort(new Error(`function '${item.fn}' timed out after ${timeoutMs} ms`));
+          counters.timedOut++;
+          callLog.error("sidecar function timed out, freeing its slot", { timeoutMs });
+          // The function cannot be stopped and keeps running detached; a late
+          // failure must not surface as an unhandled rejection.
+          work.catch((error: unknown) => {
+            callLog.warn("timed out sidecar function failed later", error instanceof Error ? error : { error: String(error) });
+          });
+          return;
+        }
         counters.ran++;
       } catch (error) {
         counters.failed++;
         callLog.error("sidecar function failed", error instanceof Error ? error : { error: String(error) });
+      } finally {
+        clearTimeout(timer);
       }
     };
 
