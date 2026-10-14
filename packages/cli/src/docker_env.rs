@@ -1298,6 +1298,128 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     })
 }
 
+/// The read-only role a sidecar's `sql` handle logs in as under `envio dev`:
+/// the local twin of the role Envio Cloud gives a dedicated deployment's
+/// sidecar. `SidecarProcess.devEnv` (packages/envio) hands these credentials
+/// to the sidecar as `ENVIO_SIDECAR_PG_USER` and `ENVIO_SIDECAR_PG_PASSWORD`.
+pub const SIDECAR_PG_ROLE: &str = "envio_sidecar";
+pub const SIDECAR_PG_PASSWORD: &str = "testing";
+
+/// Postgres identifier quoting: wrap in double quotes, double any inside.
+fn quote_ident(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
+}
+
+/// Creates the sidecar role if it is missing and converges its attributes
+/// and role level settings, so running it on every `envio dev` start is
+/// harmless. `pg_read_all_data` (Postgres 14+) follows tables the indexer
+/// creates later, and `default_transaction_read_only` makes a write fail
+/// locally exactly as it does hosted. The role level timeouts are defaults:
+/// the runtime still sets its own per transaction.
+fn sidecar_role_sql(schema: &str) -> String {
+    let role = SIDECAR_PG_ROLE;
+    let password = SIDECAR_PG_PASSWORD.replace('\'', "''");
+    let search_path = if schema == "public" {
+        "public".to_string()
+    } else {
+        format!("{}, public", quote_ident(schema))
+    };
+    format!(
+        "DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{role}') THEN
+    CREATE ROLE {role};
+  END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+ALTER ROLE {role} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS \
+INHERIT PASSWORD '{password}' CONNECTION LIMIT 6;
+GRANT pg_read_all_data TO {role};
+ALTER ROLE {role} SET statement_timeout = '10s';
+ALTER ROLE {role} SET idle_in_transaction_session_timeout = '15s';
+ALTER ROLE {role} SET default_transaction_read_only = on;
+ALTER ROLE {role} SET search_path = {search_path};"
+    )
+}
+
+pub(crate) async fn run_sidecar_role_sql(
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+    database: &str,
+    schema: &str,
+) -> anyhow::Result<()> {
+    let mut config = tokio_postgres::Config::new();
+    config
+        .host(host)
+        .port(port)
+        .user(user)
+        .password(password)
+        .dbname(database)
+        .application_name("envio-dev")
+        .connect_timeout(Duration::from_secs(5));
+    // A freshly created container accepts TCP on the published port before
+    // its server is up (initdb runs first), so retry for a while.
+    let start = std::time::Instant::now();
+    let client = loop {
+        match config.connect(tokio_postgres::NoTls).await {
+            Ok((client, connection)) => {
+                tokio::spawn(connection);
+                break client;
+            }
+            Err(_) if start.elapsed() < Duration::from_secs(30) => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(e) => return Err(e).context("Failed connecting to Postgres"),
+        }
+    };
+    client
+        .batch_execute(&sidecar_role_sql(schema))
+        .await
+        .with_context(|| format!("Failed creating the {SIDECAR_PG_ROLE} role"))?;
+    Ok(())
+}
+
+/// `envio dev` with a `sidecar:` key: make sure the docker Postgres has the
+/// read-only role the sidecar's `sql` handle logs in as. Only for the
+/// Postgres `envio dev` manages; with `ENVIO_PG_HOST` set the developer owns
+/// the database and its roles. Never fails the run: the indexer does not
+/// depend on the sidecar.
+pub async fn ensure_sidecar_role(project_root: &Path) {
+    let env = EnvConfig::from_project(project_root);
+    if env.pg_is_external() {
+        println!(
+            "Not creating the {SIDECAR_PG_ROLE} role in your Postgres (ENVIO_PG_HOST is set). \
+             For the sidecar's sql handle, create a read-only role yourself and set \
+             ENVIO_SIDECAR_PG_USER and ENVIO_SIDECAR_PG_PASSWORD."
+        );
+        return;
+    }
+    let Ok(port) = env.pg_port.parse::<u16>() else {
+        return;
+    };
+    let project_env = ProjectEnv::new(project_root);
+    let schema = project_env
+        .var("ENVIO_PG_SCHEMA")
+        .or_else(|| project_env.var("ENVIO_PG_PUBLIC_SCHEMA"))
+        .unwrap_or_else(|| "public".to_string());
+    if let Err(e) = run_sidecar_role_sql(
+        env.pg_host_str(),
+        port,
+        &env.pg_user,
+        &env.pg_password,
+        &env.pg_database,
+        &schema,
+    )
+    .await
+    {
+        eprintln!(
+            "Warning: could not set up the read-only {SIDECAR_PG_ROLE} role for the sidecar's \
+             sql handle, the indexer runs anyway: {e:#}"
+        );
+    }
+}
+
 pub async fn down() -> anyhow::Result<()> {
     let docker = connect_docker().await?;
 
@@ -1458,6 +1580,17 @@ mod tests {
             ch_password: "".into(),
             ch_database: "default".into(),
         }
+    }
+
+    #[test]
+    fn sidecar_role_sql_quotes_the_schema_in_the_search_path() {
+        let public = sidecar_role_sql("public");
+        assert!(public.contains("SET search_path = public;"));
+        assert!(public.contains("GRANT pg_read_all_data TO envio_sidecar;"));
+        assert!(public.contains("CONNECTION LIMIT 6"));
+        assert!(public.contains("SET default_transaction_read_only = on;"));
+        let custom = sidecar_role_sql("my\"schema");
+        assert!(custom.contains("SET search_path = \"my\"\"schema\", public;"));
     }
 
     #[test]

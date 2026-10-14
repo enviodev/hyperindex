@@ -81,14 +81,24 @@ let closeOnSignals = (started: promise<handle>) => {
 }
 
 // The same loopback contract the indexer pod gives the sidecar container in
-// Envio Cloud (D-003). A value the developer already set wins.
-let devEnv = () => {
-  let env = NodeJs.Process.process.env->Dict.copy
+// Envio Cloud (D-003), plus read-only SQL on the indexer's own database as
+// `envio_sidecar`, the role the Rust CLI creates on `envio dev` start
+// (`docker_env::ensure_sidecar_role`). A value the developer already set wins.
+let devEnv = (~env=NodeJs.Process.process.env, ()) => {
+  let env = env->Dict.copy
   [
     ("ENVIO_SIDECAR_INTERNAL_URL", "http://127.0.0.1:9901"),
     ("ENVIO_INDEXER_INTERNAL_URL", "http://127.0.0.1:9899"),
     ("ENVIO_SIDECAR_PORT", "9900"),
     ("ENVIO_GRAPHQL_URL", `${Env.Hasura.url}/v1/graphql`),
+    ("ENVIO_SIDECAR_PG_HOST", Env.Db.host),
+    ("ENVIO_SIDECAR_PG_PORT", Env.Db.port->Int.toString),
+    ("ENVIO_SIDECAR_PG_DATABASE", Env.Db.database),
+    ("ENVIO_SIDECAR_PG_USER", "envio_sidecar"),
+    ("ENVIO_SIDECAR_PG_PASSWORD", "testing"),
+    ("ENVIO_SIDECAR_PG_SCHEMA", Env.Db.publicSchema),
+    ("ENVIO_SIDECAR_PG_SSL_MODE", Env.Db.ssl->Sql.sslModeToString),
+    ("ENVIO_SIDECAR_PG_POOLER_BACKED", "false"),
   ]->Array.forEach(((key, value)) =>
     switch env->Dict.get(key) {
     | Some(set) if set !== "" => ()
