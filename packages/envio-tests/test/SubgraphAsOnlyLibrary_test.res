@@ -49,10 +49,14 @@ type Decoded @entity {
     (
       "node_modules/as-base64/assembly/index.ts",
       `
+// @ts-ignore: decorator
+@lazy
+const BUMP = StaticArray.fromArray<u8>([1, 1, 1]);
+
 export function decode(input: string): Uint8Array {
   let out = new Uint8Array(input.length);
   for (let i: i32 = 0; i < input.length; i++) {
-    out[i] = (input.charCodeAt(i) + 1) as u8;
+    out[i] = (input.charCodeAt(i) + BUMP[i]) as u8;
   }
   return out;
 }
