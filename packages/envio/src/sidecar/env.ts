@@ -27,6 +27,8 @@ export type SidecarEnv = {
   readonly graphqlRole: string | undefined;
   readonly graphqlSecret: string | undefined;
   readonly webhookSecret: string | undefined;
+  /** Checked against the GraphQL layer's resolver calls (`ENVIO_RESOLVER_SECRET`); unset accepts any. */
+  readonly resolverSecret: string | undefined;
   readonly responseLimit: number;
   /** `ENVIO_SIDECAR_LOG_LEVEL`. Not `LOG_LEVEL`: Envio Cloud sets that to trace for the
    * whole pod, which would bury user logs. */
@@ -97,6 +99,7 @@ export const readEnv = (env: NodeJS.ProcessEnv = process.env): SidecarEnv => ({
   graphqlRole: optional(env, "ENVIO_GRAPHQL_ROLE"),
   graphqlSecret: optional(env, "ENVIO_GRAPHQL_SECRET"),
   webhookSecret: optional(env, "ENVIO_WEBHOOK_SECRET"),
+  resolverSecret: optional(env, "ENVIO_RESOLVER_SECRET"),
   responseLimit: readInt(
     env,
     "ENVIO_HASURA_RESPONSE_LIMIT",

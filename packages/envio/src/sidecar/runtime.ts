@@ -6,8 +6,10 @@ import { isSidecarContract, sidecarContractHash, type SidecarContract, type Side
 import { createEmit, createEmitBreaker, DEFAULT_RETRY, type Emit, type EmitTransport, type RetryPolicy } from "./emit.js";
 import { readEnv } from "./env.js";
 import { createRootLogger, toUserLogger, type SidecarLogger } from "./log.js";
-import { createIndexerClient, type EntityMetaInput, type IndexerClient } from "./client.js";
+import { createIndexerClient, encodeValue, type EntityMetaInput, type IndexerClient } from "./client.js";
 import { createMetricsRegistry, PROMETHEUS_CONTENT_TYPE } from "./metrics.js";
+import { RESOLVER_PATH_PREFIX, RESOLVER_SECRET_HEADER, ResolverError } from "./resolvers.js";
+import { timingSafeEqual } from "node:crypto";
 
 export type SidecarCall = {
   readonly id: string;
@@ -70,10 +72,28 @@ export type SidecarRoutesApp<C extends SidecarContract> = express.Express & {
 
 export type RollbackNotice = { readonly chainId: number; readonly rollbackToBlock: number };
 
+export type SidecarResolverArgs = {
+  /** The field's arguments, as the GraphQL layer passed them. */
+  readonly args: Record<string, unknown>;
+  readonly request: {
+    readonly role: string;
+    readonly sessionVariables: Readonly<Record<string, string>>;
+    /** The client's whole GraphQL document. */
+    readonly query: string;
+  };
+  readonly indexer: IndexerClient;
+  readonly log: SidecarLogger;
+};
+
+/** Answers a `resolvers:` field declared with `handler: sidecar`. The return
+ * value is the field's value; throw `ResolverError` for a GraphQL error. */
+export type SidecarResolver = (args: SidecarResolverArgs) => unknown;
+
 export type SidecarImpl<C extends SidecarContract> = {
   readonly functions: { readonly [K in keyof C["functions"]]: SidecarFunctionImpl<C, K> };
   readonly jobs?: Record<string, SidecarJob<C>>;
   readonly routes?: (app: SidecarRoutesApp<C>) => void;
+  readonly resolvers?: Record<string, SidecarResolver>;
   readonly onRollback?: (notice: RollbackNotice) => Promise<void> | void;
 };
 
@@ -85,6 +105,9 @@ export type StartOptions = {
   /** Entity definitions (`Config.getPgUserEntities`) so reads decode bigint and
    * BigDecimal exactly; without them the client introspects the GraphQL schema. */
   readonly entities?: readonly EntityMetaInput[];
+  /** Names config.yaml declares with `handler: sidecar`. When given, starting
+   * fails unless they match `resolvers` exactly. */
+  readonly resolvers?: readonly string[];
   readonly startJobs?: boolean;
   /** The entry module as `sidecar.entry` names it, for `envio_sidecar_info`. */
   readonly entry?: string;
@@ -296,7 +319,31 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     }
   }
 
+  const resolvers = impl.resolvers ?? {};
+  for (const [name, resolver] of Object.entries(resolvers)) {
+    if (typeof resolver !== "function") {
+      throw new Error(`createSidecar: resolver '${name}' must be a function`);
+    }
+  }
+
   const start = async (options: StartOptions = {}): Promise<RunningSidecar> => {
+    if (options.resolvers !== undefined) {
+      const declared = new Set(options.resolvers);
+      const problems = [
+        ...[...declared]
+          .filter((name) => !(name in resolvers))
+          .map(
+            (name) =>
+              `'${name}' is declared with handler: sidecar but not implemented in createSidecar({ resolvers })`,
+          ),
+        ...Object.keys(resolvers)
+          .filter((name) => !declared.has(name))
+          .map((name) => `'${name}' is implemented but not declared under resolvers: in config.yaml`),
+      ];
+      if (problems.length > 0) {
+        throw new Error(`Sidecar resolvers do not match config.yaml: ${problems.join("; ")}`);
+      }
+    }
     const env = readEnv(options.env ?? process.env);
     const startTime = Date.now() / 1_000;
     const rootLogger = createRootLogger({
@@ -686,6 +733,55 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     wrapAsyncRoutes(pub);
     pub.get("/healthz", (_req, res) => {
       res.status(200).json({ status: "ok" });
+    });
+    // Hasura's action handler contract: the answer is the field's value, an
+    // error is { message, extensions } with a non-2xx status.
+    const resolverError = (res: express.Response, status: number, message: string, code: string, extra = {}) =>
+      res.status(status).json({ message, extensions: { ...extra, code } });
+    const secretMatches = (presented: unknown): boolean => {
+      if (env.resolverSecret === undefined) return true;
+      if (typeof presented !== "string") return false;
+      const expected = Buffer.from(env.resolverSecret);
+      const given = Buffer.from(presented);
+      return expected.length === given.length && timingSafeEqual(expected, given);
+    };
+    pub.post(`${RESOLVER_PATH_PREFIX}:name`, async (req, res) => {
+      if (!secretMatches(req.headers[RESOLVER_SECRET_HEADER])) {
+        resolverError(res, 401, "unauthorized", "unauthorized");
+        return;
+      }
+      const name = req.params.name ?? "";
+      const resolver = Object.hasOwn(resolvers, name) ? resolvers[name] : undefined;
+      if (resolver === undefined) {
+        resolverError(res, 404, `no resolver '${name}' in this sidecar`, "not_found");
+        return;
+      }
+      const body: unknown = req.body;
+      const payload = isPlainObject(body) ? body : {};
+      const sessionVariables = isPlainObject(payload.session_variables)
+        ? (payload.session_variables as Record<string, string>)
+        : {};
+      const resolverLog = toUserLogger(rootLogger.child({ resolver: name }));
+      try {
+        const value = await resolver({
+          args: isPlainObject(payload.input) ? payload.input : {},
+          request: {
+            role: sessionVariables["x-hasura-role"] ?? "public",
+            sessionVariables,
+            query: typeof payload.request_query === "string" ? payload.request_query : "",
+          },
+          indexer,
+          log: resolverLog,
+        });
+        res.status(200).json(encodeValue(value) ?? null);
+      } catch (error) {
+        if (error instanceof ResolverError) {
+          resolverError(res, 400, error.message, error.code, error.extensions);
+          return;
+        }
+        resolverLog.error("resolver failed", error instanceof Error ? error : { error: String(error) });
+        resolverError(res, 500, `resolver '${name}' failed`, "internal");
+      }
     });
     const routeEmit = createEmit(contract, transport);
     const app = Object.assign(pub, { indexer, emit: routeEmit, log }) as SidecarRoutesApp<C>;
