@@ -223,6 +223,11 @@ pub fn graph_cli_installed(root: &std::path::Path) -> bool {
     })
 }
 
+/// Whether an `npm` executable is on `path`, the one the runtime fetches graph-cli with.
+pub fn npm_on_path(path: Option<&std::ffi::OsStr>) -> bool {
+    path.is_some_and(|path| std::env::split_paths(path).any(|dir| dir.join("npm").is_file()))
+}
+
 /// `envio codegen` and `envio start` refuse alike when the generated code is
 /// missing and nothing can build it: codegen used to pass, and only the
 /// indexer found out.
@@ -239,7 +244,13 @@ pub fn check_generated_code(runtime: &SubgraphRuntimeConfig) -> Result<()> {
     let generated = generated_dir(root, &mapping_files);
     // Every generated tree has a schema.ts; Envio Cloud leaves the directory
     // itself behind empty.
-    if generated.join("schema.ts").is_file() || graph_cli_installed(root) {
+    // Without the project's graph-cli the runtime fetches one into envio's own
+    // cache with npm (`subgraph/toolchain.ts`), so the repo's install failing
+    // is not a reason to stop here; npm missing is.
+    if generated.join("schema.ts").is_file()
+        || graph_cli_installed(root)
+        || npm_on_path(std::env::var_os("PATH").as_deref())
+    {
         return Ok(());
     }
     let relative = pathdiff_relative(&generated, root);
@@ -701,6 +712,16 @@ mod generated_code_tests {
         )
         .unwrap();
         assert!(graph_cli_installed(&root));
+    }
+
+    #[test]
+    fn npm_found_on_path_only_when_present() {
+        let dir = TempDir::new("envio_subgraph_npm").unwrap();
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        assert!(!npm_on_path(Some(&path)));
+        assert!(!npm_on_path(None));
+        std::fs::write(dir.path().join("npm"), "").unwrap();
+        assert!(npm_on_path(Some(&path)));
     }
 }
 

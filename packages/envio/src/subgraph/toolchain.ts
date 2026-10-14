@@ -158,7 +158,9 @@ export function declaredVersion(root: string, name: string): string | null {
 
 // --- the packages the mappings import -----------------------------------------
 
-const BARE_IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["']([^"'./][^"']*)["']/g;
+const BARE_IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["']([@\w][^"'\s]*)["']/g;
+/** A name npm would accept: lowercase, optionally scoped. */
+const NPM_NAME = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/;
 const RELATIVE_IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["'](\.\.?\/[^"']*)["']/g;
 const BUILTINS = new Set(builtinModules);
 /** Never fetched: the shim replaces them. */
@@ -169,7 +171,7 @@ function packageName(specifier: string): string | null {
   if (specifier.startsWith("node:") || specifier.startsWith("#")) return null;
   const parts = specifier.split("/");
   const name = specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
-  if (!name || BUILTINS.has(name) || SHIMMED.has(name)) return null;
+  if (!name || !NPM_NAME.test(name) || BUILTINS.has(name) || SHIMMED.has(name)) return null;
   return name;
 }
 

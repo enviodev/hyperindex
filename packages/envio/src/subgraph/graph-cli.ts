@@ -64,6 +64,8 @@ function runnable(packageDir: string): boolean {
  */
 export interface CodegenProvider {
   readonly name: string;
+  /** Whether using it downloads something: only done when the mappings import generated code. */
+  readonly fetches?: boolean;
   /** graph-cli package directories to try, best first; empty when this provider has none. */
   locate(root: string): Promise<string[]>;
 }
@@ -78,6 +80,7 @@ const projectGraphCli: CodegenProvider = {
 
 const fetchedGraphCli: CodegenProvider = {
   name: "a graph-cli fetched by envio",
+  fetches: true,
   locate: async (root) => {
     const found: string[] = [];
     for (const version of graphCliVersions(root)) {
@@ -180,7 +183,12 @@ function outOfMemory(command: string): Error {
  * copy beside the manifest with those versions raised.
  */
 async function withCodegenManifest<T>(manifest: string, use: (file: string) => Promise<T>): Promise<T> {
-  const source = readFileSync(manifest, "utf8");
+  let source: string;
+  try {
+    source = readFileSync(manifest, "utf8");
+  } catch {
+    return use(manifest);
+  }
   const patched = source.replace(/(\bapiVersion:\s*["']?)0\.0\.[0-4]\b/g, "$10.0.5");
   if (patched === source) return use(manifest);
   const copy = path.join(path.dirname(manifest), `.envio-codegen-${path.basename(manifest)}`);
@@ -198,8 +206,9 @@ async function withCodegenManifest<T>(manifest: string, use: (file: string) => P
  * declared version, then two pins), since no one version reads every manifest.
  * Returns false when no provider has one.
  */
-async function runCodegen(root: string, manifestFile: string, outputDir: string): Promise<boolean> {
+async function runCodegen(root: string, manifestFile: string, outputDir: string, needed: boolean): Promise<boolean> {
   for (const provider of codegenProviders) {
+    if (provider.fetches && !needed) continue;
     const candidates = await provider.locate(root);
     if (candidates.length === 0) continue;
     for (const [index, graphCli] of candidates.entries()) {
@@ -292,6 +301,16 @@ export function missingGeneratedFiles(root: string, mappingFiles: string[], dir:
 }
 
 const MAX_SCANNED_FILES = 2_000;
+
+/** Whether any file the mappings reach imports something from `dir`. */
+function importsFrom(root: string, mappingFiles: string[], dir: string): boolean {
+  for (const { file, specifiers } of scanImports(root, mappingFiles)) {
+    for (const specifier of specifiers) {
+      if (path.resolve(path.dirname(file), specifier).startsWith(dir + path.sep)) return true;
+    }
+  }
+  return false;
+}
 
 export function missingGeneratedCode(root: string, dir: string): Error {
   const relative = path.relative(root, dir);
@@ -402,7 +421,7 @@ export async function ensureGeneratedCode(
     }
     // With no graph-cli anywhere, the mapping that imports the missing code
     // reports it, naming that mapping.
-    if (!(await runCodegen(root, manifestFile, dir))) return;
+    if (!(await runCodegen(root, manifestFile, dir, importsFrom(root, mappingFiles, dir)))) return;
   }
 }
 
