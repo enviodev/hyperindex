@@ -14,6 +14,7 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import BigNumber from "bignumber.js";
 import { type Document, isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
+import type * as GraphTsTypes from "./graph-ts-types/index.js";
 import * as GraphNodeDecimal from "./graph-node-decimal.ts";
 import {
   keccak256 as viemKeccak256,
@@ -3202,6 +3203,86 @@ function floatNamespace(name: string, single: boolean) {
     }),
   );
 }
+
+// ---------------------------------------------------------------------------
+// The rest of graph-ts 0.38's export list
+// ---------------------------------------------------------------------------
+
+/**
+ * graph-ts declares these as AssemblyScript type aliases (`type Timestamp =
+ * i64`). AssemblyScript erases them, but the JavaScript the addon makes of a
+ * mapping still imports them by name (xmtp's `import { Timestamp } from
+ * "@graphprotocol/graph-ts"`), and an ES module import of a name the module
+ * lacks is a link error. They hold nothing; a mapping only writes them as types.
+ */
+export const Timestamp = undefined;
+export const Int8 = undefined;
+export const ValuePayload = undefined;
+export const JSONValuePayload = undefined;
+export const YAMLValuePayload = undefined;
+
+/** Starknet's field element: `Felt.intoBigInt()` reads its bytes as a number. */
+export class Felt extends Bytes {
+  intoBigInt(): BigInt_ {
+    return BigInt_.fromUnsignedBytes(new ByteArray(this).reverse() as ByteArray);
+  }
+}
+
+/** The discriminants graph-node reads an AssemblyScript object's class by. */
+export enum TypeId {
+  String = 0,
+  ArrayBuffer = 1,
+  Int8Array = 2,
+  Int16Array = 3,
+  Int32Array = 4,
+  Int64Array = 5,
+  Uint8Array = 6,
+  Uint16Array = 7,
+  Uint32Array = 8,
+  Uint64Array = 9,
+  Float32Array = 10,
+  Float64Array = 11,
+  BigDecimal = 12,
+  ArrayBool = 13,
+  ArrayUint8Array = 14,
+  ArrayEthereumValue = 15,
+  ArrayStoreValue = 16,
+  ArrayJsonValue = 17,
+  ArrayString = 18,
+  YamlTypedMapValueValue = 5503,
+  YamlArrayValue = 5504,
+  YamlArrayTypedMapEntryValueValue = 5505,
+  YamlWrappedValue = 5506,
+  YamlResultValueBool = 5507,
+}
+
+/** AssemblyScript's `idof<T>()` for a graph-node type: a number the host reads. Nothing here reads it. */
+export function id_of_type(typeId: TypeId): number {
+  return typeId;
+}
+
+/** Hands the host an object by pointer; there is no wasm memory here to allocate in. */
+export function allocate(_size: number): number {
+  throw unsupported("allocate(), which hands the graph-node host a raw memory block", "a mapping handler");
+}
+
+/** A chain whose subgraphs this indexes no part of: naming a member is the error. */
+function otherEcosystem(name: string, ecosystem: string) {
+  return new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        if (typeof prop === "symbol" || prop === "then" || prop === "toJSON") return undefined;
+        throw unsupported(`${ecosystem} subgraphs — Envio Subgraph indexes EVM chains`, `${name}.${String(prop)}`);
+      },
+    },
+  );
+}
+
+// Typed as graph-ts' own, so a mapping's types agree and only a read refuses.
+export const near = otherEcosystem("near", "NEAR") as unknown as typeof GraphTsTypes.near;
+export const cosmos = otherEcosystem("cosmos", "Cosmos") as unknown as typeof GraphTsTypes.cosmos;
+export const starknet = otherEcosystem("starknet", "Starknet") as unknown as typeof GraphTsTypes.starknet;
 
 export const assemblyScriptPrimitives: Record<string, unknown> = {
   i8: integerNamespace("i8", 8, true),
