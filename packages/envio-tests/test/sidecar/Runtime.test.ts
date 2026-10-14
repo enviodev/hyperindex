@@ -429,6 +429,40 @@ describe("sidecar runtime: webhooks from outside a call", () => {
     });
   });
 
+  it("rejects a body that does not match the contract before sending anything", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const outcomes: unknown[] = [];
+    const running = await startSidecar(indexer, {
+      functions: {
+        ...noop,
+        notify: async ({ emit }) => {
+          for (const body of [{ at: "soon" }, { swapId: "s1", usd: "4123.5", amount: 1n }, { swapId: "s1", usd: 1 }]) {
+            try {
+              await (body.swapId === undefined ? emit.tick : emit.swapPriced)(body as never);
+              outcomes.push("sent");
+            } catch (error) {
+              outcomes.push(error instanceof SidecarEmitError ? error.message : "wrong error");
+            }
+          }
+        },
+      },
+    });
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-10",
+      calls: [call("1:1:1:0", "notify", { text: "hi" })],
+    });
+    await running.waitIdle();
+    expect({ outcomes, received: indexer.received.length }).toEqual({
+      outcomes: [
+        expect.stringMatching(/^Webhook 'tick': body does not match the contract: /),
+        expect.stringMatching(/^Webhook 'swapPriced': body does not match the contract: /),
+        expect.stringMatching(/^Webhook 'swapPriced': body does not match the contract: /),
+      ],
+      received: 0,
+    });
+  });
+
   it("runs jobs on their interval, one run at a time", async () => {
     const indexer = await fakeIndexer();
     cleanups.push(indexer.close);

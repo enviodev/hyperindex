@@ -157,6 +157,9 @@ export function createEmit<C extends SidecarContract>(
       let json: unknown;
       try {
         json = S.reverseConvertToJsonOrThrow(body, def.body);
+        // Converting does not type-check (`{ at: "soon" }` converts fine), so the
+        // JSON is parsed back the way the indexer will parse it.
+        S.parseOrThrow(json, def.body);
       } catch (cause) {
         return Promise.reject(
           new SidecarEmitError(name, `body does not match the contract: ${cause instanceof Error ? cause.message : String(cause)}`, {
