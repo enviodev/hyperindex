@@ -15,6 +15,8 @@ type env =
 
 type storage = {postgres: bool, clickhouse: bool}
 
+type agent = | @as("claude") Claude | @as("codex") Codex | @as("cursor") Cursor
+
 type facts = {
   os?: string,
   arch?: string,
@@ -23,6 +25,7 @@ type facts = {
   storage?: storage,
   ci?: bool,
   env?: env,
+  agent?: agent,
 }
 
 // Node's `process.platform` and `process.arch` values. Anything else is left
@@ -75,6 +78,7 @@ let format = (~version, facts: facts) => {
       ("storage", facts.storage->Option.flatMap(storageValue)),
       ("ci", facts.ci->Option.map(ci => ci ? "1" : "0")),
       ("env", facts.env->Option.map(env => (env :> string))),
+      ("agent", facts.agent->Option.map(agent => (agent :> string))),
     ]->Array.filterMap(((key, value)) => value->Option.map(value => `${key}=${value}`))
   switch fields {
   | [] => `hyperindex/${version}`
@@ -118,6 +122,21 @@ let hostFacts = (host: host): facts => {
     } else {
       Local
     },
+    // The variable each coding agent sets on the commands it runs: Claude Code
+    // `CLAUDECODE` (checked for presence, like the CLI's agentic init), Codex
+    // `CODEX_THREAD_ID`, Cursor `CURSOR_AGENT`. Any other agent is left out
+    // rather than guessed at.
+    agent: ?(
+      if host.env->Dict.get("CLAUDECODE")->Option.isSome {
+        Some(Claude)
+      } else if isSet("CODEX_THREAD_ID") {
+        Some(Codex)
+      } else if isSet("CURSOR_AGENT") {
+        Some(Cursor)
+      } else {
+        None
+      }
+    ),
   }
 }
 

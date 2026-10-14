@@ -12,6 +12,7 @@ let host = (~env=dict{}, ~hasDockerEnv=false): UserAgent.host => {
 
 let envOf = (h: UserAgent.host) => (h->UserAgent.hostFacts).env
 let ciOf = (h: UserAgent.host) => (h->UserAgent.hostFacts).ci
+let agentOf = (h: UserAgent.host) => (h->UserAgent.hostFacts).agent
 
 describe("UserAgent.format", () => {
   it("lists every fact in a fixed order", t => {
@@ -26,10 +27,11 @@ describe("UserAgent.format", () => {
           storage: {postgres: true, clickhouse: true},
           ci: false,
           env: Docker,
+          agent: Claude,
         },
       ),
     ).toBe(
-      "hyperindex/1.2.3 (os=linux; arch=arm64; node=24; ecosystem=evm; storage=postgres+clickhouse; ci=0; env=docker)",
+      "hyperindex/1.2.3 (os=linux; arch=arm64; node=24; ecosystem=evm; storage=postgres+clickhouse; ci=0; env=docker; agent=claude)",
     )
   })
 
@@ -110,10 +112,29 @@ describe("UserAgent.hostFacts", () => {
     ])
   })
 
+  it("names the coding agent running the indexer", t => {
+    t.expect(
+      [
+        host(~env=dict{"CLAUDECODE": "1"}),
+        host(~env=dict{"CODEX_THREAD_ID": "0199a213-81c0-7800-8aa1-bbab2a035a53"}),
+        host(~env=dict{"CURSOR_AGENT": "1"}),
+        host(~env=dict{"CURSOR_AGENT": ""}),
+        host(),
+      ]->Array.map(agentOf),
+    ).toEqual([Some(Claude), Some(Codex), Some(Cursor), None, None])
+  })
+
+  it("leaves the agent out when none is running it", t => {
+    t.expect(UserAgent.format(~version, host()->UserAgent.hostFacts)).toBe(
+      "hyperindex/1.2.3 (os=linux; arch=x64; node=22; ci=0; env=local)",
+    )
+  })
+
   it("describes a host without anything that identifies it", t => {
     let identifying = host(
       ~env=dict{
         "CI": "true",
+        "CODEX_THREAD_ID": "0199a213-81c0-7800-8aa1-bbab2a035a53",
         "ENVIO_OPERATOR_URL": "http://example.test",
         "HOSTNAME": "indexer-7f9c4d6b8-xk2p1",
         "INDEXER_ID": "my-indexer",
@@ -125,7 +146,7 @@ describe("UserAgent.hostFacts", () => {
     )
 
     t.expect(UserAgent.format(~version, identifying->UserAgent.hostFacts)).toBe(
-      "hyperindex/1.2.3 (os=linux; arch=x64; node=22; ci=1; env=envio-cloud)",
+      "hyperindex/1.2.3 (os=linux; arch=x64; node=22; ci=1; env=envio-cloud; agent=codex)",
     )
   })
 })
