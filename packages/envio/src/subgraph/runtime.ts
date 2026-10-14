@@ -53,6 +53,7 @@ import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappi
 import { unknown, unsupported } from "./errors.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
+const ENVIO_PACKAGE_URL = new URL("../../", import.meta.url).href;
 
 const jsonFromString = (line: string) => (jsonNamespace as any).fromString(line);
 
@@ -153,12 +154,14 @@ function installResolveHook(root: string) {
     // transpiler would refuse AssemblyScript it has no reason to accept, and
     // would strip `changetype`'s type argument before it could be read.
     load(url: string, context: any, nextLoad: any) {
-      if (
-        !projectRoot ||
-        !url.startsWith(projectRoot) ||
-        url.includes("/node_modules/") ||
-        !url.endsWith(".ts")
-      ) {
+      const isProjectFile = projectRoot !== null && url.startsWith(projectRoot) && !url.includes("/node_modules/");
+      // A mapping library is AssemblyScript too — OpenZeppelin's
+      // @amxx/graphprotocol-utils, @protofire/subgraph-toolkit — and Node
+      // won't even strip types under node_modules. envio's own sources are
+      // TypeScript, not AssemblyScript, and stay out of it.
+      const isMappingLibrary =
+        url.includes("/node_modules/") && !url.endsWith(".d.ts") && !url.startsWith(ENVIO_PACKAGE_URL);
+      if (!projectRoot || !url.endsWith(".ts") || !(isProjectFile || isMappingLibrary)) {
         return nextLoad(url, context);
       }
       const file = fileURLToPath(url);
