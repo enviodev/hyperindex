@@ -21,6 +21,7 @@ import {
   parseAbiParameters,
   type AbiParameter,
 } from "viem";
+import { subgraphKeccak256 } from "../Core.res.mjs";
 import { currentScope, type Scope } from "./scope.ts";
 import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-enums.ts";
 import { parseSignature, splitTypes } from "./abi-types.ts";
@@ -2190,7 +2191,7 @@ export const log = strictNamespace("log", logImpl);
 
 const cryptoImpl = {
   keccak256(input: ByteArray): ByteArray {
-    return ByteArray.fromHexString(viemKeccak256(input as Uint8Array));
+    return new ByteArray(subgraphKeccak256(input));
   },
 };
 
