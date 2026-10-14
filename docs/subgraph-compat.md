@@ -45,6 +45,8 @@ by name. Newer than 0.0.9 is a §7 error.
 |---|---|---|
 | Data source (`address`, `abi`, `startBlock`, `endBlock`) | `contracts` + `chains[].contracts`, `start_block`/`end_block` | ✅ |
 | Data source without `source.address` (ENS's `Resolver`) | graph-node matches it against every contract's logs; an address-less contract whose handlers register as wildcard. A log matching both it and an addressed data source runs both | ✅ |
+| `source.addresses` (a list; not a graph-node field) | read as graph-node reads it: its `Source` has no such field and ignores unknown keys, so the data source has no address and matches every emitter (wildcard). graph-cli only lets it through when a file data source skips manifest validation | ✅ (parity, not the list) |
+| Data source `endBlock` | past it the runtime runs none of that data source's handlers (graph-node's `has_expired`) while other data sources and template instances keep indexing; the chain's `end_block` is set only when every data source on the network has one and no template is on it (graph-node's `max_end_block` rule) | ✅ |
 | `network: mainnet` | `chains[].id` through a snapshot of The Graph's networks registry (ids and aliases; `scripts/sync-graph-networks.mjs`, drift reported in CI), then Envio's own chain names | ✅ |
 | Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper | ✅ |
 | `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — the receipt-only ones are HyperSync fields (§6b); `receipt.logs` → §7 error on access | ⚠️ |
@@ -54,7 +56,7 @@ by name. Newer than 0.0.9 is a §7 error.
 | Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
 | A template sharing a data source's name | graph-node keeps the two namespaces apart; envio has one, and one contract with a static address plus dynamically registered ones is the same thing — folded together, events unioned. The handlers stay apart: the data source's run for its static address, the template's for the addresses it created | ✅ |
 | Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass, which resolves host ops by suspend-and-replay of its own (§5) so a mapping can read a contract before deciding what to create. A new address's events in the block that created it run after that block's other events and block handlers, as graph-node runs a new data source's creation-block triggers — a constructor's logs precede the factory event that announces it | ✅ |
-| File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
+| File data sources (0.0.7, `kind: file/ipfs` / `file/arweave`) | **refused at translation** (§7): the runtime has no file-data-source path yet (a template created per CID whose handler gets the content, writing to entities only it can see). Not to be confused with `ipfs.cat`/`arweave` host calls, which are emulated (§4) | ❌ |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
 | `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` with a non-empty context → §7 error (nowhere to keep it per created address) | ⚠️ |
@@ -87,7 +89,9 @@ its type and stores raw bytes, see §6b), `Int8` → `BigInt` (Int8 is a
 only safe to 2^53, so `BigInt` is the lossless fit), `Timestamp` → envio's
 `Timestamp` (graph-ts sees an i64 of microseconds, envio stores a Postgres
 timestamp — the shim converts micros ↔ date at the store boundary, keyed
-off the entity schema, §4), stored entity lists → `[String!]!` id arrays,
+off the entity schema, §4), stored entity lists → `[String!]!` id arrays
+(also when written with nullable elements, `[Mint]!` as Uniswap v2 forks do:
+a mapping stores ids there, never nulls),
 `_Schema_ @fulltext` stripped, and every `@derivedFrom` field → `[T!]!`
 whatever nullability it was written with, including the one-to-one
 `Registration @derivedFrom(...)` the ENS subgraph uses. The lookup is the
@@ -104,6 +108,13 @@ A loaded entity reaches the mapping through `changetype`, which erased the
 generated getter, so the prototype tail answers a derived field with the same
 loader — the way it already answers `save()` (§4).
 
+**Indexes.** Every relation column (`<field>_id`, including an interface
+reference's) gets `@index`, and with the `@derivedFrom` targets envio already
+indexes, these are built with the tables rather than after the backfill: a
+Graph endpoint serves while the subgraph syncs, and graph-node builds its
+indexes up front. graph-node indexes every other column too; envio doesn't,
+since each index slows the backfill's writes.
+
 **Accepted divergence:** `@entity(immutable: true)` is validated, then
 dropped — graph-node's write-once check is not enforced. It's a safety net
 for buggy mappings: any subgraph that runs cleanly on graph-node never
@@ -111,8 +122,13 @@ trips it, so working subgraphs lose nothing.
 
 **Interfaces** carry through to the entity parser, which folds each one into
 the entities that implement it — the interface itself has no table. A field
-*typed* as an interface points at several tables at once: derived, it is only a
-query and is dropped; stored, it is an error.
+*typed* as an interface with **one** implementor is translated as that
+implementor (stored, derived or a list). With several implementors it points at
+several tables at once: derived, it is only a query and is dropped from the
+envio schema; stored, it keeps what graph-node stores — the referenced id —
+in a `<field>_id` column (the name a relation's column has), and a
+`@derivedFrom` naming it reads that column; a stored list is a list of ids
+like any other entity list.
 
 §7 error: **timeseries/aggregations** (`@entity(timeseries: true)`,
 `@aggregation`).
@@ -410,6 +426,12 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 A subgraph.yaml says *what* to index; these two vars are the only
 envio-side *how*.
 
+`ENVIO_SUBGRAPH_NETWORK=<name>` is `graph build --network <name>`: the
+manifest is rewritten from `networks.json` beside it before translation, as
+graph-cli rewrites it (every data source moves to the network and takes its
+`source` fields from its entry; every template moves to the network; a data
+source without an entry is an error).
+
 ## 7. Unsupported & unknown errors
 
 Two error kinds, one factory each, shared tail. Translation reports **all**
@@ -479,6 +501,7 @@ refuse instead, so behavior never silently diverges:
 | Feature | Detected |
 |---|---|
 | `callHandlers` | translation (manifest) |
+| File data sources (`file/ipfs`, `file/arweave`) | translation (manifest) |
 | `blockHandlers` with `filter: call` | translation (manifest) |
 | `blockHandlers` on a template | translation (manifest) |
 | `graft` | translation (manifest) |
@@ -509,6 +532,11 @@ refuse instead, so behavior never silently diverges:
 
 **B. CLI subgraph mode** (`packages/cli`).
 1. `dev`/`start`/`codegen` detect `subgraph.yaml` when `config.yaml` absent.
+   `--config`/`ENVIO_CONFIG` may name any subgraph manifest instead
+   (`v3-subgraph.yaml`, `subgraphs/<name>/subgraph.yaml`); its paths resolve
+   against its own directory, as graph-cli resolves them. With neither, the
+   error lists the manifests found under the project (3 levels deep) and the
+   `--config` line that runs one.
 2. Manifest parser (all specVersions) + §7 error collection; network→chain-id
    table; synthesize `human_config` structs (events with ABI param names,
    `field_selection` narrowed to the `event.transaction.*` / `event.block.*`
