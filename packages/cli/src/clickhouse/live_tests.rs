@@ -4,7 +4,9 @@
 //! makes up as Postgres would hand them over.
 //!
 //! Run with `cargo test --lib clickhouse::live -- --ignored`, against
-//! `ENVIO_CLICKHOUSE_HOST` (default `http://localhost:8123`).
+//! `ENVIO_CLICKHOUSE_HOST` (default `http://localhost:8123`), and the replicas
+//! `ENVIO_CLICKHOUSE_REPLICAS` names, which
+//! `.github/scripts/replicated-clickhouse.sh` starts.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -112,25 +114,11 @@ impl Live {
     }
 
     async fn execute(&self, statement: String) -> String {
-        let response = reqwest::Client::new()
-            .post(env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"))
-            .basic_auth(
-                env("ENVIO_CLICKHOUSE_USERNAME", "default"),
-                Some(
-                    std::env::var("ENVIO_CLICKHOUSE_PASSWORD")
-                        .unwrap_or_else(|_| "testing".to_string()),
-                ),
-            )
-            .body(statement)
-            .send()
-            .await
-            .unwrap();
-        assert!(
-            response.status().is_success(),
-            "{}",
-            response.text().await.unwrap()
-        );
-        response.text().await.unwrap().trim().to_string()
+        execute_on(
+            &env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"),
+            statement,
+        )
+        .await
     }
 
     async fn count(&self, table: &str) -> String {
@@ -305,8 +293,34 @@ fn batch(
     }
 }
 
+async fn execute_on(url: &str, statement: String) -> String {
+    let response = reqwest::Client::new()
+        .post(url)
+        .basic_auth(
+            env("ENVIO_CLICKHOUSE_USERNAME", "default"),
+            Some(
+                std::env::var("ENVIO_CLICKHOUSE_PASSWORD")
+                    .unwrap_or_else(|_| "testing".to_string()),
+            ),
+        )
+        .body(statement)
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "{}",
+        response.text().await.unwrap()
+    );
+    response.text().await.unwrap().trim().to_string()
+}
+
 async fn write(live: &Live, batch: Batch) {
-    if let Err(error) = live.storage.write_batch(batch, Handoff::default()).await {
+    write_on(&live.storage, batch).await
+}
+
+async fn write_on(storage: &Storage, batch: Batch) {
+    if let Err(error) = storage.write_batch(batch, Handoff::default()).await {
         match error {
             WriteError::Failed(failure) => panic!("{}: {:#}", failure.context, failure.error),
             WriteError::Gated => panic!("gated"),
@@ -1157,5 +1171,151 @@ async fn a_rollback_restores_the_target_at_its_diff_checkpoint() {
             (vec![row(&["a", "alice", "1"])], Vec::<Vec<String>>::new()),
             (vec![row(&["d"])], vec![row(&["a", "alice", "1", "SET"])]),
         )
+    );
+}
+
+/// The two replicas of one shard `ENVIO_CLICKHOUSE_REPLICAS` names, comma
+/// separated, on a cluster whose `{cluster}` macro is set.
+fn replicas() -> Option<(String, String)> {
+    let urls = std::env::var("ENVIO_CLICKHOUSE_REPLICAS").ok()?;
+    let mut urls = urls.split(',').map(|url| url.trim().to_string());
+    Some((urls.next()?, urls.next()?))
+}
+
+fn replica(url: &str, database: &str) -> Storage {
+    Storage::new(
+        Connection {
+            url: url.to_string(),
+            ..connection(database)
+        },
+        Tuning::default(),
+        Arc::new(|_: &str| {}),
+        Settings {
+            chain_id_mode: ChainIdMode::Int32,
+            replicated: true,
+            database_engine: None,
+        },
+    )
+    .unwrap()
+}
+
+/// A process resuming on a replica other than the one that took the writes,
+/// before that replica has fetched them: the last committed batch is still
+/// missing there, and so is the one the crash left uncommitted.
+#[tokio::test]
+#[ignore = "needs a replicated ClickHouse cluster"]
+async fn a_resume_on_a_lagging_replica_waits_for_what_the_others_took() {
+    let Some((first, second)) = replicas() else {
+        panic!("ENVIO_CLICKHOUSE_REPLICAS names no two replicas");
+    };
+    let database = Live::new().database;
+    let (writer, resumer) = (replica(&first, &database), replica(&second, &database));
+    let input = || {
+        entity_input(
+            "Account",
+            vec![
+                column("id", "String"),
+                column("owner", "String"),
+                column("balance", "BigInt"),
+            ],
+        )
+    };
+    let table = |storage: &Storage| {
+        Arc::new(Table {
+            name: "Account".to_string(),
+            postgres: None,
+            clickhouse: Some(Arc::new(storage.register(input()).unwrap())),
+        })
+    };
+    let (written, resumed) = (table(&writer), table(&resumer));
+    let history = format!("`{database}`.`envio_history_Account`");
+
+    writer
+        .initialize(&Initialize {
+            sequence: Sequence::SharedAcrossChains,
+            tables: vec![written.clone()],
+            partitions: Vec::new(),
+            enums: Vec::new(),
+            chains: vec![ChainConfig {
+                id: 1,
+                ecosystem: "evm".to_string(),
+                start_block: 0,
+                end_block: None,
+                max_reorg_depth: 200,
+            }],
+            envio_info: "{\"config\":1}".to_string(),
+            instance: "instance".to_string(),
+            contract_names: Vec::new(),
+            addresses: Addresses::default(),
+        })
+        .await
+        .unwrap();
+    write_on(
+        &writer,
+        batch(
+            &written,
+            &[("a", Some(("alice", "1")), 1)],
+            &[(1, 1, 10)],
+            (1, 1),
+        ),
+    )
+    .await;
+    execute_on(&second, format!("SYSTEM SYNC REPLICA {history}")).await;
+    execute_on(&second, format!("SYSTEM STOP FETCHES {history}")).await;
+    write_on(
+        &writer,
+        batch(
+            &written,
+            &[("a", Some(("alice", "2")), 2)],
+            &[(2, 1, 20)],
+            (1, 2),
+        ),
+    )
+    .await;
+    let uncommitted = writer
+        .write_batch(
+            batch(
+                &written,
+                &[("a", Some(("alice", "3")), 3)],
+                &[(3, 1, 30)],
+                (1, 3),
+            ),
+            Handoff {
+                landed: None,
+                commit: Some(Box::pin(async { false })),
+                committed: None,
+            },
+        )
+        .await;
+
+    let fetches = {
+        let (second, history) = (second.clone(), history.clone());
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            execute_on(&second, format!("SYSTEM START FETCHES {history}")).await;
+        })
+    };
+    resume(&resumer, vec![resumed.clone()], 2, 20).await;
+    let loaded = rows(
+        &resumer
+            .load_where(&resumed, vec![eq("id", "a")])
+            .await
+            .unwrap(),
+    );
+    fetches.await.unwrap();
+    execute_on(&second, format!("SYSTEM SYNC REPLICA {history}")).await;
+    let above = execute_on(
+        &second,
+        format!("SELECT count() FROM {history} WHERE envio_checkpoint_id > 2"),
+    )
+    .await;
+    execute_on(
+        &first,
+        format!("DROP DATABASE IF EXISTS `{database}` ON CLUSTER '{{cluster}}' SYNC"),
+    )
+    .await;
+    assert_eq!(
+        (matches!(uncommitted, Err(WriteError::Gated)), loaded, above),
+        (true, vec![row(&["a", "alice", "2"])], "0".to_string())
     );
 }

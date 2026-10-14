@@ -682,37 +682,13 @@ impl Storage {
         if committed.is_empty() {
             return Ok(());
         }
-        let mut missing = self.missing_checkpoints(&committed).await?;
-        // A replica answering for the first time since a restart can still be
-        // fetching what another took. Waiting on its fetches is best effort:
-        // what it still lacks afterwards is refused all the same.
-        if !missing.is_empty() && self.topology().replicated {
-            let synced = self
-                .client
-                .statement(format!(
-                    "SYSTEM SYNC REPLICA {} LIGHTWEIGHT",
-                    self.table_ref(CHECKPOINTS_TABLE)
-                ))
-                .await;
-            if let Err(error) = synced {
-                (self.client.warn)(&format!(
-                    "Couldn't wait for the ClickHouse replica to fetch the checkpoints: {error:#}"
-                ));
-            }
-            missing = self.missing_checkpoints(&committed).await?;
-        }
+        let missing = self.missing_checkpoints(&committed).await?;
         if !missing.is_empty() {
-            let replica = if self.topology().replicated {
-                "A replica still catching up holds them once it has: start again then, or \
-                 point ENVIO_CLICKHOUSE_HOST at the node that took the writes. Otherwise "
-            } else {
-                ""
-            };
             bail!(
                 "ClickHouse database \"{}\" doesn't hold batches Postgres committed: {}. \
-                 {replica}ClickHouse lost them after taking them, or was restored from an older \
-                 backup: index from scratch, or point ENVIO_CLICKHOUSE_DATABASE at the database \
-                 that holds them.",
+                 ClickHouse lost them after taking them, or was restored from an older backup: \
+                 index from scratch, or point ENVIO_CLICKHOUSE_DATABASE at the database that \
+                 holds them.",
                 self.database(),
                 missing
                     .iter()
@@ -759,6 +735,32 @@ impl Storage {
                 .map(Some)
                 .with_context(|| format!("Unexpected checkpoint id {id:?}")),
         }
+    }
+
+    /// A replica answering for the first time since a restart can still be
+    /// fetching what another took: the last batches it committed, and what a
+    /// crash left uncommitted. Checked and trimmed before then, a resume would
+    /// read entities without those batches for good, and leave the leftovers it
+    /// fetches afterwards above the frontier for the next batch to collide
+    /// with.
+    async fn sync_replica(&self, tables: &[Arc<Table>]) -> Result<()> {
+        let names = tables
+            .iter()
+            .map(|table| table.physical.as_str())
+            .chain([CHECKPOINTS_TABLE]);
+        try_join_all(names.map(|name| {
+            self.client.statement(format!(
+                "SYSTEM SYNC REPLICA {} LIGHTWEIGHT",
+                self.table_ref(name)
+            ))
+        }))
+        .await
+        .context(
+            "Couldn't wait for this ClickHouse replica to fetch what the other replicas took. \
+             Start again once they are reachable, or point ENVIO_CLICKHOUSE_HOST at the node that \
+             took the writes.",
+        )?;
+        Ok(())
     }
 
     /// Which of the chains' committed checkpoints the table doesn't hold.
@@ -828,13 +830,16 @@ impl Storage {
         if frontier.is_empty() {
             return Ok(());
         }
-        self.check_holds(&frontier).await?;
-        self.write_chains(frontier.clone()).await?;
         let tables = input
             .tables
             .iter()
             .filter_map(|table| table.clickhouse.clone())
             .collect::<Vec<_>>();
+        if self.topology().replicated {
+            self.sync_replica(&tables).await?;
+        }
+        self.check_holds(&frontier).await?;
+        self.write_chains(frontier.clone()).await?;
         self.trim_above(input.sequence, &frontier, &tables).await
     }
 

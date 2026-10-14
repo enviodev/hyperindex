@@ -190,7 +190,16 @@ jobs:
       - name: Live Postgres client tests
         run: cargo test --lib postgres::live -- --ignored --test-threads=1
 
+      # A resume on a replica that hasn't fetched what another took needs two
+      # of them, run from the service's own binary.
+      - name: Start a replicated ClickHouse cluster
+        run: |
+          docker cp -L "${{ job.services.clickhouse.id }}:/usr/bin/clickhouse" "$RUNNER_TEMP/clickhouse"
+          .github/scripts/replicated-clickhouse.sh "$RUNNER_TEMP/clickhouse" "$RUNNER_TEMP/replicated-clickhouse"
+
       - name: Live ClickHouse store tests
+        env:
+          ENVIO_CLICKHOUSE_REPLICAS: http://127.0.0.1:8124,http://127.0.0.1:8125
         run: cargo test --lib clickhouse::live -- --ignored --test-threads=1
 
       - name: Live tests of ClickHouse following Postgres
