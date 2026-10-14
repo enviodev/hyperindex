@@ -13,7 +13,7 @@
  */
 
 import { rpcClient } from "./rpc.ts";
-import { HttpStatusError, isTransient, untilAnswered } from "./transient.ts";
+import { HttpStatusError, untilAnswered } from "./transient.ts";
 import { warn } from "../Logging.res.mjs";
 
 /** The chains HyperSync serves traces for, at `<chainId>-traces.hypersync.xyz`. */
@@ -290,7 +290,7 @@ function positive(name: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
-type RpcRequest = (method: string, params: unknown[]) => Promise<any>;
+type RpcRequest = (method: string, params: unknown[], options?: { maxTries?: number }) => Promise<any>;
 
 function makeRpcRequest(rpcUrls: string[]): RpcRequest {
   if (rpcUrls.length === 0) {
@@ -301,8 +301,11 @@ function makeRpcRequest(rpcUrls: string[]): RpcRequest {
     );
   }
   const client = rpcClient(rpcUrls);
-  return (method, params) =>
-    untilAnswered(`The ${method} request`, () => (client as any).request({ method, params }), { deadline: false });
+  return (method, params, options) =>
+    untilAnswered(`The ${method} request`, () => (client as any).request({ method, params }), {
+      deadline: false,
+      ...options,
+    });
 }
 
 /** The block and transaction data an RPC call trigger carries. */
@@ -430,18 +433,27 @@ function rpcBackend(): Backend {
         ? "trace_filter"
         : null;
 
-  const viaTraceFilter = async (request: CallRequest, selections: Selection[], rpc: RpcRequest) => {
+  const viaTraceFilter = async (
+    request: CallRequest,
+    selections: Selection[],
+    rpc: RpcRequest,
+    options?: { maxTries?: number },
+  ) => {
     const span = positive("ENVIO_SUBGRAPH_TRACE_FILTER_BLOCKS", 500);
     const toBlock = Math.min(request.toBlock, request.fromBlock + span - 1);
     const anyAddress = selections.some((selection) => selection.addresses.length === 0);
     const addresses = [...new Set(selections.flatMap((selection) => selection.addresses))];
-    const traces: any[] = await rpc("trace_filter", [
-      {
-        fromBlock: toHex(request.fromBlock),
-        toBlock: toHex(toBlock),
-        ...(anyAddress ? {} : { toAddress: addresses }),
-      },
-    ]);
+    const traces: any[] = await rpc(
+      "trace_filter",
+      [
+        {
+          fromBlock: toHex(request.fromBlock),
+          toBlock: toHex(toBlock),
+          ...(anyAddress ? {} : { toAddress: addresses }),
+        },
+      ],
+      options,
+    );
     const calls = traces.map(callOfParityTrace).filter((call): call is RawCall => call !== null);
     return { calls, toBlock, topLevelFailed: new Map<number, Set<number>>() };
   };
@@ -477,11 +489,10 @@ function rpcBackend(): Backend {
       else if (mode === "trace_filter") result = await viaTraceFilter(request, selections, rpc);
       else {
         try {
-          result = await viaTraceFilter(request, selections, rpc);
+          // A node without trace_filter answers every try alike, so this one doesn't wait out a rate limit.
+          result = await viaTraceFilter(request, selections, rpc, { maxTries: 2 });
           mode = "trace_filter";
         } catch (error) {
-          // A node without trace_filter (Bor answers 500) can still trace a block.
-          if (isTransient(error) && !(error instanceof HttpStatusError && error.status === 500)) throw error;
           warn(
             `Envio Subgraph: the RPC node doesn't serve trace_filter (${String(error).split("\n")[0]}); ` +
               "reading calls with debug_traceBlockByNumber, one block at a time.",
