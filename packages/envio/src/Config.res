@@ -1461,4 +1461,12 @@ let load = () =>
     }
   }
 
+// The HyperSync clients are built far below where the config is known, so
+// whatever loads the config for a run hands over the user agent's part of it.
+let primeUserAgent = (config: t) =>
+  UserAgent.prime(
+    ~ecosystem=config.ecosystem.name,
+    ~storage={postgres: config.storage.postgres, clickhouse: config.storage.clickhouse},
+  )
+
 let getPgUserEntities = (config: t) => config.userEntities->Array.filter(e => e.storage.postgres)

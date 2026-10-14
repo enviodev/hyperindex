@@ -44,38 +44,34 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
   let apiToken = "11111111-1111-1111-1111-111111111111"
 
   // Height queries carry no selection, so an empty store is all the client needs.
-  let addressStore = AddressStore.make(
-    ~ecosystem=Ecosystem.Fuel,
-    ~contracts=[],
-  )
+  let addressStore = AddressStore.make(~ecosystem=Ecosystem.Fuel, ~contracts=[])
 
   Async.it("Requests height via the client with auth and user agent headers", async t => {
     let capturedHeaders = ref(None)
-    await withServer((req, res) => {
-      capturedHeaders := Some(req.headers)
-      res->writeHead(200)
-      res->endWith(`{"height": 123}`)
-    }, async endpointUrl => {
-      let source = FuelHyperSyncSource.make({
-        chainId,
-        endpointUrl,
-        apiToken: Some(apiToken),
-        onEventRegistrations: [],
-        addressStore,
-      })
-      let {height} = await source.getHeightOrThrow()
+    await withServer(
+      (req, res) => {
+        capturedHeaders := Some(req.headers)
+        res->writeHead(200)
+        res->endWith(`{"height": 123}`)
+      },
+      async endpointUrl => {
+        let source = FuelHyperSyncSource.make({
+          chainId,
+          endpointUrl,
+          apiToken: Some(apiToken),
+          onEventRegistrations: [],
+          addressStore,
+        })
+        let {height} = await source.getHeightOrThrow()
 
-      let headers = capturedHeaders.contents->Option.getOrThrow
-      t.expect((
-        height,
-        headers->Dict.get("authorization"),
-        headers->Dict.get("user-agent"),
-      )).toEqual((
-        123,
-        Some(`Bearer ${apiToken}`),
-        Some(`hyperindex/${Utils.EnvioPackage.value.version}`),
-      ))
-    })
+        let headers = capturedHeaders.contents->Option.getOrThrow
+        t.expect((
+          height,
+          headers->Dict.get("authorization"),
+          headers->Dict.get("user-agent"),
+        )).toEqual((123, Some(`Bearer ${apiToken}`), Some(UserAgent.get())))
+      },
+    )
   })
 
   it("Throws with the token instructions when no token is configured", t => {
@@ -99,27 +95,30 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
   // a token can be replaced without restarting, and the retry ramp is what gives
   // an operator the chance to. The loud line about it is said once per source.
   Async.it("Throws on 401 so the caller keeps retrying", async t => {
-    await withServer((_req, res) => {
-      res->writeHead(401)
-      res->endWith("Unauthorized")
-    }, async endpointUrl => {
-      let source = FuelHyperSyncSource.make({
-        chainId,
-        endpointUrl,
-        apiToken: Some(apiToken),
-        onEventRegistrations: [],
-        addressStore,
-      })
-      // Generous, so a slow debug build of the native client can't pass this by
-      // failing to answer inside the window.
-      let result = await Promise.race([
-        source.getHeightOrThrow()
-        ->Promise.thenResolve(_ => "resolved")
-        ->Promise.catch(_ => Promise.resolve("threw")),
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=5000)->Promise.thenResolve(() => "hung"),
-      ])
+    await withServer(
+      (_req, res) => {
+        res->writeHead(401)
+        res->endWith("Unauthorized")
+      },
+      async endpointUrl => {
+        let source = FuelHyperSyncSource.make({
+          chainId,
+          endpointUrl,
+          apiToken: Some(apiToken),
+          onEventRegistrations: [],
+          addressStore,
+        })
+        // Generous, so a slow debug build of the native client can't pass this by
+        // failing to answer inside the window.
+        let result = await Promise.race([
+          source.getHeightOrThrow()
+          ->Promise.thenResolve(_ => "resolved")
+          ->Promise.catch(_ => Promise.resolve("threw")),
+          Time.resolvePromiseAfterDelay(~delayMilliseconds=5000)->Promise.thenResolve(() => "hung"),
+        ])
 
-      t.expect(result).toEqual("threw")
-    })
+        t.expect(result).toEqual("threw")
+      },
+    )
   })
 })

@@ -219,7 +219,6 @@ let make = (
   ~programs=[],
   ~addressStore,
 ) => {
-  let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().svmHyperSyncClient->classFromConfig(
     {
       url,
@@ -228,7 +227,7 @@ let make = (
       ?retryBaseMs,
       ?retryCeilingMs,
     },
-    `hyperindex/${envioVersion}`,
+    UserAgent.get(),
     programs,
     addressStore,
   )
