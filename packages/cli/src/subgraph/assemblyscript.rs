@@ -197,6 +197,7 @@ pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
     }
 
     let scoping = SemanticBuilder::new()
+        .with_enum_eval(true)
         .build(&program)
         .semantic
         .into_scoping();
@@ -361,6 +362,30 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 let right = assign.right.take_in(&self.ast);
                 assign.right = self.operator(assign.span, method, [read, right]);
                 assign.operator = AssignmentOperator::Assign;
+            }
+            // graph-cli before 0.2x's tuple getters, and old entity loads, cast
+            // with `as` rather than `changetype`: the same reinterpret, except
+            // that a value already of the class (an upcast) keeps its own.
+            Expression::TSAsExpression(cast) => {
+                let class = match &cast.type_annotation {
+                    TSType::TSUnionType(union) => union
+                        .types
+                        .iter()
+                        .find_map(|ty| class_ref(ty, &self.classes)),
+                    ty => class_ref(ty, &self.classes),
+                };
+                let Some(class) = class.map(|class| (class.span, class.name.to_string())) else {
+                    return;
+                };
+                let span = cast.span;
+                let value = cast.expression.take_in(&self.ast);
+                let ctor = Expression::new_identifier(
+                    class.0,
+                    Ident::from_str_in(&class.1, &self.ast),
+                    &self.ast,
+                );
+                let keep = Expression::new_boolean_literal(span, true, &self.ast);
+                *expr = self.call(span, RETAG_HELPER, [ctor, value, keep]);
             }
             Expression::CallExpression(call) => {
                 let Some((class_span, class)) = self.retag_target(call) else {
@@ -554,6 +579,40 @@ export const __envio_event_classes = { handleFarmed: Farmed };
             "src/mapping.ts:2:3: Envio Subgraph can't apply this compound assignment the way \
              AssemblyScript does: an indexed or computed target would be evaluated twice. \
              Compute into a local first."
+        );
+    }
+
+    #[test]
+    fn retags_an_as_cast_onto_a_class_it_can_reach() {
+        assert_eq!(
+            js("import { Pair } from \"../generated/schema\";
+export function f(value: ethereum.Tuple, n: i64): void {
+  let pair = value as Pair;
+  let maybe = value as Pair | null;
+  let wide = n as i32;
+}"),
+            "import { Pair } from \"../generated/schema\";
+export function f(value, n) {
+\tlet pair = __envio_retag(Pair, value, true);
+\tlet maybe = __envio_retag(Pair, value, true);
+\tlet wide = n;
+}
+"
+        );
+    }
+
+    #[test]
+    fn transforms_an_enum() {
+        assert_eq!(
+            js("export enum ChainId { MAINNET = 1, BASE = 8453 }
+export const base = ChainId.BASE;"),
+            "export let ChainId = /* @__PURE__ */ function(ChainId) {
+\tChainId[ChainId[\"MAINNET\"] = 1] = \"MAINNET\";
+\tChainId[ChainId[\"BASE\"] = 8453] = \"BASE\";
+\treturn ChainId;
+}({});
+export const base = ChainId.BASE;
+"
         );
     }
 

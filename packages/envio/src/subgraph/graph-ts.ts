@@ -2407,8 +2407,11 @@ export function changetype<T>(value: unknown): T {
 // `changetype<GeneratedTuple>(result[0].toTuple())` is a pointer reinterpret
 // in AssemblyScript; in JS the named getters live on the generated class.
 // The load hook rewrites that call to this helper so `.value` etc. resolve.
-export function retagChangetype(ctor: unknown, value: unknown): unknown {
+export function retagChangetype(ctor: unknown, value: unknown, keepInstances = false): unknown {
   if (value !== null && typeof value === "object" && typeof ctor === "function") {
+    // An `as` cast to a class the value already is, or extends, is an upcast:
+    // the value keeps the getters of its own class.
+    if (keepInstances && value instanceof (ctor as Function)) return value;
     const proto = (ctor as Function).prototype;
     if (proto) Object.setPrototypeOf(value, proto);
   }
