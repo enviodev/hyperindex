@@ -76,6 +76,27 @@ const equals = (a: unknown, b: unknown): boolean => {
 };
 
 /**
+ * `x as i32` and its narrower kin. A number or bigint wraps to the width; a
+ * boolean is 0 or 1; null is 0. Anything else is a reference, and an
+ * AssemblyScript cast of one reads its address, which is garbage the mapping
+ * never meant — revert-univ3 casts a call result — so it comes out as 0
+ * rather than the NaN that `BigInt.fromI32` then refuses.
+ */
+const wrapTo = (bits: number, signed: boolean) => (value: unknown): number => {
+  let n: number;
+  if (typeof value === "bigint") n = Number(BigInt.asIntN(32, value));
+  else if (typeof value === "number") n = value;
+  else if (typeof value === "boolean") n = value ? 1 : 0;
+  else n = 0;
+  if (!Number.isFinite(n)) return 0;
+  const wrapped = (Math.trunc(n) | 0) as number;
+  if (bits === 32) return signed ? wrapped : wrapped >>> 0;
+  const mask = (1 << bits) - 1;
+  const low = wrapped & mask;
+  return signed && low >= 1 << (bits - 1) ? low - (1 << bits) : low;
+};
+
+/**
  * graph-ts overloads the arithmetic and comparison operators on `BigInt`,
  * `BigDecimal` and `ByteArray`, and AssemblyScript calls the overload: a
  * JavaScript operator would coerce them, or compare their identity — so
@@ -93,6 +114,12 @@ export const operators = {
   le: binary("le", (a, b) => a <= b),
   gt: binary("gt", (a, b) => a > b),
   ge: binary("ge", (a, b) => a >= b),
+  as_i8: wrapTo(8, true),
+  as_u8: wrapTo(8, false),
+  as_i16: wrapTo(16, true),
+  as_u16: wrapTo(16, false),
+  as_i32: wrapTo(32, true),
+  as_u32: wrapTo(32, false),
   neg: (a: unknown) => {
     const declared = overload(a, "neg");
     return declared ? declared.call(a) : -(a as number);

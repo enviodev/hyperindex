@@ -57,7 +57,7 @@ by name. Newer than 0.0.9 is a §7 error.
 | File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
-| `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` with a non-empty context → §7 error (nowhere to keep it per created address) | ⚠️ |
+| `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` keeps its context by chain, template and address (also in `.envio/subgraph-data-source-contexts.jsonl`, for a restart) | ⚠️ |
 | `features: [...]` | a declaration, not a use — whatever it enables is refused where the manifest or schema uses it | — |
 | `callHandlers`, block `filter: call`, block handlers on a template, `graft`, composition (1.3.0) | — | ❌ §7 error |
 
