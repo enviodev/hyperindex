@@ -3,7 +3,89 @@
 // can reach it can write through the indexer. It only checks and forwards;
 // queueing on a chain and finding the handler belong to whoever owns the chain.
 
-type t = {url: string, close: unit => promise<unit>}
+// What the listener answered, for the indexer's `/metrics`
+// (wiki/implementation/ui-design.md 4: rejected webhooks make a sidecar Degraded).
+type stats = {
+  // Accepted onto a chain's queue, by webhook. A resent idempotency key that is
+  // answered from memory is not counted again.
+  received: dict<int>,
+  // Refused for good (4xx), by webhook, then reason: `unauthorized`,
+  // `reserved`, `chain`, `schema`. The 503 while the indexer starts is not
+  // counted: `emit` retries it.
+  rejected: dict<dict<int>>,
+}
+
+type t = {url: string, close: unit => promise<unit>, stats: stats}
+
+// The listener this process runs, if any: the one the server's `/metrics`
+// reports on. Only `startForRun` sets it.
+let current: ref<option<stats>> = ref(None)
+
+let makeStats = () => {received: Dict.make(), rejected: Dict.make()}
+
+let increment = (counts: dict<int>, key) =>
+  counts->Dict.set(key, counts->Dict.get(key)->Option.getOr(0) + 1)
+
+let countRejected = (stats, ~name, ~reason) => {
+  let byReason = switch stats.rejected->Utils.Dict.dangerouslyGetNonOption(name) {
+  | Some(byReason) => byReason
+  | None =>
+    let byReason = Dict.make()
+    stats.rejected->Dict.set(name, byReason)
+    byReason
+  }
+  byReason->increment(reason)
+}
+
+let sortedByKey = entries => entries->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
+
+// `envio_webhooks_received_total` and `envio_webhooks_rejected_total`, as
+// exposition text. Every webhook in the contract has a received series from
+// the start, so a rate over it never begins with a missing series.
+let renderMetrics = (stats, ~contract: option<SidecarContract.t>) => {
+  let received = stats.received->Dict.copy
+  contract
+  ->Option.flatMap(contract => contract.webhooks)
+  ->Option.forEach(webhooks =>
+    webhooks
+    ->Dict.keysToArray
+    ->Array.forEach(name =>
+      if received->Dict.get(name)->Option.isNone {
+        received->Dict.set(name, 0)
+      }
+    )
+  )
+  let b: Metrics.builder = {out: ""}
+  b->Metrics.series(
+    ~name="envio_webhooks_received_total",
+    ~help="Webhooks from the sidecar the indexer accepted onto a chain's queue, by webhook. A resent idempotency key is not counted again.",
+    ~kind="counter",
+    ~entries=received
+    ->Dict.toArray
+    ->sortedByKey
+    ->Array.map(((name, count)) => (`{webhook="${name->Metrics.escapeLabelValue}"}`, count)),
+    ~value=Int.toFloat,
+  )
+  b->Metrics.series(
+    ~name="envio_webhooks_rejected_total",
+    ~help="Webhooks the indexer refused for good, by webhook and reason (unauthorized, reserved, chain, schema). The 503 while it starts is retried by the sidecar and not counted.",
+    ~kind="counter",
+    ~entries=stats.rejected
+    ->Dict.toArray
+    ->sortedByKey
+    ->Array.flatMap(((name, byReason)) =>
+      byReason
+      ->Dict.toArray
+      ->sortedByKey
+      ->Array.map(((reason, count)) => (
+        `{webhook="${name->Metrics.escapeLabelValue}",reason="${reason}"}`,
+        count,
+      ))
+    ),
+    ~value=Int.toFloat,
+  )
+  b.out
+}
 
 // A key resent after this many newer webhooks is applied again.
 let idempotencyBound = 100_000
@@ -24,7 +106,7 @@ let hostAndPort = (url: string) => {
 
 type accepted = {id: string, chainId: ChainId.t}
 
-let promiseListening = (app, ~host, ~port): promise<t> =>
+let promiseListening = (app, ~host, ~port, ~stats): promise<t> =>
   Promise.make((resolve, reject) => {
     let server = ref(None)
     let listening = app->Express.listenOn(port, host, () =>
@@ -33,6 +115,7 @@ let promiseListening = (app, ~host, ~port): promise<t> =>
           let boundPort = (server->Express.address)["port"]
           resolve({
             url: `http://${host}:${boundPort->Int.toString}`,
+            stats,
             close: () =>
               Promise.make(
                 (resolve, _) => {
@@ -59,6 +142,7 @@ let start = (
 ): promise<t> => {
   let seen: Map.t<string, accepted> = Map.make()
   let counter = ref(0)
+  let stats = makeStats()
 
   let resolveChain = (header: option<string>) =>
     switch (header, chainIds) {
@@ -100,11 +184,15 @@ let start = (
   app->Express.useFor("/webhooks", Express.jsonMiddlewareWith({"limit": "1mb"}))
   app->Express.post("/webhooks/:name", (req, res) => {
     let headers = req.headers
-    let refuse = (status, error, detail) =>
+    let name = req->Express.params->Dict.getUnsafe("name")
+    let refuse = (status, error, detail) => {
+      if status < 500 {
+        stats->countRejected(~name, ~reason=error)
+      }
       res
       ->Express.status(status)
       ->Express.json({"error": error, "detail": detail}->(Utils.magic: {..} => JSON.t))
-    let name = req->Express.params->Dict.getUnsafe("name")
+    }
     if secret->Option.isSome && headers->Dict.get("x-envio-webhook-secret") !== secret {
       refuse(401, "unauthorized", "x-envio-webhook-secret doesn't match ENVIO_WEBHOOK_SECRET")
     } else if name->String.startsWith("sidecar.") {
@@ -139,6 +227,7 @@ let start = (
               receivedAt: Date.now(),
             })
             idempotencyKey->Option.forEach(key => remember(key, accepted))
+            stats.received->increment(name)
             res->Express.status(202)->Express.json(accepted->(Utils.magic: accepted => JSON.t))
           }
         }
@@ -146,7 +235,7 @@ let start = (
     }
   })
 
-  promiseListening(app, ~host, ~port)
+  promiseListening(app, ~host, ~port, ~stats)
 }
 
 // Where `ENVIO_INDEXER_INTERNAL_URL` says, for an indexer with `sidecar:`
@@ -163,6 +252,7 @@ let startForRun = async (~config: Config.t, ~isReady, ~deliver) => {
     ~deliver,
   ) {
   | listener =>
+    current := Some(listener.stats)
     Logging.info({"msg": "Listening for sidecar webhooks", "url": listener.url})
     Some(listener)
   | exception exn =>
