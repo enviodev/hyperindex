@@ -93,6 +93,12 @@ describe("Bytes read back into a handler", () => {
     )
     await restarted.getBatchWritePromise()
 
-    t.expect(read.contents).toEqual([("222,173", 4), ("190,239", 4)])
+    // Postgres' reader shares one buffer per column; ClickHouse's copies each
+    // value into its own.
+    let held = switch IndexerRunner.selectedBackend {
+    | #clickhouseOnly => 2
+    | #postgres | #clickhouse => 4
+    }
+    t.expect(read.contents).toEqual([("222,173", held), ("190,239", held)])
   })
 })

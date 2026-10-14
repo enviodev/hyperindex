@@ -55,8 +55,9 @@ let quoteString = value =>
   "'" ++ value->String.replaceAll("\\", "\\\\")->String.replaceAll("'", "\\'") ++ "'"
 
 // What every read is answered in: 64-bit and wider integers and decimals as
-// strings, so no digit is lost to a JS number, and timestamps as ISO 8601.
-let readSettings = " SETTINGS output_format_json_quote_64bit_integers = 1, output_format_json_quote_decimals = 1, date_time_output_format = 'iso' FORMAT JSONEachRow"
+// strings, so no digit is lost to a JS number, and timestamps as ISO 8601. A
+// filter names the column even where the select aliases it to its hex.
+let readSettings = " SETTINGS output_format_json_quote_64bit_integers = 1, output_format_json_quote_decimals = 1, date_time_output_format = 'iso', prefer_column_name_to_alias = 1 FORMAT JSONEachRow"
 
 external asRows: array<'row> => array<JSON.t> = "%identity"
 
@@ -76,6 +77,13 @@ let parseLines = (text: string): array<JSON.t> =>
     parser: text => text->JSON.parseOrThrow,
     serializer: json => json->JSON.stringify,
   })
+
+  // Copied out of the decoded buffer, so a value holds on to its own bytes
+  // rather than the pool `Buffer.from` slices it from.
+  let hexBytes = S.string->S.transform(_ => {
+    parser: hex => hex->NodeJs.Buffer.fromHex->Uint8Array.fromArrayLikeOrIterable,
+    serializer: bytes => bytes->Utils.Bytes.toHex,
+  })
 )
 
 let readFieldSchema = (f: Table.field) => {
@@ -90,6 +98,7 @@ let readFieldSchema = (f: Table.field) => {
   switch f.fieldType {
   | Date => shaped(isoDate->S.toUnknown)
   | Json => shaped(jsonText->S.toUnknown)
+  | Bytea => shaped(hexBytes->S.toUnknown)
   | _ => f.fieldSchema
   }
 }
@@ -123,10 +132,16 @@ let entityRowsSchema: Table.table => S.t<array<unknown>> = Utils.WeakMap.memoize
   table->makeRowsSchema(~skipChainId=true)
 )
 
+// Raw bytes are selected as hex: JSON output has no way to carry them as is.
 let selectColumns: Table.table => string = Utils.WeakMap.memoize((table: Table.table) =>
   table.fields
   ->Array.filterMap(field =>
     switch field {
+    | Field({fieldType: Bytea, isArray} as f) =>
+      let column = f->Table.getClickHouseDbFieldName->quoteIdent
+      Some(
+        isArray ? `arrayMap(x -> hex(x), ${column}) AS ${column}` : `hex(${column}) AS ${column}`,
+      )
     | Field(f) => Some(f->Table.getClickHouseDbFieldName->quoteIdent)
     | DerivedFrom(_) => None
     }
@@ -142,6 +157,8 @@ let selectColumns: Table.table => string = Utils.WeakMap.memoize((table: Table.t
       switch kind {
       | Boolean => text === "true" ? "true" : "false"
       | Timestamp => `parseDateTime64BestEffort(${text->quoteString}, 3, 'UTC')`
+      // Spelled `0x…`, against a column holding the raw bytes.
+      | Bytes => `unhex(${text->String.slice(~start=2)->quoteString})`
       // A number travels as a string literal too: ClickHouse converts it to the
       // column's own type, where a bare literal past UInt64 would turn Float64.
       | _ => text->quoteString
