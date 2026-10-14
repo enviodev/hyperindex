@@ -1146,6 +1146,20 @@ export function resetRegisterStore(): void {
   registerStore.clear();
 }
 
+/**
+ * A field a new entity never set is null in graph-node's store; envio's write
+ * needs it spelled out — a list column refuses a missing value.
+ */
+function withUnsetAsNull(scope: Scope, entityType: string, row: Record<string, unknown>) {
+  const refFields = new Set(scope.schema.entityRefFields[entityType] ?? []);
+  for (const [field, declared] of Object.entries(scope.schema.entityFieldTypes[entityType] ?? {})) {
+    if (declared.derivedFrom) continue;
+    const column = refFields.has(field) ? `${field}_id` : field;
+    if (!(column in row)) row[column] = null;
+  }
+  return row;
+}
+
 function registerWrite(scope: Scope, entityType: string, id: string, row: Record<string, unknown> | null) {
   scope.writes ??= new Map();
   scope.writes.set(registerStoreKey(scope.dataSource.chainId, entityType, id), row);
@@ -1176,7 +1190,7 @@ const storeImpl = {
     }
     const table = entityContext(entityType);
     const stored = table.getSync(id);
-    table.set(stored ? { ...stored, ...row } : row);
+    table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {
     const scope = currentScope();
