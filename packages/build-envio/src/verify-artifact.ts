@@ -18,6 +18,8 @@ const REQUIRED_FILES = [
   "rescript.json",
   "index.d.ts",
   "index.js",
+  "sidecar.d.ts",
+  "sidecar.js",
   "README.md",
   "licenses",
   "src",
@@ -38,6 +40,9 @@ const REQUIRED_COMPILED = [
   "src/Main.res.mjs",
   "src/Bin.res.mjs",
 ];
+
+// tsc emit for the sidecar runtime, which the top-level sidecar.js/sidecar.d.ts re-export
+const REQUIRED_SIDECAR_EMIT = ["src/sidecar/index.js", "src/sidecar/index.d.ts"];
 
 function verify(dir: string): void {
   const errors: string[] = [];
@@ -70,6 +75,12 @@ function verify(dir: string): void {
   for (const file of REQUIRED_COMPILED) {
     if (!fs.existsSync(path.join(dir, file))) {
       errors.push(`Missing compiled file: ${file}`);
+    }
+  }
+
+  for (const file of REQUIRED_SIDECAR_EMIT) {
+    if (!fs.existsSync(path.join(dir, file))) {
+      errors.push(`Missing sidecar TypeScript emit: ${file}`);
     }
   }
 
