@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 
-use super::types::{Addresses, ChainConfig, Checkpoints, Frontier, Progress, Sequence};
+use super::types::{Addresses, ChainConfig, Frontier, Progress, Sequence};
 use super::{Batch, EffectCacheWrite, Holding, Initialize, Rows, Storage, Table};
 use crate::clickhouse;
 use crate::postgres;
@@ -159,45 +159,22 @@ async fn a_clickhouse_built_alongside_another_postgres_schema_has_diverged() {
 }
 
 /// ClickHouse only ever holds what Postgres committed, so one whose Postgres
-/// schema is gone holds data nothing says how far it got. One that took no
-/// batch yet holds nothing to lose.
+/// schema is gone holds data nothing says how far it got — or is another
+/// deployment's, still backfilling towards its first event and holding no
+/// batch yet.
 #[tokio::test]
 #[ignore = "needs a Postgres and a ClickHouse server"]
 async fn a_clickhouse_without_its_postgres_is_stranded() {
     let live = Live::new("stranded");
     live.initialize().await;
     live.storage.postgres.reset().await.unwrap();
-    let before_any_batch = live.storage.holding().await;
 
-    live.initialize().await;
-    live.storage
-        .write_batch(Batch {
-            frontier: Frontier {
-                chain_ids: vec![1],
-                checkpoint_ids: vec![1],
-            },
-            checkpoints: Checkpoints {
-                ids: vec![1],
-                chain_ids: vec![1],
-                block_numbers: vec![10],
-                block_hashes: vec![Some("0x10".to_string())],
-                events_processed: vec![1],
-                keeps_history: vec![true],
-            },
-            ..Batch::default()
-        })
-        .await
-        .unwrap();
-    live.storage.postgres.reset().await.unwrap();
-    let after_a_batch = live.storage.holding().await;
+    let holding = live.storage.holding().await;
 
     live.drop_all().await;
     assert_eq!(
-        (
-            before_any_batch.map_err(|error| format!("{error:#}")),
-            after_a_batch.map_err(|error| format!("{error:#}"))
-        ),
-        (Ok(Holding::Nothing), Ok(Holding::Stranded))
+        holding.map_err(|error| format!("{error:#}")),
+        Ok(Holding::Stranded)
     );
 }
 

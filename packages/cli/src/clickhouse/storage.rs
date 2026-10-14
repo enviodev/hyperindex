@@ -12,7 +12,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures_util::future::{try_join_all, BoxFuture};
 
 use super::ch_type::{ChType, FieldSpec};
-use super::client::{Client, Connection, Tuning, Warn};
+use super::client::{error_code, Client, Connection, Tuning, Warn};
 use super::ddl::{self, Topology, CHAIN_ID_COLUMN, ID_COLUMN};
 use super::row_binary::{self, encode_values, EncodedRows, Value};
 use super::select::{self, Frontier};
@@ -37,11 +37,13 @@ pub struct Settings {
 }
 
 /// How far a resume or an initialize moves the chains' version past the
-/// highest it read. A process that died mid-commit can still have its chains
-/// insert land after the next one started — with a version a little above what
-/// that one read — and the rows with the higher version are the ones that
-/// stand.
-const VERSION_FENCE: u64 = 1 << 32;
+/// highest it read, or past the clock in microseconds when that is higher. A
+/// process that died mid-commit can still have its chains insert land after
+/// the next one started — with a version a little above what that one read —
+/// and the rows with the higher version are the ones that stand. Starting from
+/// the clock keeps versions behind it, so an initialize over tables a reset
+/// dropped, with nothing to read, still starts past every earlier run.
+const VERSION_FENCE: u64 = 1 << 20;
 
 fn unix_micros() -> u64 {
     std::time::SystemTime::now()
@@ -360,10 +362,14 @@ impl Storage {
         .await;
         // Read before the reset empties it: a previous run's commit still in
         // flight lands in the tables built here, and its rows must lose. A
-        // table an older envio built has no version to read, and one a reset
-        // dropped none at all; the clock, in microseconds, is past any
-        // version a run counts up to one batch at a time.
-        let previous_version = self.read_version().await.unwrap_or(0).max(unix_micros());
+        // table an older envio built has no version column, and a database or
+        // table a reset dropped has nothing to read.
+        let previous_version = match self.read_version().await {
+            Ok(version) => version,
+            Err(error) if matches!(error_code(&format!("{error:#}")), Some(16 | 47 | 60 | 81)) => 0,
+            Err(error) => return Err(error),
+        }
+        .max(unix_micros());
         self.reset_database(topology).await?;
         self.client
             .statement(format!(
@@ -406,21 +412,33 @@ impl Storage {
             version: previous_version + VERSION_FENCE,
         };
         self.write_chains(input.chains.iter().map(|chain| (chain.id, 0)).collect())
-            .await?;
-        // Last: the record is what says the storage exists, so it only does
-        // once everything above it is in place.
+            .await
+    }
+
+    /// Builds every table, but leaves the database unpaired: see [`Self::seal`].
+    pub async fn build(&self, input: &Initialize) -> Result<()> {
+        self.initialize_inner(input)
+            .await
+            .context("Failed to initialize ClickHouse storage")
+    }
+
+    /// Pairs a built database with the initialize that built it. The record
+    /// is what says the storage exists, so it only does once both stores are
+    /// in place: one built for a Postgres that then failed is set up again.
+    pub async fn seal(&self, input: &Initialize) -> Result<()> {
         self.insert_values(
             INFO_TABLE,
             &ddl::info_columns(),
             &[vec![Value::Int(1), Value::Text(input.instance.clone())]],
         )
         .await
+        .context("Failed to initialize ClickHouse storage")
     }
 
+    #[cfg(test)]
     pub async fn initialize(&self, input: &Initialize) -> Result<()> {
-        self.initialize_inner(input)
-            .await
-            .context("Failed to initialize ClickHouse storage")
+        self.build(input).await?;
+        self.seal(input).await
     }
 
     async fn has_table(&self, name: &str) -> Result<bool> {
@@ -436,9 +454,12 @@ impl Storage {
         Ok(count.trim() != "0")
     }
 
-    /// Whether any batch landed here: every one writes the checkpoints it
-    /// covers, which nothing prunes.
+    /// Whether a batch that reached an event landed here: every one writes the
+    /// checkpoints it covers, which nothing prunes.
     pub async fn holds_batches(&self) -> Result<bool> {
+        if !self.has_table(CHECKPOINTS_TABLE).await? {
+            return Ok(false);
+        }
         let answer = self
             .client
             .statement(format!(
@@ -679,12 +700,17 @@ impl Storage {
             missing = self.missing_checkpoints(&committed).await?;
         }
         if !missing.is_empty() {
+            let replica = if self.topology().replicated {
+                "A replica still catching up holds them once it has: start again then, or \
+                 point ENVIO_CLICKHOUSE_HOST at the node that took the writes. Otherwise "
+            } else {
+                ""
+            };
             bail!(
-                "ClickHouse database \"{}\" doesn't hold batches Postgres committed: {}. A \
-                 replica still catching up holds them once it has: start again then, or point \
-                 ENVIO_CLICKHOUSE_HOST at the node that took the writes. Otherwise ClickHouse \
-                 lost them after taking them, or was restored from an older backup: index from \
-                 scratch, or point ENVIO_CLICKHOUSE_DATABASE at the database that holds them.",
+                "ClickHouse database \"{}\" doesn't hold batches Postgres committed: {}. \
+                 {replica}ClickHouse lost them after taking them, or was restored from an older \
+                 backup: index from scratch, or point ENVIO_CLICKHOUSE_DATABASE at the database \
+                 that holds them.",
                 self.database(),
                 missing
                     .iter()
@@ -749,7 +775,7 @@ impl Storage {
                 .collect::<Vec<_>>(),
         ))
         .await;
-        let version = self.read_version().await?;
+        let version = self.read_version().await?.max(unix_micros());
         *self.chains.lock().unwrap() = Chains {
             frontier: Frontier::new(),
             version: version + VERSION_FENCE,
@@ -1060,7 +1086,9 @@ mod tests {
     /// A server that answers what initializing and writing ask of it.
     async fn accepting() -> MockClickHouse {
         MockClickHouse::answering_statements(Arc::new(|statement: &str| {
-            if statement.contains("count() FROM system.tables") {
+            if statement.contains("count() FROM system.tables")
+                || statement.contains("max(`version`)")
+            {
                 (200, "0".to_string())
             } else {
                 (200, String::new())

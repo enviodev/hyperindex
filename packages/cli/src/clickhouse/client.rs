@@ -33,6 +33,8 @@ const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 /// same reason.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_millis(2_500);
 const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
+/// The server's `max_query_size` unless a request raises it.
+const DEFAULT_MAX_QUERY_SIZE: usize = 256 * 1024;
 /// How long one batch may spend on the whole retry ladder. Halving turns a
 /// failure into two more attempts, so a range that keeps failing costs
 /// exponentially many requests — cheap when each is refused in milliseconds,
@@ -225,12 +227,20 @@ impl Client {
     /// reaching the server already spent the whole statement timeout.
     async fn post(&self, read: Read) -> Result<reqwest::Response> {
         // External data goes as a form, and the statement with it: a body has
-        // to be one or the other.
-        let (content_type, body) = if read.external.is_empty() {
-            (None, Bytes::from(read.sql))
+        // to be one or the other. A statement sent alone may run past the
+        // server's default cap on one's length, which a load spelling a long
+        // list of values does.
+        let (params, content_type, body) = if read.external.is_empty() {
+            let params = if read.sql.len() > DEFAULT_MAX_QUERY_SIZE {
+                vec![("max_query_size", (read.sql.len() + 1).to_string())]
+            } else {
+                Vec::new()
+            };
+            (params, None, Bytes::from(read.sql))
         } else {
             let (boundary, form) = multipart(&read.sql, &read.external);
             (
+                Vec::new(),
                 Some(format!("multipart/form-data; boundary={boundary}")),
                 Bytes::from(form),
             )
@@ -244,6 +254,7 @@ impl Client {
                 .post(&self.url)
                 .timeout(self.tuning.statement_timeout)
                 .query(&[("wait_end_of_query", "1")])
+                .query(&params)
                 .basic_auth(&self.username, Some(&self.password))
                 .body(body.clone());
             if let Some(content_type) = &content_type {

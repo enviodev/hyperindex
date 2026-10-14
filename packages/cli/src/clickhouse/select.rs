@@ -319,10 +319,12 @@ fn external_list(
     Some(name)
 }
 
+/// A condition as the statement spells it. Given somewhere to put them, a list
+/// of text goes beside the statement instead.
 pub fn condition(
     table: &Table,
     condition: &Condition,
-    external: &mut Vec<External>,
+    external: Option<&mut Vec<External>>,
 ) -> Result<String> {
     let column = table.column(&condition.column).with_context(|| {
         format!(
@@ -334,7 +336,9 @@ pub fn condition(
     Ok(match condition.operator {
         Operator::In if condition.values.is_empty() => "false".to_string(),
         Operator::In => {
-            if let Some(list) = external_list(column, condition, external) {
+            if let Some(list) =
+                external.and_then(|external| external_list(column, condition, external))
+            {
                 return Ok(format!("{compared} IN {list}"));
             }
             let candidates = condition
@@ -425,13 +429,37 @@ pub fn load(
     conditions: &[Condition],
     frontier: &Frontier,
 ) -> Result<Read> {
+    let mut external = Vec::new();
+    let sql = load_sql(database, table, conditions, frontier, Some(&mut external))?;
+    // Sent with its lists, the statement is a form field, which the server
+    // reads no further than 128 KiB into. A long list of anything but text
+    // is spelled in it all the same, and can outgrow one.
+    if !external.is_empty() && sql.len() > MAX_FORM_FIELD {
+        return Ok(Read {
+            sql: load_sql(database, table, conditions, frontier, None)?,
+            external: Vec::new(),
+        });
+    }
+    Ok(Read { sql, external })
+}
+
+/// The longest form field the server reads, which no setting a request can
+/// carry raises.
+const MAX_FORM_FIELD: usize = 128 * 1024;
+
+fn load_sql(
+    database: &str,
+    table: &Table,
+    conditions: &[Condition],
+    frontier: &Frontier,
+    mut external: Option<&mut Vec<External>>,
+) -> Result<String> {
     let entity = &table.entity;
     let key = entity.key();
-    let mut external = Vec::new();
     let mut on_key = Vec::new();
     let mut on_values = Vec::new();
     for filter in conditions {
-        let rendered = condition(table, filter, &mut external)?;
+        let rendered = condition(table, filter, external.as_deref_mut())?;
         let column = table
             .column(&filter.column)
             .map(|column| column.name.as_str());
@@ -478,7 +506,7 @@ pub fn load(
         .join(", ");
     let mut current = on_values;
     current.insert(0, format!("{} = {}", quoted(CHANGE_COLUMN), literal(SET)));
-    let sql = format!(
+    Ok(format!(
         "SELECT {} FROM (SELECT {key}, {untupled} FROM (SELECT {key}, argMax(tuple({}), {}) AS \
          {LATEST} FROM {source} WHERE {} GROUP BY {key})) WHERE {} FORMAT RowBinary",
         as_row_names(table),
@@ -491,8 +519,7 @@ pub fn load(
         conjunction(&narrowing),
         conjunction(&current),
         key = joined(&key),
-    );
-    Ok(Read { sql, external })
+    ))
 }
 
 /// What a load names each entity's latest row by. Not a column's name: an
@@ -631,8 +658,8 @@ mod tests {
         let mut external = Vec::new();
         assert_eq!(
             (
-                condition(&account(), &with_null, &mut external).unwrap(),
-                condition(&account(), &numbers, &mut external).unwrap(),
+                condition(&account(), &with_null, Some(&mut external)).unwrap(),
+                condition(&account(), &numbers, Some(&mut external)).unwrap(),
                 external,
             ),
             (
@@ -700,7 +727,7 @@ mod tests {
             eq("id", ValueKind::Boolean, "yes"),
         ]
         .map(|filter| {
-            condition(&account(), &filter, &mut Vec::new())
+            condition(&account(), &filter, None)
                 .err()
                 .map(|error| error.to_string())
         });
@@ -742,7 +769,7 @@ mod tests {
         let mut gt = eq("balance", ValueKind::Number, "10");
         gt.operator = Operator::Gt;
         assert_eq!(
-            condition(&account(), &gt, &mut Vec::new()).unwrap(),
+            condition(&account(), &gt, None).unwrap(),
             format!("{} > '10000210'", integer_order("`balance`"))
         );
     }

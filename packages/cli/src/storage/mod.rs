@@ -393,13 +393,16 @@ impl Storage {
             None => None,
         };
         if !self.postgres.is_initialized().await? {
-            // An initialize that failed in Postgres leaves a ClickHouse built
-            // for it, which holds no batch to strand.
-            let holds_batches = match (&self.clickhouse, &built) {
-                (Some(clickhouse), Some(_)) => clickhouse.holds_batches().await?,
-                _ => false,
+            // Paired, it is another Postgres's — perhaps still running. An
+            // initialize that failed leaves one built but unpaired, and so does
+            // an older envio, which paired nothing: only the batches tell its
+            // data apart from none.
+            let stranded = match (&self.clickhouse, &built) {
+                (Some(_), Some(_)) => true,
+                (Some(clickhouse), None) => clickhouse.holds_batches().await?,
+                (None, _) => false,
             };
-            return Ok(if holds_batches {
+            return Ok(if stranded {
                 Holding::Stranded
             } else {
                 Holding::Nothing
@@ -418,17 +421,22 @@ impl Storage {
     /// Both stores start from nothing. Each is checked before either is
     /// touched, so a refusal leaves both as they were.
     ///
-    /// ClickHouse first: what a user writes into its tables — a `ttl`, an
+    /// ClickHouse's tables first: what a user writes into them — a `ttl`, an
     /// `orderBy` — only its server checks, and a table it refuses then leaves
-    /// Postgres untouched. Postgres failing behind it leaves a ClickHouse that
-    /// holds no batch, which the next start sets up again.
+    /// Postgres untouched. Its pairing record last, once Postgres committed:
+    /// a ClickHouse built for a Postgres that then failed is left unpaired,
+    /// which the next start sets up again.
     pub async fn initialize(&self, input: Initialize) -> Result<()> {
         self.postgres.check_schema_for_initialize().await?;
         if let Some(clickhouse) = &self.clickhouse {
             clickhouse.check_for_initialize().await?;
-            clickhouse.initialize(&input).await?;
+            clickhouse.build(&input).await?;
         }
-        self.postgres.initialize(&input).await
+        self.postgres.initialize(&input).await?;
+        match &self.clickhouse {
+            Some(clickhouse) => clickhouse.seal(&input).await,
+            None => Ok(()),
+        }
     }
 
     /// Resumes Postgres, and then ClickHouse to what Postgres committed: a

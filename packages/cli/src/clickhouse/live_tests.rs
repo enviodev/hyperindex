@@ -548,6 +548,64 @@ async fn a_load_of_more_ids_than_a_statement_holds_reads_them_all() {
     assert_eq!((by_id, by_id_and_owner), (Ok(6000), Ok(6000)));
 }
 
+/// A long list of numbers is spelled in the statement: alone it runs past the
+/// server's default cap on a statement's length, and beside a list of ids,
+/// which go as a form, past the longest form field the server reads.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_load_spelling_a_long_list_of_numbers_reads_what_it_names() {
+    let live = Live::new();
+    let account = live.account();
+    initialize(&live, vec![account.clone()]).await;
+    write(
+        &live,
+        batch(
+            &account,
+            &[
+                ("a", Some(("alice", "1")), 1),
+                ("b", Some(("bob", "2")), 1),
+                ("c", Some(("carol", "300000")), 1),
+            ],
+            &[(1, 1, 10)],
+            (1, 1),
+        ),
+    )
+    .await;
+
+    let balances = Condition {
+        operator: Operator::In,
+        kind: ValueKind::Number,
+        values: (0..30_000)
+            .map(|balance| vec![Some(balance.to_string())])
+            .collect(),
+        ..eq("balance", "")
+    };
+    let by_ids = Condition {
+        operator: Operator::In,
+        values: ["a", "c"].map(|id| vec![Some(id.to_string())]).to_vec(),
+        ..eq("id", "")
+    };
+    let loaded = |conditions: Vec<Condition>| async {
+        live.storage
+            .load_where(&account, conditions)
+            .await
+            .map(|result| sorted(rows(&result)))
+            .map_err(|error| format!("{error:#}"))
+    };
+    let (alone, beside_ids) = (
+        loaded(vec![balances.clone()]).await,
+        loaded(vec![by_ids, balances]).await,
+    );
+    live.drop_database().await;
+    assert_eq!(
+        (alone, beside_ids),
+        (
+            Ok(vec![row(&["a", "alice", "1"]), row(&["b", "bob", "2"])]),
+            Ok(vec![row(&["a", "alice", "1"])])
+        )
+    );
+}
+
 /// A process that died mid-write can leave an insert running on the server,
 /// one that finishes after the next process resumed and trimmed what never
 /// committed. Its rows would read as that run's once its frontier passed them.
@@ -945,11 +1003,9 @@ async fn a_resume_refuses_a_database_missing_a_batch_postgres_committed() {
         resumed,
         Err(format!(
             "Failed to resume ClickHouse storage: ClickHouse database \"{}\" doesn't hold \
-             batches Postgres committed: chain 1 through checkpoint 2. A replica still catching \
-             up holds them once it has: start again then, or point ENVIO_CLICKHOUSE_HOST at the \
-             node that took the writes. Otherwise ClickHouse lost them after taking them, or was \
-             restored from an older backup: index from scratch, or point \
-             ENVIO_CLICKHOUSE_DATABASE at the database that holds them.",
+             batches Postgres committed: chain 1 through checkpoint 2. ClickHouse lost them \
+             after taking them, or was restored from an older backup: index from scratch, or \
+             point ENVIO_CLICKHOUSE_DATABASE at the database that holds them.",
             live.database
         ))
     );
