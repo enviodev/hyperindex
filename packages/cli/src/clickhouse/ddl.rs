@@ -638,10 +638,6 @@ pub fn create_current_table(
     ))
 }
 
-fn current_view_name(entity: &EntitySpec) -> String {
-    format!("envio_mv_{}", entity.name)
-}
-
 fn current_columns(entity: &EntitySpec, history: &HistorySchema) -> Vec<String> {
     let mut columns: Vec<String> = entity
         .columns
@@ -652,9 +648,7 @@ fn current_columns(entity: &EntitySpec, history: &HistorySchema) -> Vec<String> 
     columns
 }
 
-/// The history rows an insert lands, as current-state rows: the same insert
-/// that writes history fills the current table, so the two never drift apart
-/// by more than an interrupted batch, which a resume repairs.
+/// History-shaped rows as current-state rows.
 fn history_as_current_rows(entity: &EntitySpec, history: &HistorySchema) -> String {
     format!(
         "{}, toUInt8({} != {}) AS {}",
@@ -665,21 +659,110 @@ fn history_as_current_rows(entity: &EntitySpec, history: &HistorySchema) -> Stri
     )
 }
 
-pub fn create_current_view(
+/// Where a batch's rows land first, shaped like history. Nothing reads them
+/// until the batch is committed, after which they are applied to the tables
+/// that are read and the redo table is emptied. A batch interrupted before its
+/// commit leaves its rows only here, so the tables that are read never hold
+/// state no chain row vouches for.
+pub fn redo_table_name(entity: &EntitySpec) -> String {
+    format!("envio_redo_{}", entity.name)
+}
+
+pub fn create_redo_table(
     entity: &EntitySpec,
     database: &str,
     history: &HistorySchema,
     topology: Topology,
-) -> String {
-    format!(
-        "CREATE MATERIALIZED VIEW IF NOT EXISTS {db}.{}{} TO {db}.{} AS\nSELECT {}\nFROM {db}.{}",
-        quoted(&current_view_name(entity)),
-        topology.on_cluster(),
-        quoted(&entity.name),
-        history_as_current_rows(entity, history),
-        quoted(&entity.history_table),
-        db = quoted(database),
+    chain_id_mode: ChainIdMode,
+) -> Result<String> {
+    create_history_table(
+        &EntitySpec {
+            history_table: redo_table_name(entity),
+            ..entity.without_table_options()
+        },
+        database,
+        history,
+        topology,
+        chain_id_mode,
     )
+}
+
+/// Applies a committed batch from the redo table, in an order a resume can
+/// repeat from the start: every statement is idempotent but the history
+/// append, whose duplicates a rollback reads past. Inside the reorg window the
+/// batch also goes to history, after an anchor for each key that has none —
+/// its current row at checkpoint 0, read before the batch replaces it — so a
+/// rollback can restore what the key held before the window opened.
+pub fn apply_redo(
+    entity: &EntitySpec,
+    database: &str,
+    history: &HistorySchema,
+    keep_history: bool,
+    lookup: bool,
+) -> Vec<String> {
+    let key = entity
+        .key_columns(history)
+        .iter()
+        .map(|column| quoted(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let db = quoted(database);
+    let current = format!("{db}.{}", quoted(&entity.name));
+    let redo = format!("{db}.{}", quoted(&redo_table_name(entity)));
+    let history_table = format!("{db}.{}", quoted(&entity.history_table));
+    let entity_columns: Vec<String> = entity
+        .columns
+        .iter()
+        .map(|column| quoted(&column.name))
+        .collect();
+    let history_columns = format!(
+        "{}, {}, {}",
+        entity_columns.join(", "),
+        quoted(&history.checkpoint_id_column),
+        quoted(&history.change_column)
+    );
+    let latest_per_key = format!(
+        "FROM {redo}\nORDER BY {key}, {} DESC\nLIMIT 1 BY {key}",
+        quoted(&history.checkpoint_id_column)
+    );
+    let mut statements = Vec::new();
+    if keep_history {
+        statements.push(format!(
+            "INSERT INTO {history_table} ({history_columns})\nSELECT {}, 0, {}\nFROM {current} FINAL\nWHERE ({key}) IN (SELECT {key} FROM {redo})\n  AND ({key}) NOT IN (SELECT {key} FROM {history_table})",
+            entity_columns.join(", "),
+            literal(&history.set_variant),
+        ));
+    }
+    statements.push(format!(
+        "INSERT INTO {current} ({}, {})\nSELECT {}\n{latest_per_key}",
+        current_columns(entity, history).join(", "),
+        quoted(IS_DELETED_COLUMN),
+        history_as_current_rows(entity, history),
+    ));
+    if lookup {
+        statements.push(format!(
+            "INSERT INTO {db}.{} ({}, {}, {})\nSELECT {} AS {}, {}\n{latest_per_key}",
+            quoted(&lookup_table_name(entity)),
+            quoted(LOOKUP_KEY_COLUMN),
+            current_columns(entity, history).join(", "),
+            quoted(IS_DELETED_COLUMN),
+            lookup_key_expression(entity, history),
+            quoted(LOOKUP_KEY_COLUMN),
+            history_as_current_rows(entity, history),
+        ));
+    }
+    if keep_history {
+        statements.push(format!(
+            "INSERT INTO {history_table} ({history_columns})\nSELECT {history_columns}\nFROM {redo}"
+        ));
+    }
+    statements.push(format!("TRUNCATE TABLE {redo}"));
+    statements
+}
+
+/// Drops the rows of a batch whose commit never landed.
+pub fn trim_redo_table(entity: &EntitySpec, database: &str, above: &str) -> String {
+    trim_history_table(database, &redo_table_name(entity), above)
 }
 
 /// Undoes an interrupted batch in a current table, given the predicate matching
@@ -713,6 +796,123 @@ pub fn repair_current_table(
             quoted(&history.checkpoint_id_column),
         ),
         format!("DELETE FROM {current} WHERE {above} SETTINGS lightweight_deletes_sync = 1"),
+    ]
+}
+
+/// The key a lookup table is read by. RocksDB takes a single key column, so a
+/// per-chain entity's chain is folded into it ahead of the id.
+pub const LOOKUP_KEY_COLUMN: &str = "envio_key";
+
+fn lookup_table_name(entity: &EntitySpec) -> String {
+    format!("envio_kv_{}", entity.name)
+}
+
+fn lookup_key_expression(entity: &EntitySpec, history: &HistorySchema) -> String {
+    match &entity.chain_id_column {
+        Some(chain_id_column) => format!(
+            "concat(toString({}), ':', toString({}))",
+            quoted(chain_id_column),
+            quoted(&history.id_column)
+        ),
+        None => format!("toString({})", quoted(&history.id_column)),
+    }
+}
+
+/// Every load a handler makes by id, which is most of them, asks for a few
+/// thousand keys scattered across the whole entity: a MergeTree sorted by id
+/// reads every granule to answer it, at a cost that grows with the table. An
+/// `EmbeddedRocksDB` table answers each key on its own. It mirrors the current
+/// table, is applied the same committed batches, and is only ever read by key;
+/// API queries go to the current table. Last write wins, which is why a batch
+/// is applied to it one row per key. Built the first time a handler loads the
+/// entity by id: an entity nothing reads back would only cost a copy.
+pub fn build_lookup_table(
+    entity: &EntitySpec,
+    database: &str,
+    history: &HistorySchema,
+    chain_id_mode: ChainIdMode,
+) -> Result<[String; 2]> {
+    Ok([
+        create_lookup_table(entity, database, history, chain_id_mode)?,
+        format!(
+            "INSERT INTO {db}.{} ({}, {}, {})\nSELECT {} AS {}, {}, {}\nFROM {db}.{} FINAL",
+            quoted(&lookup_table_name(entity)),
+            quoted(LOOKUP_KEY_COLUMN),
+            current_columns(entity, history).join(", "),
+            quoted(IS_DELETED_COLUMN),
+            lookup_key_expression(entity, history),
+            quoted(LOOKUP_KEY_COLUMN),
+            current_columns(entity, history).join(", "),
+            quoted(IS_DELETED_COLUMN),
+            quoted(&entity.name),
+            db = quoted(database),
+        ),
+    ])
+}
+
+fn create_lookup_table(
+    entity: &EntitySpec,
+    database: &str,
+    history: &HistorySchema,
+    chain_id_mode: ChainIdMode,
+) -> Result<String> {
+    let context = format!("entity `{}`", entity.name);
+    let mut definitions = vec![format!("{} String", quoted(LOOKUP_KEY_COLUMN))];
+    for column in &entity.columns {
+        let (name, ch_type) = column.typed(chain_id_mode, &context)?;
+        definitions.push(format!("{} {ch_type}", quoted(&name)));
+    }
+    definitions.push(format!("{} UInt64", quoted(&history.checkpoint_id_column)));
+    definitions.push(format!("{} UInt8", quoted(IS_DELETED_COLUMN)));
+    Ok(format!(
+        "CREATE TABLE IF NOT EXISTS {}.{} (\n  {}\n)\nENGINE = EmbeddedRocksDB\nPRIMARY KEY {}",
+        quoted(database),
+        quoted(&lookup_table_name(entity)),
+        definitions.join(",\n  "),
+        quoted(LOOKUP_KEY_COLUMN),
+    ))
+}
+
+/// The lookup table's half of a repair, run before the current table's while
+/// the rows above the checkpoint still name the keys a batch touched. Each key
+/// is first marked deleted and then given back its newest history row at or
+/// below the checkpoint, so a key the batch created stays deleted.
+pub fn repair_lookup_table(
+    entity: &EntitySpec,
+    database: &str,
+    history: &HistorySchema,
+    above: &str,
+) -> [String; 2] {
+    let key = entity
+        .key_columns(history)
+        .iter()
+        .map(|column| quoted(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let current = format!("{}.{}", quoted(database), quoted(&entity.name));
+    let lookup = format!(
+        "{}.{}",
+        quoted(database),
+        quoted(&lookup_table_name(entity))
+    );
+    let lookup_key = lookup_key_expression(entity, history);
+    [
+        format!(
+            "INSERT INTO {lookup} ({}, {key}, {}, {})\nSELECT DISTINCT {lookup_key}, {key}, 0, 1\nFROM {current}\nWHERE {above}",
+            quoted(LOOKUP_KEY_COLUMN),
+            quoted(&history.checkpoint_id_column),
+            quoted(IS_DELETED_COLUMN),
+        ),
+        format!(
+            "INSERT INTO {lookup} ({}, {}, {})\nSELECT {lookup_key}, {}\nFROM {}.{}\nWHERE ({key}) IN (SELECT {key} FROM {current} WHERE {above})\n  AND NOT ({above})\nORDER BY {key}, {} DESC\nLIMIT 1 BY {key}",
+            quoted(LOOKUP_KEY_COLUMN),
+            current_columns(entity, history).join(", "),
+            quoted(IS_DELETED_COLUMN),
+            history_as_current_rows(entity, history),
+            quoted(database),
+            quoted(&entity.history_table),
+            quoted(&history.checkpoint_id_column),
+        ),
     ]
 }
 

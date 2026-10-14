@@ -56,7 +56,7 @@ let quoteString = value =>
 
 // What every read is answered in: 64-bit and wider integers and decimals as
 // strings, so no digit is lost to a JS number, and timestamps as ISO 8601.
-let readSettings = " SETTINGS output_format_json_quote_64bit_integers = 1, output_format_json_quote_decimals = 1, date_time_output_format = 'iso', max_query_size = 104857600 FORMAT JSONEachRow"
+let readSettings = " SETTINGS output_format_json_quote_64bit_integers = 1, output_format_json_quote_decimals = 1, date_time_output_format = 'iso' FORMAT JSONEachRow"
 
 external asRows: array<'row> => array<JSON.t> = "%identity"
 
@@ -181,6 +181,32 @@ let selectColumns: Table.table => string = Utils.WeakMap.memoize((table: Table.t
   }
 )
 
+// The ids a filter asks for when ids are all it asks for, together with the
+// chain a per-chain entity's scope adds. Those are the loads a lookup table
+// answers.
+let byIds = (conditions: array<LoadCondition.t>) => {
+  let ids = ref(None)
+  let chainId = ref(None)
+  let other = ref(false)
+  conditions->Array.forEach(condition => {
+    let texts = () =>
+      condition.values->Array.filterMap(elements => elements->Array.getUnsafe(0)->Null.toOption)
+    switch condition {
+    | {column: "id", operator: In | Eq, isList: false} if ids.contents->Option.isNone =>
+      ids := Some(texts())
+    | {isChainId: true, operator: Eq} if chainId.contents->Option.isNone =>
+      chainId := texts()->Array.get(0)
+    | _ => other := true
+    }
+  })
+  switch (ids.contents, other.contents) {
+  | (Some(ids), false) => Some((ids, chainId.contents))
+  | _ => None
+  }
+}
+
+type lookup = Requested | Ready
+
 // The rows above each chain's bound, for a table whose chain column is
 // `chainColumn`. One shared counter holds every chain to its lowest bound.
 let aboveBounds = (
@@ -229,6 +255,28 @@ let make = (
       )
     }
   let select = async statement => (await query(statement ++ readSettings))->parseLines
+  let selectWithIds = async (statement, ids) =>
+    try (await sink->ClickHouseSink.queryWithIds(statement ++ readSettings, ids))->parseLines catch {
+    | exn =>
+      throw(
+        Persistence.StorageError({
+          message: "Failed a ClickHouse statement",
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
+    }
+
+  // Lookup tables are local to the node, so a replicated deployment does
+  // without them.
+  let lookupsEnabled = !Env.ClickHouse.replicated()
+  let lookups: dict<lookup> = Dict.make()
+  let entitiesByTable: dict<Internal.entityConfig> = Dict.make()
+  let rememberEntities = (entities: array<Internal.entityConfig>) =>
+    entities->Array.forEach(entityConfig =>
+      if entityConfig.storage.clickhouse {
+        entitiesByTable->Dict.set(entityConfig.table.tableName, entityConfig)
+      }
+    )
   let insertRows = async (table, rows: array<JSON.t>) =>
     if rows->Utils.Array.notEmpty {
       let _ = await query(
@@ -331,6 +379,8 @@ let make = (
     ~contractMapping,
     ~envioInfo,
   ): Persistence.initialState => {
+    rememberEntities(entities)
+    lookups->Utils.Dict.forEachWithKey((_, key) => lookups->Utils.Dict.deleteInPlace(key))
     try await sink->ClickHouseSink.initialize({
       entities: entities->entitySpecs,
       checkpointColumns: ClickHouse.checkpointColumnSpecs,
@@ -475,12 +525,23 @@ let make = (
     ~chainIds,
     ~contractMapping,
   ): Persistence.initialState => {
+    rememberEntities(entities)
     let stored =
       (await readChainRows())->Array.filter(chain => chainIds->Array.includes(chain.id))
     stored->Array.forEach(row => chainRows->Dict.set(row.id->ChainId.toString, row))
+    (
+      await select(
+        `SELECT name FROM system.tables WHERE database = ${database->quoteString} AND startsWith(name, 'envio_kv_')`,
+      )
+    )->Array.forEach(row => {
+      let name = row->(Utils.magic: JSON.t => {"name": string})
+      lookups->Dict.set(name["name"]->String.slice(~start=9), Ready)
+    })
+    let isLookupReady = (entityConfig: Internal.entityConfig) =>
+      lookups->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) === Some(Ready)
 
-    // Trims history and checkpoints past what each chain row committed, and
-    // repairs the current tables an interrupted batch reached.
+    // Drops what an interrupted batch left uncommitted, applies what it
+    // committed, and trims history and checkpoints past each chain row.
     try await sink->ClickHouseSink.resume({
       perChain: switch CheckpointSequence.fromEntities(entities) {
       | PerChain => true
@@ -494,7 +555,13 @@ let make = (
       historyTables: entities
       ->entitySpecs
       ->Array.map(spec => {ClickHouseSink.name: spec.historyTable, chainIdColumn: ?spec.chainIdColumn}),
-      currentTables: entities->entitySpecs,
+      primaryEntities: entities
+      ->primaryEntities
+      ->Array.map((entityConfig): ClickHouseSink.redoInput => {
+        entity: ClickHouse.entitySpec(~entityConfig, ~primary=true),
+        keepHistory: true,
+        lookup: entityConfig->isLookupReady,
+      }),
     }) catch {
     | exn =>
       throw(
@@ -569,13 +636,43 @@ let make = (
 
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
     let conditions = LoadFilter.make(~filter, ~table, ~column=field => field.clickhouseDbFieldName)
-    let where = switch conditions {
-    | [] => ""
-    | conditions => " WHERE " ++ conditions->Array.map(renderCondition)->Array.join(" AND ")
+    let entityConfig = entitiesByTable->Utils.Dict.dangerouslyGetNonOption(table.tableName)
+    let rows = switch (conditions->byIds, entityConfig) {
+    | (Some((ids, chainId)), Some(entityConfig))
+      if lookups->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) === Some(Ready) =>
+      let keys = switch chainId {
+      | Some(chainId) => ids->Array.map(id => `${chainId}:${id}`)
+      | None => ids
+      }
+      selectWithIds(
+        `SELECT ${table->selectColumns} FROM ${ClickHouseSink.lookupTableName(
+            entityConfig.name,
+          )->tableRef} WHERE envio_key IN _ids AND envio_is_deleted = 0`,
+        keys,
+      )
+    | (Some((ids, chainId)), _) =>
+      switch entityConfig {
+      | Some(entityConfig) if lookupsEnabled && !(lookups->Dict.has(entityConfig.name)) =>
+        lookups->Dict.set(entityConfig.name, Requested)
+      | _ => ()
+      }
+      let chainFilter = switch (chainId, table->Table.getChainIdField) {
+      | (Some(chainId), Some(field)) =>
+        ` AND ${field->Table.getClickHouseDbFieldName->quoteIdent} = ${chainId->quoteString}`
+      | _ => ""
+      }
+      selectWithIds(
+        `SELECT ${table->selectColumns} FROM ${table.tableName->tableRef} FINAL WHERE ${Table.idFieldName->quoteIdent} IN _ids${chainFilter}`,
+        ids,
+      )
+    | (None, _) =>
+      let where = switch conditions {
+      | [] => ""
+      | conditions => " WHERE " ++ conditions->Array.map(renderCondition)->Array.join(" AND ")
+      }
+      select(`SELECT ${table->selectColumns} FROM ${table.tableName->tableRef} FINAL${where}`)
     }
-    switch await select(
-      `SELECT ${table->selectColumns} FROM ${table.tableName->tableRef} FINAL${where}`,
-    ) {
+    switch await rows {
     | exception exn =>
       throw(
         Persistence.StorageError({
@@ -878,6 +975,55 @@ let make = (
       })
     )
     await writeChainRows(touched->Dict.valuesToArray)
+
+    // Committed: the batch moves out of the redo tables. A lookup a handler
+    // asked for since the last write is built first, from current tables that
+    // hold every batch before this one, and then takes this one with them.
+    let building =
+      lookups
+      ->Dict.toArray
+      ->Array.filterMap(((name, state)) => state === Requested ? Some(name) : None)
+    let _ = await building
+    ->Array.filterMap(name =>
+      entitiesByTable
+      ->Dict.valuesToArray
+      ->Array.find(entityConfig => entityConfig.name === name)
+    )
+    ->Array.map(entityConfig =>
+      sink->ClickHouseSink.buildLookup(ClickHouse.entitySpec(~entityConfig, ~primary=true))
+    )
+    ->Promise.all
+    let redo: dict<ClickHouseSink.redoInput> = Dict.make()
+    updatedEntities->Array.forEach(({entityConfig, shouldSaveHistory}) =>
+      switch redo->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
+      | Some(input) =>
+        redo->Dict.set(
+          entityConfig.name,
+          {...input, keepHistory: input.keepHistory || shouldSaveHistory},
+        )
+      | None =>
+        redo->Dict.set(
+          entityConfig.name,
+          {
+            entity: ClickHouse.entitySpec(~entityConfig, ~primary=true),
+            keepHistory: shouldSaveHistory,
+            lookup: lookups->Dict.has(entityConfig.name) &&
+              (lookups->Dict.getUnsafe(entityConfig.name) === Ready ||
+                building->Array.includes(entityConfig.name)),
+          },
+        )
+      }
+    )
+    try await sink->ClickHouseSink.applyRedo(redo->Dict.valuesToArray) catch {
+    | exn =>
+      throw(
+        Persistence.StorageError({
+          message: "Failed to apply a committed batch in ClickHouse",
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
+    }
+    building->Array.forEach(name => lookups->Dict.set(name, Ready))
     onWrite(~storage=storageName, ~timeSeconds=timerRef->Performance.secondsSince)
   }
 

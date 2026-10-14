@@ -293,6 +293,11 @@ let entityTable = (sink, ~registry, ~entityConfig: Internal.entityConfig) =>
   | Some(table) => table
   | None =>
     let spec = entitySpec(~entityConfig, ~primary=registry.primary)
+    // A ClickHouse-only batch lands in the redo table first and reaches the
+    // history it is shaped like only once committed.
+    let spec = registry.primary
+      ? {...spec, historyTable: ClickHouseSink.redoTableName(entityConfig.name)}
+      : spec
     let table =
       sink
       ->ClickHouseSink.registerEntityTable(spec)
