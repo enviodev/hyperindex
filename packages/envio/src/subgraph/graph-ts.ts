@@ -2409,9 +2409,22 @@ export function changetype<T>(value: unknown): T {
 // The load hook rewrites that call to this helper so `.value` etc. resolve.
 export function retagChangetype(ctor: unknown, value: unknown, keepInstances = false): unknown {
   if (value !== null && typeof value === "object" && typeof ctor === "function") {
-    // An `as` cast to a class the value already is, or extends, is an upcast:
-    // the value keeps the getters of its own class.
-    if (keepInstances && value instanceof (ctor as Function)) return value;
+    if (keepInstances) {
+      // An `as` cast to a class the value already is, or extends, is an
+      // upcast: the value keeps the getters of its own class.
+      if (value instanceof (ctor as Function)) return value;
+      // Across to a sibling — GMX casts one EventLog1 to EventLog2 for a
+      // helper — AssemblyScript reads the same object through the other
+      // class and leaves the original as it was, so the original isn't
+      // retagged: the cast reads a copy.
+      const current = Object.getPrototypeOf(value)?.constructor;
+      if (typeof current === "function" && !((ctor as Function).prototype instanceof current)) {
+        return Object.defineProperties(
+          Object.create((ctor as Function).prototype),
+          Object.getOwnPropertyDescriptors(value),
+        );
+      }
+    }
     const proto = (ctor as Function).prototype;
     if (proto) Object.setPrototypeOf(value, proto);
   }
