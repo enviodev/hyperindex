@@ -40,6 +40,10 @@ Tips:
 - Derive schema and port deterministically from the project name in any
   scripting (for example, port = 9800 + a stable hash of the name) so re-runs
   and restarts always land on the same resources.
+- Keep the indexer port off 9899, 9900 and 9901: `envio dev` uses them for a
+  project's `sidecar:` (9899 for the indexer's webhook listener, 9900 and 9901
+  for the sidecar itself), so two projects with a sidecar collide on them by
+  default.
 - Inspect any project's progress directly, regardless of Hasura state:
 
   ```bash

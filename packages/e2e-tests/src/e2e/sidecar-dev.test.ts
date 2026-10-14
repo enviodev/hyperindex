@@ -38,8 +38,11 @@ const isRunning = (pid: number) => {
 
 describe.skipIf(!dockerAvailable)("envio dev with a sidecar", () => {
   it("starts the sidecar with the loopback URLs and stops it with the indexer", async () => {
-    // A copy, so codegen output never lands in the fixture.
-    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-sidecar-dev-"));
+    // A copy, so codegen output never lands in the fixture. Run from its
+    // parent with `-d`, so the sidecar has to be started in the project root
+    // and with the non-default config file, not wherever `envio dev` ran.
+    const parentDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-sidecar-dev-"));
+    const projectDir = path.join(parentDir, "indexer");
     fs.cpSync(path.join(config.rootDir, "packages/e2e-tests/fixtures/sidecar-project"), projectDir, {
       recursive: true,
     });
@@ -53,9 +56,9 @@ describe.skipIf(!dockerAvailable)("envio dev with a sidecar", () => {
 
     const dev = startBackground(
       config.envioCommand,
-      [...config.envioArgs, "dev", "--config", "sidecar.config.yaml"],
+      [...config.envioArgs, "dev", "-d", "indexer", "--config", "sidecar.config.yaml"],
       {
-        cwd: projectDir,
+        cwd: parentDir,
         env: {
           ENVIO_TUI: "false",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
@@ -81,20 +84,26 @@ describe.skipIf(!dockerAvailable)("envio dev with a sidecar", () => {
       dev.kill("SIGTERM");
       await exited;
     }
-    const started = output.join("").match(/fake sidecar started .* pid=(\d+) env=(.*)/);
+    const started = output
+      .join("")
+      .match(/fake sidecar started .* config=(\S+) cwd=(\S+) pid=(\d+) env=(.*)/);
     // The child logs its close a moment after the parent is gone.
     await new Promise((resolve) => setTimeout(resolve, 1_000));
-    const sidecarPid = Number(started?.[1]);
+    const sidecarPid = Number(started?.[3]);
 
     expect({
-      env: started?.[2]?.trim(),
+      config: started?.[1],
+      cwd: started?.[2],
+      env: started?.[4]?.trim(),
       closed: output.join("").includes("fake sidecar closed"),
       sidecarStillRunning: isRunning(sidecarPid),
     }).toEqual({
+      config: "sidecar.config.yaml",
+      cwd: fs.realpathSync(projectDir),
       env: "http://127.0.0.1:9901 http://127.0.0.1:9899 9900 http://localhost:8080/v1/graphql",
       closed: true,
       sidecarStillRunning: false,
     });
-    fs.rmSync(projectDir, { recursive: true, force: true });
+    fs.rmSync(parentDir, { recursive: true, force: true });
   }, 180_000);
 });

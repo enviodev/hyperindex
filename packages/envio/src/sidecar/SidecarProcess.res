@@ -141,11 +141,22 @@ let startForDev = (~config: Config.t) =>
     // The Rust TUI owns the terminal; a child writing to it directly would
     // tear the frame, so its lines go through console like the indexer's.
     let pipeOutput = Tui.shouldUse()
+    let env = devEnv()
+    // `envio dev -d sub --config other.yaml` reaches this process as a start
+    // command that already moved it into the project root and set
+    // ENVIO_CONFIG relative to that root. The child gets both explicitly
+    // rather than by inheritance. Not `config.projectFlags`: those are
+    // relative to where `envio dev` ran, not to the root.
+    let args = switch env->Dict.get("ENVIO_CONFIG") {
+    | Some(configPath) if configPath !== "" => ["sidecar", "--config", configPath]
+    | _ => ["sidecar"]
+    }
     let child = NodeJs.ChildProcess.fork(
       NodeJs.Process.argv->Array.getUnsafe(1),
-      ["sidecar"],
+      args,
       {
-        env: devEnv(),
+        cwd: NodeJs.Process.cwd(),
+        env,
         stdio: pipeOutput
           ? ["inherit", "pipe", "pipe", "ipc"]
           : ["inherit", "inherit", "inherit", "ipc"],
