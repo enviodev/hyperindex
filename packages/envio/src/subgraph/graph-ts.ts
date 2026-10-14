@@ -1187,6 +1187,15 @@ const storeImpl = {
       throw unknown(`the derived field ${entityType}.${field}`, "a mapping handler");
     }
     const target = declared.target;
+    // graph-node answers with every entity whose list holds the id; envio's
+    // lookups only match a column equal to a value, so the list would read as
+    // empty — refused rather than answered wrong.
+    if (schema.entityListFields[target]?.includes(declared.derivedFrom)) {
+      throw unsupported(
+        `loading ${entityType}.${field}, derived from the list field ${target}.${declared.derivedFrom}`,
+        "a mapping handler",
+      );
+    }
     const back = schema.entityRefFields[target]?.includes(declared.derivedFrom)
       ? `${declared.derivedFrom}_id`
       : declared.derivedFrom;
