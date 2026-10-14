@@ -1,7 +1,10 @@
-type t = {logger: Pino.t, exn: exn, msg: option<string>}
+// Where a failure came from, as far as the site that caught it can tell.
+type kind = Handler | Database | Source | Other
 
-let make = (exn, ~logger=Logging.getLogger(), ~msg=?) => {
-  {logger, msg, exn}
+type t = {logger: Pino.t, exn: exn, msg: option<string>, kind: kind}
+
+let make = (exn, ~logger=Logging.getLogger(), ~msg=?, ~kind=Other) => {
+  {logger, msg, exn, kind}
 }
 
 let log = (self: t) => {

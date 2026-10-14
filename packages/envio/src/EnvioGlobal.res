@@ -20,6 +20,9 @@ type t = {
   rollbackCommitCallbacks: array<unknown>,
   mutable indexerState: option<unknown>,
   mutable persistence: option<unknown>,
+  // Effects are created at handler module load, long before any is called, so
+  // this is the one place telemetry can see that a project uses them.
+  mutable effectsCreated: int,
 }
 
 // Record type with `mutable` so assignment typechecks; ReScript keeps the
@@ -44,6 +47,7 @@ let value: t = {
       rollbackCommitCallbacks: [],
       indexerState: None,
       persistence: None,
+      effectsCreated: 0,
     }
     globalThis.__envioGlobal = Nullable.make(fresh)
     fresh

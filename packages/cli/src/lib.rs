@@ -35,6 +35,7 @@ pub mod scripts;
 mod service_health;
 mod svm;
 mod svm_hypersync_source;
+mod telemetry;
 mod template_dirs;
 mod text_position;
 mod transaction_store;

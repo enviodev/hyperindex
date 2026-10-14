@@ -74,6 +74,10 @@ pub enum CommandType {
     #[command(subcommand)]
     Config(ConfigSubcommand),
 
+    ///Turn anonymous usage telemetry on or off, or see exactly what it sends
+    #[command(subcommand)]
+    Telemetry(TelemetrySubcommand),
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
@@ -83,6 +87,16 @@ pub enum CommandType {
 pub enum ConfigSubcommand {
     ///Print the resolved indexer config as JSON
     View,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TelemetrySubcommand {
+    ///Show whether telemetry is on, why, and the events it would send from this directory
+    Status,
+    ///Turn telemetry on for this machine
+    Enable,
+    ///Turn telemetry off for this machine
+    Disable,
 }
 
 #[derive(Debug, Subcommand)]

@@ -67,6 +67,7 @@ futures-util = "0.3"
 tar = "0.4"
 tokio-postgres = "0.7"
 deadpool-postgres = "0.14"
+uuid = { version = "1.23", features = ["v4"] }
 # ring rather than rustls's default aws-lc-rs: the provider reqwest already
 # builds on every release target, with no C toolchain beyond a compiler.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

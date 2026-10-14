@@ -464,7 +464,9 @@ exception FatalError(exn)
     | None => PgStorage.makePersistenceFromConfig(~config)
     }
     setGlobalPersistence(persistence)
-    let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
+    let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)->Telemetry.observeStartup(
+      #handler,
+    )
     // A worker's supervisor has checked the handlers already, and the test
     // indexer leaves type checking to the user's test setup.
     let typeCheck =
@@ -472,15 +474,20 @@ exception FatalError(exn)
         ? Promise.resolve()
         : HandlerLoader.typeCheck(~config, ~autoLoadFiles)
     let _ = await Promise.all2((
-      persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode),
-      typeCheck,
+      persistence
+      ->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode)
+      ->Telemetry.observeStartup(#database),
+      typeCheck->Telemetry.observeStartup(#handler),
     ))
 
     // Loads user handler files, which register handler/contractRegister/where
     // state into the global `HandlerRegister` registry as a side effect; this
     // returns that state resolved into per-chain registrations. `config` itself
     // is never mutated by registration — it holds only event definitions.
-    let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config, ~autoLoadFiles)
+    let registrationsByChainId = await HandlerLoader.registerAllHandlers(
+      ~config,
+      ~autoLoadFiles,
+    )->Telemetry.observeStartup(#handler)
     let config = if isTest {
       {...config, shouldRollbackOnReorg: false}
     } else {
@@ -505,6 +512,7 @@ exception FatalError(exn)
     // indexer can run and call `onError`, so it's always present here.
     let onError = (errHandler: ErrorHandling.t) => {
       errHandler->ErrorHandling.log
+      Telemetry.reportCrash(errHandler.kind->Telemetry.classOfKind)
       (onErrorReject.contents->Option.getUnsafe)(FatalError(errHandler.exn->Utils.prettifyExn))
     }
     let envioVersion = Utils.EnvioPackage.value.version
@@ -545,6 +553,11 @@ exception FatalError(exn)
       ~onReleaseRealtime=() => state->IndexerState.releaseRealtime,
     )
     setIndexerState(state)
+    if !isTest && !Worker.isEnabled {
+      Telemetry.start(~config, ~registrationsByChainId, ~getProgress=() => Some(
+        state->IndexerState.toMetrics->Metrics.toTelemetryProgress,
+      ))
+    }
     state->IndexerLoop.start
     await runUntilFatalError
   }

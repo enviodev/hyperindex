@@ -48,6 +48,7 @@ pub async fn run_init_args(
         let mut stderr = std::io::stderr().lock();
         let _ = stderr.write_all(prompt.as_bytes());
         let _ = stderr.flush();
+        crate::telemetry::finish_command(crate::telemetry::Outcome::AgentPrompt, None);
         std::process::exit(AGENTIC_INIT_EXIT_CODE);
     }
 
@@ -59,6 +60,7 @@ pub async fn run_init_args(
 
     let parsed_project_paths = ParsedProjectPaths::try_from(init_config.clone())
         .context("Failed parsing paths from interactive input")?;
+    crate::telemetry::set_init(&init_config, &parsed_project_paths);
     // The cli errors if the folder exists, the user must provide a new folder to proceed which we create below
     std::fs::create_dir_all(&parsed_project_paths.project_root)?;
 

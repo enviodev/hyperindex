@@ -448,8 +448,10 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // Checked here once, so the workers don't each check the same handlers.
   let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
   let _ = await Promise.all2((
-    persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=config.isDev),
-    HandlerLoader.typeCheck(~config, ~autoLoadFiles),
+    persistence
+    ->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=config.isDev)
+    ->Telemetry.observeStartup(#database),
+    HandlerLoader.typeCheck(~config, ~autoLoadFiles)->Telemetry.observeStartup(#handler),
   ))
   await persistence.storage.close()
 
@@ -520,6 +522,12 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
       ),
     ~isDevelopmentMode=config.isDev,
     ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config)),
+  )
+  Telemetry.start(~config, ~splitRun=true, ~getProgress=() =>
+    switch reported() {
+    | [] => None
+    | snapshots => Some(snapshots->merge->Metrics.toTelemetryProgress)
+    }
   )
 
   if shouldUseTui {
