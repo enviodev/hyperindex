@@ -15,6 +15,8 @@ import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
+import { install as installCallSource } from "../sources/CallSource.res.mjs";
+import { fetchCalls, resetCallBackends } from "./calls-source.ts";
 import { currentScope, runInScope, type RegisterPass, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
   Address,
@@ -556,6 +558,9 @@ function announceWhereToQuery() {
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook(config.root);
   resetRpcClients();
+  resetCallBackends();
+  // The chain's sources read calls only when a handler wants them.
+  installCallSource(fetchCalls, config.rpcUrls ?? []);
   resetRegisterStore();
   announceWhereToQuery();
 
