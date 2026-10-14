@@ -3,8 +3,9 @@
 // truncated at what that crate counts as 34 digits. A subgraph's stored values
 // carry that rounding, residues included: a balance that nets to zero in exact
 // arithmetic doesn't on graph-node. The expected strings are that crate's own
-// output for the same operations, and fixtures/graph-node-bigdecimal holds a
-// few hundred more that its generator computes with that crate.
+// output for the same operations, and fixtures/graph-node-bigdecimal holds
+// 911 more that its generator computes with that crate, each value
+// normalized again as it crosses back into graph-node's host.
 @module("node:fs") external readFileSync: (string, string) => string = "readFileSync"
 @module("node:path") @variadic external pathJoin: array<string> => string = "join"
 @module("node:path") external pathDirname: string => string = "dirname"
