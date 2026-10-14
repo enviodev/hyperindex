@@ -12,8 +12,14 @@ let formatSeconds = seconds => (Math.round(seconds *. 100.) /. 100.)->Float.toSt
 // stalled-looking indexer is explainable from the logs alone.
 let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
-// The `storage` field on Postgres's logs.
-let postgresName = "postgres"
+// What logs and metrics call a store.
+let storeName = (store: StorageClient.store) =>
+  switch store {
+  | Postgres => "postgres"
+  | ClickHouse => "clickhouse"
+  }
+
+let postgresName = Postgres->storeName
 
 let logIndexEvent = (~pgSchema, event: StorageClient.indexEvent) =>
   switch event {
@@ -301,6 +307,7 @@ type postgresTable = {staged: option<array<Staging.column>>}
 // of it.
 type registered = {
   handle: int,
+  home: StorageClient.store,
   table: Table.table,
   fields: array<Table.field>,
   postgres: option<postgresTable>,
@@ -342,6 +349,7 @@ let register = (
   })
   {
     handle: registered.handle,
+    home: registered.home,
     table,
     fields,
     postgres: registered.postgres->Option.map(({?kinds}): postgresTable => {
@@ -360,7 +368,6 @@ let register = (
   }
 }
 
-// An entity's table, described for each store the entity is configured for.
 let registerEntity = (client, entityConfig: Internal.entityConfig) =>
   client->register(
     ~kind=Entity,
@@ -485,12 +492,6 @@ let converterOf = (registered, ~forArena, ~itemSchema) => {
     )
 )
 
-let storeName = (store: StorageClient.store) =>
-  switch store {
-  | Postgres => "postgres"
-  | ClickHouse => "clickhouse"
-  }
-
 // What a batch has laid out on its way to the addon: the staged handles, freed
 // if the write never reaches it, and each store's time spent laying its rows
 // out, which is part of writing to it.
@@ -507,12 +508,11 @@ let stagedFor = (staged, ~store, stage) => {
   result
 }
 
-// Lays rows out for `store`, which for one of the indexer's own tables is the
-// one that keeps it. A staged batch is handed back by handle.
+// A staged batch is handed back by handle.
 let rowsOrThrow = (
   client: StorageClient.t,
   registered,
-  ~store: StorageClient.store=registered.clickhouse->Option.isSome ? ClickHouse : Postgres,
+  ~store=registered.home,
   ~itemSchema,
   items: array<unknown>,
   ~staged: staged,
@@ -1211,28 +1211,29 @@ let make = (
   ): StorageClient.entityWrite => {
     let table = entityConfig->entityTable
 
-    // Every row in this group belongs to the group's scope, so the chain id
-    // is stamped once here instead of being looked up per row downstream.
     let scopeChainId = switch scope {
     | Internal.CrossChain => None
     | Chain(chainId) => Some(chainId)
     }
-    let stamped = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
-    | (Some(field), Some(chainId)) =>
-      changes->Array.map(change =>
-        switch change {
-        | Change.Set(set) =>
-          Change.Set({
-            ...set,
-            entity: set.entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId),
-          })
-        | Delete(_) => change
-        }
-      )
-    | _ => changes
-    }
 
     let postgresWrite = (): StorageClient.postgresEntityWrite => {
+      // Every row in this group belongs to the group's scope, so the chain id
+      // is stamped once here instead of being looked up per row downstream.
+      let stamped = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
+      | (Some(field), Some(chainId)) =>
+        changes->Array.map(change =>
+          switch change {
+          | Change.Set(set) =>
+            Change.Set({
+              ...set,
+              entity: set.entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId),
+            })
+          | Delete(_) => change
+          }
+        )
+      | _ => changes
+      }
+
       // The rollback-diff change is written to the entity table only, never the
       // history table; when present it is an id's oldest change.
       let diffCheckpointId =
@@ -1489,20 +1490,20 @@ let make = (
       client->StorageClient.discardStaged(staged.handles)
       throw(exn->storageErrorOf)
     }
-    timings->Array.forEach(({store, seconds}) =>
+    timings->Array.forEach(({store, seconds}) => {
+      let name = store->storeName
       onWrite(
-        ~storage=store,
-        ~timeSeconds=seconds +. staged.seconds->Dict.get(store)->Option.getOr(0.),
+        ~storage=name,
+        ~timeSeconds=seconds +. staged.seconds->Dict.get(name)->Option.getOr(0.),
       )
-    )
+    })
   }
 
   let close = () => client->StorageClient.close
 
   {
-    name: client->StorageClient.storeOfRecord,
-    entityStoreName: entityConfig =>
-      (entityConfig.storage.postgres ? Postgres : ClickHouse)->storeName,
+    name: client->StorageClient.storeOfRecord->storeName,
+    entityStoreName: entityConfig => (entityConfig->entityTable).home->storeName,
     holding,
     initialize,
     readStoredConfig,
@@ -1525,7 +1526,6 @@ let make = (
   }
 }
 
-// The stores the config enables, connected the way the environment says.
 let clientFromEnv = (
   ~config: Config.t,
   ~pgSchema=Env.Db.publicSchema,

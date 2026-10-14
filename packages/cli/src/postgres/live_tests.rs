@@ -17,8 +17,9 @@ use super::rows::ReadKind;
 use futures_util::future;
 
 use crate::columnar::{Arena, ColumnKind, ColumnSpec};
+use crate::storage::CacheDump;
 
-fn client() -> PgClient {
+pub(crate) fn client() -> PgClient {
     client_with(2)
 }
 
@@ -1267,13 +1268,15 @@ async fn a_table_copies_out_to_a_file_and_back_in() {
         .await
         .unwrap();
 
+    let mut file = tokio::fs::File::create(path).await.unwrap();
     client
         .copy_out(
             "COPY copy_round_trip TO STDOUT WITH (FORMAT text, HEADER)",
-            path,
+            &mut file,
         )
         .await
         .unwrap();
+    tokio::io::AsyncWriteExt::flush(&mut file).await.unwrap();
     let written = std::fs::read_to_string(path).unwrap();
 
     client.batch("TRUNCATE copy_round_trip").await.unwrap();
@@ -1358,12 +1361,20 @@ async fn a_copy_that_fails_part_way_leaves_the_previous_file() {
     let path = dir.join("cache.tsv");
     std::fs::write(&path, "the previous dump\n").unwrap();
 
-    let failed = client
-        .copy_out(
-            "COPY (SELECT CASE WHEN i < 50000 THEN i ELSE 1 / (i - i) END \
-             FROM generate_series(1, 100000) AS i) TO STDOUT",
-            path.to_str().unwrap(),
-        )
+    let dump = CacheDump {
+        table_name: "cache".to_string(),
+        path: path.to_string_lossy().into_owned(),
+    };
+    let failed = dump
+        .replace_with(async |file| {
+            client
+                .copy_out(
+                    "COPY (SELECT CASE WHEN i < 50000 THEN i ELSE 1 / (i - i) END \
+                     FROM generate_series(1, 100000) AS i) TO STDOUT",
+                    file,
+                )
+                .await
+        })
         .await
         .err()
         .map(|error| super::error::message_of(&error));

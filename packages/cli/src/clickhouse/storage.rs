@@ -1,6 +1,3 @@
-//! ClickHouse as a store: the history of every entity it keeps, and — as the
-//! store of record — everything else the indexer persists.
-//!
 //! Nothing here is updated in place. Every write appends rows stamped with the
 //! checkpoint they belong to, and the last thing it appends is the chains'
 //! rows, whose `checkpoint_id` is each chain's frontier. That insert is the
@@ -11,7 +8,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, bail, Context, Result};
-use bytes::Bytes;
 use futures_util::future::{try_join_all, BoxFuture};
 
 use super::ch_type::{ChType, FieldSpec};
@@ -34,7 +30,7 @@ use crate::storage::types::{
 };
 use crate::storage::{
     AddChain, Backend, Batch, CacheDump, CacheFile, Failure, Handoff, Initialize, Op, Resume,
-    Resumed, StoredConfigRead, WriteError,
+    Resumed, Store, StoredConfigRead, WriteError,
 };
 
 pub struct Settings {
@@ -80,7 +76,6 @@ pub struct ChainRow {
 }
 
 impl ChainRow {
-    /// A chain nothing has been indexed for yet.
     fn new(config: &ChainConfig) -> Self {
         Self {
             id: config.id,
@@ -415,7 +410,6 @@ impl Storage {
         .await
     }
 
-    /// Each chain's row as it stands.
     fn chain_rows(&self) -> BTreeMap<i64, ChainRow> {
         self.chains.lock().unwrap().rows.clone()
     }
@@ -1363,16 +1357,16 @@ impl Storage {
             self.client
                 .statement(table.create(self.database(), topology)?)
                 .await?;
-            let body = tokio::fs::read(&file.path)
+            let body = tokio::fs::File::open(&file.path)
                 .await
-                .with_context(|| format!("Failed reading {}", file.path))?;
+                .with_context(|| format!("Failed opening {}", file.path))?;
             self.client
-                .send(
+                .send_file(
                     &format!(
                         "INSERT INTO {} FORMAT TabSeparatedWithNames",
                         self.table_ref(&table.physical)
                     ),
-                    Bytes::from(body),
+                    body,
                 )
                 .await
                 .with_context(|| format!("Failed uploading {}", file.path))
@@ -1382,22 +1376,15 @@ impl Storage {
     }
 
     async fn dump_effect_cache_inner(&self, files: &[CacheDump]) -> Result<()> {
-        try_join_all(files.iter().map(|file| async move {
-            if let Some(directory) = std::path::Path::new(&file.path).parent() {
-                tokio::fs::create_dir_all(directory)
+        try_join_all(files.iter().map(|dump| {
+            let query = format!(
+                "SELECT `id`, `output` FROM {} FINAL FORMAT TabSeparatedWithNames",
+                self.table_ref(&dump.table_name)
+            );
+            async move {
+                dump.replace_with(async |file| self.client.read_into(query, file).await)
                     .await
-                    .with_context(|| format!("Failed creating {}", directory.display()))?;
             }
-            let body = self
-                .client
-                .read(format!(
-                    "SELECT `id`, `output` FROM {} FINAL FORMAT TabSeparatedWithNames",
-                    self.table_ref(&file.table_name)
-                ))
-                .await?;
-            tokio::fs::write(&file.path, body)
-                .await
-                .with_context(|| format!("Failed writing {}", file.path))
         }))
         .await?;
         Ok(())
@@ -1558,8 +1545,8 @@ impl Storage {
 }
 
 impl Backend for Storage {
-    fn name(&self) -> &'static str {
-        "clickhouse"
+    fn store(&self) -> Store {
+        Store::ClickHouse
     }
 
     fn check_for_initialize(&self) -> Op<'_, ()> {
@@ -1576,10 +1563,8 @@ impl Backend for Storage {
 
     fn add_chain<'a>(&'a self, input: &'a AddChain) -> Op<'a, ()> {
         Box::pin(async move {
-            if self.settings.primary {
-                self.insert_addresses(Self::address_values(&input.addresses, SET))
-                    .await?;
-            }
+            self.insert_addresses(Self::address_values(&input.addresses, SET))
+                .await?;
             self.write_chains(vec![ChainRow::new(&input.chain)]).await
         })
     }

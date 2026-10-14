@@ -12,6 +12,9 @@ struct State {
     statements: Option<Arc<StatementFn>>,
     statements_seen: Vec<String>,
     reject_next: usize,
+    /// Reads still to be answered by closing the connection, as a stale pooled
+    /// connection the server already let go of is.
+    drop_next_reads: usize,
     /// Inserts still to be accepted and then failed. The body is recorded as
     /// landed — the server took the rows — but the client is told it did not.
     accept_then_error: usize,
@@ -63,6 +66,15 @@ impl MockClickHouse {
     pub async fn answering_statements(statements: Arc<StatementFn>) -> Self {
         Self::serving(State {
             statements: Some(statements),
+            ..Default::default()
+        })
+        .await
+    }
+
+    pub async fn dropping_reads(n: usize, statements: Arc<StatementFn>) -> Self {
+        Self::serving(State {
+            statements: Some(statements),
+            drop_next_reads: n,
             ..Default::default()
         })
         .await
@@ -182,6 +194,13 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
             };
             outcome.unwrap_or((200, String::new()))
         } else {
+            {
+                let mut state = state.lock().unwrap();
+                if state.drop_next_reads > 0 {
+                    state.drop_next_reads -= 1;
+                    return Ok(());
+                }
+            }
             let statement = String::from_utf8_lossy(&request.body).to_string();
             let answer = {
                 let mut state = state.lock().unwrap();

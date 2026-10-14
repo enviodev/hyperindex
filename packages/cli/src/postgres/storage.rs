@@ -39,8 +39,8 @@ use crate::storage::types::{
 };
 use crate::storage::{
     self as composite, AddChain, Backend, Batch, CacheDump, CacheFile, EntityWrite, Failure,
-    Handoff, Initialize, Op, PgEntityWrite, Resume, Resumed, RollbackWrite, Rows, StoredConfigRead,
-    WriteError,
+    Handoff, Initialize, Op, PgEntityWrite, Resume, Resumed, RollbackWrite, Rows, Store,
+    StoredConfigRead, WriteError,
 };
 
 pub struct Settings {
@@ -743,13 +743,7 @@ impl Storage {
                 ],
             )
             .await?;
-        rows.first()
-            .map(|row| {
-                let id: String = cell(row, 0)?;
-                id.parse()
-                    .with_context(|| format!("`{id}` is not a checkpoint id"))
-            })
-            .transpose()
+        rows.first().map(|row| cell(row, 0)).transpose()
     }
 
     pub async fn rollback_progress_diff(&self, bounds: &Bounds) -> Result<Vec<ProgressDiff>> {
@@ -841,29 +835,19 @@ impl Storage {
         Ok(())
     }
 
-    /// Each table to its file, the directories a chain's caches go in created
-    /// as needed.
     pub async fn dump_effect_cache(&self, files: &[CacheDump]) -> Result<()> {
         let schema = self.schema();
-        let dumps = files
-            .iter()
-            .map(|CacheDump { table_name, path }| async move {
-                if let Some(directory) = std::path::Path::new(path).parent() {
-                    tokio::fs::create_dir_all(directory)
-                        .await
-                        .with_context(|| format!("Failed creating {}", directory.display()))?;
-                }
-                self.client
-                    .copy_out(
-                        &format!(
-                            "COPY {}.{} TO STDOUT WITH (FORMAT text, HEADER)",
-                            internal::quote_ident(schema),
-                            internal::quote_ident(table_name)
-                        ),
-                        path,
-                    )
+        let dumps = files.iter().map(|dump| {
+            let sql = format!(
+                "COPY {}.{} TO STDOUT WITH (FORMAT text, HEADER)",
+                internal::quote_ident(schema),
+                internal::quote_ident(&dump.table_name)
+            );
+            async move {
+                dump.replace_with(async |file| self.client.copy_out(&sql, file).await)
                     .await
-            });
+            }
+        });
         for outcome in join_all(dumps).await {
             outcome?;
         }
@@ -1337,8 +1321,8 @@ impl Storage {
 }
 
 impl Backend for Storage {
-    fn name(&self) -> &'static str {
-        "postgres"
+    fn store(&self) -> Store {
+        Store::Postgres
     }
 
     fn check_for_initialize(&self) -> Op<'_, ()> {

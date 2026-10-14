@@ -1,6 +1,3 @@
-//! Every statement that shapes the ClickHouse database, and the ones a resume
-//! trims it back with.
-
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::LazyLock;

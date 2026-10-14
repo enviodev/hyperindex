@@ -1,6 +1,5 @@
-// The indexer's tables and rows as the ClickHouse store takes them. Rows read
-// back keyed by their Postgres column names, so one set of row schemas parses
-// what either store returns.
+// Rows read back keyed by their Postgres column names, so one set of row
+// schemas parses what either store returns.
 
 let logger = Logging.createChild(~params={"storage": "clickhouse"})
 
@@ -104,7 +103,6 @@ let entityTable = (entityConfig: Internal.entityConfig): StorageClient.clickHous
   }
 }
 
-// A table of the indexer's own: the columns a batch of its rows carries.
 let ownTable = (
   ~kind: StorageClient.tableKind,
   ~name,

@@ -15,6 +15,8 @@ pub mod types;
 
 #[cfg_attr(test, allow(dead_code))]
 mod js;
+#[cfg(test)]
+mod live_tests;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -22,8 +24,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use futures_util::future::{join_all, BoxFuture};
+use tokio::io::AsyncWriteExt;
 
 use crate::clickhouse;
 use crate::columnar::Arena;
@@ -145,6 +148,13 @@ pub struct Batch {
     pub frontier: Frontier,
     pub checkpoints: Checkpoints,
     pub effect_caches: Vec<EffectCacheWrite>,
+}
+
+#[napi_derive::napi(string_enum)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Store {
+    Postgres,
+    ClickHouse,
 }
 
 /// What the stores hold before anything is initialized or resumed.
@@ -277,13 +287,53 @@ pub struct CacheDump {
     pub path: String,
 }
 
+impl CacheDump {
+    /// Writes the dump through a file of its own beside its path, which
+    /// replaces it only once `write` has finished: a dump the server gives up on
+    /// part way would otherwise leave a file holding its first rows, and the
+    /// next start would load that as the cache. The name is unique per call, so
+    /// two dumps of the same table cannot write into each other's.
+    pub async fn replace_with(
+        &self,
+        write: impl AsyncFnOnce(&mut tokio::fs::File) -> Result<()>,
+    ) -> Result<()> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = &self.path;
+        if let Some(directory) = std::path::Path::new(path).parent() {
+            tokio::fs::create_dir_all(directory)
+                .await
+                .with_context(|| format!("Failed creating {}", directory.display()))?;
+        }
+        let partial = format!(
+            "{path}.{}.{}.partial",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
+        let outcome = async {
+            let mut file = tokio::fs::File::create(&partial)
+                .await
+                .with_context(|| format!("Failed creating {partial}"))?;
+            write(&mut file).await?;
+            file.flush().await?;
+            tokio::fs::rename(&partial, path)
+                .await
+                .with_context(|| format!("Failed replacing {path}"))
+        }
+        .await;
+        if outcome.is_err() {
+            let _ = tokio::fs::remove_file(&partial).await;
+        }
+        outcome
+    }
+}
+
 /// One database the indexer's storage lives in.
 ///
 /// A store that follows another — ClickHouse beside Postgres — is only asked
 /// what concerns the entities it keeps and the chains' frontier; everything
 /// else is the store of record's.
 pub trait Backend: Send + Sync {
-    fn name(&self) -> &'static str;
+    fn store(&self) -> Store;
     /// Refuses a database the indexer may not take over, before anything is
     /// dropped: initializing starts it from nothing.
     fn check_for_initialize(&self) -> Op<'_, ()>;
@@ -422,12 +472,9 @@ impl Storage {
         }
     }
 
+    /// The follower takes the added chain's row from the resume that follows.
     pub async fn add_chain(&self, input: AddChain) -> Result<()> {
-        self.primary().add_chain(&input).await?;
-        match self.follower() {
-            Some(follower) => follower.add_chain(&input).await,
-            None => Ok(()),
-        }
+        self.primary().add_chain(&input).await
     }
 
     pub async fn read_stored_config(&self) -> Result<StoredConfigRead> {
@@ -476,11 +523,10 @@ impl Storage {
         self.home(table)?.load_where(table, conditions).await
     }
 
+    /// The store of record's alone: a follower's resume takes the store of
+    /// record's chains, and its batches carry what metadata they have.
     pub async fn set_chain_meta(&self, chains: &[ChainMeta]) -> Result<()> {
-        join_all(self.all().map(|backend| backend.set_chain_meta(chains)))
-            .await
-            .into_iter()
-            .collect()
+        self.primary().set_chain_meta(chains).await
     }
 
     pub async fn finalize_backfill(
@@ -563,12 +609,12 @@ impl Storage {
     pub async fn write_batch(
         &self,
         batch: Batch,
-    ) -> std::result::Result<Vec<(&'static str, f64)>, Failure> {
+    ) -> std::result::Result<Vec<(Store, f64)>, Failure> {
         let primary = self.primary();
         let Some(follower) = self.follower() else {
             let started = Instant::now();
             return match primary.write_batch(batch, Handoff::default()).await {
-                Ok(()) => Ok(vec![(primary.name(), started.elapsed().as_secs_f64())]),
+                Ok(()) => Ok(vec![(primary.store(), started.elapsed().as_secs_f64())]),
                 Err(WriteError::Failed(failure)) => Err(failure),
                 Err(WriteError::Gated) => unreachable!("a write with no gate is never gated"),
             };
@@ -635,8 +681,8 @@ impl Storage {
                 anyhow!("a store refused its half of the batch"),
             )),
             (Ok(follower_seconds), Ok(primary_seconds)) => Ok(vec![
-                (follower.name(), follower_seconds),
-                (primary.name(), primary_seconds),
+                (follower.store(), follower_seconds),
+                (primary.store(), primary_seconds),
             ]),
         }
     }
@@ -648,9 +694,6 @@ impl Storage {
     }
 }
 
-/// Splits a batch between the store of record and its follower. Everything
-/// about the chains goes to both; an entity's rows go to the stores it lives
-/// in, and the indexer's own tables to the store of record alone.
 /// A gate on the other store's word, and how long a store spent waiting on
 /// it: that time is the other store's, not the waiting one's. No word, its
 /// sender dropped, is a no.
@@ -668,6 +711,9 @@ fn waited_on(word: tokio::sync::oneshot::Receiver<bool>) -> (Gate, Arc<AtomicU64
     (gate, waited)
 }
 
+/// Splits a batch between the store of record and its follower. Everything
+/// about the chains goes to both; an entity's rows go to the stores it lives
+/// in, and the indexer's own tables to the store of record alone.
 fn split(batch: Batch) -> (Batch, Batch) {
     let Batch {
         rollback,
@@ -729,4 +775,41 @@ fn split(batch: Batch) -> (Batch, Batch) {
         effect_caches,
     };
     (primary, follower)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[tokio::test]
+    async fn a_dump_that_fails_part_way_leaves_the_file_it_would_replace() {
+        let directory = tempdir::TempDir::new("envio-dump").unwrap();
+        let path = directory.path().join("price.tsv");
+        std::fs::write(&path, "id\toutput\nk1\t1\n").unwrap();
+        let dump = CacheDump {
+            table_name: "envio_effect_price".to_string(),
+            path: path.to_string_lossy().into_owned(),
+        };
+
+        let outcome = dump
+            .replace_with(async |file| {
+                file.write_all(b"id\toutput\n").await?;
+                Err(anyhow!("the answer broke off"))
+            })
+            .await;
+
+        assert_eq!(
+            (
+                outcome.map_err(|error| error.to_string()),
+                std::fs::read_to_string(&path).unwrap(),
+                std::fs::read_dir(directory.path()).unwrap().count(),
+            ),
+            (
+                Err("the answer broke off".to_string()),
+                "id\toutput\nk1\t1\n".to_string(),
+                1
+            )
+        );
+    }
 }

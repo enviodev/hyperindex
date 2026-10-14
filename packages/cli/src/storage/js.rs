@@ -21,7 +21,7 @@ use super::types::{
 };
 use super::{
     AddChain, Batch, CacheDump, CacheFile, EffectCacheWrite, EntityWrite, Enum, HistoryWrite,
-    Holding, Initialize, Partition, PgEntityWrite, RollbackWrite, Rows, Table, TableWrite,
+    Holding, Initialize, Partition, PgEntityWrite, RollbackWrite, Rows, Store, Table, TableWrite,
 };
 use crate::clickhouse;
 use crate::clickhouse::client::{Connection, Tuning};
@@ -129,15 +129,10 @@ pub struct ClickHouseRegistered {
 #[napi(object)]
 pub struct RegisteredTable {
     pub handle: u32,
+    /// The store the table is read from, and its own rows staged for.
+    pub home: Store,
     pub postgres: Option<PgRegistered>,
     pub clickhouse: Option<ClickHouseRegistered>,
-}
-
-#[napi(string_enum)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Store {
-    Postgres,
-    ClickHouse,
 }
 
 #[napi(object)]
@@ -500,8 +495,7 @@ pub struct BatchInput {
 
 #[napi(object)]
 pub struct WriteTiming {
-    /// The store, as the metrics label it.
-    pub store: String,
+    pub store: Store,
     pub seconds: f64,
 }
 
@@ -637,8 +631,8 @@ impl JsStorage {
 
     /// The store everything but an entity's own rows is kept in.
     #[napi(getter)]
-    pub fn store_of_record(&self) -> &'static str {
-        self.inner.primary().name()
+    pub fn store_of_record(&self) -> Store {
+        self.inner.primary().store()
     }
 
     /// Registers a table with every store that keeps it. A Postgres table's
@@ -663,16 +657,23 @@ impl JsStorage {
             }
             _ => None,
         };
+        let table = Table {
+            name: input.name,
+            postgres,
+            clickhouse,
+        };
+        let home = self.inner.home(&table).map_err(to_napi)?.store();
         let mut tables = self.tables.write().unwrap();
         let registered = RegisteredTable {
             handle: tables.len() as u32,
-            postgres: postgres.as_ref().map(|table| PgRegistered {
+            home,
+            postgres: table.postgres.as_ref().map(|table| PgRegistered {
                 kinds: table
                     .kinds
                     .as_ref()
                     .map(|kinds| kinds.iter().map(|&kind| kind as u8).collect()),
             }),
-            clickhouse: clickhouse.as_ref().map(|table| ClickHouseRegistered {
+            clickhouse: table.clickhouse.as_ref().map(|table| ClickHouseRegistered {
                 names: table.staged.iter().map(|(name, _)| name.clone()).collect(),
                 kinds: table
                     .staged_kinds()
@@ -686,11 +687,7 @@ impl JsStorage {
                     .collect(),
             }),
         };
-        tables.push(Arc::new(Table {
-            name: input.name,
-            postgres,
-            clickhouse,
-        }));
+        tables.push(Arc::new(table));
         Ok(registered)
     }
 
@@ -781,7 +778,7 @@ impl JsStorage {
             .query(&sql, &to_params(params))
             .await
             .map_err(to_napi)?;
-        self.hold(postgres::rows::into_result(&rows, &columns).map_err(to_napi)?)
+        Ok(self.hold(postgres::rows::into_result(&rows, &columns).map_err(to_napi)?))
     }
 
     #[napi]
@@ -796,7 +793,7 @@ impl JsStorage {
             .load_where(&table, conditions)
             .await
             .map_err(to_napi)?;
-        self.hold(result)
+        Ok(self.hold(result))
     }
 
     /// The buffers a result's columns live in. They stay valid until
@@ -895,7 +892,7 @@ impl JsStorage {
                     max_reorg_depth: chain.max_reorg_depth,
                 })
                 .collect(),
-            config_addresses: self.hold(read.config_addresses)?,
+            config_addresses: self.hold(read.config_addresses),
         })
     }
 
@@ -927,7 +924,7 @@ impl JsStorage {
                     checkpoint_id: chain.checkpoint_id.to_string(),
                 })
                 .collect(),
-            addresses: self.hold(resumed.addresses)?,
+            addresses: self.hold(resumed.addresses),
             reorg_checkpoints: resumed
                 .reorg_checkpoints
                 .into_iter()
@@ -1081,11 +1078,10 @@ impl JsStorage {
             .rollback_data(&table, &bounds)
             .await
             .map_err(to_napi)?;
-        let removed = self.hold(removed)?;
-        let restored = self.hold(restored).inspect_err(|_| {
-            self.results.lock().unwrap().remove(&removed.handle);
-        })?;
-        Ok(RollbackDataOutput { removed, restored })
+        Ok(RollbackDataOutput {
+            removed: self.hold(removed),
+            restored: self.hold(restored),
+        })
     }
 
     #[napi]
@@ -1146,10 +1142,7 @@ impl JsStorage {
         match self.inner.write_batch(batch).await {
             Ok(timings) => Ok(timings
                 .into_iter()
-                .map(|(store, seconds)| WriteTiming {
-                    store: store.to_string(),
-                    seconds,
-                })
+                .map(|(store, seconds)| WriteTiming { store, seconds })
                 .collect()),
             Err(failure) => {
                 let mut failed = napi::Error::from_reason(failure.context);
@@ -1207,7 +1200,7 @@ impl JsStorage {
         handles.iter().map(|&handle| self.table(handle)).collect()
     }
 
-    fn hold(&self, result: ResultSet) -> napi::Result<QueryResult> {
+    fn hold(&self, result: ResultSet) -> QueryResult {
         let ResultSet { columns, arena } = result;
         let result = QueryResult {
             handle: self.next_handle.fetch_add(1, Ordering::Relaxed),
@@ -1220,7 +1213,7 @@ impl JsStorage {
             rows: arena.rows() as u32,
         };
         self.results.lock().unwrap().insert(result.handle, arena);
-        Ok(result)
+        result
     }
 
     fn partitions(&self, partitions: Vec<PartitionInput>) -> napi::Result<Vec<Partition>> {

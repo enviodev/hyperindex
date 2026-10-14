@@ -53,8 +53,8 @@ type queryResult = {
 type clickHouseColumn = {
   name: string,
   rowName?: string,
-  // Omitted when it matches `name`. Set when a column rename is configured, so
-  // `@storage(clickhouse: {...})` expressions can still name the schema field.
+  // The schema field, which `@storage(clickhouse: {...})` expressions name a
+  // column by even when a rename is configured.
   fieldName?: string,
   fieldType: string,
   isNullable?: bool,
@@ -104,14 +104,16 @@ type clickHouseRegistered = {
   nullable: array<bool>,
 }
 
+type store = | @as("Postgres") Postgres | @as("ClickHouse") ClickHouse
+
 // What each store made of a table: present for the stores that keep it.
 type registeredTable = {
   handle: int,
+  // The store the table is read from, and its own rows staged for.
+  home: store,
   postgres?: postgresRegistered,
   clickhouse?: clickHouseRegistered,
 }
-
-type store = | @as("Postgres") Postgres | @as("ClickHouse") ClickHouse
 
 type bounds = {
   sequence: string,
@@ -312,7 +314,7 @@ type batch = {
   effectCaches: array<effectCacheWrite>,
 }
 
-type writeTiming = {store: string, seconds: float}
+type writeTiming = {store: store, seconds: float}
 
 // What a build was for, which decides how much an existing index has to match.
 type indexPurpose = | @as("Query") Query | @as("Schema") Schema
@@ -341,9 +343,8 @@ external classCreate: (Core.storageCtor, options, indexEvent => unit, string => 
 let make = (options, ~onIndexEvent, ~onWarning) =>
   Core.getAddon().storage->classCreate(options, onIndexEvent, onWarning)
 
-// "postgres" or "clickhouse": the store everything but an entity's own rows is
-// kept in.
-@get external storeOfRecord: t => string = "storeOfRecord"
+// The store everything but an entity's own rows is kept in.
+@get external storeOfRecord: t => store = "storeOfRecord"
 
 @send external registerTable: (t, tableInput) => registeredTable = "registerTable"
 
@@ -366,7 +367,6 @@ external commitStage: (t, ~handle: int, ~buffers: array<ArrayBuffer.t>) => unit 
 
 @send external discardStaged: (t, array<int>) => unit = "discardStaged"
 
-// The arena one store's tables stage into.
 let arena = (client, ~store): Staging.arena => {
   beginStage: (~table, ~rows) => client->beginStage(~table, ~store, ~rows),
   growStage: (~handle, ~column, ~needed, ~stale) =>

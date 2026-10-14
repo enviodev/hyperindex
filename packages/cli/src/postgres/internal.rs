@@ -387,7 +387,7 @@ pub fn prune_checkpoints(pg_schema: &str, sequence: Sequence) -> anyhow::Result<
 
 pub fn rollback_target_checkpoint(pg_schema: &str) -> String {
     format!(
-        "SELECT \"id\"::TEXT FROM \"{pg_schema}\".\"{CHECKPOINTS}\"\nWHERE \"chain_id\" = $1 \
+        "SELECT \"id\"::int8 FROM \"{pg_schema}\".\"{CHECKPOINTS}\"\nWHERE \"chain_id\" = $1 \
          AND \"block_number\" <= $2\nORDER BY \"id\" DESC\nLIMIT 1;"
     )
 }

@@ -1,11 +1,9 @@
-//! The HTTP interface to one ClickHouse database: statements, reads and the
-//! retried insert every write goes through.
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
+use tokio::io::AsyncWriteExt;
 
 use super::row_binary::EncodedRows;
 
@@ -131,53 +129,90 @@ impl Client {
 
     /// Runs a statement and returns the server's answer as text.
     pub async fn statement(&self, query: String) -> Result<String> {
-        let body = self.post(query).await?;
+        let body = self.read(query).await?;
         Ok(String::from_utf8_lossy(&body).into_owned())
     }
 
     /// Runs a read and returns the server's answer as it arrived, for a format
     /// that is not text.
     pub async fn read(&self, query: String) -> Result<Bytes> {
-        self.post(query).await
+        self.post(query)
+            .await?
+            .bytes()
+            .await
+            .context("ClickHouse's answer broke off before its end")
     }
 
-    /// Sends `body` as the data `query` takes, once.
-    pub async fn send(&self, query: &str, body: Bytes) -> Result<()> {
-        let request = self
+    /// Runs a read and writes the server's answer to `file` as it arrives.
+    pub async fn read_into(&self, query: String, file: &mut tokio::fs::File) -> Result<()> {
+        let mut response = self.post(query).await?;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .context("ClickHouse's answer broke off before its end")?
+        {
+            file.write_all(&chunk).await?;
+        }
+        Ok(())
+    }
+
+    /// Sends what `file` holds as the data `query` takes, once.
+    pub async fn send_file(&self, query: &str, file: tokio::fs::File) -> Result<()> {
+        let response = self
             .http
             .post(&self.url)
             .timeout(self.tuning.statement_timeout)
             .query(&[("query", query), ("async_insert", "0")])
             .basic_auth(&self.username, Some(&self.password))
-            .body(body);
-        self.answer(request).await.map(|_| ())
+            .body(file)
+            .send()
+            .await
+            .context("ClickHouse request failed")?;
+        self.answered(response).await.map(|_| ())
     }
 
-    async fn post(&self, query: String) -> Result<Bytes> {
-        // Held until the query has finished, so one that fails after its first
-        // rows would have been sent answers with an error status instead.
-        let request = self
-            .http
-            .post(&self.url)
-            .timeout(self.tuning.statement_timeout)
-            .query(&[("wait_end_of_query", "1")])
-            .basic_auth(&self.username, Some(&self.password))
-            .body(query);
-        self.answer(request).await
+    /// Every statement the store sends this way is a read or idempotent, so one
+    /// whose connection broke is sent again: a pooled connection the server
+    /// closed while idle fails the first request on it. One that timed out
+    /// already spent the whole statement timeout and is not.
+    async fn post(&self, query: String) -> Result<reqwest::Response> {
+        let mut retries_left = self.tuning.retries;
+        loop {
+            // Held until the query has finished, so one that fails after its
+            // first rows would have been sent answers with an error status.
+            let sent = self
+                .http
+                .post(&self.url)
+                .timeout(self.tuning.statement_timeout)
+                .query(&[("wait_end_of_query", "1")])
+                .basic_auth(&self.username, Some(&self.password))
+                .body(query.clone())
+                .send()
+                .await;
+            match sent {
+                Ok(response) => return self.answered(response).await,
+                Err(error) if error.is_timeout() || retries_left == 0 => {
+                    return Err(anyhow::Error::new(error).context("ClickHouse request failed"));
+                }
+                Err(error) => {
+                    (self.warn)(&format!(
+                        "ClickHouse request failed, {retries_left} retries left: {error:#}"
+                    ));
+                    tokio::time::sleep(self.tuning.delay(retries_left)).await;
+                    retries_left -= 1;
+                }
+            }
+        }
     }
 
-    async fn answer(&self, request: reqwest::RequestBuilder) -> Result<Bytes> {
-        let response = request.send().await.context("ClickHouse request failed")?;
+    async fn answered(&self, response: reqwest::Response) -> Result<reqwest::Response> {
         self.check_served_by(&response)?;
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
             bail!("ClickHouse returned {status}: {text}");
         }
-        response
-            .bytes()
-            .await
-            .context("ClickHouse's answer broke off before its end")
+        Ok(response)
     }
 
     /// ClickHouse names the node that answered in every response. The first
@@ -355,8 +390,8 @@ enum Retry {
 /// own `partitionBy` writes a part per partition, and one of those already
 /// committed would be sent again — the reads' `LIMIT 1 BY` reads past the
 /// duplicate, a direct query of the history table does not.
-/// A resend can leave the same rows in the history table twice: insert dedup is
-/// off on purpose (see `Topology::settings`) so trim-then-replay recovery works.
+/// A resend can leave the same rows in the history table twice: every insert
+/// carries a token of its own (see `post_rows`) so trim-then-replay recovery works.
 /// Duplicates cost storage, not correctness — every read collapses them with
 /// `LIMIT 1 BY`, and a resent row repeats the id, checkpoint id and values of
 /// the one it duplicates. So a verdict answers whether sending again has a
@@ -398,11 +433,6 @@ const NEVER_ERROR_CODES: &[u32] = &[
     516, // AUTHENTICATION_FAILED
 ];
 
-/// A request that never reached the server carries no risk of a double write, so
-/// it is resent whole. A timeout is resent smaller: the deadline is the one
-/// thing a halved batch meets differently, whether it ran out mid-upload or
-/// waiting on the server to finish. Anything else that failed after the body
-/// went out leaves the same unknown as 319.
 /// Unique to this insert among every process writing to the database.
 fn insert_token() -> String {
     static STARTED: std::sync::OnceLock<u128> = std::sync::OnceLock::new();
@@ -419,6 +449,11 @@ fn insert_token() -> String {
     )
 }
 
+/// A request that never reached the server carries no risk of a double write, so
+/// it is resent whole. A timeout is resent smaller: the deadline is the one
+/// thing a halved batch meets differently, whether it ran out mid-upload or
+/// waiting on the server to finish. Anything else that failed after the body
+/// went out leaves the same unknown as 319.
 fn retry_for_send_error(err: &reqwest::Error) -> Retry {
     if err.is_connect() {
         Retry::SameRows
@@ -579,6 +614,47 @@ mod tests {
         let err = client.statement("SELECT 1".to_string()).await.unwrap_err();
 
         assert_eq!(reason(err).contains("answered from node \"node-b\""), true);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_read_on_a_connection_the_server_dropped_is_sent_again() {
+        let server =
+            MockClickHouse::dropping_reads(1, Arc::new(|_: &str| (200, "1".to_string()))).await;
+        let client = client_for(&server, 4);
+
+        let answer = client.statement("SELECT 1".to_string()).await;
+
+        assert_eq!(
+            (answer.map_err(reason), server.queries_seen()),
+            (Ok("1".to_string()), 1)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_read_that_times_out_is_not_sent_again() {
+        let server = MockClickHouse::start_unresponsive().await;
+        let client = client_at(
+            server.url.clone(),
+            Tuning {
+                retries: 3,
+                max_retry_delay: Duration::ZERO,
+                request_timeout: Duration::from_millis(150),
+                statement_timeout: Duration::from_millis(150),
+                ..Tuning::default()
+            },
+        );
+        let started = std::time::Instant::now();
+
+        let err = reason(client.statement("SELECT 1".to_string()).await.unwrap_err());
+
+        assert_eq!(
+            (
+                err.contains("operation timed out"),
+                started.elapsed() < Duration::from_millis(600)
+            ),
+            (true, true),
+            "expected one timed out attempt, got: {err}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

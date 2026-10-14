@@ -7,7 +7,7 @@ pub mod indexes;
 pub mod insert;
 pub mod internal;
 #[cfg(test)]
-mod live_tests;
+pub(crate) mod live_tests;
 pub mod param;
 pub mod pg_type;
 pub mod rows;

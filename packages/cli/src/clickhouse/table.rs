@@ -1,6 +1,3 @@
-//! A table as the ClickHouse store knows it: its columns, what a staged batch
-//! of its rows carries, and what its rows read back as.
-
 use anyhow::{bail, Result};
 use napi_derive::napi;
 

@@ -1,12 +1,8 @@
-//! ClickHouse as one of the indexer's stores: following Postgres it keeps the
-//! history of the entities configured for it, and on its own it is the store
-//! of record.
-
 pub mod ch_type;
 pub mod client;
 pub mod ddl;
 #[cfg(test)]
-mod live_tests;
+pub(crate) mod live_tests;
 #[cfg(test)]
 mod mock_server;
 pub mod row_binary;

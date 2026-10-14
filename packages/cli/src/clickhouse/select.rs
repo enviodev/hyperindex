@@ -1,6 +1,3 @@
-//! The reads ClickHouse answers: an entity by its filter, what a rollback
-//! restores, and the indexer's own bookkeeping.
-//!
 //! An entity is read off its history table rather than through its view. The
 //! view resolves every entity in the table before any filter applies, since
 //! ClickHouse pushes nothing through `LIMIT 1 BY`; a load names the ids it
@@ -208,7 +205,6 @@ fn value(column: &Column, condition: &Condition, value: &[Option<String>]) -> Re
     }
 }
 
-/// One condition as ClickHouse spells it.
 pub fn condition(table: &Table, condition: &Condition) -> Result<String> {
     let column = table.column(&condition.column).with_context(|| {
         format!(

@@ -36,7 +36,7 @@ fn env(name: &str, default: &str) -> String {
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
-fn connection(database: &str) -> Connection {
+pub(crate) fn connection(database: &str) -> Connection {
     Connection {
         url: env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"),
         username: env("ENVIO_CLICKHOUSE_USERNAME", "default"),
