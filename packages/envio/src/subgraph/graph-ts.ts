@@ -237,14 +237,17 @@ export class Address extends Bytes {
 class BigInt_ extends Uint8Array {
   readonly value: bigint;
 
-  constructor(value: bigint) {
+  // `new BigInt(0)` is AssemblyScript's other spelling of zero: the class is a
+  // Uint8Array and the argument its byte length, so a mapping that passes a
+  // number gets that many zero bytes — zero, whatever the length.
+  constructor(value: bigint | number) {
     // The bytes are deliberately left empty. Arithmetic, comparison and every
     // `to*` run off `value`; materialising the two's-complement representation
     // on construction cost ~7% of indexing CPU, and nothing in a mapping reads
     // a BigInt as bytes — graph codegen never emits it, and the conversions
     // that would (`toHexString`, `toI32`) are overridden here.
     super(0);
-    this.value = value;
+    this.value = typeof value === "bigint" ? value : 0n;
   }
 
   // Inherited TypedArray operations (`map`, `slice`, `subarray`) would
