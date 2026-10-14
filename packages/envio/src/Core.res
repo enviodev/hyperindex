@@ -70,12 +70,27 @@ type pgIndexInput = {
   method: string,
 }
 
+type telemetryHeartbeat = {
+  reason: string,
+  features: array<string>,
+  synced: bool,
+  uptimeSeconds: float,
+  eventsProcessed: float,
+  errors: dict<int>,
+}
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
-  runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
+  runCli: (
+    ~args: array<string>,
+    ~envioPackageDir: Null.t<string>,
+    ~nodeVersion: Null.t<string>,
+  ) => promise<Null.t<string>>,
+  telemetryHeartbeat: telemetryHeartbeat => unit,
+  telemetryFinishCommand: Null.t<string> => unit,
   loadTs: string => string,
   tsCheckHandlerFormat: string => unit,
   tsResolveCandidates: (string, Null.t<string>) => array<string>,
@@ -350,7 +365,13 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~withIndexerTypes=false, yaml) =
   )
 }
 
+@val external nodeVersion: string = "process.versions.node"
+
 let runCli = args => {
   let addon = getAddon()
-  addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
+  addon.runCli(
+    ~args,
+    ~envioPackageDir=Null.make(envioPackageDir),
+    ~nodeVersion=Null.make(nodeVersion),
+  )
 }

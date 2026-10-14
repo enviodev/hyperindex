@@ -252,7 +252,7 @@ let rec onQueryResponse = async (
           ~config=state->IndexerState.config,
           ~chainState,
         ) {
-        | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
+        | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make(~kind=Handler))
         | newRegistrations => proceed(~newRegistrations)
         }
       }

@@ -7,6 +7,7 @@
 
 import { describe, it, expect } from "vitest";
 import fs from "fs";
+import http from "http";
 import os from "os";
 import path from "path";
 import { runCommand } from "../utils/process.js";
@@ -453,5 +454,236 @@ describe("TypeScript project config", () => {
     expect(`${result.stdout}${result.stderr}`).toContain(
       "loaded Gravatar NewGravatar shadowed cjs js side-effect decorated METHOD"
     );
+  });
+});
+
+// A development build sends nothing unless ENVIO_TELEMETRY_ENDPOINT is set, so
+// these run the real CLI in debug mode or against a local endpoint.
+describe("Telemetry", () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const DEBUG_HEADER = "envio telemetry (debug mode, not sent):";
+
+  // Its own config directory and a copy of the project, so a run reads no
+  // setting it didn't write and leaves no id in the fixture.
+  const isolated = async <T>(run: (dirs: { configHome: string; project: string }) => Promise<T>) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "envio-telemetry-"));
+    const configHome = path.join(root, "config");
+    const project = path.join(root, "project");
+    fs.mkdirSync(configHome);
+    fs.cpSync(PROJECT_DIR, project, { recursive: true });
+    return run({ configHome, project }).finally(() => fs.rmSync(root, { recursive: true, force: true }));
+  };
+
+  const debugBatch = (stderr: string) =>
+    stderr.includes(DEBUG_HEADER) ? JSON.parse(stderr.slice(stderr.indexOf(DEBUG_HEADER) + DEBUG_HEADER.length)) : null;
+
+  const context = {
+    install_id: expect.stringMatching(UUID),
+    session_id: expect.stringMatching(UUID),
+    envio_version: "0.0.1-dev",
+    os: expect.any(String),
+    arch: expect.any(String),
+    node_major: expect.any(Number),
+    ci: expect.any(Boolean),
+    environment: expect.stringMatching(/^(local|docker|kubernetes)$/),
+    // Whichever agent runs this suite, if any.
+    agent: expect.stringMatching(/^(claude|codex|cursor|none)$/),
+  };
+
+  it("prints a command's event in debug mode, and stores nothing", async () => {
+    const result = await isolated(async ({ configHome, project }) => {
+      const run = await runEnvio(
+        ["config", "view"],
+        { XDG_CONFIG_HOME: configHome, ENVIO_TELEMETRY_DEBUG: "1" },
+        project
+      );
+      return {
+        exitCode: run.exitCode,
+        version: JSON.parse(run.stdout).version,
+        batch: debugBatch(run.stderr),
+        stored: [fs.readdirSync(configHome), fs.existsSync(path.join(project, ".envio", "telemetry"))],
+      };
+    });
+
+    expect(result).toEqual({
+      exitCode: 0,
+      version: "0.0.1-dev",
+      batch: {
+        schema_version: 1,
+        context,
+        events: [
+          {
+            type: "command",
+            indexer_id: expect.stringMatching(UUID),
+            command: "config_view",
+            outcome: "success",
+            error_class: null,
+            duration: expect.any(String),
+          },
+        ],
+      },
+      stored: [[], false],
+    });
+  });
+
+  it("reports a failed command with its class and no indexer id outside a project", async () => {
+    const result = await isolated(async ({ configHome }) => {
+      const run = await runEnvio(
+        ["codegen"],
+        { XDG_CONFIG_HOME: configHome, ENVIO_TELEMETRY_DEBUG: "1" },
+        configHome
+      );
+      return { exitCode: run.exitCode, events: debugBatch(run.stderr)?.events };
+    });
+
+    expect(result).toEqual({
+      exitCode: 1,
+      events: [
+        {
+          type: "command",
+          indexer_id: null,
+          command: "codegen",
+          outcome: "failure",
+          error_class: "config",
+          duration: expect.any(String),
+        },
+      ],
+    });
+  });
+
+  // Without a TTY, a bare `envio init` prints its steps for an agent and stops
+  // before any choice is made.
+  it("reports an init that took the agentic path", async () => {
+    const result = await isolated(async ({ configHome }) => {
+      const run = await runEnvio(["init"], { XDG_CONFIG_HOME: configHome, ENVIO_TELEMETRY_DEBUG: "1" }, configHome);
+      return { exitCode: run.exitCode, batch: debugBatch(run.stderr) };
+    });
+
+    expect(result).toEqual({
+      exitCode: 2,
+      batch: {
+        schema_version: 1,
+        context,
+        events: [
+          {
+            type: "command",
+            indexer_id: null,
+            command: "init",
+            outcome: "agent_prompt",
+            error_class: null,
+            duration: expect.any(String),
+            init: { agentic: true, ecosystem: null, flow: null, template: null, language: null },
+          },
+        ],
+      },
+    });
+  });
+
+  it("is silenced by DO_NOT_TRACK, ENVIO_TELEMETRY_DISABLED and `envio telemetry disable`, even in debug mode", async () => {
+    const result = await isolated(async ({ configHome, project }) => {
+      const debug = { XDG_CONFIG_HOME: configHome, ENVIO_TELEMETRY_DEBUG: "1" };
+      const doNotTrack = await runEnvio(["config", "view"], { ...debug, DO_NOT_TRACK: "1" }, project);
+      const disabled = await runEnvio(["config", "view"], { ...debug, ENVIO_TELEMETRY_DISABLED: "1" }, project);
+      const disable = await runEnvio(["telemetry", "disable"], debug, project);
+      const afterDisable = await runEnvio(["config", "view"], debug, project);
+      const status = await runEnvio(["telemetry", "status"], debug, project);
+      return {
+        stderr: [doNotTrack.stderr, disabled.stderr, afterDisable.stderr],
+        disable: disable.exitCode,
+        stored: JSON.parse(fs.readFileSync(path.join(configHome, "envio", "telemetry.json"), "utf8")),
+        status: status.stdout.split("\n")[0],
+      };
+    });
+
+    expect(result).toEqual({
+      stderr: ["", "", ""],
+      disable: 0,
+      stored: { enabled: false, notice_shown: true },
+      status: "Telemetry is off: turned off with `envio telemetry disable`. Nothing is sent.",
+    });
+  });
+
+  it("status shows the heartbeat this project would send", async () => {
+    const run = await isolated(({ configHome, project }) =>
+      runEnvio(["telemetry", "status"], { XDG_CONFIG_HOME: configHome }, project)
+    );
+    const heartbeat = run.stdout.slice(run.stdout.indexOf("{", run.stdout.indexOf("A running indexer")));
+
+    expect({
+      exitCode: run.exitCode,
+      firstLine: run.stdout.split("\n")[0],
+      heartbeat: JSON.parse(heartbeat.slice(0, heartbeat.lastIndexOf("}") + 1)).events,
+    }).toEqual({
+      exitCode: 0,
+      firstLine:
+        "Telemetry is off: this is a development build of envio, which never sends anything unless ENVIO_TELEMETRY_ENDPOINT is set. Nothing is sent.",
+      heartbeat: [
+        {
+          type: "heartbeat",
+          indexer_id: expect.stringMatching(UUID),
+          reason: "start",
+          ecosystem: "evm",
+          language: "typescript",
+          chains: [{ chain_id: 1, sources: ["hypersync"] }],
+          contracts: 1,
+          events: 1,
+          entities: expect.any(Number),
+          storage: ["postgres"],
+          features: [],
+          sync_state: "backfilling",
+          uptime: "0-1h",
+          events_processed: "0",
+          errors: {},
+        },
+      ],
+    });
+  });
+
+  // An endpoint that takes the request and never answers: a command that waited
+  // on it would exit 2s after it connected, when the first attempt times out.
+  it("sends from a detached process, so a command never waits on the endpoint", async () => {
+    const received: { at: number; body: string }[] = [];
+    const server = http.createServer((req) => {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => received.push({ at: Date.now(), body }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+
+    try {
+      const result = await isolated(async ({ configHome, project }) => {
+        const run = await runEnvio(
+          ["config", "view"],
+          { XDG_CONFIG_HOME: configHome, ENVIO_TELEMETRY_ENDPOINT: `http://127.0.0.1:${port}/v1/hyperindex` },
+          project
+        );
+        const exitedAt = Date.now();
+        for (let waited = 0; received.length === 0 && waited < 10_000; waited += 50) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        const first = received[0];
+        return {
+          exitCode: run.exitCode,
+          notice: run.stderr.split("\n")[0],
+          exitedBeforeTimeout: first !== undefined && exitedAt - first.at < 1_500,
+          command: first && JSON.parse(first.body).events[0].command,
+          stored: Object.keys(JSON.parse(fs.readFileSync(path.join(configHome, "envio", "telemetry.json"), "utf8"))),
+          indexerIdIgnored: fs.readFileSync(path.join(project, ".envio", "telemetry", ".gitignore"), "utf8"),
+        };
+      });
+
+      expect(result).toEqual({
+        exitCode: 0,
+        notice: "Envio collects anonymous usage data to improve HyperIndex: which commands and",
+        exitedBeforeTimeout: true,
+        command: "config_view",
+        stored: ["install_id", "notice_shown"],
+        indexerIdIgnored: "*\n",
+      });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
   });
 });

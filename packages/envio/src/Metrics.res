@@ -152,6 +152,11 @@ type t = {
   sourceHeightStreams: array<sourceHeightStreamMetrics>,
 }
 
+let toTelemetryProgress = (m: t): Telemetry.progress => {
+  synced: m.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome),
+  eventsProcessed: m.chains->Array.reduce(0., (sum, c) => sum +. c.numEventsProcessed),
+}
+
 // Folds items that share a key into one, keeping first-seen order so the
 // rendered series doesn't reshuffle between scrapes.
 let sumByKey = (items: array<'item>, ~key: 'item => string, ~add: ('item, 'item) => 'item) => {

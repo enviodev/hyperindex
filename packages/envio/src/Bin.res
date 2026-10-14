@@ -57,6 +57,7 @@ let run = async args => {
       // with the fork, so a worker starts the same way every other process does.
       await Main.start()
     } else {
+      Telemetry.reportOnExit()
       switch (await Core.runCli(args))->Null.toOption {
       // Rust-only command (codegen / init / stop / docker / metrics / help /
       // version / scripts) — nothing for JS to do, exit cleanly.

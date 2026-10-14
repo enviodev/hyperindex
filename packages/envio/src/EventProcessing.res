@@ -387,12 +387,13 @@ let processEventBatch = async (
     Ok()
   } catch {
   | Persistence.StorageError({message, reason}) =>
-    reason->ErrorHandling.make(~msg=message, ~logger)->Error
+    reason->ErrorHandling.make(~msg=message, ~logger, ~kind=Database)->Error
   | ProcessingError({message, exn, item}) =>
     exn
     ->ErrorHandling.make(
       ~msg=message,
       ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+      ~kind=Handler,
     )
     ->Error
   | exn => exn->ErrorHandling.make(~msg="Failed processing batch", ~logger)->Error

@@ -251,6 +251,7 @@ let stopRateLimitTimeout = sourceManager => {
 // warn after the second consecutive retry so the indexer doesn't go
 // silent under chronic throttling.
 let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) => {
+  Telemetry.recordError(#rate_limited)
   let waitMs = Pervasives.min(resetMs, 300_000)
   let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
   logger->log({
@@ -703,6 +704,7 @@ let retryInconsistentResponse = async (
   ~err: exn,
   ~excludedSources=?,
 ) => {
+  Telemetry.recordError(#source)
   let backoffMillis = retry->retryBackoffMillis
   let msg = `Received a partial indicator of a possible reorg from the ${sourceState.source.name} source while fetching ${method}. Retrying the request to better identify whether a reorg happened.`
   let (log, msg) = stalledLog(
@@ -748,6 +750,7 @@ let retryFailedPage = async (
   ~err: option<exn>,
   ~excludedSources=?,
 ) => {
+  Telemetry.recordError(#source)
   let (log, msg) = stalledLog(
     ~retry,
     ~warnAfter=4,

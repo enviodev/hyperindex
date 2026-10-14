@@ -2156,6 +2156,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-width 0.2.2",
  "url",
+ "uuid",
  "vt100",
  "webpki-roots",
 ]

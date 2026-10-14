@@ -117,10 +117,15 @@ pub fn ts_not_found_candidates(code: String, url: Option<String>, message: Strin
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when
 /// Rust has handled the command end-to-end (help/version, codegen, init,
 /// stop, docker up/down). The Node process then exits with code 0.
+///
+/// A command Rust finishes is reported to telemetry here; one it hands to JS
+/// is reported by the runtime, through `telemetry_heartbeat` or
+/// `telemetry_finish_command`.
 #[napi_derive::napi]
 pub async fn run_cli(
     args: Vec<String>,
     envio_package_dir: Option<String>,
+    node_version: Option<String>,
 ) -> napi::Result<Option<String>> {
     let mut full_args = vec!["envio".to_string()];
     full_args.extend(args);
@@ -142,14 +147,63 @@ pub async fn run_cli(
         .context("Failed parsing command line arguments")
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
-    let command = crate::executor::execute(command_line_args, envio_package_dir.as_deref())
-        .await
-        .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
+    crate::telemetry::begin(&command_line_args, node_version.as_deref());
+    let command = crate::executor::execute(command_line_args, envio_package_dir.as_deref()).await;
+    match &command {
+        Ok(Some(_)) => {}
+        Ok(None) => crate::telemetry::finish_command(crate::telemetry::Outcome::Success, None),
+        Err(err) => crate::telemetry::finish_command_with_error(err),
+    }
+    let command = command.map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
     match command {
         None => Ok(None),
         Some(cmd) => serde_json::to_string(&cmd)
             .map(Some)
             .map_err(|e| napi::Error::from_reason(format!("Failed serializing command: {e}"))),
+    }
+}
+
+#[napi_derive::napi(object)]
+pub struct TelemetryHeartbeat {
+    /// `start`, `interval` or `crash`.
+    pub reason: String,
+    /// Features only the running indexer sees, such as `effects`.
+    pub features: Vec<String>,
+    pub synced: bool,
+    pub uptime_seconds: f64,
+    pub events_processed: f64,
+    /// Error counts by class since the previous heartbeat.
+    pub errors: HashMap<String, u32>,
+}
+
+/// Sends nothing unless a `start` or `dev` in this process set up the
+/// indexer's profile, and telemetry is on.
+#[napi_derive::napi]
+pub fn telemetry_heartbeat(heartbeat: TelemetryHeartbeat) {
+    crate::telemetry::heartbeat(crate::telemetry::RuntimeReport {
+        reason: &heartbeat.reason,
+        features: &heartbeat.features,
+        synced: heartbeat.synced,
+        uptime_seconds: heartbeat.uptime_seconds,
+        events_processed: heartbeat.events_processed,
+        errors: &heartbeat.errors,
+    });
+}
+
+/// Reports the command `run_cli` handed to JS, when it ends before the
+/// indexer's first heartbeat: a migration, or a start that failed to come up.
+#[napi_derive::napi]
+pub fn telemetry_finish_command(error_class: Option<String>) {
+    use std::str::FromStr;
+    match error_class {
+        None => crate::telemetry::finish_command(crate::telemetry::Outcome::Success, None),
+        Some(class) => crate::telemetry::finish_command(
+            crate::telemetry::Outcome::Failure,
+            Some(
+                crate::telemetry::ErrorClass::from_str(&class)
+                    .unwrap_or(crate::telemetry::ErrorClass::Other),
+            ),
+        ),
     }
 }

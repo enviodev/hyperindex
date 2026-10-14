@@ -37,6 +37,10 @@ This document contains the help content for the `envio` command-line program.
 * [`envio tools fetch-docs`↴](#envio-tools-fetch-docs)
 * [`envio config`↴](#envio-config)
 * [`envio config view`↴](#envio-config-view)
+* [`envio telemetry`↴](#envio-telemetry)
+* [`envio telemetry status`↴](#envio-telemetry-status)
+* [`envio telemetry enable`↴](#envio-telemetry-enable)
+* [`envio telemetry disable`↴](#envio-telemetry-disable)
 
 ## `envio`
 
@@ -54,6 +58,7 @@ This document contains the help content for the `envio` command-line program.
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
 * `tools` — Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
 * `config` — Inspect the indexer config
+* `telemetry` — Turn anonymous usage telemetry on or off, or see exactly what it sends
 
 ###### **Options:**
 
@@ -478,6 +483,44 @@ Inspect the indexer config
 Print the resolved indexer config as JSON
 
 **Usage:** `envio config view`
+
+
+
+## `envio telemetry`
+
+Turn anonymous usage telemetry on or off, or see exactly what it sends
+
+**Usage:** `envio telemetry <COMMAND>`
+
+###### **Subcommands:**
+
+* `status` — Show whether telemetry is on, why, and the events it would send from this directory
+* `enable` — Turn telemetry on for this machine
+* `disable` — Turn telemetry off for this machine
+
+
+
+## `envio telemetry status`
+
+Show whether telemetry is on, why, and the events it would send from this directory
+
+**Usage:** `envio telemetry status`
+
+
+
+## `envio telemetry enable`
+
+Turn telemetry on for this machine
+
+**Usage:** `envio telemetry enable`
+
+
+
+## `envio telemetry disable`
+
+Turn telemetry off for this machine
+
+**Usage:** `envio telemetry disable`
 
 
 
