@@ -531,19 +531,39 @@ export class TypedMapEntry<K, V> {
   ) {}
 }
 
+// The map's storage. graph-ts' `TypedMap.entries` is a plain field, and the
+// class graph codegen writes for an entity with a field called `entries`
+// overrides it with an accessor: AssemblyScript's own methods keep reading the
+// field, while a mapping's `rs.entries = []` reaches the accessor. A JavaScript
+// field would be overwritten by that assignment, wiping the entity's id.
+const MAP_ENTRIES = Symbol("envio.subgraph.typedMapEntries");
+
+function entriesOf<K, V>(map: TypedMap<K, V>): TypedMapEntry<K, V>[] {
+  return (map as any)[MAP_ENTRIES];
+}
+
 export class TypedMap<K, V> {
-  entries: TypedMapEntry<K, V>[] = [];
+  constructor() {
+    Object.defineProperty(this, MAP_ENTRIES, { value: [], writable: true });
+  }
+
+  get entries(): TypedMapEntry<K, V>[] {
+    return entriesOf(this);
+  }
+  set entries(value: TypedMapEntry<K, V>[]) {
+    (this as any)[MAP_ENTRIES] = value;
+  }
 
   set(key: K, value: V): void {
     const entry = this.getEntry(key);
     if (entry) {
       entry.value = value;
     } else {
-      this.entries.push(new TypedMapEntry(key, value));
+      entriesOf(this).push(new TypedMapEntry(key, value));
     }
   }
   getEntry(key: K): TypedMapEntry<K, V> | null {
-    return this.entries.find((entry) => entry.key === key) ?? null;
+    return entriesOf(this).find((entry) => entry.key === key) ?? null;
   }
   get(key: K): V | null {
     const entry = this.getEntry(key);
@@ -850,7 +870,7 @@ export class Entity extends TypedMap<string, Value> {
   merge(sources: Entity[]): this {
     // graph-ts assigns each source in turn, so the last one wins a shared key.
     for (const source of sources) {
-      for (const entry of source.entries) {
+      for (const entry of entriesOf(source)) {
         this.set(entry.key, entry.value);
       }
     }
@@ -973,7 +993,7 @@ function toRow(entityType: string, entity: Entity): Record<string, unknown> {
   const refFields = new Set(schema.entityRefFields[entityType] ?? []);
   const listFields = new Set(schema.entityListFields[entityType] ?? []);
   const row: Record<string, unknown> = {};
-  for (const entry of entity.entries) {
+  for (const entry of entriesOf(entity)) {
     const column = refFields.has(entry.key) ? `${entry.key}_id` : entry.key;
     // An id is a string column whatever the subgraph declared it as, and so is
     // a relation, which carries one. Every other `Bytes` field is a bytes
@@ -2141,7 +2161,7 @@ export class DataSourceTemplate {
     // The created data source would have to carry the context to every event it
     // ever sees, and there is nowhere to keep it — `dataSource.context()` in the
     // template's handlers would quietly come back empty.
-    if (context.entries.length > 0) {
+    if (entriesOf(context).length > 0) {
       throw unsupported(
         `${name}.createWithContext() with a non-empty context`,
         "a mapping handler",
