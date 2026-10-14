@@ -483,6 +483,10 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     });
 
     const owns = ownerOf(source);
+    // graph-node matches a data source without `source.address` against every
+    // contract's logs — ENS's Resolver is one data source for every resolver
+    // anyone deploys. Nothing would ever register an address for it here.
+    const wildcard = !source.isTemplate && !source.address;
 
     for (const handler of source.eventHandlers) {
       const fn = mapping[handler.handler];
@@ -522,7 +526,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       const where = topicFilter(handler);
 
       indexer.onEvent(
-        { contract: config.contractAccessors[source.name], event: handler.name, where },
+        { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
         async ({ event, context }: any) => {
           if ((skipPreload && context.isPreload) || !owns(event)) return;
           const graphEvent = makeEvent(event);
@@ -537,7 +541,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       // register mode, where writes and logs are no-ops and reads are null.
       if (templateNames.size > 0) {
         indexer.contractRegister(
-          { contract: config.contractAccessors[source.name], event: handler.name, where },
+          { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
           async ({ event, context }: any) => {
             if (!owns(event)) return;
             const graphEvent = makeEvent(event);
