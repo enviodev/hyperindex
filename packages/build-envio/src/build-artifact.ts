@@ -124,6 +124,21 @@ export function compileSidecarTs(envioDir: string): void {
 }
 
 /**
+ * Drops the sidecar `.ts` sources from the artifact, keeping the emitted `.js`
+ * and `.d.ts`. TypeScript resolves `./x.js` to `x.ts` before `x.d.ts`, so a
+ * shipped source would be compiled under the user's compiler settings.
+ */
+export function pruneSidecarSources(outDir: string): void {
+  const sidecarDir = path.join(outDir, "src", "sidecar");
+  if (!fs.existsSync(sidecarDir)) return;
+  for (const entry of fs.readdirSync(sidecarDir)) {
+    if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) {
+      fs.rmSync(path.join(sidecarDir, entry));
+    }
+  }
+}
+
+/**
  * Copies the README into the target directory.
  */
 export function copyReadme(readmePath: string, destDir: string): void {
@@ -191,6 +206,7 @@ export function build(opts: BuildOptions): void {
 
   // 2. Copy publish files to dist
   copyPublishFiles(envioDir, outDir);
+  pruneSidecarSources(outDir);
   console.log(`Copied publish files to ${outDir}`);
 
   // 3. Write publish-ready package.json into dist

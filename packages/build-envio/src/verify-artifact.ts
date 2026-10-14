@@ -84,6 +84,18 @@ function verify(dir: string): void {
     }
   }
 
+  // TypeScript resolves `./x.js` to `x.ts` before `x.d.ts`, so a shipped source
+  // would be compiled under the user's own compiler settings instead of the
+  // declaration being read.
+  const sidecarDir = path.join(dir, "src", "sidecar");
+  if (fs.existsSync(sidecarDir)) {
+    for (const entry of fs.readdirSync(sidecarDir)) {
+      if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) {
+        errors.push(`Sidecar TypeScript source must not ship: src/sidecar/${entry}`);
+      }
+    }
+  }
+
   // Validate package.json
   const pkgPath = path.join(dir, "package.json");
   if (fs.existsSync(pkgPath)) {
