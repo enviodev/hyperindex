@@ -268,15 +268,30 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       queues.set(name, []);
       running.set(name, 0);
     }
-    const seen = new Set<string>();
-    const seenOrder: string[] = [];
-    const remember = (id: string) => {
-      seen.add(id);
+    // Accepted call ids with the block they came from. Ids are deterministic, so
+    // a reorg re-sends the replayed blocks' calls under the same ids: rollback
+    // forgets the ids above the rollback block, or they would be acked as
+    // duplicates and never run.
+    const seen = new Map<string, { readonly chainId: number; readonly blockNumber: number }>();
+    let seenOrder: string[] = [];
+    const remember = (id: string, chainId: number, blockNumber: number) => {
+      seen.set(id, { chainId, blockNumber });
       seenOrder.push(id);
       if (seenOrder.length > SEEN_IDS_CAP) {
         const oldest = seenOrder.shift();
         if (oldest !== undefined) seen.delete(oldest);
       }
+    };
+    const forgetAbove = (chainId: number, rollbackToBlock: number): number => {
+      let forgotten = 0;
+      for (const [id, origin] of seen) {
+        if (origin.chainId === chainId && origin.blockNumber > rollbackToBlock) {
+          seen.delete(id);
+          forgotten++;
+        }
+      }
+      if (forgotten > 0) seenOrder = seenOrder.filter((id) => seen.has(id));
+      return forgotten;
     };
     const idleWaiters: Array<() => void> = [];
     const isIdle = () =>
@@ -395,7 +410,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             batchId,
           },
         });
-        remember(wire.id);
+        remember(wire.id, wire.chainId, wire.blockNumber);
         accepted.push(wire.id);
         touched.add(wire.fn);
       }
@@ -427,7 +442,8 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         queues.set(name, kept);
       }
       counters.dropped += dropped;
-      log.info("rollback notice", { ...notice, dropped });
+      const forgotten = forgetAbove(notice.chainId, notice.rollbackToBlock);
+      log.info("rollback notice", { ...notice, dropped, forgottenCallIds: forgotten });
       Promise.resolve()
         .then(() => impl.onRollback?.(notice))
         .then(

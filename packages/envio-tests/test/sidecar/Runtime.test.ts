@@ -335,6 +335,41 @@ describe("sidecar runtime: calls", () => {
       dropped: 2,
     });
   });
+
+  it("forgets call ids above a rolled back block, so the replayed blocks' calls run again", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const ranIds: string[] = [];
+    const running = await startSidecar(indexer, {
+      functions: {
+        priceSwap: async ({ call }) => {
+          ranIds.push(call.id);
+        },
+        notify: async () => {},
+      },
+    });
+    const base = `http://127.0.0.1:${running.internalPort}`;
+    const batch = (batchId: string) => ({
+      batchId,
+      calls: [
+        call("1:10:0:0", "priceSwap", { swapId: "kept", amount: "1" }, { blockNumber: 10 }),
+        call("1:20:0:0", "priceSwap", { swapId: "reorged", amount: "1" }, { blockNumber: 20 }),
+        call("2:20:0:0", "priceSwap", { swapId: "other chain", amount: "1" }, { blockNumber: 20, chainId: 2 }),
+      ],
+    });
+    await postJson(`${base}/envio/calls`, batch("b-8"));
+    await running.waitIdle();
+    const rollback = await postJson(`${base}/envio/rollback`, { chainId: 1, rollbackToBlock: 15 });
+    // The indexer reprocesses blocks above 15 and re-sends their calls under the same ids.
+    const resent = await postJson(`${base}/envio/calls`, batch("b-9"));
+    await running.waitIdle();
+    expect({ rollback, resent, ranIds, duplicates: running.stats().duplicates }).toEqual({
+      rollback: { status: 200, body: { dropped: 0 } },
+      resent: { status: 202, body: { accepted: ["1:10:0:0", "1:20:0:0", "2:20:0:0"], rejected: [] } },
+      ranIds: ["1:10:0:0", "1:20:0:0", "2:20:0:0", "1:20:0:0"],
+      duplicates: 2,
+    });
+  });
 });
 
 describe("sidecar runtime: webhooks from outside a call", () => {
