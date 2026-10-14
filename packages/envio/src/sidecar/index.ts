@@ -1,6 +1,7 @@
 export {
   defineSidecar,
   isSidecarContract,
+  sidecarContractHash,
   type SidecarContract,
   type SidecarContractDef,
   type SidecarCaller,
