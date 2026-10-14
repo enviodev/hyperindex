@@ -414,19 +414,47 @@ function registerHostSync(scope: Scope, effect: Effect, input: unknown) {
  * waits for the earliest such pass once and reads again — the per-key order
  * graph-node's sequential processing gives. Independent events stay
  * concurrent; a key nobody ends up writing costs one wait.
+ *
+ * An earlier pass that hasn't read the key yet — Dolomite's admin handler
+ * saves each Token after a contract call — isn't among its missers, so a miss
+ * while any earlier pass of the chain still runs is only provisional: once the
+ * pass ends, it waits for those passes and runs again before its writes count.
  */
 const missers = new Map<string, RegisterPass[]>();
 
-function startRegisterPass(position: number): { pass: RegisterPass; settle: () => void } {
+/** Each chain's running passes and the passes waiting on them, by position. */
+type ChainPasses = {
+  running: RegisterPass[];
+  waiters: { position: number; release: () => void }[];
+};
+const chainPasses = new Map<number, ChainPasses>();
+
+/** Passes start in about the order of their events, so this mostly appends. */
+function insertByPosition<T extends { position: number }>(list: T[], item: T) {
+  let at = list.length;
+  while (at > 0 && list[at - 1].position > item.position) at--;
+  list.splice(at, 0, item);
+}
+
+function startRegisterPass(chainId: number, position: number): { pass: RegisterPass; settle: () => void } {
   let resolve!: () => void;
   const pass: RegisterPass = {
+    chainId,
     position,
     done: new Promise<void>((done) => (resolve = done)),
     settled: false,
     missed: [],
+    provisional: false,
   };
+  const passes = chainPasses.get(chainId) ?? { running: [], waiters: [] };
+  chainPasses.set(chainId, passes);
+  insertByPosition(passes.running, pass);
   const settle = () => {
     pass.settled = true;
+    passes.running.splice(passes.running.indexOf(pass), 1);
+    const first = passes.running[0]?.position ?? Infinity;
+    while (passes.waiters.length > 0 && passes.waiters[0].position <= first) passes.waiters.shift()!.release();
+    if (passes.running.length === 0 && passes.waiters.length === 0) chainPasses.delete(chainId);
     for (const key of pass.missed) {
       const remaining = (missers.get(key) ?? []).filter((other) => other !== pass);
       if (remaining.length === 0) missers.delete(key);
@@ -435,6 +463,17 @@ function startRegisterPass(position: number): { pass: RegisterPass; settle: () =
     resolve();
   };
   return { pass, settle };
+}
+
+function earlierPassRunning(pass: RegisterPass): boolean {
+  const first = chainPasses.get(pass.chainId)?.running[0];
+  return first !== undefined && first.position < pass.position;
+}
+
+function earlierPassesSettled(pass: RegisterPass): Promise<void> {
+  const passes = chainPasses.get(pass.chainId);
+  if (!passes || !earlierPassRunning(pass)) return Promise.resolve();
+  return new Promise((release) => insertByPosition(passes.waiters, { position: pass.position, release }));
 }
 
 function onRegisterMiss(scope: Scope, key: string) {
@@ -455,6 +494,21 @@ function onRegisterMiss(scope: Scope, key: string) {
     missers.set(key, list);
     pass.missed.push(key);
   }
+  if (!pass.provisional && earlierPassRunning(pass)) pass.provisional = true;
+}
+
+/**
+ * True when the pass's round must run again: a read missed while an earlier
+ * pass was running, which may have written it since. Its writes are dropped;
+ * a create it made stands, and the rerun registers nothing twice.
+ */
+async function rerunProvisional(scope: Scope): Promise<boolean> {
+  const pass = scope.pass;
+  if (!pass?.provisional) return false;
+  pass.provisional = false;
+  scope.writes = undefined;
+  await earlierPassesSettled(pass);
+  return true;
 }
 
 const maxRegisterRounds = 100;
@@ -481,6 +535,7 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
         // registered until then stands; the same mapping runs again with the
         // real store, and any error that is genuinely the mapping's surfaces
         // there.
+        if (await rerunProvisional(scope)) continue;
         commitRegisterWrites(scope);
         return;
       }
@@ -488,6 +543,7 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
     }
     const awaiting = scope.awaiting;
     if (!suspended) {
+      if (await rerunProvisional(scope)) continue;
       commitRegisterWrites(scope);
       return;
     }
@@ -785,7 +841,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             await primeOnceHandlers(event.chainId, context);
             const graphEvent = makeEvent(event);
             const scope = makeScope(event, context, "register");
-            const { pass, settle } = startRegisterPass(scope.position ?? 0);
+            const { pass, settle } = startRegisterPass(event.chainId, scope.position ?? 0);
             scope.pass = pass;
             try {
               await runRegisterRounds(scope, () => fn(graphEvent));
