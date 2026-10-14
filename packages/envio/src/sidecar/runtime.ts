@@ -90,6 +90,8 @@ export type StartOptions = {
   readonly graceMs?: number;
   /** Default per-function timeout in ms. Default `ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS`, else 60000; 0 for none. */
   readonly functionTimeoutMs?: number;
+  /** Accepted call ids remembered to dedupe redelivery. Default `ENVIO_SIDECAR_DEDUPE_MAX`, else 100000. */
+  readonly dedupeMax?: number;
 };
 
 export type CloseOptions = {
@@ -153,7 +155,6 @@ type WireCall = {
 type QueuedCall = { readonly call: SidecarCall; readonly fn: string; readonly input: unknown };
 
 const DEFAULT_MAX_QUEUE = 10_000;
-const SEEN_IDS_CAP = 10_000;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -335,14 +336,14 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     // a reorg re-sends the replayed blocks' calls under the same ids: rollback
     // forgets the ids above the rollback block, or they would be acked as
     // duplicates and never run.
+    // A Map iterates in insertion order, so its first key is the oldest id.
     const seen = new Map<string, { readonly chainId: number; readonly blockNumber: number }>();
-    let seenOrder: string[] = [];
+    const dedupeMax = Math.max(1, options.dedupeMax ?? env.dedupeMax);
     const remember = (id: string, chainId: number, blockNumber: number) => {
       seen.set(id, { chainId, blockNumber });
-      seenOrder.push(id);
-      if (seenOrder.length > SEEN_IDS_CAP) {
-        const oldest = seenOrder.shift();
-        if (oldest !== undefined) seen.delete(oldest);
+      if (seen.size > dedupeMax) {
+        const oldest = seen.keys().next();
+        if (oldest.done !== true) seen.delete(oldest.value);
       }
     };
     const forgetAbove = (chainId: number, rollbackToBlock: number): number => {
@@ -353,7 +354,6 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
           forgotten++;
         }
       }
-      if (forgotten > 0) seenOrder = seenOrder.filter((id) => seen.has(id));
       return forgotten;
     };
     const idleWaiters: Array<() => void> = [];

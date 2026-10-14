@@ -355,6 +355,35 @@ describe("sidecar runtime: calls", () => {
     });
   });
 
+  it("remembers the last ENVIO_SIDECAR_DEDUPE_MAX call ids (100k by default) and evicts the oldest", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const ranIds: string[] = [];
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          ...noop,
+          notify: async ({ call }) => {
+            ranIds.push(call.id);
+          },
+        },
+      },
+      { env: { ENVIO_SIDECAR_DEDUPE_MAX: "2" } },
+    );
+    const url = `http://127.0.0.1:${running.internalPort}/envio/calls`;
+    const send = async (batchId: string, ids: string[]) => {
+      await postJson(url, { batchId, calls: ids.map((id) => call(id, "notify", { text: id })) });
+      await running.waitIdle();
+    };
+    await send("b-17", ["1:1:1:0", "1:1:2:0", "1:1:3:0"]);
+    await send("b-18", ["1:1:1:0", "1:1:3:0"]);
+    expect({ ranIds, duplicates: running.stats().duplicates }).toEqual({
+      ranIds: ["1:1:1:0", "1:1:2:0", "1:1:3:0", "1:1:1:0"],
+      duplicates: 1,
+    });
+  });
+
   it("drops queued calls above a rolled back block and tells the user", async () => {
     const indexer = await fakeIndexer();
     cleanups.push(indexer.close);
