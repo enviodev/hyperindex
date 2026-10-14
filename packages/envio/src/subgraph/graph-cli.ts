@@ -104,12 +104,13 @@ function runGraphCli(packageDir: string, root: string, command: string, argv: st
 async function runOrThrow(
   graphCli: string,
   root: string,
+  manifestFile: string,
   command: string,
   outputDir: string,
   failure: string,
 ): Promise<void> {
   const outcome = await runGraphCli(graphCli, root, command, [
-    path.resolve(root, "subgraph.yaml"),
+    path.resolve(root, manifestFile),
     "--output-dir",
     outputDir,
     "--skip-migrations",
@@ -240,7 +241,11 @@ function runScriptStep(root: string, step: string): Promise<void> {
  * codegen` itself runs in-process, sized and without migrations, wherever the
  * project's codegen script puts it among its steps.
  */
-export async function ensureGeneratedCode(root: string, dir: string): Promise<void> {
+export async function ensureGeneratedCode(
+  root: string,
+  dir: string,
+  manifestFile = "subgraph.yaml",
+): Promise<void> {
   if (existsSync(dir)) return;
   const graphCli = graphCliPackage(root);
   // Reported when a mapping fails to import it, naming that mapping.
@@ -254,6 +259,7 @@ export async function ensureGeneratedCode(root: string, dir: string): Promise<vo
     await runOrThrow(
       graphCli,
       root,
+      manifestFile,
       "codegen",
       dir,
       "Envio Subgraph ran `graph codegen` to build the generated code, but it\n" +
@@ -273,11 +279,11 @@ export async function ensureGeneratedCode(root: string, dir: string): Promise<vo
  * Only in dev, and only when something it reads has changed: it is an
  * AssemblyScript compile, not something to pay on every restart.
  */
-export async function typeCheckMappings(root: string): Promise<void> {
+export async function typeCheckMappings(root: string, manifestFile = "subgraph.yaml"): Promise<void> {
   const graphCli = graphCliPackage(root);
   if (!graphCli) return;
 
-  const inputs = ["subgraph.yaml", "schema.graphql", "src", "abis"]
+  const inputs = [manifestFile, "schema.graphql", "src", "abis"]
     .map((entry) => path.join(root, entry))
     .filter((entry) => existsSync(entry))
     .map((entry) => fingerprint(entry))
@@ -289,6 +295,7 @@ export async function typeCheckMappings(root: string): Promise<void> {
   await runOrThrow(
     graphCli,
     root,
+    manifestFile,
     "build",
     path.resolve(root, "build"),
     "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +

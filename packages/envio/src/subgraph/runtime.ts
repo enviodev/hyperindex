@@ -99,6 +99,8 @@ type SubgraphConfig = {
   /** The config's contract name for each data source and template. */
   contractAccessors: Record<string, string>;
   root: string;
+  /** The manifest's name within `root`: `--config` may name another than subgraph.yaml. */
+  manifestFile?: string;
   rpcUrls: string[];
   isDev: boolean;
 } & SubgraphSchema;
@@ -572,10 +574,10 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     config.root,
     sources.map((source) => source.mappingFile),
   );
-  await ensureGeneratedCode(config.root, generated);
+  await ensureGeneratedCode(config.root, generated, config.manifestFile);
 
   if (config.isDev) {
-    await typeCheckMappings(config.root);
+    await typeCheckMappings(config.root, config.manifestFile);
   }
 
   const templateNames = new Set(config.templates.map((template) => template.name));
