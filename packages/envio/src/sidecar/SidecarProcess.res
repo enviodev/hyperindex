@@ -66,6 +66,106 @@ let closeOnSignals = (started: promise<handle>) => {
   NodeJs.Process.onSignal("SIGINT", close)
 }
 
+// The same loopback contract the indexer pod gives the sidecar container in
+// Envio Cloud (D-003). A value the developer already set wins.
+let devEnv = () => {
+  let env = NodeJs.Process.process.env->Dict.copy
+  [
+    ("ENVIO_SIDECAR_INTERNAL_URL", "http://127.0.0.1:9901"),
+    ("ENVIO_INDEXER_INTERNAL_URL", "http://127.0.0.1:9899"),
+    ("ENVIO_SIDECAR_PORT", "9900"),
+    ("ENVIO_GRAPHQL_URL", `${Env.Hasura.url}/v1/graphql`),
+  ]->Array.forEach(((key, value)) =>
+    switch env->Dict.get(key) {
+    | Some(set) if set !== "" => ()
+    | _ => env->Dict.set(key, value)
+    }
+  )
+  env
+}
+
+let pipeLines = (stream: Null.t<NodeJs.ChildProcess.Stream.t>, ~print) =>
+  switch stream->Null.toOption {
+  | None => ()
+  | Some(stream) =>
+    stream->NodeJs.ChildProcess.Stream.setEncoding("utf8")
+    let pending = ref("")
+    stream->NodeJs.ChildProcess.Stream.onData(chunk => {
+      let lines = (pending.contents ++ chunk)->String.split("\n")
+      pending := lines->Array.pop->Option.getOr("")
+      lines->Array.forEach(line => print(`[sidecar] ${line}`))
+    })
+    stream->NodeJs.ChildProcess.Stream.onEnd(() =>
+      if pending.contents !== "" {
+        print(`[sidecar] ${pending.contents}`)
+      }
+    )
+  }
+
+// `envio dev` only. Deployed, the sidecar is its own container and is never
+// started from the indexer. The indexer never waits for it: a sidecar that
+// fails to start or crashes costs a log line, not the run.
+let startForDev = (~config: Config.t) =>
+  switch config.sidecar {
+  | None => ()
+  | Some(_) if NodeJs.Process.process.env->Dict.get("ENVIO_SIDECAR_EXTERNAL") === Some("true") =>
+    Logging.info(
+      "ENVIO_SIDECAR_EXTERNAL=true: not starting the sidecar, run `envio sidecar` yourself",
+    )
+  | Some(_) =>
+    // The Rust TUI owns the terminal; a child writing to it directly would
+    // tear the frame, so its lines go through console like the indexer's.
+    let pipeOutput = Tui.shouldUse()
+    let child = NodeJs.ChildProcess.fork(
+      NodeJs.Process.argv->Array.getUnsafe(1),
+      ["sidecar"],
+      {
+        env: devEnv(),
+        stdio: pipeOutput
+          ? ["inherit", "pipe", "pipe", "ipc"]
+          : ["inherit", "inherit", "inherit", "ipc"],
+      },
+    )
+    if pipeOutput {
+      child->NodeJs.ChildProcess.Child.stdout->pipeLines(~print=line => Console.log(line))
+      child->NodeJs.ChildProcess.Child.stderr->pipeLines(~print=line => Console.error(line))
+    }
+    let exited = ref(false)
+    child->NodeJs.ChildProcess.Child.onExit((code, signal) => {
+      exited := true
+      switch (code->Null.toOption, signal->Null.toOption) {
+      | (Some(0), _) | (_, Some("SIGTERM")) | (_, Some("SIGINT")) => ()
+      | (code, signal) =>
+        Logging.warn(
+          `The sidecar exited (${switch (code, signal) {
+            | (Some(code), _) => `code ${code->Int.toString}`
+            | (_, Some(signal)) => `signal ${signal}`
+            | _ => "unknown reason"
+            }}); the indexer keeps running. Restart \`envio dev\` to start it again.`,
+        )
+      }
+    })
+    child->NodeJs.ChildProcess.Child.onError(exn =>
+      Logging.errorWithExn(exn->Utils.prettifyExn, "Failed to start the sidecar")
+    )
+    let stopChild = () =>
+      if !exited.contents {
+        child->NodeJs.ChildProcess.Child.kill("SIGTERM")->ignore
+      }
+    NodeJs.Process.onExit(stopChild)
+    // A signal with no other listener ends the process without an `exit`
+    // event. Stop the sidecar, step aside, and raise the signal again so the
+    // TUI (or Node's default action) ends the indexer exactly as before.
+    ["SIGINT", "SIGTERM", "SIGHUP"]->Array.forEach(signal => {
+      let rec onSignal = () => {
+        stopChild()
+        NodeJs.Process.offSignal(signal, onSignal)
+        NodeJs.Process.kill(NodeJs.Process.pid, signal)->ignore
+      }
+      NodeJs.Process.onSignal(signal, onSignal)
+    })
+  }
+
 let run = async (~config: Config.t) => {
   let sidecar = switch config.sidecar {
   | Some(sidecar) => sidecar

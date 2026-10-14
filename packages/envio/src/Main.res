@@ -571,6 +571,12 @@ let start = async (
   // An unsupported Node fails here, before the database is touched.
   HandlerLoader.registerTsHooks()
   let config = Config.load()
+
+  // From the process `envio dev` started, never from its workers, so a split
+  // run still gets exactly one sidecar.
+  if config.isDev && !isTest && !Worker.isEnabled {
+    SidecarProcess.startForDev(~config)
+  }
   switch isTest ? None : Supervisor.planForRun(~config) {
   | Some(workers) => await Supervisor.run(~config, ~workers, ~reset)
   | None =>

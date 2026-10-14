@@ -6,8 +6,13 @@ sidecar:
   contract: src/sidecar/contract.ts
   entry: src/sidecar/index.ts
 chains:
+  # Never answers: the tests only start and stop the processes, and an RPC
+  # source keeps them free of HyperSync and an API token.
   - id: 1
     start_block: 1
+    rpc:
+      url: http://127.0.0.1:9
+      for: sync
     contracts:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
