@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
-import { info } from "../Logging.res.mjs";
+import { info, warn } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
 import {
   currentScope,
@@ -56,6 +56,8 @@ import {
   operators,
 } from "./assemblyscript.ts";
 import { makeHostEffects } from "./hosts.ts";
+import { advanceRollup } from "./rollup.ts";
+import { graftBaseNotice } from "./graft.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
 import { runSyncCounted } from "./stats.ts";
@@ -106,6 +108,11 @@ type SubgraphConfig = {
   dataSources: DataSource[];
   templates: DataSource[];
   declaresEthCalls: boolean;
+  /** Set when the manifest has a `graft:` block; the indexer ignores it. */
+  graft?: { base: string; block: number };
+  graftNotice?: string;
+  timeseriesEntities?: string[];
+  aggregations?: SubgraphSchema["aggregations"];
   /** The config's contract name for each data source and template. */
   contractAccessors: Record<string, string>;
   root: string;
@@ -535,6 +542,17 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   resetRpcClients();
   resetRegisterStore();
   announceWhereToQuery();
+  if (config.graftNotice) warn(config.graftNotice);
+  if (config.graft && process.env.ENVIO_SUBGRAPH_GRAFT_CHECK !== "off") {
+    const ownStarts = config.dataSources.flatMap((source) =>
+      source.startBlock === undefined ? [] : [source.startBlock],
+    );
+    // Best effort and not waited on: an offline box or an unpinned base says nothing.
+    void graftBaseNotice(config.graft, ownStarts).then(
+      (notice) => notice && warn(notice),
+      () => undefined,
+    );
+  }
 
   // One effect for every contract call: envio already batches and dedupes
   // effect calls in preload, and the block number in the input is what keeps
@@ -630,6 +648,20 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     entityRefFields: config.entityRefFields ?? {},
     entityFieldTypes: config.entityFieldTypes ?? {},
     entityAccessors: config.entityAccessors,
+    timeseriesEntities: config.timeseriesEntities ?? [],
+    aggregations: config.aggregations ?? [],
+  };
+  const secondsOf = (blockNumber: number, given: unknown) => () =>
+    given !== undefined && given !== null
+      ? Number(given)
+      : Number(callSync(hosts.blockTimestamp, blockNumber, "block.timestamp"));
+  // Aggregations roll up when a block's time passes a bucket's end, so every
+  // handler checks first; the timeseries it saves carry the block's time.
+  const startRun = (scope: Scope) => {
+    scope.timeseriesSequence = 0;
+    if (schema.aggregations.length > 0) {
+      advanceRollup(scope, BigInt(scope.blockSeconds!()) * 1_000_000n);
+    }
   };
 
   // Before any mapping is imported: Node caches a failed module resolution for
@@ -763,6 +795,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         },
         registered: new Set(),
         blockNumber: event.block.number,
+        blockSeconds: secondsOf(event.block.number, event.block.timestamp),
         position: event.block.number * POSITION_BLOCK + event.logIndex,
         mappingExports: mapping,
       });
@@ -774,8 +807,12 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         async ({ event, context }: any) => {
           if ((skipPreload && context.isPreload) || !owns(event) || !live(event)) return;
           const graphEvent = makeEvent(event);
+          const scope = makeScope(event, context, "handler");
           await runSyncCounted(context, () =>
-            runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
+            runInScope(scope, () => {
+              startRun(scope);
+              return fn(graphEvent);
+            }),
           );
         },
       );
@@ -855,26 +892,28 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             block.number,
             `data source "${source.name}" → "${handler.handler}"`,
           );
+          const scope: Scope = {
+            context,
+            event: block,
+            mode: "handler",
+            schema,
+            dataSource: {
+              name: source.name,
+              address: source.address ?? "",
+              chainId: source.chainId ?? 0,
+              network: source.network ?? "",
+              context: source.context ?? {},
+            },
+            registered: new Set(),
+            blockNumber: block.number,
+            blockSeconds: secondsOf(block.number, block.timestamp),
+            mappingExports: mapping,
+          };
           await runSyncCounted(context, () =>
-            runInScope(
-              {
-                context,
-                event: block,
-                mode: "handler",
-                schema,
-                dataSource: {
-                  name: source.name,
-                  address: source.address ?? "",
-                  chainId: source.chainId ?? 0,
-                  network: source.network ?? "",
-                  context: source.context ?? {},
-                },
-                registered: new Set(),
-                blockNumber: block.number,
-                mappingExports: mapping,
-              },
-              () => fn(graphBlock),
-            ),
+            runInScope(scope, () => {
+              startRun(scope);
+              return fn(graphBlock);
+            }),
           );
         },
       );

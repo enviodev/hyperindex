@@ -23,6 +23,7 @@ import {
 } from "viem";
 import { subgraphKeccak256 } from "../Core.res.mjs";
 import { currentScope, type Scope } from "./scope.ts";
+import { timeseriesId } from "./rollup.ts";
 import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-enums.ts";
 import { parseSignature, splitTypes } from "./abi-types.ts";
 import {
@@ -1259,6 +1260,14 @@ const storeImpl = {
       return registerWrite(scope, entityType, id, stored ? { ...toRow(entityType, stored), ...row } : row);
     }
     const table = entityContext(entityType);
+    if (scope.schema.timeseriesEntities.includes(entityType)) {
+      // graph-node overrides whatever id and timestamp the mapping set.
+      const sequence = scope.timeseriesSequence ?? 0;
+      scope.timeseriesSequence = sequence + 1;
+      row.id = timeseriesId(scope.blockNumber, scope.event?.logIndex ?? -1, sequence);
+      row.timestamp = new Date(Number(scope.blockSeconds?.() ?? 0) * 1000);
+      return table.set(withUnsetAsNull(scope, entityType, row));
+    }
     const stored = table.getSync(id);
     table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
