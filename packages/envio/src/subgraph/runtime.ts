@@ -75,6 +75,7 @@ import { fetchMappingPackages, missingMappingPackages } from "./toolchain.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
 import { runSyncCounted } from "./stats.ts";
+import { resolveAssemblyScriptPackage } from "./as-package.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
 const REGEX_SHIM_URL = new URL("./assemblyscript-regex.ts", import.meta.url).href;
@@ -231,11 +232,23 @@ function installResolveHook(root: string) {
         resolved = nextResolve(specifier, context);
       } catch (error: any) {
         const bare = !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.includes(":");
-        if (!fetchedModulesParent || !bare || error?.code !== "ERR_MODULE_NOT_FOUND") throw error;
-        try {
-          resolved = nextResolve(specifier, { ...context, parentURL: fetchedModulesParent });
-        } catch {
-          throw error;
+        let fetched;
+        if (fetchedModulesParent && bare && error?.code === "ERR_MODULE_NOT_FOUND") {
+          try {
+            fetched = nextResolve(specifier, { ...context, parentURL: fetchedModulesParent });
+          } catch {}
+        }
+        if (fetched) {
+          resolved = fetched;
+        } else {
+          // A library written in AssemblyScript has no JavaScript entry for Node
+          // to find (as-base64's package.json names no `main`); asc reads its
+          // assembly/index.ts.
+          const asFile =
+            resolveAssemblyScriptPackage(specifier, context?.parentURL) ??
+            resolveAssemblyScriptPackage(specifier, fetchedModulesParent ?? undefined);
+          if (!asFile) throw error;
+          return { url: asFile, shortCircuit: true };
         }
       }
       // A subgraph project's package.json has no `type`, so its mappings and
