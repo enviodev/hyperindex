@@ -338,6 +338,13 @@
               "type": "null"
             }
           ]
+        },
+        "topic0": {
+          "description": "Match logs by this topic0 instead of the event signature hash. Use it for anonymous events with a fixed first topic, like DSNote's LogNote, and leave that topic out of the event signature.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,

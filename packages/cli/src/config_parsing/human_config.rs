@@ -944,6 +944,13 @@ pub mod evm {
                            event"
         )]
         pub field_selection: Option<FieldSelection>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Match logs by this topic0 instead of the event signature hash. Use it \
+                           for anonymous events with a fixed first topic, like DSNote's LogNote, \
+                           and leave that topic out of the event signature."
+        )]
+        pub topic0: Option<String>,
     }
 }
 
