@@ -12,6 +12,7 @@ pub mod schema;
 pub mod usage;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
 use serde::Serialize;
@@ -101,6 +102,111 @@ pub struct SubgraphRuntimeConfig {
 }
 
 pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
+
+/// The directory a manifest's project runs from, and the manifest with its
+/// paths relative to it.
+///
+/// graph-cli reads a manifest's paths relative to the manifest itself, and a
+/// per-network manifest in a subfolder names its code `../src/…` (WOOFi's
+/// `subgraphs/polygon.yaml`). The runtime loads, scans and resolves the
+/// mappings and `generated/` from a single root, so the root is the closest
+/// directory holding the manifest, its schema and every mapping, and each path
+/// is rebased onto it. ABIs are read up front and don't widen the root (liquity
+/// points at `../contracts/out`).
+pub fn rebase_manifest(manifest_dir: &std::path::Path, yaml: &str) -> Result<(PathBuf, String)> {
+    use crate::project_paths::path_utils::normalize_path;
+    use serde_yaml::Value;
+
+    let unchanged = || Ok((manifest_dir.to_path_buf(), yaml.to_string()));
+    let Ok(mut manifest) = serde_yaml::from_str::<Value>(yaml) else {
+        return unchanged();
+    };
+    let absolute_dir = normalize_path(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(manifest_dir),
+    );
+    let resolve = |path: &str| normalize_path(absolute_dir.join(path));
+
+    let sources = |manifest: &Value| -> Vec<Value> {
+        ["dataSources", "templates"]
+            .iter()
+            .filter_map(|key| manifest.get(*key).and_then(Value::as_sequence))
+            .flatten()
+            .cloned()
+            .collect()
+    };
+    let mut run_files: Vec<PathBuf> = Vec::new();
+    if let Some(schema) = manifest
+        .get("schema")
+        .and_then(|schema| schema.get("file"))
+        .and_then(Value::as_str)
+    {
+        run_files.push(resolve(schema));
+    }
+    for source in sources(&manifest) {
+        if let Some(file) = source
+            .get("mapping")
+            .and_then(|mapping| mapping.get("file"))
+            .and_then(Value::as_str)
+        {
+            run_files.push(resolve(file));
+        }
+    }
+
+    let mut root = absolute_dir.clone();
+    for file in &run_files {
+        let dir = file.parent().unwrap_or(file);
+        while !dir.starts_with(&root) {
+            match root.parent() {
+                Some(parent) => root = parent.to_path_buf(),
+                None => break,
+            }
+        }
+    }
+    if root == absolute_dir {
+        return unchanged();
+    }
+
+    let rebase = |value: &mut Value| {
+        if let Some(path) = value.as_str() {
+            let relative = pathdiff::diff_paths(resolve(path), &root).unwrap_or_default();
+            let relative = relative.display().to_string();
+            *value = Value::String(if relative.starts_with("..") {
+                relative
+            } else {
+                format!("./{relative}")
+            });
+        }
+    };
+    if let Some(file) = manifest
+        .get_mut("schema")
+        .and_then(|schema| schema.get_mut("file"))
+    {
+        rebase(file);
+    }
+    for key in ["dataSources", "templates"] {
+        let Some(list) = manifest.get_mut(key).and_then(Value::as_sequence_mut) else {
+            continue;
+        };
+        for source in list {
+            let Some(mapping) = source.get_mut("mapping") else {
+                continue;
+            };
+            if let Some(file) = mapping.get_mut("file") {
+                rebase(file);
+            }
+            if let Some(abis) = mapping.get_mut("abis").and_then(Value::as_sequence_mut) {
+                for abi in abis {
+                    if let Some(file) = abi.get_mut("file") {
+                        rebase(file);
+                    }
+                }
+            }
+        }
+    }
+    Ok((root, serde_yaml::to_string(&manifest)?))
+}
 
 /// `graph build --network <name>`: which entry of `networks.json` the manifest
 /// is built for.
@@ -1806,6 +1912,40 @@ type Renewal implements Event @entity {
         );
     }
 
+    // WOOFi keeps one manifest per chain in `subgraphs/`, naming its code
+    // `../src/…`. Rooted at `subgraphs/`, the mappings were outside the root
+    // the runtime loads them from and the usage scan never saw them.
+    #[test]
+    fn roots_a_subfolder_manifest_where_its_code_is() {
+        let dir = tempdir::TempDir::new("envio-subgraph-subfolder").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::remove_file(root.join("subgraph.yaml")).unwrap();
+        fs::create_dir_all(root.join("subgraphs")).unwrap();
+        fs::write(
+            root.join("subgraphs/polygon.yaml"),
+            GRAVITY_MANIFEST
+                .replace("./schema.graphql", "../schema.graphql")
+                .replace("./abis/", "../abis/")
+                .replace("./src/", "../src/"),
+        )
+        .unwrap();
+
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "subgraphs/polygon.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let subgraph = config.subgraph.unwrap();
+
+        assert_eq!(
+            (
+                std::path::Path::new(&subgraph.root) == root,
+                subgraph.manifest_file.as_str(),
+                subgraph.manifest.data_sources[0].mapping_file.as_str(),
+            ),
+            (true, "subgraphs/polygon.yaml", "./src/gravity.ts")
+        );
+    }
+
     // Ekubo's manifest names no network; `graph build --network <name>` fills
     // each data source in from networks.json.
     #[test]
@@ -1826,9 +1966,21 @@ type Renewal implements Event @entity {
 }"#,
         )
         .unwrap();
-        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=arbitrum-one\n").unwrap();
-
         let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let unset = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+        assert!(
+            unset.ends_with(
+                "This project keeps per-network addresses in networks.json (mainnet, \
+                 arbitrum-one). Pick one, as `graph build --network` does:\n  \
+                 ENVIO_SUBGRAPH_NETWORK=mainnet"
+            ),
+            "{unset}"
+        );
+
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=arbitrum-one\n").unwrap();
         let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
         let chain = config.get_chains().into_iter().next().unwrap();
         let contract = &chain.contracts[0];

@@ -1544,7 +1544,7 @@ impl SystemConfig {
         manifest_path: &Path,
         manifest: String,
     ) -> Result<Self> {
-        let root = &match manifest_path.parent() {
+        let manifest_dir = match manifest_path.parent() {
             Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
             _ => project_paths.project_root.clone(),
         };
@@ -1562,7 +1562,13 @@ impl SystemConfig {
 
         let manifest = match env.var(crate::subgraph::NETWORK_ENV_VAR) {
             Some(network) => {
-                let networks_path = root.join("networks.json");
+                // graph-cli's `--network-file` defaults to the directory it
+                // runs in; a manifest in a subfolder may keep its own.
+                let networks_path = [&project_paths.project_root, &manifest_dir]
+                    .iter()
+                    .map(|dir| dir.join("networks.json"))
+                    .find(|path| path.exists())
+                    .unwrap_or_else(|| manifest_dir.join("networks.json"));
                 let networks = std::fs::read_to_string(&networks_path).context(format!(
                     "{} is set, so the manifest's addresses come from {}, which can't be read",
                     crate::subgraph::NETWORK_ENV_VAR,
@@ -1572,6 +1578,8 @@ impl SystemConfig {
             }
             None => manifest,
         };
+        let (root, manifest) = crate::subgraph::rebase_manifest(&manifest_dir, &manifest)?;
+        let root = &root;
 
         // The manifest names its own schema file, so it's read before the
         // translation rather than through the usual `schema:` config field.
@@ -1620,7 +1628,7 @@ impl SystemConfig {
         let mapping_sources = crate::subgraph::usage::gather(root);
 
         let root_str = root.to_str().unwrap_or(".").to_string();
-        let mut config = Self::parse_subgraph(
+        let parsed = Self::parse_subgraph(
             &manifest,
             &schema,
             &name,
@@ -1628,12 +1636,42 @@ impl SystemConfig {
             &files,
             &root_str,
             &mapping_sources,
-        )?;
-        if let (Some(subgraph), Some(file)) = (
-            config.subgraph.as_mut(),
-            manifest_path.file_name().and_then(|name| name.to_str()),
-        ) {
-            subgraph.manifest_file = file.to_string();
+        );
+        let networks = [&project_paths.project_root, &manifest_dir]
+            .iter()
+            .find_map(|dir| std::fs::read_to_string(dir.join("networks.json")).ok())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|json| {
+                json.as_object()
+                    .map(|all| all.keys().cloned().collect::<Vec<_>>())
+            });
+        let mut config = match (parsed, networks) {
+            // A manifest that leaves its addresses to networks.json (Ekubo
+            // names no network at all) is only half written until a network
+            // is picked.
+            (Err(err), Some(networks)) if env.var(crate::subgraph::NETWORK_ENV_VAR).is_none() => {
+                return Err(anyhow!(
+                    "{err:#}\nThis project keeps per-network addresses in networks.json ({}). \
+                     Pick one, as `graph build --network` does:\n  {}={}",
+                    networks.join(", "),
+                    crate::subgraph::NETWORK_ENV_VAR,
+                    networks.first().cloned().unwrap_or_default()
+                ));
+            }
+            (parsed, _) => parsed?,
+        };
+        let manifest_file = if *root == manifest_dir {
+            manifest_path.file_name().map(PathBuf::from)
+        } else {
+            let absolute = path_utils::normalize_path(
+                std::env::current_dir()
+                    .unwrap_or_default()
+                    .join(manifest_path),
+            );
+            pathdiff::diff_paths(absolute, root)
+        };
+        if let (Some(subgraph), Some(file)) = (config.subgraph.as_mut(), manifest_file) {
+            subgraph.manifest_file = file.display().to_string();
         }
         config.parsed_project_paths = project_paths.clone();
         Ok(config)
