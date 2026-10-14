@@ -39,8 +39,13 @@ contracts:
       - event: "TestEvent()"
 `
 
+let unsupported: array<Scenario.unsupported> = [
+  {backend: #clickhouseOnly, reason: "asserts the Postgres indexes it defers and builds"},
+]
+
 let scenario = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~configYaml=`
 name: schema-indexes${contractsYaml}chains:${chainYaml(
       1337,
@@ -54,6 +59,7 @@ name: schema-indexes${contractsYaml}chains:${chainYaml(
 // at the unreachable end block.
 let unreachableEndBlockScenario = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~configYaml=`
 name: schema-indexes-unreachable-end${contractsYaml}chains:
   - id: 1337
@@ -73,6 +79,7 @@ name: schema-indexes-unreachable-end${contractsYaml}chains:
 // and never has a batch to process, so nothing ever writes its progress row.
 let aheadOfHeadScenario = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~configYaml=`
 name: schema-indexes-ahead-of-head${contractsYaml}chains:
   - id: 1337
@@ -89,6 +96,7 @@ name: schema-indexes-ahead-of-head${contractsYaml}chains:
 
 let multichainScenario = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~configYaml=`
 name: schema-indexes-multichain${contractsYaml}chains:${chainYaml(
       100,

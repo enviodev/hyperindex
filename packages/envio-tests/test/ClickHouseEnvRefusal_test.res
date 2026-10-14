@@ -41,7 +41,11 @@ describe("Starting with ClickHouse storage but no ClickHouse settings", () => {
   let name = "refuses, naming every missing variable"
   switch IndexerRunner.selectedBackend {
   // That leg sets the variables for every run.
-  | #clickhouse => Async.it_skip(`${name} [no clickhouse: the leg provides them]`, async _ => ())
+  | #clickhouse | #clickhouseOnly =>
+    Async.it_skip(
+      `${name} [no ${IndexerRunner.selectedBackend->IndexerRunner.backendName}: the leg provides them]`,
+      async _ => (),
+    )
   | #postgres =>
     Async.it(name, async t => {
       // A developer's shell or an earlier file in the same worker may have set

@@ -27,6 +27,12 @@ type Doc {
   payload: Json!
 }
 `,
+  ~unsupported=[
+    {
+      backend: #clickhouseOnly,
+      reason: "ClickHouse stores the NUL character Postgres leaves out, so the document stored is the one written",
+    },
+  ],
 )
 
 type doc = {id: string, payload: JSON.t}

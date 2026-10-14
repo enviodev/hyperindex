@@ -31,9 +31,7 @@ type Counter {
   count: BigInt!
 }
 `,
-  ~unsupported=[
-    {backend: #postgres, reason: "asserts against a ClickHouse server"},
-  ],
+  ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
 
 type counter = {id: string, count: bigint}
@@ -95,7 +93,10 @@ describe("ClickHouse sink resuming past its own rows", () => {
       let trimmed = await orphanCounts()
 
       let survivors = await TestClickHouse.query(
-        `SELECT id, count FROM \`${database}\`.\`Counter\` FORMAT JSONEachRow`,
+        `SELECT id, count FROM ${IndexerRunner.clickHouseEntity(
+            ~database,
+            "Counter",
+          )} FORMAT JSONEachRow`,
       )
 
       t.expect((planted, trimmed, survivors->String.trim)).toEqual((

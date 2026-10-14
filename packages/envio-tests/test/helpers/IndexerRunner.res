@@ -10,9 +10,10 @@ type pg = {sql: Sql.t, pgSchema: string}
 
 let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
 
-// Which persistence a run is exercised against. Both are Postgres-backed; the
-// ClickHouse one adds the sink on top. CI runs the suite once per backend.
-type backend = [#postgres | #clickhouse]
+// Which persistence a run is exercised against. The first two are
+// Postgres-backed, the ClickHouse one adding the sink on top; the last keeps
+// everything in ClickHouse. CI runs the suite once per backend.
+type backend = [#postgres | #clickhouse | #clickhouseOnly]
 
 @module("node:os") external tmpdir: unit => string = "tmpdir"
 @module("node:fs") external rmSync: (string, {"recursive": bool, "force": bool}) => unit = "rmSync"
@@ -21,14 +22,16 @@ let backendName = (backend: backend) =>
   switch backend {
   | #postgres => "postgres"
   | #clickhouse => "clickhouse"
+  | #clickhouseOnly => "clickhouse-only"
   }
 
 let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nullable.toOption {
 | None | Some("") | Some("postgres") => #postgres
 | Some("clickhouse") => #clickhouse
+| Some("clickhouse-only") => #clickhouseOnly
 | Some(other) =>
   JsError.throwWithMessage(
-    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres or clickhouse.`,
+    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres, clickhouse or clickhouse-only.`,
   )
 }
 
@@ -38,6 +41,21 @@ type addressRow = {
   address: Address.t,
   contractName: string,
   registrationBlock: int,
+}
+
+// What the storage keeps of a chain, as a test reads it back.
+type chainRow = {
+  id: ChainId.t,
+  startBlock: int,
+  progressBlock: int,
+  firstEventBlock: option<int>,
+  readyAt: option<Date.t>,
+}
+
+// The storage the persistence of a run on the selected backend reports as.
+let storageName = switch selectedBackend {
+| #clickhouseOnly => ClickHouseStorage.storageName
+| #postgres | #clickhouse => PgStorage.storageName
 }
 
 // A logged line as a test reads it: what was said, and the fields said with it
@@ -55,6 +73,8 @@ type rec t = {
   // `envio_addresses` isn't an entity, so it has a read path of its own. The
   // stored key is rendered back here, the only place a test needs a string.
   queryAddresses: unit => promise<array<addressRow>>,
+  // Every stored chain, by id.
+  queryChains: unit => promise<array<chainRow>>,
   queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
   queryEffectCache: 'input 'output. (
     Envio.effect<'input, 'output>,
@@ -100,6 +120,39 @@ type rec t = {
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
+
+// An entity's current rows, for a test reading ClickHouse itself: the sink's
+// view, or the table a ClickHouse-only run keeps, which holds every version of
+// a row until a merge collapses them.
+let clickHouseEntity = (~database, name) =>
+  switch selectedBackend {
+  | #clickhouseOnly =>
+    `(SELECT * EXCEPT (${EntityHistory.checkpointIdFieldName}, envio_is_deleted) FROM \`${database}\`.\`${name}\` FINAL)`
+  | #postgres | #clickhouse => `\`${database}\`.\`${name}\``
+  }
+
+let selectClickHouse = async statement =>
+  (await TestClickHouse.query(statement ++ ClickHouseStorage.readSettings))
+  ->ClickHouseStorage.parseLines
+  ->(Utils.magic: array<JSON.t> => array<unknown>)
+
+// A stored ClickHouse row decoded the way Postgres' are: keyed by API field
+// name, with the values the field schemas give.
+let clickHouseRowSchema = (table: Table.table) =>
+  S.object(s => {
+    let dict = Dict.make()
+    table.fields->Array.forEach(field =>
+      switch field {
+      | Field(f) =>
+        dict->Dict.set(
+          f->Table.getApiFieldName,
+          s.field(f->Table.getClickHouseDbFieldName, ClickHouseStorage.readFieldSchema(f)),
+        )
+      | DerivedFrom(_) => ()
+      }
+    )
+    dict
+  })->(Utils.magic: S.t<dict<unknown>> => S.t<unknown>)
 
 let parseLogLine = line =>
   switch line->JSON.parseOrThrow->JSON.Decode.object {
@@ -206,12 +259,13 @@ let run = async (
       JsError.throwWithMessage("Can't start an indexer once the run is tearing down.")
     }
 
-  // The ClickHouse leg writes through the sink Postgres storage attaches, into
-  // a database of this run's own.
+  // The ClickHouse legs write into a database of this run's own: through the
+  // sink Postgres storage attaches, or as the only storage.
   let clickHouseDatabase = switch backend {
-  | #clickhouse => Some(TestClickHouse.make())
+  | #clickhouse | #clickhouseOnly => Some(TestClickHouse.make())
   | #postgres => None
   }
+  let usedPostgres = ref(false)
 
   // The builder is only reachable here and from `restart`, so it takes just
   // what differs between them and reads the rest off this call.
@@ -237,9 +291,19 @@ let run = async (
     }
     let sql = PgStorage.makeClient()
     clients->Array.push(sql)->ignore
+    let clickHouseOnlyDatabase = switch clickHouseDatabase {
+    | Some(database) if !config.storage.postgres => Some(database)
+    | Some(_) | None => None
+    }
+    if clickHouseOnlyDatabase->Option.isNone {
+      usedPostgres := true
+    }
     let storage = mapStorage(
+      switch clickHouseOnlyDatabase {
+      | Some(_) => ClickHouseStorage.makeFromEnv(~config)
       // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-      PgStorage.makeStorageFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir),
+      | None => PgStorage.makeStorageFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir)
+      },
     )
     storages->Array.push(storage)
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
@@ -337,11 +401,29 @@ let run = async (
       }
     stops->Array.push(stop)->ignore
 
+    let clickHouseTable = name =>
+      `${clickHouseOnlyDatabase
+        ->Option.getOrThrow
+        ->ClickHouseStorage.quoteIdent}.${name->ClickHouseStorage.quoteIdent}`
+
     // Rows come back decoded: postgres parses them with the table's field schemas.
     let queryEntity = (entityConfig: Internal.entityConfig) =>
-      sql
-      ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
-      ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
+      switch clickHouseOnlyDatabase {
+      // `FINAL` collapses each key to its newest row and leaves out a delete.
+      // Ordered the way Postgres hands back a table it only ever appended to.
+      | Some(_) =>
+        selectClickHouse(
+          `SELECT ${entityConfig.table->ClickHouseStorage.selectColumns} FROM ${entityConfig.table.tableName->clickHouseTable} FINAL ORDER BY ${EntityHistory.checkpointIdFieldName}, id`,
+        )->Promise.thenResolve(items =>
+          items->S.parseOrThrow(S.array(entityConfig.table->clickHouseRowSchema))
+        )
+      | None =>
+        sql
+        ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
+        ->Promise.thenResolve(items =>
+          items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
+        )
+      }
 
     // Which chain a stored row belongs to, for a table that has chains at all.
     // Read off the row rather than the change decoded from it: a delete keeps
@@ -353,7 +435,12 @@ let run = async (
         row =>
           switch row
           ->(Utils.magic: unknown => dict<unknown>)
-          ->Utils.Dict.dangerouslyGetNonOption(field->Table.getPgDbFieldName) {
+          ->Utils.Dict.dangerouslyGetNonOption(
+            switch clickHouseOnlyDatabase {
+            | Some(_) => field->Table.getClickHouseDbFieldName
+            | None => field->Table.getPgDbFieldName
+            },
+          ) {
           // Text when the chain-id column is a bigint.
           | Some(value) if typeof(value) === #string =>
             value->(Utils.magic: unknown => string)->Float.fromString->Option.getOr(0.)
@@ -364,17 +451,17 @@ let run = async (
 
     let queryEntityHistory = (entityConfig: Internal.entityConfig) => {
       let chainIdOfRow = chainIdOfRow(entityConfig)
-      sql
-      ->Sql.queryForTests(
-        loadAllQuery(
-          ~pgSchema,
-          ~tableName=EntityHistory.historyTableName(
-            ~entityName=entityConfig.name,
-            ~entityIndex=entityConfig.index,
-          ),
-        ),
+      let historyTableName = EntityHistory.historyTableName(
+        ~entityName=entityConfig.name,
+        ~entityIndex=entityConfig.index,
       )
-      ->Promise.thenResolve(items => {
+      switch clickHouseOnlyDatabase {
+      | Some(_) =>
+        selectClickHouse(
+          `SELECT ${entityConfig.table->ClickHouseStorage.selectColumns}, ${EntityHistory.checkpointIdFieldName}, ${EntityHistory.changeFieldName} FROM ${historyTableName->clickHouseTable}`,
+        )
+      | None => sql->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=historyTableName))
+      }->Promise.thenResolve(items => {
         // Rows aren't ordered by the query, and insert order isn't meaningful
         // since checkpointId is the source of truth. Sort for stable assertions.
         let changes = items->S.parseOrThrow(
@@ -382,7 +469,13 @@ let run = async (
             S.union([
               EntityHistory.makeSetUpdateSchema(
                 ~idSchema=entityConfig.table->Table.getIdSchema,
-                entityConfig->PgStorage.getRowSchema,
+                switch clickHouseOnlyDatabase {
+                | Some(_) =>
+                  entityConfig.table
+                  ->clickHouseRowSchema
+                  ->(Utils.magic: S.t<unknown> => S.t<Internal.entity>)
+                | None => entityConfig->PgStorage.getRowSchema
+                },
               ),
               S.object((s): Change.t<Internal.entity> => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
@@ -542,12 +635,27 @@ let run = async (
       queryRaw: (type entity, entityConfig: Internal.entityConfig) =>
         queryEntity(entityConfig)->(Utils.magic: promise<array<unknown>> => promise<array<entity>>),
       queryAddresses: async () => {
-        let rows =
+        let rows = switch clickHouseOnlyDatabase {
+        | Some(_) =>
+          (
+            await selectClickHouse(
+              `SELECT chain_id, address, contract_id, toInt32(registration_block) AS registration_block FROM ${ClickHouseStorage.addressesTable->clickHouseTable} FINAL WHERE envio_is_deleted = 0 ORDER BY chain_id, address`,
+            )
+          )
+          ->(Utils.magic: array<unknown> => array<ClickHouseStorage.addressRow>)
+          ->Array.map((row): AddressRows.row => {
+            chainId: row.chainId,
+            address: row.address->NodeJs.Buffer.fromHex,
+            contractId: row.contractId,
+            registrationBlock: row.registrationBlock,
+          })
+        | None =>
           (
             await sql->Sql.queryForTests(
               `SELECT "chain_id" AS "chainId", "address", "contract_id" AS "contractId", "registration_block" AS "registrationBlock" FROM "${pgSchema}"."envio_addresses";`,
             )
           )->(Utils.magic: array<unknown> => array<AddressRows.row>)
+        }
         let addresses =
           rows->AddressRows.render(
             ~ecosystem=(config.ecosystem.name :> string),
@@ -560,24 +668,92 @@ let run = async (
           registrationBlock: row.registrationBlock,
         })
       },
+      queryChains: async () =>
+        switch clickHouseOnlyDatabase {
+        | Some(_) =>
+          (
+            await selectClickHouse(
+              `SELECT id, toInt32(start_block) AS start_block, toInt32(progress_block) AS progress_block, toInt32OrNull(toString(first_event_block)) AS first_event_block, toString(ready_at) AS ready_at FROM ${ClickHouseStorage.chainStateTable->clickHouseTable} FINAL ORDER BY id`,
+            )
+          )
+          ->(Utils.magic: array<unknown> => array<{
+            "id": unknown,
+            "start_block": int,
+            "progress_block": int,
+            "first_event_block": Null.t<int>,
+            "ready_at": Null.t<string>,
+          }>)
+          ->Array.map(row => {
+            id: row["id"]->ChainId.normalizeOrThrow,
+            startBlock: row["start_block"],
+            progressBlock: row["progress_block"],
+            firstEventBlock: row["first_event_block"]->Null.toOption,
+            readyAt: row["ready_at"]
+            ->Null.toOption
+            ->Option.flatMap(Float.fromString)
+            ->Option.map(Date.fromTime),
+          })
+        | None =>
+          (
+            await sql->Sql.queryForTests(
+              `SELECT "id", "start_block", "progress_block", "first_event_block", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
+            )
+          )
+          ->(Utils.magic: array<unknown> => array<{
+            "id": unknown,
+            "start_block": int,
+            "progress_block": int,
+            "first_event_block": Null.t<int>,
+            "ready_at": Null.t<Date.t>,
+          }>)
+          ->Array.map(row => {
+            id: row["id"]->ChainId.normalizeOrThrow,
+            startBlock: row["start_block"],
+            progressBlock: row["progress_block"],
+            firstEventBlock: row["first_event_block"]->Null.toOption,
+            readyAt: row["ready_at"]->Null.toOption,
+          })
+        },
       queryHistory: (type entity, name) =>
         queryEntityHistory(config->entityConfigByName(name))->(
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         ),
       queryCheckpoints: () =>
-        sql
-        ->Sql.queryForTests(
-          loadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.table.tableName),
-        )
-        ->Promise.thenResolve(rows =>
+        switch clickHouseOnlyDatabase {
+        | Some(_) =>
+          selectClickHouse(
+            `SELECT toString(id) AS id, chain_id, toInt32(block_number) AS block_number, block_hash, toInt32(events_processed) AS events_processed FROM ${InternalTable.Checkpoints.table.tableName->clickHouseTable} ORDER BY id`,
+          )
+        | None =>
+          sql->Sql.queryForTests(
+            loadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.table.tableName),
+          )
+        }->Promise.thenResolve(rows =>
           rows->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         ),
       queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
-        sql
-        ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName))
-        ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": JSON.t}>>)
+        switch clickHouseOnlyDatabase {
+        // The output is stored as the document's text.
+        | Some(_) =>
+          selectClickHouse(`SELECT id, output FROM ${tableName->clickHouseTable} FINAL ORDER BY id`)
+          ->(Utils.magic: promise<array<unknown>> => promise<
+            array<{
+              "id": string,
+              "output": string,
+            }>,
+          >)
+          ->Promise.thenResolve(rows =>
+            rows->Array.map(row => {"id": row["id"], "output": row["output"]->JSON.parseOrThrow})
+          )
+        | None =>
+          sql
+          ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName))
+          ->(
+            Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": JSON.t}>>
+          )
+        }
       },
       metric: async name => {
         // Parse the metric's samples back out of the rendered /metrics text.
@@ -682,8 +858,8 @@ let run = async (
   // information it could have carried, and the sweeper only covers workers
   // that died before getting here.
   switch clients->Array.get(0) {
-  | Some(sql) => await attempt(() => sql->TestPgSchema.drop(~pgSchema))
-  | None => ()
+  | Some(sql) if usedPostgres.contents => await attempt(() => sql->TestPgSchema.drop(~pgSchema))
+  | Some(_) | None => ()
   }
   switch clickHouseDatabase {
   | Some(database) => await attempt(() => TestClickHouse.drop(~database))

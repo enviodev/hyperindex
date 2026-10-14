@@ -51,6 +51,14 @@ let withClickHouseStorage = configYaml =>
     configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
   }
 
+// The ClickHouse-only leg keeps everything in ClickHouse, Postgres switched off.
+let withClickHouseOnlyStorage = configYaml =>
+  if configYaml->String.match(/^storage:/m)->Option.isSome {
+    configYaml
+  } else {
+    configYaml ++ "\nstorage:\n  postgres: false\n  clickhouse: true\n"
+  }
+
 let make = (
   ~configYaml,
   ~schema=?,
@@ -69,7 +77,8 @@ let make = (
   // file down before the skip could apply.
   let configYaml = switch IndexerRunner.selectedBackend {
   | #clickhouse if !isUnsupported => configYaml->withClickHouseStorage
-  | #clickhouse | #postgres => configYaml
+  | #clickhouseOnly if !isUnsupported => configYaml->withClickHouseOnlyStorage
+  | #clickhouse | #clickhouseOnly | #postgres => configYaml
   }
 
   let withIndexerTypes = handlers->Option.isSome
@@ -272,8 +281,9 @@ let run = async (
   )
 }
 
-let skipReason = (scenario: t) =>
+let skipReason = (scenario: t, ~unsupported=[]) =>
   scenario.unsupported
+  ->Array.concat(unsupported)
   ->Array.find(({backend}) => backend === IndexerRunner.selectedBackend)
   ->Option.map(({reason}) => reason)
 
@@ -301,13 +311,15 @@ let it = (
   ~captureLogs=?,
   ~timeout=?,
   ~retry=?,
+  // A backend this one test can't run on, when the scenario's other tests can.
+  ~unsupported=?,
   body: (
     ~t: Vitest.testContext,
     ~indexer: IndexerRunner.t,
     ~source: (int, ~index: int=?) => MockSource.t,
   ) => promise<unit>,
 ) => {
-  switch scenario->skipReason {
+  switch scenario->skipReason(~unsupported?) {
   | Some(reason) =>
     Vitest.Async.it_skip(
       `${name} [no ${IndexerRunner.selectedBackend->IndexerRunner.backendName}: ${reason}]`,

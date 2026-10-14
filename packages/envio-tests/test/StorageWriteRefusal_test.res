@@ -47,22 +47,13 @@ let tooLarge = 2147483648.->(Utils.magic: float => int)
 type stored = {tallies: array<tally>, history: int, checkpoints: string, progress: array<int>}
 
 let read = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
   let tallies: array<tally> = await indexer.query("Tally")
   let history: array<Change.t<tally>> = await indexer.queryHistory("Tally")
-  let checkpoints: array<{
-    "count": string,
-  }> = await sql->Sql.queryForTests(
-    `SELECT count(*)::text AS "count" FROM "${pgSchema}"."envio_checkpoints";`,
-  )
-  let progress: array<{
-    "progress_block": int,
-  }> = await sql->Sql.queryForTests(`SELECT "progress_block" FROM "${pgSchema}"."envio_chains";`)
   {
     tallies: tallies->Array.toSorted((a, b) => String.compare(a.id, b.id)),
     history: history->Array.length,
-    checkpoints: (checkpoints->Array.getUnsafe(0))["count"],
-    progress: progress->Array.map(row => row["progress_block"]),
+    checkpoints: (await indexer.queryCheckpoints())->Array.length->Int.toString,
+    progress: (await indexer.queryChains())->Array.map(row => row.progressBlock),
   }
 }
 

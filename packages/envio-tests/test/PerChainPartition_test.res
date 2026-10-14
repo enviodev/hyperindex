@@ -97,7 +97,11 @@ type counterRow = {
 type counterOps = {set: {"id": string, "count": bigint, "owner": string} => unit}
 type handlerContext = {@as("Counter") counter: counterOps}
 
-let scenario = Scenario.make(~schema, ~configYaml)
+let scenario = Scenario.make(
+  ~schema,
+  ~configYaml,
+  ~unsupported=[{backend: #clickhouseOnly, reason: "reads the Postgres partitions and statements"}],
+)
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 

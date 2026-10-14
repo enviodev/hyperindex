@@ -90,43 +90,32 @@ let edited = (
 let sourceOf = (sources: array<(int, MockSource.t)>, chain) =>
   sources->Array.find(((mocked, _)) => mocked === chain)->Option.getOrThrow->Pair.second
 
-let chainRows = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
-  let rows: array<{
-    "id": ChainId.t,
-    "progress_block": int,
-  }> = await sql->Sql.queryForTests(
-    `SELECT "id", "progress_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => (row["id"]->ChainId.toString, row["progress_block"]))
-}
+let chainRows = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(row => (row.id->ChainId.toString, row.progressBlock))
 
-let startBlocks = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
-  let rows: array<{
-    "id": ChainId.t,
-    "start_block": int,
-  }> = await sql->Sql.queryForTests(
-    `SELECT "id", "start_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => (row["id"]->ChainId.toString, row["start_block"]))
-}
+let startBlocks = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(row => (row.id->ChainId.toString, row.startBlock))
 
-let counterPartitions = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
-  let rows: array<{
-    "name": string,
-  }> = await sql->Sql.queryForTests(
-    `SELECT c.relname AS "name"
+// None where the entity table isn't partitioned by chain: ClickHouse-only
+// storage keeps every chain in one table.
+let counterPartitions = async (indexer: IndexerRunner.t) =>
+  switch IndexerRunner.selectedBackend {
+  | #clickhouseOnly => None
+  | #postgres | #clickhouse =>
+    let {sql, pgSchema} = indexer.pg
+    let rows: array<{
+      "name": string,
+    }> = await sql->Sql.queryForTests(
+      `SELECT c.relname AS "name"
      FROM pg_inherits inh
      JOIN pg_class c ON c.oid = inh.inhrelid
      JOIN pg_class p ON p.oid = inh.inhparent
      JOIN pg_namespace n ON n.oid = p.relnamespace
      WHERE n.nspname = '${pgSchema}' AND p.relname = 'Counter'
      ORDER BY c.relname`,
-  )
-  rows->Array.map(row => row["name"])
-}
+    )
+    Some(rows->Array.map(row => row["name"]))
+  }
 
 describe("envio start --chain with a chain the database doesn't have yet", () => {
   deployed->Scenario.it(
@@ -158,7 +147,10 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       ).toEqual((
         [{id: "total", count: 1n, chainId: 1}, {id: "total", count: 10n, chainId: 137}],
         [("1", 100), ("137", 100)],
-        ["Counter$1", "Counter$137"],
+        switch IndexerRunner.selectedBackend {
+        | #clickhouseOnly => None
+        | #postgres | #clickhouse => Some(["Counter$1", "Counter$137"])
+        },
         [("1", "Token"), ("137", "Token")],
         [
           (
@@ -240,8 +232,12 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[])
       await indexer.stop()
-      let {sql, pgSchema} = indexer.pg
-      let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${pgSchema}" CASCADE;`)
+      switch IndexerRunner.selectedBackend {
+      | #clickhouseOnly => await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
+      | #postgres | #clickhouse =>
+        let {sql, pgSchema} = indexer.pg
+        let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${pgSchema}" CASCADE;`)
+      }
 
       let outcome = switch await indexer.restart(~chains=[ChainId.fromInt(1)], ()) {
       | restarted => Migration.Resumed(await Migration.storedChainIds(restarted))

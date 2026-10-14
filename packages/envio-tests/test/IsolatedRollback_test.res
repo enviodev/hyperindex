@@ -97,8 +97,24 @@ let clickHouseScenario = Scenario.make(
   ~supervised=false,
   ~schema=perChainSchema,
   ~configYaml=makeConfigYaml(~name="isolated-rollback-clickhouse"),
-  ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
+  ~unsupported=[
+    {backend: #postgres, reason: "asserts against a ClickHouse server"},
+    {
+      backend: #clickhouseOnly,
+      reason: "asserts the sink's view and the diff checkpoints it resolves through",
+    },
+  ],
 )
+
+// History is what fills a ClickHouse-only indexer's current tables, so it keeps
+// every change, the rollback's diff among them, and nothing prunes it or the
+// checkpoints yet.
+let keepsHistory: array<Scenario.unsupported> = [
+  {
+    backend: #clickhouseOnly,
+    reason: "ClickHouse-only storage keeps every history row and checkpoint",
+  },
+]
 
 let fullHistoryScenario = Scenario.make(
   ~supervised=false,
@@ -416,6 +432,7 @@ describe("Isolated multichain rollback", () => {
 
   scenario->Scenario.it(
     "Rolls back the reorg chain alone and leaves its sibling untouched",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -497,6 +514,7 @@ describe("Isolated multichain rollback", () => {
   )
   crossChainScenario->Scenario.it(
     "Falls back to a global rollback when one entity is cross-chain",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -559,6 +577,7 @@ describe("Isolated multichain rollback", () => {
   // it; only the reorg chain's rows may go.
   scenario->Scenario.it(
     "Keeps a sibling's re-indexed rows when a later reorg targets a lower checkpoint",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -603,6 +622,7 @@ describe("Isolated multichain rollback", () => {
   // merge is a pointwise minimum, which can't lose the earlier floor.
   scenario->Scenario.it(
     "Keeps each chain at its own floor when a second reorg lands before the first is written",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -820,6 +840,7 @@ describe("Isolated multichain rollback", () => {
   // gets to reorg on top of it. The scope reaches the same recompute either way.
   crossChainScenario->Scenario.it(
     "Keeps a superseded chain below the checkpoints the new rollback recomputes from",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -947,6 +968,7 @@ describe("Isolated multichain rollback", () => {
   )
   fullHistoryScenario->Scenario.it(
     "Keeps the sibling's full history when save_full_history is on",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1158,6 +1180,7 @@ describe("Isolated multichain rollback", () => {
 
   singleChainScenario->Scenario.it(
     "Rolls back a lone chain that counts its own checkpoint ids",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {

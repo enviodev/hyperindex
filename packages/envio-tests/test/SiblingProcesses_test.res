@@ -19,6 +19,9 @@ let chainYaml = chainId =>
 
 let scenario = Scenario.make(
   ~supervised=false,
+  ~unsupported=[
+    {backend: #clickhouseOnly, reason: "asserts the Postgres indexes each process builds"},
+  ],
   ~configYaml=`
 name: sibling-processes
 disable_default_cross_chain: true

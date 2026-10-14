@@ -535,6 +535,12 @@ describe("Per-chain history prune", () => {
 
   pruneScenario->Scenario.it(
     "Keeps each chain's own anchor",
+    ~unsupported=[
+      {
+        backend: #clickhouseOnly,
+        reason: "edits the Postgres history tables, which ClickHouse-only storage doesn't prune",
+      },
+    ],
     ~sources=[{chain: 1, methods}, {chain: 137, methods}],
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
