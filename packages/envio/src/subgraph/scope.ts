@@ -23,11 +23,14 @@ export type SubgraphSchema = {
 
 /** One event's register pass while it runs. */
 export type RegisterPass = {
+  chainId: number;
   position: number;
   done: Promise<void>;
   settled: boolean;
   /** The register-store keys it missed, so later passes can wait on it. */
   missed: string[];
+  /** A read missed while an earlier pass of its chain was still running. */
+  provisional: boolean;
 };
 
 export type Scope = {

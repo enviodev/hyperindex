@@ -1985,6 +1985,27 @@ function memoised<V>(compile: (key: string) => V): (key: string) => V {
 const tupleComponents = (type: string) => splitTypes(type.slice(1, type.lastIndexOf(")")));
 
 /**
+ * envio's decoder hands a `bytesN` over as the whole 32-byte word it was
+ * encoded in, topic or body; graph-node keeps its first N bytes
+ * (runtime/wasm/src/to_from/external.rs).
+ */
+function fixedBytes(type: string): Converter<Bytes> {
+  const end = 2 + 2 * Number(type.slice("bytes".length));
+  return (raw) => Bytes.fromHexString((raw as string).slice(0, end));
+}
+
+/**
+ * The ABI type an event parameter's value arrives as. An indexed `string`,
+ * `bytes`, array or tuple is only its topic, the keccak hash, which graph-node
+ * hands over as a 32-byte `FixedBytes` and graph codegen reads as `bytes32`.
+ */
+function arrivesAs(input: EventInput): string {
+  const { type } = input;
+  const hashed = type === "string" || type === "bytes" || type.startsWith("(") || type.endsWith("]");
+  return input.indexed && hashed ? "bytes32" : type;
+}
+
+/**
  * A decoded ABI value as the `ethereum.Value` graph-node would hand the
  * mapping, typed by the ABI rather than by its JS shape: a `string` holding
  * `0x…` is still a string.
@@ -2009,7 +2030,8 @@ const ethereumConverter: (type: string) => Converter<EthereumValue> = memoised((
   if (type === "string") return (raw) => EthereumValue.fromString(raw as string);
   if (type === "bytes") return (raw) => EthereumValue.fromBytes(Bytes.fromHexString(raw as string));
   if (type.startsWith("bytes")) {
-    return (raw) => EthereumValue.fromFixedBytes(Bytes.fromHexString(raw as string));
+    const bytes = fixedBytes(type);
+    return (raw) => EthereumValue.fromFixedBytes(bytes(raw));
   }
   // viem decodes the narrow integer types to numbers.
   const fromInt = type.startsWith("uint") ? EthereumValue.fromUnsignedBigInt : EthereumValue.fromSignedBigInt;
@@ -2036,7 +2058,8 @@ function graphValue(type: string): Converter<unknown> {
   }
   if (type === "address") return (raw) => Address.fromString(raw as string);
   if (type === "bool" || type === "string") return (raw) => raw;
-  if (type.startsWith("bytes")) return (raw) => Bytes.fromHexString(raw as string);
+  if (type === "bytes") return (raw) => Bytes.fromHexString(raw as string);
+  if (type.startsWith("bytes")) return fixedBytes(type);
   if (SMALL_INT.test(type)) return (raw) => Number(raw);
   return (raw) => new BigInt_(raw as bigint);
 }
@@ -2148,7 +2171,7 @@ class EthereumEvent {
   get parameters(): EthereumEventParam[] {
     return (this._parameters ??= this._kind.inputs.map(
       (input) =>
-        EthereumEventParam.decoded(input.name, input.type, this._raw.params?.[input.key]),
+        EthereumEventParam.decoded(input.name, arrivesAs(input), this._raw.params?.[input.key]),
     ));
   }
   set parameters(value: EthereumEventParam[]) {
@@ -2168,7 +2191,7 @@ class EthereumEvent {
       return (this._params = params);
     }
     this._kind.inputs.forEach((input, index) => {
-      params[input.name || `param${index}`] = graphConverter(input.type)(this._raw.params?.[input.key]);
+      params[input.name || `param${index}`] = graphConverter(arrivesAs(input))(this._raw.params?.[input.key]);
     });
     return (this._params = params);
   }
@@ -2256,9 +2279,15 @@ export function newMockEvent(): EthereumEvent {
 // ---------------------------------------------------------------------------
 
 let registerHook: ((templateName: string, address: string) => void) | null = null;
+let handlerCreateHook: ((templateName: string, address: string) => void) | null = null;
 
 export function installRegisterHook(hook: typeof registerHook) {
   registerHook = hook;
+}
+
+/** Sees each create() a handler (not a register pass) makes. */
+export function installHandlerCreateHook(hook: typeof handlerCreateHook) {
+  handlerCreateHook = hook;
 }
 
 export class DataSourceTemplate {
@@ -2269,9 +2298,10 @@ export class DataSourceTemplate {
       throw new Error(`${name}.create() was called without an address parameter`);
     }
     const key = `${name}:${address.toLowerCase()}`;
+    if (mode !== "register") return handlerCreateHook?.(name, address);
     // Replays rerun the mapping from the top, so registration is deduped
     // rather than repeated.
-    if (mode !== "register" || registered.has(key)) return;
+    if (registered.has(key)) return;
     registered.add(key);
     registerHook?.(name, address);
   }

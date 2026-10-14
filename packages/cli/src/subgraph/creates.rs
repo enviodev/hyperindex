@@ -446,6 +446,46 @@ export class Swap__Params { constructor(public event: Swap) {} get amount(): Big
         );
     }
 
+    // Dolomite: codegen into `src/types`, where `templates.ts` sits beside a
+    // `templates/` directory, and the template imported under an alias because
+    // the schema entity has its name.
+    #[test]
+    fn follows_an_aliased_template_import_beside_a_templates_directory() {
+        let dir = project(&[
+            ("src/types/templates.ts", TEMPLATES),
+            ("src/types/templates/Pool/Pool.ts", "export class Sync {}\n"),
+            (
+                "src/types/schema.ts",
+                r#"
+import { Entity, store } from "@graphprotocol/graph-ts";
+export class Pool extends Entity {
+  save(): void { store.set("Pool", "id", this); }
+}
+"#,
+            ),
+            (
+                "src/mappings/factory.ts",
+                r#"
+import { Pool } from "../types/schema";
+import { Pool as PoolTemplate } from "../types/templates";
+export function handleNewPair(event: any): void {
+  new Pool().save();
+  PoolTemplate.create(event.params.pair);
+}
+export function handleSync(event: any): void { new Pool().save(); }
+"#,
+            ),
+        ]);
+        assert_eq!(
+            creating(
+                &dir,
+                "src/mappings/factory.ts",
+                &["handleNewPair", "handleSync"]
+            ),
+            vec!["handleNewPair".to_string()]
+        );
+    }
+
     #[test]
     fn assumes_a_create_behind_whatever_it_cannot_see() {
         let dir = project(&[
