@@ -3,6 +3,9 @@ name: test-all-options
 schema: ../schemas/schema-with-multi-storage.graphql
 description: Test config with all options set
 handlers: custom/handlers
+sidecar:
+  contract: src/sidecar/contract.ts
+  entry: src/sidecar/index.ts
 full_batch_size: 1000
 rollback_on_reorg: false
 save_full_history: true

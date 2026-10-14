@@ -88,6 +88,12 @@ const baseGetSourceFile = host.getSourceFile.bind(host);
 host.readFile = (fileName) => virtualFiles.get(fileName) ?? baseReadFile(fileName);
 host.fileExists = (fileName) =>
   virtualFiles.has(fileName) || baseFileExists(fileName);
+// Module resolution checks a directory before probing files in it, and a
+// virtual file (the sidecar contract) can sit in one that isn't on disk.
+const baseDirectoryExists = host.directoryExists?.bind(host) ?? ts.sys.directoryExists;
+host.directoryExists = (directoryName) =>
+  [...virtualFiles.keys()].some((fileName) => fileName.startsWith(directoryName + path.sep)) ||
+  baseDirectoryExists(directoryName);
 host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreate) => {
   const virtual = virtualFiles.get(fileName);
   if (virtual !== undefined) {
@@ -110,11 +116,23 @@ host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreate)
  */
 export function checkSources(
   typesDts: string,
-  sources: { handlers?: string; test?: string },
+  sources: {
+    handlers?: string;
+    test?: string;
+    // `sidecar.contract`'s source and its project-relative path. Served where
+    // the generated types import it from, which is one level above them.
+    sidecarContract?: { path: string; source: string };
+  },
 ): string[] {
   const entries: Array<[string, string]> = [[typesPath, typesDts]];
   if (sources.handlers !== undefined) entries.push([handlersPath, sources.handlers]);
   if (sources.test !== undefined) entries.push([testPath, sources.test]);
+  if (sources.sidecarContract !== undefined) {
+    entries.push([
+      path.resolve(helpersDir, "..", sources.sidecarContract.path),
+      sources.sidecarContract.source,
+    ]);
+  }
   virtualFiles = new Map<string, string>(entries);
 
   const program = ts.createProgram(

@@ -36,8 +36,9 @@ const indexerEnv = {
   ENVIO_CLICKHOUSE_DATABASE: CH_DATABASE,
   ENVIO_HASURA: "false",
   ENVIO_TUI: "false",
-  // Off the default port, so a suite that reclaims 9898 cannot kill this run.
-  ENVIO_INDEXER_PORT: "9899",
+  // Off the default port, so a suite that reclaims 9898 cannot kill this run,
+  // and off 9899, where the indexer listens for sidecar webhooks.
+  ENVIO_INDEXER_PORT: "9896",
   ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
   E2E_EXPECTED_END_BLOCK: END_BLOCK,
 };

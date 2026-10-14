@@ -45,6 +45,11 @@ pub enum Command {
     DropSchema {
         config: serde_json::Value,
     },
+    Sidecar {
+        cwd: String,
+        env: serde_json::Map<String, serde_json::Value>,
+        config: serde_json::Value,
+    },
 }
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
@@ -81,10 +86,33 @@ impl Command {
         if !project_flags.is_empty() {
             let (Command::Start { config, .. }
             | Command::Migrate { config, .. }
-            | Command::DropSchema { config }) = &mut self;
+            | Command::DropSchema { config }
+            | Command::Sidecar { config, .. }) = &mut self;
             config["projectFlags"] = project_flags.into();
         }
         self
+    }
+}
+
+/// Envio Cloud runs `envio sidecar` with no flags from the image directory and
+/// names the tenant's config file only in `CONFIG_FILE`, so a sidecar there
+/// would otherwise look for a `config.yaml` that may not exist. Only clap's
+/// default gives way: a `--config` or `ENVIO_CONFIG`, even `config.yaml`,
+/// always wins, which only the matches can tell apart from the default.
+pub fn use_hosted_sidecar_config_file(
+    command_line_args: &mut CommandLineArgs,
+    matches: &clap::ArgMatches,
+    config_file_env: Option<&str>,
+) {
+    let config_is_default =
+        matches.value_source("config") == Some(clap::parser::ValueSource::DefaultValue);
+    match (&command_line_args.command, config_file_env) {
+        (CommandType::Sidecar, Some(config_file))
+            if config_is_default && !config_file.is_empty() =>
+        {
+            command_line_args.project_paths.config = config_file.to_string();
+        }
+        _ => (),
     }
 }
 
@@ -162,6 +190,21 @@ async fn execute_command(
                 &[],
                 &start_args.chains,
             )?))
+        }
+
+        // No codegen: the sidecar runs from a build that already happened, and in
+        // Envio Cloud it shares the image with the indexer container.
+        CommandType::Sidecar => {
+            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+                .context("Failed parsing config")?;
+            if config.human_config.get_base_config().sidecar.is_none() {
+                anyhow::bail!(
+                    "`envio sidecar` has nothing to run: {} has no `sidecar:` key. Add \
+                     `sidecar: {{ contract: src/sidecar/contract.ts, entry: src/sidecar/index.ts }}`.",
+                    config.parsed_project_paths.config_relative_to_root().display()
+                );
+            }
+            Ok(Some(build_sidecar_command(&config)?))
         }
 
         CommandType::Local(local_commands) => {
@@ -251,6 +294,23 @@ pub fn build_start_command(
             .into_owned(),
         env,
         config: public_config,
+    })
+}
+
+fn build_sidecar_command(config: &SystemConfig) -> Result<Command> {
+    let config_path = config
+        .parsed_project_paths
+        .config_relative_to_root()
+        .to_string_lossy()
+        .into_owned();
+    Ok(Command::Sidecar {
+        cwd: config
+            .parsed_project_paths
+            .project_root
+            .to_string_lossy()
+            .into_owned(),
+        env: std::iter::once(("ENVIO_CONFIG".to_string(), config_path.into())).collect(),
+        config: public_config_value(config, false)?,
     })
 }
 
@@ -475,6 +535,115 @@ mod project_flags_tests {
             (
                 serde_json::json!(format!("-d {directory}")),
                 serde_json::json!(format!("-d {directory} --config config.head.yaml")),
+            )
+        );
+    }
+}
+
+#[cfg(test)]
+mod sidecar_command_tests {
+    use super::{execute, use_hosted_sidecar_config_file};
+    use crate::cli_args::clap_definitions::CommandLineArgs;
+    use clap::{CommandFactory, FromArgMatches, Parser};
+
+    // Bin.res decodes exactly this shape; the sidecar needs no codegen or Docker.
+    #[tokio::test]
+    async fn hands_the_runtime_the_sidecar_paths_from_the_config() {
+        let directory = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let command = execute(
+            CommandLineArgs::parse_from([
+                "envio",
+                "sidecar",
+                "-d",
+                &directory,
+                "--config",
+                "configs/config-with-all-options.yaml",
+            ]),
+            None,
+        )
+        .await
+        .expect("the command should run")
+        .expect("the command should hand work to the runtime");
+        let json = serde_json::to_value(&command).unwrap();
+        assert_eq!(
+            (
+                json["kind"].clone(),
+                json["env"].clone(),
+                json["config"]["sidecar"].clone(),
+                json["cwd"].as_str().map(|cwd| cwd.ends_with("/test")),
+            ),
+            (
+                serde_json::json!("sidecar"),
+                serde_json::json!({ "ENVIO_CONFIG": "configs/config-with-all-options.yaml" }),
+                serde_json::json!({
+                    "contract": "src/sidecar/contract.ts",
+                    "entry": "src/sidecar/index.ts",
+                }),
+                Some(true),
+            )
+        );
+    }
+
+    // A hosted tenant's config is rarely named config.yaml.
+    #[tokio::test]
+    async fn names_the_config_file_that_has_no_sidecar() {
+        let directory = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let error = execute(
+            CommandLineArgs::parse_from([
+                "envio",
+                "sidecar",
+                "-d",
+                &directory,
+                "--config",
+                "configs/config1.yaml",
+            ]),
+            None,
+        )
+        .await
+        .expect_err("a config without a sidecar has nothing to run");
+        assert_eq!(
+            error.to_string(),
+            "`envio sidecar` has nothing to run: configs/config1.yaml has no `sidecar:` key. Add \
+             `sidecar: { contract: src/sidecar/contract.ts, entry: src/sidecar/index.ts }`."
+        );
+    }
+
+    fn config_with_hosted_env(args: &[&str], config_file_env: Option<&str>) -> String {
+        let matches = CommandLineArgs::command()
+            .try_get_matches_from(args)
+            .expect("the arguments should parse");
+        let mut command_line_args =
+            CommandLineArgs::from_arg_matches(&matches).expect("the matches should decode");
+        use_hosted_sidecar_config_file(&mut command_line_args, &matches, config_file_env);
+        command_line_args.project_paths.config
+    }
+
+    // Envio Cloud runs `pnpm envio sidecar` with no flags and names the tenant's
+    // config file only in CONFIG_FILE (hosted-service-controller sidecar.go).
+    #[test]
+    fn falls_back_to_the_hosted_config_file_only_when_no_config_was_given() {
+        let hosted = Some("config.base.yaml");
+        assert_eq!(
+            (
+                config_with_hosted_env(&["envio", "sidecar"], hosted),
+                config_with_hosted_env(
+                    &["envio", "sidecar", "--config", "config.head.yaml"],
+                    hosted
+                ),
+                config_with_hosted_env(&["envio", "sidecar", "--config", "config.yaml"], hosted),
+                config_with_hosted_env(&["envio", "--config", "config.yaml", "sidecar"], hosted),
+                config_with_hosted_env(&["envio", "sidecar"], Some("")),
+                config_with_hosted_env(&["envio", "sidecar"], None),
+                config_with_hosted_env(&["envio", "codegen"], hosted),
+            ),
+            (
+                "config.base.yaml".to_string(),
+                "config.head.yaml".to_string(),
+                "config.yaml".to_string(),
+                "config.yaml".to_string(),
+                "config.yaml".to_string(),
+                "config.yaml".to_string(),
+                "config.yaml".to_string(),
             )
         );
     }

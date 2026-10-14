@@ -165,6 +165,28 @@ let runOneWrite = async (state: IndexerState.t) => {
     ))
 
     state->IndexerState.markCommitted(~writtenFrontier)
+    // Only once the write landed, so a call is never sent for writes that
+    // didn't. The notices go ahead of the write's calls: the sidecar forgets
+    // the ids above the block on a notice, so a replayed call it saw first
+    // would be deduped away.
+    state
+    ->IndexerState.sidecarSender
+    ->Option.forEach(sender =>
+      sender->SidecarSender.enqueueCommitted(
+        ~rollbackTargets=switch rollback {
+        | Some({progressedChains}) =>
+          progressedChains->Array.map(({
+            chainId,
+            progressBlockNumber,
+          }): SidecarSender.rollbackTarget => {
+            chainId,
+            rollbackToBlock: progressBlockNumber,
+          })
+        | None => []
+        },
+        ~calls=batch.sidecarCalls,
+      )
+    )
 
     switch rollback {
     | Some({progressedChains}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>

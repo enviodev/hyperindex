@@ -11,6 +11,7 @@ Commands:
   codegen  Generate indexing code from user-defined configuration & schema files
   local    Prepare local environment for envio testing
   start    Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
+  sidecar  Run the sidecar declared by `sidecar:` in config.yaml: your long-running process next to the indexer. `envio dev` starts it for you
   metrics  Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
   skills   Manage Envio-provided Claude Code skills under `.claude/skills/`
   tools    Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details

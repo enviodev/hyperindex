@@ -1,0 +1,220 @@
+// `context.sidecar.<fn>(input)`: typed from the contract, returns the call id
+// at once, and records the call on the batch for delivery after the commit.
+let _ = InternalTestIndexer.fromUserApi(
+  ~configYaml=`
+name: test-indexer-sidecar
+sidecar:
+  contract: src/sidecar/contract.ts
+  entry: src/sidecar/index.ts
+chains:
+  - id: 1
+    start_block: 1
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+`,
+  ~schema=`
+type Probe {
+  id: ID!
+  callIds: String!
+  probes: String!
+}
+`,
+  ~sidecarContract=`
+import { defineSidecar, S } from "envio";
+
+export default defineSidecar({
+  functions: {
+    priceSwap: { input: { owner: S.string, amount: S.bigint } },
+    notify: { input: { text: S.string } },
+  },
+});
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "NewGravatar" }, async ({ event, context }) => {
+  const priced: string = context.sidecar.priceSwap({ owner: event.params.owner, amount: event.params.id });
+  const notified = context.sidecar.notify({ text: event.params.displayName });
+  // Input that slipped past the types is dropped, never thrown into the handler.
+  const dropped = context.sidecar.notify({ text: 42 } as unknown as { text: string });
+  // So is a function the contract doesn't have (a JS caller, a stale build).
+  const unknown = (context.sidecar as unknown as { missing: (input: unknown) => string }).missing({});
+
+  // \`await\`, serializers and matchers probe the object: what can't be a
+  // contract function reads as undefined instead of throwing.
+  const sidecar = context.sidecar;
+  const probed = sidecar as unknown as Record<string | symbol, unknown>;
+  const probes = JSON.stringify({
+    then: typeof probed.then,
+    toJSON: typeof probed.toJSON,
+    constructor: typeof probed.constructor,
+    $$typeof: typeof probed.$$typeof,
+    iterator: typeof probed[Symbol.iterator],
+    awaited: (await sidecar) === sidecar,
+    json: JSON.stringify(sidecar),
+  });
+
+  context.Probe.set({ id: priced, callIds: [notified, dropped, unknown].join(","), probes });
+
+  if (event.params.displayName === "never") {
+    // @ts-expect-error not a function of the contract
+    context.sidecar.missing({});
+    // @ts-expect-error the input doesn't match the contract's schema
+    context.sidecar.notify({ text: 1 });
+  }
+});
+
+// The same log feeds a second registration, whose own call count starts at 0
+// again: the registration index keeps its ids apart from the first one's.
+indexer.onEvent({ contract: "Gravatar", event: "NewGravatar" }, async ({ event, context }) => {
+  context.sidecar.notify({ text: \`again \${event.params.displayName}\` });
+});
+`,
+  ~test=`
+import { describe, it } from "vitest";
+import { createTestIndexer, defineSidecar, S, TestHelpers } from "envio";
+
+const [owner] = TestHelpers.Addresses.mockAddresses;
+
+const newGravatar = (displayName: string, block = 5) => ({
+  chains: {
+    1: {
+      simulate: [
+        {
+          contract: "Gravatar" as const,
+          event: "NewGravatar" as const,
+          params: { id: 7n, owner, displayName, imageUrl: "" },
+          block: { number: block, timestamp: block * 100 },
+          logIndex: 3,
+        },
+      ],
+    },
+  },
+});
+
+describe("context.sidecar through a test indexer", () => {
+  it("records each call once, with a deterministic id and the input's JSON form", async (t) => {
+    const indexer = createTestIndexer();
+    const result = await indexer.process(newGravatar("hi"));
+
+    t.expect(result.changes).toEqual([
+      {
+        block: 5,
+        chainId: 1,
+        eventsProcessed: 1,
+        sidecar: {
+          calls: [
+            { id: "1:5:3r2:0", fn: "priceSwap", input: { owner, amount: "7" } },
+            { id: "1:5:3r2:1", fn: "notify", input: { text: "hi" } },
+            { id: "1:5:3r3:0", fn: "notify", input: { text: "again hi" } },
+          ],
+        },
+        Probe: {
+          sets: [
+            {
+              id: "1:5:3r2:0",
+              callIds: "1:5:3r2:1,1:5:3r2:2,1:5:3r2:3",
+              probes: JSON.stringify({
+                then: "undefined",
+                toJSON: "undefined",
+                constructor: "undefined",
+                $$typeof: "undefined",
+                iterator: "undefined",
+                awaited: true,
+                json: "{}",
+              }),
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
+  // The flat view: every call the handlers made, across process runs, with
+  // its input decoded the way the handler passed it.
+  it("lists the calls of every process run with their decoded input, until cleared", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process(newGravatar("one"));
+    await indexer.process(newGravatar("two", 9));
+    const listed = indexer.sidecar.calls;
+    indexer.sidecar.clear();
+
+    for (const call of listed) {
+      // Typed from the contract: \`fn\` narrows \`input\`.
+      if (call.fn === "priceSwap") {
+        const amount: bigint = call.input.amount;
+        void amount;
+      }
+      // @ts-expect-error not a function of the contract
+      if (call.fn === "missing") continue;
+    }
+
+    t.expect([listed, indexer.sidecar.calls]).toEqual([
+      [
+        { id: "1:5:3r2:0", fn: "priceSwap", chainId: 1, blockNumber: 5, blockTimestamp: 500, input: { owner, amount: 7n } },
+        { id: "1:5:3r2:1", fn: "notify", chainId: 1, blockNumber: 5, blockTimestamp: 500, input: { text: "one" } },
+        { id: "1:5:3r3:0", fn: "notify", chainId: 1, blockNumber: 5, blockTimestamp: 500, input: { text: "again one" } },
+        { id: "1:9:3r2:0", fn: "priceSwap", chainId: 1, blockNumber: 9, blockTimestamp: 900, input: { owner, amount: 7n } },
+        { id: "1:9:3r2:1", fn: "notify", chainId: 1, blockNumber: 9, blockTimestamp: 900, input: { text: "two" } },
+        { id: "1:9:3r3:0", fn: "notify", chainId: 1, blockNumber: 9, blockTimestamp: 900, input: { text: "again two" } },
+      ],
+      [],
+    ]);
+  });
+
+  // A second contract in the same process (another fixture, another package of
+  // a monorepo) must not rebind context.sidecar away from the configured one.
+  it("keeps the configured contract when another one is defined in the process", async (t) => {
+    defineSidecar({ functions: { unrelated: { input: { text: S.string } } } });
+    const first = createTestIndexer();
+    const second = createTestIndexer();
+    const fns = async (indexer: typeof first, displayName: string) =>
+      (await indexer.process(newGravatar(displayName))).changes.map((change) =>
+        change.sidecar?.calls.map(({ fn, input }) => ({ fn, input })),
+      );
+
+    t.expect([await fns(first, "a"), await fns(second, "b")]).toEqual([
+      [[
+        { fn: "priceSwap", input: { owner, amount: "7" } },
+        { fn: "notify", input: { text: "a" } },
+        { fn: "notify", input: { text: "again a" } },
+      ]],
+      [[
+        { fn: "priceSwap", input: { owner, amount: "7" } },
+        { fn: "notify", input: { text: "b" } },
+        { fn: "notify", input: { text: "again b" } },
+      ]],
+    ]);
+  });
+});
+`,
+)
+
+// Without `sidecar:` in config.yaml, `context.sidecar` is the message saying
+// what to add, so any call on it is a type error.
+let _ = InternalTestIndexer.fromUserApi(
+  ~configYaml=`
+name: test-indexer-sidecar-not-configured
+chains:
+  - id: 1
+    start_block: 1
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "NewGravatar" }, async ({ context }) => {
+  const message: "context.sidecar is not available. Add \`sidecar: { contract, entry }\` in config.yaml and run 'envio codegen'" =
+    context.sidecar;
+  // @ts-expect-error no sidecar is configured
+  context.sidecar.notify({ text: message });
+});
+`,
+)

@@ -107,6 +107,9 @@ type t = {
   // in-process test runner injects a callback that resolves its run promise
   // instead, so a caught-up run doesn't kill the test process.
   onExit: option<unit => unit>,
+  // Delivers committed `context.sidecar` calls. Only an indexer the CLI
+  // started has one; test indexers never send.
+  sidecarSender: option<SidecarSender.t>,
   // Set once on any fatal error. Every loop checks it to stop iterating and
   // every launch skips when it's set, so a single failure quiesces the indexer.
   mutable isStopped: bool,
@@ -152,6 +155,7 @@ let make = (
   ~exitAfterFirstEventBlock=false,
   ~onError: ErrorHandling.t => unit,
   ~onExit=?,
+  ~sidecarSender=?,
 ) => {
   let chainMetaThrottler = {
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
@@ -201,6 +205,7 @@ let make = (
     exitAfterFirstEventBlock,
     onError,
     onExit,
+    sidecarSender,
     isStopped: false,
     epoch: 0,
     simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
@@ -244,6 +249,7 @@ let makeFromDbState = (
   ~holdRealtime=false,
   ~onError,
   ~onExit=?,
+  ~sidecarSender=?,
 ) => {
   let isInReorgThreshold = if initialState.cleanRun {
     false
@@ -297,6 +303,7 @@ let makeFromDbState = (
     ~exitAfterFirstEventBlock,
     ~onError,
     ~onExit?,
+    ~sidecarSender?,
   )
   state.crossChainState->CrossChainState.markCaughtUpOnResume
   initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
@@ -554,6 +561,7 @@ let loadManager = (state: t) => state.loadManager
 let keepProcessAlive = (state: t) => state.keepProcessAlive
 let exitAfterFirstEventBlock = (state: t) => state.exitAfterFirstEventBlock
 let onExit = (state: t) => state.onExit
+let sidecarSender = (state: t) => state.sidecarSender
 let isStopped = (state: t) => state.isStopped
 let epoch = (state: t) => state.epoch
 let lastPrunedAtMillis = (state: t) => state.lastPrunedAtMillis
@@ -664,6 +672,7 @@ let toMetrics = (state: t): Metrics.t => {
     sourceRequests,
     sourceHeights,
     sourceHeightStreams,
+    sidecar: state.sidecarSender->Option.map(SidecarSender.stats),
   }
 }
 
@@ -824,6 +833,7 @@ let drainBatchRun = (state: t): Batch.t => {
   let checkpointItemsCount = []
   let checkpointEventsProcessed = []
   let registeredAddresses = []
+  let sidecarCalls = []
   all->Array.forEach(batch => {
     // Once one batch lands in rest, all later ones follow it, preserving order.
     if rest->Utils.Array.isEmpty && batch.history == history {
@@ -839,6 +849,7 @@ let drainBatchRun = (state: t): Batch.t => {
       checkpointItemsCount->Array.pushMany(batch.checkpointItemsCount)
       checkpointEventsProcessed->Array.pushMany(batch.checkpointEventsProcessed)
       registeredAddresses->Array.pushMany(batch.registeredAddresses)
+      sidecarCalls->Array.pushMany(batch.sidecarCalls)
     } else {
       rest->Array.push(batch)
     }
@@ -857,6 +868,7 @@ let drainBatchRun = (state: t): Batch.t => {
     checkpointItemsCount,
     checkpointEventsProcessed,
     registeredAddresses,
+    sidecarCalls,
   }
 }
 

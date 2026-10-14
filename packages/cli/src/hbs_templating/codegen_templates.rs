@@ -2446,6 +2446,12 @@ type testIndexer = {{
                         }
                     },
                     enums: &enums_body,
+                    sidecar_contract: cfg
+                        .human_config
+                        .get_base_config()
+                        .sidecar
+                        .as_ref()
+                        .map(|sidecar| sidecar_contract_import(&sidecar.contract)),
                 },
             ),
         })
@@ -2512,6 +2518,11 @@ type testIndexer = {{
         .collect::<Vec<_>>()
         .join("\n");
 
+        let sidecar_member = match &bodies.sidecar_contract {
+            Some(import) => format!("\n{I4}sidecar: typeof import(\"{import}\").default;"),
+            None => String::new(),
+        };
+
         let entity_aliases = entity_aliases
             .iter()
             .map(|name| format!("{I2}export type {name} = Entities[\"{name}\"];"))
@@ -2538,7 +2549,7 @@ type testIndexer = {{
              `pnpm codegen`).\n */\n\nimport type {{ Address, BigDecimal, JSON, SingleOrMultiple }} \
              from \"envio\";\n\n{field_not_selected}{file_level_types}\n\n\
              declare module \"envio\" {{\n{I2}interface Global {{\n{I4}config: \
-             {{\n{config_block}\n{I4}}};\n{I2}}}\n\n{entity_aliases}\n}}\n",
+             {{\n{config_block}\n{I4}}};{sidecar_member}\n{I2}}}\n\n{entity_aliases}\n}}\n",
             field_not_selected = field_not_selected,
             file_level_types = file_level_types,
             entity_aliases = entity_aliases,
@@ -2559,6 +2570,20 @@ struct ConfigBodies<'a> {
     // Union of the names whose rows belong to a single chain, or `never`.
     per_chain_entities: String,
     enums: &'a str,
+    // The `sidecar.contract` module as `.envio/types.d.ts` imports it.
+    sidecar_contract: Option<String>,
+}
+
+/// `sidecar.contract` is relative to the project root, and the generated
+/// types live one level down in `.envio/`. The extension is dropped so the
+/// import resolves the same way a handler's would.
+fn sidecar_contract_import(contract: &str) -> String {
+    let path = contract.trim_start_matches("./");
+    let path = [".ts", ".mts", ".js", ".mjs"]
+        .iter()
+        .find_map(|ext| path.strip_suffix(ext))
+        .unwrap_or(path);
+    format!("../{path}")
 }
 
 /// Render an upstream `FieldType` as a TypeScript type. `defined_types` is
@@ -3181,6 +3206,29 @@ mod test {
         insta::assert_snapshot!(json);
     }
 
+    #[test]
+    fn internal_config_json_carries_the_sidecar_paths() {
+        let with_sidecar: serde_json::Value = serde_json::from_str(
+            &get_internal_config_json_helper("config-with-all-options.yaml"),
+        )
+        .unwrap();
+        let without_sidecar: serde_json::Value =
+            serde_json::from_str(&get_internal_config_json_helper("config1.yaml")).unwrap();
+        assert_eq!(
+            (
+                with_sidecar.get("sidecar").cloned(),
+                without_sidecar.get("sidecar").cloned()
+            ),
+            (
+                Some(serde_json::json!({
+                    "contract": "src/sidecar/contract.ts",
+                    "entry": "src/sidecar/index.ts",
+                })),
+                None
+            )
+        );
+    }
+
     // When the backends marked `default` coincide with the enabled ones,
     // the entity storage field must stay omitted (the runtime falls back to
     // the global storage) — an added key would trip the persisted-config
@@ -3279,6 +3327,25 @@ mod test {
     fn envio_types_dts_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
         insta::assert_snapshot!(project_template.envio_types_dts);
+    }
+
+    // `context.sidecar` is typed from the user's contract module, which the
+    // generated file reaches from `.envio/`. Without a sidecar the line must
+    // not appear: it would name a module that doesn't exist.
+    #[test]
+    fn envio_types_dts_types_the_sidecar_from_its_contract() {
+        let sidecar_line = "    sidecar: typeof import(\"../src/sidecar/contract\").default;";
+        assert_eq!(
+            (
+                get_project_template_helper("config-with-all-options.yaml")
+                    .envio_types_dts
+                    .contains(sidecar_line),
+                get_project_template_helper("config1.yaml")
+                    .envio_types_dts
+                    .contains("sidecar"),
+            ),
+            (true, false)
+        );
     }
 
     #[test]
@@ -3875,6 +3942,7 @@ type Swap {
                 entities: "Entities",
                 per_chain_entities: "never".to_string(),
                 enums: "Enums",
+                sidecar_contract: None,
             },
         );
 

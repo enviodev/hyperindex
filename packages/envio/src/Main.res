@@ -536,6 +536,11 @@ exception FatalError(exn)
       ~exitAfterFirstEventBlock,
       ~holdRealtime=Worker.config->Option.mapOr(false, worker => worker.holdRealtime),
       ~onError,
+      // Each worker of a split run sends its own chains' calls; ids lead with
+      // the chain id, so the sidecar never sees two workers' calls collide.
+      ~sidecarSender=?config.sidecar->Option.isSome && !isTest
+        ? Some(SidecarSender.make(~url=Env.Sidecar.internalUrl, ~queueMax=Env.Sidecar.queueMax))
+        : None,
     )
     if shouldUseTui {
       Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
@@ -571,6 +576,12 @@ let start = async (
   // An unsupported Node fails here, before the database is touched.
   HandlerLoader.registerTsHooks()
   let config = Config.load()
+
+  // From the process `envio dev` started, never from its workers, so a split
+  // run still gets exactly one sidecar.
+  if config.isDev && !isTest && !Worker.isEnabled {
+    SidecarProcess.startForDev(~config)
+  }
   switch isTest ? None : Supervisor.planForRun(~config) {
   | Some(workers) => await Supervisor.run(~config, ~workers, ~reset)
   | None =>

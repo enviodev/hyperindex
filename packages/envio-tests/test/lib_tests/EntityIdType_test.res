@@ -301,6 +301,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
       addresses: AddressRows.Table.make(),
       contractMapping: ContractMapping.empty,
       processChanges: [],
+      sidecarCalls: [],
     }
   }
 
@@ -309,6 +310,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
     state->TestIndexer.handleWriteBatch(
       ~config=idTypesConfig,
       ~registeredAddresses=[],
+      ~sidecarCalls=[],
       ~updatedEntities=[
         {
           entityConfig,

@@ -28,6 +28,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate down`↴](#envio-local-db-migrate-down)
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
 * [`envio start`↴](#envio-start)
+* [`envio sidecar`↴](#envio-sidecar)
 * [`envio metrics`↴](#envio-metrics)
 * [`envio metrics runtime`↴](#envio-metrics-runtime)
 * [`envio skills`↴](#envio-skills)
@@ -50,6 +51,7 @@ This document contains the help content for the `envio` command-line program.
 * `codegen` — Generate indexing code from user-defined configuration & schema files
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
+* `sidecar` — Run the sidecar declared by `sidecar:` in config.yaml: your long-running process next to the indexer. `envio dev` starts it for you
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
 * `tools` — Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
@@ -381,6 +383,16 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 * `--chain <CHAIN_ID>` — Index only this chain, leaving the others to their own `envio start --chain` processes. Repeat the flag for several chains.
 
    Only needed to place chains yourself. Requires a per-chain schema, migrated before any process starts, and a separate `ENVIO_INDEXER_PORT` per process. A chain added to config.yaml after the migration joins the database when its process names only that chain.
+
+
+
+## `envio sidecar`
+
+Run the sidecar declared by `sidecar:` in config.yaml: your long-running process next to the indexer. `envio dev` starts it for you.
+
+Without `--config` or `ENVIO_CONFIG`, it reads the config file named by the `CONFIG_FILE` environment variable when that is set, as Envio Cloud does.
+
+**Usage:** `envio sidecar`
 
 
 
