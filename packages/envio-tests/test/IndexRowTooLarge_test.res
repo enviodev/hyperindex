@@ -77,7 +77,10 @@ describe("An indexed String field given a value too large to index", () => {
 
       t.expect(await refusal.awaitStorageError()).toEqual(
         Some((
-          "Failed to insert items into table \"Domain\": \"name\" of id \"spam\" is 24000 bytes, over the 2704 bytes a PostgreSQL index can hold. Truncate long values in the handler, e.g. `value.slice(0, 512)`, or stop indexing the field with @index or getWhere.",
+          `Failed to insert items into table "Domain": field "name" of entity "spam" is 24000 bytes, over the 2704 bytes a PostgreSQL index can hold. The field is indexed by @index in schema.graphql or by a getWhere filter on it. Truncate the value in the handler, e.g. \`value.slice(0, 512)\`, or remove that index. Value: "${longName->String.slice(
+              ~start=0,
+              ~end=32,
+            )}…"`,
           "index row requires 24016 bytes, maximum size is 8191",
         )),
       )
@@ -107,7 +110,7 @@ describe("An indexed String field given a value too large to index", () => {
         ),
       ).toEqual(
         Some(
-          "Failed to build an index on \"Domain\"(\"name\"): a stored value is over the 2704 bytes a PostgreSQL index can hold. Truncate long values in the handler, e.g. `value.slice(0, 512)`, or stop indexing the field with @index or getWhere.\nindex row requires 24016 bytes, maximum size is 8191",
+          "Failed to build an index on \"Domain\"(\"name\"): a stored value is over the 2704 bytes a PostgreSQL index can hold. The field is indexed by @index in schema.graphql or by a getWhere filter on it. Truncate the value in the handler, e.g. `value.slice(0, 512)`, or remove that index.\nindex row requires 24016 bytes, maximum size is 8191",
         ),
       )
     },

@@ -1466,14 +1466,19 @@ impl Storage {
         (0..arena.rows()).find_map(|row| {
             columns.clone().find_map(|(spec, column)| {
                 // A fixed-width or null cell has no bytes to count.
-                let bytes = column.bytes_at(row).len();
-                (bytes > index_row::BTREE_MAX_ITEM_BYTES && indexed.contains(&spec.name)).then(
-                    || index_row::Oversized {
+                let value = column.bytes_at(row);
+                (value.len() > index_row::BTREE_MAX_ITEM_BYTES && indexed.contains(&spec.name))
+                    .then(|| index_row::Oversized {
                         column: spec.name.clone(),
                         id: String::from_utf8_lossy(arena.columns()[id].bytes_at(row)).into_owned(),
-                        bytes,
-                    },
-                )
+                        value: match column.kind() {
+                            ColumnKind::Bytes => value
+                                .iter()
+                                .fold("0x".to_string(), |hex, byte| hex + &format!("{byte:02x}")),
+                            _ => String::from_utf8_lossy(value).into_owned(),
+                        },
+                        bytes: value.len(),
+                    })
             })
         })
     }
