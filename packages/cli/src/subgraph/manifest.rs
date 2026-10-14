@@ -211,6 +211,13 @@ pub enum DataSourceKind {
     FileArweave,
 }
 
+impl DataSourceKind {
+    /// A `file/ipfs` or `file/arweave` data source: no chain, no contract.
+    pub fn is_file(self) -> bool {
+        matches!(self, Self::FileIpfs | Self::FileArweave)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BlockFilter {
@@ -640,9 +647,11 @@ fn parse_data_source(
         }
     }
 
-    if matches!(kind, DataSourceKind::FileIpfs | DataSourceKind::FileArweave) {
+    // graph-node creates a file data source only from a template; a static one
+    // has no CID to read until something creates it.
+    if matches!(kind, DataSourceKind::FileIpfs | DataSourceKind::FileArweave) && !is_template {
         report.unsupported(
-            "file data sources",
+            "file data sources outside `templates`",
             format!("data source \"{name}\" → kind: {kind_raw}"),
         );
     }

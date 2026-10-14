@@ -63,6 +63,37 @@ export type Scope = {
   waitedKeys?: Set<string>;
   /** The mapping module, so `ipfs.map` can reach the callback it names. */
   mappingExports: Record<string, any>;
+  /** Set when the scope is a file data source's handler. */
+  file?: FileScope;
+  /** File templates this run created, keyed to dedupe a replayed mapping. */
+  fileCreates?: Map<string, FileCreate>;
+};
+
+/** A `DataSourceTemplate.create` of a file template, waiting for its file. */
+export type FileCreate = {
+  template: string;
+  /** The CID or Arweave transaction id the mapping passed. */
+  source: string;
+  /** The `DataSourceContext` of `createWithContext`, if there was one. */
+  context?: unknown;
+};
+
+/** What distinguishes a file data source's handler run from a chain one. */
+export type FileScope = {
+  kind: "ipfs" | "arweave";
+  /**
+   * The manifest's `entities` list. graph-node lets a file data source touch
+   * only these types, and refuses any other, read or write.
+   */
+  entities: Set<string>;
+  /**
+   * What this run has written, by entity type and id. graph-node keys an entity
+   * by its causality region too, so a file data source can't see a chain
+   * entity (or another file's) even of the same type and id: a read answers
+   * from here only.
+   */
+  written: Set<string>;
+  context?: unknown;
 };
 
 const storage = new AsyncLocalStorage<Scope>();

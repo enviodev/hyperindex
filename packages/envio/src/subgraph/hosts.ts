@@ -10,11 +10,64 @@ import * as Sury from "rescript-schema";
 import { createEffect } from "../Envio.res.mjs";
 import { configureBlockTimestamps, requestBlockTimestamp } from "./blocks.ts";
 import { missingRpcMessage } from "./errors.ts";
-import { HttpStatusError, untilAnswered } from "./transient.ts";
+import { HttpStatusError, untilAnswered, withDeadline } from "./transient.ts";
 import { warn } from "../Logging.res.mjs";
 
-const IPFS_GATEWAY = "https://ipfs.io/ipfs/";
-const ARWEAVE_GATEWAY = "https://arweave.net/";
+/**
+ * Public IPFS gateways, in the order they are asked. The Graph's own node holds
+ * what subgraphs pin and doesn't rate-limit a backfill the way ipfs.io does
+ * (which answers 429 to a box that has made a handful of requests); the others
+ * take over when it is down, rate-limited or doesn't have the file.
+ */
+const IPFS_GATEWAYS = ["https://ipfs.thegraph.com/ipfs/", "https://ipfs.io/ipfs/", "https://gateway.pinata.cloud/ipfs/"];
+const IPFS_GATEWAY_ENV = "ENVIO_SUBGRAPH_IPFS_URL";
+const ARWEAVE_GATEWAYS = ["https://arweave.net/"];
+const ARWEAVE_GATEWAY_ENV = "ENVIO_SUBGRAPH_ARWEAVE_URL";
+/** Fetches of a file data source's file in flight at once. */
+const FILE_IN_FLIGHT = 16;
+
+function gatewayList(env: string, fallback: string[], suffix: string): string[] {
+  const configured = (process.env[env] ?? "")
+    .split(/[\s,]+/)
+    .map((url) => url.trim())
+    .filter((url) => url !== "");
+  if (configured.length === 0) return fallback;
+  return configured.map((url) => {
+    const base = url.replace(/\/+$/, "");
+    return suffix && !base.endsWith(suffix) ? `${base}/${suffix}/` : `${base}/`;
+  });
+}
+
+/**
+ * The gateways a CID is appended to, read per fetch. `ENVIO_SUBGRAPH_IPFS_URL`
+ * names one or several (comma separated), each with or without its `/ipfs/`
+ * path.
+ */
+export function ipfsGatewayUrls(): string[] {
+  return gatewayList(IPFS_GATEWAY_ENV, IPFS_GATEWAYS, "ipfs");
+}
+
+export function arweaveGatewayUrls(): string[] {
+  return gatewayList(ARWEAVE_GATEWAY_ENV, ARWEAVE_GATEWAYS, "");
+}
+
+/**
+ * A CID, or a CID and a path under it, as a content path; `null` for anything
+ * graph-node would refuse to parse (a data source created with one is ignored).
+ * Accepts the `/ipfs/` and `ipfs://` spellings.
+ */
+export function normalizeIpfsPath(raw: string): string | null {
+  const path = raw
+    .trim()
+    .replace(/^ipfs:\/\//, "")
+    .replace(/^\/?ipfs\//, "");
+  const [root] = path.split("/");
+  // CIDv0 is 46 base58 characters; CIDv1 is multibase-prefixed, most often
+  // base32 (`b`) or base36 (`k`).
+  const v0 = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
+  const v1 = /^(b[a-z2-7]{20,}|k[a-z0-9]{20,}|z[1-9A-HJ-NP-Za-km-z]{20,}|f[0-9a-f]{20,})$/;
+  return v0.test(root) || v1.test(root) ? path : null;
+}
 /** graph-node heals a hash from its rainbow table; this is the public one. */
 const ENS_RAINBOW = "https://api.ensrainbow.io/v1/heal/";
 const ENS_RAINBOW_ENV = "ENVIO_SUBGRAPH_ENS_RAINBOW_URL";
@@ -75,21 +128,70 @@ async function fetchRainbow(url: string, signal: AbortSignal): Promise<Response>
 const nullableString = Sury.union([Sury.string, null]);
 
 /**
- * Only "the gateway doesn't have it" is an answer, and a cached one; a timeout,
- * a 5xx or a rate limit is asked again rather than cached as a null for good.
+ * One try at one URL: the bytes, `null` for the gateway's 404, a throw for
+ * anything else (a timeout, a 5xx, a rate limit).
  */
-function fetchBase64(url: string): Promise<string | null> {
-  return untilAnswered(`the fetch of ${url}`, async (signal) => {
-    const response = await fetch(url, { signal });
-    if (response.status === 404) {
+async function fetchOnce(url: string, signal: AbortSignal): Promise<string | null> {
+  const response = await fetch(url, { signal });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new HttpStatusError(url, response.status, response.statusText);
+  return Buffer.from(new Uint8Array(await response.arrayBuffer())).toString("base64");
+}
+
+/**
+ * The file at `path` under each gateway in turn: the first to have it answers.
+ * Only "none of them has it" is an answer, and a cached one; a timeout, a 5xx or
+ * a rate limit at any gateway that didn't have it is asked again rather than
+ * cached as a null for good. With `maxTries`, the last failure is thrown once
+ * that many rounds of the gateways have failed.
+ */
+function fetchBase64(gateways: string[], path: string, maxTries = Infinity): Promise<string | null> {
+  return untilAnswered(
+    `the fetch of ${path}`,
+    async () => {
+      let failure: unknown;
+      for (const gateway of gateways) {
+        const url = gateway + path;
+        try {
+          const content = await withDeadline(`the fetch of ${url}`, (signal) => fetchOnce(url, signal));
+          if (content !== null) return content;
+        } catch (error) {
+          failure = error;
+        }
+      }
+      if (failure !== undefined) throw failure;
       return null;
+    },
+    { maxTries, deadline: false },
+  );
+}
+
+/** At most `limit` of `task`s run at once; the rest queue. */
+function limiter(limit: number) {
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    if (running < limit) running++;
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else running--;
     }
-    if (!response.ok) {
-      throw new HttpStatusError(url, response.status, response.statusText);
-    }
-    const buffer = new Uint8Array(await response.arrayBuffer());
-    return Buffer.from(buffer).toString("base64");
-  });
+  };
+}
+
+/** Tries before a file data source's file is given up on. */
+function fileAttempts(): number {
+  const value = Number(process.env.ENVIO_SUBGRAPH_FILE_ATTEMPTS);
+  return Number.isInteger(value) && value > 0 ? value : 4;
+}
+
+function fileRetryMs(): number {
+  const value = Number(process.env.ENVIO_SUBGRAPH_FILE_RETRY_MS);
+  return Number.isFinite(value) && value >= 0 ? value : 2_000;
 }
 
 export type HostEffects = ReturnType<typeof makeHostEffects>;
@@ -112,7 +214,7 @@ export function makeHostEffects(rpcUrls: string[]) {
       rateLimit: false,
       cache: true,
     },
-    async ({ input }: { input: string }) => fetchBase64(IPFS_GATEWAY + input),
+    async ({ input }: { input: string }) => fetchBase64(ipfsGatewayUrls(), input),
   );
 
   const arweaveData = createEffect(
@@ -123,7 +225,51 @@ export function makeHostEffects(rpcUrls: string[]) {
       rateLimit: false,
       cache: true,
     },
-    async ({ input }: { input: string }) => fetchBase64(ARWEAVE_GATEWAY + input),
+    async ({ input }: { input: string }) => fetchBase64(arweaveGatewayUrls(), input),
+  );
+
+  // A file data source's file: `ipfs:<path>` or `arweave:<id>`. graph-node polls
+  // for it until it exists; here a file the gateway lacks, or can't be reached
+  // for, is asked for `fileAttempts()` times and then reads null, and the
+  // handler is skipped. A definite miss is cached like any answer; a gateway
+  // that never answered is not, so a later run (or the same file created again)
+  // asks anew.
+  const fileGate = limiter(FILE_IN_FLIGHT);
+  const fileData = createEffect(
+    {
+      name: "envio_subgraph_file",
+      input: Sury.string,
+      output: nullableString,
+      rateLimit: false,
+      cache: true,
+    },
+    async ({ input, context }: { input: string; context: { cache: boolean } }) => {
+      const split = input.indexOf(":");
+      const kind = input.slice(0, split);
+      const id = input.slice(split + 1);
+      const gateways = kind === "arweave" ? arweaveGatewayUrls() : ipfsGatewayUrls();
+      const url = gateways[0] + id;
+      const attempts = fileAttempts();
+      let unreachable = false;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+          const content = await fileGate(() => fetchBase64(gateways, id, 1));
+          if (content !== null) return content;
+          unreachable = false;
+        } catch (error) {
+          unreachable = true;
+          const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+          warn(`Envio Subgraph: file ${url} failed (${reason}).`);
+        }
+        if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, fileRetryMs() * 2 ** (attempt - 1)));
+      }
+      warn(
+        `Envio Subgraph: the file data source's file ${url} wasn't there after ${attempts} attempts; ` +
+          "its handler is skipped. (graph-node keeps polling for it; set ENVIO_SUBGRAPH_FILE_ATTEMPTS to wait longer.)",
+      );
+      if (unreachable) context.cache = false;
+      return null;
+    },
   );
 
   // graph-node returns null when its rainbow table doesn't hold the hash, and
@@ -252,5 +398,5 @@ export function makeHostEffects(rpcUrls: string[]) {
     },
   );
 
-  return { ipfsCat, arweaveData, ensName, getBalance, hasCode, blockTimestamp };
+  return { ipfsCat, arweaveData, fileData, ensName, getBalance, hasCode, blockTimestamp };
 }
