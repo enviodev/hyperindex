@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
-import { info } from "../Logging.res.mjs";
+import { info, warn } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
 import { currentScope, runInScope, type RegisterPass, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
@@ -98,6 +98,9 @@ type SubgraphConfig = {
   dataSources: DataSource[];
   templates: DataSource[];
   declaresEthCalls: boolean;
+  /** Set when the manifest has a `graft:` block; the indexer ignores it. */
+  graft?: { base: string; block: number };
+  graftNotice?: string;
   /** The config's contract name for each data source and template. */
   contractAccessors: Record<string, string>;
   root: string;
@@ -527,6 +530,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   resetRpcClients();
   resetRegisterStore();
   announceWhereToQuery();
+  if (config.graftNotice) warn(config.graftNotice);
 
   // One effect for every contract call: envio already batches and dedupes
   // effect calls in preload, and the block number in the input is what keeps
