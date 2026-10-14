@@ -31,15 +31,53 @@ const HEAP_MB = Math.floor(
   (Math.min(totalmem(), process.constrainedMemory?.() || Infinity) / 2 ** 20) * 0.75,
 );
 
+/**
+ * Where Node would resolve graph-cli from the project: its own node_modules,
+ * then each parent's — a yarn or npm workspace hoists it to the root.
+ */
 function graphCliPackage(root: string): string | null {
-  const dir = path.resolve(root, "node_modules", "@graphprotocol", "graph-cli");
-  // pnpm links the package in; its own plugins resolve only from where it lives.
-  return existsSync(dir) ? realpathSync(dir) : null;
+  for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
+    const candidate = path.join(dir, "node_modules", "@graphprotocol", "graph-cli");
+    // pnpm links the package in; its own plugins resolve only from where it lives.
+    if (existsSync(path.join(candidate, "package.json"))) return realpathSync(candidate);
+    if (path.dirname(dir) === dir) return null;
+  }
 }
 
 type Outcome = "ok" | "failed" | "outOfMemory";
 
-function runGraphCli(packageDir: string, command: string, argv: string[]): Promise<Outcome> {
+/**
+ * graph-cli before oclif (0.2x) has no `dist/commands/` to run in-process, only
+ * its gluegun bin.
+ */
+function legacyBin(packageDir: string): string | null {
+  if (existsSync(path.join(packageDir, "dist", "commands"))) return null;
+  try {
+    const { bin } = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
+    const graph = typeof bin === "string" ? bin : bin?.graph;
+    return typeof graph === "string" ? path.join(packageDir, graph) : null;
+  } catch {
+    return null;
+  }
+}
+
+function runLegacyGraphCli(bin: string, root: string, command: string, argv: string[]): Promise<Outcome> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [`--max-old-space-size=${HEAP_MB}`, bin, command, ...argv], {
+      cwd: root,
+      stdio: "inherit",
+    });
+    child.on("error", (error) => {
+      console.error(error);
+      resolve("failed");
+    });
+    child.on("exit", (code) => resolve(code === 0 ? "ok" : "failed"));
+  });
+}
+
+function runGraphCli(packageDir: string, root: string, command: string, argv: string[]): Promise<Outcome> {
+  const bin = legacyBin(packageDir);
+  if (bin) return runLegacyGraphCli(bin, root, command, argv);
   return new Promise((resolve) => {
     let ok = false;
     const worker = new Worker(WORKER, {
@@ -70,7 +108,7 @@ async function runOrThrow(
   outputDir: string,
   failure: string,
 ): Promise<void> {
-  const outcome = await runGraphCli(graphCli, command, [
+  const outcome = await runGraphCli(graphCli, root, command, [
     path.resolve(root, "subgraph.yaml"),
     "--output-dir",
     outputDir,
@@ -116,9 +154,9 @@ export function missingGeneratedCode(root: string, dir: string): Error {
   const relative = path.relative(root, dir);
   return new Error(
     `Envio Subgraph needs the project's generated code, but "${relative}/" is\n` +
-      "missing and @graphprotocol/graph-cli isn't installed.\n" +
-      "Install dependencies and try again:\n" +
-      "  pnpm install\n" +
+      "missing and @graphprotocol/graph-cli isn't installed in the project or any\n" +
+      "directory above it. Install the project's dependencies and try again:\n" +
+      "  npm install   (or yarn / pnpm install)\n" +
       "Or generate manually:\n" +
       `  pnpm exec graph codegen --output-dir ${relative}`,
   );
@@ -146,6 +184,15 @@ function codegenSteps(root: string): string[] | null {
   return steps.some((step) => GRAPH_CODEGEN.test(step)) ? steps : null;
 }
 
+/** The project's bins and its workspaces', nearest first, as a package manager puts them on PATH. */
+function binDirs(root: string): string[] {
+  const dirs: string[] = [];
+  for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
+    dirs.push(path.join(dir, "node_modules", ".bin"));
+    if (path.dirname(dir) === dir) return dirs;
+  }
+}
+
 /** A step as the package manager would run it: a shell, with the project's bins on PATH. */
 function runScriptStep(root: string, step: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -155,7 +202,7 @@ function runScriptStep(root: string, step: string): Promise<void> {
       stdio: "inherit",
       env: {
         ...process.env,
-        PATH: [path.join(root, "node_modules", ".bin"), process.env.PATH].join(path.delimiter),
+        PATH: [...binDirs(root), process.env.PATH].join(path.delimiter),
       },
     });
     child.on("error", reject);
