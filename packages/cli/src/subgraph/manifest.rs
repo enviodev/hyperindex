@@ -507,12 +507,28 @@ fn parse_data_source(
     let mut abi = None;
     if let Some(source) = obj.get("source") {
         if let Some(mut source) = Obj::new(source, &format!("{path}.source"), report) {
-            address = source.string("address");
+            // graph-node parses the address as hex with or without the `0x`
+            // (Livepeer writes it bare); envio requires the prefix.
+            address = source.string("address").map(|address| {
+                let bare = address.len() == 40 && address.chars().all(|c| c.is_ascii_hexdigit());
+                if bare {
+                    format!("0x{address}")
+                } else {
+                    address
+                }
+            });
             start_block = source.u64("startBlock");
             end_block = source.u64("endBlock");
             abi = source.string("abi");
             // File data sources point at a CID instead of a contract.
             source.get("file");
+            // Not a graph-node field: its `Source` (graph/src/data/subgraph)
+            // has `address` only and doesn't deny unknown keys, so a list here
+            // is dropped and the data source matches every emitter, as one
+            // without an address does. graph-cli lets it through when the
+            // manifest has a file data source, which skips its validation
+            // (flaunch). Read the same way, so the same events are indexed.
+            source.get("addresses");
             source.finish(report);
         }
     }
@@ -769,6 +785,21 @@ fn parse_event_handler(
 
     if obj.get("calls").is_some() {
         *declares_eth_calls = true;
+    }
+
+    // graph-node matches a log on `topic0` instead of the signature's hash
+    // when one is given (`MappingEventHandler::topic0`). Spelling out the
+    // signature's own hash changes nothing; any other value selects logs envio
+    // can't ask for by event, Balancer's anonymous LOG_CALL among them.
+    if let Some(topic0) = obj.string("topic0") {
+        let signature = alloy_primitives::keccak256(event.replace("indexed ", "").as_bytes());
+        if !topic0.eq_ignore_ascii_case(&signature.to_string()) {
+            report.unsupported(
+                "event handlers whose topic0 is not the event signature's hash (anonymous \
+                 events)",
+                format!("data source \"{data_source}\" → eventHandlers → \"{handler}\" → topic0"),
+            );
+        }
     }
 
     obj.finish(report);
@@ -1297,6 +1328,80 @@ dataSources:
                         .to_string()
                 ])
             )
+        );
+    }
+
+    const TOPIC0_MANIFEST: &str = r#"
+specVersion: 1.2.0
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Token
+    network: mainnet
+    source:
+      address: "35Bcf3c30594191d53231E4FF333E8A770453e40"
+      abi: Token
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      eventHandlers:
+        - event: Transfer(indexed address,indexed address,uint256)
+          topic0: "TOPIC0"
+          handler: handleTransfer
+      file: ./src/token.ts
+"#;
+
+    // Livepeer writes its addresses without `0x`, which graph-node accepts.
+    // A topic0 equal to the signature's hash (any case) matches what the
+    // signature already selects.
+    #[test]
+    fn accepts_a_bare_address_and_the_signature_topic0() {
+        let yaml = TOPIC0_MANIFEST.replace(
+            "TOPIC0",
+            "0xDDF252AD1BE2C89B69C2B068FC378DAA952BA7F163C4A11628F55A4DF523B3EF",
+        );
+        let (manifest, report) = parse_ok(&yaml);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            manifest.unwrap().data_sources[0].address.clone(),
+            Some("0x35Bcf3c30594191d53231E4FF333E8A770453e40".to_string())
+        );
+    }
+
+    // flaunch's BidWall1 lists `addresses:`, which graph-node never reads: the
+    // data source has no address there, so it has none here either.
+    #[test]
+    fn reads_a_source_addresses_list_as_graph_node_does() {
+        let yaml = TOPIC0_MANIFEST
+            .replace(
+                "      address: \"35Bcf3c30594191d53231E4FF333E8A770453e40\"",
+                "      addresses:\n        - \"0x66681f10BA90496241A25e33380004f30Dfd8aa8\"",
+            )
+            .replace("          topic0: \"TOPIC0\"\n", "");
+        let (manifest, report) = parse_ok(&yaml);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(manifest.unwrap().data_sources[0].address, None);
+    }
+
+    // Balancer's cow-amm matches its anonymous LOG_CALL on topic0, the called
+    // selector: not an event envio can select by signature.
+    #[test]
+    fn refuses_a_topic0_other_than_the_signature_hash() {
+        let yaml = TOPIC0_MANIFEST.replace(
+            "TOPIC0",
+            "0x4bb278f300000000000000000000000000000000000000000000000000000000",
+        );
+        let (_, report) = parse_ok(&yaml);
+        assert_eq!(
+            report.findings(),
+            &[crate::subgraph::errors::Finding::unsupported(
+                "event handlers whose topic0 is not the event signature's hash (anonymous events)",
+                "data source \"Token\" → eventHandlers → \"handleTransfer\" → topic0",
+            )]
         );
     }
 }

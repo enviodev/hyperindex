@@ -142,6 +142,17 @@ fn is_list(wrappers: &[Wrapper]) -> bool {
     wrappers.contains(&Wrapper::List)
 }
 
+fn non_null_elements(wrappers: &[Wrapper]) -> Vec<Wrapper> {
+    let mut out = Vec::with_capacity(wrappers.len() + 1);
+    for (index, wrapper) in wrappers.iter().enumerate() {
+        out.push(*wrapper);
+        if *wrapper == Wrapper::List && wrappers.get(index + 1) != Some(&Wrapper::NonNull) {
+            out.push(Wrapper::NonNull);
+        }
+    }
+    out
+}
+
 /// A list graph-node stores and envio's store can't, as the feature to report.
 fn unstorable_list(base: &str, wrappers: &[Wrapper]) -> Option<&'static str> {
     let nullable_element = wrappers.iter().enumerate().any(|(index, wrapper)| {
@@ -156,6 +167,109 @@ fn unstorable_list(base: &str, wrappers: &[Wrapper]) -> Option<&'static str> {
     }
 }
 
+/// The envio scalar an id of this subgraph type is stored as.
+fn id_scalar(base: &str) -> &'static str {
+    match map_scalar(base) {
+        Some(scalar @ ("Int" | "BigInt")) => scalar,
+        _ => "String",
+    }
+}
+
+/// What the schema's interfaces resolve to, collected before any field is
+/// rendered.
+///
+/// graph-node stores a field typed as an interface as the referenced entity's
+/// id, and finds the entity by looking that id up in every implementor. With
+/// one implementor that is a plain relation to it. With several there is no one
+/// table to relate to, so the column holds the id alone — under the `_id` name
+/// a relation's column gets, which is where graph-node consumers look for it.
+#[derive(Default)]
+struct Interfaces {
+    /// The only entity implementing each interface that has exactly one.
+    sole_implementor: BTreeMap<String, String>,
+    /// The id type of each interface with several (or no) implementors.
+    shared_id_type: BTreeMap<String, String>,
+    /// Per type, the stored fields typed as one of those shared interfaces.
+    /// A `@derivedFrom` naming one has to name its id column instead.
+    id_only_fields: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl Interfaces {
+    fn collect(document: &Document<'_, String>) -> Self {
+        let mut implementors: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut id_types: BTreeMap<String, String> = BTreeMap::new();
+        let mut types: Vec<(&str, &[graphql_parser::schema::Field<'_, String>])> = Vec::new();
+        for definition in &document.definitions {
+            match definition {
+                Definition::TypeDefinition(TypeDefinition::Interface(interface)) => {
+                    implementors.entry(interface.name.clone()).or_default();
+                    let id_type = interface
+                        .fields
+                        .iter()
+                        .find(|field| field.name == "id")
+                        .map(|field| unwrap_type(&field.field_type).0)
+                        .unwrap_or_else(|| "ID".to_string());
+                    id_types.insert(interface.name.clone(), id_type);
+                    types.push((&interface.name, &interface.fields));
+                }
+                Definition::TypeDefinition(TypeDefinition::Object(object)) => {
+                    for interface in &object.implements_interfaces {
+                        implementors
+                            .entry(interface.clone())
+                            .or_default()
+                            .push(object.name.clone());
+                    }
+                    types.push((&object.name, &object.fields));
+                }
+                _ => {}
+            }
+        }
+
+        let mut interfaces = Interfaces::default();
+        for (interface, entities) in implementors {
+            match entities.as_slice() {
+                [only] => {
+                    interfaces.sole_implementor.insert(interface, only.clone());
+                }
+                _ => {
+                    let id_type = id_types.remove(&interface).unwrap_or_else(|| "ID".into());
+                    interfaces.shared_id_type.insert(interface, id_type);
+                }
+            }
+        }
+        for (owner, fields) in types {
+            for field in fields {
+                let (base, wrappers) = unwrap_type(&field.field_type);
+                let derived = field
+                    .directives
+                    .iter()
+                    .any(|directive| directive.name == "derivedFrom");
+                if !derived && !is_list(&wrappers) && interfaces.shared_id_type.contains_key(&base)
+                {
+                    interfaces
+                        .id_only_fields
+                        .entry(owner.to_string())
+                        .or_default()
+                        .insert(field.name.clone());
+                }
+            }
+        }
+        interfaces
+    }
+
+    /// The type a field names, with a single-implementor interface replaced by
+    /// its implementor.
+    fn resolve(&self, base: String) -> String {
+        self.sole_implementor.get(&base).cloned().unwrap_or(base)
+    }
+
+    fn is_id_only(&self, owner: &str, field: &str) -> bool {
+        self.id_only_fields
+            .get(owner)
+            .is_some_and(|fields| fields.contains(field))
+    }
+}
+
 /// Field lines for one type, with the subgraph scalars mapped to what envio
 /// stores and the conversions the shim needs recorded against `owner`.
 fn render_fields(
@@ -163,6 +277,7 @@ fn render_fields(
     source: &[graphql_parser::schema::Field<'_, String>],
     entity_names: &BTreeSet<String>,
     enum_names: &BTreeSet<String>,
+    interfaces: &Interfaces,
     translation: &mut SchemaTranslation,
     report: &mut Report,
 ) -> Vec<String> {
@@ -201,6 +316,7 @@ fn render_fields(
         }
 
         let (base, wrappers) = unwrap_type(&field.field_type);
+        let base = interfaces.resolve(base);
 
         translation
             .entity_field_types
@@ -222,22 +338,56 @@ fn render_fields(
             );
 
         if let Some(derived_field) = derived_from {
+            let column = if interfaces.is_id_only(&base, &derived_field) {
+                format!("{derived_field}_id")
+            } else {
+                derived_field
+            };
             // Rendered as a list whatever the subgraph wrote. The Graph accepts
             // the one-to-one `Registration @derivedFrom(...)` and answers it
             // with the same lookup; envio only spells a derived field as a
             // list, and `graph codegen` reads one back as an array either way.
             fields.push(format!(
                 "  {}: [{}!]! @derivedFrom(field: \"{}\")",
-                field.name, base, derived_field
+                field.name, base, column
             ));
             continue;
         }
+
+        if interfaces.is_id_only(owner, &field.name) {
+            translation
+                .entity_ref_fields
+                .entry(owner.to_string())
+                .or_default()
+                .push(field.name.clone());
+            let id_type = interfaces
+                .shared_id_type
+                .get(&base)
+                .map(String::as_str)
+                .unwrap_or("ID");
+            fields.push(format!(
+                "  {}_id: {}{RELATION_INDEX}",
+                field.name,
+                render_type(id_scalar(id_type), &wrappers)
+            ));
+            continue;
+        }
+
+        // The original Uniswap v2 schema, and most of its forks, declare
+        // `mints: [Mint]!`. A list of entities holds their ids, which a mapping
+        // never leaves null, so its elements are stored as the ids they are.
+        let wrappers = if entity_names.contains(&base) {
+            non_null_elements(&wrappers)
+        } else {
+            wrappers
+        };
 
         if let Some(shape) = unstorable_list(&base, &wrappers) {
             report.unsupported(shape, location.clone());
             continue;
         }
 
+        let mut indexed = false;
         let rendered_base = if let Some(scalar) = map_scalar(&base) {
             if field.name == "id" {
                 if base == "Bytes" {
@@ -276,6 +426,7 @@ fn render_fields(
                     .entry(owner.to_string())
                     .or_default()
                     .push(field.name.clone());
+                indexed = true;
                 base.clone()
             }
         } else {
@@ -284,13 +435,21 @@ fn render_fields(
         };
 
         fields.push(format!(
-            "  {}: {}",
+            "  {}: {}{}",
             field.name,
-            render_type(&rendered_base, &wrappers)
+            render_type(&rendered_base, &wrappers),
+            if indexed { RELATION_INDEX } else { "" }
         ));
     }
     fields
 }
+
+/// graph-node indexes every column (relational/ddl.rs, `add_attribute_indexes`).
+/// A relation's is the one a Graph query can't do without: a nested selection,
+/// a `where` on it and every `@derivedFrom` lookup join on it, and without an
+/// index each is a scan of the whole table. The rest stay unindexed, as every
+/// index slows the backfill's writes.
+const RELATION_INDEX: &str = " @index";
 
 fn inherit_conversions(translation: &mut SchemaTranslation, entity: &str, interface: &str) {
     if translation.bytes_id_entities.contains(interface) {
@@ -340,6 +499,7 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
     };
 
     let mut translation = SchemaTranslation::default();
+    let interfaces = Interfaces::collect(&document);
 
     // Object types are also the set of valid field target types, so collect
     // them before emitting anything.
@@ -376,6 +536,7 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                     &interface.fields,
                     &entity_names,
                     &enum_names,
+                    &interfaces,
                     &mut translation,
                     report,
                 );
@@ -452,6 +613,7 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                     &object.fields,
                     &entity_names,
                     &enum_names,
+                    &interfaces,
                     &mut translation,
                     report,
                 );
@@ -625,11 +787,11 @@ type Transfer @entity {
                  }\n\n\
                  type Registration {\n  \
                    id: ID!\n  \
-                   domain: Domain!\n\
+                   domain: Domain! @index\n\
                  }\n\n\
                  type Transfer {\n  \
                    id: ID!\n  \
-                   domain: Domain!\n\
+                   domain: Domain! @index\n\
                  }",
                 // The reverse field is what `store.loadRelated` needs and the
                 // manifest never states; only the schema carries it.
@@ -666,6 +828,12 @@ type Transfer implements DomainEvent @entity {
   txHash: Bytes!
   owner: Bytes!
 }
+
+type Renewal implements DomainEvent @entity {
+  id: ID!
+  domain: Domain!
+  txHash: Bytes!
+}
 "#,
         );
         assert!(report.is_empty(), "{report}");
@@ -673,7 +841,7 @@ type Transfer implements DomainEvent @entity {
             translation.text.as_str(),
             "interface DomainEvent {\n  \
                id: ID!\n  \
-               domain: Domain!\n  \
+               domain: Domain! @index\n  \
                txHash: Bytes!\n\
              }\n\n\
              type Domain {\n  \
@@ -682,10 +850,190 @@ type Transfer implements DomainEvent @entity {
              }\n\n\
              type Transfer implements DomainEvent {\n  \
                id: ID!\n  \
-               domain: Domain!\n  \
+               domain: Domain! @index\n  \
                txHash: Bytes!\n  \
                owner: Bytes!\n\
+             }\n\n\
+             type Renewal implements DomainEvent {\n  \
+               id: ID!\n  \
+               domain: Domain! @index\n  \
+               txHash: Bytes!\n\
              }"
+        );
+    }
+
+    // With one implementor, a derived field over the interface is a derived
+    // field over that entity, which envio can answer.
+    #[test]
+    fn derives_a_single_implementor_interface_from_its_implementor() {
+        let (translation, report) = translate_ok(
+            r#"
+interface DomainEvent {
+  id: ID!
+  domain: Domain!
+}
+
+type Domain @entity {
+  id: ID!
+  events: [DomainEvent!]! @derivedFrom(field: "domain")
+}
+
+type Transfer implements DomainEvent @entity {
+  id: ID!
+  domain: Domain!
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            translation.text.as_str(),
+            "interface DomainEvent {\n  \
+               id: ID!\n  \
+               domain: Domain! @index\n\
+             }\n\n\
+             type Domain {\n  \
+               id: ID!\n  \
+               events: [Transfer!]! @derivedFrom(field: \"domain\")\n\
+             }\n\n\
+             type Transfer implements DomainEvent {\n  \
+               id: ID!\n  \
+               domain: Domain! @index\n\
+             }"
+        );
+    }
+
+    // PancakeSwap and most Uniswap v2 forks: `Transaction.mints: [Mint]!`.
+    #[test]
+    fn stores_an_entity_list_with_nullable_elements_as_ids() {
+        let (translation, report) = translate_ok(
+            r#"
+type Transaction @entity {
+  id: ID!
+  mints: [Mint]!
+  burns: [Burn]
+}
+
+type Mint @entity {
+  id: ID!
+}
+
+type Burn @entity {
+  id: ID!
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            (
+                translation.text.as_str(),
+                translation.entity_list_fields.get("Transaction").cloned(),
+            ),
+            (
+                "type Transaction {\n  \
+                   id: ID!\n  \
+                   mints: [String!]!\n  \
+                   burns: [String!]\n\
+                 }\n\n\
+                 type Mint {\n  id: ID!\n}\n\n\
+                 type Burn {\n  id: ID!\n}",
+                Some(vec!["mints".to_string(), "burns".to_string()]),
+            )
+        );
+    }
+
+    // CryptoPunks: `NFT` has one implementor, so `Ask.nft: NFT` is a relation to
+    // `Punk`. `Event` has nine, so `Ask.created: Event` holds an event's id, as
+    // graph-node stores it.
+    #[test]
+    fn stores_interface_typed_fields() {
+        let (translation, report) = translate_ok(
+            r#"
+interface NFT {
+  id: ID!
+  owner: Account!
+}
+
+interface Event {
+  id: ID!
+  nft: NFT
+}
+
+type Account @entity {
+  id: Bytes!
+  nftsOwned: [NFT!]! @derivedFrom(field: "owner")
+}
+
+type Punk implements NFT @entity {
+  id: ID!
+  owner: Account!
+  events: [Event!]! @derivedFrom(field: "nft")
+}
+
+type Ask @entity {
+  id: ID!
+  nft: NFT
+  created: Event!
+  history: [Event!]!
+}
+
+type Sale implements Event @entity {
+  id: ID!
+  nft: NFT
+  asks: [Ask!]! @derivedFrom(field: "created")
+}
+
+type Transfer implements Event @entity {
+  id: ID!
+  nft: NFT
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        let ask = translation.entity_field_types.get("Ask").unwrap();
+        assert_eq!(
+            (
+                translation.text.as_str(),
+                translation.entity_ref_fields.get("Ask").cloned(),
+                ask.get("nft").and_then(|field| field.target.clone()),
+                ask.get("created").and_then(|field| field.target.clone()),
+            ),
+            (
+                "interface NFT {\n  \
+                   id: ID!\n  \
+                   owner: Account! @index\n\
+                 }\n\n\
+                 interface Event {\n  \
+                   id: ID!\n  \
+                   nft: Punk @index\n\
+                 }\n\n\
+                 type Account {\n  \
+                   id: String!\n  \
+                   nftsOwned: [Punk!]! @derivedFrom(field: \"owner\")\n\
+                 }\n\n\
+                 type Punk implements NFT {\n  \
+                   id: ID!\n  \
+                   owner: Account! @index\n  \
+                   events: [Event!]! @derivedFrom(field: \"nft\")\n\
+                 }\n\n\
+                 type Ask {\n  \
+                   id: ID!\n  \
+                   nft: Punk @index\n  \
+                   created_id: String! @index\n  \
+                   history: [String!]!\n\
+                 }\n\n\
+                 type Sale implements Event {\n  \
+                   id: ID!\n  \
+                   nft: Punk @index\n  \
+                   asks: [Ask!]! @derivedFrom(field: \"created_id\")\n\
+                 }\n\n\
+                 type Transfer implements Event {\n  \
+                   id: ID!\n  \
+                   nft: Punk @index\n\
+                 }",
+                Some(vec!["nft".to_string(), "created".to_string()]),
+                Some("Punk".to_string()),
+                Some("Event".to_string()),
+            )
         );
     }
 

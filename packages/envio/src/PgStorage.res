@@ -1753,6 +1753,10 @@ let make = (
   // indexes on its own chains' partitions, never on the parent table, so no
   // build reaches into the rows a sibling process drives.
   ~isolated=false,
+  // Whether the schema's read indexes wait for the backfill to finish. A
+  // subgraph's Graph endpoint serves while it syncs, as graph-node's does, and
+  // graph-node builds every index with the table.
+  ~deferSchemaIndexes=true,
   ~onInitialize=?,
 ): Persistence.storage => {
   // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
@@ -1978,7 +1982,7 @@ let make = (
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
       ~isHasuraEnabled,
-      ~deferSchemaIndexes=true,
+      ~deferSchemaIndexes,
       ~chainIdMode,
     )
     // Execute all queries within a single transaction for integrity.
@@ -2769,6 +2773,7 @@ let makeStorageFromEnv = (
     ~chainIdMode=config.chainIdMode,
     ~ecosystem=config.ecosystem.name,
     ~isolated=config.isolated,
+    ~deferSchemaIndexes=config.subgraph->Option.isNone,
     ~sink=?{
       // Internally ClickHouse storage is implemented as a sync of the
       // Postgres storage. Required env vars are validated here only when

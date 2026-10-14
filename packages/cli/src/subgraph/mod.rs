@@ -12,6 +12,7 @@ pub mod schema;
 pub mod usage;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
 use serde::Serialize;
@@ -96,6 +97,327 @@ pub struct SubgraphRuntimeConfig {
     /// effects use them as a viem fallback transport; empty means the mapping's
     /// first contract call raises the missing-RPC error.
     pub rpc_urls: Vec<String>,
+    /// The manifest's file name within `root`, which `graph codegen` is run on.
+    pub manifest_file: String,
+}
+
+pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
+
+/// The directory a manifest's project runs from, and the manifest with its
+/// paths relative to it.
+///
+/// graph-cli reads a manifest's paths relative to the manifest itself, and a
+/// per-network manifest in a subfolder names its code `../src/…` (WOOFi's
+/// `subgraphs/polygon.yaml`). The runtime loads, scans and resolves the
+/// mappings and `generated/` from a single root, so the root is the closest
+/// directory holding the manifest, its schema and every mapping, and each path
+/// is rebased onto it. ABIs are read up front and don't widen the root (liquity
+/// points at `../contracts/out`).
+pub fn rebase_manifest(manifest_dir: &std::path::Path, yaml: &str) -> Result<(PathBuf, String)> {
+    use crate::project_paths::path_utils::normalize_path;
+    use serde_yaml::Value;
+
+    let unchanged = || Ok((manifest_dir.to_path_buf(), yaml.to_string()));
+    let Ok(mut manifest) = serde_yaml::from_str::<Value>(yaml) else {
+        return unchanged();
+    };
+    let absolute_dir = normalize_path(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(manifest_dir),
+    );
+    let resolve = |path: &str| normalize_path(absolute_dir.join(path));
+
+    let sources = |manifest: &Value| -> Vec<Value> {
+        ["dataSources", "templates"]
+            .iter()
+            .filter_map(|key| manifest.get(*key).and_then(Value::as_sequence))
+            .flatten()
+            .cloned()
+            .collect()
+    };
+    let mut run_files: Vec<PathBuf> = Vec::new();
+    if let Some(schema) = manifest
+        .get("schema")
+        .and_then(|schema| schema.get("file"))
+        .and_then(Value::as_str)
+    {
+        run_files.push(resolve(schema));
+    }
+    for source in sources(&manifest) {
+        if let Some(file) = source
+            .get("mapping")
+            .and_then(|mapping| mapping.get("file"))
+            .and_then(Value::as_str)
+        {
+            run_files.push(resolve(file));
+        }
+    }
+
+    let mut root = absolute_dir.clone();
+    for file in &run_files {
+        let dir = file.parent().unwrap_or(file);
+        while !dir.starts_with(&root) {
+            match root.parent() {
+                Some(parent) => root = parent.to_path_buf(),
+                None => break,
+            }
+        }
+    }
+    if root == absolute_dir {
+        return unchanged();
+    }
+
+    let rebase = |value: &mut Value| {
+        if let Some(path) = value.as_str() {
+            let relative = pathdiff::diff_paths(resolve(path), &root).unwrap_or_default();
+            let relative = relative.display().to_string();
+            *value = Value::String(if relative.starts_with("..") {
+                relative
+            } else {
+                format!("./{relative}")
+            });
+        }
+    };
+    if let Some(file) = manifest
+        .get_mut("schema")
+        .and_then(|schema| schema.get_mut("file"))
+    {
+        rebase(file);
+    }
+    for key in ["dataSources", "templates"] {
+        let Some(list) = manifest.get_mut(key).and_then(Value::as_sequence_mut) else {
+            continue;
+        };
+        for source in list {
+            let Some(mapping) = source.get_mut("mapping") else {
+                continue;
+            };
+            if let Some(file) = mapping.get_mut("file") {
+                rebase(file);
+            }
+            if let Some(abis) = mapping.get_mut("abis").and_then(Value::as_sequence_mut) {
+                for abi in abis {
+                    if let Some(file) = abi.get_mut("file") {
+                        rebase(file);
+                    }
+                }
+            }
+        }
+    }
+    Ok((root, serde_yaml::to_string(&manifest)?))
+}
+
+/// `graph build --network <name>`: which entry of `networks.json` the manifest
+/// is built for.
+pub const NETWORK_ENV_VAR: &str = "ENVIO_SUBGRAPH_NETWORK";
+
+/// The manifest `graph build --network <network>` writes from `networks.json`
+/// (graph-cli `updateSubgraphNetwork`): every data source moves to the network
+/// and takes its `source` fields from its entry there, and every template moves
+/// to the network.
+pub fn apply_network(manifest_yaml: &str, networks_json: &str, network: &str) -> Result<String> {
+    use serde_yaml::Value;
+    let networks: serde_json::Value = serde_json::from_str(networks_json)
+        .map_err(|err| anyhow!("networks.json is not valid JSON: {err}"))?;
+    let Some(entries) = networks.get(network).and_then(|value| value.as_object()) else {
+        return Err(anyhow!(
+            "{NETWORK_ENV_VAR} names the network '{network}', which networks.json has no entry \
+             for. It has: {}.",
+            networks
+                .as_object()
+                .map(|all| all.keys().cloned().collect::<Vec<_>>().join(", "))
+                .unwrap_or_default()
+        ));
+    };
+    let mut manifest: Value = serde_yaml::from_str(manifest_yaml)
+        .map_err(|err| anyhow!("Failed to read the subgraph manifest: {err}"))?;
+    let network_value = Value::String(network.to_string());
+
+    if let Some(sources) = manifest
+        .get_mut("dataSources")
+        .and_then(Value::as_sequence_mut)
+    {
+        for source in sources {
+            let name = source
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let entry = entries
+                .get(&name)
+                .and_then(|entry| entry.as_object())
+                .ok_or_else(|| {
+                    anyhow!(
+                    "The data source '{name}' has no entry under '{network}' in networks.json, \
+                     which `graph build --network {network}` requires too."
+                )
+                })?;
+            let changed = source.get("network") != Some(&network_value)
+                || entry.iter().any(|(key, value)| {
+                    source.get("source").and_then(|fields| fields.get(key))
+                        != serde_yaml::to_value(value).ok().as_ref()
+                });
+            if !changed {
+                continue;
+            }
+            let mut fields = serde_yaml::Mapping::new();
+            if let Some(abi) = source.get("source").and_then(|fields| fields.get("abi")) {
+                fields.insert(Value::String("abi".to_string()), abi.clone());
+            }
+            for (key, value) in entry {
+                fields.insert(Value::String(key.clone()), serde_yaml::to_value(value)?);
+            }
+            if let Some(map) = source.as_mapping_mut() {
+                map.insert(Value::String("network".to_string()), network_value.clone());
+                map.insert(Value::String("source".to_string()), Value::Mapping(fields));
+            }
+        }
+    }
+    if let Some(templates) = manifest
+        .get_mut("templates")
+        .and_then(Value::as_sequence_mut)
+    {
+        for template in templates.iter_mut().filter_map(Value::as_mapping_mut) {
+            template.insert(Value::String("network".to_string()), network_value.clone());
+        }
+    }
+    Ok(serde_yaml::to_string(&manifest)?)
+}
+
+/// The ABI files the manifest's data sources and templates decode with that
+/// aren't among `files`, as one message naming each, or `None`. envio's own
+/// check names only a "Virtual config file", once per run.
+pub fn missing_abi_files(
+    manifest_yaml: &str,
+    files: &HashMap<String, String>,
+    root: &std::path::Path,
+) -> Option<String> {
+    let mut discard = Report::new();
+    let manifest = manifest::parse(manifest_yaml, &mut discard)?;
+    let mut lines = Vec::new();
+    for source in manifest.all_sources() {
+        let Some(path) = source.abi.as_ref().and_then(|abi| source.abis.get(abi)) else {
+            continue;
+        };
+        if files.contains_key(path) || files.contains_key(path.trim_start_matches("./")) {
+            continue;
+        }
+        let line = format!("  {path}, the ABI of \"{}\"", source.name);
+        if !lines.contains(&line) {
+            lines.push(line);
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let mut message = format!(
+        "These ABI files the manifest names don't exist under {}:\n{}\n\
+         The manifest's paths are resolved against its own directory, as graph-cli \
+         resolves them. If a build step writes them (forge build, a git submodule, a copy \
+         script), run it first.",
+        root.canonicalize()
+            .unwrap_or_else(|_| root.to_path_buf())
+            .display(),
+        lines.join("\n")
+    );
+    // A manifest written on macOS can name `WrappedPunks.json` for a file
+    // committed as `wrappedpunks.json` (CryptoPunks); only a case-sensitive
+    // filesystem tells them apart.
+    for source in manifest.all_sources() {
+        let Some(path) = source.abi.as_ref().and_then(|abi| source.abis.get(abi)) else {
+            continue;
+        };
+        let wanted = root.join(path);
+        let (Some(dir), Some(name)) = (wanted.parent(), wanted.file_name()) else {
+            continue;
+        };
+        let name = name.to_string_lossy().to_lowercase();
+        let found = std::fs::read_dir(dir).ok().and_then(|entries| {
+            entries
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name().to_string_lossy().to_string())
+                .find(|entry| entry.to_lowercase() == name && !wanted.ends_with(entry))
+        });
+        if let Some(found) = found {
+            let hint = format!("\n{path} differs only in case from {found}, which does exist.");
+            if !message.contains(&hint) {
+                message.push_str(&hint);
+            }
+        }
+    }
+    Some(message)
+}
+
+/// Whether a YAML document is a subgraph manifest rather than an envio config.
+pub fn is_manifest(yaml: &str) -> bool {
+    serde_yaml::from_str::<serde_yaml::Value>(yaml)
+        .ok()
+        .and_then(|value| {
+            let map = value.as_mapping()?;
+            Some(map.contains_key("specVersion") && map.contains_key("dataSources"))
+        })
+        .unwrap_or(false)
+}
+
+/// Subgraph manifests under `root`, project-relative: build scripts write them
+/// under other names (Uniswap's `v3-subgraph.yaml`), and monorepos keep one per
+/// package (`subgraphs/<name>/subgraph.yaml`).
+pub fn find_manifests(root: &std::path::Path) -> Vec<String> {
+    const MAX_DEPTH: usize = 3;
+    const SKIPPED: &[&str] = &["node_modules", "build", "generated", "target"];
+    let mut found = Vec::new();
+    let mut pending = vec![(root.to_path_buf(), 0)];
+    while let Some((dir, depth)) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut entries: Vec<_> = entries.filter_map(|entry| entry.ok()).collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir() {
+                if depth < MAX_DEPTH && !name.starts_with('.') && !SKIPPED.contains(&name.as_str())
+                {
+                    pending.push((path, depth + 1));
+                }
+                continue;
+            }
+            let is_yaml = name.ends_with(".yaml") || name.ends_with(".yml");
+            // A mustache template (`network: {{ network }}`) still parses, but
+            // it is the input to the build that writes the manifest.
+            let is_manifest_file = |text: String| !text.contains("{{") && is_manifest(&text);
+            if is_yaml && std::fs::read_to_string(&path).is_ok_and(is_manifest_file) {
+                if let Ok(relative) = path.strip_prefix(root) {
+                    found.push(relative.display().to_string());
+                }
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// What to add to "config.yaml not found" so a subgraph project learns how to
+/// run: name the manifests there are, or say where envio looks for one.
+pub fn manifest_hint(manifests: &[String]) -> String {
+    match manifests {
+        [] => format!(
+            "\nFor a subgraph, run envio in the directory holding {DEFAULT_MANIFEST}, or point \
+             --config (or ENVIO_CONFIG) at the manifest:\n  envio start --config \
+             path/to/subgraph.yaml"
+        ),
+        [only] => format!(
+            "\nFound the subgraph manifest {only}. To index it, point --config (or ENVIO_CONFIG) \
+             at it:\n  envio start --config {only}"
+        ),
+        [first, ..] => format!(
+            "\nFound these subgraph manifests: {}. To index one, point --config (or \
+             ENVIO_CONFIG) at it:\n  envio start --config {first}",
+            manifests.join(", ")
+        ),
+    }
 }
 
 #[derive(Debug)]
@@ -161,6 +483,54 @@ pub fn graph_codegen_failed_message() -> String {
      rerun. If `graph codegen` succeeds on its own but fails through envio,\n\
      please open an issue: https://github.com/enviodev/hyperindex/issues"
         .to_string()
+}
+
+/// The envio contract name for each data source and template name. graph-node
+/// takes any string (Giveth's `WETH/GIV LP`, Sablier's `SablierV1.0.0`); envio
+/// generates code from it, so anything but an identifier is spelled with `_`
+/// instead, suffixed if that collides. A data source and a template sharing a
+/// name share it here too, which is what folds them together.
+fn contract_names(manifest: &Manifest) -> HashMap<String, String> {
+    let is_identifier = |name: &str| {
+        name.chars()
+            .next()
+            .is_some_and(|first| !first.is_ascii_digit())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    let mut taken: HashSet<String> = manifest
+        .all_sources()
+        .filter(|source| is_identifier(&source.name))
+        .map(|source| source.name.clone())
+        .collect();
+    let mut names = HashMap::new();
+    for source in manifest.all_sources() {
+        if names.contains_key(&source.name) {
+            continue;
+        }
+        let name = if is_identifier(&source.name) {
+            source.name.clone()
+        } else {
+            let mut base: String = source
+                .name
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            if !is_identifier(&base) {
+                base = format!("_{base}");
+            }
+            let name = (1..)
+                .map(|ordinal| match ordinal {
+                    1 => base.clone(),
+                    _ => format!("{base}_{ordinal}"),
+                })
+                .find(|name| !taken.contains(name))
+                .unwrap_or(base);
+            taken.insert(name.clone());
+            name
+        };
+        names.insert(source.name.clone(), name);
+    }
+    names
 }
 
 /// The name envio routes an event by: its own unless one was minted.
@@ -313,9 +683,12 @@ pub fn translate(
     };
     let schema = schema::translate(schema_text, &mut report);
 
-    let rpc = match rpc_env {
-        Some(raw) => Some(parse_rpc_env(raw)?),
-        None => None,
+    // Held back until the manifest and schema have been checked too, so a
+    // mistyped endpoint doesn't hide what else this subgraph needs changed.
+    let (rpc, rpc_error) = match rpc_env.map(parse_rpc_env) {
+        Some(Ok(rpc)) => (Some(rpc), None),
+        Some(Err(err)) => (None, Some(err)),
+        None => (None, None),
     };
     let rpc_urls = match &rpc {
         Some(RpcSelection::Url(url)) => vec![url.clone()],
@@ -328,9 +701,11 @@ pub fn translate(
     let mut chains: BTreeMap<u64, Chain> = BTreeMap::new();
 
     let mut manifest = manifest;
+    let contract_names = contract_names(&manifest);
+    let contract_name = |source: &DataSource| contract_names[&source.name].clone();
     for source in manifest.data_sources.iter_mut() {
         contracts.push(GlobalContract {
-            name: source.name.clone(),
+            name: contract_name(source),
             config: contract_config(source, files, &usage, &mut report),
         });
 
@@ -365,7 +740,7 @@ pub fn translate(
         }
         if let Some(chain_contracts) = chain.contracts.as_mut() {
             chain_contracts.push(ChainContract {
-                name: source.name.clone(),
+                name: contract_name(source),
                 address: NormalizedList::from(
                     source.address.clone().into_iter().collect::<Vec<_>>(),
                 ),
@@ -382,8 +757,14 @@ pub fn translate(
     } else {
         chains.keys().cloned().collect()
     };
+    let mut template_chains: HashSet<u64> = HashSet::new();
     for source in manifest.templates.iter_mut() {
         let config = contract_config(source, files, &usage, &mut report);
+        let ids = match source.chain_id {
+            Some(id) => vec![id],
+            None => template_chain_ids.clone(),
+        };
+        template_chains.extend(ids.iter().copied());
 
         // graph-node keeps `dataSources` and `templates` in separate namespaces,
         // so a name can appear in both — Balancer's FXPoolDeployer is a fixed
@@ -393,7 +774,7 @@ pub fn translate(
         // together and only the events are unioned.
         match contracts
             .iter_mut()
-            .find(|contract| contract.name == source.name)
+            .find(|contract| contract.name == contract_name(source))
         {
             Some(existing) => {
                 // The template's own names were minted against its handlers
@@ -436,15 +817,11 @@ pub fn translate(
                 continue;
             }
             None => contracts.push(GlobalContract {
-                name: source.name.clone(),
+                name: contract_name(source),
                 config,
             }),
         }
 
-        let ids = match source.chain_id {
-            Some(id) => vec![id],
-            None => template_chain_ids.clone(),
-        };
         for chain_id in ids {
             // A template's network has to be one a data source already put on
             // the config: only `dataSources` open a chain. Naming any other
@@ -464,7 +841,7 @@ pub fn translate(
             };
             if let Some(chain_contracts) = chain.contracts.as_mut() {
                 chain_contracts.push(ChainContract {
-                    name: source.name.clone(),
+                    name: contract_name(source),
                     address: NormalizedList::from(Vec::<String>::new()),
                     start_block: None,
                     config: None,
@@ -473,7 +850,38 @@ pub fn translate(
         }
     }
 
-    report.into_result()?;
+    // graph-node stops at its data sources' last endBlock only when nothing
+    // else can produce a trigger, and an instance of a template has no end of
+    // its own (core/src/subgraph/instance_manager.rs, `max_end_block`).
+    for chain_id in &template_chains {
+        if let Some(chain) = chains.get_mut(chain_id) {
+            chain.end_block = None;
+        }
+    }
+    // envio ends whole chains, not single contracts, so a data source stops at
+    // its endBlock only if its chain stops there too. Past it, graph-node runs
+    // none of its handlers; envio would keep running them all.
+    for source in &manifest.data_sources {
+        let (Some(end_block), Some(chain_id)) = (source.end_block, source.chain_id) else {
+            continue;
+        };
+        if chains.get(&chain_id).and_then(|chain| chain.end_block) != Some(end_block) {
+            report.unsupported(
+                "a data source endBlock while other data sources or templates on its network \
+                 keep indexing",
+                format!(
+                    "subgraph.yaml → dataSources → {} → source.endBlock ({end_block})",
+                    source.name
+                ),
+            );
+        }
+    }
+
+    match (rpc_error, report.into_result()) {
+        (Some(rpc_error), Err(findings)) => return Err(anyhow!("{rpc_error}\n\n{findings}")),
+        (Some(rpc_error), Ok(())) => return Err(rpc_error),
+        (None, result) => result?,
+    }
 
     if chains.is_empty() {
         return Err(anyhow!(
@@ -529,7 +937,12 @@ pub fn translate(
     let entity_accessors = schema.entity_fields.keys().map(accessor).collect();
     let contract_accessors = manifest
         .all_sources()
-        .map(|source| accessor(&source.name))
+        .map(|source| {
+            (
+                source.name.clone(),
+                contract_names[&source.name].capitalize(),
+            )
+        })
         .collect();
 
     Ok(Translation {
@@ -541,6 +954,7 @@ pub fn translate(
             contract_accessors,
             root: root.to_string(),
             rpc_urls,
+            manifest_file: DEFAULT_MANIFEST.to_string(),
         },
         human_config,
     })
@@ -762,8 +1176,9 @@ type Gravatar @entity {
 
     #[test]
     fn carries_a_data_source_end_block_onto_its_chain() {
+        let without_templates = MANIFEST.split("templates:").next().unwrap();
         let single = translate(
-            MANIFEST,
+            without_templates,
             SCHEMA,
             "gravatar",
             None,
@@ -773,7 +1188,7 @@ type Gravatar @entity {
         )
         .unwrap();
 
-        let bounded_source = MANIFEST.replace(
+        let bounded_source = without_templates.replace(
             "      startBlock: 6175244",
             "      startBlock: 6175244\n      endBlock: 6180000",
         );
@@ -797,6 +1212,65 @@ type Gravatar @entity {
         );
     }
 
+    // graph-node keeps indexing a template's instances after the data source
+    // that created them ends, and stops nothing else at a data source's
+    // endBlock; envio can only end the whole chain. Uniswap v3: Factory with an
+    // endBlock, Pool template; autonolas predict-polymarket: the retired v1
+    // exchange next to open-ended sources.
+    #[test]
+    fn refuses_an_end_block_that_would_stop_more_than_its_data_source() {
+        let bounded = MANIFEST.replace(
+            "      startBlock: 6175244",
+            "      startBlock: 6175244\n      endBlock: 6180000",
+        );
+        let with_template = translate(
+            &bounded,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap_err()
+        .to_string();
+
+        let one_source = bounded.split("templates:").next().unwrap();
+        let open_ended = MANIFEST
+            .split("templates:")
+            .next()
+            .unwrap()
+            .split("dataSources:")
+            .nth(1)
+            .unwrap()
+            .replace("name: Gravity", "name: GravityV2");
+        let beside_an_open_source = translate(
+            &format!("{one_source}{open_ended}"),
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap_err()
+        .to_string();
+
+        let refusal = "doesn't support a data source endBlock while other data sources or \
+                       templates on its network keep indexing";
+        let location = "dataSources → Gravity → source.endBlock (6180000)";
+        assert_eq!(
+            (
+                with_template.contains(refusal),
+                with_template.contains(location),
+                beside_an_open_source.contains(refusal),
+                beside_an_open_source.contains(location),
+                beside_an_open_source.contains("GravityV2"),
+            ),
+            (true, true, true, true, false),
+            "{with_template}\n{beside_an_open_source}"
+        );
+    }
     #[test]
     fn selects_receipt_fields_only_where_declared() {
         let translation = translate(
@@ -1081,6 +1555,32 @@ type Gravatar @entity {
             (true, true)
         );
     }
+
+    // CryptoPunks learned of its RPC value on one run and of its schema on the
+    // next.
+    #[test]
+    fn reports_a_bad_rpc_value_with_the_other_findings() {
+        let error = translate(
+            MANIFEST,
+            "type Gravatar @entity { id: ID! bad: NotAType! }",
+            "gravatar",
+            Some("[1, 2]"),
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(
+            (
+                error.contains("Invalid ENVIO_SUBGRAPH_RPC"),
+                error.contains("doesn't know the type NotAType"),
+            ),
+            (true, true),
+            "{error}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1158,6 +1658,402 @@ dataSources:
                 json.contains("\"mappingFile\": \"./src/gravity.ts\""),
             ),
             (true, true, true, true, true, true)
+        );
+    }
+
+    const GRAVITY_ABI: &str = r#"[{"type":"event","name":"NewGravatar","anonymous":false,"inputs":[{"name":"id","type":"uint256","indexed":false}]}]"#;
+
+    const GRAVITY_MANIFEST: &str = r#"
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Gravity
+    network: mainnet
+    source:
+      address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
+      abi: Gravity
+      startBlock: 6175244
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Gravatar
+      abis:
+        - name: Gravity
+          file: ./abis/Gravity.json
+      eventHandlers:
+        - event: NewGravatar(uint256)
+          handler: handleNewGravatar
+      file: ./src/gravity.ts
+"#;
+
+    fn parse_in_memory(schema: &str) -> anyhow::Result<SystemConfig> {
+        let files = std::collections::HashMap::from([(
+            "./abis/Gravity.json".to_string(),
+            GRAVITY_ABI.to_string(),
+        )]);
+        SystemConfig::parse_subgraph(
+            GRAVITY_MANIFEST,
+            schema,
+            "gravatar",
+            &std::collections::HashMap::new(),
+            &files,
+            ".",
+            &[],
+        )
+    }
+
+    // CryptoPunks: `Ask.nft: NFT` (one implementor) and `Ask.created: Event`
+    // (nine) were refused one after the other by envio's own schema checks.
+    #[test]
+    fn indexes_fields_typed_as_an_interface() {
+        let config = parse_in_memory(
+            r#"
+interface NFT {
+  id: ID!
+}
+interface Event {
+  id: ID!
+  nft: NFT
+}
+type Punk implements NFT @entity {
+  id: ID!
+  events: [Event!]! @derivedFrom(field: "nft")
+}
+type Ask @entity {
+  id: ID!
+  nft: NFT
+  created: Event
+}
+type Sale implements Event @entity {
+  id: ID!
+  nft: NFT
+  asks: [Ask!]! @derivedFrom(field: "created")
+}
+type Transfer implements Event @entity {
+  id: ID!
+  nft: NFT
+}
+"#,
+        )
+        .unwrap();
+        let ask = config.schema.entities.get("Ask").unwrap();
+        let mut columns: Vec<String> = ask
+            .get_fields()
+            .iter()
+            .filter_map(|field| {
+                field
+                    .get_postgres_field(&config.schema, ask)
+                    .unwrap()
+                    .map(|pg| pg.field_name.clone())
+            })
+            .collect();
+        columns.sort();
+        assert_eq!(columns, vec!["created_id", "id", "nft"]);
+    }
+
+    // Giveth names a data source `WETH/GIV LP`, Sablier `SablierV1.0.0`: any
+    // string to graph-node, an invalid contract name to envio.
+    #[test]
+    fn names_a_contract_after_a_data_source_whatever_it_is_called() {
+        let manifest = format!(
+            "{GRAVITY_MANIFEST}{}",
+            GRAVITY_MANIFEST
+                .split("dataSources:")
+                .nth(1)
+                .unwrap()
+                .replacen("    name: Gravity\n", "    name: WETH_GIV_LP\n", 1)
+        )
+        .replacen("    name: Gravity\n", "    name: WETH/GIV LP\n", 1);
+        let files = std::collections::HashMap::from([(
+            "./abis/Gravity.json".to_string(),
+            GRAVITY_ABI.to_string(),
+        )]);
+        let config = SystemConfig::parse_subgraph(
+            &manifest,
+            "type Gravatar @entity {\n  id: ID!\n}\n",
+            "gravatar",
+            &std::collections::HashMap::new(),
+            &files,
+            ".",
+            &[],
+        )
+        .unwrap();
+        let mut contracts: Vec<String> = config.contracts.keys().cloned().collect();
+        contracts.sort();
+
+        assert_eq!(
+            (contracts, config.subgraph.unwrap().contract_accessors),
+            (
+                vec!["WETH_GIV_LP".to_string(), "WETH_GIV_LP_2".to_string()],
+                std::collections::BTreeMap::from([
+                    ("WETH/GIV LP".to_string(), "WETH_GIV_LP_2".to_string()),
+                    ("WETH_GIV_LP".to_string(), "WETH_GIV_LP".to_string()),
+                ])
+            )
+        );
+    }
+
+    // ENS app queries through a Graph endpoint took 1.3-5.7 s: `Domain.parent_id`
+    // and `Registration.domain_id` lookups scanned the whole table.
+    #[test]
+    fn indexes_every_relation_column() {
+        let config = parse_in_memory(
+            r#"
+interface Event {
+  id: ID!
+}
+type Domain @entity {
+  id: ID!
+  parent: Domain
+  name: String
+  latest: Event
+  subdomains: [Domain!]! @derivedFrom(field: "parent")
+}
+type Registration @entity {
+  id: ID!
+  domain: Domain!
+  cost: BigInt
+}
+type Transfer implements Event @entity {
+  id: ID!
+}
+type Renewal implements Event @entity {
+  id: ID!
+}
+"#,
+        )
+        .unwrap();
+        let mut indexed: Vec<String> = config
+            .schema
+            .entities
+            .values()
+            .flat_map(|entity| {
+                entity
+                    .get_fields()
+                    .into_iter()
+                    .filter_map(|field| field.get_postgres_field(&config.schema, entity).unwrap())
+                    .filter(|pg| pg.is_index)
+                    .map(|pg| format!("{}.{}", entity.name, pg.field_name))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        indexed.sort();
+        assert_eq!(
+            indexed,
+            vec!["Domain.latest_id", "Domain.parent", "Registration.domain"]
+        );
+    }
+
+    /// The Gravity project laid out in `dir`, its manifest named `manifest`.
+    fn write_gravity(dir: &std::path::Path, manifest: &str) {
+        fs::create_dir_all(dir.join("abis")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("abis/Gravity.json"), GRAVITY_ABI).unwrap();
+        fs::write(
+            dir.join("src/gravity.ts"),
+            "export function handleNewGravatar() {}",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("schema.graphql"),
+            "type Gravatar @entity {\n  id: Bytes!\n  owner: Bytes!\n}\n",
+        )
+        .unwrap();
+        fs::write(dir.join(manifest), GRAVITY_MANIFEST).unwrap();
+    }
+
+    // Uniswap v3's build writes `v3-subgraph.yaml`; `--config` naming it was
+    // parsed as an envio config ("missing field `chains`").
+    #[test]
+    fn indexes_the_manifest_config_names() {
+        let dir = tempdir::TempDir::new("envio-subgraph-named").unwrap();
+        let root = dir.path();
+        write_gravity(root, "v3-subgraph.yaml");
+
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "v3-subgraph.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let subgraph = config.subgraph.unwrap();
+
+        assert_eq!(
+            (
+                subgraph.manifest_file.as_str(),
+                std::path::Path::new(&subgraph.root) == root,
+                config.contracts.contains_key("Gravity"),
+            ),
+            ("v3-subgraph.yaml", true, true)
+        );
+    }
+
+    // A monorepo keeps one subgraph per package; its paths are relative to its
+    // own manifest, as graph-cli reads them.
+    #[test]
+    fn resolves_a_manifest_against_its_own_directory() {
+        let dir = tempdir::TempDir::new("envio-subgraph-monorepo").unwrap();
+        let root = dir.path();
+        write_gravity(&root.join("subgraphs/gravity"), "subgraph.yaml");
+
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "subgraphs/gravity/subgraph.yaml")
+                .unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let subgraph = config.subgraph.unwrap();
+
+        assert_eq!(
+            (
+                std::path::Path::new(&subgraph.root) == root.join("subgraphs/gravity"),
+                config.schema.entities.contains_key("Gravatar"),
+            ),
+            (true, true)
+        );
+    }
+
+    // WOOFi keeps one manifest per chain in `subgraphs/`, naming its code
+    // `../src/…`. Rooted at `subgraphs/`, the mappings were outside the root
+    // the runtime loads them from and the usage scan never saw them.
+    #[test]
+    fn roots_a_subfolder_manifest_where_its_code_is() {
+        let dir = tempdir::TempDir::new("envio-subgraph-subfolder").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::remove_file(root.join("subgraph.yaml")).unwrap();
+        fs::create_dir_all(root.join("subgraphs")).unwrap();
+        fs::write(
+            root.join("subgraphs/polygon.yaml"),
+            GRAVITY_MANIFEST
+                .replace("./schema.graphql", "../schema.graphql")
+                .replace("./abis/", "../abis/")
+                .replace("./src/", "../src/"),
+        )
+        .unwrap();
+
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "subgraphs/polygon.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let subgraph = config.subgraph.unwrap();
+
+        assert_eq!(
+            (
+                std::path::Path::new(&subgraph.root) == root,
+                subgraph.manifest_file.as_str(),
+                subgraph.manifest.data_sources[0].mapping_file.as_str(),
+            ),
+            (true, "subgraphs/polygon.yaml", "./src/gravity.ts")
+        );
+    }
+
+    // Ekubo's manifest names no network; `graph build --network <name>` fills
+    // each data source in from networks.json.
+    #[test]
+    fn builds_the_manifest_for_the_network_networks_json_names() {
+        let dir = tempdir::TempDir::new("envio-subgraph-network").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("    network: mainnet\n", ""),
+        )
+        .unwrap();
+        fs::write(
+            root.join("networks.json"),
+            r#"{
+  "mainnet": {"Gravity": {"address": "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC", "startBlock": 6175244}},
+  "arbitrum-one": {"Gravity": {"address": "0x00000000000014aA86C5d3c41765bb24e11bd701", "startBlock": 416469410}}
+}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let unset = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+        assert!(
+            unset.ends_with(
+                "This project keeps per-network addresses in networks.json (mainnet, \
+                 arbitrum-one). Pick one, as `graph build --network` does:\n  \
+                 ENVIO_SUBGRAPH_NETWORK=mainnet"
+            ),
+            "{unset}"
+        );
+
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=arbitrum-one\n").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let chain = config.get_chains().into_iter().next().unwrap();
+        let contract = &chain.contracts[0];
+
+        assert_eq!(
+            (chain.id, chain.start_block, contract.addresses.clone(),),
+            (
+                42161,
+                crate::config_parsing::human_config::StartBlock::Number(416469410),
+                vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()],
+            )
+        );
+    }
+
+    // CryptoPunks names `./abis/WrappedPunks.json` and commits
+    // `abis/wrappedpunks.json`; envio said only `Virtual config file
+    // "./abis/WrappedPunks.json" was not provided`.
+    #[test]
+    fn names_a_missing_abi_file_and_a_case_only_match() {
+        let dir = tempdir::TempDir::new("envio-subgraph-abi").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::rename(
+            root.join("abis/Gravity.json"),
+            root.join("abis/gravity.json"),
+        )
+        .unwrap();
+
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            err,
+            format!(
+                "These ABI files the manifest names don't exist under {}:\n  \
+                 ./abis/Gravity.json, the ABI of \"Gravity\"\n\
+                 The manifest's paths are resolved against its own directory, as graph-cli \
+                 resolves them. If a build step writes them (forge build, a git submodule, a \
+                 copy script), run it first.\n\
+                 ./abis/Gravity.json differs only in case from gravity.json, which does exist.",
+                root.display()
+            )
+        );
+    }
+
+    // The error used to talk only about config.yaml.
+    #[test]
+    fn names_the_manifests_there_are_when_config_yaml_is_missing() {
+        let dir = tempdir::TempDir::new("envio-subgraph-missing").unwrap();
+        let root = dir.path();
+        write_gravity(root, "v3-subgraph.yaml");
+        fs::write(
+            root.join("v3-subgraph.template.yaml"),
+            // Uniswap's template parses as YAML; it is not a manifest to run.
+            "specVersion: 0.0.4\ndataSources:\n  - network: {{ network }}\n",
+        )
+        .unwrap();
+
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert!(
+            err.contains(
+                "Found the subgraph manifest v3-subgraph.yaml. To index it, point --config (or \
+                 ENVIO_CONFIG) at it:\n  envio start --config v3-subgraph.yaml"
+            ),
+            "{err}"
         );
     }
 
