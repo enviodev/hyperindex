@@ -2096,6 +2096,21 @@ const ethereumImpl = {
 
 export const ethereum = strictNamespace("ethereum", ethereumImpl);
 
+/**
+ * `matchstick-as`' test helper, which also resolves to this module (a mapping
+ * file that holds test fixtures imports it beside its handlers — Forta's do).
+ * Same defaults as matchstick-as/assembly/defaults.
+ */
+export function newMockEvent(): EthereumEvent {
+  const address = Address.fromString("0xA16081F360e3847006dB660bae1c6d1b2e17eC2A");
+  const hash = Bytes.fromHexString("0xA16081F360e3847006dB660bae1c6d1b2e17eC2A");
+  const one = BigInt_.fromI32(1);
+  const ten = BigInt_.fromI32(10);
+  const block = new EthereumBlock(hash, hash, hash, address, hash, hash, hash, one, ten, ten, one, one, one, one, null);
+  const transaction = new EthereumTransaction(hash, one, address, address, one, one, one, hash, one);
+  return new EthereumEvent(address, one, one, "mock_log_type", block, transaction, [], null);
+}
+
 // ---------------------------------------------------------------------------
 // dataSource + templates
 // ---------------------------------------------------------------------------
