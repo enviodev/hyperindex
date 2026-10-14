@@ -26,6 +26,7 @@ struct State {
     queries: usize,
     heads: Vec<String>,
     display_name: Option<String>,
+    keep_alive: Option<String>,
 }
 
 pub struct MockClickHouse {
@@ -139,6 +140,11 @@ impl MockClickHouse {
         self.state.lock().unwrap().statements_seen.clone()
     }
 
+    /// Answers with a `Keep-Alive` header, as a ClickHouse server does.
+    pub fn keep_alive(&self, value: &str) {
+        self.state.lock().unwrap().keep_alive = Some(value.to_string());
+    }
+
     pub fn serve_as(&self, display_name: &str) {
         self.state.lock().unwrap().display_name = Some(display_name.to_string());
     }
@@ -241,10 +247,16 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
                 ),
             }
         };
-        let display_name = state.lock().unwrap().display_name.clone();
+        let (display_name, keep_alive) = {
+            let state = state.lock().unwrap();
+            (state.display_name.clone(), state.keep_alive.clone())
+        };
         let mut headers = vec![("Connection", "keep-alive")];
         if let Some(display_name) = &display_name {
             headers.push(("X-ClickHouse-Server-Display-Name", display_name.as_str()));
+        }
+        if let Some(keep_alive) = &keep_alive {
+            headers.push(("Keep-Alive", keep_alive.as_str()));
         }
         mock_http::write_response(&mut stream, status, &headers, body.as_bytes()).await?;
     }

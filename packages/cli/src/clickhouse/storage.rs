@@ -145,23 +145,31 @@ impl Storage {
         self.insert(table, &query, &encoded).await
     }
 
-    /// Sends a batch JavaScript staged. Encoding runs off the async workers:
-    /// it is pure CPU over every cell of the batch.
-    async fn insert_staged(&self, table: Arc<Table>, arena: Arena) -> Result<()> {
-        let rows = arena.rows();
+    /// Sends what JavaScript staged for one table, in one insert. Encoding
+    /// runs off the async workers: it is pure CPU over every cell of the batch.
+    async fn insert_staged(&self, table: Arc<Table>, arenas: Vec<Arena>) -> Result<()> {
         let schema = table.clone();
         let encoded = tokio::task::spawn_blocking(move || {
-            let columns: Vec<row_binary::Column> = schema
-                .staged
-                .iter()
-                .zip(arena.columns())
-                .map(|((name, ch_type), values)| row_binary::Column {
-                    name: std::borrow::Cow::Borrowed(name),
-                    ch_type: std::borrow::Cow::Borrowed(ch_type),
-                    values,
-                })
-                .collect();
-            row_binary::encode(&columns, rows)
+            let rows = arenas.iter().map(Arena::rows).sum();
+            let mut body = Vec::with_capacity(rows * schema.staged.len() * 12);
+            let mut row_offsets = Vec::with_capacity(rows);
+            for arena in &arenas {
+                let columns: Vec<row_binary::Column> = schema
+                    .staged
+                    .iter()
+                    .zip(arena.columns())
+                    .map(|((name, ch_type), values)| row_binary::Column {
+                        name: std::borrow::Cow::Borrowed(name),
+                        ch_type: std::borrow::Cow::Borrowed(ch_type),
+                        values,
+                    })
+                    .collect();
+                row_binary::encode_into(&mut body, &mut row_offsets, &columns, arena.rows())?;
+            }
+            Ok::<_, anyhow::Error>(EncodedRows {
+                body: body.into(),
+                row_offsets,
+            })
         })
         .await
         .context("ClickHouse encode task failed")?
@@ -806,11 +814,23 @@ impl Storage {
             &checkpoint_columns,
             &checkpoint_rows,
         ))];
+        // A per-chain entity stages each chain's rows apart, and each insert
+        // is a part the server has to merge.
+        let mut staged: Vec<(Arc<Table>, Vec<Arena>)> = Vec::new();
         for write in entities {
             if let Some(arena) = write.clickhouse {
                 let table = write.table.clickhouse()?.clone();
-                rows.push(Box::pin(self.insert_staged(table, arena)));
+                match staged
+                    .iter_mut()
+                    .find(|(staged, _)| staged.physical == table.physical)
+                {
+                    Some((_, arenas)) => arenas.push(arena),
+                    None => staged.push((table, vec![arena])),
+                }
             }
+        }
+        for (table, arenas) in staged {
+            rows.push(Box::pin(self.insert_staged(table, arenas)));
         }
         try_join_all(rows).await?;
 
@@ -990,25 +1010,22 @@ mod tests {
         );
     }
 
-    /// The chains' rows are what make a write readable, so they go only once
-    /// every row they cover has landed.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_write_commits_with_its_chains_rows_last() {
-        let server = MockClickHouse::answering_statements(Arc::new(|statement: &str| {
+    /// A server that answers what initializing and writing ask of it.
+    async fn accepting() -> MockClickHouse {
+        MockClickHouse::answering_statements(Arc::new(|statement: &str| {
             if statement.contains("count() FROM system.tables") {
                 (200, "0".to_string())
             } else {
                 (200, String::new())
             }
         }))
-        .await;
-        let storage = storage_at(&server);
-        let account = account(&storage);
-        initialize(&storage, vec![account.clone()]).await;
-        let initialized = inserted_tables(&server).len();
+        .await
+    }
 
+    /// A set of each id, staged at checkpoint 1.
+    fn staged(ids: &[&str]) -> Arena {
         let mut arena = Arena::new(
-            1,
+            ids.len(),
             &[
                 crate::columnar::ColumnKind::Text,
                 crate::columnar::ColumnKind::U64,
@@ -1016,22 +1033,31 @@ mod tests {
             ],
         )
         .unwrap();
-        arena.set_bytes(0, 0, b"a");
-        arena.set_u64(1, 0, 1);
-        arena.set_bytes(2, 0, b"SET");
+        for (row, id) in ids.iter().enumerate() {
+            arena.set_bytes(0, row, id.as_bytes());
+            arena.set_u64(1, row, 1);
+            arena.set_bytes(2, row, b"SET");
+        }
         arena
             .seal_unlent(&["id", "envio_checkpoint_id", "envio_change"].map(str::to_string))
             .unwrap();
-        let queries_before = server.queries_seen();
+        arena
+    }
+
+    /// Writes the staged rows at checkpoint 1 of chain 1.
+    async fn write_staged(storage: &Storage, writes: Vec<(Arc<crate::storage::Table>, Arena)>) {
         storage
             .write_batch(
                 Batch {
-                    entities: vec![EntityWrite {
-                        table: account,
-                        chain_id: None,
-                        postgres: None,
-                        clickhouse: Some(arena),
-                    }],
+                    entities: writes
+                        .into_iter()
+                        .map(|(table, arena)| EntityWrite {
+                            table,
+                            chain_id: None,
+                            postgres: None,
+                            clickhouse: Some(arena),
+                        })
+                        .collect(),
                     frontier: Frontier {
                         chain_ids: vec![1],
                         checkpoint_ids: vec![1],
@@ -1054,6 +1080,50 @@ mod tests {
                 WriteError::Gated => "gated".to_string(),
             })
             .unwrap();
+    }
+
+    /// A per-chain entity stages each chain's rows apart, and every insert is
+    /// a part the server has to merge: one table's rows go in one insert. Each
+    /// row is its id, its checkpoint and its change — 11 bytes for these.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_write_sends_each_table_one_insert() {
+        let server = accepting().await;
+        let storage = storage_at(&server);
+        let account = account(&storage);
+        initialize(&storage, vec![account.clone()]).await;
+        let initialized = inserted_tables(&server).len();
+
+        write_staged(
+            &storage,
+            vec![
+                (account.clone(), staged(&["a"])),
+                (account, staged(&["b", "c"])),
+            ],
+        )
+        .await;
+
+        let history = inserted_tables(&server)
+            .into_iter()
+            .zip(server.accepted())
+            .skip(initialized)
+            .filter(|(table, _)| table == "envio_history_Account")
+            .map(|(_, body)| body.len())
+            .collect::<Vec<_>>();
+        assert_eq!(history, vec![33]);
+    }
+
+    /// The chains' rows are what make a write readable, so they go only once
+    /// every row they cover has landed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_write_commits_with_its_chains_rows_last() {
+        let server = accepting().await;
+        let storage = storage_at(&server);
+        let account = account(&storage);
+        initialize(&storage, vec![account.clone()]).await;
+        let initialized = inserted_tables(&server).len();
+
+        let queries_before = server.queries_seen();
+        write_staged(&storage, vec![(account, staged(&["a"]))]).await;
 
         let mut written = inserted_tables(&server).split_off(initialized);
         let last = written.pop();

@@ -696,7 +696,25 @@ pub fn decode(body: &[u8], columns: &[(ChType, ReadKind)]) -> Result<Vec<Cell<'s
     Ok(cells)
 }
 
+#[cfg(test)]
 pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
+    let mut body = Vec::with_capacity(rows * columns.len() * 12);
+    let mut row_offsets = Vec::with_capacity(rows);
+    encode_into(&mut body, &mut row_offsets, columns, rows)?;
+    Ok(EncodedRows {
+        body: body.into(),
+        row_offsets,
+    })
+}
+
+/// Appends the rows to what `body` already holds, so several stagings of one
+/// table go in one insert.
+pub fn encode_into(
+    body: &mut Vec<u8>,
+    row_offsets: &mut Vec<usize>,
+    columns: &[Column],
+    rows: usize,
+) -> Result<()> {
     for column in columns {
         if column.values.len() != rows {
             bail!(
@@ -706,19 +724,14 @@ pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
             );
         }
     }
-    let mut body = Vec::with_capacity(rows * columns.len() * 12);
-    let mut row_offsets = Vec::with_capacity(rows);
     for row in 0..rows {
         row_offsets.push(body.len());
         for column in columns {
-            encode_cell(&mut body, column, row)
+            encode_cell(body, column, row)
                 .with_context(|| format!("encoding column `{}` row {row}", column.name))?;
         }
     }
-    Ok(EncodedRows {
-        body: body.into(),
-        row_offsets,
-    })
+    Ok(())
 }
 
 #[cfg(test)]

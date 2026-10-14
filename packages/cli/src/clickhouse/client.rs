@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -24,12 +24,13 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Probes an idle pooled socket so a connection dropped by a NAT or proxy is
 /// discovered before a batch is handed to it.
 const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
-/// How long a pooled socket may sit idle before the client drops it. Deliberately
-/// under ClickHouse's own `keep_alive_timeout` (3s on older servers, 10s by
-/// default), which is the deadline that matters: past it the server closes the
-/// socket, and a batch dispatched onto one already carrying a FIN fails with
-/// `connection closed before message completed`. `@clickhouse/client` set its
-/// `idle_socket_ttl` to 2.5s for the same reason.
+/// How long a pooled socket may sit idle before the client drops it, until the
+/// server says how long it keeps one. Deliberately under ClickHouse's own
+/// `keep_alive_timeout` (3s on older servers), which is the deadline that
+/// matters: past it the server closes the socket, and a batch dispatched onto
+/// one already carrying a FIN fails with `connection closed before message
+/// completed`. `@clickhouse/client` set its `idle_socket_ttl` to 2.5s for the
+/// same reason.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_millis(2_500);
 const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
 /// How long one batch may spend on the whole retry ladder. Halving turns a
@@ -86,7 +87,10 @@ pub struct Connection {
 }
 
 pub struct Client {
-    http: reqwest::Client,
+    /// Rebuilt when the server says how long it keeps an idle socket, which
+    /// a pool's settings can't change once built.
+    http: RwLock<reqwest::Client>,
+    idle_timeout: Mutex<Duration>,
     url: String,
     username: String,
     password: String,
@@ -102,23 +106,40 @@ pub struct Client {
     tag: Mutex<String>,
 }
 
+fn http_client(tuning: &Tuning, idle_timeout: Duration) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .pool_idle_timeout(idle_timeout)
+        .pool_max_idle_per_host(8)
+        .timeout(tuning.request_timeout)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .tcp_keepalive(TCP_KEEPALIVE)
+        // reqwest picks up HTTP_PROXY/HTTPS_PROXY by default; Node's http
+        // client never did, so honouring them here would silently start
+        // routing a deployment's inserts through a proxy that nothing asked
+        // to be in the path.
+        .no_proxy()
+        .build()
+        .context("Failed building HTTP client")
+}
+
+/// A second under how long a `Keep-Alive` answer says the server keeps an
+/// idle socket open, so the pool lets go of it first.
+fn idle_timeout_of(keep_alive: &str) -> Option<Duration> {
+    keep_alive
+        .split(',')
+        .find_map(|part| part.trim().strip_prefix("timeout="))?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|seconds| *seconds > 1)
+        .map(|seconds| Duration::from_secs(seconds - 1))
+}
+
 impl Client {
     pub fn new(connection: Connection, tuning: Tuning, warn: Warn) -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
-            .pool_max_idle_per_host(8)
-            .timeout(tuning.request_timeout)
-            .connect_timeout(CONNECT_TIMEOUT)
-            .tcp_keepalive(TCP_KEEPALIVE)
-            // reqwest picks up HTTP_PROXY/HTTPS_PROXY by default; Node's http
-            // client never did, so honouring them here would silently start
-            // routing a deployment's inserts through a proxy that nothing asked
-            // to be in the path.
-            .no_proxy()
-            .build()
-            .context("Failed building HTTP client")?;
         Ok(Self {
-            http,
+            http: RwLock::new(http_client(&tuning, POOL_IDLE_TIMEOUT)?),
+            idle_timeout: Mutex::new(POOL_IDLE_TIMEOUT),
             url: connection.url.trim_end_matches('/').to_string(),
             username: connection.username,
             password: connection.password,
@@ -128,6 +149,36 @@ impl Client {
             warn,
             served_by: Mutex::new(None),
         })
+    }
+
+    fn http(&self) -> reqwest::Client {
+        self.http.read().unwrap().clone()
+    }
+
+    #[cfg(test)]
+    fn idle_timeout(&self) -> Duration {
+        *self.idle_timeout.lock().unwrap()
+    }
+
+    /// Keeps idle sockets as long as the answer says the server does. A pool
+    /// that can't be rebuilt keeps the one it has: it only reconnects more.
+    fn learn_keep_alive(&self, response: &reqwest::Response) {
+        let Some(timeout) = response
+            .headers()
+            .get("Keep-Alive")
+            .and_then(|value| value.to_str().ok())
+            .and_then(idle_timeout_of)
+        else {
+            return;
+        };
+        let mut idle_timeout = self.idle_timeout.lock().unwrap();
+        if *idle_timeout == timeout {
+            return;
+        }
+        if let Ok(http) = http_client(&self.tuning, timeout) {
+            *self.http.write().unwrap() = http;
+            *idle_timeout = timeout;
+        }
     }
 
     /// Tags this process's inserts as writing `chain_ids`.
@@ -188,7 +239,7 @@ impl Client {
             // Held until the query has finished, so one that fails after its
             // first rows would have been sent answers with an error status.
             let mut request = self
-                .http
+                .http()
                 .post(&self.url)
                 .timeout(self.tuning.statement_timeout)
                 .query(&[("wait_end_of_query", "1")])
@@ -202,6 +253,7 @@ impl Client {
             let failure = match sent {
                 Ok(response) => {
                     self.check_served_by(&response)?;
+                    self.learn_keep_alive(&response);
                     let status = response.status();
                     if status.is_success() {
                         return Ok(response);
@@ -343,7 +395,7 @@ impl Client {
         let token = insert_token();
         let query_id = format!("{}{token}", self.tag.lock().unwrap());
         let request = self
-            .http
+            .http()
             .post(&self.url)
             .query(&[
                 ("query", query),
@@ -368,6 +420,7 @@ impl Client {
                 });
             }
         };
+        self.learn_keep_alive(&response);
         if let Err(error) = self.check_served_by(&response) {
             return Err(InsertFailure {
                 retry: Retry::Never,
@@ -711,6 +764,32 @@ mod tests {
                         .to_string()
                 ),
                 1
+            )
+        );
+    }
+
+    /// A socket reopened per request costs a handshake each time, and at the
+    /// chain head requests come further apart than the pool's opening guess.
+    /// The server says how long it keeps one, and the pool keeps it a second
+    /// less; a value it can't read leaves the guess alone.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_pool_keeps_sockets_as_long_as_the_server_says() {
+        let server =
+            MockClickHouse::answering_statements(Arc::new(|_: &str| (200, "1".to_string()))).await;
+        let client = client_for(&server, 0);
+        let before = client.idle_timeout();
+        server.keep_alive("timeout=30, max=9999");
+        client.statement("SELECT 1".to_string()).await.unwrap();
+        let announced = client.idle_timeout();
+        server.keep_alive("max=9999");
+        client.statement("SELECT 1".to_string()).await.unwrap();
+
+        assert_eq!(
+            (before, announced, client.idle_timeout()),
+            (
+                POOL_IDLE_TIMEOUT,
+                Duration::from_secs(29),
+                Duration::from_secs(29)
             )
         );
     }
