@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
+import { createRequire } from "module";
 import os from "os";
 import path from "path";
 import { config } from "../config.js";
@@ -42,8 +43,13 @@ describe.skipIf(!dockerAvailable)("envio dev with a sidecar", () => {
     fs.cpSync(path.join(config.rootDir, "packages/e2e-tests/fixtures/sidecar-project"), projectDir, {
       recursive: true,
     });
+    // The installed envio, like config.envioCommand: in CI the source
+    // checkout has no compiled `.res.mjs`, only the installed artifact does.
     fs.mkdirSync(path.join(projectDir, "node_modules"));
-    fs.symlinkSync(path.join(config.rootDir, "packages/envio"), path.join(projectDir, "node_modules/envio"));
+    fs.symlinkSync(
+      path.dirname(createRequire(import.meta.url).resolve("envio/package.json")),
+      path.join(projectDir, "node_modules/envio")
+    );
 
     const dev = startBackground(
       config.envioCommand,
