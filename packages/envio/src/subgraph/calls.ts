@@ -13,6 +13,7 @@ import { missingRpcMessage } from "./errors.ts";
 import { rpcClient } from "./rpc.ts";
 import { parseSignature } from "./abi-types.ts";
 import { untilAnswered } from "./transient.ts";
+import { info } from "../Logging.res.mjs";
 
 export function abiItemFor(signature: string): Abi {
   const { name, inputs, outputs } = parseSignature(signature);
@@ -65,6 +66,48 @@ export type CallOutput = {
  * serialisable shape — so the call is described in plain JSON and the graph-ts
  * values are converted on both sides by the shim.
  */
+/**
+ * A batch commits only once every contract call its handlers make is in, and a
+ * call-heavy backfill's first batch can wait minutes on thousands of them with
+ * nothing else to show — the sweep took several for hung. While calls are
+ * outstanding, how many were answered is logged now and then.
+ */
+const progress = { started: 0, answered: 0, reportedAnswered: 0, timer: undefined as NodeJS.Timeout | undefined };
+
+function progressIntervalMs(): number {
+  const value = Number(process.env.ENVIO_SUBGRAPH_PROGRESS_LOG_MS);
+  return Number.isFinite(value) && value > 0 ? value : 30_000;
+}
+
+function reportProgress() {
+  const waiting = progress.started - progress.answered;
+  if (waiting <= 0) {
+    clearInterval(progress.timer);
+    progress.timer = undefined;
+    return;
+  }
+  const interval = progressIntervalMs();
+  const span = interval >= 1000 ? `${Math.round(interval / 1000)}s` : `${interval}ms`;
+  info(
+    `Envio Subgraph: ${progress.answered - progress.reportedAnswered} contract calls answered in the last ` +
+      `${span}, ${waiting} waiting. The batch is written once its handlers' calls are all in.`,
+  );
+  progress.reportedAnswered = progress.answered;
+}
+
+function trackCall<T>(call: Promise<T>): Promise<T> {
+  progress.started++;
+  if (!progress.timer) {
+    progress.timer = setInterval(reportProgress, progressIntervalMs());
+    progress.timer.unref();
+  }
+  const settle = () => {
+    progress.answered++;
+  };
+  call.then(settle, settle);
+  return call;
+}
+
 export function makeCallEffect(rpcUrls: string[], recall: (encoded: string) => string | undefined = () => undefined) {
   return createEffect(
     {
@@ -94,7 +137,7 @@ export function makeCallEffect(rpcUrls: string[], recall: (encoded: string) => s
         args: input.args.map(decodeArg),
       });
 
-      const result = await untilAnswered(
+      const result = await trackCall(untilAnswered(
         `${input.signature} on ${input.address} at block ${input.blockNumber}`,
         async () => {
           try {
@@ -108,7 +151,8 @@ export function makeCallEffect(rpcUrls: string[], recall: (encoded: string) => s
             throw error;
           }
         },
-      );
+        { deadline: false },
+      ));
       if (result === null) {
         return JSON.stringify({ reverted: true, values: null });
       }

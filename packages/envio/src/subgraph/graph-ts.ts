@@ -1141,7 +1141,14 @@ function registerStoreKey(chainId: number, entityType: string, id: string): stri
   return `${chainId}\u0000${entityType}\u0000${id}`;
 }
 
-function registerRead(scope: Scope, entityType: string, id: string, sameBlock: boolean) {
+let registerMissHook: ((scope: Scope, key: string) => void) | null = null;
+
+/** Called on a register-store miss; may suspend the pass to wait on another. */
+export function installRegisterMissHook(hook: typeof registerMissHook) {
+  registerMissHook = hook;
+}
+
+function registerRead(scope: Scope, entityType: string, id: string, sameBlock: boolean, wait = true) {
   const key = registerStoreKey(scope.dataSource.chainId, entityType, id);
   if (scope.writes?.has(key)) return toEntity(entityType, scope.writes.get(key));
   const position = scope.position ?? 0;
@@ -1158,6 +1165,7 @@ function registerRead(scope: Scope, entityType: string, id: string, sameBlock: b
     }
     return toEntity(entityType, version.row);
   }
+  if (wait) registerMissHook?.(scope, key);
   return null;
 }
 
@@ -1194,6 +1202,20 @@ export function resetRegisterStore(): void {
   registerStore.clear();
 }
 
+/**
+ * A field a new entity never set is null in graph-node's store; envio's write
+ * needs it spelled out — a list column refuses a missing value.
+ */
+function withUnsetAsNull(scope: Scope, entityType: string, row: Record<string, unknown>) {
+  const refFields = new Set(scope.schema.entityRefFields[entityType] ?? []);
+  for (const [field, declared] of Object.entries(scope.schema.entityFieldTypes[entityType] ?? {})) {
+    if (declared.derivedFrom) continue;
+    const column = refFields.has(field) ? `${field}_id` : field;
+    if (!(column in row)) row[column] = null;
+  }
+  return row;
+}
+
 function registerWrite(scope: Scope, entityType: string, id: string, row: Record<string, unknown> | null) {
   scope.writes ??= new Map();
   scope.writes.set(registerStoreKey(scope.dataSource.chainId, entityType, id), row);
@@ -1214,8 +1236,17 @@ const storeImpl = {
     const scope = currentScope();
     const row = toRow(entityType, data);
     row.id = id;
-    if (scope.mode === "register") return registerWrite(scope, entityType, id, row);
-    entityContext(entityType).set(row);
+    // graph-node merges a save onto the stored entity (EntityCache::set is an
+    // Update, merged by merge_remove_null_fields): a field this instance
+    // doesn't set keeps its stored value, an explicit null clears it. ENS's
+    // handleAddrChanged saves a fresh `new Resolver(id)` and relies on it.
+    if (scope.mode === "register") {
+      const stored = registerRead(scope, entityType, id, false, false);
+      return registerWrite(scope, entityType, id, stored ? { ...toRow(entityType, stored), ...row } : row);
+    }
+    const table = entityContext(entityType);
+    const stored = table.getSync(id);
+    table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {
     const scope = currentScope();
@@ -2064,9 +2095,11 @@ class EthereumEvent {
     });
     return (this._params = params);
   }
+  // graph-node answers the log's index in its block here (trigger.rs,
+  // `transaction_log_index`): Geth never set the per-transaction one, and
+  // subgraphs read it only to tell logs apart.
   get transactionLogIndex(): BigInt_ {
-    if (this._transactionLogIndex !== undefined) return this._transactionLogIndex;
-    throw unsupported("event.transactionLogIndex", this._kind.location);
+    return (this._transactionLogIndex ??= this.logIndex);
   }
   set transactionLogIndex(value: BigInt_) {
     this._transactionLogIndex = value;
@@ -2489,9 +2522,22 @@ export function changetype<T>(value: unknown): T {
 // The load hook rewrites that call to this helper so `.value` etc. resolve.
 export function retagChangetype(ctor: unknown, value: unknown, keepInstances = false): unknown {
   if (value !== null && typeof value === "object" && typeof ctor === "function") {
-    // An `as` cast to a class the value already is, or extends, is an upcast:
-    // the value keeps the getters of its own class.
-    if (keepInstances && value instanceof (ctor as Function)) return value;
+    if (keepInstances) {
+      // An `as` cast to a class the value already is, or extends, is an
+      // upcast: the value keeps the getters of its own class.
+      if (value instanceof (ctor as Function)) return value;
+      // Across to a sibling — GMX casts one EventLog1 to EventLog2 for a
+      // helper — AssemblyScript reads the same object through the other
+      // class and leaves the original as it was, so the original isn't
+      // retagged: the cast reads a copy.
+      const current = Object.getPrototypeOf(value)?.constructor;
+      if (typeof current === "function" && !((ctor as Function).prototype instanceof current)) {
+        return Object.defineProperties(
+          Object.create((ctor as Function).prototype),
+          Object.getOwnPropertyDescriptors(value),
+        );
+      }
+    }
     const proto = (ctor as Function).prototype;
     if (proto) Object.setPrototypeOf(value, proto);
   }

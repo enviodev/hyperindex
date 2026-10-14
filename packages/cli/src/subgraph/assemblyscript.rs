@@ -95,6 +95,21 @@ fn class_ref<'b>(
     }
 }
 
+/// AssemblyScript lets a class take a built-in type's name — OpenZeppelin's
+/// `@amxx/graphprotocol-utils` declares `export class string extends String {}`
+/// in a namespace — which TypeScript's grammar refuses. Such a declaration
+/// becomes a class expression bound to a constant of that name, which is
+/// legal, and reads the same from outside: `persistent.string`.
+fn class_expressions_for_type_names(source: &str) -> String {
+    let pattern = regex::Regex::new(
+        r"(?m)^([ \t]*)(export[ \t]+)?class[ \t]+(string|number|boolean|symbol|bigint|object|any|unknown|never|void)\b",
+    )
+    .expect("valid pattern");
+    pattern
+        .replace_all(source, "${1}${2}const ${3} = class")
+        .into_owned()
+}
+
 /// AssemblyScript takes a decorator on a top-level function or variable —
 /// Beefy writes `@inline` above its helpers — which TypeScript's grammar
 /// refuses. Those are blanked to spaces before parsing, so every offset the
@@ -172,7 +187,7 @@ fn blank_statement_decorators(source: &str) -> String {
 /// The JavaScript to run for one AssemblyScript file, with an inline source map
 /// back to the original so a mapping's stack trace names its own lines.
 pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
-    let blanked = blank_statement_decorators(source);
+    let blanked = blank_statement_decorators(&class_expressions_for_type_names(source));
     let source = blanked.as_str();
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::ts()).parse();
@@ -642,6 +657,22 @@ export function f(value) {
 \tlet items = __envio_retag_each(Item, value.toTupleArray());
 \tlet plain = value.toTupleArray();
 }
+"
+        );
+    }
+
+    #[test]
+    fn takes_a_class_named_after_a_built_in_type() {
+        assert_eq!(
+            js("export namespace persistent {
+  export class string extends String {}
+}
+export const read = persistent.string;"),
+            "export let persistent;
+(function(_persistent) {
+\tconst string = _persistent.string = class extends String {};
+})(persistent || (persistent = {}));
+export const read = persistent.string;
 "
         );
     }

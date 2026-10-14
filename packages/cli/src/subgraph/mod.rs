@@ -237,7 +237,9 @@ pub fn check_generated_code(runtime: &SubgraphRuntimeConfig) -> Result<()> {
         .map(|source| source.mapping_file.clone())
         .collect();
     let generated = generated_dir(root, &mapping_files);
-    if generated.exists() || graph_cli_installed(root) {
+    // Every generated tree has a schema.ts; Envio Cloud leaves the directory
+    // itself behind empty.
+    if generated.join("schema.ts").is_file() || graph_cli_installed(root) {
         return Ok(());
     }
     let relative = pathdiff_relative(&generated, root);

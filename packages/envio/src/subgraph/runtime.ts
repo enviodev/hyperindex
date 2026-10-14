@@ -15,7 +15,14 @@ import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
-import { currentScope, runInScope, runInScopeUntilSettled, type Scope, type SubgraphSchema } from "./scope.ts";
+import {
+  currentScope,
+  runInScope,
+  runInScopeUntilSettled,
+  type RegisterPass,
+  type Scope,
+  type SubgraphSchema,
+} from "./scope.ts";
 import {
   Address,
   assemblyScriptPrimitives,
@@ -27,6 +34,7 @@ import {
   installCallHook,
   installHosts,
   installRegisterHook,
+  installRegisterMissHook,
   ethereum,
   type EventInput,
   type EventKind,
@@ -53,6 +61,7 @@ import { unknown, unsupported } from "./errors.ts";
 import { runSyncCounted } from "./stats.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
+const ENVIO_PACKAGE_URL = new URL("../../", import.meta.url).href;
 
 const jsonFromString = (line: string) => (jsonNamespace as any).fromString(line);
 
@@ -100,6 +109,8 @@ type SubgraphConfig = {
   /** The config's contract name for each data source and template. */
   contractAccessors: Record<string, string>;
   root: string;
+  /** The manifest's name within `root`: `--config` may name another than subgraph.yaml. */
+  manifestFile?: string;
   rpcUrls: string[];
   isDev: boolean;
 } & SubgraphSchema;
@@ -151,12 +162,14 @@ function installResolveHook(root: string) {
     // transpiler would refuse AssemblyScript it has no reason to accept, and
     // would strip `changetype`'s type argument before it could be read.
     load(url: string, context: any, nextLoad: any) {
-      if (
-        !projectRoot ||
-        !url.startsWith(projectRoot) ||
-        url.includes("/node_modules/") ||
-        !url.endsWith(".ts")
-      ) {
+      const isProjectFile = projectRoot !== null && url.startsWith(projectRoot) && !url.includes("/node_modules/");
+      // A mapping library is AssemblyScript too — OpenZeppelin's
+      // @amxx/graphprotocol-utils, @protofire/subgraph-toolkit — and Node
+      // won't even strip types under node_modules. envio's own sources are
+      // TypeScript, not AssemblyScript, and stay out of it.
+      const isMappingLibrary =
+        url.includes("/node_modules/") && !url.endsWith(".d.ts") && !url.startsWith(ENVIO_PACKAGE_URL);
+      if (!projectRoot || !url.endsWith(".ts") || !(isProjectFile || isMappingLibrary)) {
         return nextLoad(url, context);
       }
       const file = fileURLToPath(url);
@@ -400,6 +413,58 @@ function registerHostSync(scope: Scope, effect: Effect, input: unknown) {
   throw REGISTER_SUSPEND;
 }
 
+/**
+ * A batch's register passes run concurrently, and a pass's writes reach the
+ * register store only when it completes. Every Comptroller event in Venus's
+ * first batch missed the Market an earlier event was still creating, and
+ * repeated its ~20 creation calls at its own block. So a pass that misses an
+ * entity an earlier pass of its chain also missed, and is still running,
+ * waits for the earliest such pass once and reads again — the per-key order
+ * graph-node's sequential processing gives. Independent events stay
+ * concurrent; a key nobody ends up writing costs one wait.
+ */
+const missers = new Map<string, RegisterPass[]>();
+
+function startRegisterPass(position: number): { pass: RegisterPass; settle: () => void } {
+  let resolve!: () => void;
+  const pass: RegisterPass = {
+    position,
+    done: new Promise<void>((done) => (resolve = done)),
+    settled: false,
+    missed: [],
+  };
+  const settle = () => {
+    pass.settled = true;
+    for (const key of pass.missed) {
+      const remaining = (missers.get(key) ?? []).filter((other) => other !== pass);
+      if (remaining.length === 0) missers.delete(key);
+      else missers.set(key, remaining);
+    }
+    resolve();
+  };
+  return { pass, settle };
+}
+
+function onRegisterMiss(scope: Scope, key: string) {
+  const pass = scope.pass;
+  if (!pass) return;
+  const list = missers.get(key) ?? [];
+  if (!scope.waitedKeys?.has(key)) {
+    const earlier = list.find((other) => other.position < pass.position && !other.settled);
+    if (earlier) {
+      (scope.waitedKeys ??= new Set()).add(key);
+      (scope.awaiting ??= []).push(earlier.done);
+      throw REGISTER_SUSPEND;
+    }
+  }
+  if (!list.includes(pass)) {
+    list.push(pass);
+    list.sort((a, b) => a.position - b.position);
+    missers.set(key, list);
+    pass.missed.push(key);
+  }
+}
+
 const maxRegisterRounds = 100;
 
 async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
@@ -528,6 +593,8 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
 
   // Reads the scope rather than closing over one context: register passes for
   // the items in a batch run concurrently, and this hook is process-wide.
+  installRegisterMissHook(onRegisterMiss);
+
   installRegisterHook((templateName, address) => {
     const accessor = config.contractAccessors[templateName];
     if (accessor === undefined) throw unknown(`the template ${templateName}`, "a mapping handler");
@@ -573,10 +640,15 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     config.root,
     sources.map((source) => source.mappingFile),
   );
-  await ensureGeneratedCode(config.root, generated);
+  await ensureGeneratedCode(
+    config.root,
+    generated,
+    config.manifestFile,
+    sources.map((source) => source.mappingFile),
+  );
 
   if (config.isDev) {
-    await typeCheckMappings(config.root);
+    await typeCheckMappings(config.root, config.manifestFile);
   }
 
   const templateNames = new Set(config.templates.map((template) => template.name));
@@ -638,6 +710,10 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
 
     await indexEventClasses();
     const owns = ownerOf(source);
+    // graph-node runs none of a data source's handlers past its endBlock
+    // (`has_expired`), while its chain and every template instance go on.
+    const live = (event: any) =>
+      source.isTemplate || source.endBlock === undefined || event.block.number <= source.endBlock;
     // After codegen, so the analysis can follow the mapping into
     // `generated/templates.ts`.
     const creating = new Set<string>(
@@ -696,7 +772,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       indexer.onEvent(
         { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
         async ({ event, context }: any) => {
-          if ((skipPreload && context.isPreload) || !owns(event)) return;
+          if ((skipPreload && context.isPreload) || !owns(event) || !live(event)) return;
           const graphEvent = makeEvent(event);
           await runSyncCounted(context, () =>
             runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
@@ -713,10 +789,17 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         indexer.contractRegister(
           { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
           async ({ event, context }: any) => {
-            if (!owns(event)) return;
+            if (!owns(event) || !live(event)) return;
             await primeOnceHandlers(event.chainId, context);
             const graphEvent = makeEvent(event);
-            await runRegisterRounds(makeScope(event, context, "register"), () => fn(graphEvent));
+            const scope = makeScope(event, context, "register");
+            const { pass, settle } = startRegisterPass(scope.position ?? 0);
+            scope.pass = pass;
+            try {
+              await runRegisterRounds(scope, () => fn(graphEvent));
+            } finally {
+              settle();
+            }
           },
         );
       }
@@ -757,7 +840,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       const blocks =
         handler.filter === "once"
           ? { _gte: start, _lte: start }
-          : { _gte: start, _every: handler.filter.every };
+          : source.endBlock === undefined
+            ? { _gte: start, _every: handler.filter.every }
+            : { _gte: start, _lte: source.endBlock, _every: handler.filter.every };
       indexer.onBlock(
         {
           name: `${source.name}_${handler.handler}`,
