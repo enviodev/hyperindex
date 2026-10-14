@@ -33,8 +33,34 @@ const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 /// same reason.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_millis(2_500);
 const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
-/// The server's `max_query_size` unless a request raises it.
+/// The server's caps on a statement unless a request raises them: its length,
+/// and the elements it parses into before and after expanding aliases.
 const DEFAULT_MAX_QUERY_SIZE: usize = 256 * 1024;
+const DEFAULT_MAX_AST_ELEMENTS: usize = 50_000;
+const DEFAULT_MAX_EXPANDED_AST_ELEMENTS: usize = 500_000;
+
+/// A load spelling a long list of values runs past the server's caps on a
+/// statement: on its length, and on its elements, several of which a value
+/// spelled as a call makes. Every element takes a byte of the statement at
+/// least, so its length is a cap it never runs into; expanding aliases adds
+/// what referencing one adds, no more than the statement again.
+fn long_statement_settings(sql: &str) -> Vec<(&'static str, String)> {
+    let length = sql.len();
+    let mut settings = Vec::new();
+    if length > DEFAULT_MAX_QUERY_SIZE {
+        settings.push(("max_query_size", (length + 1).to_string()));
+    }
+    if length > DEFAULT_MAX_AST_ELEMENTS {
+        settings.push(("max_ast_elements", length.to_string()));
+        settings.push((
+            "max_expanded_ast_elements",
+            (2 * length)
+                .max(DEFAULT_MAX_EXPANDED_AST_ELEMENTS)
+                .to_string(),
+        ));
+    }
+    settings
+}
 /// How long one batch may spend on the whole retry ladder. Halving turns a
 /// failure into two more attempts, so a range that keeps failing costs
 /// exponentially many requests — cheap when each is refused in milliseconds,
@@ -227,20 +253,13 @@ impl Client {
     /// reaching the server already spent the whole statement timeout.
     async fn post(&self, read: Read) -> Result<reqwest::Response> {
         // External data goes as a form, and the statement with it: a body has
-        // to be one or the other. A statement sent alone may run past the
-        // server's default cap on one's length, which a load spelling a long
-        // list of values does.
-        let (params, content_type, body) = if read.external.is_empty() {
-            let params = if read.sql.len() > DEFAULT_MAX_QUERY_SIZE {
-                vec![("max_query_size", (read.sql.len() + 1).to_string())]
-            } else {
-                Vec::new()
-            };
-            (params, None, Bytes::from(read.sql))
+        // to be one or the other.
+        let params = long_statement_settings(&read.sql);
+        let (content_type, body) = if read.external.is_empty() {
+            (None, Bytes::from(read.sql))
         } else {
             let (boundary, form) = multipart(&read.sql, &read.external);
             (
-                Vec::new(),
                 Some(format!("multipart/form-data; boundary={boundary}")),
                 Bytes::from(form),
             )

@@ -606,6 +606,37 @@ async fn a_load_spelling_a_long_list_of_numbers_reads_what_it_names() {
     );
 }
 
+/// A value the statement spells as a call — a timestamp, bytes, a decimal —
+/// counts as several of the elements the server caps a statement at, which a
+/// long list of them outgrows long before the statement's own length does.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_load_spelling_a_long_list_of_timestamps_reads_what_it_names() {
+    let live = Live::new();
+    let event = live.table(entity_input(
+        "Event",
+        vec![column("id", "String"), column("at", "Date")],
+    ));
+    initialize(&live, vec![event.clone()]).await;
+
+    let at = Condition {
+        operator: Operator::In,
+        kind: ValueKind::Timestamp,
+        values: (0..20_000)
+            .map(|second| vec![Some(format!("2024-01-01T00:00:{:02}.000Z", second % 60))])
+            .collect(),
+        ..eq("at", "")
+    };
+    let loaded = live
+        .storage
+        .load_where(&event, vec![at])
+        .await
+        .map(|result| result.arena.rows())
+        .map_err(|error| format!("{error:#}"));
+    live.drop_database().await;
+    assert_eq!(loaded, Ok(0));
+}
+
 /// A process that died mid-write can leave an insert running on the server,
 /// one that finishes after the next process resumed and trimmed what never
 /// committed. Its rows would read as that run's once its frontier passed them.

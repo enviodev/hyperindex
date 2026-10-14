@@ -1465,6 +1465,8 @@ let strandedMessage = (~resetCommand) =>
       ("Point ENVIO_CLICKHOUSE_DATABASE at a new database", keepBoth),
     ])}`
 
+let setUpMeanwhileMessage = `Another indexer set up this storage while this one waited on an RPC for a "latest" start block, so this one stops rather than build over it. Stop that indexer before starting this one, or point ENVIO_PG_SCHEMA (and ENVIO_CLICKHOUSE_DATABASE) at storage of this one's own.`
+
 let divergedMessage = (~resetCommand) =>
   `ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one indexed alongside this ENVIO_PG_SCHEMA, or setting it up didn't finish.\n\nPick one:\n${pickOne([
       ("Point ENVIO_CLICKHOUSE_DATABASE at the database indexed alongside it", resume),

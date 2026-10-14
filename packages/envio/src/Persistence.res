@@ -319,10 +319,22 @@ let init = {
           // reset" gate), which is exactly when a `latest` start block must be
           // resolved: every later resume reads `envio_chains.start_block` back
           // verbatim instead of re-running this.
+          let waitsOnAnRpc = chainConfigs->Array.some((chain: Config.chain) =>
+            switch chain.startBlock {
+            | Latest => true
+            | Block(_) => false
+            }
+          )
           let chainConfigs = await chainConfigs->StartBlockResolver.resolveAllOrThrow(
             ~lowercaseAddresses,
             ~retry=startBlockRetry,
           )
+
+          // The RPC answers when it does, and another indexer can set the
+          // storage up meanwhile: it's checked again before it's built over.
+          if waitsOnAnRpc && !reset && (await persistence.storage.holding()) !== Nothing {
+            throw(Refused(Config.setUpMeanwhileMessage))
+          }
           let initialState = await persistence.storage.initialize(
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,

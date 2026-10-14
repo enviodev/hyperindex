@@ -554,7 +554,9 @@ impl Storage {
         let answer = self
             .client
             .statement(format!(
-                "SELECT max({}) FROM {} FORMAT TabSeparated",
+                // Null over no rows where a profile sets
+                // aggregate_functions_null_for_empty.
+                "SELECT ifNull(max({}), 0) FROM {} FORMAT TabSeparated",
                 quoted(ddl::VERSION_COLUMN),
                 self.table_ref(CHAINS_TABLE)
             ))

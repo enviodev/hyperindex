@@ -144,6 +144,55 @@ describe("Test Persistence layer init", () => {
     ))
   })
 
+  // Resolving a `latest` start block waits on the chain's RPC for as long as it
+  // takes to answer, and another indexer can set the storage up meanwhile.
+  Async.it("Refuses storage another indexer set up while a start block resolved", async t => {
+    let storageMock = MockStorage.make([#holding, #initialize])
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+    let config = Scenario.make(
+      ~configYaml=`
+name: set-up-meanwhile
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: latest
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+        events:
+          - event: Transfer(address indexed from, address indexed to, uint256 value)
+`,
+    ).config->Scenario.withMockSources(
+      ~sources=[(1, MockSource.make(Scenario.defaultMethods, ~chainId=1, ~autoHeight=500))],
+    )
+
+    let initialized =
+      persistence->Persistence.init(
+        ~chainConfigs=config.chainMap->ChainMap.values,
+        ~contractMapping=ContractMapping.empty,
+        ~envioInfo=JSON.Encode.object(Dict.make()),
+        ~resetCommand=resetCmd,
+        ~runCommand=runCmd,
+      )
+    storageMock.resolveHolding(Nothing)
+    await Scenario.waitUntil(
+      () => storageMock.holdingCalls->Array.length === 2,
+      ~message="the storage to be checked again",
+    )
+    storageMock.resolveHolding(Stranded)
+    let refusal = switch await initialized {
+    | () => None
+    | exception JsExn(error) => error->JsExn.message
+    }
+
+    t.expect((refusal, storageMock.initializeCalls->Array.length)).toEqual((
+      Some(Config.setUpMeanwhileMessage),
+      0,
+    ))
+  })
+
   Async.it("Should skip initialization when storage is already initialized", async t => {
     let envioInfo = JSON.Encode.object(Dict.make())
     // The stored snapshot matches the running one, so the compat gate no-ops.
