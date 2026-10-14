@@ -151,7 +151,9 @@ let selectColumns: Table.table => string = Utils.WeakMap.memoize((table: Table.t
   let renderElements = (elements: array<Null.t<string>>, ~condition: LoadCondition.t) =>
     condition.isList
       ? "[" ++
-        elements->Array.map(value => value->renderValue(~kind=condition.kind))->Array.join(", ") ++ "]"
+        elements
+        ->Array.map(value => value->renderValue(~kind=condition.kind))
+        ->Array.join(", ") ++ "]"
       : elements->Array.getUnsafe(0)->renderValue(~kind=condition.kind)
 
   let renderCondition = (condition: LoadCondition.t) => {
@@ -314,7 +316,9 @@ let make = (
     }
   let select = async statement => (await query(statement ++ readSettings))->parseLines
   let selectWithIds = async (statement, ids) =>
-    try (await sink->ClickHouseSink.queryWithIds(statement ++ readSettings, ids))->parseLines catch {
+    try (
+      await sink->ClickHouseSink.queryWithIds(statement ++ readSettings, ids)
+    )->parseLines catch {
     | exn =>
       throw(
         Persistence.StorageError({
@@ -369,7 +373,9 @@ let make = (
   let primaryEntities = (entities: array<Internal.entityConfig>) =>
     entities->Array.filter(e => e.storage.clickhouse)
   let entitySpecs = entities =>
-    entities->primaryEntities->Array.map(entityConfig => ClickHouse.entitySpec(~entityConfig, ~primary=true))
+    entities
+    ->primaryEntities
+    ->Array.map(entityConfig => ClickHouse.entitySpec(~entityConfig, ~primary=true))
 
   let isInitialized = async () => {
     let answer = await select(
@@ -384,6 +390,7 @@ let make = (
 
   let readEffectCacheRecords = async () => {
     let cache = Dict.make()
+
     (
       await select(
         `SELECT name, total_rows FROM system.tables WHERE database = ${database->quoteString} AND name LIKE '%effect%'`,
@@ -524,6 +531,7 @@ let make = (
       )
     )->Array.map(row => {
       let row = row->(Utils.magic: JSON.t => addressRow)
+
       (
         {
           chainId: row.chainId->ChainId.normalizeOrThrow,
@@ -584,9 +592,9 @@ let make = (
     ~contractMapping,
   ): Persistence.initialState => {
     rememberEntities(entities)
-    let stored =
-      (await readChainRows())->Array.filter(chain => chainIds->Array.includes(chain.id))
+    let stored = (await readChainRows())->Array.filter(chain => chainIds->Array.includes(chain.id))
     stored->Array.forEach(row => chainRows->Dict.set(row.id->ChainId.toString, row))
+
     (
       await select(
         `SELECT name FROM system.tables WHERE database = ${database->quoteString} AND startsWith(name, 'envio_kv_')`,
@@ -612,7 +620,10 @@ let make = (
       }),
       historyTables: entities
       ->entitySpecs
-      ->Array.map(spec => {ClickHouseSink.name: spec.historyTable, chainIdColumn: ?spec.chainIdColumn}),
+      ->Array.map(spec => {
+        ClickHouseSink.name: spec.historyTable,
+        chainIdColumn: ?spec.chainIdColumn,
+      }),
       primaryEntities: entities
       ->primaryEntities
       ->Array.map((entityConfig): ClickHouseSink.redoInput => {
@@ -739,7 +750,9 @@ let make = (
         }),
       )
     | rows =>
-      try rows->(Utils.magic: array<JSON.t> => unknown)->S.parseOrThrow(table->entityRowsSchema) catch {
+      try rows
+      ->(Utils.magic: array<JSON.t> => unknown)
+      ->S.parseOrThrow(table->entityRowsSchema) catch {
       | exn =>
         throw(
           Persistence.StorageError({
@@ -831,7 +844,9 @@ let make = (
 
   let historyAbove = (entityConfig: Internal.entityConfig, ~bounds) =>
     bounds->aboveBounds(
-      ~chainColumn=entityConfig.table->Table.getChainIdField->Option.map(Table.getClickHouseDbFieldName),
+      ~chainColumn=entityConfig.table
+      ->Table.getChainIdField
+      ->Option.map(Table.getClickHouseDbFieldName),
       ~checkpointColumn=EntityHistory.checkpointIdFieldName,
     )
 
@@ -881,7 +896,9 @@ let make = (
     })
     let restored = []
     restoredRows->Array.forEach(row =>
-      switch row->(Utils.magic: JSON.t => dict<string>)->Dict.getUnsafe(EntityHistory.changeFieldName) {
+      switch row
+      ->(Utils.magic: JSON.t => dict<string>)
+      ->Dict.getUnsafe(EntityHistory.changeFieldName) {
       | "SET" => restored->Array.push(row)
       | _ => removals->Array.push({entityId: row->idOf, scope: row->scopeOf})
       }
@@ -905,13 +922,15 @@ let make = (
       }
       await insertRows(
         table.tableName,
-        items->Array.map(item => {
+        items
+        ->Array.map(item => {
           let row =
             item
             ->S.reverseConvertOrThrow(itemSchema)
             ->(Utils.magic: unknown => {"id": string, "output": JSON.t})
           {"id": row["id"], "output": row["output"]->JSON.stringify}
-        })->asRows,
+        })
+        ->asRows,
       )
     })
     ->Promise.all
@@ -963,14 +982,16 @@ let make = (
       )
       await insertRows(
         addressesTable,
-        rolledBackAddresses->Array.map((key): addressRow => {
+        rolledBackAddresses
+        ->Array.map((key): addressRow => {
           chainId: key.chainId,
           address: key.address->NodeJs.Buffer.toHex,
           contractId: key.contractId,
           registrationBlock: 0,
           version: nextVersion(),
           isDeleted: 1,
-        })->asRows,
+        })
+        ->asRows,
       )
     | None => ()
     }

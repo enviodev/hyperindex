@@ -120,7 +120,10 @@ let checkpointColumns = InternalTable.Checkpoints.columns->Array.filterMap(({
 
 let checkpointColumnSpecs = checkpointColumns->Array.map(({spec}) => spec)
 
-let entitySpec = (~entityConfig: Internal.entityConfig, ~primary=false): ClickHouseSink.entitySpec => {
+let entitySpec = (
+  ~entityConfig: Internal.entityConfig,
+  ~primary=false,
+): ClickHouseSink.entitySpec => {
   let options = entityConfig.storage.clickhouseOptions
   {
     name: entityConfig.name,
