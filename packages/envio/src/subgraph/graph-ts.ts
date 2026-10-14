@@ -2647,7 +2647,7 @@ function contextFile(): string {
   return path.join(process.cwd(), ".envio", "subgraph-data-source-contexts.jsonl");
 }
 
-function contextKey(chainId: number, template: string, address: string): string {
+function dynamicContextKey(chainId: number, template: string, address: string): string {
   return `${chainId}:${template}:${address.toLowerCase()}`;
 }
 
@@ -2667,7 +2667,7 @@ function loadContexts() {
 
 function rememberContext(chainId: number, template: string, address: string, entries: ContextEntries) {
   loadContexts();
-  const key = contextKey(chainId, template, address);
+  const key = dynamicContextKey(chainId, template, address);
   if (JSON.stringify(dynamicContexts.get(key)) === JSON.stringify(entries)) return;
   dynamicContexts.set(key, entries);
   try {
@@ -2681,7 +2681,7 @@ function rememberContext(chainId: number, template: string, address: string, ent
 /** The context `createWithContext` was given, for the handler pass of that data source. */
 export function contextOf(chainId: number, template: string, address: string): ContextEntries | undefined {
   loadContexts();
-  return dynamicContexts.get(contextKey(chainId, template, address));
+  return dynamicContexts.get(dynamicContextKey(chainId, template, address));
 }
 
 /** The manifest's own typed entries (`contextValue`) run the other way. */
