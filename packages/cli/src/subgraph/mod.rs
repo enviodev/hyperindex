@@ -111,12 +111,23 @@ pub struct Translation {
 pub fn parse_rpc_env(raw: &str) -> Result<RpcSelection> {
     let trimmed = raw.trim();
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        serde_json::from_str::<RpcSelection>(trimmed).map_err(|err| {
+        let invalid = |err: serde_json::Error| {
             anyhow!(
                 "Invalid {RPC_ENV_VAR}: {err}. It takes an RPC URL, or JSON matching envio's rpc \
-                 config (a single entry or an array)."
+                 config (a single entry or an array of entries and URLs)."
             )
-        })
+        };
+        let mut value: serde_json::Value = serde_json::from_str(trimmed).map_err(invalid)?;
+        // A bare URL in the list means what a bare URL alone means: an entry
+        // with only `url`, whose `for` takes the chain's default.
+        if let serde_json::Value::Array(entries) = &mut value {
+            for entry in entries.iter_mut() {
+                if let serde_json::Value::String(url) = entry {
+                    *entry = serde_json::json!({ "url": url.trim() });
+                }
+            }
+        }
+        serde_json::from_value::<RpcSelection>(value).map_err(invalid)
     } else if trimmed.is_empty() {
         Err(anyhow!("{RPC_ENV_VAR} is set but empty."))
     } else {
@@ -1044,6 +1055,26 @@ type Gravatar @entity {
                 query_timeout_millis: None,
                 polling_interval: None,
             }))
+        );
+    }
+
+    #[test]
+    fn accepts_an_array_mixing_urls_and_entries() {
+        let parsed = parse_rpc_env(
+            r#"["https://a.example.test", {"url":"https://b.example.test","for":"fallback"}]"#,
+        )
+        .unwrap();
+        let RpcSelection::List(rpcs) = parsed else {
+            panic!("expected a list, got {parsed:?}");
+        };
+        assert_eq!(
+            rpcs.iter()
+                .map(|rpc| (rpc.url.as_str(), rpc.source_for.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("https://a.example.test", None),
+                ("https://b.example.test", Some(For::Fallback)),
+            ]
         );
     }
 
