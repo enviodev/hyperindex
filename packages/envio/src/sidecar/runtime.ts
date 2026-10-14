@@ -79,6 +79,26 @@ export type StartOptions = {
   readonly logDestination?: NodeJS.WritableStream;
   readonly fetch?: typeof fetch;
   readonly retry?: RetryPolicy;
+  /** Longest `close()` waits for running work. Default `ENVIO_SIDECAR_GRACE_MS`, else 20000. */
+  readonly graceMs?: number;
+};
+
+export type CloseOptions = {
+  /** Overrides the grace period given to `start`. */
+  readonly graceMs?: number;
+};
+
+export type CloseReport = {
+  /** False when the grace period ran out first. */
+  readonly drained: boolean;
+  readonly graceMs: number;
+  /** What was still unfinished when the servers closed. */
+  readonly abandoned: {
+    readonly running: Readonly<Record<string, number>>;
+    readonly queued: Readonly<Record<string, number>>;
+    readonly emits: number;
+    readonly jobs: number;
+  };
 };
 
 export type SidecarStats = {
@@ -96,7 +116,10 @@ export type SidecarStats = {
 export type RunningSidecar = {
   readonly internalPort: number;
   readonly publicPort: number;
-  readonly close: () => Promise<void>;
+  /** Stops taking calls (503) and jobs, waits for running and queued functions,
+   * jobs and webhook deliveries up to the grace period, then closes the servers.
+   * Calling it again returns the same promise. */
+  readonly close: (options?: CloseOptions) => Promise<CloseReport>;
   readonly stats: () => SidecarStats;
   /** Resolves once no call is queued or running. */
   readonly waitIdle: () => Promise<void>;
@@ -241,6 +264,9 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       webhooksSent: 0,
       webhooksFailed: 0,
     };
+    const pendingEmits = new Set<Promise<unknown>>();
+    let runningJobs = 0;
+    let closing = false;
     const transport: EmitTransport = {
       indexerInternalUrl: options.indexerInternalUrl ?? env.indexerInternalUrl,
       webhookSecret: env.webhookSecret,
@@ -252,6 +278,14 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       },
       onFailed: () => {
         counters.webhooksFailed++;
+      },
+      onPending: (sending) => {
+        pendingEmits.add(sending);
+        const done = () => {
+          pendingEmits.delete(sending);
+          settle();
+        };
+        sending.then(done, done);
       },
     };
     const indexer = createIndexerClient({
@@ -295,11 +329,13 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       return forgotten;
     };
     const idleWaiters: Array<() => void> = [];
+    const drainWaiters: Array<() => void> = [];
     const isIdle = () =>
       [...queues.values()].every((queue) => queue.length === 0) && [...running.values()].every((n) => n === 0);
-    const notifyIfIdle = () => {
-      if (!isIdle()) return;
-      for (const resolve of idleWaiters.splice(0)) resolve();
+    const isDrained = () => isIdle() && pendingEmits.size === 0 && runningJobs === 0;
+    const settle = () => {
+      if (isIdle()) for (const resolve of idleWaiters.splice(0)) resolve();
+      if (isDrained()) for (const resolve of drainWaiters.splice(0)) resolve();
     };
 
     const settingsOf = (name: string) => {
@@ -343,7 +379,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         void runOne(item).finally(() => {
           running.set(name, (running.get(name) ?? 1) - 1);
           pump(name);
-          notifyIfIdle();
+          settle();
         });
       }
     };
@@ -355,9 +391,13 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       res.status(200).json({ status: "ok" });
     });
     internal.get("/readyz", (_req, res) => {
-      res.status(ready ? 200 : 503).json({ status: ready ? "ok" : "starting" });
+      res.status(ready ? 200 : 503).json({ status: ready ? "ok" : closing ? "closing" : "starting" });
     });
     internal.post("/envio/calls", (req, res) => {
+      if (closing) {
+        res.status(503).set("retry-after", "1").json({ error: "shutting down" });
+        return;
+      }
       const body: unknown = req.body;
       if (!isPlainObject(body) || !Array.isArray(body.calls)) {
         res.status(400).json({ error: "expected { batchId, calls: [...] }" });
@@ -456,7 +496,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             res.status(200).json({ dropped, onRollbackError: error instanceof Error ? error.message : String(error) });
           },
         )
-        .finally(notifyIfIdle);
+        .finally(settle);
     });
 
     const pub = express();
@@ -494,6 +534,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             return;
           }
           inFlight = true;
+          runningJobs++;
           Promise.resolve()
             .then(() => job.run({ emit: jobEmit, indexer, log: jobLog }))
             .catch((error: unknown) => {
@@ -501,6 +542,8 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             })
             .finally(() => {
               inFlight = false;
+              runningJobs--;
+              settle();
             });
         };
         timers.push(setInterval(tick, parseEvery(job.every)));
@@ -514,6 +557,42 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       jobs: Object.keys(jobs),
     });
 
+    const unfinished = (): CloseReport["abandoned"] => ({
+      running: Object.fromEntries(running),
+      queued: Object.fromEntries([...queues].map(([name, queue]) => [name, queue.length])),
+      emits: pendingEmits.size,
+      jobs: runningJobs,
+    });
+
+    const shutdown = async (graceMs: number): Promise<CloseReport> => {
+      closing = true;
+      ready = false;
+      for (const timer of timers) clearInterval(timer);
+      log.info("sidecar closing", { graceMs, ...unfinished() });
+      let graceTimer: NodeJS.Timeout | undefined;
+      const drained = await Promise.race([
+        new Promise<true>((resolve) => {
+          if (isDrained()) resolve(true);
+          else drainWaiters.push(() => resolve(true));
+        }),
+        new Promise<false>((resolve) => {
+          graceTimer = setTimeout(() => resolve(false), graceMs);
+        }),
+      ]);
+      clearTimeout(graceTimer);
+      const abandoned = unfinished();
+      if (!drained) {
+        // Running functions cannot be cancelled; queued ones must not start
+        // once the process is on its way out.
+        for (const queue of queues.values()) queue.length = 0;
+        log.warn("sidecar grace period over, abandoning unfinished work", { graceMs, ...abandoned });
+      }
+      await Promise.all([closeServer(internalServer), closeServer(publicServer)]);
+      log.info("sidecar stopped", { drained });
+      return { drained, graceMs, abandoned };
+    };
+    let closed: Promise<CloseReport> | undefined;
+
     return {
       internalPort: portOf(internalServer),
       publicPort: portOf(publicServer),
@@ -526,11 +605,9 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
           if (isIdle()) resolve();
           else idleWaiters.push(resolve);
         }),
-      close: async () => {
-        ready = false;
-        for (const timer of timers) clearInterval(timer);
-        await Promise.all([closeServer(internalServer), closeServer(publicServer)]);
-        log.info("sidecar stopped");
+      close: (closeOptions = {}) => {
+        closed ??= shutdown(closeOptions.graceMs ?? options.graceMs ?? env.graceMs);
+        return closed;
       },
     };
   };

@@ -119,7 +119,7 @@ afterEach(async () => {
 const startSidecar = async (
   indexer: FakeIndexer,
   impl: SidecarImpl<Contract>,
-  options: { startJobs?: boolean } = {},
+  options: { startJobs?: boolean; env?: NodeJS.ProcessEnv } = {},
 ): Promise<RunningSidecar> => {
   const sidecar = createSidecar(contract, impl);
   const running = await sidecar.start({
@@ -129,6 +129,7 @@ const startSidecar = async (
     logLevel: "silent",
     retry: { attempts: 4, baseMs: 1, capMs: 5 },
     startJobs: options.startJobs ?? false,
+    ...(options.env === undefined ? {} : { env: options.env }),
   });
   cleanups.push(running.close);
   return running;
@@ -521,6 +522,116 @@ describe("sidecar runtime: webhooks from outside a call", () => {
       atLeastTwo: true,
       boundedBySerialRuns: true,
     });
+  });
+});
+
+describe("sidecar runtime: close", () => {
+  it("stops taking calls, then lets running and queued functions and their emits finish", async () => {
+    // The first webhook meets a busy indexer, so the emit is still retrying when close starts.
+    const indexer = await fakeIndexer((_received, n) => (n === 1 ? { status: 503 } : undefined));
+    cleanups.push(indexer.close);
+    const gate = deferred();
+    const started = deferred();
+    const ranIds: string[] = [];
+    const running = await startSidecar(indexer, {
+      functions: {
+        priceSwap: async ({ input, call, emit }) => {
+          started.resolve();
+          await gate.promise;
+          await emit.swapPriced({ swapId: input.swapId, usd: 1, amount: input.amount });
+          ranIds.push(call.id);
+        },
+        notify: async () => {},
+      },
+    });
+    const base = `http://127.0.0.1:${running.internalPort}`;
+    await postJson(`${base}/envio/calls`, {
+      batchId: "b-13",
+      calls: [
+        call("1:100:1:0", "priceSwap", { swapId: "running", amount: "1" }),
+        call("1:100:2:0", "priceSwap", { swapId: "queued", amount: "2" }),
+      ],
+    });
+    await started.promise;
+    const closing = running.close();
+    const duringClose = await Promise.all([
+      postJson(`${base}/envio/calls`, { batchId: "b-14", calls: [call("1:101:1:0", "notify", { text: "late" })] }),
+      fetch(`${base}/readyz`).then(async (response) => ({ status: response.status, body: (await response.json()) as unknown })),
+    ]);
+    gate.resolve();
+    const report = await closing;
+    expect({
+      duringClose,
+      ranIds,
+      received: indexer.received.map((r) => [r.name, r.headers["idempotency-key"]]),
+      report,
+    }).toEqual({
+      duringClose: [
+        { status: 503, body: { error: "shutting down" } },
+        { status: 503, body: { status: "closing" } },
+      ],
+      ranIds: ["1:100:1:0", "1:100:2:0"],
+      received: [
+        ["swapPriced", "1:100:1:0#0"],
+        ["swapPriced", "1:100:1:0#0"],
+        ["swapPriced", "1:100:2:0#0"],
+      ],
+      report: {
+        drained: true,
+        graceMs: 20_000,
+        abandoned: { running: { priceSwap: 0, notify: 0 }, queued: { priceSwap: 0, notify: 0 }, emits: 0, jobs: 0 },
+      },
+    });
+  });
+
+  it("gives up on unfinished work after the grace period (ENVIO_SIDECAR_GRACE_MS or close option)", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const gate = deferred();
+    cleanups.push(async () => gate.resolve());
+    const closeStuck = async (env: NodeJS.ProcessEnv, graceMs?: number) => {
+      const started = deferred();
+      const ranIds: string[] = [];
+      const running = await startSidecar(
+        indexer,
+        {
+          functions: {
+            priceSwap: async ({ call }) => {
+              ranIds.push(call.id);
+              started.resolve();
+              await gate.promise;
+            },
+            notify: async () => {},
+          },
+        },
+        { env },
+      );
+      await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+        batchId: "b-15",
+        calls: [
+          call("1:100:1:0", "priceSwap", { swapId: "stuck", amount: "1" }),
+          call("1:100:2:0", "priceSwap", { swapId: "never started", amount: "1" }),
+        ],
+      });
+      await started.promise;
+      const startedAt = Date.now();
+      const report = await running.close(graceMs === undefined ? undefined : { graceMs });
+      const elapsed = Date.now() - startedAt;
+      return { report, onTime: elapsed >= report.graceMs - 5 && elapsed < report.graceMs + 500, ranIds };
+    };
+    const outcomes = [await closeStuck({ ENVIO_SIDECAR_GRACE_MS: "50" }), await closeStuck({}, 30)];
+    gate.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const abandoned = {
+      running: { priceSwap: 1, notify: 0 },
+      queued: { priceSwap: 1, notify: 0 },
+      emits: 0,
+      jobs: 0,
+    };
+    expect(outcomes).toEqual([
+      { report: { drained: false, graceMs: 50, abandoned }, onTime: true, ranIds: ["1:100:1:0"] },
+      { report: { drained: false, graceMs: 30, abandoned }, onTime: true, ranIds: ["1:100:1:0"] },
+    ]);
   });
 });
 
