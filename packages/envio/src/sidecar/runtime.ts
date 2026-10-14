@@ -1,7 +1,8 @@
 import express from "express";
 import type { Server } from "node:http";
+import { createRequire } from "node:module";
 import * as S from "rescript-schema";
-import { isSidecarContract, type SidecarContract, type SidecarFunctionInput } from "./contract.js";
+import { isSidecarContract, sidecarContractHash, type SidecarContract, type SidecarFunctionInput } from "./contract.js";
 import { createEmit, createEmitBreaker, DEFAULT_RETRY, type Emit, type EmitTransport, type RetryPolicy } from "./emit.js";
 import { readEnv } from "./env.js";
 import { createRootLogger, toUserLogger, type SidecarLogger } from "./log.js";
@@ -85,6 +86,8 @@ export type StartOptions = {
    * BigDecimal exactly; without them the client introspects the GraphQL schema. */
   readonly entities?: readonly EntityMetaInput[];
   readonly startJobs?: boolean;
+  /** The entry module as `sidecar.entry` names it, for `envio_sidecar_info`. */
+  readonly entry?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly logLevel?: string;
   readonly logDestination?: NodeJS.WritableStream;
@@ -163,6 +166,14 @@ type WireCall = {
 type QueuedCall = { readonly call: SidecarCall; readonly fn: string; readonly input: unknown };
 
 const DEFAULT_MAX_QUEUE = 10_000;
+
+const envioVersion = (): string => {
+  try {
+    return (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
+  } catch {
+    return "unknown";
+  }
+};
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -287,8 +298,10 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
 
   const start = async (options: StartOptions = {}): Promise<RunningSidecar> => {
     const env = readEnv(options.env ?? process.env);
+    const startTime = Date.now() / 1_000;
     const rootLogger = createRootLogger({
       level: options.logLevel ?? env.logLevel,
+      ecs: env.ecsLogs,
       ...(options.logDestination === undefined ? {} : { destination: options.logDestination, pretty: false }),
     });
     const log = toUserLogger(rootLogger.child({ component: "sidecar" }));
@@ -343,9 +356,30 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     const breakerOpened = metrics.counter("envio_sidecar_emit_breaker_opened_total", "Times the emit breaker opened.");
     const jobRuns = metrics.counter("envio_sidecar_job_runs_total", "Job ticks by outcome (succeeded, failed, skipped).");
     const jobDurations = metrics.histogram("envio_sidecar_job_duration_seconds", "Time a job run took.");
+    const jobLastRun = new Map<string, Map<"succeeded" | "failed", number>>();
+    const recordJobRun = (job: string, outcome: "succeeded" | "failed") => {
+      const byOutcome = jobLastRun.get(job) ?? new Map<"succeeded" | "failed", number>();
+      byOutcome.set(outcome, Date.now() / 1_000);
+      jobLastRun.set(job, byOutcome);
+    };
+    metrics.gauge(
+      "envio_sidecar_job_last_run_timestamp_seconds",
+      "Unix time the job's last run with this outcome (succeeded, failed) finished.",
+      () => [...jobLastRun].flatMap(([job, byOutcome]) => [...byOutcome].map(([outcome, at]) => [{ job, outcome }, at] as const)),
+    );
+    metrics.gauge("envio_sidecar_job_interval_seconds", "How often the job runs.", () =>
+      Object.entries(jobs).map(([job, { every }]) => [{ job }, parseEvery(every) / 1_000] as const),
+    );
     metrics.gauge("envio_sidecar_ready", "1 while the sidecar takes calls, 0 while starting or closing.", () => [
       [{}, ready ? 1 : 0],
     ]);
+    metrics.gauge("envio_sidecar_start_time_seconds", "Unix time the sidecar started.", () => [[{}, startTime]]);
+    const info = { version: envioVersion(), contract_hash: sidecarContractHash(contract), entry: options.entry ?? "" };
+    metrics.gauge(
+      "envio_sidecar_info",
+      "Always 1: envio version, contract hash (sidecarContractHash) and entry module.",
+      () => [[info, 1]],
+    );
 
     const stopEmits = new AbortController();
     const indexerInternalUrl = options.indexerInternalUrl ?? env.indexerInternalUrl;
@@ -691,9 +725,11 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             .then(
               () => {
                 jobRuns.inc({ job: name, outcome: "succeeded" });
+                recordJobRun(name, "succeeded");
               },
               (error: unknown) => {
                 jobRuns.inc({ job: name, outcome: "failed" });
+                recordJobRun(name, "failed");
                 jobLog.error("job failed", error instanceof Error ? error : { error: String(error) });
               },
             )

@@ -3,7 +3,8 @@
 type handle = {close: unit => promise<unit>}
 // The entities let the read client decode bigint / BigDecimal columns exactly
 // instead of learning them by introspection.
-type startOptions = {entities: array<Internal.entityConfig>}
+// `entry` only labels `envio_sidecar_info`.
+type startOptions = {entities: array<Internal.entityConfig>, entry: string}
 type runtime = {start: startOptions => promise<handle>}
 
 // How long a signalled `envio sidecar` waits for `close()` before exiting
@@ -190,6 +191,9 @@ let run = async (~config: Config.t) => {
   started->closeOnSignals
   HandlerLoader.registerTsHooks()
   let runtime = await loadRuntimeOrThrow(~entry=sidecar.entry)
-  let handle = await runtime.start({entities: config->Config.getPgUserEntities})
+  let handle = await runtime.start({
+    entities: config->Config.getPgUserEntities,
+    entry: sidecar.entry,
+  })
   resolveStarted.contents(handle)
 }

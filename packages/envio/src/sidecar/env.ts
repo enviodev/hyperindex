@@ -28,7 +28,11 @@ export type SidecarEnv = {
   readonly graphqlSecret: string | undefined;
   readonly webhookSecret: string | undefined;
   readonly responseLimit: number;
+  /** `ENVIO_SIDECAR_LOG_LEVEL`. Not `LOG_LEVEL`: Envio Cloud sets that to trace for the
+   * whole pod, which would bury user logs. */
   readonly logLevel: string;
+  /** ECS JSON lines, like the indexer's, when `LOG_STRATEGY` is `ecs-*`. */
+  readonly ecsLogs: boolean;
   /** Longest `close()` waits for running work (`ENVIO_SIDECAR_GRACE_MS`). */
   readonly graceMs: number;
   /** Default per-function timeout (`ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS`), 0 turns it off. */
@@ -98,7 +102,8 @@ export const readEnv = (env: NodeJS.ProcessEnv = process.env): SidecarEnv => ({
     "ENVIO_HASURA_RESPONSE_LIMIT",
     readInt(env, "HASURA_RESPONSE_LIMIT", DEFAULT_RESPONSE_LIMIT),
   ),
-  logLevel: optional(env, "LOG_LEVEL") ?? "info",
+  logLevel: optional(env, "ENVIO_SIDECAR_LOG_LEVEL") ?? "info",
+  ecsLogs: optional(env, "LOG_STRATEGY")?.startsWith("ecs-") ?? false,
   graceMs: readInt(env, "ENVIO_SIDECAR_GRACE_MS", DEFAULT_GRACE_MS, 0),
   functionTimeoutMs: readInt(env, "ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS", DEFAULT_FUNCTION_TIMEOUT_MS, 0),
   dedupeMax: readInt(env, "ENVIO_SIDECAR_DEDUPE_MAX", DEFAULT_DEDUPE_MAX),
