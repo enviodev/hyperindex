@@ -146,6 +146,25 @@ describe("a subgraph with a timeseries and an aggregation", () => {
       ],
     });
   });
+
+  it("picks up where the stored rows left off when the run is split", async (t) => {
+    const whole = createTestIndexer();
+    const split = createTestIndexer();
+    const events = [
+      trade(10, 36100, "A", 5, "1.5"),
+      trade(11, 37800, "A", 7, "2.5"),
+      trade(13, 39900, "A", 3, "4"),
+      trade(14, 46800, "A", 2, "5"),
+    ];
+    await whole.process({ chains: { 1: { startBlock: 0, endBlock: 100, simulate: events } } });
+    await split.process({ chains: { 1: { startBlock: 0, endBlock: 12, simulate: events.slice(0, 2) } } });
+    await split.process({ chains: { 1: { startBlock: 13, endBlock: 100, simulate: events.slice(2) } } });
+    const wholeRows = ordered(await whole.TradeStats_hour.getAll());
+    t.expect({
+      hours: wholeRows.length,
+      splitEqualsWhole: JSON.stringify(ordered(await split.TradeStats_hour.getAll())) === JSON.stringify(wholeRows),
+    }).toEqual({ hours: 2, splitEqualsWhole: true });
+  });
 });
 `,
 )
