@@ -104,6 +104,8 @@ type SubgraphConfig = {
   /** The manifest's name within `root`: `--config` may name another than subgraph.yaml. */
   manifestFile?: string;
   rpcUrls: string[];
+  /** Per chain id, the reorg depth a block handler's header reads are held back by. */
+  blockHeaderLag?: Record<number, number>;
   isDev: boolean;
 } & SubgraphSchema;
 
@@ -536,7 +538,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     const hit = registerCache.get(`envio_subgraph_eth_call\u0000${encoded}`);
     return hit && "value" in hit ? (hit.value as string) : undefined;
   });
-  const hosts = makeHostEffects(rpcUrls);
+  const hosts = makeHostEffects(rpcUrls, config.blockHeaderLag ?? {});
   const callSync = (effect: unknown, input: unknown, what: string) => {
     const scope = currentScope();
     void what;
@@ -581,6 +583,8 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       ),
     blockTimestamp: (blockNumber) =>
       callSync(hosts.blockTimestamp, blockNumber, "block.timestamp"),
+    blockHeader: (blockNumber) => callSync(hosts.blockHeader, blockNumber, "block header"),
+    receiptLogs: (transaction) => callSync(hosts.receiptLogs, transaction, "event.receipt.logs"),
   });
 
   // Reads the scope rather than closing over one context: register passes for
