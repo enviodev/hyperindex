@@ -62,5 +62,16 @@ export {
   type GetWhereOperator,
   type ChainMeta,
 } from "./client.js";
-export { readEnv, type SidecarEnv } from "./env.js";
+export { readEnv, type SidecarEnv, type SidecarSqlEnv, type SidecarSqlSslMode } from "./env.js";
+export {
+  createSidecarSql,
+  SidecarSqlError,
+  SidecarSqlDisabledError,
+  type SidecarSql,
+  type SidecarSqlQuery,
+  type SidecarSqlFragment,
+  type SidecarSqlTransactionOptions,
+  type SidecarSqlErrorCode,
+  type SidecarSqlHandle,
+} from "./sql.js";
 export { type SidecarLogger, type LogParams } from "./log.js";

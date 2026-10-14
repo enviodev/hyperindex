@@ -77,6 +77,26 @@ let stateSchema = S.union([
   })),
 ])
 
+// The body of `/metrics`: the indexer's metrics, then, for an indexer with a
+// sidecar, the sidecar's own (its internal /metrics is loopback only, D-008).
+// A sidecar that does not answer within `timeoutMs` is left out quietly: it
+// never fails the scrape, and `envio_sidecar_up` already says it is down.
+let collectMetrics = async (
+  ~metrics: option<Metrics.t>,
+  ~sidecarUrl=Env.Sidecar.internalUrl,
+  ~timeoutMs=1_000,
+) => {
+  let own = Metrics.collect(~metrics)
+  switch metrics {
+  | Some({sidecar: Some(_)}) =>
+    switch await SidecarSender.fetchMetrics(~url=sidecarUrl, ~timeoutMs) {
+    | Some(sidecarText) => Metrics.appendExposition(own, sidecarText)
+    | None => own
+    }
+  | _ => own
+  }
+}
+
 let startServer = (
   ~getMetrics: unit => option<Metrics.t>,
   ~envioVersion: string,
@@ -154,7 +174,11 @@ let startServer = (
 
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", Metrics.contentType)
-    let _ = res->endWithData(Metrics.collect(~metrics=getMetrics()))
+    let metrics = getMetrics()
+    let _ =
+      collectMetrics(~metrics)
+      ->Promise.catch(_ => Promise.resolve(Metrics.collect(~metrics)))
+      ->Promise.thenResolve(body => res->endWithData(body))
   })
 
   app->get("/metrics/runtime", (_req, res) => {

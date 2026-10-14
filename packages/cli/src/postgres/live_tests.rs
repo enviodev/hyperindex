@@ -1391,3 +1391,94 @@ async fn a_copy_that_fails_part_way_leaves_the_previous_file() {
         )
     );
 }
+
+/// The read-only role `envio dev` creates for the sidecar's `sql` handle:
+/// creating it again is harmless, and logged in as it a SELECT works while a
+/// write fails on the role's own `default_transaction_read_only`.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn envio_dev_sidecar_role_is_idempotent_and_read_only() {
+    let host = std::env::var("ENVIO_PG_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port: u16 = std::env::var("ENVIO_PG_PORT")
+        .ok()
+        .and_then(|port| port.parse().ok())
+        .unwrap_or(5433);
+    let user = std::env::var("ENVIO_PG_USER").unwrap_or_else(|_| "postgres".to_string());
+    let password = std::env::var("ENVIO_PG_PASSWORD").unwrap_or_else(|_| "testing".to_string());
+    let database = std::env::var("ENVIO_PG_DATABASE").unwrap_or_else(|_| "envio-dev".to_string());
+    let schema = "envio_sidecar_role_test";
+
+    let connect = |user: &str, password: &str| {
+        let mut config = tokio_postgres::Config::new();
+        config
+            .host(&host)
+            .port(port)
+            .user(user)
+            .password(password)
+            .dbname(&database);
+        async move {
+            let (client, connection) = config
+                .connect(tokio_postgres::NoTls)
+                .await
+                .expect("connects");
+            tokio::spawn(connection);
+            client
+        }
+    };
+
+    let owner = connect(&user, &password).await;
+    owner
+        .batch_execute(&format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema};
+             CREATE TABLE {schema}.trade (id text PRIMARY KEY, amount numeric);
+             INSERT INTO {schema}.trade VALUES ('a', 1.5), ('b', 2);"
+        ))
+        .await
+        .expect("seeds a table");
+
+    for _ in 0..2 {
+        crate::docker_env::run_sidecar_role_sql(&host, port, &user, &password, &database, schema)
+            .await
+            .expect("creating the role twice is fine");
+    }
+
+    let sidecar = connect(
+        crate::docker_env::SIDECAR_PG_ROLE,
+        crate::docker_env::SIDECAR_PG_PASSWORD,
+    )
+    .await;
+    // The role's search_path names the indexer schema, so tables need no prefix.
+    let row = sidecar
+        .query_one("SELECT sum(amount)::text FROM trade", &[])
+        .await
+        .expect("the role can read");
+    assert_eq!(row.get::<_, String>(0), "3.5");
+    let row = sidecar
+        .query_one("SHOW statement_timeout", &[])
+        .await
+        .expect("shows");
+    assert_eq!(row.get::<_, String>(0), "10s");
+
+    let write = sidecar
+        .batch_execute("INSERT INTO trade VALUES ('c', 3)")
+        .await
+        .expect_err("the role cannot write");
+    let message = write
+        .as_db_error()
+        .map(|error| error.message().to_string())
+        .unwrap_or_default();
+    assert_eq!(message, "cannot execute INSERT in a read-only transaction");
+    let create = sidecar
+        .batch_execute("CREATE TABLE sneaky (id int)")
+        .await
+        .expect_err("the role cannot create tables");
+    assert!(create
+        .as_db_error()
+        .is_some_and(|error| error.message().contains("read-only transaction")));
+
+    drop(sidecar);
+    owner
+        .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+        .await
+        .expect("cleans up");
+}
