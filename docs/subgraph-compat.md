@@ -486,6 +486,11 @@ refuse instead, so behavior never silently diverges:
 
 **B. CLI subgraph mode** (`packages/cli`).
 1. `dev`/`start`/`codegen` detect `subgraph.yaml` when `config.yaml` absent.
+   `--config`/`ENVIO_CONFIG` may name any subgraph manifest instead
+   (`v3-subgraph.yaml`, `subgraphs/<name>/subgraph.yaml`); its paths resolve
+   against its own directory, as graph-cli resolves them. With neither, the
+   error lists the manifests found under the project (3 levels deep) and the
+   `--config` line that runs one.
 2. Manifest parser (all specVersions) + §7 error collection; network→chain-id
    table; synthesize `human_config` structs (events with ABI param names,
    `field_selection` narrowed to the `event.transaction.*` / `event.block.*`

@@ -36,7 +36,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use hypersync_client_solana::decode::{
@@ -1525,16 +1525,21 @@ impl SystemConfig {
         Ok(config)
     }
 
-    /// A subgraph project has no config.yaml: `subgraph.yaml` next to it is
-    /// what puts the CLI into subgraph mode, so `dev`, `start` and `codegen`
-    /// all work inside one unchanged.
-    fn parse_subgraph_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
-        let root = &project_paths.project_root;
-        let manifest_path = root.join("subgraph.yaml");
-        let manifest = std::fs::read_to_string(&manifest_path)
-            .context(format!("Failed to read {}", manifest_path.display()))?;
+    /// A subgraph project has no config.yaml: its manifest is what puts the CLI
+    /// into subgraph mode, so `dev`, `start` and `codegen` all work inside one
+    /// unchanged. The manifest's paths resolve against its own directory, as
+    /// graph-cli resolves them.
+    fn parse_subgraph_from_project_files(
+        project_paths: &ParsedProjectPaths,
+        manifest_path: &Path,
+        manifest: String,
+    ) -> Result<Self> {
+        let root = &match manifest_path.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+            _ => project_paths.project_root.clone(),
+        };
 
-        let env = crate::utils::project_env::ProjectEnv::new(root);
+        let env = crate::utils::project_env::ProjectEnv::new(&project_paths.project_root);
         let mut env_vars = HashMap::new();
         for name in [
             crate::subgraph::RPC_ENV_VAR,
@@ -1601,40 +1606,63 @@ impl SystemConfig {
             &root_str,
             &mapping_sources,
         )?;
+        if let (Some(subgraph), Some(file)) = (
+            config.subgraph.as_mut(),
+            manifest_path.file_name().and_then(|name| name.to_str()),
+        ) {
+            subgraph.manifest_file = file.to_string();
+        }
         config.parsed_project_paths = project_paths.clone();
         Ok(config)
     }
 
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
-        if !project_paths.config.exists()
-            && project_paths.project_root.join("subgraph.yaml").exists()
-        {
-            return Self::parse_subgraph_from_project_files(project_paths);
+        let root = &project_paths.project_root;
+        if !project_paths.config.exists() {
+            let manifest_path = root.join(crate::subgraph::DEFAULT_MANIFEST);
+            if manifest_path.exists() {
+                let manifest = std::fs::read_to_string(&manifest_path)
+                    .context(format!("Failed to read {}", manifest_path.display()))?;
+                return Self::parse_subgraph_from_project_files(
+                    project_paths,
+                    &manifest_path,
+                    manifest,
+                );
+            }
         }
 
-        if !project_paths.config.exists()
-            && project_paths
-                .project_root
-                .join("subgraph.template.yaml")
-                .exists()
-        {
-            return Err(anyhow!(
-                "Found subgraph.template.yaml but no subgraph.yaml.\n\
-                 This project generates its manifest — run the package prepare script \
-                 (mustache / `graph build --network <network>`), then run envio from \
-                 the directory that now contains subgraph.yaml."
-            ));
-        }
+        let human_config_string = match std::fs::read_to_string(&project_paths.config) {
+            Ok(text) => text,
+            Err(err) => {
+                let manifests = crate::subgraph::find_manifests(root);
+                let hint = crate::subgraph::manifest_hint(&manifests);
+                if root.join("subgraph.template.yaml").exists() && manifests.is_empty() {
+                    return Err(anyhow!(
+                        "Found subgraph.template.yaml but no subgraph.yaml.\n\
+                         This project generates its manifest — run the package prepare script \
+                         (mustache / `graph build --network <network>`), then run envio from \
+                         the directory that now contains subgraph.yaml, or point --config at \
+                         the manifest it wrote."
+                    ));
+                }
+                return Err(anyhow::Error::new(err).context(format!(
+                    "Failed to resolve config path {0} (--config {1} resolved relative to \
+                     --directory {2}). Make sure the file exists. Note that --config and \
+                     ENVIO_CONFIG are interpreted relative to --directory.{hint}",
+                    project_paths.config.to_str().unwrap_or("{unknown}"),
+                    project_paths.config_relative_to_root().display(),
+                    project_paths.project_root.display(),
+                )));
+            }
+        };
 
-        let human_config_string =
-            std::fs::read_to_string(&project_paths.config).context(format!(
-                "Failed to resolve config path {0} (--config {1} resolved relative to --directory \
-                 {2}). Make sure the file exists. Note that --config and ENVIO_CONFIG are \
-                 interpreted relative to --directory.",
-                project_paths.config.to_str().unwrap_or("{unknown}"),
-                project_paths.config_relative_to_root().display(),
-                project_paths.project_root.display(),
-            ))?;
+        if crate::subgraph::is_manifest(&human_config_string) {
+            return Self::parse_subgraph_from_project_files(
+                project_paths,
+                &project_paths.config,
+                human_config_string,
+            );
+        }
 
         let mut source = FilesystemConfigSource::new(project_paths);
         Self::parse_yaml_with_source(human_config_string, &mut source)

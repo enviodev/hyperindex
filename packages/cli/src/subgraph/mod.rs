@@ -96,6 +96,78 @@ pub struct SubgraphRuntimeConfig {
     /// effects use them as a viem fallback transport; empty means the mapping's
     /// first contract call raises the missing-RPC error.
     pub rpc_urls: Vec<String>,
+    /// The manifest's file name within `root`, which `graph codegen` is run on.
+    pub manifest_file: String,
+}
+
+pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
+
+/// Whether a YAML document is a subgraph manifest rather than an envio config.
+pub fn is_manifest(yaml: &str) -> bool {
+    serde_yaml::from_str::<serde_yaml::Value>(yaml)
+        .ok()
+        .and_then(|value| {
+            let map = value.as_mapping()?;
+            Some(map.contains_key("specVersion") && map.contains_key("dataSources"))
+        })
+        .unwrap_or(false)
+}
+
+/// Subgraph manifests under `root`, project-relative: build scripts write them
+/// under other names (Uniswap's `v3-subgraph.yaml`), and monorepos keep one per
+/// package (`subgraphs/<name>/subgraph.yaml`).
+pub fn find_manifests(root: &std::path::Path) -> Vec<String> {
+    const MAX_DEPTH: usize = 3;
+    const SKIPPED: &[&str] = &["node_modules", "build", "generated", "target"];
+    let mut found = Vec::new();
+    let mut pending = vec![(root.to_path_buf(), 0)];
+    while let Some((dir, depth)) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut entries: Vec<_> = entries.filter_map(|entry| entry.ok()).collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir() {
+                if depth < MAX_DEPTH && !name.starts_with('.') && !SKIPPED.contains(&name.as_str())
+                {
+                    pending.push((path, depth + 1));
+                }
+                continue;
+            }
+            let is_yaml = name.ends_with(".yaml") || name.ends_with(".yml");
+            if is_yaml && std::fs::read_to_string(&path).is_ok_and(|text| is_manifest(&text)) {
+                if let Ok(relative) = path.strip_prefix(root) {
+                    found.push(relative.display().to_string());
+                }
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// What to add to "config.yaml not found" so a subgraph project learns how to
+/// run: name the manifests there are, or say where envio looks for one.
+pub fn manifest_hint(manifests: &[String]) -> String {
+    match manifests {
+        [] => format!(
+            "\nFor a subgraph, run envio in the directory holding {DEFAULT_MANIFEST}, or point \
+             --config (or ENVIO_CONFIG) at the manifest:\n  envio start --config \
+             path/to/subgraph.yaml"
+        ),
+        [only] => format!(
+            "\nFound the subgraph manifest {only}. To index it, point --config (or ENVIO_CONFIG) \
+             at it:\n  envio start --config {only}"
+        ),
+        [first, ..] => format!(
+            "\nFound these subgraph manifests: {}. To index one, point --config (or \
+             ENVIO_CONFIG) at it:\n  envio start --config {first}",
+            manifests.join(", ")
+        ),
+    }
 }
 
 #[derive(Debug)]
@@ -548,6 +620,7 @@ pub fn translate(
             contract_accessors,
             root: root.to_string(),
             rpc_urls,
+            manifest_file: DEFAULT_MANIFEST.to_string(),
         },
         human_config,
     })
@@ -1286,6 +1359,97 @@ type Transfer implements Event @entity {
             .collect();
         columns.sort();
         assert_eq!(columns, vec!["created_id", "id", "nft"]);
+    }
+
+    /// The Gravity project laid out in `dir`, its manifest named `manifest`.
+    fn write_gravity(dir: &std::path::Path, manifest: &str) {
+        fs::create_dir_all(dir.join("abis")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("abis/Gravity.json"), GRAVITY_ABI).unwrap();
+        fs::write(
+            dir.join("src/gravity.ts"),
+            "export function handleNewGravatar() {}",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("schema.graphql"),
+            "type Gravatar @entity {\n  id: Bytes!\n  owner: Bytes!\n}\n",
+        )
+        .unwrap();
+        fs::write(dir.join(manifest), GRAVITY_MANIFEST).unwrap();
+    }
+
+    // Uniswap v3's build writes `v3-subgraph.yaml`; `--config` naming it was
+    // parsed as an envio config ("missing field `chains`").
+    #[test]
+    fn indexes_the_manifest_config_names() {
+        let dir = tempdir::TempDir::new("envio-subgraph-named").unwrap();
+        let root = dir.path();
+        write_gravity(root, "v3-subgraph.yaml");
+
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "v3-subgraph.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let subgraph = config.subgraph.unwrap();
+
+        assert_eq!(
+            (
+                subgraph.manifest_file.as_str(),
+                std::path::Path::new(&subgraph.root) == root,
+                config.contracts.contains_key("Gravity"),
+            ),
+            ("v3-subgraph.yaml", true, true)
+        );
+    }
+
+    // A monorepo keeps one subgraph per package; its paths are relative to its
+    // own manifest, as graph-cli reads them.
+    #[test]
+    fn resolves_a_manifest_against_its_own_directory() {
+        let dir = tempdir::TempDir::new("envio-subgraph-monorepo").unwrap();
+        let root = dir.path();
+        write_gravity(&root.join("subgraphs/gravity"), "subgraph.yaml");
+
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "subgraphs/gravity/subgraph.yaml")
+                .unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let subgraph = config.subgraph.unwrap();
+
+        assert_eq!(
+            (
+                std::path::Path::new(&subgraph.root) == root.join("subgraphs/gravity"),
+                config.schema.entities.contains_key("Gravatar"),
+            ),
+            (true, true)
+        );
+    }
+
+    // The error used to talk only about config.yaml.
+    #[test]
+    fn names_the_manifests_there_are_when_config_yaml_is_missing() {
+        let dir = tempdir::TempDir::new("envio-subgraph-missing").unwrap();
+        let root = dir.path();
+        write_gravity(root, "v3-subgraph.yaml");
+        fs::write(
+            root.join("v3-subgraph.template.yaml"),
+            "dataSources: {{x}}\n",
+        )
+        .unwrap();
+
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert!(
+            err.contains(
+                "Found the subgraph manifest v3-subgraph.yaml. To index it, point --config (or \
+                 ENVIO_CONFIG) at it:\n  envio start --config v3-subgraph.yaml"
+            ),
+            "{err}"
+        );
     }
 
     #[test]
