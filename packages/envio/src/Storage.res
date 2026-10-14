@@ -132,7 +132,7 @@ let makeClient = (
   ~chainIdMode: ChainId.mode=Int32,
   ~postgres: option<StorageClient.postgresOptions>=?,
   ~clickhouse: option<StorageClient.clickHouseOptions>=?,
-): Sql.t =>
+): StorageClient.t =>
   StorageClient.make(
     {chainIdMode: (chainIdMode :> string), ?postgres, ?clickhouse},
     ~onIndexEvent=event =>
@@ -308,7 +308,7 @@ type registered = {
 }
 
 let register = (
-  client: Sql.t,
+  client: StorageClient.t,
   ~kind: StorageClient.tableKind,
   ~table: Table.table,
   ~itemSchema: S.t<unknown>,
@@ -345,7 +345,9 @@ let register = (
     table,
     fields,
     postgres: registered.postgres->Option.map(({?kinds}): postgresTable => {
-      staged: kinds->Option.map(kinds => PgWriting.columns(fields, ~kinds)),
+      staged: kinds->Option.map(kinds =>
+        PgWriting.columns(fields, ~kinds=kinds->Array.map(Staging.kindOfOrdinal))
+      ),
     }),
     // Named for where its rows go, which for an entity is its history table.
     clickhouse: registered.clickhouse->Option.map(
@@ -483,64 +485,86 @@ let converterOf = (registered, ~forArena, ~itemSchema) => {
     )
 )
 
+let storeName = (store: StorageClient.store) =>
+  switch store {
+  | Postgres => "postgres"
+  | ClickHouse => "clickhouse"
+  }
+
+// What a batch has laid out on its way to the addon: the staged handles, freed
+// if the write never reaches it, and each store's time spent laying its rows
+// out, which is part of writing to it.
+type staged = {handles: array<int>, seconds: dict<float>}
+
+let stagedFor = (staged, ~store, stage) => {
+  let started = Performance.now()
+  let result = stage()
+  let name = store->storeName
+  staged.seconds->Dict.set(
+    name,
+    staged.seconds->Dict.get(name)->Option.getOr(0.) +. started->Performance.secondsSince,
+  )
+  result
+}
+
 // Lays rows out for `store`, which for one of the indexer's own tables is the
-// one that keeps it. A staged batch is handed back by handle, and recorded in
-// `staged` so a write that fails before reaching the addon can free it.
+// one that keeps it. A staged batch is handed back by handle.
 let rowsOrThrow = (
-  client: Sql.t,
+  client: StorageClient.t,
   registered,
   ~store: StorageClient.store=registered.clickhouse->Option.isSome ? ClickHouse : Postgres,
   ~itemSchema,
   items: array<unknown>,
-  ~staged: array<int>,
-): StorageClient.rows => {
-  let rows = items->Array.length
-  try {
-    switch (store, registered) {
-    | (ClickHouse, {clickhouse: Some(table)}) =>
-      let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
-      let handle =
-        client
-        ->StorageClient.arena(~store=ClickHouse)
-        ->ClickHouse.stageColumnsOrThrow(table, ~fields=registered.fields, ~values, ~rows)
-      staged->Array.push(handle)
-      {staged: handle, rows}
-    | (Postgres, {postgres: Some({staged: Some(columns)})}) =>
-      let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
-      let handle =
-        client
-        ->StorageClient.arena(~store=Postgres)
-        ->PgWriting.stage(~table=registered.handle, ~columns, ~values, ~rows)
-      staged->Array.push(handle)
-      {staged: handle, rows}
-    | (Postgres, {postgres: Some({staged: None})}) =>
-      let values = (registered->converterOf(~forArena=false, ~itemSchema))(items)
-      values->refuseNonFinite(~fields=registered.fields)
-      {
-        cells: values->Utils.Array.flatten->Sql.params,
-        rows,
+  ~staged: staged,
+): StorageClient.rows =>
+  staged->stagedFor(~store, () => {
+    let rows = items->Array.length
+    try {
+      switch (store, registered) {
+      | (ClickHouse, {clickhouse: Some(table)}) =>
+        let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
+        let handle =
+          client
+          ->StorageClient.arena(~store=ClickHouse)
+          ->ClickHouse.stageColumnsOrThrow(table, ~fields=registered.fields, ~values, ~rows)
+        staged.handles->Array.push(handle)
+        ({staged: handle, rows}: StorageClient.rows)
+      | (Postgres, {postgres: Some({staged: Some(columns)})}) =>
+        let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
+        let handle =
+          client
+          ->StorageClient.arena(~store=Postgres)
+          ->PgWriting.stage(~table=registered.handle, ~columns, ~values, ~rows)
+        staged.handles->Array.push(handle)
+        {staged: handle, rows}
+      | (Postgres, {postgres: Some({staged: None})}) =>
+        let values = (registered->converterOf(~forArena=false, ~itemSchema))(items)
+        values->refuseNonFinite(~fields=registered.fields)
+        {
+          cells: values->Utils.Array.flatten->Sql.params,
+          rows,
+        }
+      | (ClickHouse, _) | (Postgres, _) =>
+        JsError.throwWithMessage(`No store keeps "${registered.table.tableName}" for this write`)
       }
-    | (ClickHouse, _) | (Postgres, _) =>
-      JsError.throwWithMessage(`No store keeps "${registered.table.tableName}" for this write`)
+    } catch {
+    | Persistence.StorageError(_) as exn => throw(exn)
+    | S.Raised(_) as exn =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed to convert items for table "${registered.table.tableName}"`,
+          reason: exn,
+        }),
+      )
+    | exn =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed to insert items into table "${registered.table.tableName}"`,
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
     }
-  } catch {
-  | Persistence.StorageError(_) as exn => throw(exn)
-  | S.Raised(_) as exn =>
-    throw(
-      Persistence.StorageError({
-        message: `Failed to convert items for table "${registered.table.tableName}"`,
-        reason: exn,
-      }),
-    )
-  | exn =>
-    throw(
-      Persistence.StorageError({
-        message: `Failed to insert items into table "${registered.table.tableName}"`,
-        reason: exn->Utils.prettifyExn,
-      }),
-    )
-  }
-}
+  })
 
 // Ids as the text their column reads them from.
 let renderIds = (table: Table.table, ids: array<EntityId.t>) =>
@@ -629,7 +653,7 @@ let rollbackRemovedIdSchema: Table.table => S.t<EntityId.t> = Utils.WeakMap.memo
 )
 
 let make = (
-  ~client: Sql.t,
+  ~client: StorageClient.t,
   // The entities a load can name before initialize or resume has.
   ~entities: array<Internal.entityConfig>=[],
   // Where the effect cache is dumped to and uploaded from.
@@ -1310,11 +1334,12 @@ let make = (
       clickhouse: ?switch (table.clickhouse, changes) {
       | (_, []) | (None, _) => None
       | (Some(chTable), _) =>
-        let handle =
+        let handle = staged->stagedFor(~store=ClickHouse, () =>
           client
           ->StorageClient.arena(~store=ClickHouse)
           ->ClickHouse.stageChangesOrThrow(chTable, ~entityConfig, ~scope, ~changes)
-        staged->Array.push(handle)
+        )
+        staged.handles->Array.push(handle)
         Some(handle)
       },
     }
@@ -1357,7 +1382,7 @@ let make = (
       []
     }
 
-    let staged = []
+    let staged = {handles: [], seconds: Dict.make()}
     let input: StorageClient.batch = try {
       rollback: ?(
         rollback->Option.map(({
@@ -1454,23 +1479,30 @@ let make = (
       }),
     } catch {
     | exn =>
-      client->StorageClient.discardStaged(staged)
+      client->StorageClient.discardStaged(staged.handles)
       throw(exn)
     }
 
     let timings = try await client->StorageClient.writeBatch(input) catch {
     | exn =>
       // Batches the addon never took, because it refused the call itself.
-      client->StorageClient.discardStaged(staged)
+      client->StorageClient.discardStaged(staged.handles)
       throw(exn->storageErrorOf)
     }
-    timings->Array.forEach(({store, seconds}) => onWrite(~storage=store, ~timeSeconds=seconds))
+    timings->Array.forEach(({store, seconds}) =>
+      onWrite(
+        ~storage=store,
+        ~timeSeconds=seconds +. staged.seconds->Dict.get(store)->Option.getOr(0.),
+      )
+    )
   }
 
   let close = () => client->StorageClient.close
 
   {
     name: client->StorageClient.storeOfRecord,
+    entityStoreName: entityConfig =>
+      (entityConfig.storage.postgres ? Postgres : ClickHouse)->storeName,
     isInitialized,
     initialize,
     readStoredConfig,

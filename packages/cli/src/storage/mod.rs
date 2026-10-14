@@ -396,7 +396,7 @@ impl Storage {
                         resumed
                             .chains
                             .iter()
-                            .filter(|chain| chain_ids.contains(&(chain.id as i64)))
+                            .filter(|chain| chain_ids.contains(&chain.id))
                             .cloned()
                             .collect(),
                     ),
@@ -412,7 +412,10 @@ impl Storage {
     }
 
     pub async fn set_chain_meta(&self, chains: &[ChainMeta]) -> Result<()> {
-        settle(join_all(self.all().map(|backend| backend.set_chain_meta(chains))).await)
+        join_all(self.all().map(|backend| backend.set_chain_meta(chains)))
+            .await
+            .into_iter()
+            .collect()
     }
 
     pub async fn finalize_backfill(
@@ -479,7 +482,10 @@ impl Storage {
     }
 
     pub async fn reset(&self) -> Result<()> {
-        settle(join_all(self.all().map(Backend::reset)).await)
+        join_all(self.all().map(Backend::reset))
+            .await
+            .into_iter()
+            .collect()
     }
 
     /// Writes a batch to every store, and says how long each took. A follower
@@ -521,6 +527,18 @@ impl Storage {
         // The follower's own failure is what a refused gate means, so it is
         // the one reported.
         match (follower_outcome, primary_outcome) {
+            (Err(WriteError::Failed(follower)), Err(WriteError::Failed(primary))) => {
+                Err(Failure::new(
+                    "Both stores failed writing the batch",
+                    anyhow!(
+                        "{}: {}\n{}: {}",
+                        follower.context,
+                        postgres::error::message_of(&follower.error),
+                        primary.context,
+                        postgres::error::message_of(&primary.error)
+                    ),
+                ))
+            }
             (Err(WriteError::Failed(failure)), _) | (_, Err(WriteError::Failed(failure))) => {
                 Err(failure)
             }
@@ -540,11 +558,6 @@ impl Storage {
             backend.close();
         }
     }
-}
-
-/// The first failure among outcomes that all had to succeed.
-fn settle(outcomes: Vec<Result<()>>) -> Result<()> {
-    outcomes.into_iter().collect()
 }
 
 /// Splits a batch between the store of record and its follower. Everything

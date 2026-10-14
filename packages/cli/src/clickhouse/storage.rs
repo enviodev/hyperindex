@@ -89,13 +89,10 @@ impl ChainRow {
         }
     }
 
-    fn of_resumed(chain: &ResumedChain) -> Result<Self> {
-        Ok(Self {
-            id: chain.id as i64,
-            checkpoint_id: chain
-                .checkpoint_id
-                .parse()
-                .with_context(|| format!("`{}` is not a checkpoint id", chain.checkpoint_id))?,
+    fn of_resumed(chain: &ResumedChain) -> Self {
+        Self {
+            id: chain.id,
+            checkpoint_id: chain.checkpoint_id,
             ecosystem: chain.ecosystem.clone(),
             start_block: chain.start_block,
             end_block: chain.end_block,
@@ -108,12 +105,12 @@ impl ChainRow {
             is_hyper_sync: false,
             progress_block: chain.progress_block,
             progress_block_time: chain.progress_block_time,
-        })
+        }
     }
 
     fn resumed(&self) -> ResumedChain {
         ResumedChain {
-            id: self.id as f64,
+            id: self.id,
             ecosystem: self.ecosystem.clone(),
             start_block: self.start_block,
             end_block: self.end_block,
@@ -124,7 +121,7 @@ impl ChainRow {
             progress_block: self.progress_block,
             progress_block_time: self.progress_block_time,
             source_block: self.source_block,
-            checkpoint_id: self.checkpoint_id.to_string(),
+            checkpoint_id: self.checkpoint_id,
         }
     }
 
@@ -882,7 +879,7 @@ impl Storage {
             .map(|row| match row {
                 [Cell::Str(id), Cell::Str(chain_id), Cell::Num(block_number), Cell::Str(hash)] => {
                     Ok(ReorgCheckpoint {
-                        id: id.to_string(),
+                        id: id.parse()?,
                         chain_id: chain_id.parse()?,
                         block_number: *block_number as i32,
                         block_hash: hash.to_string(),
@@ -1033,7 +1030,7 @@ impl Storage {
                 let rows = committed
                     .iter()
                     .map(ChainRow::of_resumed)
-                    .collect::<Result<Vec<_>>>()?;
+                    .collect::<Vec<_>>();
                 // No chain, no rows to hold to anything: the store of record
                 // writes every chain's row in the transaction that creates its
                 // schema, so an empty list means a config without chains.
@@ -1110,7 +1107,7 @@ impl Storage {
             .chain_rows()
             .into_values()
             .map(|row| StoredChain {
-                id: row.id as f64,
+                id: row.id,
                 ecosystem: row.ecosystem,
                 start_block: row.start_block,
                 end_block: row.end_block,
@@ -1231,7 +1228,7 @@ impl Storage {
                 };
                 Ok(ProgressDiff {
                     chain_id: chain_id.parse()?,
-                    events_processed: events.to_string(),
+                    events_processed: events.parse()?,
                     progress_block: block.parse()?,
                 })
             })
@@ -1884,7 +1881,7 @@ mod tests {
                 tables: vec![account],
                 chain_ids: vec![1],
                 committed: Some(vec![ResumedChain {
-                    id: 1.0,
+                    id: 1,
                     ecosystem: "evm".to_string(),
                     start_block: 0,
                     end_block: None,
@@ -1895,7 +1892,7 @@ mod tests {
                     progress_block: 10,
                     progress_block_time: None,
                     source_block: 10,
-                    checkpoint_id: "7".to_string(),
+                    checkpoint_id: 7,
                 }]),
             })
             .await

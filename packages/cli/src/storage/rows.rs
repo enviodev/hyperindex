@@ -100,13 +100,6 @@ pub struct ResultSet {
     pub arena: Arena,
 }
 
-impl ResultSet {
-    #[cfg(test)]
-    pub fn rows(&self) -> usize {
-        self.arena.rows()
-    }
-}
-
 fn write_cell(arena: &mut Arena, column: usize, row: usize, cell: &Cell<'_>) -> Result<()> {
     match cell {
         Cell::Null => arena.mark_null(column, row),
@@ -227,7 +220,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             (
-                result.rows(),
+                result.arena.rows(),
                 result
                     .arena
                     .columns()

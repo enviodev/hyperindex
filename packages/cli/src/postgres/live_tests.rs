@@ -374,7 +374,7 @@ async fn every_column_type_lays_out() {
         .await
         .expect("the query runs");
     let result = super::rows::into_result(&rows, &columns).expect("the rows lay out");
-    assert_eq!(result.rows(), 1);
+    assert_eq!(result.arena.rows(), 1);
 }
 
 /// A query matching nothing still has to describe its columns, or the other
@@ -391,7 +391,7 @@ async fn an_empty_result_still_describes_its_columns() {
         .await
         .expect("the query runs");
     let result = super::rows::into_result(&rows, &columns).expect("the rows lay out");
-    assert_eq!((result.rows(), result.arena.columns().len()), (0, 2));
+    assert_eq!((result.arena.rows(), result.arena.columns().len()), (0, 2));
 }
 
 /// A transaction holds one connection, so a temporary table made inside it is

@@ -7,25 +7,6 @@ let isNullable = true
 // Names and record types of the tables the indexer keeps for itself.
 
 module Chains = {
-  type field = [
-    | #id
-    | #ecosystem
-    | #start_block
-    | #end_block
-    | #max_reorg_depth
-    | #source_block
-    | #first_event_block
-    | #buffer_block
-    | #progress_block
-    | #progress_block_time
-    | #ready_at
-    | #events_processed
-    | #_is_hyper_sync
-    | #checkpoint_id
-  ]
-
-  let tableName = "envio_chains"
-
   type metaFields = {
     @as("first_event_block")
     firstEventBlockNumber: Null.t<int>,
@@ -45,14 +26,6 @@ module Chains = {
 }
 
 module Checkpoints = {
-  type field = [
-    | #id
-    | #chain_id
-    | #block_number
-    | #block_hash
-    | #events_processed
-  ]
-
   type t = {
     id: bigint,
     @as("chain_id")

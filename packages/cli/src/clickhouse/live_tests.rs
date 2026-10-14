@@ -394,7 +394,7 @@ async fn a_read_that_fails_partway_is_an_error() {
 async fn a_primary_reads_back_the_record_it_was_initialized_with() {
     let live = Live::new(true);
     let account = live.account();
-    assert_eq!(live.storage.is_initialized().await.unwrap(), false);
+    let initialized_before = live.storage.is_initialized().await.unwrap();
     initialize(&live, vec![account], vec![chain(1)]).await;
 
     let stored = live.storage.read_stored_config().await.unwrap();
@@ -402,6 +402,7 @@ async fn a_primary_reads_back_the_record_it_was_initialized_with() {
     live.drop_database().await;
     assert_eq!(
         (
+            initialized_before,
             initialized,
             stored.config.envio_info,
             stored.config.contract_names,
@@ -415,10 +416,11 @@ async fn a_primary_reads_back_the_record_it_was_initialized_with() {
             rows(&stored.config_addresses),
         ),
         (
+            false,
             true,
             Some("{\"config\":1}".to_string()),
             Some(vec!["Token".to_string()]),
-            vec![(1.0, "evm".to_string(), 200)],
+            vec![(1, "evm".to_string(), 200)],
             vec![
                 "chainId".to_string(),
                 "address".to_string(),
@@ -572,14 +574,14 @@ async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
             resumed
                 .chains
                 .iter()
-                .map(|chain| (chain.checkpoint_id.clone(), chain.progress_block))
+                .map(|chain| (chain.checkpoint_id, chain.progress_block))
                 .collect::<Vec<_>>(),
             history,
             checkpoints
         ),
         (
             vec![row(&["a", "alice", "1"])],
-            vec![("1".to_string(), 10)],
+            vec![(1, 10)],
             "1".to_string(),
             "1".to_string()
         )
@@ -676,11 +678,7 @@ async fn a_rollback_restores_the_target_and_orphans_what_came_after() {
         (
             target,
             diff.iter()
-                .map(|diff| (
-                    diff.chain_id,
-                    diff.events_processed.clone(),
-                    diff.progress_block
-                ))
+                .map(|diff| (diff.chain_id, diff.events_processed, diff.progress_block))
                 .collect::<Vec<_>>(),
             rows(&removed),
             rows(&restored),
@@ -690,7 +688,7 @@ async fn a_rollback_restores_the_target_and_orphans_what_came_after() {
         ),
         (
             Some(1),
-            vec![(1.0, "2".to_string(), 19)],
+            vec![(1, 2, 19)],
             vec![row(&["c"])],
             vec![row(&["a", "alice", "1", "SET"])],
             Vec::<Vec<String>>::new(),
@@ -805,7 +803,7 @@ async fn chain_state_survives_a_restart() {
             .iter()
             .map(|chain| (
                 chain.id,
-                chain.checkpoint_id.clone(),
+                chain.checkpoint_id,
                 chain.progress_block,
                 chain.progress_block_time,
                 chain.first_event_block,
@@ -815,15 +813,15 @@ async fn chain_state_survives_a_restart() {
             .collect::<Vec<_>>(),
         vec![
             (
-                1.0,
-                "1".to_string(),
+                1,
+                1,
                 10,
                 Some(1_700_000_000.0),
                 Some(10),
                 Some(1_700_000_000_123.0),
                 1.0
             ),
-            (137.0, "0".to_string(), -1, None, None, None, 0.0),
+            (137, 0, -1, None, None, None, 0.0),
         ]
     );
 }
@@ -935,7 +933,7 @@ async fn a_follower_resumes_to_what_the_store_of_record_committed() {
             tables: vec![account.clone()],
             chain_ids: vec![1],
             committed: Some(vec![crate::storage::types::ResumedChain {
-                id: 1.0,
+                id: 1,
                 ecosystem: "evm".to_string(),
                 start_block: 0,
                 end_block: None,
@@ -946,7 +944,7 @@ async fn a_follower_resumes_to_what_the_store_of_record_committed() {
                 progress_block: 10,
                 progress_block_time: None,
                 source_block: 1000,
-                checkpoint_id: "1".to_string(),
+                checkpoint_id: 1,
             }]),
         })
         .await

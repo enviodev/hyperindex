@@ -106,6 +106,9 @@ type rollbackRemoval = {
 type storage = {
   // Identifier used as the `storage` label on Prometheus metrics.
   name: string,
+  // The `storage` label for an entity's loads: an entity kept apart from the
+  // store of record is served by its own store.
+  entityStoreName: Internal.entityConfig => string,
   // Should return true if we already have persisted data
   // and we can skip initialization
   isInitialized: unit => promise<bool>,

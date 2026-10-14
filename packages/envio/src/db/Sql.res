@@ -1,5 +1,3 @@
-type t = StorageClient.t
-
 // As `SslSetting::parse` in packages/cli/src/postgres/client.rs spells them.
 @unboxed
 type sslMode =
@@ -99,5 +97,3 @@ let queryForTests = (client, sql, ~params as values: array<unknown>=[]): promise
   client
   ->StorageClient.queryForTests(sql, ~params=params(values))
   ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<'row>>)
-
-let close = client => client->StorageClient.close

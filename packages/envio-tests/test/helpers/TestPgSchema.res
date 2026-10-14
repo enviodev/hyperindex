@@ -98,15 +98,20 @@ let write = async (
         {
           table: registered.handle,
           create,
-          rows: sql->Storage.rowsOrThrow(registered, ~itemSchema, items, ~staged=[]),
+          rows: sql->Storage.rowsOrThrow(
+            registered,
+            ~itemSchema,
+            items,
+            ~staged={handles: [], seconds: Dict.make()},
+          ),
         },
       ],
     })
   } catch {
   | exn =>
-    await sql->Sql.close
+    await sql->StorageClient.close
     throw(exn)
   }
-  await sql->Sql.close
+  await sql->StorageClient.close
   registered
 }

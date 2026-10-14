@@ -100,7 +100,7 @@ pub struct Addresses {
     pub checkpoint_ids: Vec<i64>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Checkpoints {
     pub ids: Vec<i64>,
     pub chain_ids: Vec<i64>,
@@ -168,7 +168,7 @@ pub struct DiffCheckpoint {
 }
 
 pub struct StoredChain {
-    pub id: f64,
+    pub id: i64,
     pub ecosystem: String,
     pub start_block: i32,
     pub end_block: Option<i32>,
@@ -184,7 +184,7 @@ pub struct StoredConfig {
 
 #[derive(Clone, Debug)]
 pub struct ResumedChain {
-    pub id: f64,
+    pub id: i64,
     pub ecosystem: String,
     pub start_block: i32,
     pub end_block: Option<i32>,
@@ -197,19 +197,19 @@ pub struct ResumedChain {
     /// Unix seconds.
     pub progress_block_time: Option<f64>,
     pub source_block: i32,
-    pub checkpoint_id: String,
+    pub checkpoint_id: i64,
 }
 
 pub struct ReorgCheckpoint {
-    pub id: String,
-    pub chain_id: f64,
+    pub id: i64,
+    pub chain_id: i64,
     pub block_number: i32,
     pub block_hash: String,
 }
 
 pub struct ProgressDiff {
-    pub chain_id: f64,
-    pub events_processed: String,
+    pub chain_id: i64,
+    pub events_processed: i64,
     pub progress_block: i32,
 }
 
@@ -236,20 +236,16 @@ mod tests {
             events_processed: vec![1, 2, 3],
             keeps_history: vec![false, true, true],
         };
-        let kept = checkpoints.keeping_history();
         assert_eq!(
-            (
-                kept.ids,
-                kept.chain_ids,
-                kept.block_numbers,
-                kept.block_hashes
-            ),
-            (
-                vec![2, 3],
-                vec![137, 1],
-                vec![20, 30],
-                vec![Some("0xb".to_string()), Some("0xc".to_string())]
-            )
+            checkpoints.keeping_history(),
+            Checkpoints {
+                ids: vec![2, 3],
+                chain_ids: vec![137, 1],
+                block_numbers: vec![20, 30],
+                block_hashes: vec![Some("0xb".to_string()), Some("0xc".to_string())],
+                events_processed: vec![2, 3],
+                keeps_history: vec![true, true],
+            }
         );
     }
 }

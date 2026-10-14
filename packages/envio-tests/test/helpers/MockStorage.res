@@ -74,6 +74,7 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
     },
     storage: {
       name: "mock",
+      entityStoreName: _ => "mock",
       isInitialized: implement(#isInitialized, () => {
         isInitializedCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {

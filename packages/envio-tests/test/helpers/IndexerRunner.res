@@ -6,7 +6,7 @@ type metric = {
 // The schema this indexer's tables live in, and the run's own client — closed
 // with it. A test needing raw SQL should reach for these rather than opening a
 // client the run won't clean up.
-type pg = {sql: Sql.t, pgSchema: string}
+type pg = {sql: StorageClient.t, pgSchema: string}
 
 let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
 
@@ -718,7 +718,7 @@ let run = async (
   )
   for i in 0 to clients->Array.length - 1 {
     switch clients->Array.get(i) {
-    | Some(sql) => await attempt(() => sql->Sql.close)
+    | Some(sql) => await attempt(() => sql->StorageClient.close)
     | None => ()
     }
   }

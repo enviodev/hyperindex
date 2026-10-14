@@ -563,6 +563,7 @@ type entityOperations = {
 // JSON serialization round-trip.
 let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   name: "test-inmemory",
+  entityStoreName: _ => "test-inmemory",
   isInitialized: async () => true,
   // The runner injects the config-derived initial state by setting
   // `persistence.storageStatus = Ready(...)` directly, bypassing `Persistence.init`,

@@ -32,16 +32,12 @@ use crate::entity_filter::Condition;
 use crate::postgres;
 use crate::postgres::client::{self, PgConnectionOptions, SslSetting};
 use crate::postgres::ddl::{ColumnSpec, TableSpec};
-use crate::postgres::error::to_napi as pg_to_napi;
+use crate::postgres::error::to_napi;
 use crate::postgres::index_definition::{Direction, IndexColumn, IndexDefinition, BTREE};
 use crate::postgres::indexes::{Coverage, IndexEvent, Purpose};
 use crate::postgres::param::Param;
 use crate::postgres::pg_type::FieldType;
 use crate::postgres::storage::{HistoryRegistration, TableRegistration};
-
-fn to_napi(error: anyhow::Error) -> napi::Error {
-    pg_to_napi(error)
-}
 
 /// One column, flattened for the boundary: napi carries no tagged union, so the
 /// variant arrives as `fieldType` plus whichever of the modifiers it takes.
@@ -667,8 +663,9 @@ impl JsStorage {
             }
             _ => None,
         };
+        let mut tables = self.tables.write().unwrap();
         let registered = RegisteredTable {
-            handle: 0,
+            handle: tables.len() as u32,
             postgres: postgres.as_ref().map(|table| PgRegistered {
                 kinds: table
                     .kinds
@@ -689,16 +686,12 @@ impl JsStorage {
                     .collect(),
             }),
         };
-        let mut tables = self.tables.write().unwrap();
         tables.push(Arc::new(Table {
             name: input.name,
             postgres,
             clickhouse,
         }));
-        Ok(RegisteredTable {
-            handle: (tables.len() - 1) as u32,
-            ..registered
-        })
+        Ok(registered)
     }
 
     /// Lays out a batch for one store's table and lends JavaScript the memory
@@ -895,7 +888,7 @@ impl JsStorage {
                 .chains
                 .into_iter()
                 .map(|chain| StoredChainOutput {
-                    id: chain.id,
+                    id: chain.id as f64,
                     ecosystem: chain.ecosystem,
                     start_block: chain.start_block,
                     end_block: chain.end_block,
@@ -921,7 +914,7 @@ impl JsStorage {
                 .chains
                 .into_iter()
                 .map(|chain| ResumedChainOutput {
-                    id: chain.id,
+                    id: chain.id as f64,
                     start_block: chain.start_block,
                     end_block: chain.end_block,
                     max_reorg_depth: chain.max_reorg_depth,
@@ -931,7 +924,7 @@ impl JsStorage {
                     progress_block: chain.progress_block,
                     progress_block_time: chain.progress_block_time,
                     source_block: chain.source_block,
-                    checkpoint_id: chain.checkpoint_id,
+                    checkpoint_id: chain.checkpoint_id.to_string(),
                 })
                 .collect(),
             addresses: self.hold(resumed.addresses)?,
@@ -939,8 +932,8 @@ impl JsStorage {
                 .reorg_checkpoints
                 .into_iter()
                 .map(|checkpoint| ReorgCheckpointOutput {
-                    id: checkpoint.id,
-                    chain_id: checkpoint.chain_id,
+                    id: checkpoint.id.to_string(),
+                    chain_id: checkpoint.chain_id as f64,
                     block_number: checkpoint.block_number,
                     block_hash: checkpoint.block_hash,
                 })
@@ -1068,8 +1061,8 @@ impl JsStorage {
             .map_err(to_napi)?
             .into_iter()
             .map(|diff| ProgressDiffOutput {
-                chain_id: diff.chain_id,
-                events_processed: diff.events_processed,
+                chain_id: diff.chain_id as f64,
+                events_processed: diff.events_processed.to_string(),
                 progress_block: diff.progress_block,
             })
             .collect())

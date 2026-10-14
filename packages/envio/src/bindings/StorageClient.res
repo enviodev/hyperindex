@@ -96,7 +96,7 @@ type tableInput = {
   clickhouse?: clickHouseTable,
 }
 
-type postgresRegistered = {kinds?: array<Staging.kind>}
+type postgresRegistered = {kinds?: array<int>}
 
 type clickHouseRegistered = {
   names: array<string>,
