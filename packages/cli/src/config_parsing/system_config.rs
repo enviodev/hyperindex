@@ -1035,6 +1035,7 @@ impl SystemConfig {
         validate_cross_chain_relationships(&schema, default_scope)?;
         validate_internal_relationships(&schema)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
+        super::resolvers::validate(base_config, &schema)?;
 
         validate_db_column_names(&storage, &schema)?;
         validate_clickhouse_sorting_key_scalars(&storage, &schema)?;
@@ -1518,6 +1519,8 @@ impl SystemConfig {
             }
             None => Ecosystem::Evm,
         };
+
+        super::resolvers::reject_module_path_form(&human_config_string)?;
 
         let human_config = match ecosystem {
             Ecosystem::Evm => {

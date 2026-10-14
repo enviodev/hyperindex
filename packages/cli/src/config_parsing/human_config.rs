@@ -2,7 +2,7 @@ use crate::config_parsing::entity_parsing::DefaultChainScope;
 use crate::utils::normalized_list::{NormalizedList, SingleOrList};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, fmt::Display};
+use std::{borrow::Cow, collections::BTreeMap, fmt::Display};
 
 impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
     fn schema_name() -> Cow<'static, str> {
@@ -187,6 +187,46 @@ pub struct BaseConfig {
                        functions through `context.sidecar.<name>(input)` without waiting."
     )]
     pub sidecar: Option<SidecarConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Extra root query fields in the GraphQL API, answered by your sidecar or a \
+                       webhook. Each one is published as a Hasura action, so Hasura and envio \
+                       serve call the handler with Hasura's action payload."
+    )]
+    pub resolvers: Option<BTreeMap<String, ResolverConfig>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Output object types for `resolvers:`: type name to a map of field name to \
+                       GraphQL type string (for example `address: \"String!\"`)."
+    )]
+    pub types: Option<BTreeMap<String, BTreeMap<String, String>>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResolverConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Shown as the field's description in the GraphQL schema.")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Argument name to GraphQL type string, for example `limit: \"Int!\"`. \
+                       Scalars or lists of scalars."
+    )]
+    pub args: Option<BTreeMap<String, String>>,
+    #[schemars(
+        description = "GraphQL type string of the result, for example `\"[TopTrader!]!\"`. \
+                       Scalars or types declared under `types:`."
+    )]
+    pub output: String,
+    #[schemars(
+        description = "`sidecar` (answered by the `resolvers` of your `createSidecar`) or an \
+                       http(s):// URL that accepts Hasura's action payload."
+    )]
+    pub handler: String,
+    #[serde(rename = "timeoutMs", skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "How long the GraphQL layer waits for the handler. (default: 30000)")]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -2190,6 +2230,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 storage: None,
                 disable_default_cross_chain: None,
                 sidecar: None,
+                resolvers: None,
+                types: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -2245,6 +2287,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 storage: None,
                 disable_default_cross_chain: None,
                 sidecar: None,
+                resolvers: None,
+                types: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,

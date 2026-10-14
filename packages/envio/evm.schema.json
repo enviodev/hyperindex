@@ -67,6 +67,29 @@
         }
       ]
     },
+    "resolvers": {
+      "description": "Extra root query fields in the GraphQL API, answered by your sidecar or a webhook. Each one is published as a Hasura action, so Hasura and envio serve call the handler with Hasura's action payload.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "$ref": "#/$defs/ResolverConfig"
+      }
+    },
+    "types": {
+      "description": "Output object types for `resolvers:`: type name to a map of field name to GraphQL type string (for example `address: \"String!\"`).",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    },
     "ecosystem": {
       "description": "Ecosystem of the project.",
       "anyOf": [
@@ -300,6 +323,50 @@
       "required": [
         "contract",
         "entry"
+      ]
+    },
+    "ResolverConfig": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "Shown as the field's description in the GraphQL schema.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "args": {
+          "description": "Argument name to GraphQL type string, for example `limit: \"Int!\"`. Scalars or lists of scalars.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "output": {
+          "description": "GraphQL type string of the result, for example `\"[TopTrader!]!\"`. Scalars or types declared under `types:`.",
+          "type": "string"
+        },
+        "handler": {
+          "description": "`sidecar` (answered by the `resolvers` of your `createSidecar`) or an http(s):// URL that accepts Hasura's action payload.",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "description": "How long the GraphQL layer waits for the handler. (default: 30000)",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "output",
+        "handler"
       ]
     },
     "EcosystemTag": {
