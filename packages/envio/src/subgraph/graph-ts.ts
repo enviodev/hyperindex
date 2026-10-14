@@ -2476,7 +2476,7 @@ function asGraphBigInt(value: Uint8Array): BigInt_ {
 }
 
 const typeConversionImpl = {
-  bytesToString: (bytes: Uint8Array) => new TextDecoder().decode(bytes),
+  bytesToString: (bytes: Uint8Array) => new ByteArray(bytes).toString(),
   bytesToHex: (bytes: Uint8Array) => new ByteArray(bytes).toHexString(),
   // graph-ts types the argument as the byte array a BigInt is in
   // AssemblyScript. This one carries its value instead of laying those bytes

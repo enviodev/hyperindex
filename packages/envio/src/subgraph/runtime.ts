@@ -115,7 +115,11 @@ function installResolveHook(root: string) {
     resolve(specifier: string, context: any, nextResolve: any) {
       if (
         specifier === "@graphprotocol/graph-ts" ||
-        specifier.startsWith("@graphprotocol/graph-ts/")
+        specifier.startsWith("@graphprotocol/graph-ts/") ||
+        // Matchstick re-exports graph-ts' `log`, and some mappings import it
+        // from there; its test helpers have no meaning outside a test.
+        specifier === "matchstick-as" ||
+        specifier.startsWith("matchstick-as/")
       ) {
         return { url: SHIM_URL, shortCircuit: true };
       }
@@ -162,6 +166,22 @@ function installResolveHook(root: string) {
   for (const [name, namespace] of Object.entries(assemblyScriptPrimitives)) {
     globals[name] ??= namespace;
   }
+
+  // AssemblyScript's DataView reads and writes a 64-bit integer as `u64`/`i64`
+  // under these names; JavaScript's only as a bigint, under `*Big*` ones.
+  const view = DataView.prototype as any;
+  view.getUint64 ??= function (this: DataView, offset: number, littleEndian?: boolean) {
+    return this.getBigUint64(offset, littleEndian);
+  };
+  view.getInt64 ??= function (this: DataView, offset: number, littleEndian?: boolean) {
+    return this.getBigInt64(offset, littleEndian);
+  };
+  view.setUint64 ??= function (this: DataView, offset: number, value: bigint | number, littleEndian?: boolean) {
+    this.setBigUint64(offset, BigInt.asUintN(64, BigInt(value)), littleEndian);
+  };
+  view.setInt64 ??= function (this: DataView, offset: number, value: bigint | number, littleEndian?: boolean) {
+    this.setBigInt64(offset, BigInt.asIntN(64, BigInt(value)), littleEndian);
+  };
 }
 
 /**
