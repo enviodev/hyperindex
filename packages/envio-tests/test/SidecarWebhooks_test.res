@@ -149,7 +149,52 @@ let checkpointsAt = async (indexer: IndexerRunner.t, ~blockNumber) =>
     checkpoint.blockNumber === blockNumber
   )
 
+let readyAt = async (indexer: IndexerRunner.t) => {
+  let {sql, pgSchema} = indexer.pg
+  let rows: array<{
+    "ready_at": Null.t<Date.t>,
+  }> = await sql->Sql.queryForTests(`SELECT "ready_at" FROM "${pgSchema}"."envio_chains";`)
+  rows->Array.map(row => row["ready_at"]->Null.toOption->Option.isSome)
+}
+
 describe("Sidecar webhooks into the indexer", () => {
+  // Found in T-010: a sidecar job's first webhook arrived while HyperSync had
+  // not answered the chain's height yet. The batch made for it alone read
+  // progress -1 against a head of 0 as "at the head", so the chain logged
+  // "Finished backfill" and committed ready_at before indexing anything.
+  Async.it(
+    "does not mark a chain ready for a webhook that lands before its height is known",
+    async t => {
+      let answer = ref(None)
+      let rows = ref([])
+      let ready = ref([])
+      await scenario->Scenario.run(
+        ~sources,
+        ~reorgThresholdReadyTolerance=0,
+        ~webhookPort=0,
+        async (~indexer, ~source) => {
+          let _ = source(1337)
+          answer :=
+            Some(
+              await post(
+                indexer.webhookUrl(),
+                ~name="swapPriced",
+                ~body={"swapId": "s1", "usd": 42}->Utils.magic,
+              ),
+            )
+          rows := (await rowsOnceWritten(indexer, "Priced"))
+          ready := (await readyAt(indexer))
+        },
+      )
+
+      t.expect((answer.contents, rows.contents, ready.contents)).toEqual((
+        Some(202),
+        [{id: "s1", usd: 42, block: 0}],
+        [false],
+      ))
+    },
+  )
+
   // T-006 Done when: result handler writes are visible (in Postgres, so in
   // GraphQL). The chain is idle at the head: the webhook gets a batch alone.
   Async.it("applies a posted webhook on an idle chain at its head block", async t => {

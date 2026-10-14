@@ -92,8 +92,12 @@ let getProgressedChainsById = {
             totalEventsProcessed: chainBeforeBatch.totalEventsProcessed +.
             counts.eventsProcessed->Int.toFloat,
             fetchState: fetchStateAfterBatch,
-            isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
-            chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.blockLag,
+            // A batch of webhooks alone can come before the source has
+            // answered the height, while it still reads 0: nothing is at a
+            // head that isn't known yet.
+            isProgressAtHeadWhenBatchCreated: chainBeforeBatch.sourceBlockNumber > 0 &&
+              progressBlockNumberAfterBatch >=
+              chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.blockLag,
             webhooksCount,
           }: chainAfterBatch
         ),
