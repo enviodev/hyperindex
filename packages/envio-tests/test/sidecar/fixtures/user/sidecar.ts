@@ -23,6 +23,9 @@ export default createSidecar(contract, {
       expectType<`0x${string}`>(input.token);
       expectType<number>(call.chainId);
       expectType<string>(call.id);
+      expectType<number | undefined>(call.blockTimestamp);
+      // @ts-expect-error absent for block handler calls
+      expectType<number>(call.blockTimestamp);
       const sent = await emit.swapPriced({ swapId: input.swapId, usd: 1 });
       expectType<string>(sent.id);
       // @ts-expect-error usd is a number

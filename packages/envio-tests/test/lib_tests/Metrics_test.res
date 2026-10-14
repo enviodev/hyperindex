@@ -360,6 +360,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           disconnectsByReason: [("rotated", 4), ("401", 1)],
         },
       ],
+      sidecar: None,
     }
 
     t.expect(Metrics.collect(~metrics=Some(metrics))).toBe(

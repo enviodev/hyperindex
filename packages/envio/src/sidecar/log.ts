@@ -36,16 +36,30 @@ export const toUserLogger = (logger: pino.Logger): SidecarLogger => ({
   error: (message, params) => write(logger, "error", message, params),
 });
 
+const PINO_LEVELS = new Set(["trace", "debug", "info", "warn", "error", "fatal", "silent"]);
+
+// The indexer's LOG_LEVEL also takes `udebug | uinfo | uwarn | uerror` (its user
+// log levels, Env.res). Every sidecar log line is user code or about it, so each
+// maps to its base level. Pino throws on a level it does not know, which would
+// stop the sidecar from starting over a log setting.
+export const resolveLogLevel = (raw: string | undefined): { level: string; unknown?: string } => {
+  if (raw === undefined) return { level: "info" };
+  const name = raw.trim().toLowerCase();
+  const base = /^u(debug|info|warn|error)$/.exec(name)?.[1] ?? name;
+  return PINO_LEVELS.has(base) ? { level: base } : { level: "info", unknown: raw };
+};
+
 export const createRootLogger = (options: LoggerOptions = {}): pino.Logger => {
-  const level = options.level ?? "info";
+  const { level, unknown } = resolveLogLevel(options.level);
   const usePretty = options.pretty ?? (process.stdout.isTTY === true && process.env.ENVIO_SIDECAR_LOG_JSON !== "true");
-  if (options.destination !== undefined) {
-    return pino({ level }, options.destination);
-  }
-  if (usePretty) {
-    return pino({ level }, pretty({ colorize: true, ignore: "pid,hostname" }));
-  }
-  return pino({ level });
+  const logger =
+    options.destination !== undefined
+      ? pino({ level }, options.destination)
+      : usePretty
+        ? pino({ level }, pretty({ colorize: true, ignore: "pid,hostname" }))
+        : pino({ level });
+  if (unknown !== undefined) logger.warn(`LOG_LEVEL '${unknown}' is not a known level, using 'info'`);
+  return logger;
 };
 
 export const silentLogger = (): pino.Logger => pino({ level: "silent" });

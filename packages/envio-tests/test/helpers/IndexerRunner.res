@@ -161,6 +161,9 @@ let run = async (
   ~superviseRun=false,
   ~onError=?,
   ~onExit=?,
+  // Opts the run into delivering `context.sidecar` calls; without it nothing is
+  // sent, as in any test indexer.
+  ~sidecarSender=?,
   ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   // Runs after `restart` has stopped the previous indexer and before the next
   // one starts, so mocked sources can void what the stopped one left in flight.
@@ -283,6 +286,7 @@ let run = async (
       ~holdRealtime={holdRealtime || superviseRun},
       ~onError,
       ~onExit?,
+      ~sidecarSender?,
     )
     state->IndexerLoop.start
 

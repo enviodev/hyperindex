@@ -109,4 +109,5 @@ let emptySnapshot: Metrics.t = {
   sourceRequests: [],
   sourceHeights: [],
   sourceHeightStreams: [],
+  sidecar: None,
 }

@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { defineSidecar, S } from "envio";
 import { createSidecar, SidecarEmitError, type RunningSidecar, type SidecarImpl } from "envio/sidecar";
@@ -118,7 +119,7 @@ afterEach(async () => {
 const startSidecar = async (
   indexer: FakeIndexer,
   impl: SidecarImpl<Contract>,
-  options: { startJobs?: boolean } = {},
+  options: { startJobs?: boolean; env?: NodeJS.ProcessEnv } = {},
 ): Promise<RunningSidecar> => {
   const sidecar = createSidecar(contract, impl);
   const running = await sidecar.start({
@@ -128,6 +129,7 @@ const startSidecar = async (
     logLevel: "silent",
     retry: { attempts: 4, baseMs: 1, capMs: 5 },
     startJobs: options.startJobs ?? false,
+    ...(options.env === undefined ? {} : { env: options.env }),
   });
   cleanups.push(running.close);
   return running;
@@ -335,6 +337,65 @@ describe("sidecar runtime: calls", () => {
       dropped: 2,
     });
   });
+
+  it("leaves blockTimestamp out for block handler calls instead of inventing one", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const timestamps: Array<[string, number | undefined]> = [];
+    const running = await startSidecar(indexer, {
+      functions: {
+        ...noop,
+        notify: async ({ call }) => {
+          timestamps.push([call.id, call.blockTimestamp]);
+        },
+      },
+    });
+    const { blockTimestamp: _, ...blockCall } = call("1:5:b0:0", "notify", { text: "block" }, { blockNumber: 5 });
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-12",
+      calls: [blockCall, call("1:6:3:0", "notify", { text: "event" }, { blockNumber: 6 })],
+    });
+    await running.waitIdle();
+    expect(timestamps).toEqual([
+      ["1:5:b0:0", undefined],
+      ["1:6:3:0", 1760440000],
+    ]);
+  });
+
+  it("forgets call ids above a rolled back block, so the replayed blocks' calls run again", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const ranIds: string[] = [];
+    const running = await startSidecar(indexer, {
+      functions: {
+        priceSwap: async ({ call }) => {
+          ranIds.push(call.id);
+        },
+        notify: async () => {},
+      },
+    });
+    const base = `http://127.0.0.1:${running.internalPort}`;
+    const batch = (batchId: string) => ({
+      batchId,
+      calls: [
+        call("1:10:0:0", "priceSwap", { swapId: "kept", amount: "1" }, { blockNumber: 10 }),
+        call("1:20:0:0", "priceSwap", { swapId: "reorged", amount: "1" }, { blockNumber: 20 }),
+        call("2:20:0:0", "priceSwap", { swapId: "other chain", amount: "1" }, { blockNumber: 20, chainId: 2 }),
+      ],
+    });
+    await postJson(`${base}/envio/calls`, batch("b-8"));
+    await running.waitIdle();
+    const rollback = await postJson(`${base}/envio/rollback`, { chainId: 1, rollbackToBlock: 15 });
+    // The indexer reprocesses blocks above 15 and re-sends their calls under the same ids.
+    const resent = await postJson(`${base}/envio/calls`, batch("b-9"));
+    await running.waitIdle();
+    expect({ rollback, resent, ranIds, duplicates: running.stats().duplicates }).toEqual({
+      rollback: { status: 200, body: { dropped: 0 } },
+      resent: { status: 202, body: { accepted: ["1:10:0:0", "1:20:0:0", "2:20:0:0"], rejected: [] } },
+      ranIds: ["1:10:0:0", "1:20:0:0", "2:20:0:0", "1:20:0:0"],
+      duplicates: 2,
+    });
+  });
 });
 
 describe("sidecar runtime: webhooks from outside a call", () => {
@@ -394,6 +455,40 @@ describe("sidecar runtime: webhooks from outside a call", () => {
     });
   });
 
+  it("rejects a body that does not match the contract before sending anything", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const outcomes: unknown[] = [];
+    const running = await startSidecar(indexer, {
+      functions: {
+        ...noop,
+        notify: async ({ emit }) => {
+          for (const body of [{ at: "soon" }, { swapId: "s1", usd: "4123.5", amount: 1n }, { swapId: "s1", usd: 1 }]) {
+            try {
+              await (body.swapId === undefined ? emit.tick : emit.swapPriced)(body as never);
+              outcomes.push("sent");
+            } catch (error) {
+              outcomes.push(error instanceof SidecarEmitError ? error.message : "wrong error");
+            }
+          }
+        },
+      },
+    });
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-10",
+      calls: [call("1:1:1:0", "notify", { text: "hi" })],
+    });
+    await running.waitIdle();
+    expect({ outcomes, received: indexer.received.length }).toEqual({
+      outcomes: [
+        expect.stringMatching(/^Webhook 'tick': body does not match the contract: /),
+        expect.stringMatching(/^Webhook 'swapPriced': body does not match the contract: /),
+        expect.stringMatching(/^Webhook 'swapPriced': body does not match the contract: /),
+      ],
+      received: 0,
+    });
+  });
+
   it("runs jobs on their interval, one run at a time", async () => {
     const indexer = await fakeIndexer();
     cleanups.push(indexer.close);
@@ -426,6 +521,170 @@ describe("sidecar runtime: webhooks from outside a call", () => {
       overlapping: 0,
       atLeastTwo: true,
       boundedBySerialRuns: true,
+    });
+  });
+});
+
+describe("sidecar runtime: close", () => {
+  it("stops taking calls, then lets running and queued functions and their emits finish", async () => {
+    // The first webhook meets a busy indexer, so the emit is still retrying when close starts.
+    const indexer = await fakeIndexer((_received, n) => (n === 1 ? { status: 503 } : undefined));
+    cleanups.push(indexer.close);
+    const gate = deferred();
+    const started = deferred();
+    const ranIds: string[] = [];
+    const running = await startSidecar(indexer, {
+      functions: {
+        priceSwap: async ({ input, call, emit }) => {
+          started.resolve();
+          await gate.promise;
+          await emit.swapPriced({ swapId: input.swapId, usd: 1, amount: input.amount });
+          ranIds.push(call.id);
+        },
+        notify: async () => {},
+      },
+    });
+    const base = `http://127.0.0.1:${running.internalPort}`;
+    await postJson(`${base}/envio/calls`, {
+      batchId: "b-13",
+      calls: [
+        call("1:100:1:0", "priceSwap", { swapId: "running", amount: "1" }),
+        call("1:100:2:0", "priceSwap", { swapId: "queued", amount: "2" }),
+      ],
+    });
+    await started.promise;
+    const closing = running.close();
+    const duringClose = await Promise.all([
+      postJson(`${base}/envio/calls`, { batchId: "b-14", calls: [call("1:101:1:0", "notify", { text: "late" })] }),
+      fetch(`${base}/readyz`).then(async (response) => ({ status: response.status, body: (await response.json()) as unknown })),
+    ]);
+    gate.resolve();
+    const report = await closing;
+    expect({
+      duringClose,
+      ranIds,
+      received: indexer.received.map((r) => [r.name, r.headers["idempotency-key"]]),
+      report,
+    }).toEqual({
+      duringClose: [
+        { status: 503, body: { error: "shutting down" } },
+        { status: 503, body: { status: "closing" } },
+      ],
+      ranIds: ["1:100:1:0", "1:100:2:0"],
+      received: [
+        ["swapPriced", "1:100:1:0#0"],
+        ["swapPriced", "1:100:1:0#0"],
+        ["swapPriced", "1:100:2:0#0"],
+      ],
+      report: {
+        drained: true,
+        graceMs: 20_000,
+        abandoned: { running: { priceSwap: 0, notify: 0 }, queued: { priceSwap: 0, notify: 0 }, emits: 0, jobs: 0 },
+      },
+    });
+  });
+
+  it("gives up on unfinished work after the grace period (ENVIO_SIDECAR_GRACE_MS or close option)", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const gate = deferred();
+    cleanups.push(async () => gate.resolve());
+    const closeStuck = async (env: NodeJS.ProcessEnv, graceMs?: number) => {
+      const started = deferred();
+      const ranIds: string[] = [];
+      const running = await startSidecar(
+        indexer,
+        {
+          functions: {
+            priceSwap: async ({ call }) => {
+              ranIds.push(call.id);
+              started.resolve();
+              await gate.promise;
+            },
+            notify: async () => {},
+          },
+        },
+        { env },
+      );
+      await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+        batchId: "b-15",
+        calls: [
+          call("1:100:1:0", "priceSwap", { swapId: "stuck", amount: "1" }),
+          call("1:100:2:0", "priceSwap", { swapId: "never started", amount: "1" }),
+        ],
+      });
+      await started.promise;
+      const startedAt = Date.now();
+      const report = await running.close(graceMs === undefined ? undefined : { graceMs });
+      const elapsed = Date.now() - startedAt;
+      return { report, onTime: elapsed >= report.graceMs - 5 && elapsed < report.graceMs + 500, ranIds };
+    };
+    const outcomes = [await closeStuck({ ENVIO_SIDECAR_GRACE_MS: "50" }), await closeStuck({}, 30)];
+    gate.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const abandoned = {
+      running: { priceSwap: 1, notify: 0 },
+      queued: { priceSwap: 1, notify: 0 },
+      emits: 0,
+      jobs: 0,
+    };
+    expect(outcomes).toEqual([
+      { report: { drained: false, graceMs: 50, abandoned }, onTime: true, ranIds: ["1:100:1:0"] },
+      { report: { drained: false, graceMs: 30, abandoned }, onTime: true, ranIds: ["1:100:1:0"] },
+    ]);
+  });
+});
+
+describe("sidecar runtime: LOG_LEVEL", () => {
+  it("accepts the indexer's u-levels and falls back to info on anything else", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const linesAt = async (level: string) => {
+      const lines: Array<{ level: number; msg: string }> = [];
+      const destination = new Writable({
+        write(chunk: Buffer, _encoding, done) {
+          for (const line of chunk.toString("utf8").split("\n")) {
+            if (line !== "") lines.push(JSON.parse(line) as { level: number; msg: string });
+          }
+          done();
+        },
+      });
+      const sidecar = createSidecar(contract, {
+        functions: {
+          ...noop,
+          notify: ({ log }) => {
+            log.debug("d");
+            log.info("i");
+            log.warn("w");
+          },
+        },
+      });
+      const running = await sidecar.start({
+        internalPort: 0,
+        publicPort: 0,
+        indexerInternalUrl: indexer.url,
+        env: { LOG_LEVEL: level },
+        logDestination: destination,
+        startJobs: false,
+      });
+      await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+        batchId: "b-11",
+        calls: [call("1:1:1:0", "notify", { text: "hi" })],
+      });
+      await running.waitIdle();
+      await running.close();
+      return lines.filter((line) => ["d", "i", "w"].includes(line.msg) || line.msg.startsWith("LOG_LEVEL")).map((line) => line.msg);
+    };
+    const levels = ["udebug", "uinfo", "uwarn", "uerror", "debug", "silent", "nonsense"];
+    const seen = await Promise.all(levels.map(linesAt));
+    expect(Object.fromEntries(levels.map((level, n) => [level, seen[n]]))).toEqual({
+      udebug: ["d", "i", "w"],
+      uinfo: ["i", "w"],
+      uwarn: ["w"],
+      uerror: [],
+      debug: ["d", "i", "w"],
+      silent: [],
+      nonsense: ["LOG_LEVEL 'nonsense' is not a known level, using 'info'", "i", "w"],
     });
   });
 });

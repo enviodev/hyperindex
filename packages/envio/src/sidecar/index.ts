@@ -23,6 +23,8 @@ export {
   type SidecarRoutesApp,
   type SidecarStats,
   type StartOptions,
+  type CloseOptions,
+  type CloseReport,
   type RunningSidecar,
   type RollbackNotice,
 } from "./runtime.js";

@@ -52,6 +52,8 @@ export type EmitTransport = {
   readonly log: SidecarLogger;
   readonly onSent?: () => void;
   readonly onFailed?: () => void;
+  /** Handed every delivery in progress, so shutdown can wait for retries. */
+  readonly onPending?: (sending: Promise<unknown>) => void;
 };
 
 export type EmitBinding = {
@@ -149,14 +151,22 @@ export function createEmit<C extends SidecarContract>(
     throw new SidecarEmitError(name, `undeliverable after ${retry.attempts} attempts: ${lastFailure}`);
   };
 
+  const track = (sending: Promise<EmitResult>): Promise<EmitResult> => {
+    transport.onPending?.(sending);
+    return sending;
+  };
+
   const emit: Record<string, unknown> = {
-    raw: (name: string, body: unknown, opts: EmitOptions = {}) => send(name, body, opts),
+    raw: (name: string, body: unknown, opts: EmitOptions = {}) => track(send(name, body, opts)),
   };
   for (const [name, def] of Object.entries(contract.webhooks as Record<string, { body: S.Schema<unknown> }>)) {
     emit[name] = (body: unknown, opts: EmitOptions = {}) => {
       let json: unknown;
       try {
         json = S.reverseConvertToJsonOrThrow(body, def.body);
+        // Converting does not type-check (`{ at: "soon" }` converts fine), so the
+        // JSON is parsed back the way the indexer will parse it.
+        S.parseOrThrow(json, def.body);
       } catch (cause) {
         return Promise.reject(
           new SidecarEmitError(name, `body does not match the contract: ${cause instanceof Error ? cause.message : String(cause)}`, {
@@ -164,7 +174,7 @@ export function createEmit<C extends SidecarContract>(
           }),
         );
       }
-      return send(name, json, opts);
+      return track(send(name, json, opts));
     };
   }
   return emit as Emit<C>;
