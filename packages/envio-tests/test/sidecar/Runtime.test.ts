@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { defineSidecar, S } from "envio";
-import { createSidecar, SidecarEmitError, type RunningSidecar, type SidecarImpl } from "envio/sidecar";
+import { createSidecar, SidecarEmitError, type RetryPolicy, type RunningSidecar, type SidecarImpl } from "envio/sidecar";
 
 type Received = {
   readonly name: string;
@@ -10,7 +10,7 @@ type Received = {
   readonly body: unknown;
 };
 
-type Reply = { readonly status: number; readonly body?: unknown };
+type Reply = { readonly status: number; readonly body?: unknown; readonly headers?: Record<string, string> };
 
 type FakeIndexer = {
   readonly url: string;
@@ -28,7 +28,7 @@ const readBody = (request: IncomingMessage): Promise<string> =>
 
 const send = (response: ServerResponse, reply: Reply) => {
   const payload = reply.body === undefined ? "" : JSON.stringify(reply.body);
-  response.writeHead(reply.status, { "content-type": "application/json" });
+  response.writeHead(reply.status, { "content-type": "application/json", ...reply.headers });
   response.end(payload);
 };
 
@@ -119,7 +119,7 @@ afterEach(async () => {
 const startSidecar = async (
   indexer: FakeIndexer,
   impl: SidecarImpl<Contract>,
-  options: { startJobs?: boolean; env?: NodeJS.ProcessEnv } = {},
+  options: { startJobs?: boolean; env?: NodeJS.ProcessEnv; retry?: RetryPolicy } = {},
 ): Promise<RunningSidecar> => {
   const sidecar = createSidecar(contract, impl);
   const running = await sidecar.start({
@@ -127,7 +127,7 @@ const startSidecar = async (
     publicPort: 0,
     indexerInternalUrl: indexer.url,
     logLevel: "silent",
-    retry: { attempts: 4, baseMs: 1, capMs: 5 },
+    retry: options.retry ?? { attempts: 4, baseMs: 1, capMs: 5 },
     startJobs: options.startJobs ?? false,
     ...(options.env === undefined ? {} : { env: options.env }),
   });
@@ -544,6 +544,79 @@ describe("sidecar runtime: webhooks from outside a call", () => {
     });
   });
 
+  it("keeps retrying a busy indexer for ENVIO_EMIT_RETRY_MAX_MS, then rejects", async () => {
+    const indexer = await fakeIndexer(() => ({ status: 503 }));
+    cleanups.push(indexer.close);
+    const outcome = deferred<{ message: string; elapsed: number }>();
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          ...noop,
+          notify: async ({ emit }) => {
+            const startedAt = Date.now();
+            try {
+              await emit.tick({ at: 1 });
+              outcome.resolve({ message: "sent", elapsed: Date.now() - startedAt });
+            } catch (error) {
+              outcome.resolve({
+                message: error instanceof SidecarEmitError ? error.message : "wrong error",
+                elapsed: Date.now() - startedAt,
+              });
+            }
+          },
+        },
+      },
+      { env: { ENVIO_EMIT_RETRY_MAX_MS: "150" }, retry: { baseMs: 5, capMs: 20 } },
+    );
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-19",
+      calls: [call("1:1:1:0", "notify", { text: "hi" })],
+    });
+    const { message, elapsed } = await outcome.promise;
+    await running.waitIdle();
+    expect({
+      message,
+      withinBudget: elapsed >= 150 && elapsed < 1_000,
+      // Doubling from 5 ms with jitter, capped at 20 ms: well over 5 tries in 150 ms.
+      manyAttempts: indexer.received.length >= 5,
+      webhooksFailed: running.stats().webhooksFailed,
+    }).toEqual({
+      message: expect.stringMatching(/^Webhook 'tick': undeliverable after \d+ attempts in \d+ ms: status 503$/),
+      withinBudget: true,
+      manyAttempts: true,
+      webhooksFailed: 1,
+    });
+  });
+
+  it("waits as long as a 503's retry-after asks", async () => {
+    const indexer = await fakeIndexer((_received, n) =>
+      n === 1 ? { status: 503, headers: { "retry-after": "1" } } : undefined,
+    );
+    cleanups.push(indexer.close);
+    const times: number[] = [];
+    const running = await startSidecar(indexer, {
+      functions: {
+        ...noop,
+        notify: async ({ emit }) => {
+          await emit.tick({ at: 1 }, { chainId: 1 });
+        },
+      },
+    });
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-20",
+      calls: [call("1:1:1:0", "notify", { text: "hi" })],
+    });
+    const startedAt = Date.now();
+    await running.waitIdle();
+    times.push(Date.now() - startedAt);
+    expect({
+      received: indexer.received.length,
+      waitedForRetryAfter: (times[0] ?? 0) >= 950,
+      sent: running.stats().webhooksSent,
+    }).toEqual({ received: 2, waitedForRetryAfter: true, sent: 1 });
+  });
+
   it("rejects a body that does not match the contract before sending anything", async () => {
     const indexer = await fakeIndexer();
     cleanups.push(indexer.close);
@@ -721,6 +794,58 @@ describe("sidecar runtime: close", () => {
       { report: { drained: false, graceMs: 50, abandoned }, onTime: true, ranIds: ["1:100:1:0"] },
       { report: { drained: false, graceMs: 30, abandoned }, onTime: true, ranIds: ["1:100:1:0"] },
     ]);
+  });
+});
+
+describe("sidecar runtime: close with retrying emits", () => {
+  it("abandons emits still retrying at the grace cap and reports them", async () => {
+    const indexer = await fakeIndexer(() => ({ status: 503 }));
+    cleanups.push(indexer.close);
+    const started = deferred();
+    const outcome = deferred<string>();
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          ...noop,
+          notify: async ({ emit }) => {
+            started.resolve();
+            try {
+              await emit.tick({ at: 1 });
+              outcome.resolve("sent");
+            } catch (error) {
+              outcome.resolve(error instanceof SidecarEmitError ? error.message : "wrong error");
+            }
+          },
+        },
+      },
+      // No attempt cap: the budget is the 10 min default, so only close can end it.
+      { retry: { baseMs: 5, capMs: 10 } },
+    );
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-21",
+      calls: [call("1:1:1:0", "notify", { text: "hi" })],
+    });
+    await started.promise;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const startedAt = Date.now();
+    const report = await running.close({ graceMs: 60 });
+    const elapsed = Date.now() - startedAt;
+    expect({
+      report,
+      onTime: elapsed < 1_000,
+      outcome: await outcome.promise,
+      webhooksFailed: running.stats().webhooksFailed,
+    }).toEqual({
+      report: {
+        drained: false,
+        graceMs: 60,
+        abandoned: { running: { priceSwap: 0, notify: 1 }, queued: { priceSwap: 0, notify: 0 }, emits: 1, jobs: 0 },
+      },
+      onTime: true,
+      outcome: "Webhook 'tick': abandoned: sidecar closed before it was delivered",
+      webhooksFailed: 1,
+    });
   });
 });
 

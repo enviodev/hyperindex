@@ -2,7 +2,7 @@ import express from "express";
 import type { Server } from "node:http";
 import * as S from "rescript-schema";
 import { isSidecarContract, type SidecarContract, type SidecarFunctionInput } from "./contract.js";
-import { createEmit, type Emit, type EmitTransport, type RetryPolicy } from "./emit.js";
+import { createEmit, DEFAULT_RETRY, type Emit, type EmitTransport, type RetryPolicy } from "./emit.js";
 import { readEnv } from "./env.js";
 import { createRootLogger, toUserLogger, type SidecarLogger } from "./log.js";
 import { createIndexerClient, type EntityMetaInput, type IndexerClient } from "./client.js";
@@ -85,6 +85,7 @@ export type StartOptions = {
   readonly logLevel?: string;
   readonly logDestination?: NodeJS.WritableStream;
   readonly fetch?: typeof fetch;
+  /** Webhook backoff. `maxMs` defaults to `ENVIO_EMIT_RETRY_MAX_MS`, else 600000. */
   readonly retry?: RetryPolicy;
   /** Longest `close()` waits for running work. Default `ENVIO_SIDECAR_GRACE_MS`, else 20000. */
   readonly graceMs?: number;
@@ -296,11 +297,13 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     const pendingEmits = new Set<Promise<unknown>>();
     let runningJobs = 0;
     let closing = false;
+    const stopEmits = new AbortController();
     const transport: EmitTransport = {
       indexerInternalUrl: options.indexerInternalUrl ?? env.indexerInternalUrl,
       webhookSecret: env.webhookSecret,
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-      ...(options.retry === undefined ? {} : { retry: options.retry }),
+      retry: { ...DEFAULT_RETRY, maxMs: env.emitRetryMaxMs, ...options.retry },
+      signal: stopEmits.signal,
       log,
       onSent: () => {
         counters.webhooksSent++;
@@ -650,6 +653,9 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         for (const queue of queues.values()) queue.length = 0;
         log.warn("sidecar grace period over, abandoning unfinished work", { graceMs, ...abandoned });
       }
+      // Retrying deliveries reject now instead of outliving the grace period;
+      // emits made after close (a timed out function waking up) fail at once.
+      stopEmits.abort(new Error("sidecar closed before it was delivered"));
       await Promise.all([closeServer(internalServer), closeServer(publicServer)]);
       log.info("sidecar stopped", { drained });
       return { drained, graceMs, abandoned };
