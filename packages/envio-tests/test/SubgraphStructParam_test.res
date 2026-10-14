@@ -2,7 +2,9 @@
 // `ValidatorAdded(..., Cluster)`. envio decodes a struct whose ABI names its
 // components as an object keyed by those names; the shim read it by position,
 // got `undefined` for every field, and since every parameter is converted
-// together, even `event.params.tokenId` threw.
+// together, even `event.params.tokenId` threw. And a struct array's elements,
+// read through `toTupleArray<Struct>()`, are the struct graph codegen names —
+// GMX's event data is one — but the type argument was erased with the rest.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.5
@@ -48,7 +50,7 @@ type Seed @entity {
     (
       "src/token.ts",
       `
-import { BigInt, Entity, ethereum, store } from "@graphprotocol/graph-ts";
+import { Address, BigInt, Entity, ethereum, store } from "@graphprotocol/graph-ts";
 
 export function handleNounCreated(event: ethereum.Event): void {
   let tokenId: BigInt = event.parameters[0].value.toBigInt();
@@ -60,11 +62,22 @@ export function handleNounCreated(event: ethereum.Event): void {
   store.set("Seed", tokenId.toString(), entity);
 }
 
+// What graph codegen emits for a struct array: the generic names the element's
+// class, whose getters read the tuple.
+class BatchItemsStruct extends ethereum.Tuple {
+  get id(): BigInt {
+    return this[0].toBigInt();
+  }
+  get owner(): Address {
+    return this[1].toAddress();
+  }
+}
+
 export function handleBatch(event: ethereum.Event): void {
-  let items = event.parameters[0].value.toTupleArray<ethereum.Tuple>();
+  let items = event.parameters[0].value.toTupleArray<BatchItemsStruct>();
   let values: string[] = [];
   for (let i = 0; i < items.length; i++) {
-    values.push(items[i][0].toBigInt().toString() + "@" + items[i][1].toAddress().toHexString());
+    values.push(items[i].id.toString() + "@" + items[i].owner.toHexString());
   }
   let entity = new Entity();
   entity.setString("values", values.join(","));

@@ -8,6 +8,7 @@
 
 export const OPERATORS_HELPER = "__envio_op";
 export const RETAG_HELPER = "__envio_retag";
+export const RETAG_EACH_HELPER = "__envio_retag_each";
 export const EVENT_CLASSES_EXPORT = "__envio_event_classes";
 
 /**

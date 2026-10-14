@@ -2419,6 +2419,19 @@ export function retagChangetype(ctor: unknown, value: unknown, keepInstances = f
 }
 
 /**
+ * `x.toTupleArray<Struct>()`: each element is a `Struct` in AssemblyScript, and
+ * graph codegen's getters live on that class. A matrix nests the arrays.
+ */
+export function retagEach(ctor: unknown, values: unknown): unknown {
+  if (!Array.isArray(values)) return values;
+  for (const value of values) {
+    if (value instanceof EthereumTuple) retagChangetype(ctor, value, true);
+    else if (Array.isArray(value)) retagEach(ctor, value);
+  }
+  return values;
+}
+
+/**
  * AssemblyScript's primitives are namespaces as well as types: `i32.MAX_VALUE`
  * reads a bound, `i32(x)` truncates to one. Both are ordinary source in a
  * mapping and neither exists in JavaScript.

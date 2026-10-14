@@ -45,6 +45,7 @@ use oxc::{
 
 pub const OPERATORS_HELPER: &str = "__envio_op";
 pub const RETAG_HELPER: &str = "__envio_retag";
+pub const RETAG_EACH_HELPER: &str = "__envio_retag_each";
 pub const EVENT_CLASSES_EXPORT: &str = "__envio_event_classes";
 
 /// `export function handleTransfer(event: Transfer)` names, in a type, the
@@ -300,6 +301,22 @@ impl<'a> Rewrite<'a> {
         }
     }
 
+    /// The element class `x.toTupleArray<Foo>()` names: graph codegen reads a
+    /// struct array that way, and the elements are `Foo`s in AssemblyScript.
+    fn element_retag_target(&self, call: &CallExpression<'a>) -> Option<(Span, String)> {
+        let Expression::StaticMemberExpression(member) = &call.callee else {
+            return None;
+        };
+        if !matches!(
+            member.property.name.as_str(),
+            "toTupleArray" | "toTupleMatrix"
+        ) {
+            return None;
+        }
+        let class = class_ref(call.type_arguments.as_ref()?.params.first()?, &self.classes)?;
+        Some((class.span, class.name.to_string()))
+    }
+
     /// The class `changetype<Foo>` names, if it is one the runtime can reach.
     fn retag_target(&self, call: &CallExpression<'a>) -> Option<(Span, String)> {
         let Expression::Identifier(callee) = &call.callee else {
@@ -388,6 +405,17 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 *expr = self.call(span, RETAG_HELPER, [ctor, value, keep]);
             }
             Expression::CallExpression(call) => {
+                if let Some((class_span, class)) = self.element_retag_target(call) {
+                    let span = call.span;
+                    let value = expr.take_in(&self.ast);
+                    let class = Expression::new_identifier(
+                        class_span,
+                        Ident::from_str_in(&class, &self.ast),
+                        &self.ast,
+                    );
+                    *expr = self.call(span, RETAG_EACH_HELPER, [class, value]);
+                    return;
+                }
                 let Some((class_span, class)) = self.retag_target(call) else {
                     return;
                 };
@@ -596,6 +624,23 @@ export function f(value, n) {
 \tlet pair = __envio_retag(Pair, value, true);
 \tlet maybe = __envio_retag(Pair, value, true);
 \tlet wide = n;
+}
+"
+        );
+    }
+
+    #[test]
+    fn retags_the_elements_of_a_struct_array() {
+        assert_eq!(
+            js("import { Item } from \"../generated/Pool/Pool\";
+export function f(value: ethereum.Value): void {
+  let items = value.toTupleArray<Item>();
+  let plain = value.toTupleArray<ethereum.Tuple>();
+}"),
+            "import { Item } from \"../generated/Pool/Pool\";
+export function f(value) {
+\tlet items = __envio_retag_each(Item, value.toTupleArray());
+\tlet plain = value.toTupleArray();
 }
 "
         );

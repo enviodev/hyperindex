@@ -21,6 +21,7 @@ import {
   Bytes,
   changetype,
   retagChangetype,
+  retagEach,
   installCallHook,
   installHosts,
   installRegisterHook,
@@ -37,7 +38,13 @@ import {
 } from "./graph-ts.ts";
 import { encodeArg, decodeArg, makeCallEffect } from "./calls.ts";
 import { resetRpcClients } from "./rpc.ts";
-import { EVENT_CLASSES_EXPORT, OPERATORS_HELPER, RETAG_HELPER, operators } from "./assemblyscript.ts";
+import {
+  EVENT_CLASSES_EXPORT,
+  OPERATORS_HELPER,
+  RETAG_EACH_HELPER,
+  RETAG_HELPER,
+  operators,
+} from "./assemblyscript.ts";
 import { makeHostEffects } from "./hosts.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
@@ -164,6 +171,7 @@ function installResolveHook(root: string) {
   globals.changetype ??= changetype;
   globals[OPERATORS_HELPER] ??= operators;
   globals[RETAG_HELPER] ??= retagChangetype;
+  globals[RETAG_EACH_HELPER] ??= retagEach;
   globals.assert ??= (value: unknown, message?: string) => {
     if (!value) throw new Error(message ?? "assertion failed");
     return value;
