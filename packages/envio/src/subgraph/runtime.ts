@@ -51,6 +51,7 @@ import {
 import { makeHostEffects } from "./hosts.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
+import { resolveAssemblyScriptPackage } from "./as-package.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
 const ENVIO_PACKAGE_URL = new URL("../../", import.meta.url).href;
@@ -140,7 +141,17 @@ function installResolveHook(root: string) {
       ) {
         return { url: SHIM_URL, shortCircuit: true };
       }
-      const resolved = nextResolve(specifier, context);
+      let resolved;
+      try {
+        resolved = nextResolve(specifier, context);
+      } catch (error) {
+        // A library written in AssemblyScript has no JavaScript entry for Node
+        // to find (as-base64's package.json names no `main`); asc reads its
+        // assembly/index.ts.
+        const asFile = resolveAssemblyScriptPackage(specifier, context?.parentURL);
+        if (!asFile) throw error;
+        return { url: asFile, shortCircuit: true };
+      }
       // A subgraph project's package.json has no `type`, so its mappings and
       // its `generated/` would load as CommonJS and reach the shim — a real ES
       // module — through `require()`, which Node refuses inside a cycle. They
