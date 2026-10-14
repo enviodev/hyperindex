@@ -6,6 +6,7 @@
 
 pub mod abi;
 pub mod assemblyscript;
+pub mod codegen;
 pub mod creates;
 pub mod errors;
 pub mod manifest;
@@ -238,8 +239,12 @@ pub fn check_generated_code(runtime: &SubgraphRuntimeConfig) -> Result<()> {
         .collect();
     let generated = generated_dir(root, &mapping_files);
     // Every generated tree has a schema.ts; Envio Cloud leaves the directory
-    // itself behind empty.
-    if generated.join("schema.ts").is_file() || graph_cli_installed(root) {
+    // itself behind empty. Only `ENVIO_SUBGRAPH_CODEGEN=graph-cli` has no
+    // fallback: bundled codegen builds the tree without an install.
+    if generated.join("schema.ts").is_file()
+        || graph_cli_installed(root)
+        || codegen::CodegenMode::from_env() != codegen::CodegenMode::GraphCli
+    {
         return Ok(());
     }
     let relative = pathdiff_relative(&generated, root);

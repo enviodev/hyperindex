@@ -1,0 +1,109 @@
+// SubgraphCodegenGolden_test.res's mappings, run against envio's own codegen
+// (test/fixtures/subgraph-codegen/generated-bundled) instead of graph-cli's.
+@module("node:fs") external readFileSync: (string, string) => string = "readFileSync"
+@module("node:path") @variadic external pathJoin: array<string> => string = "join"
+@module("node:path") external pathDirname: string => string = "dirname"
+@module("node:url") external fileURLToPath: string => string = "fileURLToPath"
+@val external importMetaUrl: string = "import.meta.url"
+
+let fixture = relativePath =>
+  readFileSync(
+    pathJoin([
+      pathDirname(fileURLToPath(importMetaUrl)),
+      "fixtures",
+      "subgraph-codegen",
+      relativePath,
+    ]),
+    "utf8",
+  )
+
+let _ = InternalTestIndexer.fromSubgraph(
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4700")]),
+  ~manifest=fixture("subgraph.yaml"),
+  ~schema=fixture("schema.graphql"),
+  ~files=Dict.fromArray([
+    ("./abis/Margin.json", fixture("abis/Margin.json")),
+    ("./abis/ERC20.json", fixture("abis/ERC20.json")),
+    ("./abis/Registry.json", fixture("abis/Registry.json")),
+  ]),
+  ~mappings=Dict.fromArray([
+    ("src/mapping.ts", fixture("src/mapping.ts")),
+    ("src/registry.ts", fixture("src/registry.ts")),
+    ("generated/Margin/Margin.ts", fixture("generated-bundled/Margin/Margin.ts")),
+    ("generated/Margin/ERC20.ts", fixture("generated-bundled/Margin/ERC20.ts")),
+    ("generated/Registry/Registry.ts", fixture("generated-bundled/Registry/Registry.ts")),
+    ("generated/schema.ts", fixture("generated-bundled/schema.ts")),
+  ]),
+  ~test=`
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createServer, type Server } from "node:http";
+import { createTestIndexer } from "envio";
+
+const RATIO_SELECTOR = "0x4f3c1542";
+const RATIO_RESULT =
+  "0x0000000000000000000000000000000000000000000000000000000000000064";
+const DECIMALS_SELECTOR = "0x313ce567";
+const DECIMALS_RESULT =
+  "0x0000000000000000000000000000000000000000000000000000000000000012";
+
+let server: Server;
+
+beforeAll(async () => {
+  server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      const request = JSON.parse(body);
+      const data: string = request.params?.[0]?.data ?? "";
+      if (request.method === "eth_call" && data.startsWith(RATIO_SELECTOR)) {
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: RATIO_RESULT }));
+        return;
+      }
+      if (request.method === "eth_call" && data.startsWith(DECIMALS_SELECTOR)) {
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: DECIMALS_RESULT }));
+        return;
+      }
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: "0x1" }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(4700, "127.0.0.1", resolve));
+});
+
+afterAll(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+describe("bundled codegen", () => {
+  it("runs generated bindings as envio wrote them", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        1: {
+          simulate: [
+            { contract: "Margin", event: "LogSetMarginRatio", params: { marginRatio: 1n } },
+            {
+              contract: "Registry",
+              event: "Registered",
+              params: {
+                members: [
+                  "0x00000000000000000000000000000000000000aa",
+                  "0x00000000000000000000000000000000000000bb",
+                ],
+                _1: 7n,
+              },
+            },
+          ],
+        },
+      },
+    });
+    t.expect((await indexer.Probe.getAll()).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: "decimals", name: "18" },
+      { id: "kinds", name: "8,0,4|9,0,7" },
+      { id: "members", name: "0x00000000000000000000000000000000000000bb/7" },
+      { id: "parameters", name: "2" },
+      { id: "ratio", name: "100" },
+    ]);
+  });
+});
+`,
+)
