@@ -392,7 +392,10 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // effect calls in preload, and the block number in the input is what keeps
   // a cached result tied to the state the mapping saw.
   const rpcUrls = config.rpcUrls ?? [];
-  const callEffect = makeCallEffect(rpcUrls);
+  const callEffect = makeCallEffect(rpcUrls, (encoded) => {
+    const hit = registerCache.get(`envio_subgraph_eth_call\u0000${encoded}`);
+    return hit && "value" in hit ? (hit.value as string) : undefined;
+  });
   const hosts = makeHostEffects(rpcUrls);
   const callSync = (effect: unknown, input: unknown, what: string) => {
     const scope = currentScope();

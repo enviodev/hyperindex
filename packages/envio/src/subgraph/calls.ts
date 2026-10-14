@@ -65,7 +65,7 @@ export type CallOutput = {
  * serialisable shape — so the call is described in plain JSON and the graph-ts
  * values are converted on both sides by the shim.
  */
-export function makeCallEffect(rpcUrls: string[]) {
+export function makeCallEffect(rpcUrls: string[], recall: (encoded: string) => string | undefined = () => undefined) {
   return createEffect(
     {
       name: "envio_subgraph_eth_call",
@@ -78,6 +78,10 @@ export function makeCallEffect(rpcUrls: string[]) {
       crossChain: false,
     },
     async ({ input: encoded }: { input: string }) => {
+      // The register pass asked the same question at fetch time; its answer
+      // is the same one, and asking twice doubled a factory's calls.
+      const recalled = recall(encoded);
+      if (recalled !== undefined) return recalled;
       const input = JSON.parse(encoded) as CallInput;
       if (rpcUrls.length === 0) {
         throw new Error(missingRpcMessage(input.signature));

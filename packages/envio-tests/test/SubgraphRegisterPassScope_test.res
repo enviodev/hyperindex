@@ -165,7 +165,7 @@ afterAll(async () => {
 });
 
 describe("the register pass", () => {
-  it("skips a handler that can't create a template, and shares one call between the ones that can", async (t) => {
+  it("skips a handler that can't create a template, and shares one call with the ones that can", async (t) => {
     const indexer = createTestIndexer();
 
     await indexer.process({
@@ -203,10 +203,11 @@ describe("the register pass", () => {
         { id: pair, symbol: "ABC:2" },
         { id: other, symbol: "ABC" },
       ],
-      // The factory's symbol() at block 10 once for both register passes, which
-      // run concurrently, and once for both handlers; then one per Sync, from
-      // the handler itself — none from a register pass.
-      ethCalls: 4,
+      // The factory's symbol() at block 10 once, for both register passes,
+      // which run concurrently, and for both handlers, which reuse their
+      // answer; then one per Sync, from the handler itself — none from a
+      // register pass.
+      ethCalls: 3,
     });
   });
 });
