@@ -17,6 +17,7 @@ import { info } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
 import { currentScope, runInScope, type RegisterPass, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
+  contextOf,
   Address,
   assemblyScriptPrimitives,
   BigInt as GraphBigInt,
@@ -751,7 +752,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           address: event.srcAddress,
           chainId: event.chainId,
           network: source.network ?? "",
-          context: source.context ?? {},
+          context: contextOf(event.chainId, source.name, event.srcAddress) ?? source.context ?? {},
         },
         registered: new Set(),
         blockNumber: event.block.number,

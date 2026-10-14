@@ -10,6 +10,8 @@
  * the project's real `generated/` runs on top of it unchanged.
  */
 
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import BigNumber from "bignumber.js";
 import * as GraphNodeDecimal from "./graph-node-decimal.ts";
 import {
@@ -2123,17 +2125,102 @@ export class DataSourceTemplate {
     registerHook?.(name, address);
   }
   static createWithContext(name: string, params: string[], context: DataSourceContext): void {
-    // The created data source would have to carry the context to every event it
-    // ever sees, and there is nowhere to keep it — `dataSource.context()` in the
-    // template's handlers would quietly come back empty.
-    if (context.entries.length > 0) {
-      throw unsupported(
-        `${name}.createWithContext() with a non-empty context`,
-        "a mapping handler",
-      );
+    const { mode, dataSource } = currentScope();
+    if (mode === "register" && context.entries.length > 0 && params[0]) {
+      rememberContext(dataSource.chainId, name, params[0], contextEntries(name, context));
     }
     DataSourceTemplate.create(name, params);
   }
+}
+
+/**
+ * The context a template's data source was created with, which its handlers
+ * read through `dataSource.context()`. The created address is all envio keeps
+ * of a data source, so the context is kept here, by chain, template and
+ * address — and in the project's `.envio` directory, so a restart that loads
+ * the addresses from storage finds it again.
+ */
+type ContextEntries = Record<string, { type: string; data: string }>;
+const dynamicContexts = new Map<string, ContextEntries>();
+let contextsLoaded = false;
+
+function contextFile(): string {
+  return path.join(process.cwd(), ".envio", "subgraph-data-source-contexts.jsonl");
+}
+
+function contextKey(chainId: number, template: string, address: string): string {
+  return `${chainId}:${template}:${address.toLowerCase()}`;
+}
+
+function loadContexts() {
+  if (contextsLoaded) return;
+  contextsLoaded = true;
+  try {
+    for (const line of readFileSync(contextFile(), "utf8").split("\n")) {
+      if (!line) continue;
+      const { key, entries } = JSON.parse(line);
+      dynamicContexts.set(key, entries);
+    }
+  } catch {
+    // none saved yet
+  }
+}
+
+function rememberContext(chainId: number, template: string, address: string, entries: ContextEntries) {
+  loadContexts();
+  const key = contextKey(chainId, template, address);
+  if (JSON.stringify(dynamicContexts.get(key)) === JSON.stringify(entries)) return;
+  dynamicContexts.set(key, entries);
+  try {
+    mkdirSync(path.dirname(contextFile()), { recursive: true });
+    appendFileSync(contextFile(), JSON.stringify({ key, entries }) + "\n");
+  } catch {
+    // in memory still serves this run
+  }
+}
+
+/** The context `createWithContext` was given, for the handler pass of that data source. */
+export function contextOf(chainId: number, template: string, address: string): ContextEntries | undefined {
+  loadContexts();
+  return dynamicContexts.get(contextKey(chainId, template, address));
+}
+
+/** The manifest's own typed entries (`contextValue`) run the other way. */
+function contextEntries(template: string, context: DataSourceContext): ContextEntries {
+  const out: ContextEntries = {};
+  for (const entry of context.entries) {
+    const value = entry.value;
+    const key = entry.key;
+    switch (value.kind) {
+      case ValueKind.STRING:
+        out[key] = { type: "String", data: value.toString() };
+        break;
+      case ValueKind.INT:
+        out[key] = { type: "Int", data: String(value.toI32()) };
+        break;
+      case ValueKind.INT8:
+        out[key] = { type: "Int8", data: String(value.data) };
+        break;
+      case ValueKind.BOOL:
+        out[key] = { type: "Bool", data: String(value.toBoolean()) };
+        break;
+      case ValueKind.BIGINT:
+        out[key] = { type: "BigInt", data: value.toBigInt().toString() };
+        break;
+      case ValueKind.BIGDECIMAL:
+        out[key] = { type: "BigDecimal", data: value.toBigDecimal().toString() };
+        break;
+      case ValueKind.BYTES:
+        out[key] = { type: "Bytes", data: value.toBytes().toHexString() };
+        break;
+      default:
+        throw unsupported(
+          `${template}.createWithContext() with a ${ValueKind[value.kind]} value on "${key}"`,
+          "a mapping handler",
+        );
+    }
+  }
+  return out;
 }
 
 export class DataSourceContext extends Entity {}
