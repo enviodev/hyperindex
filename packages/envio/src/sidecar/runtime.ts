@@ -11,7 +11,8 @@ export type SidecarCall = {
   readonly id: string;
   readonly chainId: number;
   readonly blockNumber: number;
-  readonly blockTimestamp: number;
+  /** Absent for block handler calls. */
+  readonly blockTimestamp?: number;
   readonly batchId: string;
 };
 
@@ -406,7 +407,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             id: wire.id,
             chainId: wire.chainId,
             blockNumber: wire.blockNumber,
-            blockTimestamp: wire.blockTimestamp ?? 0,
+            blockTimestamp: wire.blockTimestamp,
             batchId,
           },
         });

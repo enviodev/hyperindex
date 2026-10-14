@@ -337,6 +337,30 @@ describe("sidecar runtime: calls", () => {
     });
   });
 
+  it("leaves blockTimestamp out for block handler calls instead of inventing one", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const timestamps: Array<[string, number | undefined]> = [];
+    const running = await startSidecar(indexer, {
+      functions: {
+        ...noop,
+        notify: async ({ call }) => {
+          timestamps.push([call.id, call.blockTimestamp]);
+        },
+      },
+    });
+    const { blockTimestamp: _, ...blockCall } = call("1:5:b0:0", "notify", { text: "block" }, { blockNumber: 5 });
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-12",
+      calls: [blockCall, call("1:6:3:0", "notify", { text: "event" }, { blockNumber: 6 })],
+    });
+    await running.waitIdle();
+    expect(timestamps).toEqual([
+      ["1:5:b0:0", undefined],
+      ["1:6:3:0", 1760440000],
+    ]);
+  });
+
   it("forgets call ids above a rolled back block, so the replayed blocks' calls run again", async () => {
     const indexer = await fakeIndexer();
     cleanups.push(indexer.close);
