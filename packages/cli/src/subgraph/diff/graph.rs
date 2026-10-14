@@ -209,10 +209,43 @@ impl GraphClient {
         ids: &[Value],
         block: Option<u64>,
     ) -> Result<Vec<Value>> {
+        self.rows_as("rows", collection, selection, ids, block)
+            .await
+    }
+
+    /// [`Self::rows`] asked again, in batches, as a query of its own: under
+    /// another alias it's a new question to a gateway, not a cached repeat, and
+    /// may reach another indexer.
+    pub async fn recheck(
+        &self,
+        collection: &str,
+        selection: &str,
+        ids: &[Value],
+        block: Option<u64>,
+        batch: usize,
+    ) -> Result<Vec<Value>> {
+        let mut rows = Vec::new();
+        for chunk in ids.chunks(batch.max(1)) {
+            rows.extend(
+                self.rows_as("recheck", collection, selection, chunk, block)
+                    .await?,
+            );
+        }
+        Ok(rows)
+    }
+
+    async fn rows_as(
+        &self,
+        alias: &str,
+        collection: &str,
+        selection: &str,
+        ids: &[Value],
+        block: Option<u64>,
+    ) -> Result<Vec<Value>> {
         let data = self
-            .query(&rows_query(collection, selection, ids, block))
+            .query(&rows_query_as(alias, collection, selection, ids, block))
             .await?;
-        data["rows"]
+        data[alias]
             .as_array()
             .cloned()
             .ok_or_else(|| anyhow!("{} returned no list for {collection}", self.url))
@@ -250,9 +283,19 @@ pub fn page_query(collection: &str, cursor: Option<&str>, block: Option<u64>) ->
 }
 
 pub fn rows_query(collection: &str, selection: &str, ids: &[Value], block: Option<u64>) -> String {
+    rows_query_as("rows", collection, selection, ids, block)
+}
+
+fn rows_query_as(
+    alias: &str,
+    collection: &str,
+    selection: &str,
+    ids: &[Value],
+    block: Option<u64>,
+) -> String {
     let ids = ids.iter().map(literal).collect::<Vec<_>>().join(", ");
     format!(
-        "{{ rows: {collection}(first: {PAGE_SIZE}, where: {{id_in: [{ids}]}}{}) {{ id \
+        "{{ {alias}: {collection}(first: {PAGE_SIZE}, where: {{id_in: [{ids}]}}{}) {{ id \
          {selection} }} }}",
         block_arg(block)
     )

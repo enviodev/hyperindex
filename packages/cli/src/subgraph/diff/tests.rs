@@ -108,48 +108,62 @@ async fn graph_node_refusing(
                 return (200, json!({"errors": [{"message": message}]}).to_string());
             }
         }
-        if query.contains("_meta") {
-            let meta = json!({"block": {"number": block}, "deployment": "QmTest", "hasIndexingErrors": false});
-            return (200, json!({"data": {"_meta": meta}}).to_string());
-        }
-        if query.contains("__schema") {
-            return (200, json!({"data": introspection(&data)}).to_string());
-        }
-        let Some(collection) = query
-            .split_once(": ")
-            .and_then(|(_, rest)| rest.split_once('('))
-            .map(|(collection, _)| collection.to_string())
-        else {
-            return (400, "unparseable".to_string());
-        };
-        let rows = data.get(collection.as_str()).cloned().unwrap_or_default();
-        if query.starts_with("{ page:") {
-            let after = cursor(query);
-            let page: Vec<Value> = rows
-                .iter()
-                .filter(|row| after.as_ref().is_none_or(|a| row["id"].as_str().unwrap() > a.as_str()))
-                .take(graph::PAGE_SIZE)
-                .map(|row| json!({"id": row["id"]}))
-                .collect();
-            return (200, json!({"data": {"page": page}}).to_string());
-        }
-        let wanted: Vec<String> = query
-            .split_once("id_in: [")
-            .and_then(|(_, rest)| rest.split_once(']'))
-            .map(|(ids, _)| serde_json::from_str(&format!("[{ids}]")).unwrap())
-            .unwrap_or_default();
-        let found: Vec<Value> = rows
-            .into_iter()
-            // graph-node parses a Bytes id, so its case doesn't matter.
-            .filter(|row| {
-                wanted
-                    .iter()
-                    .any(|id| row["id"].as_str().unwrap().eq_ignore_ascii_case(id))
-            })
-            .collect();
-        (200, json!({"data": {"rows": found}}).to_string())
+        serve(&data, block, query)
     })
     .await
+}
+
+/// One answer of the mock graph-node over `data`.
+fn serve(data: &Dataset, block: u64, query: &str) -> (u16, String) {
+    if query.contains("_meta") {
+        let meta =
+            json!({"block": {"number": block}, "deployment": "QmTest", "hasIndexingErrors": false});
+        return (200, json!({"data": {"_meta": meta}}).to_string());
+    }
+    if query.contains("__schema") {
+        return (200, json!({"data": introspection(data)}).to_string());
+    }
+    let Some(collection) = query
+        .split_once(": ")
+        .and_then(|(_, rest)| rest.split_once('('))
+        .map(|(collection, _)| collection.to_string())
+    else {
+        return (400, "unparseable".to_string());
+    };
+    let rows = data.get(collection.as_str()).cloned().unwrap_or_default();
+    if query.starts_with("{ page:") {
+        let after = cursor(query);
+        let page: Vec<Value> = rows
+            .iter()
+            .filter(|row| {
+                after
+                    .as_ref()
+                    .is_none_or(|a| row["id"].as_str().unwrap() > a.as_str())
+            })
+            .take(graph::PAGE_SIZE)
+            .map(|row| json!({"id": row["id"]}))
+            .collect();
+        return (200, json!({"data": {"page": page}}).to_string());
+    }
+    let wanted: Vec<String> = query
+        .split_once("id_in: [")
+        .and_then(|(_, rest)| rest.split_once(']'))
+        .map(|(ids, _)| serde_json::from_str(&format!("[{ids}]")).unwrap())
+        .unwrap_or_default();
+    let found: Vec<Value> = rows
+        .into_iter()
+        // graph-node parses a Bytes id, so its case doesn't matter.
+        .filter(|row| {
+            wanted
+                .iter()
+                .any(|id| row["id"].as_str().unwrap().eq_ignore_ascii_case(id))
+        })
+        .collect();
+    let alias = query
+        .trim_start_matches("{ ")
+        .split_once(':')
+        .map_or("rows", |(alias, _)| alias);
+    (200, json!({"data": {alias: found}}).to_string())
 }
 
 fn introspection(data: &Dataset) -> Value {
@@ -298,6 +312,71 @@ async fn reports_missing_entities_and_wrong_fields() {
                  "skipped": []},
             ],
         })
+    );
+}
+
+/// A gateway whose paged listing skips an entity it has, and whose first
+/// answer for a sampled entity is stale: neither is a difference once the
+/// reference is asked again by id.
+#[tokio::test]
+async fn asks_again_before_reporting_a_difference() {
+    let data = Arc::new(reference_data());
+    let stale = {
+        let mut stale = reference_data();
+        stale.get_mut("tokens").unwrap()[2]["supply"] = json!("2999");
+        stale.get_mut("tokens").unwrap().remove(4);
+        Arc::new(stale)
+    };
+    let reference = mock_graph(move |query| {
+        if query.starts_with("{ recheck:") {
+            serve(&data, BLOCK, query)
+        } else {
+            serve(&stale, BLOCK, query)
+        }
+    })
+    .await;
+    // Ours really lacks t07 and really differs on t01's decimals.
+    let mut ours = reference_data();
+    let tokens = ours.get_mut("tokens").unwrap();
+    tokens[0]["decimals"] = json!(6);
+    tokens.remove(6);
+    let ours = graph_node(ours, BLOCK).await;
+
+    let dir = project();
+    let mut options = options(&reference.url, Some(&ours.url));
+    options.types = vec!["Token".to_string()];
+    let report = run(dir.path(), &options).await;
+    let recheck_queries = reference
+        .queries
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|q| q.starts_with("{ recheck:"))
+        .count();
+    assert_eq!(
+        (
+            outcome(&report),
+            json!(report.entities[0].recheck),
+            recheck_queries
+        ),
+        (
+            json!({
+                "status": "mismatch", "exitCode": 1, "block": BLOCK, "errors": [],
+                "entities": [
+                    {"type": "Token", "status": "mismatch", "ours": 11, "theirs": 12,
+                     "onlyOurs": [], "onlyTheirs": ["t07"], "sampled": 11,
+                     "fieldMismatches": {"decimals": 1},
+                     "examples": [{"id": "t01", "field": "decimals", "ours": "6", "theirs": "18"}],
+                     "skipped": []},
+                ],
+            }),
+            // Asked: t05 and t07 of the listings (and t07 of ours), then the
+            // sampled t01, t03 and t05 (which the stale answer left out).
+            json!({"asked": 6, "listingMissed": 1, "listingPhantom": 0,
+                   "oursListingMissed": 0, "samplesResolved": 2, "unchecked": 0,
+                   "error": null}),
+            2
+        )
     );
 }
 

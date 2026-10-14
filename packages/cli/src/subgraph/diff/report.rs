@@ -123,6 +123,35 @@ pub struct EntityReport {
     /// it. graph-node serves such a relation as `null` and leaves such an id
     /// out of a list, so they were compared that way: a note, not a mismatch.
     pub dangling_relations: Vec<DanglingRelation>,
+    /// What asking the reference again by id changed. Its paged listing can
+    /// come back short through a gateway, and indexers behind one gateway can
+    /// answer the same pinned query differently, so every id on one side only
+    /// and every differing sample is re-asked by `id_in` before it counts.
+    pub recheck: Recheck,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Recheck {
+    /// Ids asked for again, by `id_in` at the same block.
+    pub asked: usize,
+    /// Ids only ours listed that the reference has when asked by id: its
+    /// listing skipped them, so they count on both sides.
+    pub listing_missed: usize,
+    /// Ids only the reference listed that it doesn't have when asked by id:
+    /// dropped from its side.
+    pub listing_phantom: usize,
+    /// Ids only the reference listed that ours (a Graph endpoint) has when
+    /// asked by id: ours' listing skipped them.
+    pub ours_listing_missed: usize,
+    /// Sampled entities that differed, or that the reference didn't return,
+    /// and matched when asked again.
+    pub samples_resolved: usize,
+    /// One-side-only ids past the per-type cap, counted without being
+    /// re-asked.
+    pub unchecked: usize,
+    /// Why re-asking failed; the first answers then stand.
     pub error: Option<String>,
 }
 
@@ -394,21 +423,65 @@ impl Report {
             .entities
             .iter()
             .flat_map(|entity| {
-                entity.dangling_relations.iter().map(move |dangling| {
-                    if dangling.list {
-                        format!(
+                let recheck = &entity.recheck;
+                let name = &entity.name;
+                let mut lines = Vec::new();
+                if recheck.listing_missed > 0 {
+                    lines.push(format!(
+                        "  {name}: the reference's listing skipped {} ids it has when asked by \
+                         id; counted on both sides",
+                        recheck.listing_missed
+                    ));
+                }
+                if recheck.listing_phantom > 0 {
+                    lines.push(format!(
+                        "  {name}: the reference listed {} ids it doesn't have when asked by \
+                         id; dropped",
+                        recheck.listing_phantom
+                    ));
+                }
+                if recheck.ours_listing_missed > 0 {
+                    lines.push(format!(
+                        "  {name}: ours' listing skipped {} ids it has when asked by id; \
+                         counted on both sides",
+                        recheck.ours_listing_missed
+                    ));
+                }
+                if recheck.samples_resolved > 0 {
+                    lines.push(format!(
+                        "  {name}: {} sampled entities the reference answered differently when \
+                         asked again matched the second time",
+                        recheck.samples_resolved
+                    ));
+                }
+                if recheck.unchecked > 0 {
+                    lines.push(format!(
+                        "  {name}: {} ids on one side only weren't re-asked (past the cap)",
+                        recheck.unchecked
+                    ));
+                }
+                if let Some(error) = &recheck.error {
+                    lines.push(format!(
+                        "  {name}: re-asking the reference failed, first answers kept: {error}"
+                    ));
+                }
+                lines
+                    .into_iter()
+                    .chain(entity.dangling_relations.iter().map(move |dangling| {
+                        if dangling.list {
+                            format!(
                             "  {}.{}: {} ids in sampled lists name a {} ours doesn't have; left \
                              out, as graph-node serves the list",
                             entity.name, dangling.field, dangling.count, dangling.target
                         )
-                    } else {
-                        format!(
+                        } else {
+                            format!(
                             "  {}.{}: {} sampled rows point at a {} ours doesn't have; read as \
                              null, as graph-node serves it",
                             entity.name, dangling.field, dangling.count, dangling.target
                         )
-                    }
-                })
+                        }
+                    }))
             })
             .collect();
         if !notes.is_empty() {

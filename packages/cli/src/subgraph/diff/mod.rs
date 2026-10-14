@@ -25,13 +25,17 @@ use graph::{Exposed, GraphClient};
 use model::{Entity, Field, FieldKind, Model};
 use postgres::{Column, PgConfig, PgSide, Planned, Relation};
 use report::{
-    DanglingRelation, EntityReport, FieldMismatch, Report, Side, Skipped, Status, Tolerance,
+    DanglingRelation, EntityReport, FieldMismatch, Recheck, Report, Side, Skipped, Status,
+    Tolerance,
 };
 
 use crate::utils::project_env::ProjectEnv;
 
 const EXAMPLES: usize = 5;
 const MISMATCH_EXAMPLES: usize = 10;
+/// Ids on one side only re-asked by `id_in` per type and side, and per query.
+const RECHECK_CAP: usize = 1000;
+const RECHECK_BATCH: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -409,9 +413,24 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
             .filter_map(|id| normalize::id(entity.id, id))
             .collect()
     };
-    let ours_ids = canonical_ids(&ours_ids.context("Failed to list ours' ids")?);
+    let mut ours_ids = canonical_ids(&ours_ids.context("Failed to list ours' ids")?);
     let theirs = theirs_ids.context("Failed to list the reference's ids")?;
-    let theirs_ids = canonical_ids(&theirs.ids);
+    let mut theirs_ids = canonical_ids(&theirs.ids);
+    if theirs.complete {
+        let listings = Listings {
+            entity,
+            their_collection: &their_collection,
+            our_collection: our_collection.as_deref().unwrap_or_default(),
+        };
+        recheck_listings(
+            context,
+            &listings,
+            &mut ours_ids,
+            &mut theirs_ids,
+            &mut out.recheck,
+        )
+        .await;
+    }
 
     out.ours = Some(ours_ids.len() as u64);
     out.theirs = Some(theirs_ids.len() as u64);
@@ -574,11 +593,8 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
         })
         .collect();
 
-    for id in &sample {
-        let (Some(ours), Some(theirs)) = (our_rows.get(*id), their_rows.get(*id)) else {
-            out.sample_missing += 1;
-            continue;
-        };
+    let compare = |ours: &Value, theirs: &Value| -> Vec<FieldMismatch> {
+        let mut mismatches = Vec::new();
         for compared in &compared {
             let field = compared.field;
             let mut our_value = normalize::canonical(&field.kind, field.list, &ours[&field.name]);
@@ -592,20 +608,191 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
                 }
             }
             if our_value != their_value {
-                out.field_mismatches += 1;
-                *out.mismatched_fields.entry(field.name.clone()).or_default() += 1;
-                if out.mismatch_examples.len() < MISMATCH_EXAMPLES {
-                    out.mismatch_examples.push(FieldMismatch {
-                        id: id.to_string(),
-                        field: field.name.clone(),
-                        ours: our_value,
-                        theirs: their_value,
-                    });
+                mismatches.push(FieldMismatch {
+                    id: String::new(),
+                    field: field.name.clone(),
+                    ours: our_value,
+                    theirs: their_value,
+                });
+            }
+        }
+        mismatches
+    };
+
+    // Sampled ids that differ: `None` when a side didn't return the entity.
+    let mut differing: BTreeMap<String, Option<Vec<FieldMismatch>>> = BTreeMap::new();
+    for id in &sample {
+        let first = match (our_rows.get(*id), their_rows.get(*id)) {
+            (Some(ours), Some(theirs)) => {
+                let mismatches = compare(ours, theirs);
+                if mismatches.is_empty() {
+                    continue;
+                }
+                Some(mismatches)
+            }
+            _ => None,
+        };
+        differing.insert(id.to_string(), first);
+    }
+    // Indexers behind one gateway can answer the same pinned query
+    // differently; a difference counts only if the reference repeats it.
+    let again: Vec<Value> = differing
+        .keys()
+        .filter(|id| our_rows.contains_key(*id))
+        .map(|id| Value::String(id.clone()))
+        .collect();
+    if !again.is_empty() {
+        out.recheck.asked += again.len();
+        match context
+            .reference
+            .recheck(
+                &their_collection,
+                &selection,
+                &again,
+                Some(context.block),
+                batch,
+            )
+            .await
+        {
+            Ok(rows) => {
+                for row in rows {
+                    let Some(id) = normalize::id(entity.id, &row["id"]) else {
+                        continue;
+                    };
+                    let (Some(ours), Some(entry)) = (our_rows.get(&id), differing.get_mut(&id))
+                    else {
+                        continue;
+                    };
+                    let now = compare(ours, &row);
+                    if now.is_empty() {
+                        out.recheck.samples_resolved += 1;
+                        differing.remove(&id);
+                    } else {
+                        *entry = Some(now);
+                    }
+                }
+            }
+            Err(err) => out.recheck.error = Some(format!("{err:#}")),
+        }
+    }
+
+    for id in &sample {
+        match differing.remove(id.as_str()) {
+            None => {}
+            Some(None) => out.sample_missing += 1,
+            Some(Some(mismatches)) => {
+                for mismatch in mismatches {
+                    out.field_mismatches += 1;
+                    *out.mismatched_fields
+                        .entry(mismatch.field.clone())
+                        .or_default() += 1;
+                    if out.mismatch_examples.len() < MISMATCH_EXAMPLES {
+                        out.mismatch_examples.push(FieldMismatch {
+                            id: id.to_string(),
+                            ..mismatch
+                        });
+                    }
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Where one type's ids are listed on each side.
+struct Listings<'a> {
+    entity: &'a Entity,
+    their_collection: &'a str,
+    our_collection: &'a str,
+}
+
+/// A gateway's paged listing can come back short (or, in principle, list
+/// what it doesn't have), so before an id counts as on one side only, the
+/// side missing it is asked for it by `id_in` at the same block. Ours'
+/// Postgres snapshot is its own truth; a Graph endpoint of ours is asked too.
+async fn recheck_listings(
+    context: &Run<'_>,
+    listings: &Listings<'_>,
+    ours_ids: &mut BTreeSet<String>,
+    theirs_ids: &mut BTreeSet<String>,
+    recheck: &mut Recheck,
+) {
+    let only_ours: Vec<String> = ours_ids.difference(theirs_ids).cloned().collect();
+    let only_theirs: Vec<String> = theirs_ids.difference(ours_ids).cloned().collect();
+    recheck.unchecked +=
+        only_ours.len().saturating_sub(RECHECK_CAP) + only_theirs.len().saturating_sub(RECHECK_CAP);
+    let only_ours = &only_ours[..only_ours.len().min(RECHECK_CAP)];
+    let only_theirs = &only_theirs[..only_theirs.len().min(RECHECK_CAP)];
+    let asked: Vec<Value> = only_ours
+        .iter()
+        .chain(only_theirs)
+        .map(|id| Value::String(id.clone()))
+        .collect();
+    if asked.is_empty() {
+        return;
+    }
+    let present = |rows: Vec<Value>| -> BTreeSet<String> {
+        rows.iter()
+            .filter_map(|row| normalize::id(listings.entity.id, &row["id"]))
+            .collect()
+    };
+
+    recheck.asked += asked.len();
+    let found = match context
+        .reference
+        .recheck(
+            listings.their_collection,
+            "",
+            &asked,
+            Some(context.block),
+            RECHECK_BATCH,
+        )
+        .await
+    {
+        Ok(rows) => present(rows),
+        Err(err) => {
+            recheck.error = Some(format!("{err:#}"));
+            return;
+        }
+    };
+    for id in only_ours {
+        if found.contains(id) {
+            theirs_ids.insert(id.clone());
+            recheck.listing_missed += 1;
+        }
+    }
+    for id in only_theirs {
+        if !found.contains(id) {
+            theirs_ids.remove(id);
+            recheck.listing_phantom += 1;
+        }
+    }
+
+    let Ours::Graph { client, .. } = context.ours else {
+        return;
+    };
+    let still: Vec<Value> = only_theirs
+        .iter()
+        .filter(|id| theirs_ids.contains(*id))
+        .map(|id| Value::String(id.clone()))
+        .collect();
+    if still.is_empty() {
+        return;
+    }
+    recheck.asked += still.len();
+    match client
+        .recheck(listings.our_collection, "", &still, None, RECHECK_BATCH)
+        .await
+    {
+        Ok(rows) => {
+            for id in present(rows) {
+                if theirs_ids.contains(&id) && ours_ids.insert(id) {
+                    recheck.ours_listing_missed += 1;
+                }
+            }
+        }
+        Err(err) => recheck.error = Some(format!("{err:#}")),
+    }
 }
 
 /// Ours stores a relation as the id it points at, which graph-node resolves by

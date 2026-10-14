@@ -409,7 +409,11 @@ query over a non-null relation to a missing entity) is dropped and listed
 under "Not compared". A relation ours stores as an id with no entity behind
 it is read the way graph-node serves it — a nullable one as `null`, a list
 without that id — and counted under "Notes" (`danglingRelations` in the
-JSON), not as a mismatch.
+JSON), not as a mismatch. Before an id counts as on one side only, or a
+sampled entity as different, the reference is asked for it again by `id_in`
+at the same block (a gateway's paged listing can come back short, and the
+indexers behind it can answer one pinned query differently); what that
+settled is under "Notes" (`recheck` in the JSON).
 
 Exit 0: every type within `--tolerance` (percent of the reference count,
 default 0.1) and at most `--max-field-mismatches` (default 0) across the run.
