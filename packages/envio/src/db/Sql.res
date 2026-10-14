@@ -31,6 +31,17 @@ let sslModeToString = mode =>
 %%private(let isDate: unknown => bool = %raw(`(value) => value instanceof Date`))
 @send external toISOString: unknown => string = "toISOString"
 
+// Every object's keys in one order, so a document is spelled one way whatever
+// order its keys were set in: ClickHouse compares a document as its text.
+%%private(
+  let withSortedKeys: (string, unknown) => unknown = %raw(`(_, value) =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : value`)
+)
+@val @scope("JSON")
+external stringifyWith: (unknown, (string, unknown) => unknown) => string = "stringify"
+
 // A document as the text a jsonb column stores. jsonb refuses the NUL
 // character however it is spelled, and `JSON.stringify` spells it `\u0000`: an
 // escape after an even run of backslashes, which leaving out is what lets the
@@ -38,7 +49,7 @@ let sslModeToString = mode =>
 // and the addon leaves those out of every parameter.
 let stringifyDocument = (value: unknown): string =>
   value
-  ->stringify
+  ->stringifyWith(withSortedKeys)
   ->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\u0000/g, "")
   ->Utils.replaceLoneSurrogateEscapes
 

@@ -114,7 +114,7 @@ let drive = (tui: t, ~getMetrics: unit => Metrics.t) => {
 let start = (~config: Config.t, ~getMetrics: unit => Metrics.t) => {
   let metrics = getMetrics()
   // Hasura serves what Postgres keeps.
-  let hasura = config.storage.postgres ? Some(Env.Hasura.connection()) : None
+  let hasura = config.storage.postgres && Env.Hasura.enabled ? Some(Env.Hasura.connection()) : None
   let info = {
     ecosystem: (config.ecosystem.name :> string),
     version: Utils.EnvioPackage.value.version,

@@ -5,6 +5,9 @@ open Vitest
 // so, not fail on a missing table halfway through the resume.
 
 let scenario = Scenario.make(
+  ~unsupported=[
+    {backend: #clickhouseOnly, reason: "writes a Postgres schema an older envio built"},
+  ],
   ~configYaml=`
 name: older-schema-refusal
 chains:

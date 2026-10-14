@@ -11,7 +11,7 @@ use super::{literal, quoted};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::storage::types::{
     ADDRESSES_TABLE, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN,
-    CONTRACTS_TABLE, DELETE, INFO_TABLE, SET,
+    CONTRACTS_TABLE, DELETE, INFO_TABLE, RAW_EVENTS_TABLE, SET,
 };
 
 pub const ID_COLUMN: &str = "id";
@@ -27,6 +27,25 @@ pub const ROLLBACK_TARGET_COLUMN: &str = "rollback_target";
 /// The latest one written is the chain's state.
 pub const VERSION_COLUMN: &str = "version";
 pub const FRONTIER_COLUMN: &str = "checkpoint_id";
+/// Where raw events land. They carry no checkpoint, so `raw_events` reads them
+/// through a view held to each chain's committed progress instead.
+pub const RAW_EVENTS_LANDED_TABLE: &str = "envio_raw_events";
+
+/// Raw events as their chains committed them: a batch's land before its
+/// commit, and stay when the commit never comes, until a resume trims them.
+pub fn create_raw_events_view(database: &str, topology: Topology) -> String {
+    format!(
+        "CREATE VIEW IF NOT EXISTS {}{} AS\nWITH (SELECT mapFromArrays(groupArray({chain}), \
+         groupArray(`progress_block`)) FROM {} FINAL) AS envio_progress\nSELECT * FROM {} FINAL \
+         WHERE {} <= envio_progress[{chain}]",
+        table_ref(database, RAW_EVENTS_TABLE),
+        topology.on_cluster(),
+        table_ref(database, CHAINS_TABLE),
+        table_ref(database, RAW_EVENTS_LANDED_TABLE),
+        quoted(BLOCK_NUMBER_COLUMN),
+        chain = quoted(CHAIN_ID_COLUMN),
+    )
+}
 
 #[derive(Debug, Clone)]
 pub struct ColumnSpec {
@@ -413,6 +432,7 @@ pub fn info_columns() -> Vec<(String, ChType)> {
     vec![
         (ID_COLUMN.to_string(), ChType::Int32),
         ("config".to_string(), ChType::String),
+        ("instance".to_string(), ChType::String),
     ]
 }
 

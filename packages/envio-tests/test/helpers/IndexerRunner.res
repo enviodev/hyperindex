@@ -161,7 +161,6 @@ let makeLogCapture = () => {
 let run = async (
   ~config: Config.t,
   ~resolveRegistrations: (~config: Config.t) => promise<HandlerRegister.registrationsByChainId>,
-  ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
   ~targetBufferSize=?,
@@ -225,13 +224,10 @@ let run = async (
       JsError.throwWithMessage("Can't start an indexer once the run is tearing down.")
     }
 
-  // ClickHouse writes into a database of this run's own, on the ClickHouse legs
-  // and for a config that enables it itself.
-  let clickHouseDatabase = switch (backend, config.storage.clickhouse) {
-  | (#clickhouse | #clickhouseOnly, _) | (_, true) if provideClickHouse =>
-    Some(TestClickHouse.make())
-  | _ => None
-  }
+  // ClickHouse writes into a database of this run's own, whenever the config it
+  // runs under enables it — a restart's included.
+  let clickHouseDatabase = provideClickHouse ? Some(TestClickHouse.make()) : None
+  let restoreClickHouseEnv = TestClickHouse.savedEnv()
 
   // The builder is only reachable here and from `restart`, so it takes just
   // what differs between them and reads the rest off this call.
@@ -252,10 +248,10 @@ let run = async (
     }
 
     switch clickHouseDatabase {
-    | Some(database) => TestClickHouse.use(~database)
-    | None => ()
+    | Some(database) if config.storage.clickhouse => TestClickHouse.use(~database)
+    | _ => ()
     }
-    let sql = Storage.makePgClient()
+    let sql = TestPgSchema.client()
     clients->Array.push(sql)->ignore
     // Tracking tables in Hasura costs ~1.9 seconds per indexer.
     let client = Storage.clientFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false)
@@ -405,17 +401,23 @@ let run = async (
 
     let queryEntityHistory = (entityConfig: Internal.entityConfig) => {
       let chainIdOfRow = chainIdOfRow(entityConfig)
-      sql
-      ->Sql.queryForTests(
-        loadAllQuery(
-          ~pgSchema,
-          ~tableName=EntityHistory.historyTableName(
-            ~entityName=entityConfig.name,
-            ~entityIndex=entityConfig.index,
+      switch (entityConfig.storage.postgres, clickHouseDatabase) {
+      | (false, Some(database)) =>
+        TestClickHouse.committedHistory(~database, ~table=ClickHouse.entityTable(entityConfig))->(
+          Utils.magic: promise<array<JSON.t>> => promise<array<unknown>>
+        )
+
+      | _ =>
+        sql->Sql.queryForTests(
+          loadAllQuery(
+            ~pgSchema,
+            ~tableName=EntityHistory.historyTableName(
+              ~entityName=entityConfig.name,
+              ~entityIndex=entityConfig.index,
+            ),
           ),
-        ),
-      )
-      ->Promise.thenResolve(items => {
+        )
+      }->Promise.thenResolve(items => {
         // Rows aren't ordered by the query, and insert order isn't meaningful
         // since checkpointId is the source of truth. Sort for stable assertions.
         let changes = items->S.parseOrThrow(
@@ -583,12 +585,15 @@ let run = async (
       queryRaw: (type entity, entityConfig: Internal.entityConfig) =>
         queryEntity(entityConfig)->(Utils.magic: promise<array<unknown>> => promise<array<entity>>),
       queryAddresses: async () => {
-        let rows =
+        let rows = switch (config.storage.postgres, clickHouseDatabase) {
+        | (false, Some(database)) => await TestClickHouse.committedAddresses(~database)
+        | _ =>
           (
             await sql->Sql.queryForTests(
               `SELECT "chain_id" AS "chainId", "address", "contract_id" AS "contractId", "registration_block" AS "registrationBlock" FROM "${pgSchema}"."envio_addresses";`,
             )
           )->(Utils.magic: array<unknown> => array<AddressRows.row>)
+        }
         let addresses =
           rows->AddressRows.render(
             ~ecosystem=(config.ecosystem.name :> string),
@@ -606,9 +611,17 @@ let run = async (
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         ),
       queryCheckpoints: () =>
-        sql
-        ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.tableName))
-        ->Promise.thenResolve(rows =>
+        switch (config.storage.postgres, clickHouseDatabase) {
+        | (false, Some(database)) =>
+          TestClickHouse.committedCheckpoints(~database)->(
+            Utils.magic: promise<array<JSON.t>> => promise<array<unknown>>
+          )
+
+        | _ =>
+          sql->Sql.queryForTests(
+            `SELECT * FROM "${pgSchema}"."${InternalTable.Checkpoints.tableName}" ORDER BY "id", "chain_id";`,
+          )
+        }->Promise.thenResolve(rows =>
           rows->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         ),
       queryChains: async () =>
@@ -795,6 +808,7 @@ let run = async (
   | Some(database) => await attempt(() => TestClickHouse.drop(~database))
   | None => ()
   }
+  restoreClickHouseEnv()
   await attempt(async () =>
     rmSync(cacheDir->NodeJs.Path.toString, {"recursive": true, "force": true})
   )

@@ -472,7 +472,10 @@ impl Storage {
             transaction
                 .execute(
                     &internal::write_info(schema),
-                    &[Param::Text(input.envio_info.clone())],
+                    &[
+                        Param::Text(input.envio_info.clone()),
+                        Param::Text(input.instance.clone()),
+                    ],
                 )
                 .await?;
             transaction
@@ -537,6 +540,20 @@ impl Storage {
         }
         .await;
         finish(transaction, outcome).await
+    }
+
+    /// None for a schema an older envio built, which keeps none.
+    pub async fn instance(&self) -> Result<Option<String>> {
+        match self
+            .client
+            .query(&internal::read_instance(self.schema()), &[])
+            .await
+        {
+            Ok((rows, _)) => rows.first().map(|row| cell(row, 0)).transpose(),
+            // The table, or the column, an older envio didn't create.
+            Err(error) if matches!(sql_state(&error), Some("42P01" | "42703")) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// The record a resume is checked against, and the config addresses it was
@@ -900,7 +917,9 @@ impl Storage {
             checkpoints,
             effect_caches,
         } = batch;
-        let transactional = async {
+        // Moved in, so the handoff goes as soon as the transaction is done and a
+        // store waiting on its word never waits on the caches too.
+        let transactional = async move {
             let transaction =
                 self.client.begin().await.map_err(|error| {
                     Failure::new("Failed opening the batch's transaction", error)
@@ -927,10 +946,12 @@ impl Storage {
             }
             .await;
             match outcome {
-                Ok(()) => transaction
-                    .commit()
-                    .await
-                    .map_err(|error| Failure::new("Failed committing the batch", error).into()),
+                Ok(()) => {
+                    let committed = transaction.commit().await;
+                    handoff.report_commit(committed.is_ok());
+                    committed
+                        .map_err(|error| Failure::new("Failed committing the batch", error).into())
+                }
                 Err(error) => {
                     // The statement that failed is what to report; a rollback
                     // failing after it would only say the connection is gone.

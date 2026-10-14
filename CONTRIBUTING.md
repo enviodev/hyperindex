@@ -120,7 +120,7 @@ Entry point:
 - `Main.start` (in `packages/envio`) is the indexer entry proper. Responsibilities:
   - Loads runtime configuration (`Config.res`).
   - Starts an Express server that serves `/metrics`, `/health`, and the Development Console endpoints.
-  - Initializes the Persistence layer (Postgres and/or ClickHouse, and Hasura alongside Postgres) — a single `init()` call that also handles `~reset` + `upsertPersistedState` when `~migrate` is provided.
+  - Initializes the Persistence layer (Postgres and/or ClickHouse, and Hasura alongside Postgres) — a single `init()` call that creates the storage, resumes it, or refuses one it can't resume; `~reset` starts it over.
   - Loads user handler modules via `HandlerLoader.registerAllHandlers`.
   - Loads initial state (to resume from a previous run).
   - Builds the indexer state (`IndexerState.make`) and starts `IndexerLoop.res`, which orchestrates the fetch / process / rollback loops.
@@ -136,7 +136,7 @@ Persistence layer:
 - `Storage.res` – the storage over every configured store, backed by the Rust `Storage` class (`packages/cli/src/storage`, bound in `bindings/StorageClient.res`). Postgres and ClickHouse are its two stores.
 - `Hasura.res` – Hasura metadata integration.
 - `Persistence.res` – high-level persistence façade.
-- `IO.res` – commits batched entity changes using the persistence layer. (should be refactored to use `Storage.res` and `Persistence.res`)
+- `Writing.res` – commits each batch's entity changes through the persistence layer.
 
 Data sourcing (fetch side):
 
@@ -152,7 +152,7 @@ Event processing:
 - `BatchProcessing.res` – the single batch-processing loop (usually 5000-event batches).
 - `Rollback.res` – the reorg rollback state machine.
 - `EventProcessing.res` – runs handlers & builds in-memory entity updates.
-- `IO.res` – flushes the batch to Postgres in a single transaction.
+- `Writing.res` – flushes the batch to every configured store, committing it in each or in none.
 
 Monitoring & health:
 

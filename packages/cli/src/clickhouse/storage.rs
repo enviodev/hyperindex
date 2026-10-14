@@ -48,9 +48,15 @@ pub struct Settings {
 const OWN_RECORD: i32 = 1;
 const FOLLOWER_RECORD: i32 = 2;
 
+/// How far a resume moves the chains' version past the highest it read. A
+/// process that died mid-commit can still have its chains insert land after
+/// the next one resumed — with a version a little above what that one read —
+/// and the rows with the higher version are the ones that stand.
+const RESUME_FENCE: u64 = 1 << 32;
+
 pub struct Record {
     pub follower: bool,
-    pub envio_info: String,
+    pub instance: String,
 }
 
 /// A chain as its row holds it. A write rewrites the whole row, so the latest
@@ -357,9 +363,12 @@ impl Storage {
         change: impl FnOnce(&mut BTreeMap<i64, ChainRow>) -> HashSet<i64>,
     ) -> Result<()> {
         let _turn = self.chain_writes.lock().await;
+        // Spent whether the insert lands or not: one that failed here can
+        // still land later, and must not tie with the next.
         let (mut rows, version) = {
-            let chains = self.chains.lock().unwrap();
-            (chains.rows.clone(), chains.version + 1)
+            let mut chains = self.chains.lock().unwrap();
+            chains.version += 1;
+            (chains.rows.clone(), chains.version)
         };
         let changed = change(&mut rows);
         let rows = rows
@@ -390,7 +399,6 @@ impl Storage {
             .await
             .with_context(|| format!("Failed inserting into ClickHouse table `{CHAINS_TABLE}`"))?;
         let mut chains = self.chains.lock().unwrap();
-        chains.version = version;
         for row in rows {
             chains.rows.insert(row.id, row);
         }
@@ -541,10 +549,10 @@ impl Storage {
             .any(|name| !name.starts_with("envio_") && *name != RAW_EVENTS_TABLE);
         if foreign && !names.contains(&CHAINS_TABLE) {
             bail!(
-                "Cannot initialize the indexer in ClickHouse database \"{}\" because it holds \
-                 tables that aren't the indexer's. Initializing would delete them.\n\nTo resolve \
-                 this:\n1. Set ENVIO_CLICKHOUSE_DATABASE to a database of the indexer's own\n2. Or \
-                 drop those tables yourself if you're certain they aren't needed.",
+                "ClickHouse database \"{}\" holds tables that aren't the indexer's, and emptying it \
+                 for the indexer would delete them.\n\nTo resolve this:\n1. Set \
+                 ENVIO_CLICKHOUSE_DATABASE to a database of the indexer's own\n2. Or drop those \
+                 tables yourself if you're certain they aren't needed.",
                 self.database()
             );
         }
@@ -628,11 +636,18 @@ impl Storage {
                 .map(|query| self.client.statement(query)),
         )
         .await?;
-        try_join_all(entities.iter().map(|entity| {
-            self.client
-                .statement(ddl::create_view(entity, self.database(), topology))
-        }))
-        .await?;
+        let mut views = entities
+            .iter()
+            .map(|entity| ddl::create_view(entity, self.database(), topology))
+            .collect::<Vec<_>>();
+        if self.settings.primary
+            && tables
+                .iter()
+                .any(|table| matches!(table.kind, Kind::RawEvents))
+        {
+            views.push(ddl::create_raw_events_view(self.database(), topology));
+        }
+        try_join_all(views.into_iter().map(|view| self.client.statement(view))).await?;
 
         if self.settings.primary {
             self.insert_values(
@@ -665,6 +680,7 @@ impl Storage {
             &[vec![
                 Value::Int(id.into()),
                 Value::Text(input.envio_info.clone()),
+                Value::Text(input.instance.clone()),
             ]],
         )
         .await
@@ -691,7 +707,7 @@ impl Storage {
         let body = self
             .client
             .read(format!(
-                "SELECT `id`, `config` FROM {} ORDER BY `id` LIMIT 1 FORMAT RowBinary",
+                "SELECT `id`, `instance` FROM {} ORDER BY `id` LIMIT 1 FORMAT RowBinary",
                 self.table_ref(INFO_TABLE)
             ))
             .await?;
@@ -704,15 +720,16 @@ impl Storage {
         )?;
         match cells.as_slice() {
             [] => Ok(None),
-            [Cell::Str(id), Cell::Str(config)] => Ok(Some(Record {
+            [Cell::Str(id), Cell::Str(instance)] => Ok(Some(Record {
                 follower: id.parse::<i32>()? == FOLLOWER_RECORD,
-                envio_info: config.to_string(),
+                instance: instance.to_string(),
             })),
             other => bail!("Unexpected info record {other:?}"),
         }
     }
 
-    /// Empties the database, or drops it where emptying is not an option.
+    /// Emptied rather than dropped, so a database the operator provisioned
+    /// keeps its engine and grants — except where emptying is not an option.
     async fn reset_database(&self, topology: Topology) -> Result<()> {
         let database = quoted(self.database());
         if has_replicated_engine(self.settings.database_engine.as_deref()) {
@@ -1002,7 +1019,7 @@ impl Storage {
         if self.settings.primary {
             above_by_table.push((ADDRESSES_TABLE.to_string(), shared(CHECKPOINT_ID_COLUMN)?));
         }
-        if !progress.is_empty() && self.has_table(RAW_EVENTS_TABLE).await? {
+        if !progress.is_empty() && self.has_table(ddl::RAW_EVENTS_LANDED_TABLE).await? {
             let past = progress
                 .iter()
                 .map(|(chain_id, block)| {
@@ -1014,18 +1031,17 @@ impl Storage {
                 })
                 .collect::<Vec<_>>()
                 .join(" OR ");
-            above_by_table.push((RAW_EVENTS_TABLE.to_string(), format!("({past})")));
+            above_by_table.push((
+                ddl::RAW_EVENTS_LANDED_TABLE.to_string(),
+                format!("({past})"),
+            ));
         }
-        // The checkpoints last: a trim interrupted before them still has the
-        // checkpoints saying which rows the next one must remove.
         above_by_table.push((CHECKPOINTS_TABLE.to_string(), shared(ID_COLUMN)?));
 
         let holding = self.tables_holding_rows_above(&above_by_table).await?;
-        let (checkpoints, rest) = above_by_table
-            .split_last()
-            .expect("the checkpoints are always trimmed");
         try_join_all(
-            rest.iter()
+            above_by_table
+                .iter()
                 .filter(|(table, _)| holding.contains(table))
                 .map(|(table, above)| {
                     self.client
@@ -1033,15 +1049,6 @@ impl Storage {
                 }),
         )
         .await?;
-        if holding.contains(&checkpoints.0) {
-            self.client
-                .statement(ddl::trim_table(
-                    self.database(),
-                    &checkpoints.0,
-                    &checkpoints.1,
-                ))
-                .await?;
-        }
         Ok(())
     }
 
@@ -1101,7 +1108,7 @@ impl Storage {
                 let (_, version) = self.read_chains().await?;
                 *self.chains.lock().unwrap() = Chains {
                     rows: BTreeMap::new(),
-                    version,
+                    version: version + RESUME_FENCE,
                 };
                 let rows = committed
                     .iter()
@@ -1128,9 +1135,19 @@ impl Storage {
                     reorg_checkpoints: Vec::new(),
                 })
             }
+            // The driven chains' rows are written again first, fencing off a
+            // previous process's commit still in flight.
             None => {
                 self.load_chains().await?;
+                self.chains.lock().unwrap().version += RESUME_FENCE;
                 let rows = self.chain_rows().into_values().collect::<Vec<_>>();
+                self.write_chains(
+                    rows.iter()
+                        .filter(|row| input.chain_ids.contains(&row.id))
+                        .cloned()
+                        .collect(),
+                )
+                .await?;
                 let frontier = self
                     .frontier()
                     .into_iter()
@@ -1174,7 +1191,7 @@ impl Storage {
         let contracts = self
             .client
             .read(format!(
-                "SELECT `name` FROM {} ORDER BY `id` FORMAT RowBinary",
+                "SELECT `name` FROM {} ORDER BY `id` LIMIT 1 BY `id` FORMAT RowBinary",
                 self.table_ref(CONTRACTS_TABLE)
             ))
             .await?;
@@ -1629,8 +1646,6 @@ impl Backend for Storage {
         })
     }
 
-    /// Nothing to prune: the history is what every read resolves the entities
-    /// from, and the checkpoints are what maps it back to blocks.
     fn prune_checkpoints<'a>(&'a self, bounds: &'a Bounds) -> Op<'a, ()> {
         Box::pin(async move {
             // A marker below the bound only names checkpoints below it too.
@@ -1646,6 +1661,8 @@ impl Backend for Storage {
         })
     }
 
+    /// Nothing to prune: the history is what every read resolves the entities
+    /// from.
     fn prune_history<'a>(
         &'a self,
         _table: &'a crate::storage::Table,
@@ -1682,8 +1699,6 @@ impl Backend for Storage {
         Box::pin(self.dump_effect_cache_inner(files))
     }
 
-    /// Empties the database rather than dropping it, so one the operator
-    /// provisioned keeps its engine and grants.
     fn reset(&self) -> Op<'_, ()> {
         Box::pin(async move {
             self.check_for_initialize_inner().await?;
@@ -1777,6 +1792,7 @@ mod tests {
                     max_reorg_depth: 0,
                 }],
                 envio_info: "{}".to_string(),
+                instance: "instance".to_string(),
                 contract_names: Vec::new(),
                 addresses: Addresses::default(),
             })

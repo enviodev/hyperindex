@@ -52,7 +52,6 @@ pub fn above(
     bounded(bounds, chain_column, checkpoint_column, ">")
 }
 
-/// The rows a bound leaves below it.
 pub fn below(
     bounds: &Bounds,
     chain_column: Option<&str>,
@@ -164,15 +163,17 @@ fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> R
 }
 
 /// The column as a filter compares it: a number kept as text is read as the
-/// number it spells.
+/// number it spells, and a list of them as the numbers they spell.
 fn compared(column: &Column, kind: ValueKind) -> String {
     let name = quoted(&column.name);
+    let as_number = |text: &str| match column.field.field_type.as_str() {
+        "BigInt" => format!("toInt256OrNull({text})"),
+        _ => format!("toDecimal256OrNull({text}, {TEXT_NUMBER_SCALE})"),
+    };
     match (kind, column.ch_type.base()) {
-        (ValueKind::Number, ChType::String) if column.field.field_type == "BigInt" => {
-            format!("toInt256OrNull({name})")
-        }
-        (ValueKind::Number, ChType::String) => {
-            format!("toDecimal256OrNull({name}, {TEXT_NUMBER_SCALE})")
+        (ValueKind::Number, ChType::String) => as_number(&name),
+        (ValueKind::Number, ChType::Array(inner)) if *inner.base() == ChType::String => {
+            format!("arrayMap(element -> {}, {name})", as_number("element"))
         }
         _ => name,
     }

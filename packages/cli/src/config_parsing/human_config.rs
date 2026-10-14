@@ -166,11 +166,11 @@ pub struct BaseConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "Storage backends the indexer writes data to. Defaults to Postgres when \
-                       omitted. Set `postgres: true` and `clickhouse: true` to also keep data in \
-                       ClickHouse, or `postgres: false` and `clickhouse: true` to keep \
-                       everything in ClickHouse alone. Mark a backend with `default: true` to \
-                       store entities that don't have an @storage directive in the schema, e.g. \
-                       `clickhouse: {default: true}`."
+                       omitted. With one backend enabled every entity is kept in it, so \
+                       `postgres: false` and `clickhouse: true` keep everything in ClickHouse \
+                       alone. With both, an entity is kept where its @storage directive in the \
+                       schema says, or else in each backend marked `default: true`, e.g. \
+                       `postgres: {default: true}` and `clickhouse: true`."
     )]
     pub storage: Option<StorageConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]

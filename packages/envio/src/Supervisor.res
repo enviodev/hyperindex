@@ -52,11 +52,17 @@ let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<wor
 // one chain's process doesn't split again — whoever started it owns the layout.
 // The budget split is Postgres connections, so a run without Postgres keeps one
 // process.
-let planForRun = (~config: Config.t, ~maxConnections=Env.Db.maxConnections) =>
+let planForRun = (~config: Config.t, ~maxConnections=?) =>
   if config.isolated || !(config->Config.isPerChain) || !config.storage.postgres {
     None
   } else {
-    plan(~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id), ~maxConnections)
+    plan(
+      ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
+      ~maxConnections=switch maxConnections {
+      | Some(maxConnections) => maxConnections
+      | None => Env.Db.maxConnections()
+      },
+    )
   }
 
 // One forked worker: the process, the chains it drives, and the last snapshot
@@ -253,7 +259,7 @@ let syncCache = {
 // `envio dev` asks for a dump, and the alternative is pausing the indexing to
 // free one.
 let dumpCache = (~config) => {
-  let storage = Storage.makeStorageFromEnv(~config, ~maxConnections=1)
+  let storage = Storage.makeStorageFromEnv(~config, ~maxConnections=1, ~isHasuraEnabled=false)
   storage.dumpEffectCache()->Promise.finally(() => storage.close()->Promise.ignore)
 }
 
@@ -465,7 +471,7 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     "msg": "Indexing will be split across multiple processes for faster and more reliable indexing.",
     "chains": config.chainMap->ChainMap.values->Array.length,
     "processes": workers->Array.length,
-    "maxConnections": Env.Db.maxConnections,
+    "maxConnections": Env.Db.maxConnections(),
   })
 
   // Decided before the first fork: it is what makes a worker's output the

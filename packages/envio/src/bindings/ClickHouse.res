@@ -209,7 +209,6 @@ let makeTable = (~handle, ~name, {names, kinds, nullable}: StorageClient.clickHo
     }
 )
 
-// What an entity field's value is staged as.
 %%private(
   let serializerOf = (f: Table.field): (unknown => unknown) => {
     let shaped = baseSchema =>

@@ -281,30 +281,6 @@ let run = async (
   )
 }
 
-@send external skipRunning: (Vitest.testContext, string) => unit = "skip"
-
-type rec failure = {message?: string, cause?: failure}
-
-// On ClickHouse alone the indexer opens no Postgres connection, so a relation
-// Postgres doesn't have can only be one the test reads itself: the case is
-// about a Postgres detail, which the legs keeping Postgres cover.
-let rec readsPostgres = exn =>
-  switch exn {
-  | Persistence.StorageError({reason}) => reason->readsPostgres
-  | _ =>
-    let rec missing = (failure: failure) =>
-      failure.message->Option.mapOr(false, message =>
-        message->String.match(/^(relation|schema) ".*" does not exist$/)->Option.isSome
-      ) || failure.cause->Option.mapOr(false, missing)
-    exn->Utils.prettifyExn->(Utils.magic: exn => failure)->missing
-  }
-
-let skippingPostgresReads = async (t, body) =>
-  try await body() catch {
-  | exn if IndexerRunner.selectedBackend === #clickhouseOnly && exn->readsPostgres =>
-    t->skipRunning("reads Postgres tables")
-  }
-
 let skipReason = (scenario: t) =>
   scenario.unsupported
   ->Array.find(({backend}) => backend === IndexerRunner.selectedBackend)
@@ -349,23 +325,21 @@ let it = (
   | None =>
     let runBody = (~superviseRun) =>
       async (t: Vitest.testContext) =>
-        await t->skippingPostgresReads(() =>
-          scenario->run(
-            ~sources,
-            ~reducedPollingInterval?,
-            ~newBlockStallTimeoutRealtime?,
-            ~targetBufferSize?,
-            ~maxAddrInPartition?,
-            ~clientFilterAddressThreshold?,
-            ~reorgThresholdReadyTolerance?,
-            ~holdRealtime?,
-            ~superviseRun,
-            ~onError?,
-            ~onExit?,
-            ~mapStorage?,
-            ~captureLogs?,
-            (~indexer, ~source) => body(~t, ~indexer, ~source),
-          )
+        await scenario->run(
+          ~sources,
+          ~reducedPollingInterval?,
+          ~newBlockStallTimeoutRealtime?,
+          ~targetBufferSize?,
+          ~maxAddrInPartition?,
+          ~clientFilterAddressThreshold?,
+          ~reorgThresholdReadyTolerance?,
+          ~holdRealtime?,
+          ~superviseRun,
+          ~onError?,
+          ~onExit?,
+          ~mapStorage?,
+          ~captureLogs?,
+          (~indexer, ~source) => body(~t, ~indexer, ~source),
         )
     let register = (name, ~superviseRun) =>
       switch retry {

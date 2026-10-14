@@ -299,7 +299,14 @@ let init = {
         persistence.storageStatus = Initializing(promise)
         let holding = reset ? Nothing : await persistence.storage.holding()
         if holding === Stranded {
-          throw(Refused(Config.strandedMessage(~resetCommand)))
+          throw(
+            Refused(
+              Config.strandedMessage(
+                ~resetCommand,
+                ~hasPostgres=persistence.storage.name === "postgres",
+              ),
+            ),
+          )
         }
         if holding === Nothing {
           if isolated {

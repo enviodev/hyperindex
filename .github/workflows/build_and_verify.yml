@@ -193,6 +193,9 @@ jobs:
       - name: Live ClickHouse store tests
         run: cargo test --lib clickhouse::live -- --ignored --test-threads=1
 
+      - name: Live tests of ClickHouse following Postgres
+        run: cargo test --lib storage::live -- --ignored --test-threads=1
+
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:
     runs-on: ubuntu-latest

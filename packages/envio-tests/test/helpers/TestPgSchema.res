@@ -4,6 +4,10 @@
 
 @val external pid: int = "process.pid"
 
+// A storage with Postgres alone, for what a test reads or sets up itself.
+let client = (~pgSchema=?, ~maxConnections=?) =>
+  Storage.makeClient(~postgres=Storage.postgresOptions(~pgSchema?, ~maxConnections?))
+
 let prefix = "envio_test_"
 
 let counter = ref(0)
@@ -89,7 +93,7 @@ let write = async (
   ~items: array<unknown>,
   ~create=false,
 ) => {
-  let sql = Storage.makePgClient(~pgSchema, ~maxConnections=1)
+  let sql = client(~pgSchema, ~maxConnections=1)
   let registered = sql->Storage.register(~kind=EffectCache, ~table, ~itemSchema)
   try {
     let _ = await sql->StorageClient.writeBatch({

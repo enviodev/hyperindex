@@ -77,6 +77,22 @@ impl Live {
         Self { storage, database }
     }
 
+    /// Another process's store of record on the same database.
+    fn another_process(&self) -> Storage {
+        Storage::new(
+            connection(&self.database),
+            Tuning::default(),
+            Arc::new(|_: &str| {}),
+            Settings {
+                chain_id_mode: ChainIdMode::Int32,
+                replicated: false,
+                database_engine: None,
+                primary: true,
+            },
+        )
+        .unwrap()
+    }
+
     fn table(&self, input: ClickHouseTableInput) -> Arc<Table> {
         Arc::new(Table {
             name: input.name.clone(),
@@ -148,6 +164,7 @@ async fn initialize(live: &Live, tables: Vec<Arc<Table>>, chains: Vec<ChainConfi
             enums: Vec::new(),
             chains,
             envio_info: "{\"config\":1}".to_string(),
+            instance: "instance".to_string(),
             contract_names: vec!["Token".to_string()],
             addresses: Addresses {
                 chain_ids: vec![1],
@@ -501,6 +518,94 @@ async fn a_load_reads_each_entitys_latest_row() {
     );
 }
 
+/// An insert resent after a timeout can land twice. The contracts are read by
+/// position, so a duplicate would shift every name after it.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn the_contracts_read_back_once_however_often_they_landed() {
+    let live = Live::new(true);
+    initialize(&live, vec![live.account()], vec![chain(1)]).await;
+    live.execute(format!(
+        "INSERT INTO `{}`.envio_contracts VALUES (0, 'Token')",
+        live.database
+    ))
+    .await;
+
+    let stored = live.storage.read_stored_config().await.unwrap();
+
+    live.drop_database().await;
+    assert_eq!(
+        stored.config.contract_names,
+        Some(vec!["Token".to_string()])
+    );
+}
+
+/// A process that died mid-commit can still have its chains insert land after
+/// the next process resumed and trimmed that batch's rows away. Landing then,
+/// it must not claim the batch back.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_commit_landing_after_the_next_resume_claims_nothing() {
+    let live = Live::new(true);
+    let account = live.account();
+    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
+    write(
+        &live,
+        batch(
+            &account,
+            &[("a", Some(("alice", "1")), 1)],
+            &[(1, 1, 10)],
+            (1, 1),
+        ),
+    )
+    .await;
+    let resume = |storage: Storage| {
+        let account = account.clone();
+        async move {
+            storage
+                .resume(&Resume {
+                    sequence: Sequence::SharedAcrossChains,
+                    tables: vec![account],
+                    chain_ids: vec![1],
+                    committed: None,
+                })
+                .await
+                .unwrap()
+                .chains
+                .iter()
+                .map(|chain| chain.checkpoint_id)
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let (landed, rows_landed) = tokio::sync::oneshot::channel();
+    let (commit, may_commit) = tokio::sync::oneshot::channel();
+    let dying = live.storage.write_batch(
+        batch(
+            &account,
+            &[("a", Some(("alice", "2")), 2)],
+            &[(2, 1, 20)],
+            (1, 2),
+        ),
+        crate::storage::Handoff {
+            landed: Some(landed),
+            commit: Some(Box::pin(async move { may_commit.await.unwrap_or(false) })),
+            committed: None,
+        },
+    );
+    let next = async {
+        rows_landed.await.unwrap();
+        let resumed = resume(live.another_process()).await;
+        commit.send(true).unwrap();
+        resumed
+    };
+    let (_, resumed) = tokio::join!(dying, next);
+    let after = resume(live.another_process()).await;
+
+    live.drop_database().await;
+    assert_eq!((resumed, after), (vec![1], vec![1]));
+}
+
 /// Raw events are appended with the batch's other rows, so an interrupted
 /// write leaves some past the progress its chain committed, which the batch's
 /// replay would write a second time.
@@ -521,6 +626,7 @@ async fn a_resume_trims_raw_events_past_the_committed_progress() {
             ],
         )
     });
+    let landed = raw_events.clickhouse.as_ref().unwrap().physical.clone();
     initialize(&live, vec![account.clone(), raw_events], vec![chain(1)]).await;
     write(
         &live,
@@ -533,7 +639,7 @@ async fn a_resume_trims_raw_events_past_the_committed_progress() {
     )
     .await;
     live.execute(format!(
-        "INSERT INTO `{}`.`raw_events` VALUES (1, 10, 0), (1, 20, 0)",
+        "INSERT INTO `{}`.`{landed}` VALUES (1, 10, 0), (1, 20, 0)",
         live.database
     ))
     .await;
@@ -549,12 +655,66 @@ async fn a_resume_trims_raw_events_past_the_committed_progress() {
         .unwrap();
     let left = live
         .execute(format!(
-            "SELECT groupArray(block_number) FROM `{}`.`raw_events`",
+            "SELECT groupArray(block_number) FROM `{}`.`{landed}`",
             live.database
         ))
         .await;
     live.drop_database().await;
     assert_eq!(left, "[10]");
+}
+
+/// Raw events land with their batch's other rows, before its commit — and stay
+/// there when it never comes — so what reads them sees only the blocks their
+/// chain committed, each once however often it landed.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn raw_events_read_as_their_chain_committed_them() {
+    let live = Live::new(true);
+    let account = live.account();
+    let raw_events = live.table(ClickHouseTableInput {
+        kind: ClickHouseTableKind::RawEvents,
+        history_table: None,
+        ..entity_input(
+            "raw_events",
+            vec![
+                column("chain_id", "ChainId"),
+                column("block_number", "Int32"),
+                column("log_index", "Int32"),
+            ],
+        )
+    });
+    initialize(
+        &live,
+        vec![account.clone(), raw_events.clone()],
+        vec![chain(1)],
+    )
+    .await;
+    write(
+        &live,
+        batch(
+            &account,
+            &[("a", Some(("alice", "1")), 1)],
+            &[(1, 1, 10)],
+            (1, 1),
+        ),
+    )
+    .await;
+    live.execute(format!(
+        "INSERT INTO `{}`.`{}` VALUES (1, 10, 0), (1, 10, 0), (1, 20, 0)",
+        live.database,
+        raw_events.clickhouse.as_ref().unwrap().physical
+    ))
+    .await;
+
+    let read = live
+        .execute(format!(
+            "SELECT groupArray(block_number) FROM `{}`.`raw_events`",
+            live.database
+        ))
+        .await;
+
+    live.drop_database().await;
+    assert_eq!(read, "[10]");
 }
 
 /// Checkpoints below the safe one can no longer be rolled back to, and are

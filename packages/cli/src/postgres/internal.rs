@@ -95,6 +95,7 @@ pub fn tables(sequence: Sequence) -> Vec<TableSpec> {
                     ..key("id", FieldType::Int32)
                 },
                 column("config", FieldType::String),
+                column("instance", FieldType::String),
             ],
         ),
         // The canonical contract ids: a name's position in the list written at
@@ -216,13 +217,18 @@ pub fn views(pg_schema: &str) -> String {
 
 pub fn write_info(pg_schema: &str) -> String {
     format!(
-        "INSERT INTO \"{pg_schema}\".\"{INFO}\" (\"id\", \"config\") VALUES (1, $1) ON CONFLICT \
-         (\"id\") DO UPDATE SET \"config\" = EXCLUDED.\"config\";"
+        "INSERT INTO \"{pg_schema}\".\"{INFO}\" (\"id\", \"config\", \"instance\") VALUES (1, $1, \
+         $2) ON CONFLICT (\"id\") DO UPDATE SET \"config\" = EXCLUDED.\"config\", \"instance\" = \
+         EXCLUDED.\"instance\";"
     )
 }
 
 pub fn read_info(pg_schema: &str) -> String {
     format!("SELECT \"config\" FROM \"{pg_schema}\".\"{INFO}\" LIMIT 1;")
+}
+
+pub fn read_instance(pg_schema: &str) -> String {
+    format!("SELECT \"instance\" FROM \"{pg_schema}\".\"{INFO}\" LIMIT 1;")
 }
 
 pub fn insert_contracts(pg_schema: &str) -> String {

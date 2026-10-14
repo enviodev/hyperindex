@@ -137,6 +137,7 @@ pub struct RollbackWrite {
 }
 
 /// What a batch writes. An empty list is nothing to write.
+#[derive(Default)]
 pub struct Batch {
     pub rollback: Option<RollbackWrite>,
     pub progress: Vec<Progress>,
@@ -195,9 +196,18 @@ pub type Gate = Pin<Box<dyn Future<Output = bool> + Send>>;
 pub struct Handoff {
     pub landed: Option<tokio::sync::oneshot::Sender<bool>>,
     pub commit: Option<Gate>,
+    /// Told whether the store committed as soon as it knows, rather than once
+    /// the rest of its write is done.
+    pub committed: Option<tokio::sync::oneshot::Sender<bool>>,
 }
 
 impl Handoff {
+    pub fn report_commit(&mut self, committed: bool) {
+        if let Some(sender) = self.committed.take() {
+            let _ = sender.send(committed);
+        }
+    }
+
     /// A store that fails before calling this drops `landed` unsent, which
     /// the other side reads as a no.
     pub async fn ready_to_commit(&mut self) -> bool {
@@ -243,8 +253,25 @@ pub struct Initialize {
     pub enums: Vec<Enum>,
     pub chains: Vec<ChainConfig>,
     pub envio_info: String,
+    /// Written to every store, so a follower is told apart from one built by
+    /// another initialize of the same config.
+    pub instance: String,
     pub contract_names: Vec<String>,
     pub addresses: Addresses,
+}
+
+/// One initialize's instance: unique to it with overwhelming odds, which is
+/// all telling deployments apart needs.
+pub fn new_instance() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos()),
+    );
+    hasher.write_u32(std::process::id());
+    format!("{:016x}", hasher.finish())
 }
 
 pub struct AddChain {
@@ -439,16 +466,12 @@ impl Storage {
         if self.clickhouse.is_none() {
             return Ok(Holding::Initialized);
         }
-        // A schema an older envio built keeps no record: resuming refuses it
-        // on its own.
-        let Some(stored) = postgres.read_stored_config().await?.config.envio_info else {
-            return Ok(Holding::Initialized);
-        };
+        let instance = postgres.instance().await?;
         Ok(match record {
             Some(clickhouse::storage::Record {
                 follower: true,
-                envio_info,
-            }) if envio_info == stored => Holding::Initialized,
+                instance: followed,
+            }) if instance.as_ref() == Some(&followed) => Holding::Initialized,
             _ => Holding::Diverged,
         })
     }
@@ -456,11 +479,10 @@ impl Storage {
     /// Every store starts from nothing. Each one is checked before any is
     /// touched, so a refusal leaves them all as they were.
     ///
-    /// The store of record first, here and wherever the stores change apart
-    /// from a batch: a follower that fails behind it is brought back to what
-    /// it committed by the next resume — or refuses it, missing a table. The
-    /// other way round, a store of record that fails keeps its old state, and
-    /// a follower emptied under it would resume as if it held that state too.
+    /// The store of record first: a follower that fails behind it is left
+    /// without the record of this initialize, which the next start refuses.
+    /// The other way round, a store of record that fails keeps its old state,
+    /// and a follower emptied under it would resume as if it held that state.
     pub async fn initialize(&self, input: Initialize) -> Result<()> {
         for backend in self.all() {
             backend.check_for_initialize().await?;
@@ -535,19 +557,9 @@ impl Storage {
         chain_ids: &[i64],
         ready_at: f64,
     ) -> Result<()> {
-        // The follower is only ready once the indexes the store of record
-        // promised are built.
         self.primary()
             .finalize_backfill(indexes, chain_ids, ready_at)
-            .await?;
-        match self.follower() {
-            Some(follower) => {
-                follower
-                    .finalize_backfill(Vec::new(), chain_ids, ready_at)
-                    .await
-            }
-            None => Ok(()),
-        }
+            .await
     }
 
     pub async fn prune_checkpoints(&self, bounds: &Bounds) -> Result<()> {
@@ -595,11 +607,15 @@ impl Storage {
         self.primary().dump_effect_cache(files).await
     }
 
+    /// The follower first, and it refuses a database it may not empty before
+    /// the store of record is touched. Failing after it, the store of record
+    /// keeps data its follower no longer holds, which the next start refuses
+    /// until a reset finishes.
     pub async fn reset(&self) -> Result<()> {
-        join_all(self.all().map(Backend::reset))
-            .await
-            .into_iter()
-            .collect()
+        if let Some(follower) = self.follower() {
+            follower.reset().await?;
+        }
+        self.primary().reset().await
     }
 
     /// Writes a batch to every store, and says how long each took. A follower
@@ -639,23 +655,24 @@ impl Storage {
                     Handoff {
                         landed: Some(landed),
                         commit: Some(follower_gate),
+                        committed: None,
                     },
                 )
                 .await
                 .map(|()| own_seconds(&follower_waited))
         };
         let primary_write = async {
-            let outcome = primary
+            primary
                 .write_batch(
                     primary_batch,
                     Handoff {
                         landed: None,
                         commit: Some(primary_gate),
+                        committed: Some(committed),
                     },
                 )
-                .await;
-            let _ = committed.send(outcome.is_ok());
-            outcome.map(|()| own_seconds(&primary_waited))
+                .await
+                .map(|()| own_seconds(&primary_waited))
         };
         let (follower_outcome, primary_outcome) = tokio::join!(follower_write, primary_write);
         // A store told not to commit was told so because the other failed,

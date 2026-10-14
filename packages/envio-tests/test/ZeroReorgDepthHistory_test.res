@@ -39,6 +39,9 @@ let chainYaml = (chainId, ~maxReorgDepth) =>
 // sequence a shared one.
 let singleChainScenario = Scenario.make(
   ~supervised=false,
+  ~unsupported=[
+    {backend: #clickhouseOnly, reason: "ClickHouse keeps an entity as its whole history"},
+  ],
   ~schema,
   ~configYaml=`
 name: zero-reorg-depth-history

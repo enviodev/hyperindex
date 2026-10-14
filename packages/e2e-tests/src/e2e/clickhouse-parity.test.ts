@@ -264,7 +264,7 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
         `SELECT "block_number", "log_index", "event_name"
          FROM "${PG_SCHEMA}"."raw_events" ORDER BY "block_number", "log_index"`,
         `SELECT block_number, log_index, event_name
-         FROM ${CH_ONLY_DATABASE}.raw_events FINAL ORDER BY block_number, log_index`
+         FROM ${CH_ONLY_DATABASE}.raw_events ORDER BY block_number, log_index`
       ));
 
     it("the chain's progress", async () =>

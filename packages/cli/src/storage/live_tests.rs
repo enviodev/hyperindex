@@ -6,10 +6,11 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 
-use super::types::{Addresses, ChainConfig, ChainMeta, Sequence};
-use super::{Initialize, Storage};
+use super::types::{Addresses, ChainConfig, ChainMeta, Frontier, Progress, Sequence};
+use super::{Batch, EffectCacheWrite, Holding, Initialize, Rows, Storage, Table};
 use crate::clickhouse;
 use crate::postgres;
+use crate::postgres::param::Param;
 
 struct Live {
     storage: Storage,
@@ -68,6 +69,7 @@ impl Live {
                     max_reorg_depth: 200,
                 }],
                 envio_info: "{\"config\":1}".to_string(),
+                instance: super::new_instance(),
                 contract_names: Vec::new(),
                 addresses: Addresses::default(),
             })
@@ -79,16 +81,52 @@ impl Live {
             .unwrap();
     }
 
-    async fn drop_clickhouse(&self) {
+    /// Where Postgres and ClickHouse each hold chain 1's frontier.
+    async fn frontiers(&self) -> (String, String) {
+        let (rows, _) = postgres::live_tests::client()
+            .query(
+                &format!(
+                    "SELECT \"checkpoint_id\"::text FROM \"{}\".\"envio_chains\" WHERE \"id\" = 1",
+                    self.name
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+        let clickhouse = clickhouse::client::Client::new(
+            clickhouse::live_tests::connection(&self.name),
+            clickhouse::client::Tuning::default(),
+            Arc::new(|_: &str| ()),
+        )
+        .unwrap()
+        .statement(format!(
+            "SELECT checkpoint_id FROM `{}`.envio_chains FINAL WHERE chain_id = 1 FORMAT \
+             TabSeparated",
+            self.name
+        ))
+        .await
+        .unwrap();
+        (
+            rows.first().unwrap().get::<_, String>(0),
+            clickhouse.trim().to_string(),
+        )
+    }
+
+    async fn clickhouse_statement(&self, statement: String) {
         clickhouse::client::Client::new(
             clickhouse::live_tests::connection("default"),
             clickhouse::client::Tuning::default(),
             Arc::new(|_: &str| ()),
         )
         .unwrap()
-        .statement(format!("DROP DATABASE IF EXISTS `{}` SYNC", self.name))
+        .statement(statement)
         .await
         .unwrap();
+    }
+
+    async fn drop_clickhouse(&self) {
+        self.clickhouse_statement(format!("DROP DATABASE IF EXISTS `{}` SYNC", self.name))
+            .await;
     }
 
     async fn drop_all(&self) {
@@ -98,6 +136,157 @@ impl Live {
             .await
             .unwrap();
     }
+}
+
+/// Two deployments of one config each pair a Postgres schema with the
+/// ClickHouse database following it. Crossing them resumes neither.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn a_follower_of_another_postgres_schema_has_diverged() {
+    let (a, b) = (Live::new("pair_a"), Live::new("pair_b"));
+    a.initialize().await;
+    b.initialize().await;
+    let crossed = Storage {
+        postgres: a.storage.postgres.clone(),
+        clickhouse: b.storage.clickhouse.clone(),
+    };
+
+    let holding = crossed.holding().await;
+
+    a.drop_all().await;
+    b.drop_all().await;
+    assert_eq!(
+        holding.map_err(|error| format!("{error:#}")),
+        Ok(Holding::Diverged)
+    );
+}
+
+/// The follower commits once Postgres has: an effect cache write failing after
+/// the transaction committed fails the batch, not the follower's half of it.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn the_follower_commits_what_postgres_committed_whatever_its_caches_do() {
+    let live = Live::new("cache_after_commit");
+    live.initialize().await;
+    let cache = Arc::new(Table {
+        name: "envio_effect_price".to_string(),
+        postgres: Some(Arc::new(
+            live.storage
+                .postgres
+                .as_ref()
+                .unwrap()
+                .register(postgres::storage::TableRegistration {
+                    spec: postgres::ddl::TableSpec {
+                        table_name: "envio_effect_price".to_string(),
+                        columns: vec![
+                            postgres::ddl::ColumnSpec {
+                                name: "id".to_string(),
+                                field_type: postgres::pg_type::FieldType::String,
+                                is_array: false,
+                                is_nullable: false,
+                                is_primary_key: true,
+                                default_value: None,
+                            },
+                            postgres::ddl::ColumnSpec {
+                                name: "output".to_string(),
+                                field_type: postgres::pg_type::FieldType::Json,
+                                is_array: false,
+                                is_nullable: false,
+                                is_primary_key: false,
+                                default_value: None,
+                            },
+                        ],
+                        partition_by_column: None,
+                    },
+                    write_columns: vec!["id".to_string(), "output".to_string()],
+                    append_only: false,
+                    history: None,
+                })
+                .unwrap(),
+        )),
+        clickhouse: None,
+    });
+
+    let written = live
+        .storage
+        .write_batch(Batch {
+            progress: vec![Progress {
+                chain_id: 1,
+                progress_block: 10,
+                progress_block_time: None,
+                events_processed: 1.0,
+                source_block: 10,
+            }],
+            frontier: Frontier {
+                chain_ids: vec![1],
+                checkpoint_ids: vec![1],
+            },
+            // Never created, so the insert into it fails.
+            effect_caches: vec![EffectCacheWrite {
+                table: cache,
+                create: false,
+                rows: Rows::Cells {
+                    cells: vec![Param::Text("k".to_string()), Param::Text("{}".to_string())],
+                    rows: 1,
+                },
+            }],
+            ..Batch::default()
+        })
+        .await;
+    let frontiers = live.frontiers().await;
+
+    live.drop_all().await;
+    assert_eq!(
+        (written.is_err(), frontiers),
+        (true, ("1".to_string(), "1".to_string()))
+    );
+}
+
+/// Nothing reads a follower's `ready_at` either.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn finalizing_is_the_store_of_records_alone() {
+    let live = Live::new("finalize");
+    live.initialize().await;
+    live.drop_clickhouse().await;
+
+    let outcome = live
+        .storage
+        .finalize_backfill(Vec::new(), &[1], 1_700_000_000_000.0)
+        .await;
+
+    live.drop_all().await;
+    assert_eq!(outcome.map_err(|error| format!("{error:#}")), Ok(()));
+}
+
+/// Every store is checked before any is reset, as before an initialize: a
+/// refusal leaves them all as they were.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn a_reset_one_store_refuses_touches_neither() {
+    let live = Live::new("reset_refused");
+    live.initialize().await;
+    live.drop_clickhouse().await;
+    live.clickhouse_statement(format!("CREATE DATABASE `{}`", live.name))
+        .await;
+    live.clickhouse_statement(format!(
+        "CREATE TABLE `{}`.someone_elses (x UInt8) ENGINE = MergeTree ORDER BY x",
+        live.name
+    ))
+    .await;
+
+    let refused = live.storage.reset().await.is_err();
+    let kept = live
+        .storage
+        .postgres
+        .as_ref()
+        .unwrap()
+        .is_initialized()
+        .await
+        .unwrap();
+
+    live.drop_all().await;
+    assert_eq!((refused, kept), (true, true));
 }
 
 /// Nothing reads a follower's chain metadata, so a follower that cannot take

@@ -258,24 +258,28 @@ describe("Changing the chains of a deployment", () => {
 })
 
 describe("Changing which stores keep the data", () => {
-  let stranded = Migration.Failed(`ClickHouse holds indexed data that the configured store of record has none of: the storage config, or the Postgres schema in front of ClickHouse, changed since it was indexed.
-
-Pick one:
-  1. Revert that change  # resume indexing where it left off
-  2. envio dev -r        # delete all indexed data and start over`)
-
   Migration.it(
     "Refuses Postgres put in front of a ClickHouse-only deployment",
     ~deployed=deployment(~chains=[chain(1)], ~storage=clickHouseAlone),
     ~edited=deployment(~chains=[chain(1)], ~storage=clickHouseBehindPostgres),
-    ~expected=stranded,
+    ~expected=Failed(`ClickHouse holds indexed data that Postgres has none of: it was indexed without Postgres, or ENVIO_PG_SCHEMA names another schema than the one it was indexed alongside.
+
+Pick one:
+  1. Drop Postgres from the storage config, or point ENVIO_PG_SCHEMA at that schema  # resume indexing where it left off
+  2. envio dev -r                                                                    # delete all indexed data and start over
+  3. Point ENVIO_CLICKHOUSE_DATABASE at a new database                               # keep the existing data and index from scratch`),
   )
 
   Migration.it(
     "Refuses ClickHouse alone over what it kept behind Postgres",
     ~deployed=deployment(~chains=[chain(1)], ~storage=clickHouseBehindPostgres),
     ~edited=deployment(~chains=[chain(1)], ~storage=clickHouseAlone),
-    ~expected=stranded,
+    ~expected=Failed(`ClickHouse holds indexed data it kept behind Postgres, which the storage config no longer enables.
+
+Pick one:
+  1. Enable Postgres in the storage config again        # resume indexing where it left off
+  2. envio dev -r                                       # delete all indexed data and start over
+  3. Point ENVIO_CLICKHOUSE_DATABASE at a new database  # keep the existing data and index from scratch`),
   )
 
   Migration.it(
@@ -308,11 +312,11 @@ Pick one:
       }
 
       t.expect(refusal).toEqual(
-        Some(`ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one it was indexed into, or setting it up didn't finish.
+        Some(`ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one indexed alongside this ENVIO_PG_SCHEMA, an older envio version built it, or setting it up didn't finish.
 
 Pick one:
-  1. Point ENVIO_CLICKHOUSE_DATABASE at the database it was indexed into  # resume indexing where it left off
-  2. envio dev -r                                                         # delete all indexed data and start over`),
+  1. Point ENVIO_CLICKHOUSE_DATABASE at the database indexed alongside it  # resume indexing where it left off
+  2. envio dev -r                                                          # delete all indexed data and start over`),
       )
     },
   )

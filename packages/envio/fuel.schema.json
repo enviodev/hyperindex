@@ -39,7 +39,7 @@
       "minimum": 0
     },
     "storage": {
-      "description": "Storage backends the indexer writes data to. Defaults to Postgres when omitted. Set `postgres: true` and `clickhouse: true` to also keep data in ClickHouse, or `postgres: false` and `clickhouse: true` to keep everything in ClickHouse alone. Mark a backend with `default: true` to store entities that don't have an @storage directive in the schema, e.g. `clickhouse: {default: true}`.",
+      "description": "Storage backends the indexer writes data to. Defaults to Postgres when omitted. With one backend enabled every entity is kept in it, so `postgres: false` and `clickhouse: true` keep everything in ClickHouse alone. With both, an entity is kept where its @storage directive in the schema says, or else in each backend marked `default: true`, e.g. `postgres: {default: true}` and `clickhouse: true`.",
       "anyOf": [
         {
           "$ref": "#/$defs/StorageConfig"

@@ -127,14 +127,11 @@ impl Client {
         })
     }
 
-    /// Runs a statement and returns the server's answer as text.
     pub async fn statement(&self, query: String) -> Result<String> {
         let body = self.read(query).await?;
         Ok(String::from_utf8_lossy(&body).into_owned())
     }
 
-    /// Runs a read and returns the server's answer as it arrived, for a format
-    /// that is not text.
     pub async fn read(&self, query: String) -> Result<Bytes> {
         self.post(query)
             .await?
@@ -143,7 +140,7 @@ impl Client {
             .context("ClickHouse's answer broke off before its end")
     }
 
-    /// Runs a read and writes the server's answer to `file` as it arrives.
+    /// Writes the answer out as it arrives, so it is never held whole.
     pub async fn read_into(&self, query: String, file: &mut tokio::fs::File) -> Result<()> {
         let mut response = self.post(query).await?;
         while let Some(chunk) = response
@@ -172,9 +169,10 @@ impl Client {
     }
 
     /// Every statement the store sends this way is a read or idempotent, so one
-    /// whose connection broke is sent again: a pooled connection the server
-    /// closed while idle fails the first request on it. One that timed out
-    /// already spent the whole statement timeout and is not.
+    /// is sent again for whatever an insert would be: a pooled connection the
+    /// server closed while idle, an overloaded server or proxy. One that timed
+    /// out after reaching the server already spent the whole statement timeout
+    /// and is not.
     async fn post(&self, query: String) -> Result<reqwest::Response> {
         let mut retries_left = self.tuning.retries;
         loop {
@@ -189,19 +187,37 @@ impl Client {
                 .body(query.clone())
                 .send()
                 .await;
-            match sent {
-                Ok(response) => return self.answered(response).await,
-                Err(error) if error.is_timeout() || retries_left == 0 => {
-                    return Err(anyhow::Error::new(error).context("ClickHouse request failed"));
+            let failure = match sent {
+                Ok(response) => {
+                    self.check_served_by(&response)?;
+                    let status = response.status();
+                    if status.is_success() {
+                        return Ok(response);
+                    }
+                    let text = response.text().await.unwrap_or_default();
+                    let failure = anyhow!("ClickHouse returned {status}: {text}");
+                    if retry_for(status, &text) == Retry::Never {
+                        return Err(failure);
+                    }
+                    failure
                 }
                 Err(error) => {
-                    (self.warn)(&format!(
-                        "ClickHouse request failed, {retries_left} retries left: {error:#}"
-                    ));
-                    tokio::time::sleep(self.tuning.delay(retries_left)).await;
-                    retries_left -= 1;
+                    let spent = error.is_timeout() && !error.is_connect();
+                    let failure = anyhow::Error::new(error).context("ClickHouse request failed");
+                    if spent {
+                        return Err(failure);
+                    }
+                    failure
                 }
+            };
+            if retries_left == 0 {
+                return Err(failure);
             }
+            (self.warn)(&format!(
+                "ClickHouse request failed, {retries_left} retries left: {failure:#}"
+            ));
+            tokio::time::sleep(self.tuning.delay(retries_left)).await;
+            retries_left -= 1;
         }
     }
 
@@ -279,10 +295,7 @@ impl Client {
                 Err(failure) => {
                     let spent = started.elapsed();
                     let out_of_budget = spent >= self.tuning.retry_budget;
-                    if retries == 0
-                        || out_of_budget
-                        || matches!(failure.retry, Retry::Never | Retry::Ambiguous)
-                    {
+                    if retries == 0 || out_of_budget || failure.retry == Retry::Never {
                         return Err(match (failures, out_of_budget) {
                             (0, _) => failure.error,
                             (n, false) => failure
@@ -374,41 +387,28 @@ struct InsertFailure {
     retry: Retry,
 }
 
+/// What sending a failed insert again can change. Whether the server already
+/// took the rows doesn't come into it: every insert carries a token of its own
+/// (see `post_rows`), so a resend can land them twice, and that costs storage
+/// rather than correctness — every read collapses rows sharing a key and a
+/// checkpoint with `LIMIT 1 BY`, a resent row repeats the values of the one it
+/// duplicates, and the chains' rows replace each other by version. Only a
+/// direct query of a history table sees a duplicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Retry {
     Never,
     SameRows,
     Halved,
-    /// The server may already have the rows. Another send would double-write,
-    /// so the batch fails and a restart trims back to the committed checkpoint.
-    Ambiguous,
 }
 
 /// Conditions a smaller batch is answered differently by, because what ran out
-/// was proportional to the batch's size. Resending is safe for a table in one
-/// partition, where an insert commits a single part or none; an entity with its
-/// own `partitionBy` writes a part per partition, and one of those already
-/// committed would be sent again — the reads' `LIMIT 1 BY` reads past the
-/// duplicate, a direct query of the history table does not.
-/// A resend can leave the same rows in the history table twice: every insert
-/// carries a token of its own (see `post_rows`) so trim-then-replay recovery works.
-/// Duplicates cost storage, not correctness — every read collapses them with
-/// `LIMIT 1 BY`, and a resent row repeats the id, checkpoint id and values of
-/// the one it duplicates. So a verdict answers whether sending again has a
-/// mechanism to go differently, not whether the rows could already have landed:
-/// a batch that outran a deadline or a memory limit fits once it is smaller.
+/// was proportional to the batch's size: a batch that outran a deadline or a
+/// memory limit fits once it is smaller.
 const HALVED_ERROR_CODES: &[u32] = &[
     173, // CANNOT_ALLOCATE_MEMORY
     241, // MEMORY_LIMIT_EXCEEDED
     159, // TIMEOUT_EXCEEDED
     209, // SOCKET_TIMEOUT
-];
-
-/// Failures that say nothing about size or reachability, so a resend is only the
-/// same request again for the same likely answer.
-const AMBIGUOUS_ERROR_CODES: &[u32] = &[
-    210, // NETWORK_ERROR
-    319, // UNKNOWN_STATUS_OF_INSERT
 ];
 
 /// Codes that say the deployment or the rows are what failed — a table that is
@@ -449,18 +449,14 @@ fn insert_token() -> String {
     )
 }
 
-/// A request that never reached the server carries no risk of a double write, so
-/// it is resent whole. A timeout is resent smaller: the deadline is the one
-/// thing a halved batch meets differently, whether it ran out mid-upload or
-/// waiting on the server to finish. Anything else that failed after the body
-/// went out leaves the same unknown as 319.
+/// A timeout is resent smaller: the deadline is the one thing a halved batch
+/// meets differently, whether it ran out mid-upload or waiting on the server to
+/// finish. A connect timeout never reached the server, so it is resent whole.
 fn retry_for_send_error(err: &reqwest::Error) -> Retry {
-    if err.is_connect() {
-        Retry::SameRows
-    } else if err.is_timeout() {
+    if err.is_timeout() && !err.is_connect() {
         Retry::Halved
     } else {
-        Retry::Ambiguous
+        Retry::SameRows
     }
 }
 
@@ -471,7 +467,6 @@ fn retry_for_send_error(err: &reqwest::Error) -> Retry {
 fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
     match error_code(body) {
         Some(code) if HALVED_ERROR_CODES.contains(&code) => Retry::Halved,
-        Some(code) if AMBIGUOUS_ERROR_CODES.contains(&code) => Retry::Ambiguous,
         Some(code) if NEVER_ERROR_CODES.contains(&code) => Retry::Never,
         Some(_) => Retry::SameRows,
         // Nothing in the body is ClickHouse's, so something in front of it
@@ -627,6 +622,50 @@ mod tests {
         assert_eq!(
             (answer.map_err(reason), server.queries_seen()),
             (Ok("1".to_string()), 1)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_read_turned_away_for_now_is_sent_again() {
+        let server = MockClickHouse::rejecting_reads(
+            2,
+            503,
+            "Service Unavailable",
+            Arc::new(|_: &str| (200, "1".to_string())),
+        )
+        .await;
+        let client = client_for(&server, 4);
+
+        let answer = client.statement("SELECT 1".to_string()).await;
+
+        assert_eq!(
+            (answer.map_err(reason), server.queries_seen()),
+            (Ok("1".to_string()), 3)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_read_the_statement_is_to_blame_for_is_not_sent_again() {
+        let server = MockClickHouse::rejecting_reads(
+            1,
+            400,
+            "Code: 62. DB::Exception: Syntax error",
+            Arc::new(|_: &str| (200, "1".to_string())),
+        )
+        .await;
+        let client = client_for(&server, 4);
+
+        let answer = client.statement("SELECT".to_string()).await;
+
+        assert_eq!(
+            (answer.map_err(reason), server.queries_seen()),
+            (
+                Err(
+                    "ClickHouse returned 400 Bad Request: Code: 62. DB::Exception: Syntax error"
+                        .to_string()
+                ),
+                1
+            )
         );
     }
 
@@ -936,8 +975,10 @@ mod tests {
         );
     }
 
+    /// Every read collapses a row that landed twice, so an insert the server
+    /// may or may not have taken is sent again rather than failing the batch.
     #[tokio::test(flavor = "multi_thread")]
-    async fn an_insert_whose_status_is_unknown_is_not_resent() {
+    async fn an_insert_whose_status_is_unknown_is_sent_again_whole() {
         let server = MockClickHouse::accepting_then_erroring(
             1,
             "Code: 319. DB::Exception: Unknown status of insert",
@@ -945,25 +986,16 @@ mod tests {
         .await;
         let client = client_for(&server, 4);
 
-        let err = reason(insert(&client, &["a", "b", "c", "d"]).await.unwrap_err());
+        let sent = insert(&client, &["a", "b", "c", "d"]).await;
 
+        let rows = ["a", "b", "c", "d"].map(str::to_string).to_vec();
         assert_eq!(
             (
-                err.contains("319"),
+                sent.map_err(reason),
                 server.inserts_seen(),
                 server.accepted_batches(),
             ),
-            (
-                true,
-                1,
-                vec![vec![
-                    "a".to_string(),
-                    "b".to_string(),
-                    "c".to_string(),
-                    "d".to_string()
-                ]],
-            ),
-            "expected one accepted insert of the original four, got: {err}"
+            (Ok(()), 2, vec![rows.clone(), rows]),
         );
     }
 

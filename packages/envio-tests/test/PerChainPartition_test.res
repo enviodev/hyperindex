@@ -97,7 +97,11 @@ type counterRow = {
 type counterOps = {set: {"id": string, "count": bigint, "owner": string} => unit}
 type handlerContext = {@as("Counter") counter: counterOps}
 
-let scenario = Scenario.make(~schema, ~configYaml)
+let scenario = Scenario.make(
+  ~schema,
+  ~configYaml,
+  ~unsupported=[{backend: #clickhouseOnly, reason: "asserts the Postgres partitions"}],
+)
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
@@ -225,7 +229,7 @@ describe("A chain-scoped load", () => {
         dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}}
         ->EntityFilter.parseOrThrow(~entityName=counter.name, ~table=counter.table)
         ->EntityFilter.scoped(~table=counter.table, ~scope=Chain(137->ChainId.fromInt))
-      let client = Storage.makePgClient(~pgSchema, ~maxConnections=1)
+      let client = TestPgSchema.client(~pgSchema, ~maxConnections=1)
       let storage = Storage.make(~client, ~entities=[counter], ~ecosystem=Evm)
       let _ = await storage.loadOrThrow(~filter, ~table=counter.table)
       let prepared: array<{

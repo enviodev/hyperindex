@@ -15,6 +15,8 @@ struct State {
     /// Reads still to be answered by closing the connection, as a stale pooled
     /// connection the server already let go of is.
     drop_next_reads: usize,
+    /// Reads still to be answered with the rejection.
+    reject_next_reads: usize,
     /// Inserts still to be accepted and then failed. The body is recorded as
     /// landed — the server took the rows — but the client is told it did not.
     accept_then_error: usize,
@@ -75,6 +77,22 @@ impl MockClickHouse {
         Self::serving(State {
             statements: Some(statements),
             drop_next_reads: n,
+            ..Default::default()
+        })
+        .await
+    }
+
+    pub async fn rejecting_reads(
+        n: usize,
+        status: u16,
+        rejection: &str,
+        statements: Arc<StatementFn>,
+    ) -> Self {
+        Self::serving(State {
+            statements: Some(statements),
+            reject_next_reads: n,
+            rejection: rejection.to_string(),
+            rejection_status: status,
             ..Default::default()
         })
         .await
@@ -194,13 +212,19 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
             };
             outcome.unwrap_or((200, String::new()))
         } else {
-            {
+            let rejection = {
                 let mut state = state.lock().unwrap();
                 if state.drop_next_reads > 0 {
                     state.drop_next_reads -= 1;
                     return Ok(());
                 }
-            }
+                if state.reject_next_reads > 0 {
+                    state.reject_next_reads -= 1;
+                    Some((state.rejection_status, state.rejection.clone()))
+                } else {
+                    None
+                }
+            };
             let statement = String::from_utf8_lossy(&request.body).to_string();
             let answer = {
                 let mut state = state.lock().unwrap();
@@ -208,9 +232,10 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
                 state.statements_seen.push(statement.clone());
                 state.statements.clone()
             };
-            match answer {
-                Some(answer) => answer(&statement),
-                None => (
+            match (rejection, answer) {
+                (Some(rejection), _) => rejection,
+                (None, Some(answer)) => answer(&statement),
+                (None, None) => (
                     400,
                     "the store should not be querying the server".to_string(),
                 ),

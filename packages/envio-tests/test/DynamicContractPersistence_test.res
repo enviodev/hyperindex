@@ -63,20 +63,18 @@ let registeringItem = (~blockNumber, ~register): MockSource.itemMock => {
     register(args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)),
 }
 
-let withIndexer = (t, body) =>
-  t->Scenario.skippingPostgresReads(() =>
-    scenario->Scenario.run(
-      ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
-      async (~indexer, ~source) => {
-        let sourceMock = source(1337)
+let withIndexer = (_t, body) =>
+  scenario->Scenario.run(
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
+    async (~indexer, ~source) => {
+      let sourceMock = source(1337)
 
-        sourceMock.resolveGetHeightOrThrow(1000)
-        await Utils.delay(0)
-        await Utils.delay(0)
+      sourceMock.resolveGetHeightOrThrow(1000)
+      await Utils.delay(0)
+      await Utils.delay(0)
 
-        await body(sourceMock, indexer)
-      },
-    )
+      await body(sourceMock, indexer)
+    },
   )
 
 describe("Dynamic contract persistence", () => {

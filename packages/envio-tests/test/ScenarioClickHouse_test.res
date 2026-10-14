@@ -2,8 +2,6 @@ open Vitest
 
 // Guards the ClickHouse leg against being a silent no-op: ClickHouse is switched
 // on by config, so a scenario can run green on it while writing nothing at all.
-// Reading entity state back through ClickHouse is otherwise out of scope — the
-// other scenarios assert through Postgres.
 
 let scenario = Scenario.make(
   ~configYaml=`

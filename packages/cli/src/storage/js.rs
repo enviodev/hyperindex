@@ -858,6 +858,7 @@ impl JsStorage {
                 .collect(),
             chains: input.chains.into_iter().map(chain_config).collect(),
             envio_info: input.envio_info,
+            instance: super::new_instance(),
             contract_names: input.contract_names,
             addresses: addresses(input.addresses)?,
         };
@@ -1335,6 +1336,25 @@ impl JsStorage {
         if let Some(problem) = problems.into_iter().next() {
             return Err(problem);
         }
+        same_length(
+            "frontier",
+            &[
+                batch.frontier.chain_ids.len(),
+                batch.frontier.checkpoint_ids.len(),
+            ],
+        )?;
+        let checkpoints = &batch.checkpoints;
+        same_length(
+            "checkpoint",
+            &[
+                checkpoints.ids.len(),
+                checkpoints.chain_ids.len(),
+                checkpoints.block_numbers.len(),
+                checkpoints.block_hashes.len(),
+                checkpoints.events_processed.len(),
+                checkpoints.keeps_history.len(),
+            ],
+        )?;
         Ok(Batch {
             rollback: rollback.transpose()?,
             progress: batch.progress.into_iter().map(progress).collect(),
@@ -1376,6 +1396,17 @@ impl JsStorage {
             },
             effect_caches,
         })
+    }
+}
+
+/// Rows cross as one list per column, which every store reads by index
+/// together: lists of different lengths are refused here rather than read past.
+fn same_length(rows: &str, lengths: &[usize]) -> napi::Result<()> {
+    match lengths.windows(2).all(|pair| pair[0] == pair[1]) {
+        true => Ok(()),
+        false => Err(napi::Error::from_reason(format!(
+            "Internal error: the {rows} columns have different lengths, {lengths:?}"
+        ))),
     }
 }
 
@@ -1421,6 +1452,15 @@ fn chain_meta(meta: ChainMetaInput) -> ChainMeta {
 }
 
 fn addresses(addresses: AddressesInput) -> napi::Result<Addresses> {
+    let mut lengths = vec![
+        addresses.chain_ids.len(),
+        addresses.addresses.len(),
+        addresses.contract_ids.len(),
+    ];
+    // A key leaves both out.
+    lengths.extend(addresses.registration_blocks.as_ref().map(Vec::len));
+    lengths.extend(addresses.checkpoint_ids.as_ref().map(Vec::len));
+    same_length("address", &lengths)?;
     Ok(Addresses {
         chain_ids: addresses.chain_ids.into_iter().map(chain_id).collect(),
         addresses: addresses
@@ -1440,6 +1480,10 @@ fn addresses(addresses: AddressesInput) -> napi::Result<Addresses> {
 }
 
 fn to_bounds(bounds: BoundsInput) -> napi::Result<Bounds> {
+    same_length(
+        "bound",
+        &[bounds.chain_ids.len(), bounds.checkpoint_ids.len()],
+    )?;
     Ok(Bounds {
         sequence: Sequence::parse(&bounds.sequence).map_err(to_napi)?,
         chain_ids: bounds.chain_ids.into_iter().map(chain_id).collect(),

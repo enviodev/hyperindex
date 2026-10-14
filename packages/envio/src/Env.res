@@ -162,13 +162,11 @@ module Db = {
   // workers divides it among them, and each caps its own pool to its share.
   // Splitting takes two workers and a worker takes two connections, so a budget
   // under 4 — the default among them — keeps the run in one process.
-  let maxConnections = envSafe->EnvSafe.get("ENVIO_PG_MAX_CONNECTIONS", S.int, ~fallback=2)
+  let maxConnections = lazily(envSafe =>
+    envSafe->EnvSafe.get("ENVIO_PG_MAX_CONNECTIONS", S.int, ~fallback=2)
+  )
 }
 
-// Required env vars are validated lazily in `ClickHouse.optionsFromEnvOrThrow`
-// when the user opts into ClickHouse via `storage.clickhouse: true` in
-// config.yaml.
-//
 // Reads run at call time instead of module load. `envio dev` injects these
 // vars into `process.env` after booting its ClickHouse container, and that
 // happens strictly after this module has already been evaluated — caching

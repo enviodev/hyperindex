@@ -47,6 +47,7 @@ type EntityWithTimestamp @storage(clickhouse: {}) {
       backend: #postgres,
       reason: "configures its own storage, so it runs the same on the ClickHouse leg",
     },
+    {backend: #clickhouseOnly, reason: "is about an entity Postgres keeps beside one it doesn't"},
   ],
 )
 
@@ -124,22 +125,14 @@ describe("Rollback with a ClickHouse-only entity", () => {
       )
       await indexer.getBatchWritePromise()->raiseOnIndexerError
 
-      let missingHistoryRelationError = try {
-        let _ = await indexer.queryHistory(chOnlyEntityName)
-        "the history table exists"
-      } catch {
-      | exn =>
-        exn->JsExn.fromException->Option.flatMap(JsExn.message)->Option.getOr("unknown error")
-      }
+      let {sql, pgSchema} = indexer.pg
+      let postgresHistory: array<unknown> = await sql->Sql.queryForTests(
+        `SELECT 1 FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name = 'envio_history_${chOnlyEntityName}'`,
+      )
       t.expect(
-        (
-          missingHistoryRelationError->String.includes(
-            `relation "${indexer.pg.pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
-          ),
-          await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-        ),
+        (postgresHistory, await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>)),
         ~message="The ClickHouse-only entity should have no Postgres history table, while the Postgres entity is written",
-      ).toEqual((true, [{id: "1", value: "value-2"}]))
+      ).toEqual(([], [{id: "1", value: "value-2"}]))
 
       // Should trigger rollback
       sourceMock.resolveGetItemsOrThrow(

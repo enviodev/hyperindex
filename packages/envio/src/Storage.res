@@ -1,10 +1,3 @@
-// The indexer's storage over every store the config enables. Postgres, when it
-// is there, is the store of record: it keeps the chains, the checkpoints, the
-// addresses, the raw events and the effect caches, and ClickHouse follows it with
-// the entities it keeps. Without Postgres, ClickHouse keeps all of it. An entity
-// is kept by each store it is configured for, and read from Postgres when that
-// is one of them.
-
 let formatSeconds = seconds => (Math.round(seconds *. 100.) /. 100.)->Float.toString
 
 // Every index build blocks writes to its table for as long as it runs, and on a
@@ -12,7 +5,6 @@ let formatSeconds = seconds => (Math.round(seconds *. 100.) /. 100.)->Float.toSt
 // stalled-looking indexer is explainable from the logs alone.
 let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
-// What logs and metrics call a store.
 let storeName = (store: StorageClient.store) =>
   switch store {
   | Postgres => "postgres"
@@ -111,7 +103,7 @@ let logIndexEvent = (~pgSchema, event: StorageClient.indexEvent) =>
 let postgresOptions = (
   ~pgSchema=Env.Db.publicSchema,
   ~isHasuraEnabled=false,
-  ~maxConnections=Env.Db.maxConnections,
+  ~maxConnections=Env.Db.maxConnections(),
 ): StorageClient.postgresOptions => {
   let {host, port, user, password, database, ssl} = Env.Db.connection()
   {
@@ -147,12 +139,6 @@ let makeClient = (
         event,
       ),
     ~onWarning=message => ClickHouse.logger->Logging.childWarn({"msg": message}),
-  )
-
-let makePgClient = (~pgSchema=?, ~chainIdMode=?, ~isHasuraEnabled=?, ~maxConnections=?) =>
-  makeClient(
-    ~chainIdMode?,
-    ~postgres=postgresOptions(~pgSchema?, ~isHasuraEnabled?, ~maxConnections?),
   )
 
 // A per-chain entity's rows are partitioned by the chain that owns them, so a

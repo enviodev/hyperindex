@@ -1,6 +1,3 @@
-// The addon's storage: every store the indexer is configured with, behind one
-// class. A storage operation is one call here.
-//
 // Rows cross in arenas both ways. A write stages its rows into memory the addon
 // lends (`beginStage` to `commitStage`); a read lands its rows in a Rust-owned
 // arena that `lendResult` hands over and `releaseResult` takes back. Reading or

@@ -156,11 +156,14 @@ impl Table {
                     .iter()
                     .map(|column| (column.name.clone(), column.ch_type.clone()))
                     .collect();
-                let kind = match kind {
-                    ClickHouseTableKind::RawEvents => Kind::RawEvents,
-                    _ => Kind::EffectCache,
-                };
-                (input.name.clone(), kind, staged)
+                match kind {
+                    ClickHouseTableKind::RawEvents => (
+                        ddl::RAW_EVENTS_LANDED_TABLE.to_string(),
+                        Kind::RawEvents,
+                        staged,
+                    ),
+                    _ => (input.name.clone(), Kind::EffectCache, staged),
+                }
             }
         };
         let insert_query =

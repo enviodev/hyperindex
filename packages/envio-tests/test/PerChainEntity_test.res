@@ -93,7 +93,14 @@ let snakeCaseScenario = Scenario.make(
 )
 
 // The history prune is asserted through raw SQL against the history tables.
-let pruneScenario = Scenario.make(~supervised=false, ~schema, ~configYaml=makeConfigYaml())
+let pruneScenario = Scenario.make(
+  ~supervised=false,
+  ~unsupported=[
+    {backend: #clickhouseOnly, reason: "ClickHouse keeps an entity as its whole history"},
+  ],
+  ~schema,
+  ~configYaml=makeConfigYaml(),
+)
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 let reorgMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
@@ -577,7 +584,7 @@ describe("Per-chain history prune", () => {
                 ('above', 4, 50, 'SET')`,
       )
 
-      let storage = Storage.make(~client=Storage.makePgClient(~pgSchema), ~ecosystem=Evm)
+      let storage = Storage.make(~client=TestPgSchema.client(~pgSchema), ~ecosystem=Evm)
       let prune = entityConfig =>
         storage.pruneStaleEntityHistory(
           ~entityConfig,

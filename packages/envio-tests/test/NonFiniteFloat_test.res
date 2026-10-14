@@ -61,14 +61,9 @@ let refusesWith = (~name, ~sample, ~reason) =>
         )
         let failure = await refusal.awaitRefusalReason()
 
-        let {sql, pgSchema} = indexer.pg
-        let stored: array<{
-          "n": string,
-        }> = await sql->Sql.queryForTests(
-          `SELECT count(*)::text AS "n" FROM "${pgSchema}"."Sample";`,
-        )
+        let stored: array<unknown> = await indexer.query("Sample")
 
-        t.expect((failure, stored->Array.map(row => row["n"]))).toEqual((Some(reason), ["0"]))
+        t.expect((failure, stored)).toEqual((Some(reason), []))
       },
     )
   })
