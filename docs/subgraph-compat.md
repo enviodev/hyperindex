@@ -155,6 +155,15 @@ suspend-and-replay, capped at 100 rounds; a host op that fails fails the
 batch rather than dropping the registration. Safe because graph-node already
 requires mappings to be deterministic.
 
+Only handlers whose code can reach `DataSourceTemplate.create` get the pass:
+the addon follows each handler through the mapping's module graph (top-level
+functions, classes and variables, relative imports and re-exports, into
+`generated/templates.ts`), and anything it can't see — a file that doesn't
+parse or resolve, another package, a namespace import of graph-ts — counts as
+a create. A pool's swap handler no longer replays its mapping and its contract
+calls at fetch time. Concurrent passes share one in-flight request per op.
+`ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` restores the pass for every handler.
+
 ## 5. Sync bridge: try-sync, suspend, replay
 
 graph-ts host ops are synchronous; envio's are async. Bridge:

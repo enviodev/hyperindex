@@ -39,6 +39,7 @@ type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   fromSubgraph: (string, string, fromSubgraphOptions) => fromUserApiResult,
   subgraphFileToJavascript: (string, string) => string,
+  subgraphCreatingHandlers: (string, array<string>) => array<string>,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -324,6 +325,11 @@ let fromSubgraph = (~name=?, ~env=?, ~files=?, ~root=?, ~manifest, ~schema) => {
 let subgraphFileToJavascript = (~source, ~path) => {
   let addon = getAddon()
   addon.subgraphFileToJavascript(source, path)
+}
+
+let subgraphCreatingHandlers = (~mappingFile, ~handlers) => {
+  let addon = getAddon()
+  addon.subgraphCreatingHandlers(mappingFile, handlers)
 }
 
 let runCli = args => {

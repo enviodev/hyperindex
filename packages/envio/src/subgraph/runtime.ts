@@ -12,7 +12,7 @@ import { registerHooks } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { indexer } from "../Api.res.mjs";
-import { subgraphFileToJavascript } from "../Core.res.mjs";
+import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
 import { currentScope, runInScope, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
   Address,
@@ -49,6 +49,9 @@ const jsonFromString = (line: string) => (jsonNamespace as any).fromString(line)
  * reads were preloaded or not.
  */
 const skipPreload = process.env.ENVIO_SUBGRAPH_SKIP_PRELOAD === "1";
+
+/** Escape hatch from the create analysis: every handler gets a register pass. */
+const registerEveryHandler = process.env.ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS === "1";
 
 type EventHandler = {
   event: string;
@@ -229,6 +232,12 @@ const REGISTER_SUSPEND = Symbol("envio.subgraph.register.suspend");
  */
 const registerCache = new Map<string, { value?: unknown; error?: unknown }>();
 const REGISTER_CACHE_LIMIT = 20_000;
+/**
+ * The register passes of a response's items run concurrently, so the same op
+ * at the same block — every pair a factory creates in one block reading the
+ * factory — is usually still in flight when the next pass asks for it.
+ */
+const registerInFlight = new Map<string, Promise<unknown>>();
 
 async function runRegisterHost(effect: Effect, input: unknown): Promise<unknown> {
   return effect.handler({
@@ -277,8 +286,18 @@ function registerHostSync(scope: Scope, effect: Effect, input: unknown) {
 
   const awaiting = scope.awaiting ?? [];
   scope.awaiting = awaiting;
+  let flight = registerInFlight.get(key);
+  if (!flight) {
+    const started = runRegisterHost(effect, input);
+    flight = started;
+    registerInFlight.set(key, started);
+    const settle = () => {
+      if (registerInFlight.get(key) === started) registerInFlight.delete(key);
+    };
+    started.then(settle, settle);
+  }
   awaiting.push(
-    runRegisterHost(effect, input).then(
+    flight.then(
       (value) => {
         resolved.set(key, { value });
         if (registerCache.size >= REGISTER_CACHE_LIMIT) registerCache.clear();
@@ -483,6 +502,18 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     });
 
     const owns = ownerOf(source);
+    // After codegen, so the analysis can follow the mapping into
+    // `generated/templates.ts`.
+    const creating = new Set<string>(
+      templateNames.size === 0
+        ? []
+        : registerEveryHandler
+          ? source.eventHandlers.map((handler) => handler.handler)
+          : subgraphCreatingHandlers(
+              path.resolve(config.root, source.mappingFile),
+              source.eventHandlers.map((handler) => handler.handler),
+            ),
+    );
     // graph-node matches a data source without `source.address` against every
     // contract's logs — ENS's Resolver is one data source for every resolver
     // anyone deploys. Nothing would ever register an address for it here.
@@ -538,8 +569,10 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
 
       // `dataSource.create` has to reach envio's contractRegister, which runs
       // at fetch time — before any entity exists. The same mapping reruns in
-      // register mode, where writes and logs are no-ops and reads are null.
-      if (templateNames.size > 0) {
+      // register mode, where writes and logs are no-ops and reads are null —
+      // only when its code can reach a create (`subgraph/creates.rs`): the
+      // rerun costs every contract call the handler makes on the way.
+      if (creating.has(handler.handler)) {
         indexer.contractRegister(
           { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
           async ({ event, context }: any) => {
