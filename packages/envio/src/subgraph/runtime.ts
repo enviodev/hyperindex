@@ -29,6 +29,7 @@ import {
   type EventKind,
   json as jsonNamespace,
   makeBlockHandlerBlock,
+  makeEvent as makeGraphEvent,
   ethereumValueToJs,
 } from "./graph-ts.ts";
 import { encodeArg, decodeArg, makeCallEffect } from "./calls.ts";
@@ -535,7 +536,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       // Built as the generated class the handler declares, when it declares
       // one: its `params` getters are graph codegen's own.
       const EventClass = mapping[EVENT_CLASSES_EXPORT]?.[handler.handler] ?? ethereum.Event;
-      const makeEvent = (event: unknown) => Reflect.construct(ethereum.Event, [event, kind], EventClass);
+      const makeEvent = (event: unknown) => makeGraphEvent(event, kind, EventClass);
 
       const makeScope = (event: any, context: any, mode: Scope["mode"]): Scope => ({
         context,

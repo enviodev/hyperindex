@@ -1426,6 +1426,14 @@ function abiParameterOf(value: EthereumValue): AbiParameter {
   }
 }
 
+/**
+ * A graph-ts chain object as the runtime fills it in: `shaped` sets each field
+ * off the decoded payload, so the constructor a mapping would call is skipped.
+ */
+function blank<T>(Class: abstract new (...args: any[]) => T): T {
+  return Reflect.construct(Class, []) as T;
+}
+
 class EthereumBlock {
   declare hash: Bytes;
   declare parentHash: Bytes;
@@ -1442,6 +1450,43 @@ class EthereumBlock {
   declare totalDifficulty: BigInt_;
   declare size: BigInt_ | null;
   declare baseFeePerGas: BigInt_ | null;
+
+  constructor(
+    hash: Bytes,
+    parentHash: Bytes,
+    unclesHash: Bytes,
+    author: Address,
+    stateRoot: Bytes,
+    transactionsRoot: Bytes,
+    receiptsRoot: Bytes,
+    number: BigInt_,
+    gasUsed: BigInt_,
+    gasLimit: BigInt_,
+    timestamp: BigInt_,
+    difficulty: BigInt_,
+    totalDifficulty: BigInt_,
+    size: BigInt_ | null,
+    baseFeePerGas: BigInt_ | null,
+  ) {
+    if (arguments.length === 0) return;
+    Object.assign(this, {
+      hash,
+      parentHash,
+      unclesHash,
+      author,
+      stateRoot,
+      transactionsRoot,
+      receiptsRoot,
+      number,
+      gasUsed,
+      gasLimit,
+      timestamp,
+      difficulty,
+      totalDifficulty,
+      size,
+      baseFeePerGas,
+    });
+  }
 }
 
 class EthereumTransaction {
@@ -1454,6 +1499,21 @@ class EthereumTransaction {
   declare gasPrice: BigInt_;
   declare input: Bytes;
   declare nonce: BigInt_;
+
+  constructor(
+    hash: Bytes,
+    index: BigInt_,
+    from: Address,
+    to: Address | null,
+    value: BigInt_,
+    gasLimit: BigInt_,
+    gasPrice: BigInt_,
+    input: Bytes,
+    nonce: BigInt_,
+  ) {
+    if (arguments.length === 0) return;
+    Object.assign(this, { hash, index, from, to, value, gasLimit, gasPrice, input, nonce });
+  }
 }
 
 class EthereumEventParam {
@@ -1497,6 +1557,35 @@ class EthereumTransactionReceipt {
   declare status: BigInt_;
   declare root: Bytes;
   declare logsBloom: Bytes;
+
+  constructor(
+    transactionHash: Bytes,
+    transactionIndex: BigInt_,
+    blockHash: Bytes,
+    blockNumber: BigInt_,
+    cumulativeGasUsed: BigInt_,
+    gasUsed: BigInt_,
+    contractAddress: Address,
+    logs: EthereumLog[],
+    status: BigInt_,
+    root: Bytes,
+    logsBloom: Bytes,
+  ) {
+    if (arguments.length === 0) return;
+    Object.assign(this, {
+      transactionHash,
+      transactionIndex,
+      blockHash,
+      blockNumber,
+      cumulativeGasUsed,
+      gasUsed,
+      contractAddress,
+      logs,
+      status,
+      root,
+      logsBloom,
+    });
+  }
 }
 
 class EthereumCall {
@@ -1680,50 +1769,110 @@ function graphValue(type: string): Converter<unknown> {
  * convert the block, the transaction and every parameter — and envio runs each
  * handler twice over the same payload, so anything eager is paid twice.
  */
+const FROM_ENVIO = Symbol("envio.subgraph.event");
+
+/** What a mapping-built event is, for anything that names where it came from. */
+const BUILT_EVENT: EventKind = { location: "an ethereum.Event the mapping built", inputs: [], hasReceipt: false };
+
+/** The event the runtime hands a handler, as the class the handler declares. */
+export function makeEvent(raw: unknown, kind: EventKind, EventClass: Function): EthereumEvent {
+  return Reflect.construct(EthereumEvent, [FROM_ENVIO, raw, kind], EventClass) as EthereumEvent;
+}
+
 class EthereumEvent {
+  private _raw: any = null;
+  private _kind: EventKind = BUILT_EVENT;
   private _address: Address | undefined;
   private _logIndex: BigInt_ | undefined;
+  private _transactionLogIndex: BigInt_ | undefined;
+  private _logType: string | null = null;
   private _block: EthereumBlock | undefined;
   private _transaction: EthereumTransaction | undefined;
-  private _receipt: EthereumTransactionReceipt | undefined;
+  private _receipt: EthereumTransactionReceipt | null | undefined;
   private _parameters: EthereumEventParam[] | undefined;
   private _params: Record<string, unknown> | undefined;
 
+  /**
+   * graph-ts' own, for a mapping that builds an event — Notional synthesizes
+   * one in a block handler. The runtime goes through `makeEvent` instead.
+   */
   constructor(
-    private readonly _raw: any,
-    private readonly _kind: EventKind,
-  ) {}
+    address: Address,
+    logIndex: BigInt_,
+    transactionLogIndex: BigInt_,
+    logType: string | null,
+    block: EthereumBlock,
+    transaction: EthereumTransaction,
+    parameters: EthereumEventParam[],
+    receipt: EthereumTransactionReceipt | null,
+  ) {
+    if ((address as unknown) === FROM_ENVIO) {
+      this._raw = logIndex;
+      this._kind = transactionLogIndex as unknown as EventKind;
+      return;
+    }
+    this._address = address;
+    this._logIndex = logIndex;
+    this._transactionLogIndex = transactionLogIndex;
+    this._logType = logType;
+    this._block = block;
+    this._transaction = transaction;
+    this._parameters = parameters ?? [];
+    this._receipt = receipt ?? null;
+  }
 
   get address(): Address {
     return (this._address ??= Address.fromString(this._raw.srcAddress));
   }
+  set address(value: Address) {
+    this._address = value;
+  }
   get logIndex(): BigInt_ {
     return (this._logIndex ??= BigInt_.fromI32(this._raw.logIndex));
   }
+  set logIndex(value: BigInt_) {
+    this._logIndex = value;
+  }
   get block(): EthereumBlock {
-    return (this._block ??= shaped(new EthereumBlock(), BLOCK_SHAPE, this._raw.block));
+    return (this._block ??= shaped(blank(EthereumBlock), BLOCK_SHAPE, this._raw.block));
+  }
+  set block(value: EthereumBlock) {
+    this._block = value;
   }
   get transaction(): EthereumTransaction {
-    return (this._transaction ??= shaped(new EthereumTransaction(), TRANSACTION_SHAPE, this._raw.transaction));
+    return (this._transaction ??= shaped(blank(EthereumTransaction), TRANSACTION_SHAPE, this._raw.transaction));
+  }
+  set transaction(value: EthereumTransaction) {
+    this._transaction = value;
   }
   get receipt(): EthereumTransactionReceipt | null {
+    if (this._receipt !== undefined) return this._receipt;
     if (!this._kind.hasReceipt) return null;
-    if (this._receipt) return this._receipt;
-    const receipt = shaped(new EthereumTransactionReceipt(), RECEIPT_SHAPE, this._raw.transaction);
+    const receipt = shaped(blank(EthereumTransactionReceipt), RECEIPT_SHAPE, this._raw.transaction);
     receipt.blockHash = this.block.hash;
     receipt.blockNumber = this.block.number;
     refusedGetter(receipt, "logs", "event.receipt.logs", this._kind.location);
     return (this._receipt = receipt);
   }
+  set receipt(value: EthereumTransactionReceipt | null) {
+    this._receipt = value;
+  }
   // graph-node reads it off the log, where no Ethereum client sets it.
   get logType(): string | null {
-    return null;
+    return this._logType;
+  }
+  set logType(value: string | null) {
+    this._logType = value;
   }
   get parameters(): EthereumEventParam[] {
     return (this._parameters ??= this._kind.inputs.map(
       (input) =>
         new EthereumEventParam(input.name, ethereumConverter(input.type)(this._raw.params?.[input.key])),
     ));
+  }
+  set parameters(value: EthereumEventParam[]) {
+    this._parameters = value;
+    this._params = undefined;
   }
   /**
    * By name, for a handler not typed with a generated class — a generated
@@ -1733,13 +1882,21 @@ class EthereumEvent {
   get params(): Record<string, unknown> {
     if (this._params) return this._params;
     const params: Record<string, unknown> = {};
+    if (this._raw === null) {
+      for (const parameter of this.parameters) params[parameter.name] = parameter.value;
+      return (this._params = params);
+    }
     this._kind.inputs.forEach((input, index) => {
       params[input.name || `param${index}`] = graphConverter(input.type)(this._raw.params?.[input.key]);
     });
     return (this._params = params);
   }
-  get transactionLogIndex(): never {
+  get transactionLogIndex(): BigInt_ {
+    if (this._transactionLogIndex !== undefined) return this._transactionLogIndex;
     throw unsupported("event.transactionLogIndex", this._kind.location);
+  }
+  set transactionLogIndex(value: BigInt_) {
+    this._transactionLogIndex = value;
   }
 }
 
@@ -2101,7 +2258,7 @@ export const ens = strictNamespace("ens", ensImpl);
 
 /** graph-ts hands a block handler an `ethereum.Block`; only `number` is free. */
 export function makeBlockHandlerBlock(blockNumber: number, location: string): EthereumBlock {
-  const block = new EthereumBlock();
+  const block = blank(EthereumBlock);
   block.number = BigInt_.fromI32(blockNumber);
   Object.defineProperty(block, "timestamp", {
     enumerable: true,

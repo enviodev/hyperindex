@@ -17,10 +17,29 @@
 import type * as GraphTs from "./graph-ts-types/index.js";
 import type * as Shim from "./graph-ts.ts";
 
-/** A class's statics: a mapped type drops the construct signature. */
+/** A class's statics: a mapped type drops the construct signature (see `Constructs`). */
 type Statics<T> = { [K in keyof T as K extends "prototype" ? never : K]: T[K] };
 
 type Agrees<Real, Ours, Path extends string> = [Ours] extends [Real] ? never : Path;
+
+/**
+ * A public constructor the shim's has to accept, named `Path()` — a mapping
+ * can build an `ethereum.Event` itself. A protected one isn't a construct
+ * signature, so it is never compared.
+ */
+type Constructs<Real, Ours, Path extends string> = [Real] extends [abstract new (...args: infer Args) => any]
+  ? [Ours] extends [abstract new (...args: infer OursArgs) => any]
+    ? // By arity: a shorter parameter list is assignable to a longer one, and
+      // would take the arguments a mapping passes without a word. The types
+      // themselves can't be compared this way round — graph-ts' `BigInt` is a
+      // `Uint8Array`, the shim's isn't — and the members already are.
+      number extends OursArgs["length"]
+      ? never
+      : OursArgs["length"] extends Args["length"]
+        ? never
+        : `${Path}()`
+    : `${Path}()`
+  : never;
 
 /**
  * Deep enough to reach `ethereum.Value.fromAddress`, and no deeper: a member
@@ -38,6 +57,7 @@ type Member<Real, Ours, Path extends string, Depth extends unknown[]> = Depth["l
       [Real] extends [{ prototype: infer RealInstance }]
       ? [Ours] extends [{ prototype: infer OursInstance }]
         ?
+            | Constructs<Real, Ours, Path>
             | Gaps<Statics<Real>, Statics<Ours>, `${Path}.`, [...Depth, unknown]>
             | Gaps<RealInstance, OursInstance, `${Path}#`, [...Depth, unknown]>
         : Path
@@ -73,7 +93,14 @@ type KnownGap =
   // graph-ts declares `CallResult._value` private, which no other declaration
   // can match; the shim's is structurally the same.
   | "ethereum.CallResult.fromValue"
-  | "ethereum.SmartContract#tryCall";
+  | "ethereum.SmartContract#tryCall"
+  // Constructors only the shim itself calls. graph-ts' BigInt inherits
+  // Uint8Array's and is built through its statics; the others are declared
+  // without one, and a mapping gets each from a call, a parse or `fromValue`.
+  | "BigInt()"
+  | "ethereum.CallResult()"
+  | "Result()"
+  | "JSONValue()";
 
 /** A known gap no longer found, whose entry should go. */
 type Closed<Gap> = Gap extends unknown ? ([Extract<Found, Gap>] extends [never] ? Gap : never) : never;
