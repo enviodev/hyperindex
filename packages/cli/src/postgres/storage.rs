@@ -38,8 +38,8 @@ use crate::storage::types::{
     ReorgCheckpoint, ResumedChain, StoredChain, StoredConfig,
 };
 use crate::storage::{
-    self as composite, AddChain, Backend, Batch, CacheDump, CacheFile, EntityWrite, Failure, Gate,
-    Initialize, Op, PgEntityWrite, Resume, Resumed, RollbackWrite, Rows, StoredConfigRead,
+    self as composite, AddChain, Backend, Batch, CacheDump, CacheFile, EntityWrite, Failure,
+    Handoff, Initialize, Op, PgEntityWrite, Resume, Resumed, RollbackWrite, Rows, StoredConfigRead,
     WriteError,
 };
 
@@ -898,12 +898,12 @@ impl Storage {
     /// The caches stay outside: they are never rolled back, and keeping them
     /// out keeps their writes off the connection the batch holds.
     ///
-    /// Nothing commits unless every statement succeeded and the gate, if there
-    /// is one, says the other store wrote its half.
+    /// Nothing commits unless every statement succeeded and the handoff says
+    /// to.
     pub async fn write_batch(
         &self,
         batch: Batch,
-        gate: Option<Gate>,
+        mut handoff: Handoff,
     ) -> std::result::Result<(), WriteError> {
         let Batch {
             rollback,
@@ -936,10 +936,8 @@ impl Storage {
                     &checkpoints,
                 )
                 .await?;
-                if let Some(gate) = gate {
-                    if !gate.await {
-                        return Err(WriteError::Gated);
-                    }
+                if !handoff.ready_to_commit().await {
+                    return Err(WriteError::Gated);
                 }
                 Ok(())
             }
@@ -1436,9 +1434,9 @@ impl Backend for Storage {
     fn write_batch(
         &self,
         batch: Batch,
-        gate: Option<Gate>,
+        handoff: Handoff,
     ) -> BoxFuture<'_, std::result::Result<(), WriteError>> {
-        Box::pin(Storage::write_batch(self, batch, gate))
+        Box::pin(Storage::write_batch(self, batch, handoff))
     }
 
     fn close(&self) {

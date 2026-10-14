@@ -18,8 +18,9 @@ mod js;
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use futures_util::future::{join_all, BoxFuture};
@@ -175,13 +176,34 @@ impl Failure {
     }
 }
 
-/// Settles once another store has written its half of a batch, saying whether
-/// it did. A store handed one commits only once it says yes.
+/// Settles with whether a store may commit what it wrote.
 pub type Gate = Pin<Box<dyn Future<Output = bool> + Send>>;
+
+/// How a store's half of a batch meets the other store's: it says once its
+/// rows have landed, and commits only when the other side says so.
+#[derive(Default)]
+pub struct Handoff {
+    pub landed: Option<tokio::sync::oneshot::Sender<bool>>,
+    pub commit: Option<Gate>,
+}
+
+impl Handoff {
+    /// A store that fails before calling this drops `landed` unsent, which
+    /// the other side reads as a no.
+    pub async fn ready_to_commit(&mut self) -> bool {
+        if let Some(landed) = self.landed.take() {
+            let _ = landed.send(true);
+        }
+        match self.commit.take() {
+            Some(commit) => commit.await,
+            None => true,
+        }
+    }
+}
 
 pub enum WriteError {
     Failed(Failure),
-    /// The gate said no, so nothing here was committed.
+    /// Told not to commit, so nothing here was.
     Gated,
 }
 
@@ -293,12 +315,10 @@ pub trait Backend: Send + Sync {
     fn upload_effect_cache<'a>(&'a self, files: &'a [CacheFile]) -> Op<'a, ()>;
     fn dump_effect_cache<'a>(&'a self, files: &'a [CacheDump]) -> Op<'a, ()>;
     fn reset(&self) -> Op<'_, ()>;
-    /// Writes a batch, committing it only once `gate` — when there is one —
-    /// says the other store has its half.
     fn write_batch(
         &self,
         batch: Batch,
-        gate: Option<Gate>,
+        handoff: Handoff,
     ) -> BoxFuture<'_, std::result::Result<(), WriteError>>;
     fn close(&self);
 }
@@ -485,7 +505,10 @@ impl Storage {
     }
 
     pub async fn prune_checkpoints(&self, bounds: &Bounds) -> Result<()> {
-        self.primary().prune_checkpoints(bounds).await
+        join_all(self.all().map(|backend| backend.prune_checkpoints(bounds)))
+            .await
+            .into_iter()
+            .collect()
     }
 
     pub async fn prune_history(&self, table: &Table, bounds: &Bounds) -> Result<()> {
@@ -544,33 +567,53 @@ impl Storage {
         let primary = self.primary();
         let Some(follower) = self.follower() else {
             let started = Instant::now();
-            return match primary.write_batch(batch, None).await {
+            return match primary.write_batch(batch, Handoff::default()).await {
                 Ok(()) => Ok(vec![(primary.name(), started.elapsed().as_secs_f64())]),
                 Err(WriteError::Failed(failure)) => Err(failure),
-                Err(WriteError::Gated) => unreachable!("an ungated write is never gated"),
+                Err(WriteError::Gated) => unreachable!("a write with no gate is never gated"),
             };
         };
         let (primary_batch, follower_batch) = split(batch);
-        let (written, said) = tokio::sync::oneshot::channel();
+        // The store of record commits once the follower's rows have landed,
+        // and the follower makes them readable once the store of record has
+        // committed: neither holds a batch the other refused, and nothing
+        // reads one before it is the store of record's.
+        let (landed, follower_landed) = tokio::sync::oneshot::channel();
+        let (committed, primary_committed) = tokio::sync::oneshot::channel();
+        let (primary_gate, primary_waited) = waited_on(follower_landed);
+        let (follower_gate, follower_waited) = waited_on(primary_committed);
         let started = Instant::now();
-        let follower_write = async move {
-            let outcome = follower.write_batch(follower_batch, None).await;
-            let seconds = started.elapsed().as_secs_f64();
-            let _ = written.send(outcome.is_ok());
-            outcome.map(|()| seconds)
+        let own_seconds = |waited: &AtomicU64| {
+            (started.elapsed() - Duration::from_nanos(waited.load(Ordering::Relaxed))).as_secs_f64()
         };
-        // A follower that never answers — its future dropped — has not
-        // written, so the store of record rolls back.
-        let gate: Gate = Box::pin(async move { said.await.unwrap_or(false) });
-        let primary_write = async {
-            primary
-                .write_batch(primary_batch, Some(gate))
+        let follower_write = async {
+            follower
+                .write_batch(
+                    follower_batch,
+                    Handoff {
+                        landed: Some(landed),
+                        commit: Some(follower_gate),
+                    },
+                )
                 .await
-                .map(|()| started.elapsed().as_secs_f64())
+                .map(|()| own_seconds(&follower_waited))
+        };
+        let primary_write = async {
+            let outcome = primary
+                .write_batch(
+                    primary_batch,
+                    Handoff {
+                        landed: None,
+                        commit: Some(primary_gate),
+                    },
+                )
+                .await;
+            let _ = committed.send(outcome.is_ok());
+            outcome.map(|()| own_seconds(&primary_waited))
         };
         let (follower_outcome, primary_outcome) = tokio::join!(follower_write, primary_write);
-        // The follower's own failure is what a refused gate means, so it is
-        // the one reported.
+        // A store told not to commit was told so because the other failed,
+        // and that failure is the one reported.
         match (follower_outcome, primary_outcome) {
             (Err(WriteError::Failed(follower)), Err(WriteError::Failed(primary))) => {
                 Err(Failure::new(
@@ -608,6 +651,23 @@ impl Storage {
 /// Splits a batch between the store of record and its follower. Everything
 /// about the chains goes to both; an entity's rows go to the stores it lives
 /// in, and the indexer's own tables to the store of record alone.
+/// A gate on the other store's word, and how long a store spent waiting on
+/// it: that time is the other store's, not the waiting one's. No word, its
+/// sender dropped, is a no.
+fn waited_on(word: tokio::sync::oneshot::Receiver<bool>) -> (Gate, Arc<AtomicU64>) {
+    let waited = Arc::new(AtomicU64::new(0));
+    let gate: Gate = Box::pin({
+        let waited = waited.clone();
+        async move {
+            let started = Instant::now();
+            let go = word.await.unwrap_or(false);
+            waited.store(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            go
+        }
+    });
+    (gate, waited)
+}
+
 fn split(batch: Batch) -> (Batch, Batch) {
     let Batch {
         rollback,

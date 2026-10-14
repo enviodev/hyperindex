@@ -284,7 +284,13 @@ impl Client {
     async fn post_rows(&self, query: &str, body: Bytes) -> std::result::Result<(), InsertFailure> {
         // Synchronous whatever the server's profile says: an asynchronous
         // insert can be acknowledged before its rows are written, and a write
-        // is only committed once every row it covers has landed.
+        // is only committed once every row it covers has landed. A token of its
+        // own, so it is never deduplicated: a batch replayed after a resume
+        // trimmed it is the same bytes as before, and an engine that
+        // deduplicates (ClickHouse Cloud's does by default) would drop it while
+        // answering success. The setting that turns deduplication off is named
+        // differently across server versions; the token works on all of them.
+        let token = insert_token();
         let request = self
             .http
             .post(&self.url)
@@ -292,6 +298,7 @@ impl Client {
                 ("query", query),
                 ("database", &self.database),
                 ("async_insert", "0"),
+                ("insert_deduplication_token", &token),
             ])
             // Base64 of the credentials rather than the X-ClickHouse-User/Key
             // headers: a header value may only carry visible ASCII, so a password
@@ -396,6 +403,22 @@ const NEVER_ERROR_CODES: &[u32] = &[
 /// thing a halved batch meets differently, whether it ran out mid-upload or
 /// waiting on the server to finish. Anything else that failed after the body
 /// went out leaves the same unknown as 319.
+/// Unique to this insert among every process writing to the database.
+fn insert_token() -> String {
+    static STARTED: std::sync::OnceLock<u128> = std::sync::OnceLock::new();
+    static SENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let started = STARTED.get_or_init(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos())
+    });
+    format!(
+        "envio-{}-{started}-{}",
+        std::process::id(),
+        SENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
 fn retry_for_send_error(err: &reqwest::Error) -> Retry {
     if err.is_connect() {
         Retry::SameRows

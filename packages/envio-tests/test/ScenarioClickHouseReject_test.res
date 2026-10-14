@@ -39,6 +39,11 @@ type Bounded @storage(clickhouse: {}) {
   id: ID!
   amount: BigInt! @config(precision: 20)
 }
+
+type Note @storage(clickhouse: {}) {
+  id: ID!
+  text: String!
+}
 `,
   ~unsupported=[
     {
@@ -50,7 +55,13 @@ type Bounded @storage(clickhouse: {}) {
 
 type bounded = {id: string, amount: bigint}
 type boundedOps = {set: bounded => unit}
-type handlerContext = {@as("Bounded") bounded: boundedOps, @as("PgBounded") pgBounded: boundedOps}
+type note = {id: string, text: string}
+type noteOps = {set: note => unit}
+type handlerContext = {
+  @as("Bounded") bounded: boundedOps,
+  @as("PgBounded") pgBounded: boundedOps,
+  @as("Note") note: noteOps,
+}
 
 describe("ClickHouse refuses a value its column cannot hold", () => {
   // Swallowed so it doesn't take the test worker down, and kept so the test can
@@ -124,6 +135,45 @@ describe("Both stores refuse their halves of one batch", () => {
         reason->Option.mapOr(false, reason => reason->String.includes("out of range")),
         reason->Option.mapOr(false, reason => reason->String.includes("numeric field overflow")),
       )).toEqual((true, true))
+    },
+  )
+})
+
+describe("A batch Postgres refuses", () => {
+  let refusal = Scenario.captureRefusal()
+  scenario->Scenario.it(
+    "is never readable in the ClickHouse following it",
+    ~sources=[{chain: 1}],
+    ~onError=refusal.onError,
+    async (~t, ~indexer as _, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(10)
+
+      source.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 5,
+            logIndex: 0,
+            handler: async args => {
+              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+              context.note.set({id: "landed", text: "only ClickHouse takes it"})
+              context.pgBounded.set({id: "over", amount: 100000000000000000000n})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=10,
+      )
+      let reason = await refusal.awaitRefusalReason()
+
+      let database = TestClickHouse.currentDatabase()
+      let readable = await TestClickHouse.query(
+        `SELECT count() FROM \`${database}\`.\`Note\` FORMAT TabSeparated`,
+      )
+
+      t.expect((
+        reason->Option.mapOr(false, reason => reason->String.includes("numeric field overflow")),
+        readable->String.trim,
+      )).toEqual((true, "0"))
     },
   )
 })

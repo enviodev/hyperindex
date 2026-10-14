@@ -240,7 +240,7 @@ pub fn create_history_table(
     let columns = entity.history_columns(chain_id_mode)?;
     let by_field_name = entity.column_by_field_name();
 
-    let order_by = match &entity.order_by {
+    let (order_by, leads_with_id) = match &entity.order_by {
         Some(field_names) => {
             let mut resolved = Vec::with_capacity(field_names.len());
             for field_name in field_names {
@@ -252,9 +252,16 @@ pub fn create_history_table(
                     ),
                 }
             }
-            format!("{}, {}", resolved.join(", "), quoted(CHECKPOINT_ID_COLUMN))
+            let leads_with_id = resolved.first() == Some(&quoted(ID_COLUMN));
+            (
+                format!("{}, {}", resolved.join(", "), quoted(CHECKPOINT_ID_COLUMN)),
+                leads_with_id,
+            )
         }
-        None => format!("{}, {}", quoted(ID_COLUMN), quoted(CHECKPOINT_ID_COLUMN)),
+        None => (
+            format!("{}, {}", quoted(ID_COLUMN), quoted(CHECKPOINT_ID_COLUMN)),
+            true,
+        ),
     };
 
     let renamed = entity.renamed_column_by_field_name();
@@ -277,7 +284,21 @@ pub fn create_history_table(
         None => String::new(),
     };
 
-    let mut indexes = String::new();
+    // Older parts hold only older checkpoints, so a range above one (a
+    // rollback's, a resume's trim) skips them instead of reading every part.
+    let mut indexes = format!(
+        ",\n  INDEX `envio_checkpoint_minmax` {} TYPE minmax GRANULARITY 1",
+        quoted(CHECKPOINT_ID_COLUMN)
+    );
+    // Every load names ids, which a sort led by something else can't narrow.
+    if !leads_with_id {
+        write!(
+            indexes,
+            ",\n  INDEX `envio_id_bloom_filter` {} TYPE bloom_filter GRANULARITY 1",
+            quoted(ID_COLUMN)
+        )
+        .expect("writing to a String cannot fail");
+    }
     for index in &entity.skipping_indexes {
         let granularity = match index.granularity {
             Some(granularity) => format!(" GRANULARITY {granularity}"),
@@ -677,7 +698,8 @@ mod tests {
              `id` String,\n  \
              `balance` Int32,\n  \
              `envio_checkpoint_id` UInt64,\n  \
-             `envio_change` Enum8('SET' = 1, 'DELETE' = 2)\n\
+             `envio_change` Enum8('SET' = 1, 'DELETE' = 2),\n  \
+             INDEX `envio_checkpoint_minmax` `envio_checkpoint_id` TYPE minmax GRANULARITY 1\n\
              )\n\
              ENGINE = MergeTree()\n\
              ORDER BY (`id`, `envio_checkpoint_id`)"
@@ -692,7 +714,8 @@ mod tests {
             "CREATE TABLE IF NOT EXISTS `test_db`.`envio_history_Account` ON CLUSTER '{cluster}' (\n  \
              `id` String,\n  \
              `envio_checkpoint_id` UInt64,\n  \
-             `envio_change` Enum8('SET' = 1, 'DELETE' = 2)\n\
+             `envio_change` Enum8('SET' = 1, 'DELETE' = 2),\n  \
+             INDEX `envio_checkpoint_minmax` `envio_checkpoint_id` TYPE minmax GRANULARITY 1\n\
              )\n\
              ENGINE = ReplicatedMergeTree\n\
              ORDER BY (`id`, `envio_checkpoint_id`)\n\
@@ -729,6 +752,8 @@ mod tests {
              `created_at` DateTime64(3, 'UTC'),\n  \
              `envio_checkpoint_id` UInt64,\n  \
              `envio_change` Enum8('SET' = 1, 'DELETE' = 2),\n  \
+             INDEX `envio_checkpoint_minmax` `envio_checkpoint_id` TYPE minmax GRANULARITY 1,\n  \
+             INDEX `envio_id_bloom_filter` `id` TYPE bloom_filter GRANULARITY 1,\n  \
              INDEX `idx_created` `created_at` TYPE minmax GRANULARITY 4\n\
              )\n\
              ENGINE = MergeTree()\n\
@@ -794,7 +819,8 @@ mod tests {
              `day` Int32,\n  \
              `created_at` DateTime64(3, 'UTC'),\n  \
              `envio_checkpoint_id` UInt64,\n  \
-             `envio_change` Enum8('SET' = 1, 'DELETE' = 2)\n\
+             `envio_change` Enum8('SET' = 1, 'DELETE' = 2),\n  \
+             INDEX `envio_checkpoint_minmax` `envio_checkpoint_id` TYPE minmax GRANULARITY 1\n\
              )\n\
              ENGINE = MergeTree()\n\
              PARTITION BY day\n\

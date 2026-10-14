@@ -97,7 +97,8 @@ impl Live {
     }
 
     async fn drop_database(&self) {
-        self.storage.reset().await.unwrap();
+        self.execute(format!("DROP DATABASE IF EXISTS `{}` SYNC", self.database))
+            .await;
     }
 
     async fn execute(&self, statement: String) -> String {
@@ -258,7 +259,11 @@ fn batch(
 }
 
 async fn write(live: &Live, batch: Batch) {
-    if let Err(error) = live.storage.write_batch(batch, None).await {
+    if let Err(error) = live
+        .storage
+        .write_batch(batch, crate::storage::Handoff::default())
+        .await
+    {
         match error {
             crate::storage::WriteError::Failed(failure) => {
                 panic!("{}: {:#}", failure.context, failure.error)
@@ -494,6 +499,158 @@ async fn a_load_reads_each_entitys_latest_row() {
             vec!["id".to_string(), "owner".to_string(), "balance".to_string()]
         )
     );
+}
+
+/// Raw events are appended with the batch's other rows, so an interrupted
+/// write leaves some past the progress its chain committed, which the batch's
+/// replay would write a second time.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_resume_trims_raw_events_past_the_committed_progress() {
+    let live = Live::new(true);
+    let account = live.account();
+    let raw_events = live.table(ClickHouseTableInput {
+        kind: ClickHouseTableKind::RawEvents,
+        history_table: None,
+        ..entity_input(
+            "raw_events",
+            vec![
+                column("chain_id", "ChainId"),
+                column("block_number", "Int32"),
+                column("log_index", "Int32"),
+            ],
+        )
+    });
+    initialize(&live, vec![account.clone(), raw_events], vec![chain(1)]).await;
+    write(
+        &live,
+        batch(
+            &account,
+            &[("a", Some(("alice", "1")), 1)],
+            &[(1, 1, 10)],
+            (1, 1),
+        ),
+    )
+    .await;
+    live.execute(format!(
+        "INSERT INTO `{}`.`raw_events` VALUES (1, 10, 0), (1, 20, 0)",
+        live.database
+    ))
+    .await;
+
+    live.storage
+        .resume(&Resume {
+            sequence: Sequence::SharedAcrossChains,
+            tables: vec![account],
+            chain_ids: vec![1],
+            committed: None,
+        })
+        .await
+        .unwrap();
+    let left = live
+        .execute(format!(
+            "SELECT groupArray(block_number) FROM `{}`.`raw_events`",
+            live.database
+        ))
+        .await;
+    live.drop_database().await;
+    assert_eq!(left, "[10]");
+}
+
+/// Checkpoints below the safe one can no longer be rolled back to, and are
+/// pruned as Postgres prunes them, or the table grows with every block a chain
+/// indexes at its head.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn checkpoints_below_the_safe_one_are_pruned() {
+    let live = Live::new(true);
+    let account = live.account();
+    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
+    for (checkpoint, block) in [(1, 10), (2, 20), (3, 30)] {
+        write(
+            &live,
+            batch(
+                &account,
+                &[("a", Some(("alice", "1")), checkpoint as u64)],
+                &[(checkpoint, 1, block)],
+                (1, checkpoint),
+            ),
+        )
+        .await;
+    }
+
+    live.storage
+        .prune_checkpoints(&Bounds {
+            sequence: Sequence::SharedAcrossChains,
+            chain_ids: vec![1],
+            checkpoint_ids: vec![3],
+        })
+        .await
+        .unwrap();
+    let left = live
+        .execute(format!(
+            "SELECT groupArray(id) FROM (SELECT id FROM `{}`.envio_checkpoints ORDER BY id)",
+            live.database
+        ))
+        .await;
+    live.drop_database().await;
+    assert_eq!(left, "[3]");
+}
+
+/// A reset empties the indexer's database, so it refuses one that also holds
+/// someone else's tables, as initializing does.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_reset_leaves_a_database_with_someone_elses_tables_alone() {
+    let live = Live::new(true);
+    live.execute(format!("CREATE DATABASE `{}`", live.database))
+        .await;
+    live.execute(format!(
+        "CREATE TABLE `{}`.`orders` (id UInt64) ENGINE = MergeTree ORDER BY id",
+        live.database
+    ))
+    .await;
+
+    let refused = live.storage.reset().await.is_err();
+    let orders = live
+        .execute(format!(
+            "SELECT count() FROM system.tables WHERE database = '{}' AND name = 'orders'",
+            live.database
+        ))
+        .await;
+    live.drop_database().await;
+    assert_eq!((refused, orders), (true, "1".to_string()));
+}
+
+/// A batch replayed after a resume trimmed it lands byte for byte as before,
+/// which an engine that deduplicates inserts (ClickHouse Cloud's does) would
+/// drop while reporting success.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_replayed_insert_lands_where_the_engine_deduplicates() {
+    let live = Live::new(true);
+    let account = live.account();
+    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
+    live.execute(format!(
+        "ALTER TABLE `{}`.`envio_history_Account` MODIFY SETTING \
+         non_replicated_deduplication_window = 100",
+        live.database
+    ))
+    .await;
+    let replayed = || {
+        batch(
+            &account,
+            &[("a", Some(("alice", "10")), 1)],
+            &[(1, 1, 10)],
+            (1, 1),
+        )
+    };
+    write(&live, replayed()).await;
+    write(&live, replayed()).await;
+
+    let history = live.count("envio_history_Account").await;
+    live.drop_database().await;
+    assert_eq!(history, "2");
 }
 
 /// A write that never got to its chains' row is invisible, and a resume

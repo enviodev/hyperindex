@@ -52,9 +52,29 @@ pub fn above(
     chain_column: Option<&str>,
     checkpoint_column: &str,
 ) -> Result<String> {
+    bounded(bounds, chain_column, checkpoint_column, ">")
+}
+
+/// The rows a bound leaves below it.
+pub fn below(
+    bounds: &Bounds,
+    chain_column: Option<&str>,
+    checkpoint_column: &str,
+) -> Result<String> {
+    bounded(bounds, chain_column, checkpoint_column, "<")
+}
+
+fn bounded(
+    bounds: &Bounds,
+    chain_column: Option<&str>,
+    checkpoint_column: &str,
+    comparison: &str,
+) -> Result<String> {
     let checkpoint = quoted(checkpoint_column);
     match bounds.sequence {
-        Sequence::SharedAcrossChains => Ok(format!("{checkpoint} > {}", bounds.shared_id())),
+        Sequence::SharedAcrossChains => {
+            Ok(format!("{checkpoint} {comparison} {}", bounds.shared_id()))
+        }
         Sequence::PerChain => {
             let Some(chain_column) = chain_column else {
                 bail!(
@@ -71,7 +91,9 @@ pub fn above(
                 bounds
                     .by_chain()
                     .map(|(chain_id, checkpoint_id)| {
-                        format!("({chain} = {chain_id} AND {checkpoint} > {checkpoint_id})")
+                        format!(
+                            "({chain} = {chain_id} AND {checkpoint} {comparison} {checkpoint_id})"
+                        )
                     })
                     .collect::<Vec<_>>()
                     .join(" OR ")

@@ -14,6 +14,7 @@ pub const INFO_TABLE: &str = "envio_info";
 pub const CONTRACTS_TABLE: &str = "envio_contracts";
 pub const ADDRESSES_TABLE: &str = "envio_addresses";
 pub const CHECKPOINTS_TABLE: &str = "envio_checkpoints";
+pub const RAW_EVENTS_TABLE: &str = "raw_events";
 
 /// How checkpoint ids are handed out. Under one shared counter a row's id is
 /// comparable with any other chain's, so a bound is a single id; with a counter

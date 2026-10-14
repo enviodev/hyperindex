@@ -30,11 +30,11 @@ use crate::storage::types::{
     Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Progress,
     ProgressDiff, ReorgCheckpoint, ResumedChain, Sequence, StoredChain, StoredConfig,
     ADDRESSES_TABLE, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN,
-    CONFIG_REGISTRATION_BLOCK, CONTRACTS_TABLE, DELETE, INFO_TABLE, SET,
+    CONFIG_REGISTRATION_BLOCK, CONTRACTS_TABLE, DELETE, INFO_TABLE, RAW_EVENTS_TABLE, SET,
 };
 use crate::storage::{
-    AddChain, Backend, Batch, CacheDump, CacheFile, Failure, Gate, Initialize, Op, Resume, Resumed,
-    StoredConfigRead, WriteError,
+    AddChain, Backend, Batch, CacheDump, CacheFile, Failure, Handoff, Initialize, Op, Resume,
+    Resumed, StoredConfigRead, WriteError,
 };
 
 pub struct Settings {
@@ -538,7 +538,14 @@ impl Storage {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .collect::<Vec<_>>();
-        if !names.is_empty() && !names.contains(&CHAINS_TABLE) {
+        // An entity's view is named after the entity, so a database the
+        // indexer built is told by its chains' table. One whose setup failed
+        // before that table was created holds only tables named the
+        // indexer's way.
+        let foreign = names
+            .iter()
+            .any(|name| !name.starts_with("envio_") && *name != RAW_EVENTS_TABLE);
+        if foreign && !names.contains(&CHAINS_TABLE) {
             bail!(
                 "Cannot initialize the indexer in ClickHouse database \"{}\" because it holds \
                  tables that aren't the indexer's. Initializing would delete them.\n\nTo resolve \
@@ -669,18 +676,22 @@ impl Storage {
         .await
     }
 
-    /// What the database was built as, if an indexer finished building it.
-    pub async fn record(&self) -> Result<Option<Record>> {
-        let exists = self
+    async fn has_table(&self, name: &str) -> Result<bool> {
+        let count = self
             .client
             .statement(format!(
                 "SELECT count() FROM system.tables WHERE `database` = {} AND `name` = {} \
                  FORMAT TabSeparated",
                 literal(self.database()),
-                literal(INFO_TABLE)
+                literal(name)
             ))
             .await?;
-        if exists.trim() == "0" {
+        Ok(count.trim() != "0")
+    }
+
+    /// What the database was built as, if an indexer finished building it.
+    pub async fn record(&self) -> Result<Option<Record>> {
+        if !self.has_table(INFO_TABLE).await? {
             return Ok(None);
         }
         let body = self
@@ -948,10 +959,13 @@ impl Storage {
     /// write that never committed leaves behind. A table with nothing above it
     /// is left alone: a mutation rewrites parts, and on a clean restart there
     /// is nothing to rewrite.
+    /// `progress` is each driven chain's committed progress block, past which
+    /// its raw events, which carry no checkpoint, were never committed.
     async fn trim_above(
         &self,
         sequence: Sequence,
         frontier: &Frontier,
+        progress: &[(i64, i32)],
         tables: &[Arc<Table>],
     ) -> Result<()> {
         if frontier.is_empty() {
@@ -993,6 +1007,20 @@ impl Storage {
             .collect::<Result<Vec<_>>>()?;
         if self.settings.primary {
             above_by_table.push((ADDRESSES_TABLE.to_string(), shared(CHECKPOINT_ID_COLUMN)?));
+        }
+        if !progress.is_empty() && self.has_table(RAW_EVENTS_TABLE).await? {
+            let past = progress
+                .iter()
+                .map(|(chain_id, block)| {
+                    format!(
+                        "({} = {chain_id} AND {} > {block})",
+                        quoted(CHAIN_ID_COLUMN),
+                        quoted(ddl::BLOCK_NUMBER_COLUMN)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            above_by_table.push((RAW_EVENTS_TABLE.to_string(), format!("({past})")));
         }
         // The checkpoints last: a trim interrupted before them still has the
         // checkpoints saying which rows the next one must remove.
@@ -1098,7 +1126,8 @@ impl Storage {
                 let frontier: Frontier =
                     rows.iter().map(|row| (row.id, row.checkpoint_id)).collect();
                 self.write_chains(rows).await?;
-                self.trim_above(input.sequence, &frontier, &tables).await?;
+                self.trim_above(input.sequence, &frontier, &[], &tables)
+                    .await?;
                 Ok(Resumed {
                     chains: committed.clone(),
                     addresses: rows::lay_out(&[], Vec::new())?,
@@ -1113,7 +1142,13 @@ impl Storage {
                     .into_iter()
                     .filter(|(chain_id, _)| input.chain_ids.contains(chain_id))
                     .collect();
-                self.trim_above(input.sequence, &frontier, &tables).await?;
+                let progress = rows
+                    .iter()
+                    .filter(|row| input.chain_ids.contains(&row.id))
+                    .map(|row| (row.id, row.progress_block))
+                    .collect::<Vec<_>>();
+                self.trim_above(input.sequence, &frontier, &progress, &tables)
+                    .await?;
                 let (addresses, reorg_checkpoints) = futures_util::try_join!(
                     self.read_addresses(false),
                     self.read_reorg_checkpoints(&rows)
@@ -1236,21 +1271,22 @@ impl Storage {
 
     async fn rollback_target_inner(&self, chain_id: i64, block_number: i32) -> Result<Option<i64>> {
         let frontier = self.frontier();
+        // Read from the newest down, in the table's own order, so the scan stops
+        // at the first checkpoint that stands.
         let answer = self
             .client
             .statement(format!(
-                "SELECT max({id}) FROM {} WHERE {chain} = {chain_id} AND `block_number` <= \
-                 {block_number} AND {} FORMAT TabSeparated",
+                "SELECT {id} FROM {} WHERE {chain} = {chain_id} AND `block_number` <= \
+                 {block_number} AND {} ORDER BY {id} DESC LIMIT 1 FORMAT TabSeparated",
                 self.table_ref(CHECKPOINTS_TABLE),
                 self.standing_checkpoints(&frontier),
                 id = quoted(ID_COLUMN),
                 chain = quoted(CHAIN_ID_COLUMN),
             ))
             .await?;
-        // `max` over no rows is 0, and no checkpoint is numbered 0.
-        Ok(match answer.trim().parse::<i64>()? {
-            0 => None,
-            id => Some(id),
+        Ok(match answer.trim() {
+            "" => None,
+            id => Some(id.parse::<i64>()?),
         })
     }
 
@@ -1377,7 +1413,9 @@ impl Storage {
         .await
     }
 
-    async fn write_inner(&self, batch: Batch) -> Result<()> {
+    /// Whether the batch was committed: one landed but not told to commit is
+    /// left above the frontier, unread and trimmed by the next resume.
+    async fn write_inner(&self, batch: Batch, mut handoff: Handoff) -> Result<bool> {
         let Batch {
             rollback,
             progress,
@@ -1478,7 +1516,10 @@ impl Storage {
             try_join_all(rows).await?;
 
             // Every row above has landed, so the chains' rows can make them
-            // readable.
+            // readable once the handoff says to.
+            if !handoff.ready_to_commit().await {
+                return Ok(false);
+            }
             self.change_chains(|chains| {
                 let mut changed = HashSet::new();
                 for update in rollback
@@ -1506,12 +1547,13 @@ impl Storage {
                 changed
             })
             .await
+            .map(|()| true)
         };
 
         let (committed, cached) = tokio::join!(committed, caches);
-        committed?;
+        let committed = committed?;
         cached?;
-        Ok(())
+        Ok(committed)
     }
 }
 
@@ -1604,8 +1646,19 @@ impl Backend for Storage {
 
     /// Nothing to prune: the history is what every read resolves the entities
     /// from, and the checkpoints are what maps it back to blocks.
-    fn prune_checkpoints<'a>(&'a self, _bounds: &'a Bounds) -> Op<'a, ()> {
-        Box::pin(async { Ok(()) })
+    fn prune_checkpoints<'a>(&'a self, bounds: &'a Bounds) -> Op<'a, ()> {
+        Box::pin(async move {
+            // A marker below the bound only names checkpoints below it too.
+            self.client
+                .statement(format!(
+                    "DELETE FROM {}{} WHERE {}",
+                    self.table_ref(CHECKPOINTS_TABLE),
+                    self.topology().on_cluster(),
+                    select::below(bounds, Some(CHAIN_ID_COLUMN), ID_COLUMN)?
+                ))
+                .await?;
+            Ok(())
+        })
     }
 
     fn prune_history<'a>(
@@ -1644,15 +1697,12 @@ impl Backend for Storage {
         Box::pin(self.dump_effect_cache_inner(files))
     }
 
+    /// Empties the database rather than dropping it, so one the operator
+    /// provisioned keeps its engine and grants.
     fn reset(&self) -> Op<'_, ()> {
         Box::pin(async move {
-            let database = quoted(self.database());
-            self.client
-                .statement(format!(
-                    "DROP DATABASE IF EXISTS {database}{} SYNC",
-                    ddl::on_cluster_clause(self.topology().replicated)
-                ))
-                .await?;
+            self.check_for_initialize_inner().await?;
+            self.reset_database(self.topology()).await?;
             *self.chains.lock().unwrap() = Chains::default();
             Ok(())
         })
@@ -1661,12 +1711,17 @@ impl Backend for Storage {
     fn write_batch(
         &self,
         batch: Batch,
-        _gate: Option<Gate>,
+        handoff: Handoff,
     ) -> BoxFuture<'_, std::result::Result<(), WriteError>> {
         Box::pin(async move {
-            self.write_inner(batch).await.map_err(|error| {
-                WriteError::Failed(Failure::new("Failed to write a batch to ClickHouse", error))
-            })
+            match self.write_inner(batch, handoff).await {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(WriteError::Gated),
+                Err(error) => Err(WriteError::Failed(Failure::new(
+                    "Failed to write a batch to ClickHouse",
+                    error,
+                ))),
+            }
         })
     }
 
@@ -1769,6 +1824,32 @@ mod tests {
         );
     }
 
+    /// A setup that failed partway leaves tables of its own behind, possibly
+    /// without the chains' table, and the next one takes them over.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn initializing_takes_over_what_a_failed_setup_left() {
+        let server = MockClickHouse::answering_statements(Arc::new(|statement: &str| {
+            if statement.contains("system.tables") {
+                (
+                    200,
+                    "envio_history_Account\nenvio_checkpoints\nraw_events".to_string(),
+                )
+            } else {
+                (200, String::new())
+            }
+        }))
+        .await;
+        let storage = storage_at(&server, true);
+
+        assert_eq!(
+            storage
+                .check_for_initialize()
+                .await
+                .map_err(|error| format!("{error:#}")),
+            Ok(())
+        );
+    }
+
     /// Metadata is written on a throttle of its own, alongside the
     /// finalization that marks a chain ready, and each rewrites the chain's
     /// whole row. Started from the same row, the later would undo the
@@ -1862,7 +1943,7 @@ mod tests {
                     },
                     effect_caches: Vec::new(),
                 },
-                None,
+                Handoff::default(),
             )
             .await
             .map_err(|error| match error {
