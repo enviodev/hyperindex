@@ -140,6 +140,66 @@ fn number(text: &str) -> Result<&str> {
 /// column that keeps its numbers as text.
 const TEXT_NUMBER_SCALE: u32 = 30;
 
+/// The widest scale a Decimal256 holds.
+const MAX_DECIMAL_SCALE: u32 = 76;
+
+/// An integer as the canonical text a BigInt is kept as, which is what lets
+/// two of them be compared by their text.
+fn integer(text: &str) -> Result<String> {
+    let (negative, digits) = match text.strip_prefix('-') {
+        Some(digits) => (true, digits),
+        None => (false, text),
+    };
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        bail!("`{text}` is not an integer to filter by");
+    }
+    Ok(match digits.trim_start_matches('0') {
+        "" => "0".to_string(),
+        digits if negative => format!("-{digits}"),
+        digits => digits.to_string(),
+    })
+}
+
+/// An integer kept as text, as text that sorts the way the number does: its
+/// sign, then how many digits it has, then the digits — below zero the count
+/// and digits complemented, where more is less. ClickHouse's own integers stop
+/// at 2^255 and wrap past it rather than refuse, and a uint256 reaches 2^256.
+fn integer_order(text: &str) -> String {
+    format!(
+        "if(startsWith({text}, '-'), concat('0', leftPad(toString(100000 - length({text})), 5, \
+         '0'), translate(substring({text}, 2), '0123456789', '9876543210')), concat('1', \
+         leftPad(toString(length({text})), 5, '0'), {text}))"
+    )
+}
+
+/// [`integer_order`] of a canonical integer, worked out here.
+fn integer_key(canonical: &str) -> String {
+    match canonical.strip_prefix('-') {
+        Some(digits) => format!(
+            "0{:05}{}",
+            99_999 - digits.len(),
+            digits
+                .bytes()
+                .map(|digit| char::from(b'9' - digit + b'0'))
+                .collect::<String>()
+        ),
+        None => format!("1{:05}{canonical}", canonical.len()),
+    }
+}
+
+/// How many fractional digits a number spells, which a Decimal has to keep to
+/// compare it rather than a rounded neighbour.
+fn fraction_digits(text: &str) -> u32 {
+    let (mantissa, exponent) = match text.split_once(['e', 'E']) {
+        Some((mantissa, exponent)) => (mantissa, exponent.parse::<i64>().unwrap_or(0)),
+        None => (text, 0),
+    };
+    let fraction = mantissa
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len() as i64);
+    (fraction - exponent).clamp(0, MAX_DECIMAL_SCALE.into()) as u32
+}
+
 /// One element as the column's own type reads it.
 fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> Result<String> {
     Ok(match kind {
@@ -160,15 +220,20 @@ fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> R
             // A bound wider than any Decimal keeps the number as its text, so
             // it is compared as the number it spells rather than as text,
             // which orders "9" after "10".
-            ChType::String if field_type == "BigInt" => {
-                format!("toInt256({})", literal(number(text)?))
-            }
+            ChType::String if field_type == "BigInt" => literal(&integer_key(&integer(text)?)),
             ChType::String => format!(
                 "toDecimal256({}, {TEXT_NUMBER_SCALE})",
                 literal(number(text)?)
             ),
+            // Decimals of two scales compare exactly, so the value keeps
+            // every digit it has past the column's.
             ChType::Decimal { scale, .. } => {
-                format!("toDecimal256({}, {scale})", literal(number(text)?))
+                let text = number(text)?;
+                format!(
+                    "toDecimal256({}, {})",
+                    literal(text),
+                    (*scale).max(fraction_digits(text))
+                )
             }
             _ => number(text)?.to_string(),
         },
@@ -180,7 +245,7 @@ fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> R
 fn compared(column: &Column, kind: ValueKind) -> String {
     let name = quoted(&column.name);
     let as_number = |text: &str| match column.field.field_type.as_str() {
-        "BigInt" => format!("toInt256OrNull({text})"),
+        "BigInt" => integer_order(text),
         _ => format!("toDecimal256OrNull({text}, {TEXT_NUMBER_SCALE})"),
     };
     match (kind, column.ch_type.base()) {
@@ -566,7 +631,7 @@ mod tests {
             ),
             (
                 "`owner_name` IN ('a', NULL)".to_string(),
-                "toInt256OrNull(`balance`) IN (toInt256('1'))".to_string(),
+                format!("{} IN ('1000011')", integer_order("`balance`")),
                 Vec::new(),
             )
         );
@@ -636,7 +701,7 @@ mod tests {
         assert_eq!(
             refused,
             [
-                Some("`1 OR 1=1` is not a number to filter by".to_string()),
+                Some("`1 OR 1=1` is not an integer to filter by".to_string()),
                 Some("`0x0g` is not hex bytes to filter by".to_string()),
                 Some("`yes` is not a boolean to filter by".to_string()),
             ]
@@ -651,7 +716,37 @@ mod tests {
         gt.operator = Operator::Gt;
         assert_eq!(
             condition(&account(), &gt, &mut Vec::new()).unwrap(),
-            "toInt256OrNull(`balance`) > toInt256('10')"
+            format!("{} > '10000210'", integer_order("`balance`"))
+        );
+    }
+
+    /// The key orders integers as numbers across signs and sizes, uint256's
+    /// top past 2^255 included, and spells each one value the one way.
+    #[test]
+    fn an_integer_key_orders_as_the_number() {
+        let max = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+        let ordered = [
+            "-1000", "-999", "-10", "-9", "-1", "0", "1", "9", "10", "999", max,
+        ];
+        let mut keys = ordered
+            .iter()
+            .map(|text| (integer_key(&integer(text).unwrap()), *text))
+            .collect::<Vec<_>>();
+        keys.sort();
+        assert_eq!(
+            (
+                keys.iter().map(|(_, text)| *text).collect::<Vec<_>>(),
+                ["-007", "0", "-0", "+1"].map(|text| integer(text).map_err(|e| e.to_string())),
+            ),
+            (
+                ordered.to_vec(),
+                [
+                    Ok("-7".to_string()),
+                    Ok("0".to_string()),
+                    Ok("0".to_string()),
+                    Err("`+1` is not an integer to filter by".to_string()),
+                ]
+            )
         );
     }
 
