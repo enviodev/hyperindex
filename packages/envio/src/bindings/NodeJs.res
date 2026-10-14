@@ -225,6 +225,8 @@ module ChildProcess = {
   }
   @module("child_process")
   external fork: (string, array<string>, forkOptions) => Child.t = "fork"
+  @module("child_process")
+  external spawn: (string, array<string>, forkOptions) => Child.t = "spawn"
 }
 
 module Url = {

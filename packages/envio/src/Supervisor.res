@@ -452,6 +452,9 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     HandlerLoader.typeCheck(~config, ~autoLoadFiles),
   ))
   await persistence.storage.close()
+  if config.isDev {
+    ServeProcess.launchForDev(~config)
+  }
 
   let startTime = Date.make()
   let startTimeRef = Performance.now()
