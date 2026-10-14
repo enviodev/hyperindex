@@ -35,6 +35,10 @@ pub(crate) struct PublicConfigJson<'a> {
     description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     handlers: Option<&'a str>,
+    // Omitted when unset so configs without a sidecar keep the persisted
+    // envio_info fingerprint; the runtime also strips it from the resume diff.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sidecar: Option<&'a human_config::SidecarConfig>,
     #[serde(skip_serializing_if = "is_false")]
     is_dev: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -884,6 +888,7 @@ impl SystemConfig {
             name: &cfg.name,
             description: cfg.human_config.get_base_config().description.as_deref(),
             handlers: cfg.handlers.as_deref(),
+            sidecar: cfg.human_config.get_base_config().sidecar.as_ref(),
             is_dev,
             full_batch_size: cfg.human_config.get_base_config().full_batch_size,
             rollback_on_reorg: cfg.rollback_on_reorg,

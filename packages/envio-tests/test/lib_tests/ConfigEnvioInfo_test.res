@@ -22,6 +22,17 @@ describe("Config.toEnvioInfo", () => {
     )
   })
 
+  // The sidecar runs beside the indexer and never shapes what it stores, so
+  // adding or moving one must not make a running indexer refuse to resume.
+  it("leaves out the sidecar", t => {
+    let input = json(`{
+      "name": "demo",
+      "sidecar": {"contract": "src/sidecar/contract.ts", "entry": "src/sidecar/index.ts"}
+    }`)
+
+    t.expect(Config.toEnvioInfo(input)).toEqual(json(`{"name": "demo"}`))
+  })
+
   it("does not mutate the input JSON", t => {
     let input = json(`{"isDev": true, "evm": {"chains": {"1": {"id": 1}}}}`)
     let _ = Config.toEnvioInfo(input)

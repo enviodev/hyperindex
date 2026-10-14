@@ -180,6 +180,28 @@ pub struct BaseConfig {
                        false)"
     )]
     pub disable_default_cross_chain: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "A sidecar: your own long-running TypeScript process, run next to the \
+                       indexer by `envio sidecar` (and started by `envio dev`). Handlers call its \
+                       functions through `context.sidecar.<name>(input)` without waiting."
+    )]
+    pub sidecar: Option<SidecarConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SidecarConfig {
+    #[schemars(description = "Relative path to the contract module: `export default \
+                       defineSidecar({ functions, webhooks })`. Schemas only, since both the \
+                       indexer and the sidecar load it. Types `context.sidecar`.")]
+    pub contract: String,
+    #[schemars(
+        description = "Relative path to the sidecar entry module, which default-exports the \
+                       `createSidecar(contract, {...})` result. Keep it outside the handlers \
+                       directory, which the indexer auto-loads."
+    )]
+    pub entry: String,
 }
 
 impl BaseConfig {
@@ -2167,6 +2189,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 full_batch_size: None,
                 storage: None,
                 disable_default_cross_chain: None,
+                sidecar: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -2221,6 +2244,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 full_batch_size: None,
                 storage: None,
                 disable_default_cross_chain: None,
+                sidecar: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,

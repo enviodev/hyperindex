@@ -3181,6 +3181,29 @@ mod test {
         insta::assert_snapshot!(json);
     }
 
+    #[test]
+    fn internal_config_json_carries_the_sidecar_paths() {
+        let with_sidecar: serde_json::Value = serde_json::from_str(
+            &get_internal_config_json_helper("config-with-all-options.yaml"),
+        )
+        .unwrap();
+        let without_sidecar: serde_json::Value =
+            serde_json::from_str(&get_internal_config_json_helper("config1.yaml")).unwrap();
+        assert_eq!(
+            (
+                with_sidecar.get("sidecar").cloned(),
+                without_sidecar.get("sidecar").cloned()
+            ),
+            (
+                Some(serde_json::json!({
+                    "contract": "src/sidecar/contract.ts",
+                    "entry": "src/sidecar/index.ts",
+                })),
+                None
+            )
+        );
+    }
+
     // When the backends marked `default` coincide with the enabled ones,
     // the entity storage field must stay omitted (the runtime falls back to
     // the global storage) — an added key would trip the persisted-config

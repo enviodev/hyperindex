@@ -7,6 +7,10 @@ expression: json
   "name": "test-all-options",
   "description": "Test config with all options set",
   "handlers": "custom/handlers",
+  "sidecar": {
+    "contract": "src/sidecar/contract.ts",
+    "entry": "src/sidecar/index.ts"
+  },
   "fullBatchSize": 1000,
   "rollbackOnReorg": false,
   "saveFullHistory": true,

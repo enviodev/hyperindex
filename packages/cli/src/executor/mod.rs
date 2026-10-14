@@ -45,6 +45,11 @@ pub enum Command {
     DropSchema {
         config: serde_json::Value,
     },
+    Sidecar {
+        cwd: String,
+        env: serde_json::Map<String, serde_json::Value>,
+        config: serde_json::Value,
+    },
 }
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
@@ -81,10 +86,23 @@ impl Command {
         if !project_flags.is_empty() {
             let (Command::Start { config, .. }
             | Command::Migrate { config, .. }
-            | Command::DropSchema { config }) = &mut self;
+            | Command::DropSchema { config }
+            | Command::Sidecar { config, .. }) = &mut self;
             config["projectFlags"] = project_flags.into();
         }
         self
+    }
+}
+
+/// Envio Cloud runs `envio sidecar` with no flags from the image directory and
+/// names the tenant's config file only in `CONFIG_FILE`, so a sidecar there
+/// would otherwise look for a `config.yaml` that may not exist.
+fn sidecar_config_path(config: &str, config_file_env: Option<&str>) -> String {
+    match config_file_env {
+        Some(config_file) if config == DEFAULT_CONFIG_PATH && !config_file.is_empty() => {
+            config_file.to_string()
+        }
+        _ => config.to_string(),
     }
 }
 
@@ -92,7 +110,13 @@ async fn execute_command(
     command_line_args: CommandLineArgs,
     envio_package_dir: Option<&str>,
 ) -> Result<Option<Command>> {
-    let global_project_paths = command_line_args.project_paths;
+    let mut global_project_paths = command_line_args.project_paths;
+    if matches!(command_line_args.command, CommandType::Sidecar) {
+        global_project_paths.config = sidecar_config_path(
+            &global_project_paths.config,
+            std::env::var("CONFIG_FILE").ok().as_deref(),
+        );
+    }
     let parsed_project_paths = ParsedProjectPaths::try_from(global_project_paths.clone())
         .context("Failed parsing project paths")?;
 
@@ -162,6 +186,20 @@ async fn execute_command(
                 &[],
                 &start_args.chains,
             )?))
+        }
+
+        // No codegen: the sidecar runs from a build that already happened, and in
+        // Envio Cloud it shares the image with the indexer container.
+        CommandType::Sidecar => {
+            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+                .context("Failed parsing config")?;
+            if config.human_config.get_base_config().sidecar.is_none() {
+                anyhow::bail!(
+                    "`envio sidecar` has nothing to run: config.yaml has no `sidecar:` key. Add \
+                     `sidecar: {{ contract: src/sidecar/contract.ts, entry: src/sidecar/index.ts }}`."
+                );
+            }
+            Ok(Some(build_sidecar_command(&config)?))
         }
 
         CommandType::Local(local_commands) => {
@@ -251,6 +289,23 @@ pub fn build_start_command(
             .into_owned(),
         env,
         config: public_config,
+    })
+}
+
+fn build_sidecar_command(config: &SystemConfig) -> Result<Command> {
+    let config_path = config
+        .parsed_project_paths
+        .config_relative_to_root()
+        .to_string_lossy()
+        .into_owned();
+    Ok(Command::Sidecar {
+        cwd: config
+            .parsed_project_paths
+            .project_root
+            .to_string_lossy()
+            .into_owned(),
+        env: std::iter::once(("ENVIO_CONFIG".to_string(), config_path.into())).collect(),
+        config: public_config_value(config, false)?,
     })
 }
 
@@ -475,6 +530,71 @@ mod project_flags_tests {
             (
                 serde_json::json!(format!("-d {directory}")),
                 serde_json::json!(format!("-d {directory} --config config.head.yaml")),
+            )
+        );
+    }
+}
+
+#[cfg(test)]
+mod sidecar_command_tests {
+    use super::{execute, sidecar_config_path};
+    use crate::cli_args::clap_definitions::CommandLineArgs;
+    use clap::Parser;
+
+    // Bin.res decodes exactly this shape; the sidecar needs no codegen or Docker.
+    #[tokio::test]
+    async fn hands_the_runtime_the_sidecar_paths_from_the_config() {
+        let directory = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let command = execute(
+            CommandLineArgs::parse_from([
+                "envio",
+                "sidecar",
+                "-d",
+                &directory,
+                "--config",
+                "configs/config-with-all-options.yaml",
+            ]),
+            None,
+        )
+        .await
+        .expect("the command should run")
+        .expect("the command should hand work to the runtime");
+        let json = serde_json::to_value(&command).unwrap();
+        assert_eq!(
+            (
+                json["kind"].clone(),
+                json["env"].clone(),
+                json["config"]["sidecar"].clone(),
+                json["cwd"].as_str().map(|cwd| cwd.ends_with("/test")),
+            ),
+            (
+                serde_json::json!("sidecar"),
+                serde_json::json!({ "ENVIO_CONFIG": "configs/config-with-all-options.yaml" }),
+                serde_json::json!({
+                    "contract": "src/sidecar/contract.ts",
+                    "entry": "src/sidecar/index.ts",
+                }),
+                Some(true),
+            )
+        );
+    }
+
+    // Envio Cloud runs `pnpm envio sidecar` with no flags and names the tenant's
+    // config file only in CONFIG_FILE (hosted-service-controller sidecar.go).
+    #[test]
+    fn falls_back_to_the_hosted_config_file_only_when_no_config_was_given() {
+        assert_eq!(
+            (
+                sidecar_config_path("config.yaml", Some("config.base.yaml")),
+                sidecar_config_path("config.head.yaml", Some("config.base.yaml")),
+                sidecar_config_path("config.yaml", Some("")),
+                sidecar_config_path("config.yaml", None),
+            ),
+            (
+                "config.base.yaml".to_string(),
+                "config.head.yaml".to_string(),
+                "config.yaml".to_string(),
+                "config.yaml".to_string(),
             )
         );
     }

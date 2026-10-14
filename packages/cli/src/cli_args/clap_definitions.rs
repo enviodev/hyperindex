@@ -59,6 +59,9 @@ pub enum CommandType {
     ///Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`.
     Start(StartArgs),
 
+    ///Run the sidecar declared by `sidecar:` in config.yaml: your long-running process next to the indexer. `envio dev` starts it for you.
+    Sidecar,
+
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
     Metrics(MetricsArgs),
 

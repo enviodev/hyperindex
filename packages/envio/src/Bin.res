@@ -18,11 +18,17 @@ type startCmd = {
 }
 type migrateCmd = {reset: bool, config: JSON.t}
 type dropSchemaCmd = {config: JSON.t}
+type sidecarCmd = {
+  cwd: string,
+  env: dict<JSON.t>,
+  config: JSON.t,
+}
 
 type command =
   | Start(startCmd)
   | Migrate(migrateCmd)
   | DropSchema(dropSchemaCmd)
+  | Sidecar(sidecarCmd)
 
 let decodeCommand = (json: JSON.t): command => {
   let obj = switch json->JSON.Decode.object {
@@ -37,6 +43,7 @@ let decodeCommand = (json: JSON.t): command => {
   | "start" => Start(json->(Utils.magic: JSON.t => startCmd))
   | "migrate" => Migrate(json->(Utils.magic: JSON.t => migrateCmd))
   | "drop-schema" => DropSchema(json->(Utils.magic: JSON.t => dropSchemaCmd))
+  | "sidecar" => Sidecar(json->(Utils.magic: JSON.t => sidecarCmd))
   | other => JsError.throwWithMessage(`Unknown command kind: ${other}`)
   }
 }
@@ -74,6 +81,11 @@ let run = async args => {
         | DropSchema({config}) =>
           Config.prime(config)
           await Main.dropSchema()
+        | Sidecar({cwd, env, config}) =>
+          Config.prime(config)
+          processChdir(cwd)
+          applyEnv(env)
+          await SidecarProcess.run(~config=Config.load())
         }
       }
     }

@@ -102,10 +102,17 @@ type contractHandler = {
   handler: option<string>,
 }
 
+// Paths relative to the project root, as written in config.yaml.
+type sidecar = {
+  contract: string,
+  entry: string,
+}
+
 type t = {
   name: string,
   description: option<string>,
   handlers: string,
+  sidecar: option<sidecar>,
   contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
@@ -592,11 +599,17 @@ let publicConfigStorageSchema = S.schema(s =>
   }
 )
 
+let sidecarSchema = S.schema(s => {
+  contract: s.matches(S.string),
+  entry: s.matches(S.string),
+})
+
 let publicConfigSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
+    "sidecar": s.matches(S.option(sidecarSchema)),
     "isDev": s.matches(S.option(S.bool)),
     "isolatedChains": s.matches(S.option(S.array(ChainId.schema))),
     "projectFlags": s.matches(S.option(S.string)),
@@ -684,6 +697,10 @@ let withProjectFlags = (command, ~config: t) =>
 
 let ecosystemFields = ["evm", "fuel", "svm"]
 
+// Configured beside the indexer without shaping what it stores, so adding or
+// moving the sidecar must not make a running indexer refuse to resume.
+let besideIndexerFields = ["sidecar"]
+
 // What `envio_info` records: the public config without the command's fields
 // or its chains. A chain is recorded by its own `envio_chains` row and its
 // config's `envio_addresses` rows instead, so adding one never rewrites this
@@ -694,6 +711,7 @@ let toEnvioInfo = (publicConfigJson: JSON.t): JSON.t => {
   switch envioInfo {
   | Object(obj) => {
       commandFields->Array.forEach(field => obj->Utils.Dict.deleteInPlace(field))
+      besideIndexerFields->Array.forEach(field => obj->Utils.Dict.deleteInPlace(field))
       ecosystemFields->Array.forEach(ecosystem =>
         switch obj->Dict.get(ecosystem) {
         | Some(Object(ecosystemDict)) => ecosystemDict->Utils.Dict.deleteInPlace("chains")
@@ -1159,6 +1177,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     name: publicConfig["name"],
     description: publicConfig["description"],
     handlers: publicConfig["handlers"]->Option.getOr("src/handlers"),
+    sidecar: publicConfig["sidecar"],
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
