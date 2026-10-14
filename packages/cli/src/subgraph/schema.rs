@@ -1436,11 +1436,11 @@ type TradeStats @aggregation(intervals: ["hour", "day"], source: "Trade") {
             ),
             (
                 "type Token {\n  id: ID!\n}\n\n\
-                 type Trade {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token!\n  \
+                 type Trade {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token! @index\n  \
                    amount: BigDecimal!\n  price: BigDecimal!\n}\n\n\
-                 type TradeStats_hour {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token!\n  \
+                 type TradeStats_hour {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token! @index\n  \
                    volume: BigDecimal!\n  open: BigDecimal!\n  trades: BigInt!\n}\n\n\
-                 type TradeStats_day {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token!\n  \
+                 type TradeStats_day {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token! @index\n  \
                    volume: BigDecimal!\n  open: BigDecimal!\n  trades: BigInt!\n}\n\n\
                  type EnvioSubgraphRollup {\n  id: ID!\n  payload: String!\n}",
                 vec!["Trade".to_string()],
