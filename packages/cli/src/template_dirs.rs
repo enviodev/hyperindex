@@ -17,6 +17,7 @@ impl Template for evm::Template {
         match self {
             evm::Template::Greeter => "greeter",
             evm::Template::Erc20 => "erc20",
+            evm::Template::Erc8004 => "erc8004",
             evm::Template::FeatureExternalCalls => "external_calls",
             evm::Template::FeatureFactory => "factory",
         }
