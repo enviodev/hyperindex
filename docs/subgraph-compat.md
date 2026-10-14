@@ -129,7 +129,7 @@ query and is dropped; stored, it is an error.
 | `getInBlock` | never suspends, and checkpoint-filtered: the in-memory table spans the whole batch, so a hit counts only if its change record's checkpoint falls in the current block — everything else (including entities written in an *earlier* block of the same batch) = `null` |
 | `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary. `BigDecimal` arithmetic reproduces graph-node's digit for digit: every value is normalized to 34 significant digits through the `bigdecimal` 0.1.2 rounding graph-node pins (positives half up, negatives truncated), so residues match; checked against vectors that crate computes |
 | `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` (log's index within its tx — envio has no per-tx log index) → §7 error on access |
-| `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it is asked again (below), so a flaky RPC never fabricates `reverted` data |
+| `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A call the register pass already made at the same block is answered from its memo. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it is asked again (below), so a flaky RPC never fabricates `reverted` data |
 | `ethereum.Value` | its own class, tagged with graph-ts' ABI `ValueKind` from the ABI type (event inputs, call outputs, `ethereum.decode`'s type string); accessors refuse another kind exactly as graph-ts' asserts do |
 | `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
@@ -268,7 +268,13 @@ classes call `DataSource.create`. Consequences:
   generated `try_` binding does). It emits an inline source map, so stack
   traces name the mapping's own lines, and refuses — located — what it can't
   rewrite faithfully. The runtime injects the few AS builtin globals generated
-  code uses (`changetype` = identity, `assert`).
+  code uses (`changetype` = identity, `assert`), and covers what AS's standard
+  library spells differently: an i64 is a bigint, so `+ - * % /` with an
+  integer on the other side stay i64 arithmetic (`timestamp.toI64() * 1000`),
+  `Date` takes and sets an i64, and `DataView` has `setUint64`/`getUint64`.
+  `matchstick-as` (which re-exports graph-ts' `log`) resolves to the shim too.
+  A handler's event is built as the generated class it declares, wherever the
+  handler is written — the manifest's file may only re-export it.
 - **Type safety is byte-identical by construction.** Editor and `tsc` see
   the project's own `generated/` files and the *real* `@graphprotocol/graph-ts`
   package types (still in the project's dependencies) — exactly what a
@@ -276,7 +282,9 @@ classes call `DataSource.create`. Consequences:
   resolution only, never at type level.
 - **Codegen:** if the generated code is missing (usually gitignored), envio
   runs the `codegen` command of the project's own graph-cli
-  (`node_modules/@graphprotocol/graph-cli`) — output is then identical to the
+  (`node_modules/@graphprotocol/graph-cli`, found the way Node resolution
+  finds it — a workspace hoists it to the root; one from before oclif, 0.2x,
+  runs through its own bin) — output is then identical to the
   user's normal workflow by definition. It runs in-process on a worker thread
   whose heap is sized to three quarters of the machine, since codegen over a
   large ABI set outgrows Node's default heap. Two flags differ from a bare
