@@ -76,11 +76,7 @@ type Found = Gaps<typeof GraphTs, typeof Shim, "">;
 
 /** Every gap the shim knows it has, and why. */
 type KnownGap =
-  // Chains envio doesn't index in subgraph mode.
-  | "cosmos"
-  | "near"
-  | "starknet"
-  | "Felt"
+  // Chains envio doesn't index in subgraph mode: their namespaces refuse a read.
   | "arweave.Block"
   | "arweave.ProofOfAccess"
   | "arweave.Tag"
