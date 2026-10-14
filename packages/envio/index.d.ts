@@ -1,6 +1,11 @@
 import * as Sury from "rescript-schema";
 import type { default as BigDecimalT } from "bignumber.js";
-import type { SidecarCaller, SidecarContract } from "./src/sidecar/contract.js";
+import type {
+  SidecarCaller,
+  SidecarContract,
+  SidecarFunctionInput,
+  SidecarFunctionName,
+} from "./src/sidecar/contract.js";
 export { default as BigDecimal } from "bignumber.js";
 
 // Runtime value stubs used by the `S.*` namespace declarations further down
@@ -2228,6 +2233,32 @@ type SingleEcosystemTestChains<Config extends IndexerConfigTypes = GlobalConfig>
     ? SvmTestEcosystem<Config>
     : CodegenRequiredFallback;
 
+/** A `context.sidecar` call as the test indexer records it, with `input` as the
+ *  handler passed it (a bigint stays a bigint). */
+export type TestIndexerSidecarCall<C extends SidecarContract> = {
+  [K in SidecarFunctionName<C>]: {
+    readonly id: string;
+    readonly fn: K;
+    readonly chainId: number;
+    readonly blockNumber: number;
+    /** Absent for block handlers. */
+    readonly blockTimestamp?: number;
+    readonly input: SidecarFunctionInput<C, K>;
+  };
+}[SidecarFunctionName<C>];
+
+/** `indexer.sidecar` on a test indexer. The test indexer never talks to a
+ *  sidecar: it records the calls instead. */
+type TestIndexerSidecar = Global extends { sidecar: infer C extends SidecarContract }
+  ? {
+      /** Every call the handlers made, across `process` runs, in call order.
+       *  Calls made during preload are not recorded. */
+      readonly calls: readonly TestIndexerSidecarCall<C>[];
+      /** Forget the recorded calls. */
+      readonly clear: () => void;
+    }
+  : NotConfigured<"indexer.sidecar", "Add `sidecar: { contract, entry }`">;
+
 /**
  * Test indexer type resolved from config.
  * Allows running the indexer for specific block ranges and inspecting results.
@@ -2240,6 +2271,8 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes = GlobalConf
     /** Changes happened during the processing. */
     readonly changes: readonly EntityChange<Config>[];
   }>;
+  /** The `context.sidecar` calls the handlers made. */
+  readonly sidecar: TestIndexerSidecar;
 } & SingleEcosystemTestChains<Config> & {
   /** Entity operations for direct manipulation outside of handlers. */
   readonly [K in keyof ConfigEntities<Config>]: TestIndexerEntityOperations<

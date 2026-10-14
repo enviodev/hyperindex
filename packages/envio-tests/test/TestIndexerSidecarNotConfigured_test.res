@@ -54,9 +54,13 @@ describe("context.sidecar without a sidecar configured", () => {
       },
     });
 
-    t.expect(result.changes).toEqual([
-      { block: 5, chainId: 1, eventsProcessed: 1, Probe: { sets: [{ id: "1:5:3r1:0" }] } },
-    ]);
+    // @ts-expect-error no sidecar is configured
+    const calls: unknown = indexer.sidecar.calls;
+
+    t.expect({ changes: result.changes, calls }).toEqual({
+      changes: [{ block: 5, chainId: 1, eventsProcessed: 1, Probe: { sets: [{ id: "1:5:3r1:0" }] } }],
+      calls: [],
+    });
   });
 });
 `,

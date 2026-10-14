@@ -79,17 +79,15 @@ import { createTestIndexer, defineSidecar, S, TestHelpers } from "envio";
 
 const [owner] = TestHelpers.Addresses.mockAddresses;
 
-const newGravatar = (displayName: string) => ({
+const newGravatar = (displayName: string, block = 5) => ({
   chains: {
     1: {
-      startBlock: 1,
-      endBlock: 100,
       simulate: [
         {
           contract: "Gravatar" as const,
           event: "NewGravatar" as const,
           params: { id: 7n, owner, displayName, imageUrl: "" },
-          block: { number: 5 },
+          block: { number: block, timestamp: block * 100 },
           logIndex: 3,
         },
       ],
@@ -132,6 +130,38 @@ describe("context.sidecar through a test indexer", () => {
           ],
         },
       },
+    ]);
+  });
+
+  // The flat view: every call the handlers made, across process runs, with
+  // its input decoded the way the handler passed it.
+  it("lists the calls of every process run with their decoded input, until cleared", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process(newGravatar("one"));
+    await indexer.process(newGravatar("two", 9));
+    const listed = indexer.sidecar.calls;
+    indexer.sidecar.clear();
+
+    for (const call of listed) {
+      // Typed from the contract: \`fn\` narrows \`input\`.
+      if (call.fn === "priceSwap") {
+        const amount: bigint = call.input.amount;
+        void amount;
+      }
+      // @ts-expect-error not a function of the contract
+      if (call.fn === "missing") continue;
+    }
+
+    t.expect([listed, indexer.sidecar.calls]).toEqual([
+      [
+        { id: "1:5:3r2:0", fn: "priceSwap", chainId: 1, blockNumber: 5, blockTimestamp: 500, input: { owner, amount: 7n } },
+        { id: "1:5:3r2:1", fn: "notify", chainId: 1, blockNumber: 5, blockTimestamp: 500, input: { text: "one" } },
+        { id: "1:5:3r3:0", fn: "notify", chainId: 1, blockNumber: 5, blockTimestamp: 500, input: { text: "again one" } },
+        { id: "1:9:3r2:0", fn: "priceSwap", chainId: 1, blockNumber: 9, blockTimestamp: 900, input: { owner, amount: 7n } },
+        { id: "1:9:3r2:1", fn: "notify", chainId: 1, blockNumber: 9, blockTimestamp: 900, input: { text: "two" } },
+        { id: "1:9:3r3:0", fn: "notify", chainId: 1, blockNumber: 9, blockTimestamp: 900, input: { text: "again two" } },
+      ],
+      [],
     ]);
   });
 
