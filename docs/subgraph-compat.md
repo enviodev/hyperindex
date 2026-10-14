@@ -151,9 +151,11 @@ mapping in register mode: `create()` → `context.chain.<Name>.add(addr)`
 register pass's own store, and reads see what an earlier register pass wrote**
 (no envio entity state exists at fetch time). A read sees only writes from
 strictly earlier events on its chain, kept up to 200k entities (then dropped,
-reading `null` again); an entity saved only by a handler that creates
-nothing — which gets no register pass — reads `null`, so a `create()`
-conditioned on such state can still mis-register. A mapping that throws in the
+reading `null` again); a `once` block handler runs in register mode too, at its
+block, before the first register pass of its chain (Venus saves its
+Comptroller there); an entity saved only by a handler that creates nothing —
+which gets no register pass — or by a polling block handler reads `null`, so a
+`create()` conditioned on such state can still mis-register. A mapping that throws in the
 pass (usually on a `null` it would never see on graph-node) keeps whatever it
 registered before the throw; the handler pass surfaces its real errors. Host
 ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own

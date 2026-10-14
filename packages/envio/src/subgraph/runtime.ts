@@ -263,12 +263,12 @@ const REGISTER_CACHE_LIMIT = 20_000;
  */
 const registerInFlight = new Map<string, Promise<unknown>>();
 
-async function runRegisterHost(effect: Effect, input: unknown): Promise<unknown> {
+async function runRegisterHost(effect: Effect, input: unknown, chainId: number): Promise<unknown> {
   return effect.handler({
     input,
     // Only `blockTimestamp` reads the context, and only for the chain id, which
     // the input already carries for every other host op.
-    context: { chain: { id: 0 } },
+    context: { chain: { id: chainId } },
     cacheKey: "",
     checkpointId: 0n,
   });
@@ -312,7 +312,7 @@ function registerHostSync(scope: Scope, effect: Effect, input: unknown) {
   scope.awaiting = awaiting;
   let flight = registerInFlight.get(key);
   if (!flight) {
-    const started = runRegisterHost(effect, input);
+    const started = runRegisterHost(effect, input, scope.dataSource.chainId);
     flight = started;
     registerInFlight.set(key, started);
     const settle = () => {
@@ -516,6 +516,24 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       addresses.has(`${event.chainId}:${String(event.srcAddress).toLowerCase()}`) !== source.isTemplate;
   };
 
+  // A `once` block handler sets up what the event handlers then load — Venus
+  // saves its Comptroller there, and getOrCreateMarket reads it before it
+  // creates the VToken template. Block handlers get no register pass of their
+  // own, so each runs once in register mode, at its block, before the first
+  // register pass of its chain reads the register store.
+  const onceHandlers = new Map<number, ((context: any) => Promise<void>)[]>();
+  const primed = new Map<number, Promise<void>>();
+  const primeOnceHandlers = (chainId: number, context: any) => {
+    let done = primed.get(chainId);
+    if (!done) {
+      done = (async () => {
+        for (const run of onceHandlers.get(chainId) ?? []) await run(context);
+      })();
+      primed.set(chainId, done);
+    }
+    return done;
+  };
+
   for (const source of sources) {
     if (source.kind !== "contract") continue;
     const mapping = await loadMapping(config.root, generated, source.mappingFile, {
@@ -612,6 +630,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
           async ({ event, context }: any) => {
             if (!owns(event)) return;
+            await primeOnceHandlers(event.chainId, context);
             const graphEvent = makeEvent(event);
             await runRegisterRounds(makeScope(event, context, "register"), () => fn(graphEvent));
           },
@@ -623,6 +642,34 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       const fn = mapping[handler.handler];
       if (typeof fn !== "function") continue;
       const start = source.startBlock ?? 0;
+      if (handler.filter === "once" && templateNames.size > 0 && source.chainId !== undefined) {
+        const location = `data source "${source.name}" → "${handler.handler}"`;
+        const runs = onceHandlers.get(source.chainId) ?? [];
+        runs.push((context) =>
+          runRegisterRounds(
+            {
+              context,
+              event: { number: start },
+              mode: "register",
+              schema,
+              dataSource: {
+                name: source.name,
+                address: source.address ?? "",
+                chainId: source.chainId ?? 0,
+                network: source.network ?? "",
+                context: source.context ?? {},
+              },
+              registered: new Set(),
+              blockNumber: start,
+              // Ahead of every log of its block, as graph-node runs it.
+              position: start * POSITION_BLOCK - 1,
+              mappingExports: mapping,
+            },
+            () => fn(makeBlockHandlerBlock(start, location)),
+          ),
+        );
+        onceHandlers.set(source.chainId, runs);
+      }
       const blocks =
         handler.filter === "once"
           ? { _gte: start, _lte: start }
