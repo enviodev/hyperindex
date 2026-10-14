@@ -29,18 +29,30 @@ type Doc {
 )
 
 type doc = {id: string, one: JSON.t, many: array<JSON.t>}
-type docOps = {set: doc => unit}
+type docOps = {set: doc => unit, get: string => promise<option<doc>>}
 type handlerContext = {@as("Doc") doc: docOps}
 
 let every: array<
   JSON.t,
 > = %raw(`[{"a": 1}, [1, true], 2, true, false, "s", "a \"quoted\", {braced} value"]`)
 
+let setEvery: MockSource.itemMock = {
+  blockNumber: 5,
+  logIndex: 0,
+  handler: async args => {
+    let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+    every->Array.forEachWithIndex((one, index) =>
+      context.doc.set({id: index->Int.toString, one, many: every})
+    )
+  },
+}
+
 describe("Json documents of every shape", () => {
   let failure = ref(None)
 
   scenario->Scenario.it(
     "are stored as the documents they were, in a list as well as alone",
+    ~unsupported=[{backend: #clickhouseOnly, reason: "reads the documents' Postgres text"}],
     ~sources=[{chain: 1}],
     ~onError=(error: ErrorHandling.t) =>
       failure :=
@@ -49,21 +61,7 @@ describe("Json documents of every shape", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              every->Array.forEachWithIndex((one, index) =>
-                context.doc.set({id: index->Int.toString, one, many: every})
-              )
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      source.resolveGetItemsOrThrow([setEvery], ~latestFetchedBlockNumber=10)
       let written = ref(false)
       indexer.getBatchWritePromise()->Promise.thenResolve(() => written := true)->ignore
       await Scenario.waitUntil(
@@ -104,6 +102,45 @@ describe("Json documents of every shape", () => {
         ],
         ["7"],
       ))
+    },
+  )
+
+  scenario->Scenario.it(
+    "load back into a handler as the documents they were",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(10)
+      source.resolveGetItemsOrThrow([setEvery], ~latestFetchedBlockNumber=10)
+      await indexer.getBatchWritePromise()
+
+      // Restarted, so the documents come from storage rather than memory.
+      source.setAutoHeight(20)
+      let restarted = await indexer.restart()
+      let loaded = []
+      source.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 11,
+            logIndex: 0,
+            handler: async args => {
+              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+              for index in 0 to every->Array.length - 1 {
+                loaded->Array.push(await context.doc.get(index->Int.toString))
+              }
+            },
+          },
+        ],
+        ~filter=MockSource.coveringBlock(11),
+        ~latestFetchedBlockNumber=11,
+      )
+      await restarted.getBatchWritePromise()
+
+      t.expect(loaded).toEqual(
+        every->Array.mapWithIndex(
+          (one, index) => Some({id: index->Int.toString, one, many: every}),
+        ),
+      )
     },
   )
 })

@@ -1,4 +1,23 @@
-let clickHouseFieldSchema = (f: Table.field) => {
+// A ClickHouse-only indexer reads its documents back, so a bare string travels
+// as the document it is: the sink stores it as the text itself, which reads
+// back as no document at all.
+%%private(
+  let clickHouseDocument = S.json(~validate=false)->S.preprocess(_ => {
+    serializer: value =>
+      switch value->(Utils.magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
+      | None => "null"->(Utils.magic: string => unknown)
+      | Some(json) if typeof(json) === #string =>
+        json
+        ->(Utils.magic: unknown => JSON.t)
+        ->JSON.stringify
+        ->Utils.replaceLoneSurrogateEscapes
+        ->(Utils.magic: string => unknown)
+      | Some(json) => json
+      },
+  })
+)
+
+let clickHouseFieldSchema = (f: Table.field, ~primary=false) => {
   let shaped = baseSchema =>
     if f.isNullable {
       Utils.Schema.nullTolerant(baseSchema)->S.toUnknown
@@ -11,6 +30,8 @@ let clickHouseFieldSchema = (f: Table.field) => {
   | Date => shaped(Utils.Schema.clickHouseDate->S.toUnknown)
   | Bytea => shaped(S.json(~validate=false)->S.toUnknown)
   | ChainId => ChainId.schema->S.toUnknown
+  | Json if primary && f.isArray => S.array(clickHouseDocument)->S.toUnknown
+  | Json if primary => clickHouseDocument->S.toUnknown
   | Json if !f.isArray => Utils.Schema.clickHouseJson->S.toUnknown
   | _ => f.fieldSchema
   }
@@ -209,6 +230,7 @@ let makeRegistry = (~primary=false) => {
     ~entityConfig: Internal.entityConfig,
     ~scope: Internal.chainScope,
     ~table: ClickHouseSink.table,
+    ~primary,
   ): converters => {
     let {name: tableName, columns} = table
     let sourceTable = entityConfig.table
@@ -244,7 +266,7 @@ let makeRegistry = (~primary=false) => {
         switch (chainIdTag, fieldsByColumn->Utils.Dict.dangerouslyGetNonOption(name)) {
         | (Some((column, chainId)), _) if column === name => (_ => chainId, _ => chainId)
         | (_, Some(f)) =>
-          let serialize = compileSerializer(clickHouseFieldSchema(f))
+          let serialize = compileSerializer(clickHouseFieldSchema(f, ~primary))
           let apiName = f->Table.getApiFieldName
           if apiName === Table.idFieldName {
             let cell = change =>
@@ -378,7 +400,7 @@ let stageUpdatesOrThrow = (
       let converters = switch registry.converters->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
       | Some(cached) => cached
       | None =>
-        let cached = makeConverters(~entityConfig, ~scope, ~table)
+        let cached = makeConverters(~entityConfig, ~scope, ~table, ~primary=registry.primary)
         registry.converters->Dict.set(cacheKey, cached)
         cached
       }
