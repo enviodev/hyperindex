@@ -146,7 +146,13 @@ pub mod codegen {
         // `codegen`, `start` and `dev` all pass through here, so a subgraph
         // whose generated code nothing can build is refused by each alike.
         if let Some(runtime) = &config.subgraph {
-            crate::subgraph::check_generated_code(runtime)?;
+            crate::subgraph::check_generated_code(
+                runtime,
+                &config
+                    .parsed_project_paths
+                    .project_root
+                    .join("subgraph.yaml"),
+            )?;
         }
         let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(config)
             .context("Failed creating project template")?;

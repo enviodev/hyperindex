@@ -1720,7 +1720,18 @@ pub fn output_dir_for(root: &Path, manifest_file: &Path) -> Result<PathBuf> {
     if mapping_files.is_empty() {
         bail!("{} lists no mapping files", manifest_file.display());
     }
-    Ok(super::generated_dir(root, &mapping_files))
+    let dir = super::generated_dir(root, &mapping_files);
+    let mut normalized = PathBuf::new();
+    for part in dir.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => normalized.push(other),
+        }
+    }
+    Ok(normalized)
 }
 
 #[cfg(test)]
@@ -1869,6 +1880,34 @@ mod tests {
         assert!(!ts.contains("displayData"));
         assert!(ts.contains("get balances(): Array<string>"));
         assert!(ts.contains("set balances(value: Array<string>)"));
+    }
+
+    #[test]
+    fn graph_ts_features_are_read_from_the_installed_package() {
+        let root = std::env::temp_dir().join(format!("envio-graph-ts-{}", std::process::id()));
+        let package = root.join("node_modules/@graphprotocol/graph-ts");
+        std::fs::create_dir_all(package.join("common")).unwrap();
+        std::fs::create_dir_all(root.join("sub/project")).unwrap();
+        std::fs::write(package.join("package.json"), "{}").unwrap();
+        std::fs::write(
+            package.join("index.ts"),
+            "export namespace store { export declare function get_in_block(): void }",
+        )
+        .unwrap();
+        std::fs::write(package.join("common/numbers.ts"), "export type Int8 = i64;").unwrap();
+        assert_eq!(
+            GraphTs::detect(&root.join("sub/project")),
+            GraphTs {
+                int8: true,
+                related: false,
+                display: false
+            }
+        );
+        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(
+            GraphTs::detect(Path::new("/nonexistent/project")),
+            GraphTs::ALL
+        );
     }
 
     #[test]

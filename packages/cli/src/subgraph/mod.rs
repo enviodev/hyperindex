@@ -224,10 +224,14 @@ pub fn graph_cli_installed(root: &std::path::Path) -> bool {
     })
 }
 
-/// `envio codegen` and `envio start` refuse alike when the generated code is
-/// missing and nothing can build it: codegen used to pass, and only the
-/// indexer found out.
-pub fn check_generated_code(runtime: &SubgraphRuntimeConfig) -> Result<()> {
+/// `envio codegen` and `envio start` build the generated code when it is
+/// missing and graph-cli can't (Envio Cloud's builder has none, and leaves the
+/// directory behind empty). `ENVIO_SUBGRAPH_CODEGEN=bundled` always writes it;
+/// `graph-cli` is the one mode with nothing to fall back to, so it refuses.
+pub fn check_generated_code(
+    runtime: &SubgraphRuntimeConfig,
+    manifest_file: &std::path::Path,
+) -> Result<()> {
     // Absolute, so its ancestors are the directories above the project.
     let root = std::fs::canonicalize(&runtime.root)
         .unwrap_or_else(|_| std::path::PathBuf::from(&runtime.root));
@@ -238,13 +242,16 @@ pub fn check_generated_code(runtime: &SubgraphRuntimeConfig) -> Result<()> {
         .map(|source| source.mapping_file.clone())
         .collect();
     let generated = generated_dir(root, &mapping_files);
-    // Every generated tree has a schema.ts; Envio Cloud leaves the directory
-    // itself behind empty. Only `ENVIO_SUBGRAPH_CODEGEN=graph-cli` has no
-    // fallback: bundled codegen builds the tree without an install.
-    if generated.join("schema.ts").is_file()
-        || graph_cli_installed(root)
-        || codegen::CodegenMode::from_env() != codegen::CodegenMode::GraphCli
+    let mode = codegen::CodegenMode::from_env();
+    // Every generated tree has a schema.ts.
+    let missing = !generated.join("schema.ts").is_file();
+    if mode == codegen::CodegenMode::Bundled
+        || (mode == codegen::CodegenMode::Auto && missing && !graph_cli_installed(root))
     {
+        codegen::generate(manifest_file, &generated)?;
+        return Ok(());
+    }
+    if !missing || graph_cli_installed(root) || mode != codegen::CodegenMode::GraphCli {
         return Ok(());
     }
     let relative = pathdiff_relative(&generated, root);
