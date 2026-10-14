@@ -150,6 +150,8 @@ type t = {
   sourceRequests: array<sourceRequestMetrics>,
   sourceHeights: array<sourceHeightMetrics>,
   sourceHeightStreams: array<sourceHeightStreamMetrics>,
+  // Only an indexer with a sidecar to deliver to has these.
+  sidecar: option<SidecarSender.stats>,
 }
 
 // Folds items that share a key into one, keeping first-seen order so the
@@ -203,6 +205,22 @@ let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds, ~tar
     processingStalledOnStorageWriteSeconds: sumFloat(s => s.processingStalledOnStorageWriteSeconds),
     rollbackSeconds: sumFloat(s => s.rollbackSeconds),
     rollbackCount: sumInt(s => s.rollbackCount),
+    sidecar: switch snapshots->Array.filterMap(s => s.sidecar) {
+    | [] => None
+    | stats =>
+      let dropped = Dict.make()
+      stats->Array.forEach(s =>
+        s.dropped->Dict.forEachWithKey((count, reason) =>
+          dropped->Dict.set(reason, dropped->Dict.get(reason)->Option.getOr(0) + count)
+        )
+      )
+      Some({
+        SidecarSender.queued: stats->Array.reduce(0, (acc, s) => acc + s.queued),
+        sent: stats->Array.reduce(0, (acc, s) => acc + s.sent),
+        rollbacksSent: stats->Array.reduce(0, (acc, s) => acc + s.rollbacksSent),
+        dropped,
+      })
+    },
     rollbackEventsCount: sumFloat(s => s.rollbackEventsCount),
     chains: concat(s => s.chains),
     sourceRequests: concat(s => s.sourceRequests),
@@ -725,6 +743,37 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~kind="counter",
     ~value=metrics.rollbackCount->Int.toFloat,
   )
+  switch metrics.sidecar {
+  | Some(sidecar) =>
+    b->single(
+      ~name="envio_sidecar_calls_sent_total",
+      ~help="Sidecar calls the sidecar accepted.",
+      ~kind="counter",
+      ~value=sidecar.sent->Int.toFloat,
+    )
+    b->series(
+      ~name="envio_sidecar_calls_dropped_total",
+      ~help="Sidecar calls never delivered, by reason (overflow, rejected, rolled_back).",
+      ~kind="counter",
+      ~entries=sidecar.dropped
+      ->Dict.toArray
+      ->Array.map(((reason, count)) => (`{reason="${reason->escapeLabelValue}"}`, count)),
+      ~value=Int.toFloat,
+    )
+    b->single(
+      ~name="envio_sidecar_queue_size",
+      ~help="Sidecar calls waiting to be delivered.",
+      ~kind="gauge",
+      ~value=sidecar.queued->Int.toFloat,
+    )
+    b->single(
+      ~name="envio_sidecar_rollbacks_sent_total",
+      ~help="Rollback notices the sidecar acknowledged.",
+      ~kind="counter",
+      ~value=sidecar.rollbacksSent->Int.toFloat,
+    )
+  | None => ()
+  }
   b->single(
     ~name="envio_rollback_events",
     ~help="Number of events rollbacked on reorg",
