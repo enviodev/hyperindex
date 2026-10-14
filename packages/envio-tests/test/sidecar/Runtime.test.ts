@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { defineSidecar, S } from "envio";
-import { createSidecar, SidecarEmitError, type RunningSidecar, type SidecarImpl } from "envio/sidecar";
+import { createSidecar, SidecarEmitError, type RetryPolicy, type RunningSidecar, type SidecarImpl } from "envio/sidecar";
 
 type Received = {
   readonly name: string;
@@ -10,7 +10,7 @@ type Received = {
   readonly body: unknown;
 };
 
-type Reply = { readonly status: number; readonly body?: unknown };
+type Reply = { readonly status: number; readonly body?: unknown; readonly headers?: Record<string, string> };
 
 type FakeIndexer = {
   readonly url: string;
@@ -28,7 +28,7 @@ const readBody = (request: IncomingMessage): Promise<string> =>
 
 const send = (response: ServerResponse, reply: Reply) => {
   const payload = reply.body === undefined ? "" : JSON.stringify(reply.body);
-  response.writeHead(reply.status, { "content-type": "application/json" });
+  response.writeHead(reply.status, { "content-type": "application/json", ...reply.headers });
   response.end(payload);
 };
 
@@ -119,7 +119,7 @@ afterEach(async () => {
 const startSidecar = async (
   indexer: FakeIndexer,
   impl: SidecarImpl<Contract>,
-  options: { startJobs?: boolean; env?: NodeJS.ProcessEnv } = {},
+  options: { startJobs?: boolean; env?: NodeJS.ProcessEnv; retry?: RetryPolicy } = {},
 ): Promise<RunningSidecar> => {
   const sidecar = createSidecar(contract, impl);
   const running = await sidecar.start({
@@ -127,7 +127,7 @@ const startSidecar = async (
     publicPort: 0,
     indexerInternalUrl: indexer.url,
     logLevel: "silent",
-    retry: { attempts: 4, baseMs: 1, capMs: 5 },
+    retry: options.retry ?? { attempts: 4, baseMs: 1, capMs: 5 },
     startJobs: options.startJobs ?? false,
     ...(options.env === undefined ? {} : { env: options.env }),
   });
@@ -188,6 +188,7 @@ describe("sidecar runtime: calls", () => {
         duplicates: 1,
         ran: 1,
         failed: 0,
+        timedOut: 0,
         dropped: 0,
         queued: { priceSwap: 0, notify: 0 },
         webhooksSent: 0,
@@ -292,6 +293,94 @@ describe("sidecar runtime: calls", () => {
       calls: 2,
       secondStatus: 202,
       failed: 2,
+    });
+  });
+
+  it("times out a slow function: counted, its slot freed, its late emit refused (per function or ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS)", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const gate = deferred();
+    cleanups.push(async () => gate.resolve());
+    const lateEmit = deferred<string>();
+    const events: string[] = [];
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          priceSwap: {
+            timeout: "40ms",
+            run: async ({ input, call, emit, signal }) => {
+              events.push(`start ${call.id}`);
+              if (input.swapId !== "slow") return;
+              signal.addEventListener("abort", () => events.push(`aborted ${call.id}`));
+              await gate.promise;
+              try {
+                await emit.swapPriced({ swapId: input.swapId, usd: 1, amount: input.amount });
+                lateEmit.resolve("sent");
+              } catch (error) {
+                lateEmit.resolve(error instanceof SidecarEmitError ? error.message : "wrong error");
+              }
+            },
+          },
+          // No per-function timeout: the env default applies.
+          notify: async () => {
+            await gate.promise;
+          },
+        },
+      },
+      { env: { ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS: "20" } },
+    );
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-16",
+      calls: [
+        call("1:100:1:0", "priceSwap", { swapId: "slow", amount: "1" }),
+        call("1:100:2:0", "priceSwap", { swapId: "fast", amount: "1" }),
+        call("1:100:3:0", "notify", { text: "stuck" }),
+      ],
+    });
+    // Both functions run one call at a time, so the fast call can only start
+    // once the slow one's slot is freed by the timeout.
+    await running.waitIdle();
+    gate.resolve();
+    expect({
+      events,
+      lateEmit: await lateEmit.promise,
+      received: indexer.received.length,
+      stats: running.stats(),
+    }).toEqual({
+      events: ["start 1:100:1:0", "aborted 1:100:1:0", "start 1:100:2:0"],
+      lateEmit: "Webhook 'swapPriced': abandoned: function 'priceSwap' timed out after 40 ms",
+      received: 0,
+      stats: expect.objectContaining({ ran: 1, failed: 0, timedOut: 2 }),
+    });
+  });
+
+  it("remembers the last ENVIO_SIDECAR_DEDUPE_MAX call ids (100k by default) and evicts the oldest", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const ranIds: string[] = [];
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          ...noop,
+          notify: async ({ call }) => {
+            ranIds.push(call.id);
+          },
+        },
+      },
+      { env: { ENVIO_SIDECAR_DEDUPE_MAX: "2" } },
+    );
+    const url = `http://127.0.0.1:${running.internalPort}/envio/calls`;
+    const send = async (batchId: string, ids: string[]) => {
+      await postJson(url, { batchId, calls: ids.map((id) => call(id, "notify", { text: id })) });
+      await running.waitIdle();
+    };
+    await send("b-17", ["1:1:1:0", "1:1:2:0", "1:1:3:0"]);
+    await send("b-18", ["1:1:1:0", "1:1:3:0"]);
+    expect({ ranIds, duplicates: running.stats().duplicates }).toEqual({
+      ranIds: ["1:1:1:0", "1:1:2:0", "1:1:3:0", "1:1:1:0"],
+      duplicates: 1,
     });
   });
 
@@ -453,6 +542,79 @@ describe("sidecar runtime: webhooks from outside a call", () => {
       ],
       stats: expect.objectContaining({ ran: 1, failed: 0, webhooksSent: 1, webhooksFailed: 1 }),
     });
+  });
+
+  it("keeps retrying a busy indexer for ENVIO_EMIT_RETRY_MAX_MS, then rejects", async () => {
+    const indexer = await fakeIndexer(() => ({ status: 503 }));
+    cleanups.push(indexer.close);
+    const outcome = deferred<{ message: string; elapsed: number }>();
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          ...noop,
+          notify: async ({ emit }) => {
+            const startedAt = Date.now();
+            try {
+              await emit.tick({ at: 1 });
+              outcome.resolve({ message: "sent", elapsed: Date.now() - startedAt });
+            } catch (error) {
+              outcome.resolve({
+                message: error instanceof SidecarEmitError ? error.message : "wrong error",
+                elapsed: Date.now() - startedAt,
+              });
+            }
+          },
+        },
+      },
+      { env: { ENVIO_EMIT_RETRY_MAX_MS: "150" }, retry: { baseMs: 5, capMs: 20 } },
+    );
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-19",
+      calls: [call("1:1:1:0", "notify", { text: "hi" })],
+    });
+    const { message, elapsed } = await outcome.promise;
+    await running.waitIdle();
+    expect({
+      message,
+      withinBudget: elapsed >= 150 && elapsed < 1_000,
+      // Doubling from 5 ms with jitter, capped at 20 ms: well over 5 tries in 150 ms.
+      manyAttempts: indexer.received.length >= 5,
+      webhooksFailed: running.stats().webhooksFailed,
+    }).toEqual({
+      message: expect.stringMatching(/^Webhook 'tick': undeliverable after \d+ attempts in \d+ ms: status 503$/),
+      withinBudget: true,
+      manyAttempts: true,
+      webhooksFailed: 1,
+    });
+  });
+
+  it("waits as long as a 503's retry-after asks", async () => {
+    const indexer = await fakeIndexer((_received, n) =>
+      n === 1 ? { status: 503, headers: { "retry-after": "1" } } : undefined,
+    );
+    cleanups.push(indexer.close);
+    const times: number[] = [];
+    const running = await startSidecar(indexer, {
+      functions: {
+        ...noop,
+        notify: async ({ emit }) => {
+          await emit.tick({ at: 1 }, { chainId: 1 });
+        },
+      },
+    });
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-20",
+      calls: [call("1:1:1:0", "notify", { text: "hi" })],
+    });
+    const startedAt = Date.now();
+    await running.waitIdle();
+    times.push(Date.now() - startedAt);
+    expect({
+      received: indexer.received.length,
+      waitedForRetryAfter: (times[0] ?? 0) >= 950,
+      sent: running.stats().webhooksSent,
+    }).toEqual({ received: 2, waitedForRetryAfter: true, sent: 1 });
   });
 
   it("rejects a body that does not match the contract before sending anything", async () => {
@@ -635,6 +797,153 @@ describe("sidecar runtime: close", () => {
   });
 });
 
+describe("sidecar runtime: close with retrying emits", () => {
+  it("abandons emits still retrying at the grace cap and reports them", async () => {
+    const indexer = await fakeIndexer(() => ({ status: 503 }));
+    cleanups.push(indexer.close);
+    const started = deferred();
+    const outcome = deferred<string>();
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          ...noop,
+          notify: async ({ emit }) => {
+            started.resolve();
+            try {
+              await emit.tick({ at: 1 });
+              outcome.resolve("sent");
+            } catch (error) {
+              outcome.resolve(error instanceof SidecarEmitError ? error.message : "wrong error");
+            }
+          },
+        },
+      },
+      // No attempt cap: the budget is the 10 min default, so only close can end it.
+      { retry: { baseMs: 5, capMs: 10 } },
+    );
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-21",
+      calls: [call("1:1:1:0", "notify", { text: "hi" })],
+    });
+    await started.promise;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const startedAt = Date.now();
+    const report = await running.close({ graceMs: 60 });
+    const elapsed = Date.now() - startedAt;
+    expect({
+      report,
+      onTime: elapsed < 1_000,
+      outcome: await outcome.promise,
+      webhooksFailed: running.stats().webhooksFailed,
+    }).toEqual({
+      report: {
+        drained: false,
+        graceMs: 60,
+        abandoned: { running: { priceSwap: 0, notify: 1 }, queued: { priceSwap: 0, notify: 0 }, emits: 1, jobs: 0 },
+      },
+      onTime: true,
+      outcome: "Webhook 'tick': abandoned: sidecar closed before it was delivered",
+      webhooksFailed: 1,
+    });
+  });
+});
+
+describe("sidecar runtime: /metrics", () => {
+  it("serves Prometheus text on the internal port: calls, queue, durations, emits, drops, jobs", async () => {
+    const indexer = await fakeIndexer((_received, n) => (n === 1 ? { status: 503 } : undefined));
+    cleanups.push(indexer.close);
+    const gate = deferred();
+    cleanups.push(async () => gate.resolve());
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          priceSwap: async ({ input, emit }) => {
+            await emit.swapPriced({ swapId: input.swapId, usd: 1, amount: input.amount });
+          },
+          notify: async ({ input }) => {
+            if (input.text === "boom") throw new Error("boom");
+            if (input.text === "slow") await gate.promise;
+          },
+        },
+      },
+      { env: { ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS: "30" } },
+    );
+    const base = `http://127.0.0.1:${running.internalPort}`;
+    await postJson(`${base}/envio/calls`, {
+      batchId: "b-22",
+      calls: [
+        call("1:1:1:0", "priceSwap", { swapId: "s1", amount: "1" }),
+        call("1:1:1:0", "priceSwap", { swapId: "s1", amount: "1" }),
+        call("1:1:2:0", "notify", { text: "ok" }),
+        call("1:1:3:0", "notify", { text: "boom" }),
+        call("1:1:4:0", "notify", { text: "slow" }),
+        call("1:1:5:0", "nope", { text: "?" }),
+      ],
+    });
+    await running.waitIdle();
+    const response = await fetch(`${base}/metrics`);
+    const text = await response.text();
+    const samples = Object.fromEntries(
+      text
+        .split("\n")
+        .filter((line) => line !== "" && !line.startsWith("#") && !line.includes("_bucket{"))
+        .map((line) => {
+          const at = line.lastIndexOf(" ");
+          return [line.slice(0, at), Number(line.slice(at + 1))];
+        }),
+    );
+    const types = text.split("\n").filter((line) => line.startsWith("# TYPE "));
+    expect({
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      types,
+      samples,
+    }).toEqual({
+      status: 200,
+      contentType: "text/plain; version=0.0.4; charset=utf-8",
+      types: [
+        "# TYPE envio_sidecar_function_calls_total counter",
+        "# TYPE envio_sidecar_function_duration_seconds histogram",
+        "# TYPE envio_sidecar_function_queue_depth gauge",
+        "# TYPE envio_sidecar_function_running gauge",
+        "# TYPE envio_sidecar_dropped_total counter",
+        "# TYPE envio_sidecar_dedupe_ids gauge",
+        "# TYPE envio_sidecar_emit_total counter",
+        "# TYPE envio_sidecar_emit_retries_total counter",
+        "# TYPE envio_sidecar_emits_pending gauge",
+        "# TYPE envio_sidecar_job_runs_total counter",
+        "# TYPE envio_sidecar_job_duration_seconds histogram",
+        "# TYPE envio_sidecar_ready gauge",
+      ],
+      samples: {
+        'envio_sidecar_function_calls_total{fn="priceSwap",outcome="accepted"}': 1,
+        'envio_sidecar_function_calls_total{fn="priceSwap",outcome="duplicate"}': 1,
+        'envio_sidecar_function_calls_total{fn="notify",outcome="accepted"}': 3,
+        'envio_sidecar_function_calls_total{fn="_unknown",outcome="rejected"}': 1,
+        'envio_sidecar_function_calls_total{fn="priceSwap",outcome="succeeded"}': 1,
+        'envio_sidecar_function_calls_total{fn="notify",outcome="succeeded"}': 1,
+        'envio_sidecar_function_calls_total{fn="notify",outcome="failed"}': 1,
+        'envio_sidecar_function_calls_total{fn="notify",outcome="timed_out"}': 1,
+        'envio_sidecar_function_duration_seconds_sum{fn="priceSwap"}': expect.any(Number),
+        'envio_sidecar_function_duration_seconds_count{fn="priceSwap"}': 1,
+        'envio_sidecar_function_duration_seconds_sum{fn="notify"}': expect.any(Number),
+        'envio_sidecar_function_duration_seconds_count{fn="notify"}': 3,
+        'envio_sidecar_function_queue_depth{fn="priceSwap"}': 0,
+        'envio_sidecar_function_queue_depth{fn="notify"}': 0,
+        'envio_sidecar_function_running{fn="priceSwap"}': 0,
+        'envio_sidecar_function_running{fn="notify"}': 0,
+        envio_sidecar_dedupe_ids: 4,
+        'envio_sidecar_emit_total{webhook="swapPriced",outcome="sent"}': 1,
+        'envio_sidecar_emit_retries_total{webhook="swapPriced"}': 1,
+        envio_sidecar_emits_pending: 0,
+        envio_sidecar_ready: 1,
+      },
+    });
+  });
+});
+
 describe("sidecar runtime: LOG_LEVEL", () => {
   it("accepts the indexer's u-levels and falls back to info on anything else", async () => {
     const indexer = await fakeIndexer();
@@ -740,6 +1049,7 @@ describe("sidecar runtime: public server", () => {
       () => createSidecar(contract, { functions: { ...noop, extra: async () => {} } } as never),
       () => createSidecar({ functions: {} } as never, { functions: {} }),
       () => createSidecar(contract, { functions: noop, jobs: { j: { every: "5x", run: async () => {} } } }),
+      () => createSidecar(contract, { functions: { ...noop, notify: { timeout: "soon", run: async () => {} } } }),
     ].map((make) => {
       try {
         make();
@@ -753,6 +1063,7 @@ describe("sidecar runtime: public server", () => {
       "createSidecar: function 'extra' is implemented but not in the contract",
       "createSidecar: first argument must come from defineSidecar(...)",
       'Job interval \'5x\' is not like "30s", "5m", "1h" or a number of ms',
+      'createSidecar: function \'notify\' timeout \'soon\' is not like "30s", "5m" or a number of ms',
     ]);
   });
 });

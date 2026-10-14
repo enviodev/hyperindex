@@ -4,6 +4,12 @@ export const DEFAULT_INDEXER_INTERNAL_URL = "http://127.0.0.1:9899";
 export const DEFAULT_RESPONSE_LIMIT = 1000;
 /** Under the pod's terminationGracePeriodSeconds (30 s). */
 export const DEFAULT_GRACE_MS = 20_000;
+/** wiki 09 section 4: a function that runs longer is abandoned and counted. */
+export const DEFAULT_FUNCTION_TIMEOUT_MS = 60_000;
+/** wiki 09 section 3: accepted call ids kept for redelivery dedupe. */
+export const DEFAULT_DEDUPE_MAX = 100_000;
+/** wiki 09 section 4: how long `emit` retries before it rejects. */
+export const DEFAULT_EMIT_RETRY_MAX_MS = 600_000;
 
 export type SidecarEnv = {
   /** Routable user API port (`ENVIO_SIDECAR_PORT`). */
@@ -21,6 +27,12 @@ export type SidecarEnv = {
   readonly logLevel: string;
   /** Longest `close()` waits for running work (`ENVIO_SIDECAR_GRACE_MS`). */
   readonly graceMs: number;
+  /** Default per-function timeout (`ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS`), 0 turns it off. */
+  readonly functionTimeoutMs: number;
+  /** Accepted call ids remembered to dedupe redelivery (`ENVIO_SIDECAR_DEDUPE_MAX`). */
+  readonly dedupeMax: number;
+  /** How long `emit` keeps retrying a webhook (`ENVIO_EMIT_RETRY_MAX_MS`). */
+  readonly emitRetryMaxMs: number;
 };
 
 const readPort = (env: NodeJS.ProcessEnv, name: string, fallback: number): number => {
@@ -80,4 +92,7 @@ export const readEnv = (env: NodeJS.ProcessEnv = process.env): SidecarEnv => ({
   ),
   logLevel: optional(env, "LOG_LEVEL") ?? "info",
   graceMs: readInt(env, "ENVIO_SIDECAR_GRACE_MS", DEFAULT_GRACE_MS, 0),
+  functionTimeoutMs: readInt(env, "ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS", DEFAULT_FUNCTION_TIMEOUT_MS, 0),
+  dedupeMax: readInt(env, "ENVIO_SIDECAR_DEDUPE_MAX", DEFAULT_DEDUPE_MAX),
+  emitRetryMaxMs: readInt(env, "ENVIO_EMIT_RETRY_MAX_MS", DEFAULT_EMIT_RETRY_MAX_MS, 0),
 });

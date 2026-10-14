@@ -2,10 +2,11 @@ import express from "express";
 import type { Server } from "node:http";
 import * as S from "rescript-schema";
 import { isSidecarContract, type SidecarContract, type SidecarFunctionInput } from "./contract.js";
-import { createEmit, type Emit, type EmitTransport, type RetryPolicy } from "./emit.js";
+import { createEmit, DEFAULT_RETRY, type Emit, type EmitTransport, type RetryPolicy } from "./emit.js";
 import { readEnv } from "./env.js";
 import { createRootLogger, toUserLogger, type SidecarLogger } from "./log.js";
 import { createIndexerClient, type EntityMetaInput, type IndexerClient } from "./client.js";
+import { createMetricsRegistry, PROMETHEUS_CONTENT_TYPE } from "./metrics.js";
 
 export type SidecarCall = {
   readonly id: string;
@@ -22,6 +23,9 @@ export type SidecarFunctionArgs<C extends SidecarContract, K extends keyof C["fu
   readonly emit: Emit<C>;
   readonly indexer: IndexerClient;
   readonly log: SidecarLogger;
+  /** Aborted when the call times out. JavaScript cannot stop a running
+   * function, so long work should check it (or pass it to `fetch`). */
+  readonly signal: AbortSignal;
 };
 
 export type SidecarFunction<C extends SidecarContract, K extends keyof C["functions"]> = (
@@ -35,6 +39,10 @@ export type SidecarFunctionImpl<C extends SidecarContract, K extends keyof C["fu
       readonly concurrency?: number;
       /** Queued calls this function may hold before new ones are rejected. Default 10000. */
       readonly maxQueue?: number;
+      /** Longest one call may run: ms or `"30s"`, `"5m"`. Default
+       * `ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS` (60 s); 0 turns it off. A timed out
+       * call is logged and counted as an error, not retried, and frees its slot. */
+      readonly timeout?: string | number;
       readonly run: SidecarFunction<C, K>;
     };
 
@@ -78,9 +86,14 @@ export type StartOptions = {
   readonly logLevel?: string;
   readonly logDestination?: NodeJS.WritableStream;
   readonly fetch?: typeof fetch;
+  /** Webhook backoff. `maxMs` defaults to `ENVIO_EMIT_RETRY_MAX_MS`, else 600000. */
   readonly retry?: RetryPolicy;
   /** Longest `close()` waits for running work. Default `ENVIO_SIDECAR_GRACE_MS`, else 20000. */
   readonly graceMs?: number;
+  /** Default per-function timeout in ms. Default `ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS`, else 60000; 0 for none. */
+  readonly functionTimeoutMs?: number;
+  /** Accepted call ids remembered to dedupe redelivery. Default `ENVIO_SIDECAR_DEDUPE_MAX`, else 100000. */
+  readonly dedupeMax?: number;
 };
 
 export type CloseOptions = {
@@ -107,6 +120,8 @@ export type SidecarStats = {
   readonly duplicates: number;
   readonly ran: number;
   readonly failed: number;
+  /** Calls that ran past their timeout (not counted in `failed`). */
+  readonly timedOut: number;
   readonly dropped: number;
   readonly queued: Readonly<Record<string, number>>;
   readonly webhooksSent: number;
@@ -142,7 +157,6 @@ type WireCall = {
 type QueuedCall = { readonly call: SidecarCall; readonly fn: string; readonly input: unknown };
 
 const DEFAULT_MAX_QUEUE = 10_000;
-const SEEN_IDS_CAP = 10_000;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -157,6 +171,21 @@ const malformedCall = (raw: unknown): string | null => {
     return "`blockTimestamp` must be a number";
   }
   return null;
+};
+
+const parseDuration = (value: string | number): number | null => {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? value : null;
+  const match = /^(\d+)(ms|s|m|h)$/.exec(value);
+  if (match === null) return null;
+  return Number(match[1]) * { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 }[match[2] as "ms" | "s" | "m" | "h"];
+};
+
+const parseTimeout = (name: string, timeout: string | number): number => {
+  const ms = parseDuration(timeout);
+  if (ms === null) {
+    throw new Error(`createSidecar: function '${name}' timeout '${timeout}' is not like "30s", "5m" or a number of ms`);
+  }
+  return ms;
 };
 
 export const parseEvery = (every: string | number): number => {
@@ -232,6 +261,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     if (typeof fn !== "function" && !(isPlainObject(fn) && typeof fn.run === "function")) {
       throw new Error(`createSidecar: function '${name}' is in the contract but not implemented`);
     }
+    if (typeof fn !== "function" && fn.timeout !== undefined) parseTimeout(name, fn.timeout);
   }
   for (const name of Object.keys(functions)) {
     if (!(name in contractFunctions)) {
@@ -260,6 +290,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       duplicates: 0,
       ran: 0,
       failed: 0,
+      timedOut: 0,
       dropped: 0,
       webhooksSent: 0,
       webhooksFailed: 0,
@@ -267,17 +298,60 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     const pendingEmits = new Set<Promise<unknown>>();
     let runningJobs = 0;
     let closing = false;
+    let ready = false;
+
+    // Names stay clear of the indexer's own envio_sidecar_* series (calls_total,
+    // queue_depth, up: the indexer's view of delivery), which mean something else.
+    const metrics = createMetricsRegistry();
+    const callsTotal = metrics.counter(
+      "envio_sidecar_function_calls_total",
+      "Calls by function and outcome (accepted, duplicate, rejected, succeeded, failed, timed_out).",
+    );
+    const durations = metrics.histogram(
+      "envio_sidecar_function_duration_seconds",
+      "Time a sidecar function call ran, up to its timeout.",
+    );
+    metrics.gauge("envio_sidecar_function_queue_depth", "Calls accepted and waiting to run.", () =>
+      [...queues].map(([fn, queue]) => [{ fn }, queue.length] as const),
+    );
+    metrics.gauge("envio_sidecar_function_running", "Calls running now.", () =>
+      [...running].map(([fn, n]) => [{ fn }, n] as const),
+    );
+    const droppedTotal = metrics.counter(
+      "envio_sidecar_dropped_total",
+      "Accepted calls dropped before running, by reason (rollback, shutdown).",
+    );
+    metrics.gauge("envio_sidecar_dedupe_ids", "Call ids remembered to dedupe redelivery.", () => [[{}, seen.size]]);
+    const emitTotal = metrics.counter(
+      "envio_sidecar_emit_total",
+      "Webhooks by outcome (sent, rejected, undeliverable, abandoned, invalid).",
+    );
+    const emitRetries = metrics.counter("envio_sidecar_emit_retries_total", "Webhook delivery retries.");
+    metrics.gauge("envio_sidecar_emits_pending", "Webhook deliveries in progress.", () => [[{}, pendingEmits.size]]);
+    const jobRuns = metrics.counter("envio_sidecar_job_runs_total", "Job ticks by outcome (succeeded, failed, skipped).");
+    const jobDurations = metrics.histogram("envio_sidecar_job_duration_seconds", "Time a job run took.");
+    metrics.gauge("envio_sidecar_ready", "1 while the sidecar takes calls, 0 while starting or closing.", () => [
+      [{}, ready ? 1 : 0],
+    ]);
+
+    const stopEmits = new AbortController();
     const transport: EmitTransport = {
       indexerInternalUrl: options.indexerInternalUrl ?? env.indexerInternalUrl,
       webhookSecret: env.webhookSecret,
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-      ...(options.retry === undefined ? {} : { retry: options.retry }),
+      retry: { ...DEFAULT_RETRY, maxMs: env.emitRetryMaxMs, ...options.retry },
+      signal: stopEmits.signal,
       log,
-      onSent: () => {
+      onSent: (webhook) => {
         counters.webhooksSent++;
+        emitTotal.inc({ webhook, outcome: "sent" });
       },
-      onFailed: () => {
-        counters.webhooksFailed++;
+      onFailed: (webhook, outcome) => {
+        if (outcome !== "invalid") counters.webhooksFailed++;
+        emitTotal.inc({ webhook, outcome });
+      },
+      onRetry: (webhook) => {
+        emitRetries.inc({ webhook });
       },
       onPending: (sending) => {
         pendingEmits.add(sending);
@@ -307,14 +381,14 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     // a reorg re-sends the replayed blocks' calls under the same ids: rollback
     // forgets the ids above the rollback block, or they would be acked as
     // duplicates and never run.
+    // A Map iterates in insertion order, so its first key is the oldest id.
     const seen = new Map<string, { readonly chainId: number; readonly blockNumber: number }>();
-    let seenOrder: string[] = [];
+    const dedupeMax = Math.max(1, options.dedupeMax ?? env.dedupeMax);
     const remember = (id: string, chainId: number, blockNumber: number) => {
       seen.set(id, { chainId, blockNumber });
-      seenOrder.push(id);
-      if (seenOrder.length > SEEN_IDS_CAP) {
-        const oldest = seenOrder.shift();
-        if (oldest !== undefined) seen.delete(oldest);
+      if (seen.size > dedupeMax) {
+        const oldest = seen.keys().next();
+        if (oldest.done !== true) seen.delete(oldest.value);
       }
     };
     const forgetAbove = (chainId: number, rollbackToBlock: number): number => {
@@ -325,7 +399,6 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
           forgotten++;
         }
       }
-      if (forgotten > 0) seenOrder = seenOrder.filter((id) => seen.has(id));
       return forgotten;
     };
     const idleWaiters: Array<() => void> = [];
@@ -338,33 +411,74 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       if (isDrained()) for (const resolve of drainWaiters.splice(0)) resolve();
     };
 
+    const defaultTimeoutMs = options.functionTimeoutMs ?? env.functionTimeoutMs;
     const settingsOf = (name: string) => {
       const fn = functions[name];
-      if (typeof fn === "function") return { run: fn, concurrency: 1, maxQueue: DEFAULT_MAX_QUEUE };
+      if (typeof fn === "function") {
+        return { run: fn, concurrency: 1, maxQueue: DEFAULT_MAX_QUEUE, timeoutMs: defaultTimeoutMs };
+      }
       if (fn === undefined) throw new Error(`unreachable: no implementation for '${name}'`);
       return {
         run: fn.run,
         concurrency: Math.max(1, fn.concurrency ?? 1),
         maxQueue: Math.max(1, fn.maxQueue ?? DEFAULT_MAX_QUEUE),
+        timeoutMs: fn.timeout === undefined ? defaultTimeoutMs : parseTimeout(name, fn.timeout),
       };
     };
 
     const runOne = async (item: QueuedCall) => {
-      const { run } = settingsOf(item.fn);
+      const { run, timeoutMs } = settingsOf(item.fn);
       const callLog = toUserLogger(rootLogger.child({ fn: item.fn, callId: item.call.id, chainId: item.call.chainId }));
-      const emit = createEmit(contract, transport, { chainId: item.call.chainId, callId: item.call.id });
+      const controller = new AbortController();
+      const emit = createEmit(contract, transport, {
+        chainId: item.call.chainId,
+        callId: item.call.id,
+        signal: controller.signal,
+      });
+      let timer: NodeJS.Timeout | undefined;
+      let outcome: "succeeded" | "failed" | "timed_out" = "failed";
+      const startedAt = performance.now();
       try {
-        await run({
-          input: item.input as SidecarFunctionInput<C, keyof C["functions"]>,
-          call: item.call,
-          emit,
-          indexer,
-          log: callLog,
-        });
+        const work = Promise.resolve().then(() =>
+          run({
+            input: item.input as SidecarFunctionInput<C, keyof C["functions"]>,
+            call: item.call,
+            emit,
+            indexer,
+            log: callLog,
+            signal: controller.signal,
+          }),
+        );
+        const finished =
+          timeoutMs > 0
+            ? await Promise.race([
+                work.then(() => "done" as const),
+                new Promise<"timeout">((resolve) => {
+                  timer = setTimeout(() => resolve("timeout"), timeoutMs);
+                }),
+              ])
+            : await work.then(() => "done" as const);
+        if (finished === "timeout") {
+          outcome = "timed_out";
+          controller.abort(new Error(`function '${item.fn}' timed out after ${timeoutMs} ms`));
+          counters.timedOut++;
+          callLog.error("sidecar function timed out, freeing its slot", { timeoutMs });
+          // The function cannot be stopped and keeps running detached; a late
+          // failure must not surface as an unhandled rejection.
+          work.catch((error: unknown) => {
+            callLog.warn("timed out sidecar function failed later", error instanceof Error ? error : { error: String(error) });
+          });
+          return;
+        }
+        outcome = "succeeded";
         counters.ran++;
       } catch (error) {
         counters.failed++;
         callLog.error("sidecar function failed", error instanceof Error ? error : { error: String(error) });
+      } finally {
+        clearTimeout(timer);
+        callsTotal.inc({ fn: item.fn, outcome });
+        durations.observe({ fn: item.fn }, (performance.now() - startedAt) / 1_000);
       }
     };
 
@@ -386,12 +500,15 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
 
     const internal = express();
     internal.use(express.json({ limit: "10mb" }));
-    let ready = false;
     internal.get("/healthz", (_req, res) => {
       res.status(200).json({ status: "ok" });
     });
     internal.get("/readyz", (_req, res) => {
       res.status(ready ? 200 : 503).json({ status: ready ? "ok" : closing ? "closing" : "starting" });
+    });
+    internal.get("/metrics", (_req, res) => {
+      res.writeHead(200, { "content-type": PROMETHEUS_CONTENT_TYPE });
+      res.end(metrics.render());
     });
     internal.post("/envio/calls", (req, res) => {
       if (closing) {
@@ -412,6 +529,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         if (problem !== null) {
           const id = isPlainObject(raw) && typeof raw.id === "string" ? raw.id : "";
           rejected.push({ id, reason: `malformed call: ${problem}` });
+          callsTotal.inc({ fn: "_unknown", outcome: "rejected" });
           continue;
         }
         const wire = raw as WireCall;
@@ -419,15 +537,18 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         const queue = queues.get(wire.fn);
         if (def === undefined || queue === undefined) {
           rejected.push({ id: wire.id, reason: `unknown function: ${wire.fn}` });
+          callsTotal.inc({ fn: "_unknown", outcome: "rejected" });
           continue;
         }
         if (seen.has(wire.id)) {
           counters.duplicates++;
+          callsTotal.inc({ fn: wire.fn, outcome: "duplicate" });
           accepted.push(wire.id);
           continue;
         }
         if (queue.length >= settingsOf(wire.fn).maxQueue) {
           rejected.push({ id: wire.id, reason: "queue full" });
+          callsTotal.inc({ fn: wire.fn, outcome: "rejected" });
           continue;
         }
         let input: unknown;
@@ -438,6 +559,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             id: wire.id,
             reason: `invalid input: ${error instanceof Error ? error.message : String(error)}`,
           });
+          callsTotal.inc({ fn: wire.fn, outcome: "rejected" });
           continue;
         }
         queue.push({
@@ -452,6 +574,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
           },
         });
         remember(wire.id, wire.chainId, wire.blockNumber);
+        callsTotal.inc({ fn: wire.fn, outcome: "accepted" });
         accepted.push(wire.id);
         touched.add(wire.fn);
       }
@@ -483,6 +606,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         queues.set(name, kept);
       }
       counters.dropped += dropped;
+      if (dropped > 0) droppedTotal.inc({ reason: "rollback" }, dropped);
       const forgotten = forgetAbove(notice.chainId, notice.rollbackToBlock);
       log.info("rollback notice", { ...notice, dropped, forgottenCallIds: forgotten });
       Promise.resolve()
@@ -531,16 +655,25 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
         const tick = () => {
           if (inFlight) {
             jobLog.warn("job still running, skipping this tick");
+            jobRuns.inc({ job: name, outcome: "skipped" });
             return;
           }
           inFlight = true;
           runningJobs++;
+          const startedAt = performance.now();
           Promise.resolve()
             .then(() => job.run({ emit: jobEmit, indexer, log: jobLog }))
-            .catch((error: unknown) => {
-              jobLog.error("job failed", error instanceof Error ? error : { error: String(error) });
-            })
+            .then(
+              () => {
+                jobRuns.inc({ job: name, outcome: "succeeded" });
+              },
+              (error: unknown) => {
+                jobRuns.inc({ job: name, outcome: "failed" });
+                jobLog.error("job failed", error instanceof Error ? error : { error: String(error) });
+              },
+            )
             .finally(() => {
+              jobDurations.observe({ job: name }, (performance.now() - startedAt) / 1_000);
               inFlight = false;
               runningJobs--;
               settle();
@@ -584,9 +717,15 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       if (!drained) {
         // Running functions cannot be cancelled; queued ones must not start
         // once the process is on its way out.
+        const droppedQueued = [...queues.values()].reduce((sum, queue) => sum + queue.length, 0);
+        counters.dropped += droppedQueued;
+        if (droppedQueued > 0) droppedTotal.inc({ reason: "shutdown" }, droppedQueued);
         for (const queue of queues.values()) queue.length = 0;
         log.warn("sidecar grace period over, abandoning unfinished work", { graceMs, ...abandoned });
       }
+      // Retrying deliveries reject now instead of outliving the grace period;
+      // emits made after close (a timed out function waking up) fail at once.
+      stopEmits.abort(new Error("sidecar closed before it was delivered"));
       await Promise.all([closeServer(internalServer), closeServer(publicServer)]);
       log.info("sidecar stopped", { drained });
       return { drained, graceMs, abandoned };

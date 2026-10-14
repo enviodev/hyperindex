@@ -36,6 +36,7 @@ export {
   type EmitOptions,
   type EmitResult,
   type RetryPolicy,
+  type EmitFailure,
 } from "./emit.js";
 export {
   createIndexerClient,
