@@ -315,6 +315,17 @@ let getGlobalIndexer = (): 'indexer => {
     )
   }
 
+  let onWebhookFn = (rawOptions: 'a, handler: 'b) => {
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onWebhook")
+    HandlerRegister.registerOnWebhook(
+      ~name=rawOptions
+      ->(Utils.magic: 'a => Nullable.t<{"name": unknown}>)
+      ->Nullable.toOption
+      ->Option.mapOr(%raw(`undefined`), options => options["name"]),
+      ~handler=handler->(Utils.magic: 'b => Internal.onWebhookArgs => promise<unit>),
+    )
+  }
+
   // Ecosystem-specific surface: EVM/Fuel expose event + block handlers; SVM
   // exposes slot handlers only. The TS `.d.ts` already models this separation
   // — the Proxy mirrors it at runtime so `Object.keys(indexer)` reflects the
@@ -339,6 +350,7 @@ let getGlobalIndexer = (): 'indexer => {
             "onEvent",
             "contractRegister",
             "onBlock",
+            "onWebhook",
             "~internalAndWillBeRemovedSoon_onRollbackCommit",
           ]
         | Svm => [
@@ -348,6 +360,7 @@ let getGlobalIndexer = (): 'indexer => {
             "chains",
             "onInstruction",
             "onSlot",
+            "onWebhook",
             "~internalAndWillBeRemovedSoon_onRollbackCommit",
           ]
         }
@@ -372,6 +385,7 @@ let getGlobalIndexer = (): 'indexer => {
     | "onInstruction" => onInstructionFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
+    | "onWebhook" => onWebhookFn->Utils.magic
     | "~internalAndWillBeRemovedSoon_onRollbackCommit" => onRollbackCommitFn->Utils.magic
     | _ =>
       JsError.throwWithMessage(

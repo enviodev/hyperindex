@@ -907,6 +907,7 @@ let getRegistrationIndex = (item: Internal.item): int =>
   switch item {
   | Event({onEventRegistration}) => onEventRegistration.index
   | Block({onBlockRegistration}) => onBlockRegistration.index
+  | Webhook(_) => 0
   }
 
 // Lexicographic order on two call paths, parent before child: `[1]` precedes
@@ -2974,6 +2975,7 @@ let rollback = (
     ~mutItems=fetchState.buffer->Array.filter(item =>
       switch item {
       | Event({blockNumber})
+      | Webhook({blockNumber})
       | Block({blockNumber}) => blockNumber
       } <=
       targetBlockNumber

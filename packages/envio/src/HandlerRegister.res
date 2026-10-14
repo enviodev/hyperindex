@@ -5,6 +5,7 @@
 type chainRegistrations = {
   onEventRegistrations: array<Internal.onEventRegistration>,
   onBlockRegistrations: array<Internal.onBlockRegistration>,
+  onWebhookRegistrations?: array<Internal.onWebhookRegistration>,
 }
 
 // The finished registration state returned by `finishRegistration`.
@@ -591,6 +592,12 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             | Some(chainRegs) => chainRegs.onBlockRegistrations->Array.copy
             | None => []
             },
+            onWebhookRegistrations: switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(
+              key,
+            ) {
+            | Some({onWebhookRegistrations}) => onWebhookRegistrations->Array.copy
+            | _ => []
+            },
           },
         )
       })
@@ -637,6 +644,44 @@ let throwIfFinishedRegistration = (~methodName) => {
     )
   | _ => ()
   }
+}
+
+let builtinWebhookNames = ["sidecar.ack", "sidecar.dropped"]
+
+let registerOnWebhook = (~name: unknown, ~handler: Internal.onWebhookArgs => promise<unit>) => {
+  let name = switch name {
+  | name if typeof(name) === #string => name->(Utils.magic: unknown => string)
+  | _ => JsError.throwWithMessage("`indexer.onWebhook` expects `{ name }` with the webhook name.")
+  }
+  if name->String.startsWith("sidecar.") && !(builtinWebhookNames->Array.includes(name)) {
+    JsError.throwWithMessage(
+      `\`indexer.onWebhook("${name}")\`: names starting with "sidecar." are reserved for ${builtinWebhookNames->Array.join(
+          " and ",
+        )}.`,
+    )
+  }
+  withRegistration(registration =>
+    registration.config.chainMap
+    ->ChainMap.values
+    ->Array.forEach(chainConfig => {
+      let chainRegs = registration->getChainRegistrations(~chainId=chainConfig.id)
+      let existing = chainRegs.onWebhookRegistrations->Option.getOr([])
+      if existing->Array.some(reg => reg.name === name) {
+        JsError.throwWithMessage(
+          `\`indexer.onWebhook("${name}")\` is registered twice. Register one handler per webhook.`,
+        )
+      }
+      registration.registrationsByChainId->Dict.set(
+        chainConfig.id->ChainId.toString,
+        {
+          ...chainRegs,
+          onWebhookRegistrations: existing->Array.concat([
+            {Internal.name, chainId: chainConfig.id, handler},
+          ]),
+        },
+      )
+    })
+  )
 }
 
 // Shape of the user-returned `{_gte?, _lte?, _every?}` filter chunk after
@@ -763,7 +808,9 @@ let registerOnBlock = (
         // Off the same object the predicate above was handed, not off
         // `chainConfig`: that one still says whatever config.yaml said, and for
         // `start_block: latest` the resolved head only lives in persisted state.
-        let chainStartBlock = (chainObj->(Utils.magic: unknown => {"startBlock": int}))["startBlock"]
+        let chainStartBlock = (
+          chainObj->(Utils.magic: unknown => {"startBlock": int})
+        )["startBlock"]
         if range._gte->Option.getOr(chainStartBlock) < chainStartBlock {
           JsError.throwWithMessage(
             `The start block for onBlock handler "${name}" is less than the chain start block (${chainStartBlock->Int.toString}). This is not supported yet.`,

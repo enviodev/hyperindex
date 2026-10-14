@@ -128,6 +128,48 @@ let runHandlerOrThrow = async (
         }),
       )
     }
+  | Webhook({
+      pendingWebhook: {onWebhookRegistration: {handler}, delivery, body},
+      blockNumber,
+      blockTimestamp,
+    }) =>
+    try {
+      let contextParams: UserContext.contextParams = {
+        item,
+        indexerState,
+        loadManager,
+        persistence,
+        checkpointId,
+        isPreload: false,
+        chains,
+        config,
+        isResolved: false,
+        sidecarCalls,
+        sidecarSeq: 0,
+      }
+      await handler({
+        webhook: {
+          name: delivery.name,
+          body,
+          id: delivery.id,
+          chainId: delivery.chainId,
+          receivedAt: delivery.receivedAt,
+          idempotencyKey: ?delivery.idempotencyKey,
+          block: {number: blockNumber, timestamp: ?blockTimestamp},
+        },
+        context: UserContext.getHandlerContext(contextParams),
+      })
+      contextParams.isResolved = true
+    } catch {
+    | exn =>
+      throw(
+        ProcessingError({
+          message: "Unexpected error in the webhook handler. Please handle the error to keep the indexer running smoothly.",
+          item,
+          exn,
+        }),
+      )
+    }
   | Event(_) =>
     switch (item->Internal.castUnsafeEventItem).onEventRegistration.handler {
     | Some(handler) =>
@@ -241,6 +283,8 @@ let preloadBatchOrThrow = async (
         } catch {
         | _ => ()
         }
+      // Webhooks skip the preload pass (wiki/06-api-v0.md 6.3).
+      | Webhook(_) => ()
       }
     }
 

@@ -22,8 +22,10 @@ type t = {
   rollbackTimeoutMs: int,
   backoffBaseMs: int,
   backoffCapMs: int,
-  onAcked: array<string> => unit,
-  onDropped: (array<SidecarCall.t>, ~reason: string) => unit,
+  // Bound by the indexer state that owns the sender, which turns them into the
+  // built-in `sidecar.ack` and `sidecar.dropped` webhooks.
+  mutable onAcked: array<SidecarCall.t> => unit,
+  mutable onDropped: (array<SidecarCall.t>, ~reason: string) => unit,
   queue: array<item>,
   // Taken off the queue for the POST under way, and resent as they are while
   // it keeps failing. Still counted against the bound.
@@ -181,7 +183,8 @@ let settleCalls = (t, ~calls: array<SidecarCall.t>, ~reply: JSON.t) => {
   let accepted = accepted->Option.getOr([])
   t.sent = t.sent + accepted->Array.length
   if accepted->Utils.Array.notEmpty {
-    t.onAcked(accepted)
+    let acceptedIds = accepted->Utils.Set.fromArray
+    t.onAcked(calls->Array.filter(call => acceptedIds->Utils.Set.has(call.id)))
   }
   rejected
   ->Option.getOr([])

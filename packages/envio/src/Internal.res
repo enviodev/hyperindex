@@ -729,6 +729,43 @@ type onBlockRegistration = {
   handler: onBlockArgs => promise<unit>,
 }
 
+// A webhook the listener accepted, as it crosses to the process that owns its
+// chain. `body` is still the JSON form, so it survives the IPC channel.
+type webhookDelivery = {
+  id: string,
+  chainId: ChainId.t,
+  name: string,
+  body: JSON.t,
+  idempotencyKey?: string,
+  receivedAt: float,
+}
+
+type webhookBlock = {number: int, timestamp?: int}
+
+type webhookEvent = {
+  name: string,
+  body: unknown,
+  id: string,
+  chainId: ChainId.t,
+  receivedAt: float,
+  idempotencyKey?: string,
+  block: webhookBlock,
+}
+
+type onWebhookArgs = {webhook: webhookEvent, context: handlerContext}
+
+type onWebhookRegistration = {
+  name: string,
+  chainId: ChainId.t,
+  handler: onWebhookArgs => promise<unit>,
+}
+
+type pendingWebhook = {
+  onWebhookRegistration: onWebhookRegistration,
+  delivery: webhookDelivery,
+  body: unknown,
+}
+
 @tag("kind")
 type item =
   | @as(0)
@@ -747,6 +784,15 @@ type item =
       payload: eventPayload,
     })
   | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int})
+  // Never in a fetch buffer: a batch appends its chain's queued webhooks after
+  // its on-chain items, at the block the batch leaves the chain on.
+  | @as(2)
+  Webhook({
+      pendingWebhook: pendingWebhook,
+      chainId: ChainId.t,
+      blockNumber: int,
+      blockTimestamp: option<int>,
+    })
 
 external castUnsafeEventItem: item => eventItem = "%identity"
 
@@ -766,6 +812,7 @@ external getItemKind: item => int = "kind"
 let getItemChainId = item =>
   switch item {
   | Event({chainId})
+  | Webhook({chainId})
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 

@@ -68,7 +68,7 @@ let normalizeEvent = item =>
         transaction: payload.transaction,
       }
     }
-  | Internal.Block(_) =>
+  | Internal.Block(_) | Internal.Webhook(_) =>
     JsError.throwWithMessage("RPC source contract pin unexpectedly received an onBlock item")
   }
 

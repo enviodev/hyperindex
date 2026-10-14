@@ -20,6 +20,7 @@ let make: (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
   ~onEventRegistrations: array<Internal.onEventRegistration>=?,
+  ~onWebhookRegistrations: array<Internal.onWebhookRegistration>=?,
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
@@ -132,6 +133,8 @@ let takeFinished: t => option<finished>
 let reorgThresholdLiftsCeiling: t => bool
 let reorgThresholdEntryMessage: string
 let hasProcessedToEndblock: t => bool
+let webhookRegistration: (t, ~name: string) => option<Internal.onWebhookRegistration>
+let enqueueWebhook: (t, Internal.pendingWebhook) => unit
 let hasCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
 let isActivelyIndexing: t => bool

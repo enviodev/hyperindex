@@ -203,7 +203,7 @@ let eventSummary = (item: Internal.item) =>
         ->(Utils.magic: Internal.eventTransaction => transactionView),
       }
     }
-  | Internal.Block(_) => JsError.throwWithMessage("Expected an event item")
+  | Internal.Block(_) | Internal.Webhook(_) => JsError.throwWithMessage("Expected an event item")
   }
 
 describe("HyperSync source contract", () => {
