@@ -60,6 +60,9 @@ type t = {
   mutable rollback: option<Persistence.rollback>,
   // Last checkpoint each chain has persisted to the db.
   mutable committedFrontier: Frontier.t,
+  // committedFrontier read for the cross-chain scope, reassigned together with
+  // it. Every entity access reads it, so it isn't folded from the frontier per read.
+  mutable committedCrossChainCheckpointId: Internal.checkpointId,
   // Processing frontier; runs ahead of committedFrontier while writes lag.
   mutable processedFrontier: Frontier.t,
   // Processed but unwritten. The cycle drains them, splitting each write at a
@@ -174,6 +177,10 @@ let make = (
     effectState: EffectState.make(),
     rollback: None,
     committedFrontier,
+    committedCrossChainCheckpointId: config.checkpointSequence->CheckpointSequence.forScope(
+      committedFrontier,
+      ~scope=CrossChain,
+    ),
     processedFrontier: committedFrontier->Frontier.copy,
     processedBatches: [],
     processedBatchesCount: 0,
@@ -493,8 +500,12 @@ let committedFrontier = (state: t) => state.committedFrontier
 let processedFrontier = (state: t) => state.processedFrontier
 
 // The committed id a scope's in-memory rows compare against.
-let committedCheckpointIdFor = (state: t, ~scope) =>
-  state.config.checkpointSequence->CheckpointSequence.forScope(state.committedFrontier, ~scope)
+let committedCheckpointIdFor = (state: t, ~scope: Internal.chainScope) =>
+  switch scope {
+  | CrossChain => state.committedCrossChainCheckpointId
+  | Chain(_) =>
+    state.config.checkpointSequence->CheckpointSequence.forScope(state.committedFrontier, ~scope)
+  }
 
 let processedBatches = (state: t) => state.processedBatches
 let processedBatchesCount = (state: t) => state.processedBatchesCount
@@ -875,7 +886,13 @@ let takeRollback = (state: t): option<Persistence.rollback> => {
 // already has is a no-op. Rows staged while the write was in flight belong to
 // later checkpoints — ids only ever grow — so this can't drop one unwritten.
 let markCommitted = (state: t, ~writtenFrontier) => {
-  state.committedFrontier = Frontier.mergeMax(state.committedFrontier, writtenFrontier)
+  let committedFrontier = Frontier.mergeMax(state.committedFrontier, writtenFrontier)
+  state.committedFrontier = committedFrontier
+  state.committedCrossChainCheckpointId =
+    state.config.checkpointSequence->CheckpointSequence.forScope(
+      committedFrontier,
+      ~scope=CrossChain,
+    )
 }
 
 // Reset the in-memory tables and arm the rollback diff that the next write
