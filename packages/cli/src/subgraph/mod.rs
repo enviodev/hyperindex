@@ -1114,7 +1114,9 @@ type Gravatar @entity {
             &ambiguous(),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("file data sources outside `templates`"));
+        assert!(err
+            .to_string()
+            .contains("file data sources outside `templates`"));
     }
 
     // Balancer names FXPoolDeployer both a data source and a template over the
