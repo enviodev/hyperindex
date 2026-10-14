@@ -239,7 +239,7 @@ jobs:
   # The scenario suite is backend-agnostic, so it runs once per storage
   # backend, one runner each. A scenario that can't run on a backend skips
   # itself with a reason. The ClickHouse leg keeps every entity in ClickHouse
-  # too, beside the Postgres that keeps the indexer's own state; a scenario
+  # alone, beside the Postgres that keeps the indexer's own state; a scenario
   # whose config sets its own storage keeps it on both legs, which is why each
   # has both servers.
   envio-tests:

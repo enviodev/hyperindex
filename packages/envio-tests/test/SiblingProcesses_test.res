@@ -80,7 +80,6 @@ describe("Two processes indexing one schema", () => {
       // Chain metadata goes out on a throttle of its own; stopping flushes it.
       let _ = await Promise.all2((first.stop(), second.stop()))
       let {sql, pgSchema} = indexer.pg
-      let items: array<item> = await indexer.query("Item")
       let chains: array<{
         "id": int,
         "first_event_block": Null.t<int>,
@@ -88,22 +87,32 @@ describe("Two processes indexing one schema", () => {
       }> = await sql->Sql.queryForTests(
         `SELECT "id", "first_event_block", "ready_at" IS NOT NULL AS "ready" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
       )
+      let indexes =
+        (await sql->PgCatalog.indexes(~pgSchema))
+        ->Array.filter(index => index.columns == ["owner"])
+        ->Array.map(index => (index.tableName, index.isValid))
+        ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
+      // A ClickHouse read stops at the progress its own run knew of, so the rows
+      // are read by a run resumed after both siblings — once nothing else is
+      // left to read, since that run builds indexes of its own.
+      let items: array<item> = await (await indexer.restart()).query("Item")
 
       t.expect((
         items->Array.length,
         chains->Array.map(
           chain => (chain["id"], chain["first_event_block"]->Null.toOption, chain["ready"]),
         ),
-        (await sql->PgCatalog.indexes(~pgSchema))
-        ->Array.filter(index => index.columns == ["owner"])
-        ->Array.map(index => (index.tableName, index.isValid))
-        ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b)),
+        indexes,
       )).toEqual((
         rowsPerSibling * 2,
         // Each sibling stamped its own chain and left the other's alone.
         [(1, Some(1), true), (137, Some(137), true)],
-        // Each built the owner index on its own chain's partition only.
-        [("Item$1", true), ("Item$137", true)],
+        // Each built the owner index on its own chain's partition only. An
+        // entity kept in ClickHouse alone has no Postgres table to index.
+        switch IndexerRunner.selectedBackend {
+        | #postgres => [("Item$1", true), ("Item$137", true)]
+        | #clickhouse => []
+        },
       ))
     },
   )

@@ -403,7 +403,7 @@ let json = nullSafe({
   eq: (a: unknown, b: unknown) => a == b,
   gt: (a, b) => a > b,
   lt: (a, b) => a < b,
-  key: v => v->Sql.canonicalDocument->(Utils.magic: string => unknown),
+  key: v => v->Sql.sortedDocument->(Utils.magic: string => unknown),
 })
 
 let asBytes = (v: unknown) => v->(Utils.magic: unknown => Uint8Array.t)

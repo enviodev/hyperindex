@@ -41,6 +41,7 @@ describe("Json documents of every shape", () => {
 
   scenario->Scenario.it(
     "are stored as the documents they were, in a list as well as alone",
+    ~unsupported=[{backend: #clickhouse, reason: "asserts the jsonb Postgres stores"}],
     ~sources=[{chain: 1}],
     ~onError=(error: ErrorHandling.t) =>
       failure :=

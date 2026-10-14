@@ -148,6 +148,7 @@ let asContext = (context: Internal.handlerContext) =>
 describe("Deferred schema indexes", () => {
   aheadOfHeadScenario->Scenario.it(
     "Are committed for a chain that starts past the head and never processes a batch",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -171,6 +172,7 @@ describe("Deferred schema indexes", () => {
 
   unreachableEndBlockScenario->Scenario.it(
     "Are committed once the chain sits at the head, even with an end block it never reaches",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -195,6 +197,7 @@ describe("Deferred schema indexes", () => {
 
   scenario->Scenario.it(
     "Are absent through backfill, committed with ready_at, and kept across a restart",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -247,6 +250,7 @@ describe("Deferred schema indexes", () => {
   let gate = ref(MockSource.Gate.make())
   scenario->Scenario.it(
     "Hold the indexer short of ready until they are committed",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337}],
     ~mapStorage=storage => {
       ...storage,
@@ -423,6 +427,7 @@ describe("Deferred schema indexes", () => {
   // with `A(b_id)` unindexed.
   scenario->Scenario.it(
     "Reach ready even when another table holds the legacy index name",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -463,6 +468,7 @@ describe("Automatic getWhere indexes", () => {
   // still return the right rows.
   scenario->Scenario.it(
     "Are built mid-backfill by the first query that needs one",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)

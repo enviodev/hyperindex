@@ -98,6 +98,7 @@ describe("Scenario rollback and history", () => {
 
   scenario->Scenario.it(
     "keeps a history row per committed change",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1)

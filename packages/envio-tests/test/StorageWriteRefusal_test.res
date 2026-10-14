@@ -62,6 +62,7 @@ describe("A batch the server refuses", () => {
 
   scenario->Scenario.it(
     "commits nothing from it, and a restart resumes after the last good batch",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     ~onError=refusal.onError,
     async (~t, ~indexer, ~source) => {

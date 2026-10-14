@@ -17,6 +17,7 @@ chains:
 
 let scenario = Scenario.make(
   ~supervised=false,
+  ~unsupported=Scenario.assertsPostgresIndexes,
   ~configYaml,
   ~schema=`
 type A {
@@ -36,6 +37,7 @@ type B {
 let longName = `Entity${"x"->String.repeat(57)}`
 let longNameScenario = Scenario.make(
   ~supervised=false,
+  ~unsupported=Scenario.assertsPostgresIndexes,
   ~configYaml,
   ~schema=`
 type ${longName} {
@@ -47,6 +49,7 @@ type ${longName} {
 
 let tripleScenario = Scenario.make(
   ~supervised=false,
+  ~unsupported=Scenario.assertsPostgresIndexes,
   ~configYaml,
   ~schema=`
 type Triple {

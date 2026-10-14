@@ -211,6 +211,7 @@ let counterSet = (~checkpointId, ~chain, ~count): Change.t<counter> => Set({
 describe("Per-chain history pruning", () => {
   scenario->Scenario.it(
     "Prunes a chain down to its own safe checkpoint while a sibling's head sits still",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -236,6 +237,7 @@ describe("Per-chain history pruning", () => {
   // in which chain is visited first, which the checkpoint ids follow.
   crossChainScenario->Scenario.it(
     "Holds every chain at the lowest safe checkpoint when one entity is cross-chain",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -258,6 +260,7 @@ describe("Per-chain history pruning", () => {
 
   crossChainZeroDepthScenario->Scenario.it(
     "Prunes past an idle chain with no reorg depth under a shared sequence",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -282,6 +285,7 @@ describe("Per-chain history pruning", () => {
   // ids: bounds crossed between chains would survive a symmetric setup.
   manyBoundsScenario->Scenario.it(
     "Holds each chain to its own bound when several chains prune at once",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 200, methods}, {chain: 300, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -360,6 +364,7 @@ describe("Per-chain history pruning", () => {
   // observed: it sees both chains' committed rows with a fresh interval.
   zeroDepthScenario->Scenario.it(
     "Writes neither history nor checkpoints for a chain with no reorg depth",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -405,6 +410,7 @@ describe("Per-chain history pruning", () => {
   // whichever chain the fold happened to see last.
   crossChainLaggingFirstScenario->Scenario.it(
     "Holds every chain at the lowest safe checkpoint when the lagging chain comes first",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 5, methods}, {chain: 100, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {

@@ -138,6 +138,7 @@ describe("Resuming a backfill that never finalized", () => {
 
   scenario->Scenario.it(
     "Finalizes an open-ended chain without waiting for a new source block",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337, methods}],
     ~mapStorage,
     // The simulated crash reaches the loop's error boundary; swallow it so it
@@ -249,6 +250,7 @@ describe("Resuming a backfill that never finalized", () => {
 
   scenario->Scenario.it(
     "Finalizes after the resumed run processes a fresh block",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337, methods}],
     ~mapStorage,
     ~onError=_ => (),
@@ -288,6 +290,7 @@ describe("Resuming a backfill that never finalized", () => {
 
   endBlockScenario->Scenario.it(
     "Finalizes a finite endBlock chain without waiting for a new source block",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337, methods}],
     ~mapStorage,
     // The simulated crash reaches the loop's error boundary; swallow it so it
@@ -338,6 +341,7 @@ describe("Resuming a backfill that never finalized", () => {
 
   multichainScenario->Scenario.it(
     "Finalizes two open-ended chains caught up to different persisted heads",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1, methods}, {chain: 1337, methods}],
     ~mapStorage,
     // The simulated crash reaches the loop's error boundary; swallow it so it
@@ -397,6 +401,7 @@ describe("Resuming a backfill that never finalized", () => {
   let (finalizeCalls, mapStorage) = makeFlakyFinalize(~failCount=1)
   scenario->Scenario.it(
     "Finalizes a chain the head has already outrun by the time it resumes",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337, methods}],
     ~mapStorage,
     // The simulated crash reaches the loop's error boundary; swallow it so it
@@ -442,6 +447,7 @@ describe("Resuming a backfill that never finalized", () => {
 
   scenario->Scenario.it(
     "Stamps readiness without rebuilding indexes that already exist",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337, methods}],
     ~mapStorage,
     // The simulated crash reaches the loop's error boundary; swallow it so it
@@ -495,6 +501,7 @@ describe("Resuming a backfill that never finalized", () => {
 
   scenario->Scenario.it(
     "Rebuilds a schema index the database lost while it was down",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337, methods}],
     ~mapStorage,
     // The simulated crash reaches the loop's error boundary; swallow it so it

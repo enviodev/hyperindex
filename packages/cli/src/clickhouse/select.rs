@@ -331,27 +331,43 @@ pub fn load(
             conjunction(&matching)
         ));
     }
-    let columns = joined(
-        &table
-            .columns
-            .iter()
-            .map(|column| column.name.clone())
-            .collect::<Vec<_>>(),
-    );
+    // Every column the latest row carries besides the key, taken in one tuple
+    // so they all come from the same row. Grouping on the key outruns sorting
+    // each entity's rows to keep the first.
+    let latest = table
+        .columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .filter(|name| !key.iter().any(|key| key == name))
+        .chain([CHANGE_COLUMN])
+        .collect::<Vec<_>>();
+    let untupled = latest
+        .iter()
+        .enumerate()
+        .map(|(index, name)| format!("{LATEST}.{} AS {}", index + 1, quoted(name)))
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut current = on_values;
     current.insert(0, format!("{} = {}", quoted(CHANGE_COLUMN), literal(SET)));
     Ok(format!(
-        "SELECT {} FROM (SELECT {columns} FROM (SELECT {columns}, {} FROM {source} WHERE {} ORDER \
-         BY {}, {} DESC LIMIT 1 BY {}) WHERE {}) FORMAT RowBinary",
+        "SELECT {} FROM (SELECT {key}, {untupled} FROM (SELECT {key}, argMax(tuple({}), {}) AS \
+         {LATEST} FROM {source} WHERE {} GROUP BY {key})) WHERE {} FORMAT RowBinary",
         as_row_names(table),
-        quoted(CHANGE_COLUMN),
-        conjunction(&narrowing),
-        joined(&key),
+        latest
+            .iter()
+            .map(|name| quoted(name))
+            .collect::<Vec<_>>()
+            .join(", "),
         quoted(CHECKPOINT_ID_COLUMN),
-        joined(&key),
+        conjunction(&narrowing),
         conjunction(&current),
+        key = joined(&key),
     ))
 }
+
+/// What a load names each entity's latest row by. Not a column's name: an
+/// entity field can't start with `envio_`.
+const LATEST: &str = "envio_latest";
 
 /// The entities a rollback reaches: any with a row above its bound.
 fn changed(database: &str, table: &Table, above: &str) -> String {
@@ -456,10 +472,11 @@ mod tests {
         assert_eq!(
             load("db", &account(), &[by_ids], &frontier(&[(1, 7)])).unwrap(),
             "SELECT `id` AS `id`, `owner_name` AS `ownerName`, `balance` AS `balance` FROM \
-             (SELECT `id`, `owner_name`, `balance` FROM (SELECT `id`, `owner_name`, `balance`, \
-             `envio_change` FROM `db`.`envio_history_Account` WHERE `id` IN ('a', 'b''c') AND \
-             `envio_checkpoint_id` <= 7 ORDER BY `id`, `envio_checkpoint_id` DESC LIMIT 1 BY \
-             `id`) WHERE `envio_change` = 'SET') FORMAT RowBinary"
+             (SELECT `id`, envio_latest.1 AS `owner_name`, envio_latest.2 AS `balance`, \
+             envio_latest.3 AS `envio_change` FROM (SELECT `id`, argMax(tuple(`owner_name`, \
+             `balance`, `envio_change`), `envio_checkpoint_id`) AS envio_latest FROM \
+             `db`.`envio_history_Account` WHERE `id` IN ('a', 'b''c') AND `envio_checkpoint_id` \
+             <= 7 GROUP BY `id`)) WHERE `envio_change` = 'SET' FORMAT RowBinary"
         );
     }
 
@@ -477,12 +494,13 @@ mod tests {
             )
             .unwrap(),
             "SELECT `id` AS `id`, `owner_name` AS `ownerName`, `balance` AS `balance` FROM \
-             (SELECT `id`, `owner_name`, `balance` FROM (SELECT `id`, `owner_name`, `balance`, \
-             `envio_change` FROM `db`.`envio_history_Account` WHERE `envio_checkpoint_id` <= 7 \
-             AND `id` IN (SELECT `id` FROM `db`.`envio_history_Account` WHERE `owner_name` = \
-             'alice' AND `envio_checkpoint_id` <= 7) ORDER BY `id`, `envio_checkpoint_id` DESC \
-             LIMIT 1 BY `id`) WHERE `envio_change` = 'SET' AND `owner_name` = 'alice') FORMAT \
-             RowBinary"
+             (SELECT `id`, envio_latest.1 AS `owner_name`, envio_latest.2 AS `balance`, \
+             envio_latest.3 AS `envio_change` FROM (SELECT `id`, argMax(tuple(`owner_name`, \
+             `balance`, `envio_change`), `envio_checkpoint_id`) AS envio_latest FROM \
+             `db`.`envio_history_Account` WHERE `envio_checkpoint_id` <= 7 AND `id` IN (SELECT \
+             `id` FROM `db`.`envio_history_Account` WHERE `owner_name` = 'alice' AND \
+             `envio_checkpoint_id` <= 7) GROUP BY `id`)) WHERE `envio_change` = 'SET' AND \
+             `owner_name` = 'alice' FORMAT RowBinary"
         );
     }
 
@@ -500,11 +518,12 @@ mod tests {
                 &frontier(&[(1, 7), (137, 9)])
             )
             .unwrap(),
-            "SELECT `id` AS `id`, `chain_id` AS `chainId` FROM (SELECT `id`, `chain_id` FROM \
-             (SELECT `id`, `chain_id`, `envio_change` FROM `db`.`envio_history_Account` WHERE \
-             `id` = 'a' AND `chain_id` = 137 AND `envio_checkpoint_id` <= multiIf(`chain_id` = \
-             1, 7, `chain_id` = 137, 9, 0) ORDER BY `id`, `chain_id`, `envio_checkpoint_id` DESC \
-             LIMIT 1 BY `id`, `chain_id`) WHERE `envio_change` = 'SET') FORMAT RowBinary"
+            "SELECT `id` AS `id`, `chain_id` AS `chainId` FROM (SELECT `id`, `chain_id`, \
+             envio_latest.1 AS `envio_change` FROM (SELECT `id`, `chain_id`, \
+             argMax(tuple(`envio_change`), `envio_checkpoint_id`) AS envio_latest FROM \
+             `db`.`envio_history_Account` WHERE `id` = 'a' AND `chain_id` = 137 AND \
+             `envio_checkpoint_id` <= multiIf(`chain_id` = 1, 7, `chain_id` = 137, 9, 0) GROUP \
+             BY `id`, `chain_id`)) WHERE `envio_change` = 'SET' FORMAT RowBinary"
         );
     }
 

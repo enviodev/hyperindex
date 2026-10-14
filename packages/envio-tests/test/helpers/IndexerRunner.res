@@ -11,7 +11,7 @@ type pg = {sql: StorageClient.t, pgSchema: string}
 let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
 
 // Which persistence a run is exercised against: Postgres alone, or with every
-// entity kept in ClickHouse too. A scenario whose config sets its own storage
+// entity kept in ClickHouse alone instead. A scenario whose config sets its own storage
 // keeps it on both. CI runs the suite once per backend.
 type backend = [#postgres | #clickhouse]
 

@@ -127,7 +127,10 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       // Named again, the chain is already there: a plain resume.
       let resumed = await added.restart(~chains=[ChainId.fromInt(137)], ())
 
-      let rows: array<counterRow> = await resumed.query("Counter")
+      // A ClickHouse read stops at the progress its own run knew of, and a
+      // `--chain` run knows only its own chains', so the rows are read by a run
+      // of every chain.
+      let rows: array<counterRow> = await (await resumed.restart()).query("Counter")
       t.expect(
         (
           rows->Array.toSorted((a, b) => Int.compare(a.chainId, b.chainId)),
@@ -142,7 +145,11 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       ).toEqual((
         [{id: "total", count: 1n, chainId: 1}, {id: "total", count: 10n, chainId: 137}],
         [("1", 100), ("137", 100)],
-        ["Counter$1", "Counter$137"],
+        // An entity kept in ClickHouse alone has no Postgres table to partition.
+        switch IndexerRunner.selectedBackend {
+        | #postgres => ["Counter$1", "Counter$137"]
+        | #clickhouse => []
+        },
         [("1", "Token"), ("137", "Token")],
         [
           (
@@ -164,7 +171,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
     ~configYaml=configYaml(~chains=[chainYaml(1)]),
     ~unsupported=clickHouseOnly,
   )->Scenario.it(
-    "Mirrors the added chain into ClickHouse alongside the deployed one",
+    "Writes the added chain to ClickHouse alongside the deployed one",
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])

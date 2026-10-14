@@ -157,7 +157,12 @@ let metricByChain = async (indexer: IndexerRunner.t, name) => {
 let progressByChain = indexer => indexer->metricByChain("envio_progress_block")
 let eventsByChain = indexer => indexer->metricByChain("envio_progress_events")
 
-let counters = (indexer: IndexerRunner.t): promise<array<counter>> => indexer.query("Counter")
+// A read has no order of its own, and each store hands rows back in a different
+// one.
+let counters = async (indexer: IndexerRunner.t): array<counter> =>
+  (await indexer.query("Counter"))->Array.toSorted((a: counter, b) =>
+    Int.compare(a.chainId, b.chainId)
+  )
 let counterHistory = (indexer: IndexerRunner.t): promise<array<Change.t<counter>>> =>
   indexer.queryHistory("Counter")
 
@@ -416,6 +421,7 @@ describe("Isolated multichain rollback", () => {
 
   scenario->Scenario.it(
     "Rolls back the reorg chain alone and leaves its sibling untouched",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -559,6 +565,7 @@ describe("Isolated multichain rollback", () => {
   // it; only the reorg chain's rows may go.
   scenario->Scenario.it(
     "Keeps a sibling's re-indexed rows when a later reorg targets a lower checkpoint",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -603,6 +610,7 @@ describe("Isolated multichain rollback", () => {
   // merge is a pointwise minimum, which can't lose the earlier floor.
   scenario->Scenario.it(
     "Keeps each chain at its own floor when a second reorg lands before the first is written",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -947,6 +955,7 @@ describe("Isolated multichain rollback", () => {
   )
   fullHistoryScenario->Scenario.it(
     "Keeps the sibling's full history when save_full_history is on",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1158,6 +1167,7 @@ describe("Isolated multichain rollback", () => {
 
   singleChainScenario->Scenario.it(
     "Rolls back a lone chain that counts its own checkpoint ids",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {

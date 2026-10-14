@@ -59,10 +59,13 @@ external stringifyWith: (unknown, (string, unknown) => unknown) => string = "str
 // its own.
 let stringifyDocument = (value: unknown): string => value->stringify->storable
 
-// A document spelled one way whatever order its keys were set in, for where a
-// document is compared as its text: ClickHouse stores and filters it so, and
-// an in-memory index buckets entities by it.
-let canonicalDocument = (value: unknown): string => value->stringifyWith(withSortedKeys)->storable
+// A document's text whatever order its keys were set in, which an in-memory
+// index buckets entities by.
+let sortedDocument = (value: unknown): string => value->stringifyWith(withSortedKeys)
+
+// A document as ClickHouse stores and filters it: compared as its text, so
+// spelled one way whatever order its keys were set in.
+let canonicalDocument = (value: unknown): string => value->sortedDocument->storable
 
 // Every parameter reaches the server as text — the statement's own casts say
 // what type to read it back as, so a value only has to render itself.

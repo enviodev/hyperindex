@@ -7,6 +7,18 @@ type backend = IndexerRunner.backend
 // skip message — an opt-out nobody can explain is an opt-out nobody revisits.
 type unsupported = {backend: backend, reason: string}
 
+// What Postgres keeps of an entity it stores, which an entity kept in
+// ClickHouse alone has no counterpart of.
+let assertsPostgresHistory = [
+  {backend: #clickhouse, reason: "asserts the history Postgres keeps of an entity"},
+]
+let assertsPostgresIndexes = [
+  {backend: #clickhouse, reason: "asserts the indexes Postgres builds on an entity"},
+]
+let assertsPostgresPartitions = [
+  {backend: #clickhouse, reason: "asserts the partitions Postgres keeps an entity in"},
+]
+
 type t = {
   config: Config.t,
   publicConfigJson: JSON.t,
@@ -39,8 +51,9 @@ type sourceMock = {
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
-// The ClickHouse leg indexes the same scenario with ClickHouse switched on. It's
-// a config choice a user makes in YAML, so it's made there rather than by
+// The ClickHouse leg indexes the same scenario with every entity kept in
+// ClickHouse alone, so every handler read, getWhere and rollback reads it there.
+// It's a config choice a user makes in YAML, so it's made there rather than by
 // patching the parsed config — that way the entities pick up their ClickHouse
 // storage flags through the same parse a user's would.
 let withClickHouseStorage = configYaml =>
@@ -48,7 +61,7 @@ let withClickHouseStorage = configYaml =>
     // The scenario configures storage itself; leave its choice alone.
     configYaml
   } else {
-    configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
+    configYaml ++ "\nstorage:\n  clickhouse:\n    default: true\n"
   }
 
 let make = (
@@ -274,17 +287,19 @@ let run = async (
   )
 }
 
-let skipReason = (scenario: t) =>
-  scenario.unsupported
+let skipReason = (unsupported: array<unsupported>) =>
+  unsupported
   ->Array.find(({backend}) => backend === IndexerRunner.selectedBackend)
   ->Option.map(({reason}) => reason)
 
 // Registers a vitest test that runs `body` against this scenario. A backend the
-// scenario declares unsupported is skipped by name and reason, so the reporter
-// says which coverage the run is missing instead of quietly passing.
+// scenario, or this one case of it, declares unsupported is skipped by name and
+// reason, so the reporter says which coverage the run is missing instead of
+// quietly passing.
 let it = (
   scenario: t,
   name,
+  ~unsupported=[],
   ~sources: array<sourceMock>=[],
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
@@ -309,7 +324,7 @@ let it = (
     ~source: (int, ~index: int=?) => MockSource.t,
   ) => promise<unit>,
 ) => {
-  switch scenario->skipReason {
+  switch scenario.unsupported->Array.concat(unsupported)->skipReason {
   | Some(reason) =>
     Vitest.Async.it_skip(
       `${name} [no ${IndexerRunner.selectedBackend->IndexerRunner.backendName}: ${reason}]`,

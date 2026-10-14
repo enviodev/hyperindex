@@ -531,6 +531,7 @@ describe("E2E rollback tests", () => {
 
   scenario->Scenario.it(
     "Rollback of a single chain indexer",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -549,6 +550,7 @@ describe("E2E rollback tests", () => {
 
   scenario->Scenario.it(
     "Rolls back SET -> DELETE -> SET to the deleted state",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     ~onError=errHandler => {
@@ -770,6 +772,7 @@ describe("E2E rollback tests", () => {
 
   scenario->Scenario.it(
     "Fires onRollbackCommit per affected chain after the rollback write",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -897,6 +900,7 @@ describe("E2E rollback tests", () => {
 
   multichainScenario->Scenario.it(
     "Single chain rollback should also work for multichain indexer when another chains are stale",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1167,6 +1171,7 @@ describe("E2E rollback tests", () => {
 
   multichainScenario->Scenario.it(
     "Rollback of multichain indexer (single entity id change)",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1609,6 +1614,7 @@ describe("E2E rollback tests", () => {
   // Fixes duplicate history bug before 2.31
   multichainScenario->Scenario.it(
     "Rollback of multichain indexer (single entity id change + another entity on non-reorg chain)",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -2989,6 +2995,7 @@ describe("E2E rollback tests", () => {
 
   multichainScenario->Scenario.it(
     "Flushes in-flight batch write before computing rollback diffs (no silent data loss on non-reorg chain)",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     ~mapStorage=storage => {

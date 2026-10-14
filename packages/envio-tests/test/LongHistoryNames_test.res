@@ -100,6 +100,7 @@ let ids = (changes: array<Change.t<named>>) =>
 describe("Two entities whose names truncate alike", () => {
   scenario->Scenario.it(
     "keep a history table each",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
