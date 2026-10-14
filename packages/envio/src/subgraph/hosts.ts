@@ -10,31 +10,45 @@ import * as Sury from "rescript-schema";
 import { createEffect } from "../Envio.res.mjs";
 import { configureBlockTimestamps, requestBlockTimestamp } from "./blocks.ts";
 import { missingRpcMessage } from "./errors.ts";
-import { HttpStatusError, untilAnswered } from "./transient.ts";
+import { HttpStatusError, untilAnswered, withDeadline } from "./transient.ts";
 import { warn } from "../Logging.res.mjs";
 
-const IPFS_GATEWAY = "https://ipfs.io/ipfs/";
+/**
+ * Public IPFS gateways, in the order they are asked. The Graph's own node holds
+ * what subgraphs pin and doesn't rate-limit a backfill the way ipfs.io does
+ * (which answers 429 to a box that has made a handful of requests); the others
+ * take over when it is down, rate-limited or doesn't have the file.
+ */
+const IPFS_GATEWAYS = ["https://ipfs.thegraph.com/ipfs/", "https://ipfs.io/ipfs/", "https://gateway.pinata.cloud/ipfs/"];
 const IPFS_GATEWAY_ENV = "ENVIO_SUBGRAPH_IPFS_URL";
-const ARWEAVE_GATEWAY = "https://arweave.net/";
+const ARWEAVE_GATEWAYS = ["https://arweave.net/"];
 const ARWEAVE_GATEWAY_ENV = "ENVIO_SUBGRAPH_ARWEAVE_URL";
 /** Fetches of a file data source's file in flight at once. */
 const FILE_IN_FLIGHT = 16;
 
-/**
- * The gateway a CID is appended to, read per fetch. `ENVIO_SUBGRAPH_IPFS_URL`
- * may name the gateway (`https://gw.example`) or its `/ipfs/` path.
- */
-export function ipfsGatewayUrl(): string {
-  const configured = process.env[IPFS_GATEWAY_ENV]?.trim();
-  if (!configured) return IPFS_GATEWAY;
-  const base = configured.replace(/\/+$/, "");
-  return /\/ipfs$/.test(base) ? `${base}/` : `${base}/ipfs/`;
+function gatewayList(env: string, fallback: string[], suffix: string): string[] {
+  const configured = (process.env[env] ?? "")
+    .split(/[\s,]+/)
+    .map((url) => url.trim())
+    .filter((url) => url !== "");
+  if (configured.length === 0) return fallback;
+  return configured.map((url) => {
+    const base = url.replace(/\/+$/, "");
+    return suffix && !base.endsWith(suffix) ? `${base}/${suffix}/` : `${base}/`;
+  });
 }
 
-export function arweaveGatewayUrl(): string {
-  const configured = process.env[ARWEAVE_GATEWAY_ENV]?.trim();
-  if (!configured) return ARWEAVE_GATEWAY;
-  return configured.endsWith("/") ? configured : `${configured}/`;
+/**
+ * The gateways a CID is appended to, read per fetch. `ENVIO_SUBGRAPH_IPFS_URL`
+ * names one or several (comma separated), each with or without its `/ipfs/`
+ * path.
+ */
+export function ipfsGatewayUrls(): string[] {
+  return gatewayList(IPFS_GATEWAY_ENV, IPFS_GATEWAYS, "ipfs");
+}
+
+export function arweaveGatewayUrls(): string[] {
+  return gatewayList(ARWEAVE_GATEWAY_ENV, ARWEAVE_GATEWAYS, "");
 }
 
 /**
@@ -114,24 +128,41 @@ async function fetchRainbow(url: string, signal: AbortSignal): Promise<Response>
 const nullableString = Sury.union([Sury.string, null]);
 
 /**
- * Only "the gateway doesn't have it" is an answer, and a cached one; a timeout,
- * a 5xx or a rate limit is asked again rather than cached as a null for good.
+ * One try at one URL: the bytes, `null` for the gateway's 404, a throw for
+ * anything else (a timeout, a 5xx, a rate limit).
  */
-function fetchBase64(url: string, maxTries = Infinity): Promise<string | null> {
+async function fetchOnce(url: string, signal: AbortSignal): Promise<string | null> {
+  const response = await fetch(url, { signal });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new HttpStatusError(url, response.status, response.statusText);
+  return Buffer.from(new Uint8Array(await response.arrayBuffer())).toString("base64");
+}
+
+/**
+ * The file at `path` under each gateway in turn: the first to have it answers.
+ * Only "none of them has it" is an answer, and a cached one; a timeout, a 5xx or
+ * a rate limit at any gateway that didn't have it is asked again rather than
+ * cached as a null for good. With `maxTries`, the last failure is thrown once
+ * that many rounds of the gateways have failed.
+ */
+function fetchBase64(gateways: string[], path: string, maxTries = Infinity): Promise<string | null> {
   return untilAnswered(
-    `the fetch of ${url}`,
-    async (signal) => {
-    const response = await fetch(url, { signal });
-    if (response.status === 404) {
+    `the fetch of ${path}`,
+    async () => {
+      let failure: unknown;
+      for (const gateway of gateways) {
+        const url = gateway + path;
+        try {
+          const content = await withDeadline(`the fetch of ${url}`, (signal) => fetchOnce(url, signal));
+          if (content !== null) return content;
+        } catch (error) {
+          failure = error;
+        }
+      }
+      if (failure !== undefined) throw failure;
       return null;
-    }
-    if (!response.ok) {
-      throw new HttpStatusError(url, response.status, response.statusText);
-    }
-    const buffer = new Uint8Array(await response.arrayBuffer());
-    return Buffer.from(buffer).toString("base64");
     },
-    { maxTries },
+    { maxTries, deadline: false },
   );
 }
 
@@ -183,7 +214,7 @@ export function makeHostEffects(rpcUrls: string[]) {
       rateLimit: false,
       cache: true,
     },
-    async ({ input }: { input: string }) => fetchBase64(ipfsGatewayUrl() + input),
+    async ({ input }: { input: string }) => fetchBase64(ipfsGatewayUrls(), input),
   );
 
   const arweaveData = createEffect(
@@ -194,7 +225,7 @@ export function makeHostEffects(rpcUrls: string[]) {
       rateLimit: false,
       cache: true,
     },
-    async ({ input }: { input: string }) => fetchBase64(arweaveGatewayUrl() + input),
+    async ({ input }: { input: string }) => fetchBase64(arweaveGatewayUrls(), input),
   );
 
   // A file data source's file: `ipfs:<path>` or `arweave:<id>`. graph-node polls
@@ -216,12 +247,13 @@ export function makeHostEffects(rpcUrls: string[]) {
       const split = input.indexOf(":");
       const kind = input.slice(0, split);
       const id = input.slice(split + 1);
-      const url = (kind === "arweave" ? arweaveGatewayUrl() : ipfsGatewayUrl()) + id;
+      const gateways = kind === "arweave" ? arweaveGatewayUrls() : ipfsGatewayUrls();
+      const url = gateways[0] + id;
       const attempts = fileAttempts();
       let unreachable = false;
       for (let attempt = 1; attempt <= attempts; attempt++) {
         try {
-          const content = await fileGate(() => fetchBase64(url, 1));
+          const content = await fileGate(() => fetchBase64(gateways, id, 1));
           if (content !== null) return content;
           unreachable = false;
         } catch (error) {

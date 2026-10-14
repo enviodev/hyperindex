@@ -202,15 +202,19 @@ beforeAll(() => {
   process.env.ENVIO_SUBGRAPH_RETRY_BACKOFF_MS = "10";
   process.env.ENVIO_SUBGRAPH_FILE_RETRY_MS = "10";
   process.env.ENVIO_SUBGRAPH_FILE_ATTEMPTS = "3";
-  process.env.ENVIO_SUBGRAPH_IPFS_URL = "https://gateway.test";
+  process.env.ENVIO_SUBGRAPH_IPFS_URL = "https://gateway.test, https://backup.test/ipfs";
   process.env.ENVIO_SUBGRAPH_ARWEAVE_URL = "https://arweave.test";
   let flaky = 0;
   const realFetch = g.fetch;
   g.fetch = (input: any, init: any) => {
     const url = String(input);
-    if (!url.startsWith("https://gateway.test/") && !url.startsWith("https://arweave.test/")) return realFetch(input, init);
+    if (!["https://gateway.test/", "https://backup.test/", "https://arweave.test/"].some((host) => url.startsWith(host))) return realFetch(input, init);
     fetched.push(url);
     const name = url.split("/").pop()!;
+    // The first gateway rate-limits this one; the second has it.
+    if (name === CID("Limited") && url.startsWith("https://gateway.test/")) {
+      return Promise.resolve(new Response("slow down", { status: 429 }));
+    }
     if (name === CID("Missing")) return Promise.resolve(new Response("nope", { status: 404 }));
     if (name === CID("Shaky")) {
       return Promise.resolve(flaky++ < 1 ? new Response("busy", { status: 503 }) : new Response("flaky content"));
@@ -270,13 +274,21 @@ describe("file data sources", () => {
     t.expect((await files(indexer)).map((meta: any) => meta.content)).toEqual(["flaky content"]);
   });
 
+  it("falls back to the next gateway when the first rate-limits", async (t) => {
+    fetched.length = 0;
+    const indexer = createTestIndexer();
+    await indexer.process({ chains: { 1: { simulate: [published(CID("Limited"))] } } });
+    t.expect((await files(indexer)).map((meta: any) => meta.content)).toEqual(["content of QmLimi"]);
+    t.expect(fetched).toEqual(["https://gateway.test/ipfs/" + CID("Limited"), "https://backup.test/ipfs/" + CID("Limited")]);
+  });
+
   it("skips the handler for a file that never arrives, and carries on", async (t) => {
     fetched.length = 0;
     const indexer = createTestIndexer();
     await indexer.process({ chains: { 1: { simulate: [published(CID("Missing")), published(CID("After"), 11)] } } });
     t.expect((await files(indexer)).map((meta: any) => meta.id)).toEqual([CID("After") + "#n"]);
     t.expect((await indexer.Post.getAll()).length).toBe(2);
-    t.expect(fetched.filter((url) => url.endsWith(CID("Missing"))).length).toBe(3);
+    t.expect(fetched.filter((url) => url.endsWith(CID("Missing"))).length).toBe(6);
   });
 
   it("ignores a data source created with something that isn't a CID", async (t) => {
