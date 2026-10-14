@@ -247,13 +247,18 @@ let rec onQueryResponse = async (
       switch itemsWithContractRegister {
       | [] => proceed(~newRegistrations=[])
       | _ =>
+        // Keep the response's real size reserved while its passes run.
+        let extra = Pervasives.max(0, newItems->Array.length - query.itemsEst)
+        chainState->ChainState.holdExtraBudget(~items=extra)
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
           ~chainState,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
-        | newRegistrations => proceed(~newRegistrations)
+        | newRegistrations =>
+          chainState->ChainState.releaseExtraBudget(~items=extra)
+          proceed(~newRegistrations)
         }
       }
     }

@@ -74,6 +74,8 @@ let committedProgressBlockNumber: t => int
 let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
 let pendingBudget: t => float
+let holdExtraBudget: (t, ~items: int) => unit
+let releaseExtraBudget: (t, ~items: int) => unit
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
