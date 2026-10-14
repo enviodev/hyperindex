@@ -57,6 +57,8 @@ const PUBLISH_FILES = [
   "rescript.json",
   "index.d.ts",
   "index.js",
+  "sidecar.d.ts",
+  "sidecar.js",
   "src",
 ];
 
@@ -107,6 +109,18 @@ export function compileRescript(envioDir: string): void {
     stdio: "inherit",
   });
   console.log("ReScript compilation complete.");
+}
+
+/**
+ * Compiles the TypeScript sidecar runtime (src/sidecar) in place, next to its sources.
+ */
+export function compileSidecarTs(envioDir: string): void {
+  console.log("Compiling sidecar TypeScript...");
+  execSync("./node_modules/.bin/tsc -p tsconfig.sidecar.json", {
+    cwd: envioDir,
+    stdio: "inherit",
+  });
+  console.log("Sidecar TypeScript compilation complete.");
 }
 
 /**
@@ -172,6 +186,7 @@ export function build(opts: BuildOptions): void {
   // 1. Compile ReScript (in-source, before copying)
   if (!opts.skipRescript) {
     compileRescript(envioDir);
+    compileSidecarTs(envioDir);
   }
 
   // 2. Copy publish files to dist
