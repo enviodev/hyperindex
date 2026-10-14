@@ -47,6 +47,54 @@ pub fn gather(root: &Path) -> Vec<String> {
     sources
 }
 
+/// `gather`, plus every file the manifest's mappings reach through relative
+/// imports outside the project directory. A monorepo's subgraph may keep its
+/// manifest in `subgraphs/` and its mappings in `../src` (Thales), or share
+/// helpers from `../lib` (KlimaDAO): a read of `event.transaction.hash` there
+/// that the scan never saw selected no transaction field at all, and the
+/// mapping read null.
+pub fn gather_with_mappings(root: &Path, mapping_files: &[String]) -> Vec<String> {
+    let mut sources = gather(root);
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let import = regex::Regex::new(r#"(?:from|import)\s*["'](\.\.?/[^"']+)["']"#)
+        .expect("valid import pattern");
+    let mut seen = std::collections::HashSet::new();
+    let mut queue: std::collections::VecDeque<std::path::PathBuf> = mapping_files
+        .iter()
+        .filter_map(|file| std::fs::canonicalize(root.join(file)).ok())
+        .collect();
+    while let Some(file) = queue.pop_front() {
+        if seen.len() >= 5_000 || !seen.insert(file.clone()) {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        for capture in import.captures_iter(&source) {
+            let base = dir.join(&capture[1]);
+            let candidates = [
+                base.clone(),
+                base.with_extension("ts"),
+                std::path::PathBuf::from(format!("{}.ts", base.display())),
+                base.join("index.ts"),
+            ];
+            if let Some(found) = candidates
+                .iter()
+                .find(|candidate| candidate.is_file())
+                .and_then(|candidate| std::fs::canonicalize(candidate).ok())
+            {
+                queue.push_back(found);
+            }
+        }
+        // Inside the project directory `gather` has read it already.
+        if !file.starts_with(&root) {
+            sources.push(source);
+        }
+    }
+    sources
+}
+
 /// `None` means the mappings do something this scan can't account for, so the
 /// full selection stands.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -213,6 +261,40 @@ pub fn scan(sources: &[String]) -> FieldUsage {
     }
 
     FieldUsage { transaction, block }
+}
+
+#[cfg(test)]
+mod gather_tests {
+    use super::*;
+    use tempdir::TempDir;
+
+    #[test]
+    fn reads_mappings_outside_the_project_directory() {
+        let dir = TempDir::new("envio_subgraph_usage").unwrap();
+        let write = |path: &str, source: &str| {
+            let file = dir.path().join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, source).unwrap();
+        };
+        write("subgraphs/subgraph.yaml", "");
+        write(
+            "src/mapping.ts",
+            "import { id } from \"../lib/ids\";\nexport function handle(event: any): void { id(event); }",
+        );
+        write(
+            "lib/ids.ts",
+            "export function id(event: any): string { return event.transaction.hash.toHex(); }",
+        );
+        write("unrelated/other.ts", "export const x = event.block.number;");
+        let sources = gather_with_mappings(
+            &dir.path().join("subgraphs"),
+            &["../src/mapping.ts".to_string()],
+        );
+        assert_eq!(
+            scan(&sources).transaction,
+            Some(vec![TransactionField::Hash])
+        );
+    }
 }
 
 #[cfg(test)]
