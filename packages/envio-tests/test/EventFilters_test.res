@@ -524,9 +524,10 @@ describe("Test eventFilters", () => {
       let registration = nativeRegistrations->Array.getUnsafe(index)
       makeEmittedLog(~topics=[registration.sighash, topicCase.expectedTopic], ~logIndex=index)
     })
-    // Same signature as IndexedUint, but a non-matching indexed value. If
-    // native query construction drops topic1 or widens it accidentally, this
-    // extra log is returned and the item-count/registration assertions fail.
+    // Same signature as IndexedUint, but a non-matching indexed value. A
+    // one-block page reads every case with one query that carries no topic1
+    // at all, so the provider returns this log too and routing is what has to
+    // drop it — the item-count/registration assertions fail if it does not.
     let mismatchingLog = makeEmittedLog(
       ~topics=[
         (nativeRegistrations->Array.getUnsafe(0)).sighash,
@@ -588,7 +589,7 @@ describe("Test eventFilters", () => {
     t.expect((
       getLogsRequestCount,
       page.items->Array.map(item => item.onEventRegistrationIndex),
-    )).toEqual((allTopicCases->Array.length, nativeRegistrations->Array.map(reg => reg.index)))
+    )).toEqual((1, nativeRegistrations->Array.map(reg => reg.index)))
   })
 
   it("Supports multichain filters and lowercases mixed-case address values", t => {
