@@ -30,8 +30,12 @@ export {
 } from "./runtime.js";
 export {
   createEmit,
+  createEmitBreaker,
   SidecarEmitError,
   DEFAULT_RETRY,
+  type EmitBreaker,
+  type EmitBreakerSnapshot,
+  type EmitBreakerState,
   type Emit,
   type EmitOptions,
   type EmitResult,
@@ -50,6 +54,8 @@ export {
   type ReadOps,
   type QueryOpts,
   type IterateOpts,
+  type FieldSelection,
+  type Projected,
   type OrderBy,
   type GetWhereFilter,
   type GetWhereOperator,

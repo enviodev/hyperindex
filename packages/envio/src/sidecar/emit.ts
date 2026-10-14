@@ -50,8 +50,92 @@ export type RetryPolicy = {
 export const DEFAULT_RETRY: RetryPolicy & { readonly maxMs: number } = { maxMs: 600_000, baseMs: 250, capMs: 5_000 };
 
 /** Why `emit` rejected: refused by the indexer (4xx), out of retry budget,
- * abandoned on timeout or shutdown, or a bad name or body (nothing sent). */
-export type EmitFailure = "rejected" | "undeliverable" | "abandoned" | "invalid";
+ * abandoned on timeout or shutdown, a bad name or body (nothing sent), or the
+ * circuit breaker is open (nothing sent, or one failed probe). */
+export type EmitFailure = "rejected" | "undeliverable" | "abandoned" | "invalid" | "unreachable";
+
+export type EmitBreakerState = "closed" | "open" | "half-open";
+
+export type EmitBreakerSnapshot = {
+  readonly state: EmitBreakerState;
+  /** Connection failures (refused, reset, timed out) in a row, across all emits. */
+  readonly consecutiveFailures: number;
+};
+
+/** One per sidecar, shared by every emitter. After `failures` connection
+ * failures in a row it opens: new emits fail fast instead of retrying for
+ * minutes against an indexer that is not listening. Emits already retrying keep
+ * their budget, so a short indexer restart loses nothing. After `cooldownMs` the
+ * next emit is let through as a probe with one attempt; any HTTP answer, from it
+ * or from a retrying emit, closes the breaker. */
+export type EmitBreaker = {
+  readonly snapshot: () => EmitBreakerSnapshot;
+  /** `send` as usual, `probe` for the one half-open attempt, `reject` to fail fast. */
+  readonly admit: () => "send" | "probe" | "reject";
+  /** The indexer answered (any status). */
+  readonly answered: () => void;
+  readonly connectionFailed: (probe: boolean) => void;
+  /** A probe that ended without an answer or a connection failure (shutdown). */
+  readonly releaseProbe: () => void;
+};
+
+export const createEmitBreaker = (options: {
+  /** 0 turns the breaker off. */
+  readonly failures: number;
+  readonly cooldownMs: number;
+  readonly log?: SidecarLogger;
+  readonly url?: string;
+  /** Each time it goes from closed to open. */
+  readonly onOpen?: () => void;
+}): EmitBreaker => {
+  let consecutiveFailures = 0;
+  let openedAt: number | undefined;
+  let probing = false;
+  const state = (): EmitBreakerState => {
+    if (openedAt === undefined) return "closed";
+    return !probing && Date.now() - openedAt >= options.cooldownMs ? "half-open" : "open";
+  };
+  return {
+    snapshot: () => ({ state: state(), consecutiveFailures }),
+    admit: () => {
+      if (options.failures <= 0) return "send";
+      const current = state();
+      if (current === "closed") return "send";
+      if (current === "half-open") {
+        probing = true;
+        return "probe";
+      }
+      return "reject";
+    },
+    answered: () => {
+      if (openedAt !== undefined) options.log?.info("indexer answers again, emit breaker closed", { url: options.url });
+      consecutiveFailures = 0;
+      openedAt = undefined;
+      probing = false;
+    },
+    connectionFailed: (probe) => {
+      consecutiveFailures++;
+      if (options.failures <= 0) return;
+      if (probe) {
+        probing = false;
+        openedAt = Date.now();
+        return;
+      }
+      if (openedAt === undefined && consecutiveFailures >= options.failures) {
+        openedAt = Date.now();
+        options.onOpen?.();
+        options.log?.warn("indexer unreachable, emit breaker open: new emits fail fast until it answers", {
+          url: options.url,
+          consecutiveFailures,
+          cooldownMs: options.cooldownMs,
+        });
+      }
+    },
+    releaseProbe: () => {
+      probing = false;
+    },
+  };
+};
 
 export type EmitTransport = {
   readonly indexerInternalUrl: string;
@@ -68,6 +152,8 @@ export type EmitTransport = {
   readonly onPending?: (sending: Promise<unknown>) => void;
   /** Aborted when the sidecar stops waiting for deliveries (grace period over). */
   readonly signal?: AbortSignal;
+  /** Shared by every emitter of one sidecar; absent means no breaker. */
+  readonly breaker?: EmitBreaker;
 };
 
 export type EmitBinding = {
@@ -157,7 +243,45 @@ export function createEmit<C extends SidecarContract>(
     if (idempotencyKey !== undefined) headers["idempotency-key"] = idempotencyKey;
     if (transport.webhookSecret !== undefined) headers["x-envio-webhook-secret"] = transport.webhookSecret;
     const url = `${transport.indexerInternalUrl}/webhooks/${name}`;
+    const breaker = transport.breaker;
+    const unreachable = (suffix = "") => {
+      transport.onFailed?.(name, "unreachable");
+      return new SidecarEmitError(name, `indexer unreachable at ${transport.indexerInternalUrl}, breaker open${suffix}`, {
+        detail: breaker?.snapshot(),
+      });
+    };
+    const admission = breaker?.admit() ?? "send";
+    if (admission === "reject") throw unreachable();
+    // The half-open probe gets one attempt: a connection failure re-opens the
+    // breaker and fails this emit fast, an answer closes it and the emit goes on.
+    let probe = admission === "probe";
+    try {
+      return await deliver(name, url, payload, headers, chainId, {
+        failedToConnect: (reason) => {
+          breaker?.connectionFailed(probe);
+          if (probe) {
+            probe = false;
+            throw unreachable(` (probe failed: ${reason})`);
+          }
+        },
+        answered: () => {
+          breaker?.answered();
+          probe = false;
+        },
+      });
+    } finally {
+      if (probe) breaker?.releaseProbe();
+    }
+  };
 
+  const deliver = async (
+    name: string,
+    url: string,
+    payload: string,
+    headers: Record<string, string>,
+    chainId: number | undefined,
+    on: { readonly failedToConnect: (reason: string) => void; readonly answered: () => void },
+  ): Promise<EmitResult> => {
     const startedAt = Date.now();
     const deadline = startedAt + maxMs;
     let lastFailure = "no attempt made";
@@ -175,7 +299,10 @@ export function createEmit<C extends SidecarContract>(
         });
       } catch (error) {
         lastFailure = error instanceof Error ? error.message : String(error);
+        // Our own aborts (shutdown, function timeout) say nothing about the indexer.
+        if (abandoned(name) === undefined) on.failedToConnect(lastFailure);
       }
+      if (response !== undefined) on.answered();
       if (response?.ok === true) {
         const body = await readJson(response);
         transport.onSent?.(name);

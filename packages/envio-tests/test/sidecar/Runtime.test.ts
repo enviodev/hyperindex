@@ -16,6 +16,9 @@ type FakeIndexer = {
   readonly url: string;
   readonly received: Received[];
   readonly close: () => Promise<void>;
+  /** Stops listening (connections are refused) and comes back on the same port. */
+  readonly stop: () => Promise<void>;
+  readonly restart: () => Promise<void>;
 };
 
 const readBody = (request: IncomingMessage): Promise<string> =>
@@ -61,14 +64,22 @@ const fakeIndexer = async (respond?: (received: Received, n: number) => Reply | 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("no port");
+  const port = address.port;
+  const close = () =>
+    new Promise<void>((resolve) => {
+      if (!server.listening) {
+        resolve();
+        return;
+      }
+      server.closeAllConnections();
+      server.close(() => resolve());
+    });
   return {
-    url: `http://127.0.0.1:${address.port}`,
+    url: `http://127.0.0.1:${port}`,
     received,
-    close: () =>
-      new Promise((resolve) => {
-        server.closeAllConnections();
-        server.close(() => resolve());
-      }),
+    close,
+    stop: close,
+    restart: () => new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve)),
   };
 };
 
@@ -121,6 +132,8 @@ const startSidecar = async (
   impl: SidecarImpl<Contract>,
   options: { startJobs?: boolean; env?: NodeJS.ProcessEnv; retry?: RetryPolicy } = {},
 ): Promise<RunningSidecar> => {
+  // Off unless a test is about the breaker: other tests count every attempt.
+  const env = { ENVIO_EMIT_BREAKER_FAILURES: "0", ...(options.env ?? process.env) };
   const sidecar = createSidecar(contract, impl);
   const running = await sidecar.start({
     internalPort: 0,
@@ -129,7 +142,7 @@ const startSidecar = async (
     logLevel: "silent",
     retry: options.retry ?? { attempts: 4, baseMs: 1, capMs: 5 },
     startJobs: options.startJobs ?? false,
-    ...(options.env === undefined ? {} : { env: options.env }),
+    env,
   });
   cleanups.push(running.close);
   return running;
@@ -687,6 +700,225 @@ describe("sidecar runtime: webhooks from outside a call", () => {
   });
 });
 
+describe("sidecar runtime: emit circuit breaker", () => {
+  // A route that emits once and reports how it went, so a test can emit while
+  // other emits are still retrying.
+  const emitRoute: SidecarImpl<Contract> = {
+    functions: noop,
+    routes: (app) => {
+      app.post("/emit", async (req, res) => {
+        const startedAt = Date.now();
+        try {
+          await app.emit.tick({ at: Number(req.body.at) }, { chainId: 1 });
+          res.json({ ok: true });
+        } catch (error) {
+          res.json({ error: error instanceof SidecarEmitError ? error.message : "wrong error", ms: Date.now() - startedAt });
+        }
+      });
+    },
+  };
+  const emitVia = (running: RunningSidecar, at: number) =>
+    postJson(`http://127.0.0.1:${running.publicPort}/emit`, { at }).then((response) => response.body as { ok?: true; error?: string; ms?: number });
+  const breakerOf = async (running: RunningSidecar) => {
+    const ready = await fetch(`http://127.0.0.1:${running.internalPort}/readyz`).then((response) => response.json() as Promise<{ emitBreaker: unknown }>);
+    const metrics = await fetch(`http://127.0.0.1:${running.internalPort}/metrics`).then((response) => response.text());
+    return {
+      readyz: ready.emitBreaker,
+      metrics: metrics.split("\n").filter((line) => /^envio_sidecar_emit_(breaker|total\{webhook="tick",outcome="unreachable")/.test(line)),
+    };
+  };
+
+  it("opens after ENVIO_EMIT_BREAKER_FAILURES connection failures, then fails new emits fast; answers never open it", async () => {
+    const indexer = await fakeIndexer((received) => {
+      const at = (received.body as { at: number }).at;
+      if (at === 400) return { status: 400, body: { error: "schema" } };
+      if (at === 503) return { status: 503, headers: { "retry-after": "0" } };
+      return undefined;
+    });
+    cleanups.push(indexer.close);
+    const running = await startSidecar(indexer, emitRoute, {
+      env: { ENVIO_EMIT_BREAKER_FAILURES: "3", ENVIO_EMIT_BREAKER_COOLDOWN_MS: "60000" },
+      retry: { attempts: 1, baseMs: 1, capMs: 1 },
+    });
+    // Refusals and busy answers come from a live indexer.
+    const answered = [];
+    for (let i = 0; i < 4; i++) answered.push(await emitVia(running, i % 2 === 0 ? 400 : 503));
+    const afterAnswers = await breakerOf(running);
+    await indexer.stop();
+    const down = [];
+    for (let i = 0; i < 3; i++) down.push(await emitVia(running, i));
+    const fast = await emitVia(running, 9);
+    expect({ answered: answered.map((r) => r.error), afterAnswers, down: down.map((r) => r.error), fast: { error: fast.error, quick: (fast.ms ?? 1_000) < 50 }, breaker: await breakerOf(running) }).toEqual({
+      answered: [
+        "Webhook 'tick': indexer rejected it (400)",
+        expect.stringMatching(/^Webhook 'tick': undeliverable after 1 attempts in \d+ ms: status 503$/),
+        "Webhook 'tick': indexer rejected it (400)",
+        expect.stringMatching(/^Webhook 'tick': undeliverable after 1 attempts in \d+ ms: status 503$/),
+      ],
+      afterAnswers: { readyz: { state: "closed", consecutiveFailures: 0 }, metrics: ["envio_sidecar_emit_breaker_open 0"] },
+      down: [
+        expect.stringMatching(/^Webhook 'tick': undeliverable after 1 attempts/),
+        expect.stringMatching(/^Webhook 'tick': undeliverable after 1 attempts/),
+        expect.stringMatching(/^Webhook 'tick': undeliverable after 1 attempts/),
+      ],
+      fast: { error: `Webhook 'tick': indexer unreachable at ${indexer.url}, breaker open`, quick: true },
+      breaker: {
+        readyz: { state: "open", consecutiveFailures: 3 },
+        metrics: [
+          'envio_sidecar_emit_total{webhook="tick",outcome="unreachable"} 1',
+          "envio_sidecar_emit_breaker_open 1",
+          "envio_sidecar_emit_breaker_opened_total 1",
+        ],
+      },
+    });
+  });
+
+  it("after ENVIO_EMIT_BREAKER_COOLDOWN_MS the next emit probes once: a failed probe re-opens, an answer closes", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const running = await startSidecar(indexer, emitRoute, {
+      env: { ENVIO_EMIT_BREAKER_FAILURES: "2", ENVIO_EMIT_BREAKER_COOLDOWN_MS: "100" },
+      retry: { attempts: 1, baseMs: 1, capMs: 1 },
+    });
+    await indexer.stop();
+    await emitVia(running, 1);
+    await emitVia(running, 2);
+    const open = await emitVia(running, 3);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const failedProbe = await emitVia(running, 4);
+    const reopened = await emitVia(running, 5);
+    await indexer.restart();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const halfOpen = await breakerOf(running);
+    const probe = await emitVia(running, 6);
+    const after = await emitVia(running, 7);
+    expect({
+      open: open.error,
+      failedProbe: failedProbe.error,
+      reopened: reopened.error,
+      halfOpen: halfOpen.readyz,
+      probe,
+      after,
+      breaker: await breakerOf(running),
+      delivered: indexer.received.map((r) => (r.body as { at: number }).at),
+    }).toEqual({
+      open: `Webhook 'tick': indexer unreachable at ${indexer.url}, breaker open`,
+      failedProbe: expect.stringMatching(new RegExp(`^Webhook 'tick': indexer unreachable at ${indexer.url}, breaker open \\(probe failed: .+\\)$`)),
+      reopened: `Webhook 'tick': indexer unreachable at ${indexer.url}, breaker open`,
+      halfOpen: { state: "half-open", consecutiveFailures: 3 },
+      probe: { ok: true },
+      after: { ok: true },
+      breaker: {
+        readyz: { state: "closed", consecutiveFailures: 0 },
+        metrics: [
+          'envio_sidecar_emit_total{webhook="tick",outcome="unreachable"} 3',
+          "envio_sidecar_emit_breaker_open 0",
+          "envio_sidecar_emit_breaker_opened_total 1",
+        ],
+      },
+      delivered: [6, 7],
+    });
+  });
+
+  it("an indexer restart of a moment still delivers the emits that were already retrying (wiki 09 scenario 4)", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const running = await startSidecar(indexer, emitRoute, {
+      env: { ENVIO_EMIT_BREAKER_FAILURES: "2", ENVIO_EMIT_BREAKER_COOLDOWN_MS: "60000" },
+      retry: { maxMs: 10_000, baseMs: 20, capMs: 50 },
+    });
+    await indexer.stop();
+    const retrying = [emitVia(running, 1), emitVia(running, 2)];
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const whileOpen = await emitVia(running, 3);
+    const duringRestart = await breakerOf(running);
+    await indexer.restart();
+    const delivered = await Promise.all(retrying);
+    const after = await emitVia(running, 4);
+    expect({
+      whileOpen: whileOpen.error,
+      duringRestart: duringRestart.readyz,
+      delivered,
+      after,
+      breaker: (await breakerOf(running)).readyz,
+      received: indexer.received.map((r) => (r.body as { at: number }).at).sort(),
+    }).toEqual({
+      whileOpen: `Webhook 'tick': indexer unreachable at ${indexer.url}, breaker open`,
+      duringRestart: { state: "open", consecutiveFailures: expect.any(Number) },
+      delivered: [{ ok: true }, { ok: true }],
+      after: { ok: true },
+      breaker: { state: "closed", consecutiveFailures: 0 },
+      received: [1, 2, 4],
+    });
+  });
+});
+
+describe("sidecar runtime: jobs with runOnStart", () => {
+  it("runs a runOnStart job once right after start, then on its interval without overlap, and close waits for it", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const gate = deferred();
+    cleanups.push(async () => gate.resolve());
+    const hourlyRan = deferred();
+    const busyStarted = deferred();
+    const counts = { hourly: 0, busy: 0, plain: 0 };
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: noop,
+        jobs: {
+          hourly: {
+            every: "1h",
+            runOnStart: true,
+            run: () => {
+              counts.hourly++;
+              hourlyRan.resolve();
+            },
+          },
+          busy: {
+            every: "20ms",
+            runOnStart: true,
+            run: async ({ emit }) => {
+              counts.busy++;
+              busyStarted.resolve();
+              await gate.promise;
+              await emit.tick({ at: 1 }, { chainId: 1 });
+            },
+          },
+          plain: {
+            every: "1h",
+            run: () => {
+              counts.plain++;
+            },
+          },
+        },
+      },
+      { startJobs: true },
+    );
+    await Promise.all([hourlyRan.promise, busyStarted.promise]);
+    // The busy job holds its start-up run: its interval ticks are skipped, not stacked.
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const whileHeld = { ...counts };
+    const metrics = await (await fetch(`http://127.0.0.1:${running.internalPort}/metrics`)).text();
+    const skipped = Number(/envio_sidecar_job_runs_total\{job="busy",outcome="skipped"\} (\d+)/.exec(metrics)?.[1] ?? 0);
+    const closing = running.close({ graceMs: 2_000 });
+    setTimeout(() => gate.resolve(), 30);
+    const report = await closing;
+    expect({ whileHeld, skippedTicks: skipped >= 2, report, ticks: indexer.received.map((r) => r.name) }).toEqual({
+      whileHeld: { hourly: 1, busy: 1, plain: 0 },
+      skippedTicks: true,
+      report: { drained: true, graceMs: 2_000, abandoned: { running: { priceSwap: 0, notify: 0 }, queued: { priceSwap: 0, notify: 0 }, emits: 0, jobs: 0 } },
+      ticks: ["tick"],
+    });
+  });
+
+  it("does not run jobs on start unless asked, and refuses a non-boolean runOnStart", () => {
+    expect(() =>
+      createSidecar(contract, { functions: noop, jobs: { bad: { every: "1m", runOnStart: "yes" as unknown as boolean, run: () => {} } } }),
+    ).toThrow("createSidecar: job 'bad' runOnStart must be true or false");
+  });
+});
+
 describe("sidecar runtime: close", () => {
   it("stops taking calls, then lets running and queued functions and their emits finish", async () => {
     // The first webhook meets a busy indexer, so the emit is still retrying when close starts.
@@ -730,7 +962,7 @@ describe("sidecar runtime: close", () => {
     }).toEqual({
       duringClose: [
         { status: 503, body: { error: "shutting down" } },
-        { status: 503, body: { status: "closing" } },
+        { status: 503, body: { status: "closing", emitBreaker: { state: "closed", consecutiveFailures: 0 } } },
       ],
       ranIds: ["1:100:1:0", "1:100:2:0"],
       received: [
@@ -913,6 +1145,8 @@ describe("sidecar runtime: /metrics", () => {
         "# TYPE envio_sidecar_emit_total counter",
         "# TYPE envio_sidecar_emit_retries_total counter",
         "# TYPE envio_sidecar_emits_pending gauge",
+        "# TYPE envio_sidecar_emit_breaker_open gauge",
+        "# TYPE envio_sidecar_emit_breaker_opened_total counter",
         "# TYPE envio_sidecar_job_runs_total counter",
         "# TYPE envio_sidecar_job_duration_seconds histogram",
         "# TYPE envio_sidecar_ready gauge",
@@ -938,6 +1172,7 @@ describe("sidecar runtime: /metrics", () => {
         'envio_sidecar_emit_total{webhook="swapPriced",outcome="sent"}': 1,
         'envio_sidecar_emit_retries_total{webhook="swapPriced"}': 1,
         envio_sidecar_emits_pending: 0,
+        envio_sidecar_emit_breaker_open: 0,
         envio_sidecar_ready: 1,
       },
     });
@@ -1038,7 +1273,7 @@ describe("sidecar runtime: public server", () => {
       boom: { status: 500, body: { error: "internal error" } },
       pubHealth: { status: 200, body: { status: "ok" } },
       health: { status: 200, body: { status: "ok" } },
-      ready: { status: 200, body: { status: "ok" } },
+      ready: { status: 200, body: { status: "ok", emitBreaker: { state: "closed", consecutiveFailures: 0 } } },
       received: [["tick", { at: 42 }]],
     });
   });

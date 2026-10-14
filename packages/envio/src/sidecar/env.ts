@@ -10,6 +10,10 @@ export const DEFAULT_FUNCTION_TIMEOUT_MS = 60_000;
 export const DEFAULT_DEDUPE_MAX = 100_000;
 /** wiki 09 section 4: how long `emit` retries before it rejects. */
 export const DEFAULT_EMIT_RETRY_MAX_MS = 600_000;
+/** Connection failures in a row before new emits fail fast; 0 turns the breaker off. */
+export const DEFAULT_EMIT_BREAKER_FAILURES = 5;
+/** How long the breaker stays open before the next emit probes the indexer. */
+export const DEFAULT_EMIT_BREAKER_COOLDOWN_MS = 5_000;
 
 export type SidecarEnv = {
   /** Routable user API port (`ENVIO_SIDECAR_PORT`). */
@@ -33,6 +37,10 @@ export type SidecarEnv = {
   readonly dedupeMax: number;
   /** How long `emit` keeps retrying a webhook (`ENVIO_EMIT_RETRY_MAX_MS`). */
   readonly emitRetryMaxMs: number;
+  /** Connection failures in a row that open the emit breaker (`ENVIO_EMIT_BREAKER_FAILURES`), 0 = off. */
+  readonly emitBreakerFailures: number;
+  /** Open time before a probe (`ENVIO_EMIT_BREAKER_COOLDOWN_MS`). */
+  readonly emitBreakerCooldownMs: number;
 };
 
 const readPort = (env: NodeJS.ProcessEnv, name: string, fallback: number): number => {
@@ -95,4 +103,6 @@ export const readEnv = (env: NodeJS.ProcessEnv = process.env): SidecarEnv => ({
   functionTimeoutMs: readInt(env, "ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS", DEFAULT_FUNCTION_TIMEOUT_MS, 0),
   dedupeMax: readInt(env, "ENVIO_SIDECAR_DEDUPE_MAX", DEFAULT_DEDUPE_MAX),
   emitRetryMaxMs: readInt(env, "ENVIO_EMIT_RETRY_MAX_MS", DEFAULT_EMIT_RETRY_MAX_MS, 0),
+  emitBreakerFailures: readInt(env, "ENVIO_EMIT_BREAKER_FAILURES", DEFAULT_EMIT_BREAKER_FAILURES, 0),
+  emitBreakerCooldownMs: readInt(env, "ENVIO_EMIT_BREAKER_COOLDOWN_MS", DEFAULT_EMIT_BREAKER_COOLDOWN_MS, 0),
 });
