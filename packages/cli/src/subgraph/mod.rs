@@ -138,7 +138,10 @@ pub fn find_manifests(root: &std::path::Path) -> Vec<String> {
                 continue;
             }
             let is_yaml = name.ends_with(".yaml") || name.ends_with(".yml");
-            if is_yaml && std::fs::read_to_string(&path).is_ok_and(|text| is_manifest(&text)) {
+            // A mustache template (`network: {{ network }}`) still parses, but
+            // it is the input to the build that writes the manifest.
+            let is_manifest_file = |text: String| !text.contains("{{") && is_manifest(&text);
+            if is_yaml && std::fs::read_to_string(&path).is_ok_and(is_manifest_file) {
                 if let Ok(relative) = path.strip_prefix(root) {
                     found.push(relative.display().to_string());
                 }
@@ -1522,7 +1525,8 @@ type Transfer implements Event @entity {
         write_gravity(root, "v3-subgraph.yaml");
         fs::write(
             root.join("v3-subgraph.template.yaml"),
-            "dataSources: {{x}}\n",
+            // Uniswap's template parses as YAML; it is not a manifest to run.
+            "specVersion: 0.0.4\ndataSources:\n  - network: {{ network }}\n",
         )
         .unwrap();
 
