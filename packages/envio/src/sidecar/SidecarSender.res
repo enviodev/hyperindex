@@ -423,6 +423,9 @@ let sendCalls = async t => {
   let calls = t.inFlight
   t.inFlight = []
   switch outcome {
+  // The bound or a rollback emptied the batch while it was retrying: `send`
+  // answered for it without a POST, so there is no reply to settle.
+  | Some(Delivered(_)) if calls->Utils.Array.isEmpty => ()
   | Some(Delivered(reply)) => t->settleCalls(~calls, ~reply)
   | Some(Refused(code)) =>
     Logging.error({
