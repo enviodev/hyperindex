@@ -20,7 +20,8 @@ import { spawn } from "node:child_process";
 import { totalmem } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import { warn } from "../Logging.res.mjs";
+import { subgraphBundledCodegen } from "../Core.res.mjs";
+import { info, warn } from "../Logging.res.mjs";
 
 const WORKER = new URL("./graph-cli-worker.mjs", import.meta.url);
 
@@ -267,9 +268,43 @@ function runScriptStep(root: string, step: string): Promise<void> {
 }
 
 /**
+ * `ENVIO_SUBGRAPH_CODEGEN`: `bundled` always writes the tree itself, `graph-cli`
+ * only ever asks the project's graph-cli, and the default (`auto`) asks
+ * graph-cli first and writes the tree itself when graph-cli is missing or fails.
+ */
+function codegenMode(): "auto" | "bundled" | "graph-cli" {
+  const mode = process.env.ENVIO_SUBGRAPH_CODEGEN;
+  return mode === "bundled" || mode === "graph-cli" ? mode : "auto";
+}
+
+/** envio's own `graph codegen`: needs no install, only the manifest, schema and ABIs. */
+export function bundledCodegen(root: string, dir: string, manifestFile: string): string[] {
+  const { files } = subgraphBundledCodegen(path.resolve(root, manifestFile), dir);
+  info(`Envio Subgraph wrote ${files.length} generated files to "${path.relative(root, dir)}/" without graph-cli.`);
+  return files;
+}
+
+/**
+ * The project's other codegen steps (Lido writes `generated/parserData.ts` with
+ * a script of its own), which bundled codegen can't replace. A failure is a
+ * warning: the mappings that don't import their output still run.
+ */
+async function runOtherSteps(root: string): Promise<void> {
+  for (const step of codegenSteps(root) ?? []) {
+    if (GRAPH_CODEGEN.test(step)) continue;
+    try {
+      await runScriptStep(root, step);
+    } catch (error) {
+      warn(`${error instanceof Error ? error.message : error}`);
+    }
+  }
+}
+
+/**
  * The generated code is usually gitignored, so it's built when missing. `graph
  * codegen` itself runs in-process, sized and without migrations, wherever the
- * project's codegen script puts it among its steps.
+ * project's codegen script puts it among its steps; when graph-cli is missing
+ * or fails, envio writes the tree itself.
  */
 export async function ensureGeneratedCode(
   root: string,
@@ -277,6 +312,12 @@ export async function ensureGeneratedCode(
   manifestFile = "subgraph.yaml",
   mappingFiles: string[] = [],
 ): Promise<void> {
+  const mode = codegenMode();
+  if (mode === "bundled") {
+    bundledCodegen(root, dir, manifestFile);
+    await runOtherSteps(root);
+    return;
+  }
   const graphCli = graphCliPackage(root);
   const complete = existsSync(dir) && missingGeneratedFiles(root, mappingFiles, dir).length === 0;
   if (complete) {
@@ -289,25 +330,47 @@ export async function ensureGeneratedCode(
     }
     return;
   }
-  // Reported when a mapping fails to import it, naming that mapping.
-  if (!graphCli) return;
-
-  for (const step of codegenSteps(root) ?? ["graph codegen"]) {
-    if (!GRAPH_CODEGEN.test(step)) {
-      await runScriptStep(root, step);
-      continue;
+  if (!graphCli) {
+    // Nothing to build when no mapping imports a generated file.
+    if (mode === "auto" && missingGeneratedFiles(root, mappingFiles, dir).length > 0) {
+      info("Envio Subgraph found no @graphprotocol/graph-cli in the project; writing the generated code itself.");
+      try {
+        bundledCodegen(root, dir, manifestFile);
+        await runOtherSteps(root);
+      } catch (error) {
+        // The mapping that imports it fails next and names itself.
+        warn(`Envio Subgraph couldn't write the generated code itself: ${error instanceof Error ? error.message : error}`);
+      }
     }
-    await runOrThrow(
-      graphCli,
-      root,
-      manifestFile,
-      "codegen",
-      dir,
-      "Envio Subgraph ran `graph codegen` to build the generated code, but it\n" +
-        "failed — the error above comes from The Graph's own codegen, so fix it\n" +
-        "there and rerun. If `graph codegen` succeeds on its own but fails through\n" +
-        "envio, please open an issue: https://github.com/enviodev/hyperindex/issues",
+    return;
+  }
+
+  try {
+    for (const step of codegenSteps(root) ?? ["graph codegen"]) {
+      if (!GRAPH_CODEGEN.test(step)) {
+        await runScriptStep(root, step);
+        continue;
+      }
+      await runOrThrow(
+        graphCli,
+        root,
+        manifestFile,
+        "codegen",
+        dir,
+        "Envio Subgraph ran `graph codegen` to build the generated code, but it\n" +
+          "failed — the error above comes from The Graph's own codegen, so fix it\n" +
+          "there and rerun. If `graph codegen` succeeds on its own but fails through\n" +
+          "envio, please open an issue: https://github.com/enviodev/hyperindex/issues",
+      );
+    }
+  } catch (error) {
+    if (mode === "graph-cli") throw error;
+    warn(
+      "Envio Subgraph: the project's `graph codegen` failed (see above); writing the generated code " +
+        "itself. Set ENVIO_SUBGRAPH_CODEGEN=graph-cli to stop at the failure instead.",
     );
+    bundledCodegen(root, dir, manifestFile);
+    await runOtherSteps(root);
   }
 }
 

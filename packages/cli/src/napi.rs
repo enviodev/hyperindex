@@ -130,6 +130,39 @@ pub fn subgraph_creating_handlers(mapping_file: String, handlers: Vec<String>) -
     crate::subgraph::creates::creating_handlers(std::path::Path::new(&mapping_file), &handlers)
 }
 
+#[napi_derive::napi(object)]
+pub struct BundledCodegenResult {
+    /// Where the tree was written.
+    pub output_dir: String,
+    /// The files written, relative to `output_dir`.
+    pub files: Vec<String>,
+}
+
+/// `graph codegen` without graph-cli: writes the generated tree for the
+/// manifest, into `output_dir` or else where the mappings import it from.
+#[napi_derive::napi]
+pub fn subgraph_bundled_codegen(
+    manifest_file: String,
+    output_dir: Option<String>,
+) -> napi::Result<BundledCodegenResult> {
+    let manifest = std::path::Path::new(&manifest_file);
+    let run = || -> anyhow::Result<BundledCodegenResult> {
+        let output_dir = match output_dir {
+            Some(dir) => std::path::PathBuf::from(dir),
+            None => crate::subgraph::codegen::output_dir_for(
+                manifest.parent().unwrap_or(std::path::Path::new(".")),
+                manifest,
+            )?,
+        };
+        let files = crate::subgraph::codegen::generate(manifest, &output_dir)?;
+        Ok(BundledCodegenResult {
+            output_dir: output_dir.display().to_string(),
+            files,
+        })
+    };
+    run().map_err(|e| napi::Error::from_reason(format!("{e:#}")))
+}
+
 /// Parses a subgraph project the same way `from_user_api` parses an envio one:
 /// subgraph.yaml and its schema in memory, ABI bodies supplied through `files`,
 /// no process environment. The returned config carries the translated manifest

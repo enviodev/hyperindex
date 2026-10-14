@@ -56,6 +56,9 @@ pub enum CommandType {
     #[command(subcommand)]
     Local(LocalCommandTypes),
 
+    ///Write a subgraph's generated/ tree (schema entities, ABI bindings, templates) without graph-cli. Reads the manifest named by --config (default subgraph.yaml).
+    SubgraphCodegen(SubgraphCodegenArgs),
+
     ///Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`.
     Start(StartArgs),
 
@@ -129,6 +132,13 @@ pub enum JsonSchema {
     Evm,
     Fuel,
     Svm,
+}
+
+#[derive(Debug, Args)]
+pub struct SubgraphCodegenArgs {
+    ///Where to write the generated tree. Defaults to where the mappings import it from, else ./generated.
+    #[arg(long)]
+    pub output_dir: Option<String>,
 }
 
 #[derive(Debug, Args)]
