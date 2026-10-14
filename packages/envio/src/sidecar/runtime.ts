@@ -2,7 +2,7 @@ import express from "express";
 import type { Server } from "node:http";
 import * as S from "rescript-schema";
 import { isSidecarContract, type SidecarContract, type SidecarFunctionInput } from "./contract.js";
-import { createEmit, DEFAULT_RETRY, type Emit, type EmitTransport, type RetryPolicy } from "./emit.js";
+import { createEmit, createEmitBreaker, DEFAULT_RETRY, type Emit, type EmitTransport, type RetryPolicy } from "./emit.js";
 import { readEnv } from "./env.js";
 import { createRootLogger, toUserLogger, type SidecarLogger } from "./log.js";
 import { createIndexerClient, type EntityMetaInput, type IndexerClient } from "./client.js";
@@ -97,6 +97,9 @@ export type StartOptions = {
   readonly functionTimeoutMs?: number;
   /** Accepted call ids remembered to dedupe redelivery. Default `ENVIO_SIDECAR_DEDUPE_MAX`, else 100000. */
   readonly dedupeMax?: number;
+  /** Emit circuit breaker. Defaults `ENVIO_EMIT_BREAKER_FAILURES` (5, 0 = off) and
+   * `ENVIO_EMIT_BREAKER_COOLDOWN_MS` (5000). */
+  readonly emitBreaker?: { readonly failures?: number; readonly cooldownMs?: number };
 };
 
 export type CloseOptions = {
@@ -334,6 +337,10 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     );
     const emitRetries = metrics.counter("envio_sidecar_emit_retries_total", "Webhook delivery retries.");
     metrics.gauge("envio_sidecar_emits_pending", "Webhook deliveries in progress.", () => [[{}, pendingEmits.size]]);
+    metrics.gauge("envio_sidecar_emit_breaker_open", "1 while new emits fail fast because the indexer is unreachable (open or half-open).", () => [
+      [{}, breaker.snapshot().state === "closed" ? 0 : 1],
+    ]);
+    const breakerOpened = metrics.counter("envio_sidecar_emit_breaker_opened_total", "Times the emit breaker opened.");
     const jobRuns = metrics.counter("envio_sidecar_job_runs_total", "Job ticks by outcome (succeeded, failed, skipped).");
     const jobDurations = metrics.histogram("envio_sidecar_job_duration_seconds", "Time a job run took.");
     metrics.gauge("envio_sidecar_ready", "1 while the sidecar takes calls, 0 while starting or closing.", () => [
@@ -341,9 +348,18 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
     ]);
 
     const stopEmits = new AbortController();
+    const indexerInternalUrl = options.indexerInternalUrl ?? env.indexerInternalUrl;
+    const breaker = createEmitBreaker({
+      failures: options.emitBreaker?.failures ?? env.emitBreakerFailures,
+      cooldownMs: options.emitBreaker?.cooldownMs ?? env.emitBreakerCooldownMs,
+      log,
+      url: indexerInternalUrl,
+      onOpen: () => breakerOpened.inc(),
+    });
     const transport: EmitTransport = {
-      indexerInternalUrl: options.indexerInternalUrl ?? env.indexerInternalUrl,
+      indexerInternalUrl,
       webhookSecret: env.webhookSecret,
+      breaker,
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       retry: { ...DEFAULT_RETRY, maxMs: env.emitRetryMaxMs, ...options.retry },
       signal: stopEmits.signal,
@@ -510,7 +526,9 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       res.status(200).json({ status: "ok" });
     });
     internal.get("/readyz", (_req, res) => {
-      res.status(ready ? 200 : 503).json({ status: ready ? "ok" : closing ? "closing" : "starting" });
+      res
+        .status(ready ? 200 : 503)
+        .json({ status: ready ? "ok" : closing ? "closing" : "starting", emitBreaker: breaker.snapshot() });
     });
     internal.get("/metrics", (_req, res) => {
       res.writeHead(200, { "content-type": PROMETHEUS_CONTENT_TYPE });
