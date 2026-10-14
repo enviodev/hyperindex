@@ -157,14 +157,111 @@ pub fn missing_api_token_message() -> String {
     )
 }
 
-pub fn missing_graph_cli_message() -> String {
-    "Envio Subgraph needs the project's generated code, but \"generated/\" is\n\
-     missing and @graphprotocol/graph-cli isn't installed.\n\
-     Install dependencies and try again:\n  \
-     pnpm install\n\
-     Or generate manually:\n  \
-     pnpm exec graph codegen"
-        .to_string()
+/// The same words the runtime uses when it can't build the generated code.
+pub fn missing_graph_cli_message(generated: &str) -> String {
+    format!(
+        "Envio Subgraph needs the project's generated code, but \"{generated}/\" is\n\
+         missing and @graphprotocol/graph-cli isn't installed in the project or any\n\
+         directory above it. Install the project's dependencies and try again:\n  \
+         npm install   (or yarn / pnpm install)\n\
+         Or generate manually:\n  \
+         npx graph codegen --output-dir {generated}"
+    )
+}
+
+/// Where the mappings import `graph codegen`'s output from — their imports of
+/// `schema`/`templates`, followed breadth first through relative imports —
+/// as `subgraph/graph-cli.ts` reads it at startup.
+pub fn generated_dir(root: &std::path::Path, mapping_files: &[String]) -> std::path::PathBuf {
+    let import = regex::Regex::new(r#"\bfrom\s*["'](\.\.?/[^"']+)["']"#).expect("valid pattern");
+    let mut queue: std::collections::VecDeque<std::path::PathBuf> =
+        mapping_files.iter().map(|file| root.join(file)).collect();
+    let mut seen: HashSet<std::path::PathBuf> = queue.iter().cloned().collect();
+    let mut scanned = 0;
+    while let Some(file) = queue.pop_front() {
+        scanned += 1;
+        if scanned > 2_000 {
+            break;
+        }
+        let Ok(source) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let dir = file
+            .parent()
+            .map(|dir| dir.to_path_buf())
+            .unwrap_or_default();
+        for capture in import.captures_iter(&source) {
+            let specifier = std::path::Path::new(&capture[1]);
+            let base = specifier
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.trim_end_matches(".ts"));
+            if matches!(base, Some("schema") | Some("templates")) {
+                return dir.join(specifier.parent().unwrap_or(std::path::Path::new(".")));
+            }
+            let target = dir.join(specifier);
+            let candidates = [
+                target.clone(),
+                std::path::PathBuf::from(format!("{}.ts", target.display())),
+                target.join("index.ts"),
+            ];
+            if let Some(found) = candidates.into_iter().find(|candidate| candidate.is_file()) {
+                if seen.insert(found.clone()) {
+                    queue.push_back(found);
+                }
+            }
+        }
+    }
+    root.join("generated")
+}
+
+/// Whether Node would resolve graph-cli from the project directory.
+pub fn graph_cli_installed(root: &std::path::Path) -> bool {
+    root.ancestors().any(|dir| {
+        dir.join("node_modules/@graphprotocol/graph-cli/package.json")
+            .is_file()
+    })
+}
+
+/// `envio codegen` and `envio start` refuse alike when the generated code is
+/// missing and nothing can build it: codegen used to pass, and only the
+/// indexer found out.
+pub fn check_generated_code(runtime: &SubgraphRuntimeConfig) -> Result<()> {
+    // Absolute, so its ancestors are the directories above the project.
+    let root = std::fs::canonicalize(&runtime.root)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&runtime.root));
+    let root = root.as_path();
+    let mapping_files: Vec<String> = runtime
+        .manifest
+        .all_sources()
+        .map(|source| source.mapping_file.clone())
+        .collect();
+    let generated = generated_dir(root, &mapping_files);
+    if generated.exists() || graph_cli_installed(root) {
+        return Ok(());
+    }
+    let relative = pathdiff_relative(&generated, root);
+    Err(anyhow!("{}", missing_graph_cli_message(&relative)))
+}
+
+fn pathdiff_relative(path: &std::path::Path, root: &std::path::Path) -> String {
+    let normalize = |path: &std::path::Path| {
+        let mut out = std::path::PathBuf::new();
+        for part in path.components() {
+            match part {
+                std::path::Component::ParentDir => {
+                    out.pop();
+                }
+                std::path::Component::CurDir => {}
+                other => out.push(other),
+            }
+        }
+        out
+    };
+    let (path, root) = (normalize(path), normalize(root));
+    path.strip_prefix(&root)
+        .map(|relative| relative.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string())
 }
 
 pub fn graph_codegen_failed_message() -> String {
@@ -556,6 +653,53 @@ pub fn translate(
         },
         human_config,
     })
+}
+
+#[cfg(test)]
+mod generated_code_tests {
+    use super::*;
+    use tempdir::TempDir;
+
+    fn project(files: &[(&str, &str)]) -> TempDir {
+        let dir = TempDir::new("envio_subgraph_generated").unwrap();
+        for (path, source) in files {
+            let file = dir.path().join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, source).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn finds_generated_code_past_a_reexporting_entry() {
+        let dir = project(&[
+            (
+                "pkg/src/index.ts",
+                "export { handle } from \"./handlers/a\";\n",
+            ),
+            (
+                "pkg/src/handlers/a.ts",
+                "import { T } from \"../types/schema\";\n",
+            ),
+        ]);
+        let root = dir.path().join("pkg");
+        assert_eq!(
+            pathdiff_relative(
+                &generated_dir(&root, &["./src/index.ts".to_string()]),
+                &root
+            ),
+            "src/types"
+        );
+        assert!(!graph_cli_installed(&root));
+        std::fs::create_dir_all(dir.path().join("node_modules/@graphprotocol/graph-cli")).unwrap();
+        std::fs::write(
+            dir.path()
+                .join("node_modules/@graphprotocol/graph-cli/package.json"),
+            "{}",
+        )
+        .unwrap();
+        assert!(graph_cli_installed(&root));
+    }
 }
 
 #[cfg(test)]
