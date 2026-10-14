@@ -355,7 +355,7 @@ fn render_fields(
                 .map(String::as_str)
                 .unwrap_or("ID");
             fields.push(format!(
-                "  {}_id: {}",
+                "  {}_id: {}{RELATION_INDEX}",
                 field.name,
                 render_type(id_scalar(id_type), &wrappers)
             ));
@@ -367,6 +367,7 @@ fn render_fields(
             continue;
         }
 
+        let mut indexed = false;
         let rendered_base = if let Some(scalar) = map_scalar(&base) {
             if field.name == "id" {
                 if base == "Bytes" {
@@ -405,6 +406,7 @@ fn render_fields(
                     .entry(owner.to_string())
                     .or_default()
                     .push(field.name.clone());
+                indexed = true;
                 base.clone()
             }
         } else {
@@ -413,13 +415,21 @@ fn render_fields(
         };
 
         fields.push(format!(
-            "  {}: {}",
+            "  {}: {}{}",
             field.name,
-            render_type(&rendered_base, &wrappers)
+            render_type(&rendered_base, &wrappers),
+            if indexed { RELATION_INDEX } else { "" }
         ));
     }
     fields
 }
+
+/// graph-node indexes every column (relational/ddl.rs, `add_attribute_indexes`).
+/// A relation's is the one a Graph query can't do without: a nested selection,
+/// a `where` on it and every `@derivedFrom` lookup join on it, and without an
+/// index each is a scan of the whole table. The rest stay unindexed, as every
+/// index slows the backfill's writes.
+const RELATION_INDEX: &str = " @index";
 
 fn inherit_conversions(translation: &mut SchemaTranslation, entity: &str, interface: &str) {
     if translation.bytes_id_entities.contains(interface) {
@@ -757,11 +767,11 @@ type Transfer @entity {
                  }\n\n\
                  type Registration {\n  \
                    id: ID!\n  \
-                   domain: Domain!\n\
+                   domain: Domain! @index\n\
                  }\n\n\
                  type Transfer {\n  \
                    id: ID!\n  \
-                   domain: Domain!\n\
+                   domain: Domain! @index\n\
                  }",
                 // The reverse field is what `store.loadRelated` needs and the
                 // manifest never states; only the schema carries it.
@@ -811,7 +821,7 @@ type Renewal implements DomainEvent @entity {
             translation.text.as_str(),
             "interface DomainEvent {\n  \
                id: ID!\n  \
-               domain: Domain!\n  \
+               domain: Domain! @index\n  \
                txHash: Bytes!\n\
              }\n\n\
              type Domain {\n  \
@@ -820,13 +830,13 @@ type Renewal implements DomainEvent @entity {
              }\n\n\
              type Transfer implements DomainEvent {\n  \
                id: ID!\n  \
-               domain: Domain!\n  \
+               domain: Domain! @index\n  \
                txHash: Bytes!\n  \
                owner: Bytes!\n\
              }\n\n\
              type Renewal implements DomainEvent {\n  \
                id: ID!\n  \
-               domain: Domain!\n  \
+               domain: Domain! @index\n  \
                txHash: Bytes!\n\
              }"
         );
@@ -859,7 +869,7 @@ type Transfer implements DomainEvent @entity {
             translation.text.as_str(),
             "interface DomainEvent {\n  \
                id: ID!\n  \
-               domain: Domain!\n\
+               domain: Domain! @index\n\
              }\n\n\
              type Domain {\n  \
                id: ID!\n  \
@@ -867,7 +877,7 @@ type Transfer implements DomainEvent @entity {
              }\n\n\
              type Transfer implements DomainEvent {\n  \
                id: ID!\n  \
-               domain: Domain!\n\
+               domain: Domain! @index\n\
              }"
         );
     }
@@ -931,11 +941,11 @@ type Transfer implements Event @entity {
             (
                 "interface NFT {\n  \
                    id: ID!\n  \
-                   owner: Account!\n\
+                   owner: Account! @index\n\
                  }\n\n\
                  interface Event {\n  \
                    id: ID!\n  \
-                   nft: Punk\n\
+                   nft: Punk @index\n\
                  }\n\n\
                  type Account {\n  \
                    id: String!\n  \
@@ -943,23 +953,23 @@ type Transfer implements Event @entity {
                  }\n\n\
                  type Punk implements NFT {\n  \
                    id: ID!\n  \
-                   owner: Account!\n  \
+                   owner: Account! @index\n  \
                    events: [Event!]! @derivedFrom(field: \"nft\")\n\
                  }\n\n\
                  type Ask {\n  \
                    id: ID!\n  \
-                   nft: Punk\n  \
-                   created_id: String!\n  \
+                   nft: Punk @index\n  \
+                   created_id: String! @index\n  \
                    history: [String!]!\n\
                  }\n\n\
                  type Sale implements Event {\n  \
                    id: ID!\n  \
-                   nft: Punk\n  \
+                   nft: Punk @index\n  \
                    asks: [Ask!]! @derivedFrom(field: \"created_id\")\n\
                  }\n\n\
                  type Transfer implements Event {\n  \
                    id: ID!\n  \
-                   nft: Punk\n\
+                   nft: Punk @index\n\
                  }",
                 Some(vec!["nft".to_string(), "created".to_string()]),
                 Some("Punk".to_string()),

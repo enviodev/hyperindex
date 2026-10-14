@@ -1453,6 +1453,57 @@ type Transfer implements Event @entity {
         assert_eq!(columns, vec!["created_id", "id", "nft"]);
     }
 
+    // ENS app queries through a Graph endpoint took 1.3-5.7 s: `Domain.parent_id`
+    // and `Registration.domain_id` lookups scanned the whole table.
+    #[test]
+    fn indexes_every_relation_column() {
+        let config = parse_in_memory(
+            r#"
+interface Event {
+  id: ID!
+}
+type Domain @entity {
+  id: ID!
+  parent: Domain
+  name: String
+  latest: Event
+  subdomains: [Domain!]! @derivedFrom(field: "parent")
+}
+type Registration @entity {
+  id: ID!
+  domain: Domain!
+  cost: BigInt
+}
+type Transfer implements Event @entity {
+  id: ID!
+}
+type Renewal implements Event @entity {
+  id: ID!
+}
+"#,
+        )
+        .unwrap();
+        let mut indexed: Vec<String> = config
+            .schema
+            .entities
+            .values()
+            .flat_map(|entity| {
+                entity
+                    .get_fields()
+                    .into_iter()
+                    .filter_map(|field| field.get_postgres_field(&config.schema, entity).unwrap())
+                    .filter(|pg| pg.is_index)
+                    .map(|pg| format!("{}.{}", entity.name, pg.field_name))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        indexed.sort();
+        assert_eq!(
+            indexed,
+            vec!["Domain.latest_id", "Domain.parent", "Registration.domain"]
+        );
+    }
+
     /// The Gravity project laid out in `dir`, its manifest named `manifest`.
     fn write_gravity(dir: &std::path::Path, manifest: &str) {
         fs::create_dir_all(dir.join("abis")).unwrap();

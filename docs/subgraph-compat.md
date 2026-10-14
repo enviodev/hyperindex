@@ -104,6 +104,13 @@ A loaded entity reaches the mapping through `changetype`, which erased the
 generated getter, so the prototype tail answers a derived field with the same
 loader — the way it already answers `save()` (§4).
 
+**Indexes.** Every relation column (`<field>_id`, including an interface
+reference's) gets `@index`, and with the `@derivedFrom` targets envio already
+indexes, these are built with the tables rather than after the backfill: a
+Graph endpoint serves while the subgraph syncs, and graph-node builds its
+indexes up front. graph-node indexes every other column too; envio doesn't,
+since each index slows the backfill's writes.
+
 **Accepted divergence:** `@entity(immutable: true)` is validated, then
 dropped — graph-node's write-once check is not enforced. It's a safety net
 for buggy mappings: any subgraph that runs cleanly on graph-node never
