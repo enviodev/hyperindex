@@ -14,6 +14,8 @@ type chainAfterBatch = {
   totalEventsProcessed: float,
   fetchState: FetchState.t,
   isProgressAtHeadWhenBatchCreated: bool,
+  // Taken off the chain's webhook queue.
+  webhooksCount?: int,
 }
 
 // A per-chain snapshot of the scanned block hashes still inside the reorg
@@ -38,6 +40,7 @@ type chainBeforeBatch = {
   sourceBlockNumber: int,
   totalEventsProcessed: float,
   chainConfig: Config.chain,
+  pendingWebhooks: array<Internal.pendingWebhook>,
 }
 
 type t = {
@@ -73,11 +76,12 @@ let getProgressedChainsById = {
     ~progressBlockNumberAfterBatch,
     ~fetchStateAfterBatch,
     ~counts: chainBatchCounts,
+    ~webhooksCount,
   ) => {
     // The check is sufficient, since we guarantee to include a full block in a batch
     // Also, this might be true even if batchSize is 0,
     // eg when indexing at the head and chain doesn't have items in a block
-    if chainBeforeBatch.progressBlockNumber < progressBlockNumberAfterBatch {
+    if chainBeforeBatch.progressBlockNumber < progressBlockNumberAfterBatch || webhooksCount > 0 {
       Some(
         (
           {
@@ -90,6 +94,7 @@ let getProgressedChainsById = {
             fetchState: fetchStateAfterBatch,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
             chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.blockLag,
+            webhooksCount,
           }: chainAfterBatch
         ),
       )
@@ -102,6 +107,7 @@ let getProgressedChainsById = {
     ~chainsBeforeBatch: dict<chainBeforeBatch>,
     ~countsPerChain: dict<chainBatchCounts>,
     ~progressBlockNumberPerChain: dict<int>,
+    ~webhooksCountPerChain: dict<int>,
   ) => {
     let progressedChainsById = Dict.make()
 
@@ -120,6 +126,10 @@ let getProgressedChainsById = {
       | Some(progressBlockNumber) => progressBlockNumber
       | None => chainBeforeBatch.progressBlockNumber
       }
+      let webhooksCount =
+        webhooksCountPerChain
+        ->Utils.Dict.dangerouslyGetNonOption(fetchState.chainId->ChainId.toString)
+        ->Option.getOr(0)
 
       switch switch countsPerChain->Utils.Dict.dangerouslyGetNonOption(
         fetchState.chainId->ChainId.toString,
@@ -131,6 +141,7 @@ let getProgressedChainsById = {
           ~counts,
           ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(~mutItems=leftItems),
           ~progressBlockNumberAfterBatch,
+          ~webhooksCount,
         )
       // Skip not affected chains
       | None =>
@@ -139,6 +150,7 @@ let getProgressedChainsById = {
           ~counts={size: 0, eventsProcessed: 0},
           ~fetchStateAfterBatch=chainBeforeBatch.fetchState,
           ~progressBlockNumberAfterBatch,
+          ~webhooksCount,
         )
       } {
       | Some(progressedChain) =>
@@ -233,6 +245,7 @@ let make = (
   let cursor = sequence->CheckpointSequence.cursor(~frontier)
   let mutCountsPerChain = Dict.make()
   let mutProgressBlockNumberPerChain = Dict.make()
+  let mutWebhooksCountPerChain = Dict.make()
 
   let items = []
   let checkpointIds = []
@@ -347,6 +360,56 @@ let make = (
       ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
     )
 
+    let webhooksCount = chainBeforeBatch.pendingWebhooks->Array.length
+    if webhooksCount > 0 {
+      let lastIndex = checkpointIds->Array.length - 1
+
+      // On a checkpoint of their own block, so a rollback to below it undoes
+      // them along with it, and one to it or above keeps them.
+      if (
+        lastIndex >= 0 &&
+        checkpointChainIds->Array.getUnsafe(lastIndex) === fetchState.chainId &&
+        checkpointBlockNumbers->Array.getUnsafe(lastIndex) === progressBlockNumberAfterBatch
+      ) {
+        checkpointItemsCount->Array.setUnsafe(
+          lastIndex,
+          checkpointItemsCount->Array.getUnsafe(lastIndex) + webhooksCount,
+        )
+      } else {
+        checkpointIds
+        ->Array.push(cursor->CheckpointSequence.next(~chainId=fetchState.chainId))
+        ->ignore
+        checkpointChainIds->Array.push(fetchState.chainId)->ignore
+        checkpointBlockNumbers->Array.push(progressBlockNumberAfterBatch)->ignore
+        checkpointBlockHashes
+        ->Array.push(
+          switch chainBeforeBatch.scannedHashes.hashByBlockNumber->Utils.Dict.dangerouslyGetByIntNonOption(
+            progressBlockNumberAfterBatch,
+          ) {
+          | Some(hash) => Null.Value(hash)
+          | None => Null.Null
+          },
+        )
+        ->ignore
+        checkpointItemsCount->Array.push(webhooksCount)->ignore
+        checkpointEventsProcessed->Array.push(0)->ignore
+      }
+      let blockTimestamp = chainBeforeBatch.blockTimeAt(progressBlockNumberAfterBatch)
+      chainBeforeBatch.pendingWebhooks->Array.forEach(pendingWebhook =>
+        items
+        ->Array.push(
+          Internal.Webhook({
+            pendingWebhook,
+            chainId: fetchState.chainId,
+            blockNumber: progressBlockNumberAfterBatch,
+            blockTimestamp,
+          }),
+        )
+        ->ignore
+      )
+      mutWebhooksCountPerChain->ChainId.Dict.set(fetchState.chainId, webhooksCount)
+    }
+
     mutProgressBlockNumberPerChain->ChainId.Dict.set(
       fetchState.chainId,
       progressBlockNumberAfterBatch,
@@ -362,6 +425,7 @@ let make = (
       ~chainsBeforeBatch,
       ~countsPerChain=mutCountsPerChain,
       ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
+      ~webhooksCountPerChain=mutWebhooksCountPerChain,
     ),
     history,
     checkpointIds,
@@ -392,7 +456,8 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
   while idx.contents < checkpointsLength && result.contents === None {
     let checkpointChainId = batch.checkpointChainIds->Array.getUnsafe(idx.contents)
     if (
-      checkpointChainId === chainId && batch.checkpointItemsCount->Array.getUnsafe(idx.contents) > 0
+      checkpointChainId === chainId &&
+        batch.checkpointEventsProcessed->Array.getUnsafe(idx.contents) > 0
     ) {
       result := Some(batch.checkpointBlockNumbers->Array.getUnsafe(idx.contents))
     } else {
@@ -416,7 +481,7 @@ let findLastEventItem = (batch: t, ~chainId) => {
           idx := idx.contents - 1
         }
       }
-    | Internal.Block(_) => idx := idx.contents - 1
+    | Internal.Block(_) | Internal.Webhook(_) => idx := idx.contents - 1
     }
   }
   result.contents

@@ -7,9 +7,8 @@
 let itemKey = (item: Internal.item): string =>
   switch item {
   | Internal.Event({chainId, blockNumber, logIndex}) =>
-    `${chainId
-      ->ChainId.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
-  | Internal.Block(_) => ""
+    `${chainId->ChainId.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
+  | Internal.Block(_) | Internal.Webhook(_) => ""
   }
 
 // `index` is the item's position in its chain's `simulate` array, reported back

@@ -82,6 +82,16 @@ let getItemLogger = {
             "block": blockNumber,
           },
         )
+      | Webhook({pendingWebhook: {delivery}, blockNumber}) =>
+        Logging.createChildFrom(
+          ~logger=ecosystem.logger,
+          ~params={
+            "onWebhook": delivery.name,
+            "webhookId": delivery.id,
+            "chainId": delivery.chainId,
+            "block": blockNumber,
+          },
+        )
       }
       cache->Dict.set(cacheKey, logger)
       logger

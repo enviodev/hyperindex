@@ -43,6 +43,8 @@ let makeFromDbState: (
   ~sidecarSender: SidecarSender.t=?,
 ) => t
 
+let enqueueWebhook: (t, Internal.webhookDelivery, ~body: unknown=?) => unit
+
 let unexpectedErrorMsg: string
 
 // Read guards / transitions.

@@ -73,6 +73,10 @@ type t = {
   // Timestamp of the committed progress block itself. See
   // `Batch.chainAfterBatch.progressBlockTime`.
   mutable committedProgressBlockTime: option<int>,
+  onWebhookRegistrations: array<Internal.onWebhookRegistration>,
+  // In arrival order. The next batch takes them all; a rollback leaves them
+  // queued for the batch after it.
+  mutable pendingWebhooks: array<Internal.pendingWebhook>,
 }
 
 // The chain's config-declared addresses as storage rows: what a clean run
@@ -133,6 +137,7 @@ let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
   ~onEventRegistrations=[],
+  ~onWebhookRegistrations=[],
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
@@ -187,6 +192,8 @@ let make = (
     rollbackTargetBlock: None,
     progressLatencyMs: None,
     committedProgressBlockTime,
+    onWebhookRegistrations,
+    pendingWebhooks: [],
   }
 }
 
@@ -218,7 +225,7 @@ let makeInternal = (
   // Handler binding + `where`-derived fetch state, and onBlock registrations,
   // are already collected by `HandlerRegister.finishRegistration`, keyed by
   // chain - this just looks up this chain's slice.
-  let {onEventRegistrations, onBlockRegistrations} =
+  let {onEventRegistrations, onBlockRegistrations, ?onWebhookRegistrations} =
     registrationsByChainId
     ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->ChainId.toString)
     ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
@@ -325,6 +332,7 @@ let makeInternal = (
     ~chainConfig,
     ~fetchState,
     ~onEventRegistrations,
+    ~onWebhookRegistrations?,
     ~addressStore,
     ~sourceManager=SourceManager.make(
       ~sources,
@@ -662,10 +670,17 @@ let dispatch = (
 let hasProcessedToEndblock = (cs: t) => {
   let {committedProgressBlockNumber, fetchState} = cs
   switch fetchState.endBlock {
-  | Some(endBlock) => committedProgressBlockNumber >= endBlock
+  | Some(endBlock) =>
+    committedProgressBlockNumber >= endBlock && cs.pendingWebhooks->Utils.Array.isEmpty
   | None => false
   }
 }
+
+let webhookRegistration = (cs: t, ~name) =>
+  cs.onWebhookRegistrations->Array.find(reg => reg.name === name)
+
+let enqueueWebhook = (cs: t, pendingWebhook: Internal.pendingWebhook) =>
+  cs.pendingWebhooks->Array.push(pendingWebhook)->ignore
 
 // Caught up as judged by persisted values alone: progress reached the endBlock,
 // or the head the previous run had already observed (less the lag that holds the
@@ -832,7 +847,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
     // onBlock items build their block from the handler's own block number, not
     // from the stores - which is what lets the sources keep only the blocks and
     // transactions an event item references.
-    | Internal.Block(_) => ()
+    | Internal.Block(_) | Internal.Webhook(_) => ()
     }
   )
 
@@ -1126,6 +1141,7 @@ let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
       ->Null.toOption,
     shouldRollbackOnReorg: cs.shouldRollbackOnReorg,
     chainConfig: cs.chainConfig,
+    pendingWebhooks: cs.pendingWebhooks->Array.copy,
   }
 }
 
@@ -1159,6 +1175,10 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
     // The batch's items just left the buffer, so the remaining buffer's span
     // starts at the batch's progress.
     cs.processingBlockNumber = chainAfterBatch.progressBlockNumber
+    switch chainAfterBatch.webhooksCount {
+    | Some(count) => cs.pendingWebhooks = cs.pendingWebhooks->Array.slice(~start=count)
+    | None => ()
+    }
   | None => ()
   }
 

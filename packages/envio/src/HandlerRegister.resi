@@ -1,6 +1,7 @@
 type chainRegistrations = {
   onEventRegistrations: array<Internal.onEventRegistration>,
   onBlockRegistrations: array<Internal.onBlockRegistration>,
+  onWebhookRegistrations?: array<Internal.onWebhookRegistration>,
 }
 type registrationsByChainId = dict<chainRegistrations>
 
@@ -48,3 +49,6 @@ let registerOnBlock: (
   ~handler: Internal.onBlockArgs => promise<unit>,
   ~getChainsObject: Config.t => dict<unknown>,
 ) => unit
+
+let builtinWebhookNames: array<string>
+let registerOnWebhook: (~name: unknown, ~handler: Internal.onWebhookArgs => promise<unit>) => unit

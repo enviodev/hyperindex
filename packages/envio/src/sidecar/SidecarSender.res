@@ -30,8 +30,10 @@ type t = {
   rollbackTimeoutMs: int,
   backoffBaseMs: int,
   backoffCapMs: int,
-  onAcked: array<string> => unit,
-  onDropped: (array<SidecarCall.t>, ~reason: string) => unit,
+  // Bound by the indexer state that owns the sender, which turns them into the
+  // built-in `sidecar.ack` and `sidecar.dropped` webhooks.
+  mutable onAcked: array<SidecarCall.t> => unit,
+  mutable onDropped: (array<SidecarCall.t>, ~reason: string) => unit,
   // 0 turns the readiness probe off.
   probeMs: int,
   queue: array<item>,
@@ -296,7 +298,8 @@ let settleCalls = (t, ~calls: array<SidecarCall.t>, ~reply: JSON.t) => {
   let accepted = accepted->Option.getOr([])
   t.sent = t.sent + accepted->Array.length
   if accepted->Utils.Array.notEmpty {
-    t.onAcked(accepted)
+    let acceptedIds = accepted->Utils.Set.fromArray
+    t.onAcked(calls->Array.filter(call => acceptedIds->Utils.Set.has(call.id)))
   }
   rejected
   ->Option.getOr([])

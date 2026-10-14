@@ -306,6 +306,7 @@ let nextSidecarCallId = (params: contextParams) => {
   let blockNumber = params.item->Internal.getItemBlockNumber->Int.toString
   let position = switch params.item {
   | Block({onBlockRegistration: {index}}) => `b${index->Int.toString}`
+  | Webhook({pendingWebhook: {delivery: {id}}}) => `w${id}`
   | Event({logIndex, onEventRegistration: {index}}) =>
     let log = switch params.item->Internal.getItemOrderPath->Nullable.toOption {
     | Some(path) =>
@@ -320,6 +321,7 @@ let nextSidecarCallId = (params: contextParams) => {
 let sidecarBlockTimestamp = (params: contextParams) =>
   switch params.item {
   | Block(_) => None
+  | Webhook({blockTimestamp}) => blockTimestamp
   | Event(_) =>
     (params.item->Internal.castUnsafeEventItem).payload
     ->Internal.getPayloadBlock
