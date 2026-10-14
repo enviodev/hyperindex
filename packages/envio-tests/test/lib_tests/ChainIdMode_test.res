@@ -288,6 +288,7 @@ describe("ChainIdMode compat check", () => {
         ["chainIdMode"],
         ~resetCommand="envio local db-migrate setup",
         ~runCommand=None,
+        ~hasPostgres=true,
         ~hasClickhouse=false,
       ),
     ).toBe(`The following config changes are incompatible with the existing indexer data:

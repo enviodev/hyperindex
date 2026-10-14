@@ -408,7 +408,16 @@ external loadWhereRaw: (t, int, array<LoadCondition.t>) => promise<queryResult> 
 let loadWhere = async (client, ~table, ~conditions) =>
   client->read(await client->loadWhereRaw(table, conditions))
 
-@send external isInitialized: t => promise<bool> = "isInitialized"
+// What the storage holds before anything is initialized or resumed.
+type holding =
+  | Nothing
+  | Initialized
+  // ClickHouse holds indexed data its store of record has none of.
+  | Stranded
+  // The store of record holds indexed data the ClickHouse following it doesn't.
+  | Diverged
+
+@send external holding: t => promise<holding> = "holding"
 
 @send external initialize: (t, initialize) => promise<unit> = "initialize"
 

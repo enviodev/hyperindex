@@ -151,10 +151,34 @@ describe("ClickHouse as the only storage", () => {
       let rolledBack = (await indexer.query("Account"))->byId
       let resumed = await indexer.restart()
 
-      // The pre-fork state, and the same state read back after a restart.
-      t.expect((rolledBack, (await resumed.query("Account"))->byId)).toEqual((
+      let seen = ref(None)
+      source.resolveGetHeightOrThrow(400)
+      await MockSource.waitItemsQuery(source)
+      let resumedFrom = source.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"])
+      source.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 350,
+            logIndex: 0,
+            handler: async args => {
+              let context = args.context->asContext
+              let read = (await context.account.get("a"), await context.account.get("c"))
+              if !context.isPreload {
+                seen := Some(read)
+              }
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=400,
+      )
+      await resumed.getBatchWritePromise()
+
+      // The pre-fork state, where the restarted run picks up past the blocks
+      // the rollback refetched, and what its handlers read back.
+      t.expect((rolledBack, resumedFrom, seen.contents)).toEqual((
         [{id: "a", owner: "alice", balance: 1n}],
-        [{id: "a", owner: "alice", balance: 1n}],
+        [302],
+        Some((Some({id: "a", owner: "alice", balance: 1n}), None)),
       ))
     },
   )
@@ -412,7 +436,7 @@ describe("ClickHouse as the only storage of dynamic contracts", () => {
   factoryScenario->Scenario.it(
     "fetches a contract registered before a restart",
     ~sources=[{chain: 1, methods}],
-    async (~t as _, ~indexer, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(1000)
       await MockSource.waitItemsQuery(source)
@@ -436,13 +460,19 @@ describe("ClickHouse as the only storage of dynamic contracts", () => {
 
       source.setAutoHeight(1000)
       let _ = await indexer.restart()
+      let carriesRegistered = (call: MockSource.getItemsOrThrowCall) =>
+        call.payload->MockSource.CallPayload.addresses->Array.includes(registered)
       await Scenario.waitUntil(
-        () =>
-          source.getItemsOrThrowCalls->Array.some(
-            call => call.payload->MockSource.CallPayload.addresses->Array.includes(registered),
-          ),
+        () => source.getItemsOrThrowCalls->Array.some(carriesRegistered),
         ~message="a query carrying the address registered before the restart",
       )
+
+      // Picked up where the run before the restart left off.
+      t.expect(
+        source.getItemsOrThrowCalls
+        ->Array.find(carriesRegistered)
+        ->Option.map(call => call.payload["fromBlock"]),
+      ).toEqual(Some(201))
     },
   )
 })

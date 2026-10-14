@@ -381,7 +381,7 @@ let stageColumnsOrThrow = (
 
 // Every connection setting has to be there: an unset one would otherwise reach
 // the server as an empty value and fail there, for a reason naming neither.
-let optionsFromEnvOrThrow = (): StorageClient.clickHouseOptions => {
+let optionsFromEnvOrThrow = (~alongsidePostgres): StorageClient.clickHouseOptions => {
   let missing = []
   let required = (value, name) =>
     switch value {
@@ -395,10 +395,11 @@ let optionsFromEnvOrThrow = (): StorageClient.clickHouseOptions => {
   let password = Env.ClickHouse.password()->required("ENVIO_CLICKHOUSE_PASSWORD")
   let database = Env.ClickHouse.database()->required("ENVIO_CLICKHOUSE_DATABASE")
   if missing->Utils.Array.notEmpty {
+    let disable = alongsidePostgres ? " disable clickhouse in the `storage` config," : ""
     JsError.throwWithMessage(
       `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
           ", ",
-        )}. Please set them, disable clickhouse in the \`storage\` config, or run \`envio dev\` for a pre-configured local ClickHouse.`,
+        )}. Please set them,${disable} or run \`envio dev\` for a pre-configured local ClickHouse.`,
     )
   }
   {

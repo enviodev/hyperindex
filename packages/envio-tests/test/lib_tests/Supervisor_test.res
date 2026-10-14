@@ -111,8 +111,8 @@ chains:
         address: "0x2222222222222222222222222222222222222222"
 `
 
-let config = (~schema, ~isolatedChains=?) => {
-  let json = Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow
+let config = (~schema, ~isolatedChains=?, ~storage="") => {
+  let json = Core.fromUserApi(~schema, configYaml ++ storage).config->JSON.parseOrThrow
   switch (json, isolatedChains) {
   | (Object(obj), Some(chainIds)) => obj->Dict.set("isolatedChains", JSON.Encode.array(chainIds))
   | _ => ()
@@ -139,8 +139,11 @@ type GlobalCounter @crossChain {
 
 describe("Supervisor.planForRun", () => {
   it("Splits a per-chain schema, and leaves everything else in one process", t => {
-    let workerChains = (~schema, ~maxConnections, ~isolatedChains=?) =>
-      Supervisor.planForRun(~config=config(~schema, ~isolatedChains?), ~maxConnections)->Option.map(
+    let workerChains = (~schema, ~maxConnections, ~isolatedChains=?, ~storage=?) =>
+      Supervisor.planForRun(
+        ~config=config(~schema, ~isolatedChains?, ~storage?),
+        ~maxConnections,
+      )->Option.map(
         workers =>
           workers->Array.map(
             worker => worker.chainIds->Array.map(ChainId.toString)->Array.joinUnsafe(","),
@@ -156,7 +159,14 @@ describe("Supervisor.planForRun", () => {
       workerChains(~schema=perChain, ~maxConnections=2),
       // Already one chain's process: whoever started it owns the layout.
       workerChains(~schema=perChain, ~maxConnections=100, ~isolatedChains=[JSON.Number(1.)]),
-    ]).toStrictEqual([Some(["1", "137"]), None, None, None])
+      // The budget is Postgres connections, which a run without Postgres has
+      // none of to spend.
+      workerChains(
+        ~schema=perChain,
+        ~maxConnections=4,
+        ~storage="\nstorage:\n  postgres: false\n  clickhouse: true\n",
+      ),
+    ]).toStrictEqual([Some(["1", "137"]), None, None, None, None])
   })
 })
 

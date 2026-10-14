@@ -740,7 +740,7 @@ let make = (
       })
     )
 
-  let isInitialized = () => client->StorageClient.isInitialized
+  let holding = () => client->StorageClient.holding
 
   // Scans .envio/cache into a list of (cache table, absolute TSV path). Flat
   // `<name>.tsv` files map to cross-chain caches; a numeric subdirectory
@@ -1503,7 +1503,7 @@ let make = (
     name: client->StorageClient.storeOfRecord,
     entityStoreName: entityConfig =>
       (entityConfig.storage.postgres ? Postgres : ClickHouse)->storeName,
-    isInitialized,
+    holding,
     initialize,
     readStoredConfig,
     addChain,
@@ -1537,7 +1537,9 @@ let clientFromEnv = (
     ~postgres=?config.storage.postgres
       ? Some(postgresOptions(~pgSchema, ~isHasuraEnabled, ~maxConnections?))
       : None,
-    ~clickhouse=?config.storage.clickhouse ? Some(ClickHouse.optionsFromEnvOrThrow()) : None,
+    ~clickhouse=?config.storage.clickhouse
+      ? Some(ClickHouse.optionsFromEnvOrThrow(~alongsidePostgres=config.storage.postgres))
+      : None,
   )
 
 let makeStorageFromEnv = (

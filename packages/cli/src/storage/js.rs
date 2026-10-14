@@ -21,7 +21,7 @@ use super::types::{
 };
 use super::{
     AddChain, Batch, CacheDump, CacheFile, EffectCacheWrite, EntityWrite, Enum, HistoryWrite,
-    Initialize, Partition, PgEntityWrite, RollbackWrite, Rows, Table, TableWrite,
+    Holding, Initialize, Partition, PgEntityWrite, RollbackWrite, Rows, Table, TableWrite,
 };
 use crate::clickhouse;
 use crate::clickhouse::client::{Connection, Tuning};
@@ -841,8 +841,8 @@ impl JsStorage {
     }
 
     #[napi]
-    pub async fn is_initialized(&self) -> napi::Result<bool> {
-        self.inner.is_initialized().await.map_err(to_napi)
+    pub async fn holding(&self) -> napi::Result<Holding> {
+        self.inner.holding().await.map_err(to_napi)
     }
 
     #[napi]

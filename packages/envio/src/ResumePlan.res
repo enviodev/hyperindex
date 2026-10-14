@@ -160,13 +160,19 @@ let incompatibleMessage = (
   ~resetCommand: string,
   ~runCommand: option<string>,
 ) => {
-  let hasClickhouse = switch envioInfo {
+  let storage = switch envioInfo {
   | Object(d) =>
     switch d->Dict.get("storage") {
-    | Some(Object(s)) => s->Dict.get("clickhouse") == Some(Boolean(true))
-    | _ => false
+    | Some(Object(s)) => s
+    | _ => Dict.make()
     }
-  | _ => false
+  | _ => Dict.make()
   }
-  Config.incompatibleMessage(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
+  Config.incompatibleMessage(
+    changedPaths,
+    ~resetCommand,
+    ~runCommand,
+    ~hasPostgres=storage->Dict.get("postgres") != Some(Boolean(false)),
+    ~hasClickhouse=storage->Dict.get("clickhouse") == Some(Boolean(true)),
+  )
 }

@@ -35,7 +35,7 @@ type Visit @storage(clickhouse: {}) {
   ~unsupported=[
     {
       backend: #postgres,
-      reason: "the ClickHouse-only entity needs a ClickHouse database to write into",
+      reason: "configures its own storage, so it runs the same on the ClickHouse leg",
     },
   ],
 )

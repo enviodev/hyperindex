@@ -564,7 +564,7 @@ type entityOperations = {
 let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   name: "test-inmemory",
   entityStoreName: _ => "test-inmemory",
-  isInitialized: async () => true,
+  holding: async () => Persistence.Initialized,
   // The runner injects the config-derived initial state by setting
   // `persistence.storageStatus = Ready(...)` directly, bypassing `Persistence.init`,
   // so none of these is reached.

@@ -146,6 +146,19 @@ pub struct Batch {
     pub effect_caches: Vec<EffectCacheWrite>,
 }
 
+/// What the stores hold before anything is initialized or resumed.
+#[napi_derive::napi(string_enum)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum Holding {
+    Nothing,
+    Initialized,
+    /// ClickHouse holds indexed data its store of record has none of.
+    Stranded,
+    /// The store of record holds indexed data the ClickHouse following it
+    /// doesn't.
+    Diverged,
+}
+
 /// A failed write, and what it was doing.
 #[derive(Debug)]
 pub struct Failure {
@@ -249,7 +262,6 @@ pub struct CacheDump {
 /// else is the store of record's.
 pub trait Backend: Send + Sync {
     fn name(&self) -> &'static str;
-    fn is_initialized(&self) -> Op<'_, bool>;
     /// Refuses a database the indexer may not take over, before anything is
     /// dropped: initializing starts it from nothing.
     fn check_for_initialize(&self) -> Op<'_, ()>;
@@ -334,8 +346,41 @@ impl Storage {
         }
     }
 
-    pub async fn is_initialized(&self) -> Result<bool> {
-        self.primary().is_initialized().await
+    pub async fn holding(&self) -> Result<Holding> {
+        let record = match &self.clickhouse {
+            Some(clickhouse) => clickhouse.record().await?,
+            None => None,
+        };
+        let Some(postgres) = &self.postgres else {
+            return Ok(match record {
+                Some(clickhouse::storage::Record {
+                    follower: false, ..
+                }) => Holding::Initialized,
+                Some(_) => Holding::Stranded,
+                None => Holding::Nothing,
+            });
+        };
+        if !postgres.is_initialized().await? {
+            return Ok(match record {
+                Some(_) => Holding::Stranded,
+                None => Holding::Nothing,
+            });
+        }
+        if self.clickhouse.is_none() {
+            return Ok(Holding::Initialized);
+        }
+        // A schema an older envio built keeps no record: resuming refuses it
+        // on its own.
+        let Some(stored) = postgres.read_stored_config().await?.config.envio_info else {
+            return Ok(Holding::Initialized);
+        };
+        Ok(match record {
+            Some(clickhouse::storage::Record {
+                follower: true,
+                envio_info,
+            }) if envio_info == stored => Holding::Initialized,
+            _ => Holding::Diverged,
+        })
     }
 
     /// Every store starts from nothing. Each one is checked before any is

@@ -1929,6 +1929,26 @@ chains:
     )
   })
 
+  it("points an entity without a storage route at ClickHouse when it's the only store", t => {
+    expectParseError(
+      t,
+      ~schema=`
+type Apple { id: ID! }
+`,
+      `
+name: missing-storage-route
+storage:
+  postgres: false
+  clickhouse:
+    default: false
+chains:
+  - id: 1
+    start_block: 0
+`,
+      "Schema validation failed:\n\nEntities with no storage backend (no @storage directive, and no backend is marked \`default: true\` in config.yaml):\n  - Apple\n\nFixes:\n  - Set \`default: true\` on a backend under \`storage:\` in config.yaml to include these entities automatically. Example:\n      storage:\n        clickhouse:\n          default: true\n  - Or add @storage(clickhouse: true) to the entities listed above. Example:\n      type Apple @storage(clickhouse: true) { ... }",
+    )
+  })
+
   it("rejects snake_case column collisions", t => {
     expectParseError(
       t,

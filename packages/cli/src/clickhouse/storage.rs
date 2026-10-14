@@ -46,6 +46,17 @@ pub struct Settings {
     pub primary: bool,
 }
 
+/// The info record's id says which part the database was built to play, so a
+/// store of record can tell its own database from one that followed another,
+/// and a follower from one built for something else.
+const OWN_RECORD: i32 = 1;
+const FOLLOWER_RECORD: i32 = 2;
+
+pub struct Record {
+    pub follower: bool,
+    pub envio_info: String,
+}
+
 /// A chain as its row holds it. A write rewrites the whole row, so the latest
 /// one is kept here to write the next from.
 #[derive(Clone, Debug, PartialEq)]
@@ -596,8 +607,8 @@ impl Storage {
             self.database(),
             topology,
         ));
+        statements.push(ddl::create_info_table(self.database(), topology));
         if self.settings.primary {
-            statements.push(ddl::create_info_table(self.database(), topology));
             statements.push(ddl::create_contracts_table(self.database(), topology));
             statements.push(ddl::create_addresses_table(
                 &chain_id_type,
@@ -642,15 +653,58 @@ impl Storage {
             .await?;
         // Last: the record is what says the storage exists, so it only does
         // once everything above it is in place.
-        if self.settings.primary {
-            self.insert_values(
-                INFO_TABLE,
-                &ddl::info_columns(),
-                &[vec![Value::Int(1), Value::Text(input.envio_info.clone())]],
-            )
+        let id = if self.settings.primary {
+            OWN_RECORD
+        } else {
+            FOLLOWER_RECORD
+        };
+        self.insert_values(
+            INFO_TABLE,
+            &ddl::info_columns(),
+            &[vec![
+                Value::Int(id.into()),
+                Value::Text(input.envio_info.clone()),
+            ]],
+        )
+        .await
+    }
+
+    /// What the database was built as, if an indexer finished building it.
+    pub async fn record(&self) -> Result<Option<Record>> {
+        let exists = self
+            .client
+            .statement(format!(
+                "SELECT count() FROM system.tables WHERE `database` = {} AND `name` = {} \
+                 FORMAT TabSeparated",
+                literal(self.database()),
+                literal(INFO_TABLE)
+            ))
             .await?;
+        if exists.trim() == "0" {
+            return Ok(None);
         }
-        Ok(())
+        let body = self
+            .client
+            .read(format!(
+                "SELECT `id`, `config` FROM {} ORDER BY `id` LIMIT 1 FORMAT RowBinary",
+                self.table_ref(INFO_TABLE)
+            ))
+            .await?;
+        let cells = row_binary::decode(
+            &body,
+            &[
+                (ChType::Int32, ReadKind::Text),
+                (ChType::String, ReadKind::Text),
+            ],
+        )?;
+        match cells.as_slice() {
+            [] => Ok(None),
+            [Cell::Str(id), Cell::Str(config)] => Ok(Some(Record {
+                follower: id.parse::<i32>()? == FOLLOWER_RECORD,
+                envio_info: config.to_string(),
+            })),
+            other => bail!("Unexpected info record {other:?}"),
+        }
     }
 
     /// Empties the database, or drops it where emptying is not an option.
@@ -1077,7 +1131,7 @@ impl Storage {
         let info = self
             .client
             .read(format!(
-                "SELECT `config` FROM {} LIMIT 1 FORMAT RowBinary",
+                "SELECT `config` FROM {} WHERE `id` = {OWN_RECORD} FORMAT RowBinary",
                 self.table_ref(INFO_TABLE)
             ))
             .await?;
@@ -1462,31 +1516,6 @@ impl Storage {
 impl Backend for Storage {
     fn name(&self) -> &'static str {
         "clickhouse"
-    }
-
-    fn is_initialized(&self) -> Op<'_, bool> {
-        Box::pin(async move {
-            let exists = self
-                .client
-                .statement(format!(
-                    "SELECT count() FROM system.tables WHERE `database` = {} AND `name` = {} \
-                     FORMAT TabSeparated",
-                    literal(self.database()),
-                    literal(INFO_TABLE)
-                ))
-                .await?;
-            if exists.trim() == "0" {
-                return Ok(false);
-            }
-            let rows = self
-                .client
-                .statement(format!(
-                    "SELECT count() FROM {} FORMAT TabSeparated",
-                    self.table_ref(INFO_TABLE)
-                ))
-                .await?;
-            Ok(rows.trim() != "0")
-        })
     }
 
     fn check_for_initialize(&self) -> Op<'_, ()> {

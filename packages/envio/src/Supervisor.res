@@ -50,8 +50,10 @@ let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<wor
 // can't be split: workers each advance their own checkpoint sequence, which only
 // holds while no entity has rows another chain can reach. A run that is already
 // one chain's process doesn't split again — whoever started it owns the layout.
+// The budget split is Postgres connections, so a run without Postgres keeps one
+// process.
 let planForRun = (~config: Config.t, ~maxConnections=Env.Db.maxConnections) =>
-  if config.isolated || !(config->Config.isPerChain) {
+  if config.isolated || !(config->Config.isPerChain) || !config.storage.postgres {
     None
   } else {
     plan(~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id), ~maxConnections)

@@ -429,15 +429,27 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                 .map(|n| format!("  - {n}"))
                 .collect::<Vec<_>>()
                 .join("\n");
+            let enabled = [
+                ("postgres", storage.postgres.is_some()),
+                ("clickhouse", storage.clickhouse.is_some()),
+            ]
+            .into_iter()
+            .filter_map(|(backend, enabled)| enabled.then_some(backend))
+            .collect::<Vec<_>>();
+            let backend = enabled.first().copied().unwrap_or("postgres");
+            let directives = enabled
+                .iter()
+                .map(|backend| format!("@storage({backend}: true)"))
+                .collect::<Vec<_>>()
+                .join(" and/or ");
             return Err(anyhow!(
                 "Schema validation failed:\n\nEntities with no storage backend (no @storage \
-                     directive, and no backend is marked `default: true` in \
-                     config.yaml):\n{listed}\n\nFixes:\n  - Set `default: true` on a backend \
-                     under `storage:` in config.yaml to include these entities automatically. \
-                     Example:\n      storage:\n        postgres:\n          default: true\n  - Or \
-                     add @storage(postgres: true) and/or @storage(clickhouse: true) to the \
-                     entities listed above. Example:\n      type {example} @storage(postgres: \
-                     true) {{ ... }}"
+                 directive, and no backend is marked `default: true` in \
+                 config.yaml):\n{listed}\n\nFixes:\n  - Set `default: true` on a backend under \
+                 `storage:` in config.yaml to include these entities automatically. Example:\n      \
+                 storage:\n        {backend}:\n          default: true\n  - Or add {directives} \
+                 to the entities listed above. Example:\n      type {example} @storage({backend}: \
+                 true) {{ ... }}"
             ));
         }
     }

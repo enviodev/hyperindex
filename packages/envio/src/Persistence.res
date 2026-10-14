@@ -103,15 +103,15 @@ type rollbackRemoval = {
   scope: Internal.chainScope,
 }
 
+type holding = StorageClient.holding = Nothing | Initialized | Stranded | Diverged
+
 type storage = {
   // Identifier used as the `storage` label on Prometheus metrics.
   name: string,
   // The `storage` label for an entity's loads: an entity kept apart from the
   // store of record is served by its own store.
   entityStoreName: Internal.entityConfig => string,
-  // Should return true if we already have persisted data
-  // and we can skip initialization
-  isInitialized: unit => promise<bool>,
+  holding: unit => promise<holding>,
   // Should initialize the storage so we can start interacting with it
   // Eg create connection, schema, tables, etc. `envioInfo` is opaque JSON
   // persisted as part of the same transaction so a fresh schema always
@@ -297,7 +297,11 @@ let init = {
           resolveRef := resolve
         })
         persistence.storageStatus = Initializing(promise)
-        if reset || !(await persistence.storage.isInitialized()) {
+        let holding = reset ? Nothing : await persistence.storage.holding()
+        if holding === Stranded {
+          throw(Refused(Config.strandedMessage(~resetCommand)))
+        }
+        if holding === Nothing {
           if isolated {
             throw(
               Refused(
@@ -342,7 +346,6 @@ let init = {
             ~lowercaseAddresses,
             ~isolated,
           ) {
-          | Resume => ()
           | Incompatible(changedPaths) =>
             throw(
               Refused(
@@ -354,6 +357,9 @@ let init = {
                 ),
               ),
             )
+          // Behind a config change, which names what to revert.
+          | _ if holding === Diverged => throw(Refused(Config.divergedMessage(~resetCommand)))
+          | Resume => ()
           | AddChain(chainConfig) =>
             Logging.info({
               "msg": `Adding the chain to the existing indexer storage...`,

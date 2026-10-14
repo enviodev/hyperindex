@@ -48,7 +48,7 @@ let chain = (
 `
 }
 
-let deployment = (~name="migration", ~chains, ~contracts=["Token"], ~schema=schema) =>
+let deployment = (~name="migration", ~chains, ~contracts=["Token"], ~schema=schema, ~storage="") =>
   Scenario.make(
     ~schema,
     ~configYaml=`
@@ -62,10 +62,27 @@ contracts:${contracts
       - event: Transfer()`
       )
       ->Array.join("")}
-chains:${chains->Array.join("")}`,
+chains:${chains->Array.join("")}${storage}`,
   )
 
 let deployed = deployment(~chains=[chain(1)])
+
+let postgresAlone = `
+storage:
+  postgres:
+    default: true
+`
+let clickHouseBehindPostgres = `
+storage:
+  postgres:
+    default: true
+  clickhouse: true
+`
+let clickHouseAlone = `
+storage:
+  postgres: false
+  clickhouse: true
+`
 
 describe("Resuming a chain against the stored config", () => {
   Migration.it(
@@ -240,6 +257,67 @@ describe("Changing the chains of a deployment", () => {
   )
 })
 
+describe("Changing which stores keep the data", () => {
+  let stranded = Migration.Failed(`ClickHouse holds indexed data that the configured store of record has none of: the storage config, or the Postgres schema in front of ClickHouse, changed since it was indexed.
+
+Pick one:
+  1. Revert that change  # resume indexing where it left off
+  2. envio dev -r        # delete all indexed data and start over`)
+
+  Migration.it(
+    "Refuses Postgres put in front of a ClickHouse-only deployment",
+    ~deployed=deployment(~chains=[chain(1)], ~storage=clickHouseAlone),
+    ~edited=deployment(~chains=[chain(1)], ~storage=clickHouseBehindPostgres),
+    ~expected=stranded,
+  )
+
+  Migration.it(
+    "Refuses ClickHouse alone over what it kept behind Postgres",
+    ~deployed=deployment(~chains=[chain(1)], ~storage=clickHouseBehindPostgres),
+    ~edited=deployment(~chains=[chain(1)], ~storage=clickHouseAlone),
+    ~expected=stranded,
+  )
+
+  Migration.it(
+    "Refuses ClickHouse added behind a Postgres deployment",
+    ~deployed=deployment(~chains=[chain(1)], ~storage=postgresAlone),
+    ~edited=deployment(~chains=[chain(1)], ~storage=clickHouseBehindPostgres),
+    ~expected=Refused(["storage.clickhouse"]),
+  )
+
+  // As when ENVIO_CLICKHOUSE_DATABASE names another database, or the follower's
+  // setup died before it finished.
+  deployment(
+    ~chains=[chain(1)],
+    ~storage=clickHouseBehindPostgres,
+  )->Scenario.it(
+    "Refuses a store of record whose ClickHouse lost what it followed",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
+
+      let refusal = switch await indexer.restart() {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      t.expect(refusal).toEqual(
+        Some(`ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one it was indexed into, or setting it up didn't finish.
+
+Pick one:
+  1. Point ENVIO_CLICKHOUSE_DATABASE at the database it was indexed into  # resume indexing where it left off
+  2. envio dev -r                                                         # delete all indexed data and start over`),
+      )
+    },
+  )
+})
+
 describe("What a refused restart tells the operator", () => {
   deployed->Scenario.it(
     "Names every change and the ways forward, and logs nothing else about it",
@@ -339,6 +417,46 @@ Pick one:
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev -d indexer --config config.head.yaml`,
         ),
+      )
+    },
+  )
+
+  deployment(
+    ~chains=[chain(1)],
+    ~storage=clickHouseAlone,
+  )->Scenario.it(
+    "Names only the ClickHouse database for a second indexer without Postgres",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      let config =
+        deployment(
+          ~chains=[chain(1, ~endBlock=1000)],
+          ~storage=clickHouseAlone,
+        ).config->Scenario.withMockSources(~sources=[(1, source)])
+
+      let refusal = switch await indexer.restart(~config, ()) {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      t.expect(refusal).toEqual(
+        Some(`The following config changes are incompatible with the existing indexer data:
+
+    - chains.1.endBlock
+
+Pick one:
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`),
       )
     },
   )

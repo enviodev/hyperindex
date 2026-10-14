@@ -1424,28 +1424,53 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 // because running a second indexer doesn't apply. `~hasClickhouse` adds the
 // extra env line so users running both Postgres and Clickhouse get a complete
 // override.
+let resume = "resume indexing where it left off"
+let startOver = "delete all indexed data and start over"
+
+// Each way forward with what it does, the comments lined up.
+let pickOne = (ways: array<(string, string)>) => {
+  let col = ways->Array.reduce(0, (col, (way, _)) => Math.Int.max(col, way->String.length)) + 2
+  ways
+  ->Array.mapWithIndex(((way, effect), index) =>
+    `  ${(index + 1)->Int.toString}. ${way}${" "->String.repeat(
+        col - way->String.length,
+      )}# ${effect}`
+  )
+  ->Array.join("\n")
+}
+
 let incompatibleMessage = (
   changedPaths: array<string>,
   ~resetCommand: string,
   ~runCommand: option<string>,
+  ~hasPostgres: bool,
   ~hasClickhouse: bool,
 ) => {
   let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
-  let option1 = "Revert the changes above"
-  let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
-  let col = Math.Int.max(String.length(option1), String.length(resetCommand)) + 2
   let option3 = switch runCommand {
   | None => ""
   | Some(cmd) =>
+    let postgresLine = hasPostgres ? "       ENVIO_PG_SCHEMA=<new_schema> \\\n" : ""
     let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
-    `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
+    `\n  3. Run a second indexer alongside this one — keep both datasets:\n${postgresLine}${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
   }
-  `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(
-      col,
-    )}# resume indexing where it left off\n  2. ${resetCommand->padTo(
-      col,
-    )}# delete all indexed data and start over${option3}`
+  `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n${pickOne([
+      ("Revert the changes above", resume),
+      (resetCommand, startOver),
+    ])}${option3}`
 }
+
+let strandedMessage = (~resetCommand) =>
+  `ClickHouse holds indexed data that the configured store of record has none of: the storage config, or the Postgres schema in front of ClickHouse, changed since it was indexed.\n\nPick one:\n${pickOne([
+      ("Revert that change", resume),
+      (resetCommand, startOver),
+    ])}`
+
+let divergedMessage = (~resetCommand) =>
+  `ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one it was indexed into, or setting it up didn't finish.\n\nPick one:\n${pickOne([
+      ("Point ENVIO_CLICKHOUSE_DATABASE at the database it was indexed into", resume),
+      (resetCommand, startOver),
+    ])}`
 
 // The returned value is a pure function of the JSON: it holds only event
 // definitions, never handler/contractRegister/where state (that's layered on

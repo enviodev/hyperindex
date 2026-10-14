@@ -1343,10 +1343,6 @@ impl Backend for Storage {
         "postgres"
     }
 
-    fn is_initialized(&self) -> Op<'_, bool> {
-        Box::pin(Storage::is_initialized(self))
-    }
-
     fn check_for_initialize(&self) -> Op<'_, ()> {
         Box::pin(async move { self.check_schema_for_initialize().await.map(|_| ()) })
     }

@@ -242,6 +242,10 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       await indexer.stop()
       let {sql, pgSchema} = indexer.pg
       let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${pgSchema}" CASCADE;`)
+      switch IndexerRunner.selectedBackend {
+      | #clickhouse => await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
+      | #postgres => ()
+      }
 
       let outcome = switch await indexer.restart(~chains=[ChainId.fromInt(1)], ()) {
       | restarted => Migration.Resumed(await Migration.storedChainIds(restarted))

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use pretty_assertions::assert_eq;
 
 use super::client::{Client, Connection, Tuning};
-use super::storage::{Settings, Storage};
+use super::storage::{Record, Settings, Storage};
 use super::table::test_support::{column, entity_input};
 use super::table::{ClickHouseTableInput, ClickHouseTableKind};
 use crate::columnar::{Arena, ColumnKind};
@@ -394,16 +394,17 @@ async fn a_read_that_fails_partway_is_an_error() {
 async fn a_primary_reads_back_the_record_it_was_initialized_with() {
     let live = Live::new(true);
     let account = live.account();
-    let initialized_before = live.storage.is_initialized().await.unwrap();
+    let follower = |record: Option<Record>| record.map(|record| record.follower);
+    let before = follower(live.storage.record().await.unwrap());
     initialize(&live, vec![account], vec![chain(1)]).await;
 
     let stored = live.storage.read_stored_config().await.unwrap();
-    let initialized = live.storage.is_initialized().await.unwrap();
+    let after = follower(live.storage.record().await.unwrap());
     live.drop_database().await;
     assert_eq!(
         (
-            initialized_before,
-            initialized,
+            before,
+            after,
             stored.config.envio_info,
             stored.config.contract_names,
             stored
@@ -416,8 +417,8 @@ async fn a_primary_reads_back_the_record_it_was_initialized_with() {
             rows(&stored.config_addresses),
         ),
         (
-            false,
-            true,
+            None,
+            Some(false),
             Some("{\"config\":1}".to_string()),
             Some(vec!["Token".to_string()]),
             vec![(1, "evm".to_string(), 200)],

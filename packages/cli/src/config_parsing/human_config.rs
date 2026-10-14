@@ -166,10 +166,11 @@ pub struct BaseConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "Storage backends the indexer writes data to. Defaults to Postgres when \
-                       omitted. Set `clickhouse: true` to additionally sync the indexed data to \
-                       ClickHouse. Mark a backend with `default: true` to store entities that \
-                       don't have an @storage directive in the schema, e.g. `clickhouse: \
-                       {default: true}`."
+                       omitted. Set `postgres: true` and `clickhouse: true` to also keep data in \
+                       ClickHouse, or `postgres: false` and `clickhouse: true` to keep \
+                       everything in ClickHouse alone. Mark a backend with `default: true` to \
+                       store entities that don't have an @storage directive in the schema, e.g. \
+                       `clickhouse: {default: true}`."
     )]
     pub storage: Option<StorageConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,8 +302,8 @@ impl StorageBackendConfig {
 }
 
 // Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
-// constraints Storage::resolve enforces at codegen time: ClickHouse requires
-// Postgres, and at least one backend must be enabled. Without this, an IDE
+// constraints Storage::resolve enforces at codegen time: ClickHouse needs
+// `postgres` set either way, and at least one backend must be enabled. Without this, an IDE
 // validating against the schema would accept configs the CLI later rejects.
 impl JsonSchema for StorageConfig {
     fn schema_name() -> Cow<'static, str> {
@@ -391,6 +392,9 @@ impl JsonSchema for StorageConfig {
                         "required": ["clickhouse"]
                     },
                     "then": {
+                        "properties": {
+                            "postgres": { "not": { "type": "null" } }
+                        },
                         "required": ["postgres"]
                     }
                 }

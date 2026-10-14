@@ -85,7 +85,7 @@ Main CLI commands:
    the `envio` module with project-bound types), `<project>/envio-env.d.ts`
    (committed reference glue), and `src/Indexer.res` for ReScript projects.
 3. `start` – runs `codegen` to refresh the on-disk types and then launches the indexer runtime.
-4. `dev` – same codegen-then-launch flow as `start`, plus brings up Docker (Postgres, Hasura, ClickHouse when configured) and the local development services.
+4. `dev` – same codegen-then-launch flow as `start`, plus brings up Docker (Postgres and Hasura unless `storage.postgres` is `false`, ClickHouse when configured) and the local development services.
 
 Codegen output layout:
 
@@ -120,7 +120,7 @@ Entry point:
 - `Main.start` (in `packages/envio`) is the indexer entry proper. Responsibilities:
   - Loads runtime configuration (`Config.res`).
   - Starts an Express server that serves `/metrics`, `/health`, and the Development Console endpoints.
-  - Initializes the Persistence layer (Postgres + Hasura) — a single `init()` call that also handles `~reset` + `upsertPersistedState` when `~migrate` is provided.
+  - Initializes the Persistence layer (Postgres and/or ClickHouse, and Hasura alongside Postgres) — a single `init()` call that also handles `~reset` + `upsertPersistedState` when `~migrate` is provided.
   - Loads user handler modules via `HandlerLoader.registerAllHandlers`.
   - Loads initial state (to resume from a previous run).
   - Builds the indexer state (`IndexerState.make`) and starts `IndexerLoop.res`, which orchestrates the fetch / process / rollback loops.
