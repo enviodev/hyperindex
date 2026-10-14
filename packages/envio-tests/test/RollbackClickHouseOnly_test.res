@@ -47,7 +47,6 @@ type EntityWithTimestamp @storage(clickhouse: {}) {
       backend: #postgres,
       reason: "configures its own storage, so it runs the same on the ClickHouse leg",
     },
-    {backend: #clickhouseOnly, reason: "is about an entity Postgres keeps beside one it doesn't"},
   ],
 )
 

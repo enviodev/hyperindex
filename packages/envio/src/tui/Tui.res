@@ -5,7 +5,7 @@ type info = {
   version: string,
   projectDir: string,
   startTime: float,
-  graphqlUrl: option<string>,
+  graphqlUrl: string,
   graphqlPassword: option<string>,
   devConsoleUrl: option<string>,
   clickhouseUrl: option<string>,
@@ -113,18 +113,13 @@ let drive = (tui: t, ~getMetrics: unit => Metrics.t) => {
 
 let start = (~config: Config.t, ~getMetrics: unit => Metrics.t) => {
   let metrics = getMetrics()
-  // Hasura serves what Postgres keeps.
-  let hasura = config.storage.postgres && Env.Hasura.enabled ? Some(Env.Hasura.connection()) : None
   let info = {
     ecosystem: (config.ecosystem.name :> string),
     version: Utils.EnvioPackage.value.version,
     projectDir: NodeJs.Process.cwd(),
     startTime: metrics.startTime->Date.getTime,
-    graphqlUrl: hasura->Option.map(({url}) => url),
-    graphqlPassword: switch hasura {
-    | Some({secret: "testing"}) => Some("testing")
-    | _ => None
-    },
+    graphqlUrl: Env.Hasura.url,
+    graphqlPassword: Env.Hasura.secret === "testing" ? Some("testing") : None,
     devConsoleUrl: config.isDev ? Some(`${Env.envioAppUrl}/console`) : None,
     clickhouseUrl: switch (config.storage.clickhouse, Env.ClickHouse.host()) {
     | (true, Some(host)) => Some(`${host}/play`)

@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 
 use super::ch_type::ChType;
 use super::table::{Column, Table};
@@ -50,14 +50,6 @@ pub fn above(
     checkpoint_column: &str,
 ) -> Result<String> {
     bounded(bounds, chain_column, checkpoint_column, ">")
-}
-
-pub fn below(
-    bounds: &Bounds,
-    chain_column: Option<&str>,
-    checkpoint_column: &str,
-) -> Result<String> {
-    bounded(bounds, chain_column, checkpoint_column, "<")
 }
 
 fn bounded(
@@ -305,21 +297,7 @@ pub fn load(
     conditions: &[Condition],
     frontier: &Frontier,
 ) -> Result<String> {
-    let Some(entity) = table.entity() else {
-        // Effect caches are replaced in place, so their latest rows are the
-        // ones FINAL leaves.
-        let filter = conditions
-            .iter()
-            .map(|filter| condition(table, filter))
-            .collect::<Result<Vec<_>>>()?;
-        return Ok(format!(
-            "SELECT {} FROM {}.{} FINAL WHERE {} FORMAT RowBinary",
-            as_row_names(table),
-            quoted(database),
-            quoted(&table.physical),
-            conjunction(&filter)
-        ));
-    };
+    let entity = &table.entity;
     let key = entity.key();
     let mut on_key = Vec::new();
     let mut on_values = Vec::new();
@@ -376,25 +354,20 @@ pub fn load(
 }
 
 /// The entities a rollback reaches: any with a row above its bound.
-fn changed(database: &str, table: &Table, above: &str) -> Result<String> {
-    let entity = table
-        .entity()
-        .ok_or_else(|| anyhow!("\"{}\" is not an entity table", table.name))?;
-    let key = entity.key();
-    Ok(format!(
+fn changed(database: &str, table: &Table, above: &str) -> String {
+    let key = table.entity.key();
+    format!(
         "{} IN (SELECT {} FROM {} WHERE {above})",
         key_tuple(&key),
         joined(&key),
         history(database, table)
-    ))
+    )
 }
 
 /// The entities a rollback removes: every row they have is above the bound, so
 /// nothing of them existed at the target.
 pub fn rollback_removed(database: &str, table: &Table, bounds: &Bounds) -> Result<String> {
-    let entity = table
-        .entity()
-        .ok_or_else(|| anyhow!("\"{}\" is not an entity table", table.name))?;
+    let entity = &table.entity;
     let above = above(
         bounds,
         entity.chain_id_column.as_deref(),
@@ -417,16 +390,14 @@ pub fn rollback_removed(database: &str, table: &Table, bounds: &Bounds) -> Resul
         "SELECT {as_row_names} FROM {} WHERE {} GROUP BY {} HAVING countIf(NOT ({above})) = 0 \
          FORMAT RowBinary",
         history(database, table),
-        changed(database, table, &above)?,
+        changed(database, table, &above),
         joined(&key)
     ))
 }
 
 /// The row each entity a rollback reaches held at the target — set or deleted.
 pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Result<String> {
-    let entity = table
-        .entity()
-        .ok_or_else(|| anyhow!("\"{}\" is not an entity table", table.name))?;
+    let entity = &table.entity;
     let above = above(
         bounds,
         entity.chain_id_column.as_deref(),
@@ -445,7 +416,7 @@ pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Resu
          ORDER BY {}, {} DESC LIMIT 1 BY {}) FORMAT RowBinary",
         as_row_names(table),
         history(database, table),
-        changed(database, table, &above)?,
+        changed(database, table, &above),
         joined(&key),
         quoted(CHECKPOINT_ID_COLUMN),
         joined(&key),
@@ -456,7 +427,7 @@ pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clickhouse::table::test_support::{account, cache, per_chain_account};
+    use crate::clickhouse::table::test_support::{account, per_chain_account};
     use pretty_assertions::assert_eq;
 
     fn eq(column: &str, kind: ValueKind, value: &str) -> Condition {
@@ -534,21 +505,6 @@ mod tests {
              `id` = 'a' AND `chain_id` = 137 AND `envio_checkpoint_id` <= multiIf(`chain_id` = \
              1, 7, `chain_id` = 137, 9, 0) ORDER BY `id`, `chain_id`, `envio_checkpoint_id` DESC \
              LIMIT 1 BY `id`, `chain_id`) WHERE `envio_change` = 'SET') FORMAT RowBinary"
-        );
-    }
-
-    #[test]
-    fn an_effect_cache_is_read_through_final() {
-        assert_eq!(
-            load(
-                "db",
-                &cache(),
-                &[eq("id", ValueKind::Text, "k")],
-                &frontier(&[])
-            )
-            .unwrap(),
-            "SELECT `id` AS `id`, `output` AS `output` FROM `db`.`envio_effect_price` FINAL \
-             WHERE `id` = 'k' FORMAT RowBinary"
         );
     }
 

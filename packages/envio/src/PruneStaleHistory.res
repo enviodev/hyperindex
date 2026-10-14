@@ -16,16 +16,17 @@ type targets = {
   concurrent: array<Internal.entityConfig>,
   forced: array<Internal.entityConfig>,
   // Whether the checkpoints are due. They are pruned on an interval of their
-  // own: a store that keeps every entity's whole history has no entity to prune
-  // beside them.
+  // own: with every entity kept in ClickHouse, Postgres has no entity history
+  // to prune beside them.
   checkpoints: bool,
   // A rollback's write must not overlap their prune, so beside one they wait
   // for the forced group, after the write.
   isRollback: bool,
 }
 
-// Where the checkpoints' last prune is kept, beside the entities' own.
-let checkpointsKey = InternalTable.Checkpoints.tableName
+// Where the checkpoints' last prune is kept, beside the entities' own: `$` can't
+// occur in an entity's name.
+let checkpointsKey = "$checkpoints"
 
 // Where each chain's history may be pruned back to, or None while nowhere can.
 //

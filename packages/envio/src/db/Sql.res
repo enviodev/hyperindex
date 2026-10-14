@@ -31,27 +31,38 @@ let sslModeToString = mode =>
 %%private(let isDate: unknown => bool = %raw(`(value) => value instanceof Date`))
 @send external toISOString: unknown => string = "toISOString"
 
-// Every object's keys in one order, so a document is spelled one way whatever
-// order its keys were set in: ClickHouse compares a document as its text.
+// A plain object's keys in one order. Anything else — an array, a Uint8Array, a
+// boxed primitive — is left for `JSON.stringify` to spell as it always does.
 %%private(
-  let withSortedKeys: (string, unknown) => unknown = %raw(`(_, value) =>
-    value !== null && typeof value === "object" && !Array.isArray(value)
-      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-      : value`)
+  let withSortedKeys: (string, unknown) => unknown = %raw(`(_, value) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return value;
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  }`)
 )
 @val @scope("JSON")
 external stringifyWith: (unknown, (string, unknown) => unknown) => string = "stringify"
 
-// A document as the text a jsonb column stores. jsonb refuses the NUL
-// character however it is spelled, and `JSON.stringify` spells it `\u0000`: an
-// escape after an even run of backslashes, which leaving out is what lets the
-// rest of the document be stored. A raw NUL byte never reaches here escaped,
-// and the addon leaves those out of every parameter.
-let stringifyDocument = (value: unknown): string =>
-  value
-  ->stringifyWith(withSortedKeys)
-  ->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\u0000/g, "")
-  ->Utils.replaceLoneSurrogateEscapes
+// jsonb refuses the NUL character however it is spelled, and `JSON.stringify`
+// spells it `\u0000`: an escape after an even run of backslashes, which leaving
+// out is what lets the rest of the document be stored. A raw NUL byte never
+// reaches here escaped, and the addon leaves those out of every parameter.
+%%private(
+  let storable = json =>
+    json
+    ->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\u0000/g, "")
+    ->Utils.replaceLoneSurrogateEscapes
+)
+
+// A document as the text a jsonb column stores, which keeps no key order of
+// its own.
+let stringifyDocument = (value: unknown): string => value->stringify->storable
+
+// A document spelled one way whatever order its keys were set in, for where a
+// document is compared as its text: ClickHouse stores and filters it so, and
+// an in-memory index buckets entities by it.
+let canonicalDocument = (value: unknown): string => value->stringifyWith(withSortedKeys)->storable
 
 // Every parameter reaches the server as text — the statement's own casts say
 // what type to read it back as, so a value only has to render itself.

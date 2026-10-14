@@ -43,12 +43,6 @@ type SimpleEntity {
 
 let scenario = makeScenario(~name="e2e", ~chains=chainYaml(1337))
 
-// The store keeping the indexer's own tables, the effect caches among them.
-let storeOfRecord = switch IndexerRunner.selectedBackend {
-| #clickhouseOnly => "clickhouse"
-| #clickhouse | #postgres => "postgres"
-}
-
 // Partition ids and the chain's range-cost budget follow the contract set, so
 // this scenario keeps the address-less contracts alongside the addressed ones.
 let partitionScenario = Scenario.make(
@@ -485,19 +479,19 @@ describe("E2E tests", () => {
       [
         {
           value: "2",
-          labels: dict{"operation": "testEffectWithCache.effect", "storage": storeOfRecord},
+          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
         },
       ],
       [
         {
           value: "2",
-          labels: dict{"operation": "testEffectWithCache.effect", "storage": storeOfRecord},
+          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
         },
       ],
       [
         {
           value: "1",
-          labels: dict{"operation": "testEffectWithCache.effect", "storage": storeOfRecord},
+          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
         },
       ],
     ))
@@ -580,11 +574,10 @@ describe("E2E tests", () => {
       )
       await indexer.getBatchWritePromise()
 
-      // The store of record keeps the effect cache, whether or not another
-      // store writes too.
+      // Postgres keeps the effect cache, whether or not ClickHouse writes too.
       t.expect(
         (await indexer.metric("envio_storage_write_seconds"))
-        ->Array.find(({labels}) => labels->Dict.get("storage") === Some(storeOfRecord))
+        ->Array.find(({labels}) => labels->Dict.get("storage") === Some("postgres"))
         ->Option.map(
           ({value}) => value->Float.fromString->Option.getOr(0.) *. 1000. >= serializeMillis,
         ),

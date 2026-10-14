@@ -32,7 +32,7 @@ type clickHouseOptions = {
 
 type options = {
   chainIdMode: string,
-  postgres?: postgresOptions,
+  postgres: postgresOptions,
   clickhouse?: clickHouseOptions,
 }
 
@@ -68,13 +68,9 @@ type skippingIndex = {
   granularity?: int,
 }
 
-type tableKind =
-  | @as("Entity") Entity | @as("RawEvents") RawEvents | @as("EffectCache") EffectCache
-
 type clickHouseTable = {
-  kind: tableKind,
   name: string,
-  historyTable?: string,
+  historyTable: string,
   columns: array<clickHouseColumn>,
   chainIdColumn?: string,
   partitionBy?: string,
@@ -83,12 +79,10 @@ type clickHouseTable = {
   skippingIndexes?: array<skippingIndex>,
 }
 
-// A table described for every store that could keep it. An entity is kept by
-// each store it describes itself for; the indexer's own tables by the store of
-// record alone.
+// A table described for every store that keeps it: an entity for each store its
+// schema names, the indexer's own tables for Postgres alone.
 type tableInput = {
   name: string,
-  kind: tableKind,
   postgres?: Core.pgTableInput,
   clickhouse?: clickHouseTable,
 }
@@ -142,8 +136,6 @@ type addresses = {
   contractIds: array<int>,
   // Left out for a key.
   registrationBlocks?: array<int>,
-  // The checkpoint each registration belongs to.
-  checkpointIds?: array<string>,
 }
 
 type chainConfig = {
@@ -340,9 +332,6 @@ external classCreate: (Core.storageCtor, options, indexEvent => unit, string => 
 let make = (options, ~onIndexEvent, ~onWarning) =>
   Core.getAddon().storage->classCreate(options, onIndexEvent, onWarning)
 
-// The store everything but an entity's own rows is kept in.
-@get external storeOfRecord: t => store = "storeOfRecord"
-
 @send external registerTable: (t, tableInput) => registeredTable = "registerTable"
 
 @send
@@ -409,9 +398,9 @@ let loadWhere = async (client, ~table, ~conditions) =>
 type holding =
   | Nothing
   | Initialized
-  // ClickHouse holds indexed data its store of record has none of.
+  // ClickHouse holds indexed data Postgres has none of.
   | Stranded
-  // The store of record holds indexed data the ClickHouse following it doesn't.
+  // Postgres holds indexed data the ClickHouse beside it doesn't.
   | Diverged
 
 @send external holding: t => promise<holding> = "holding"

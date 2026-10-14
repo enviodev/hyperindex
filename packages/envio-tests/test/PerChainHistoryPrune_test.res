@@ -56,13 +56,8 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
     )}
 `
 
-let prunedByPostgres: array<Scenario.unsupported> = [
-  {backend: #clickhouseOnly, reason: "ClickHouse keeps an entity as its whole history"},
-]
-
 let scenario = Scenario.make(
   ~supervised=false,
-  ~unsupported=prunedByPostgres,
   ~schema,
   ~configYaml=makeConfigYaml("per-chain-prune", ~laggingChainId=1337),
 )
@@ -79,7 +74,6 @@ type Total @crossChain {
 // behind can reach a row any chain wrote, so none may prune past its safe point.
 let crossChainScenario = Scenario.make(
   ~supervised=false,
-  ~unsupported=prunedByPostgres,
   ~schema=crossChainSchema,
   ~configYaml=makeConfigYaml("per-chain-prune-cross-chain", ~laggingChainId=1337),
 )
@@ -87,7 +81,6 @@ let crossChainScenario = Scenario.make(
 // The same, with the lagging chain visited first.
 let crossChainLaggingFirstScenario = Scenario.make(
   ~supervised=false,
-  ~unsupported=prunedByPostgres,
   ~schema=crossChainSchema,
   ~configYaml=makeConfigYaml("per-chain-prune-cross-chain-lagging-first", ~laggingChainId=5),
 )
@@ -98,7 +91,6 @@ let crossChainLaggingFirstScenario = Scenario.make(
 // back for as long as it stays idle.
 let crossChainZeroDepthScenario = Scenario.make(
   ~supervised=false,
-  ~unsupported=prunedByPostgres,
   ~schema=crossChainSchema,
   ~configYaml=`
 name: per-chain-prune-cross-chain-zero-depth
@@ -121,7 +113,6 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
 // still look right, while three cannot.
 let manyBoundsScenario = Scenario.make(
   ~supervised=false,
-  ~unsupported=prunedByPostgres,
   ~schema,
   ~configYaml=`
 name: per-chain-prune-many-bounds
@@ -144,7 +135,6 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
 // and everything it has committed is safe to prune.
 let zeroDepthScenario = Scenario.make(
   ~supervised=false,
-  ~unsupported=prunedByPostgres,
   ~schema,
   ~configYaml=`
 name: per-chain-prune-zero-depth

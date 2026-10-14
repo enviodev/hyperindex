@@ -459,6 +459,7 @@ pub enum Value {
     Int(i128),
     Bool(bool),
     Text(String),
+    #[cfg(test)]
     Bytes(Vec<u8>),
     #[cfg(test)]
     Float(f64),
@@ -485,6 +486,7 @@ fn encode_value(out: &mut Vec<u8>, ch_type: &ChType, value: &Value) -> Result<()
         (ChType::Float64, Value::Float(float)) => out.extend_from_slice(&float.to_le_bytes()),
         (ChType::Bool, Value::Bool(bit)) => out.push(u8::from(*bit)),
         (ChType::String, Value::Text(text)) => put_string(out, text),
+        #[cfg(test)]
         (ChType::Bytes | ChType::String, Value::Bytes(bytes)) => put_bytes(out, bytes),
         (ChType::Enum { .. } | ChType::Decimal { .. }, Value::Text(text)) => {
             encode_text_scalar(out, ch_type, text)?

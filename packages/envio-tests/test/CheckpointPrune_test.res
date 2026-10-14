@@ -1,20 +1,19 @@
 open Vitest
 
-// A checkpoint a reorg can no longer reach is pruned, whichever store keeps
-// them — with or without an entity whose history Postgres prunes beside them.
+// A checkpoint a reorg can no longer reach is pruned, with or without an entity
+// whose history Postgres prunes beside it.
 
 type counterOps = {set: {"id": string, "count": bigint} => unit}
 type handlerContext = {@as("Counter") counter: counterOps}
 
-let scenario = Scenario.make(
-  ~supervised=false,
-  ~schema=`
+let schema = `
 type Counter {
   id: ID!
   count: BigInt!
 }
-`,
-  ~configYaml=`
+`
+
+let configYaml = `
 name: checkpoint-prune
 rollback_on_reorg: true
 contracts:
@@ -31,7 +30,26 @@ chains:
     contracts:
       - name: Token
         address: "0x0000000000000000000000000000000000000001"
+`
+
+let scenario = Scenario.make(~supervised=false, ~schema, ~configYaml)
+
+// Every entity kept in ClickHouse alone, so Postgres has no entity history to
+// prune the checkpoints beside.
+let clickHouseEntitiesScenario = Scenario.make(
+  ~supervised=false,
+  ~schema,
+  ~configYaml=configYaml ++ `
+storage:
+  clickhouse:
+    default: true
 `,
+  ~unsupported=[
+    {
+      backend: #postgres,
+      reason: "configures its own storage, so it runs the same on the ClickHouse leg",
+    },
+  ],
 )
 
 let setCounter = (~block, ~count): MockSource.itemMock => {
@@ -44,33 +62,50 @@ let setCounter = (~block, ~count): MockSource.itemMock => {
     }),
 }
 
+let dropsTheUnreachableCheckpoints = async (
+  ~t: Vitest.testContext,
+  ~indexer,
+  ~source: (int, ~index: int=?) => MockSource.t,
+) => {
+  let source = source(100)
+  await Scenario.resolveInitialHeight(~t, ~source, ~head=120)
+  source.resolveGetItemsOrThrow(
+    [setCounter(~block=111, ~count=1n), setCounter(~block=112, ~count=2n)],
+    ~latestFetchedBlockNumber=112,
+  )
+  await indexer.IndexerRunner.getBatchWritePromise()
+  // Block 115 is now safe: 111 and 112 fall out of reach, 112 staying as the
+  // anchor of what is above it.
+  source.setAutoHeight(130)
+  source.resolveGetItemsOrThrow(
+    [setCounter(~block=120, ~count=3n)],
+    ~filter=MockSource.coveringBlock(113),
+    ~latestFetchedBlockNumber=130,
+  )
+  await indexer.getBatchWritePromise()
+  await indexer.waitUntilIdle()
+
+  t.expect(
+    (await indexer.queryCheckpoints())->Array.map(({id, blockNumber}) => (id, blockNumber)),
+  ).toEqual([(2n, 112), (3n, 120), (4n, 130)])
+}
+
+let sources: array<Scenario.sourceMock> = [
+  {chain: 100, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
+]
+
 describe("Checkpoint pruning", () => {
   scenario->Scenario.it(
     "Drops the checkpoints below the chain's safe one",
-    ~sources=[{chain: 100, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
+    ~sources,
     ~reorgThresholdReadyTolerance=0,
-    async (~t, ~indexer, ~source) => {
-      let source = source(100)
-      await Scenario.resolveInitialHeight(~t, ~source, ~head=120)
-      source.resolveGetItemsOrThrow(
-        [setCounter(~block=111, ~count=1n), setCounter(~block=112, ~count=2n)],
-        ~latestFetchedBlockNumber=112,
-      )
-      await indexer.getBatchWritePromise()
-      // Block 115 is now safe: 111 and 112 fall out of reach, 112 staying as
-      // the anchor of what is above it.
-      source.setAutoHeight(130)
-      source.resolveGetItemsOrThrow(
-        [setCounter(~block=120, ~count=3n)],
-        ~filter=MockSource.coveringBlock(113),
-        ~latestFetchedBlockNumber=130,
-      )
-      await indexer.getBatchWritePromise()
-      await indexer.waitUntilIdle()
+    dropsTheUnreachableCheckpoints,
+  )
 
-      t.expect(
-        (await indexer.queryCheckpoints())->Array.map(({id, blockNumber}) => (id, blockNumber)),
-      ).toEqual([(2n, 112), (3n, 120), (4n, 130)])
-    },
+  clickHouseEntitiesScenario->Scenario.it(
+    "Drops them with every entity kept in ClickHouse",
+    ~sources,
+    ~reorgThresholdReadyTolerance=0,
+    dropsTheUnreachableCheckpoints,
   )
 })

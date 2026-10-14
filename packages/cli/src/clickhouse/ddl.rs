@@ -10,42 +10,16 @@ use super::ch_type::{ChType, FieldSpec};
 use super::{literal, quoted};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::storage::types::{
-    ADDRESSES_TABLE, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN,
-    CONTRACTS_TABLE, DELETE, INFO_TABLE, RAW_EVENTS_TABLE, SET,
+    CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN, DELETE, INFO_TABLE, SET,
 };
 
 pub const ID_COLUMN: &str = "id";
 pub const CHAIN_ID_COLUMN: &str = "chain_id";
 pub const BLOCK_NUMBER_COLUMN: &str = "block_number";
-/// On a checkpoints row a rollback wrote, the checkpoint it rolled its chain
-/// back to — which can be 0, nothing at all — and NULL on every other row.
-/// Between them a marker's own id and its target bound the checkpoints the
-/// rollback orphaned, which stay in the table: the store never deletes, so what
-/// the rollback took away is read off the markers.
-pub const ROLLBACK_TARGET_COLUMN: &str = "rollback_target";
 /// What a chains row is ordered by among the rows written for the same chain.
 /// The latest one written is the chain's state.
 pub const VERSION_COLUMN: &str = "version";
 pub const FRONTIER_COLUMN: &str = "checkpoint_id";
-/// Where raw events land. They carry no checkpoint, so `raw_events` reads them
-/// through a view held to each chain's committed progress instead.
-pub const RAW_EVENTS_LANDED_TABLE: &str = "envio_raw_events";
-
-/// Raw events as their chains committed them: a batch's land before its
-/// commit, and stay when the commit never comes, until a resume trims them.
-pub fn create_raw_events_view(database: &str, topology: Topology) -> String {
-    format!(
-        "CREATE VIEW IF NOT EXISTS {}{} AS\nWITH (SELECT mapFromArrays(groupArray({chain}), \
-         groupArray(`progress_block`)) FROM {} FINAL) AS envio_progress\nSELECT * FROM {} FINAL \
-         WHERE {} <= envio_progress[{chain}]",
-        table_ref(database, RAW_EVENTS_TABLE),
-        topology.on_cluster(),
-        table_ref(database, CHAINS_TABLE),
-        table_ref(database, RAW_EVENTS_LANDED_TABLE),
-        quoted(BLOCK_NUMBER_COLUMN),
-        chain = quoted(CHAIN_ID_COLUMN),
-    )
-}
 
 #[derive(Debug, Clone)]
 pub struct ColumnSpec {
@@ -93,14 +67,10 @@ impl Topology {
         }
     }
 
-    fn replacing_engine(&self, version: Option<&str>) -> String {
-        let version = version.map(quoted).unwrap_or_default();
+    fn replacing_engine(&self, version: &str) -> String {
+        let version = quoted(version);
         if self.replicated {
-            if version.is_empty() {
-                "ReplicatedReplacingMergeTree".to_string()
-            } else {
-                format!("ReplicatedReplacingMergeTree({version})")
-            }
+            format!("ReplicatedReplacingMergeTree({version})")
         } else {
             format!("ReplacingMergeTree({version})")
         }
@@ -352,10 +322,6 @@ pub fn checkpoint_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
         // A count of every event a chain has processed outgrows an Int32 where
         // Postgres keeps one, and ClickHouse has the id's width to spare.
         ("events_processed".to_string(), ChType::UInt64),
-        (
-            ROLLBACK_TARGET_COLUMN.to_string(),
-            ChType::Nullable(Box::new(ChType::UInt64)),
-        ),
     ]
 }
 
@@ -422,7 +388,7 @@ pub fn create_chains_table(chain_id_type: &ChType, database: &str, topology: Top
         table_ref(database, CHAINS_TABLE),
         topology.on_cluster(),
         definitions(&chain_columns(chain_id_type)),
-        topology.replacing_engine(Some(VERSION_COLUMN)),
+        topology.replacing_engine(VERSION_COLUMN),
         quoted(CHAIN_ID_COLUMN),
         topology.settings(),
     )
@@ -446,84 +412,6 @@ pub fn create_info_table(database: &str, topology: Topology) -> String {
         definitions(&info_columns()),
         topology.engine(),
         quoted(ID_COLUMN),
-        topology.settings(),
-    )
-}
-
-pub fn contract_columns() -> Vec<(String, ChType)> {
-    vec![
-        (ID_COLUMN.to_string(), ChType::Int32),
-        ("name".to_string(), ChType::String),
-    ]
-}
-
-/// The canonical contract ids: a name's position in the list written at
-/// initialize, so an id names the same contract on every chain and across
-/// restarts.
-pub fn create_contracts_table(database: &str, topology: Topology) -> String {
-    format!(
-        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
-        table_ref(database, CONTRACTS_TABLE),
-        topology.on_cluster(),
-        definitions(&contract_columns()),
-        topology.engine(),
-        quoted(ID_COLUMN),
-        topology.settings(),
-    )
-}
-
-pub fn address_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
-    vec![
-        (CHAIN_ID_COLUMN.to_string(), chain_id_type.clone()),
-        ("address".to_string(), ChType::Bytes),
-        ("contract_id".to_string(), ChType::Int32),
-        ("registration_block".to_string(), ChType::Int32),
-        (CHECKPOINT_ID_COLUMN.to_string(), ChType::UInt64),
-        (CHANGE_COLUMN.to_string(), change_type()),
-    ]
-}
-
-/// Address registrations kept the way an entity's history is: a row per
-/// change, stamped with the checkpoint it belongs to. A registration is a set
-/// and a rollback that drops one writes a delete, so the addresses a chain has
-/// are the latest row of each at or below its frontier that sets it.
-pub fn create_addresses_table(
-    chain_id_type: &ChType,
-    database: &str,
-    topology: Topology,
-) -> String {
-    format!(
-        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}, `address`, `contract_id`, {}){}",
-        table_ref(database, ADDRESSES_TABLE),
-        topology.on_cluster(),
-        definitions(&address_columns(chain_id_type)),
-        topology.engine(),
-        quoted(CHAIN_ID_COLUMN),
-        quoted(CHECKPOINT_ID_COLUMN),
-        topology.settings(),
-    )
-}
-
-/// A table whose rows are replaced rather than accumulated: a row written again
-/// under the same key is the same row, and a read through FINAL sees it once.
-pub fn create_replacing_table(
-    database: &str,
-    table: &str,
-    columns: &[(String, ChType)],
-    order_by: &[&str],
-    topology: Topology,
-) -> String {
-    format!(
-        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
-        table_ref(database, table),
-        topology.on_cluster(),
-        definitions(columns),
-        topology.replacing_engine(None),
-        order_by
-            .iter()
-            .map(|column| quoted(column))
-            .collect::<Vec<_>>()
-            .join(", "),
         topology.settings(),
     )
 }
@@ -868,7 +756,6 @@ mod tests {
              `block_number` Int32,\n  \
              `block_hash` Nullable(String),\n  \
              `events_processed` UInt64,\n  \
-             `rollback_target` Nullable(UInt64),\n  \
              INDEX `block_number_minmax` `block_number` TYPE minmax GRANULARITY 1\n\
              )\n\
              ENGINE = MergeTree()\n\
@@ -933,45 +820,6 @@ mod tests {
                 "ORDER BY (`chain_id`)",
                 "ENGINE = ReplicatedReplacingMergeTree(`version`)"
             ]
-        );
-    }
-
-    #[test]
-    fn addresses_are_kept_as_a_history_of_registrations() {
-        assert_eq!(
-            create_addresses_table(&ChType::Int32, "test_db", plain()),
-            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_addresses` (\n  \
-             `chain_id` Int32,\n  \
-             `address` String,\n  \
-             `contract_id` Int32,\n  \
-             `registration_block` Int32,\n  \
-             `envio_checkpoint_id` UInt64,\n  \
-             `envio_change` Enum8('SET' = 1, 'DELETE' = 2)\n\
-             )\n\
-             ENGINE = MergeTree()\n\
-             ORDER BY (`chain_id`, `address`, `contract_id`, `envio_checkpoint_id`)"
-        );
-    }
-
-    #[test]
-    fn a_replacing_table_is_keyed_by_what_it_is_ordered_by() {
-        assert_eq!(
-            create_replacing_table(
-                "test_db",
-                "envio_effect_price",
-                &[
-                    ("id".to_string(), ChType::String),
-                    ("output".to_string(), ChType::String)
-                ],
-                &["id"],
-                plain()
-            ),
-            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_effect_price` (\n  \
-             `id` String,\n  \
-             `output` String\n\
-             )\n\
-             ENGINE = ReplacingMergeTree()\n\
-             ORDER BY (`id`)"
         );
     }
 

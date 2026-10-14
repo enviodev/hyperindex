@@ -118,7 +118,7 @@ describe("Bytes as Uint8Array", () => {
 
       switch IndexerRunner.selectedBackend {
       | #postgres => ()
-      | #clickhouse | #clickhouseOnly =>
+      | #clickhouse =>
         let database = TestClickHouse.currentDatabase()
         let rows = await TestClickHouse.query(
           `SELECT id, hex(data) AS data, hex(optData) AS optData, arrayMap(x -> hex(x), chunks) AS chunks, hex(tag) AS tag FROM \`${database}\`.\`Blob\` ORDER BY id FORMAT JSONEachRow`,

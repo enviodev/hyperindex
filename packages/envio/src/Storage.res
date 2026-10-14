@@ -103,16 +103,15 @@ let logIndexEvent = (~pgSchema, event: StorageClient.indexEvent) =>
 let postgresOptions = (
   ~pgSchema=Env.Db.publicSchema,
   ~isHasuraEnabled=false,
-  ~maxConnections=Env.Db.maxConnections(),
+  ~maxConnections=Env.Db.maxConnections,
 ): StorageClient.postgresOptions => {
-  let {host, port, user, password, database, ssl} = Env.Db.connection()
   {
-    host,
-    port,
-    user,
-    password,
-    database,
-    ssl: ssl->Sql.sslModeToString,
+    host: Env.Db.host,
+    port: Env.Db.port,
+    user: Env.Db.user,
+    password: Env.Db.password,
+    database: Env.Db.database,
+    ssl: Env.Db.ssl->Sql.sslModeToString,
     maxConnections,
     // What pg_stat_activity, and a pooler's or provider's list of who is
     // connected, shows the indexer's connections as.
@@ -128,16 +127,12 @@ let postgresOptions = (
 // decide every statement the addon builds.
 let makeClient = (
   ~chainIdMode: ChainId.mode=Int32,
-  ~postgres: option<StorageClient.postgresOptions>=?,
+  ~postgres: StorageClient.postgresOptions,
   ~clickhouse: option<StorageClient.clickHouseOptions>=?,
 ): StorageClient.t =>
   StorageClient.make(
-    {chainIdMode: (chainIdMode :> string), ?postgres, ?clickhouse},
-    ~onIndexEvent=event =>
-      logIndexEvent(
-        ~pgSchema=postgres->Option.mapOr(Env.Db.publicSchema, options => options.pgSchema),
-        event,
-      ),
+    {chainIdMode: (chainIdMode :> string), postgres, ?clickhouse},
+    ~onIndexEvent=event => logIndexEvent(~pgSchema=postgres.pgSchema, event),
     ~onWarning=message => ClickHouse.logger->Logging.childWarn({"msg": message}),
   )
 
@@ -302,7 +297,6 @@ type registered = {
 
 let register = (
   client: StorageClient.t,
-  ~kind: StorageClient.tableKind,
   ~table: Table.table,
   ~itemSchema: S.t<unknown>,
   ~postgres=true,
@@ -314,7 +308,6 @@ let register = (
   let chainIdField = table->Table.getChainIdField
   let registered = client->StorageClient.registerTable({
     name: table.tableName,
-    kind,
     postgres: ?(
       postgres
         ? Some({
@@ -356,7 +349,6 @@ let register = (
 
 let registerEntity = (client, entityConfig: Internal.entityConfig) =>
   client->register(
-    ~kind=Entity,
     ~table=entityConfig.table,
     ~itemSchema=entityConfig->getRowSchema->S.toUnknown,
     ~postgres=entityConfig.storage.postgres,
@@ -494,44 +486,34 @@ let stagedFor = (staged, ~store, stage) => {
   result
 }
 
-// A staged batch is handed back by handle.
+// A Postgres table's rows for a write. A staged batch is handed back by handle.
 let rowsOrThrow = (
   client: StorageClient.t,
   registered,
-  ~store=registered.home,
   ~itemSchema,
   items: array<unknown>,
   ~staged: staged,
 ): StorageClient.rows =>
-  staged->stagedFor(~store, () => {
+  staged->stagedFor(~store=Postgres, () => {
     let rows = items->Array.length
     try {
-      switch (store, registered) {
-      | (ClickHouse, {clickhouse: Some(table)}) =>
-        let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
-        let handle =
-          client
-          ->StorageClient.arena(~store=ClickHouse)
-          ->ClickHouse.stageColumnsOrThrow(table, ~fields=registered.fields, ~values, ~rows)
-        staged.handles->Array.push(handle)
-        ({staged: handle, rows}: StorageClient.rows)
-      | (Postgres, {postgres: Some({staged: Some(columns)})}) =>
+      switch registered.postgres {
+      | Some({staged: Some(columns)}) =>
         let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
         let handle =
           client
           ->StorageClient.arena(~store=Postgres)
           ->PgWriting.stage(~table=registered.handle, ~columns, ~values, ~rows)
         staged.handles->Array.push(handle)
-        {staged: handle, rows}
-      | (Postgres, {postgres: Some({staged: None})}) =>
+        ({staged: handle, rows}: StorageClient.rows)
+      | Some({staged: None}) =>
         let values = (registered->converterOf(~forArena=false, ~itemSchema))(items)
         values->refuseNonFinite(~fields=registered.fields)
         {
           cells: values->Utils.Array.flatten->Sql.params,
           rows,
         }
-      | (ClickHouse, _) | (Postgres, _) =>
-        JsError.throwWithMessage(`No store keeps "${registered.table.tableName}" for this write`)
+      | None => JsError.throwWithMessage(`Postgres doesn't keep "${registered.table.tableName}"`)
       }
     } catch {
     | Persistence.StorageError(_) as exn => throw(exn)
@@ -676,32 +658,17 @@ let make = (
     }
   let entityTable = (entityConfig: Internal.entityConfig) =>
     registered(~table=entityConfig.table, () => client->registerEntity(entityConfig))
-  // The indexer's own tables are described for both stores: the addon keeps
-  // them in the store of record.
-  let ownTable = (~kind, ~table: Table.table, ~itemSchema: S.t<unknown>, ~appendOnly=?) =>
-    registered(~table, () =>
-      client->register(
-        ~kind,
-        ~table,
-        ~itemSchema,
-        ~appendOnly?,
-        ~clickhouse=ClickHouse.ownTable(
-          ~kind,
-          ~name=table.tableName,
-          ~fields=table->Table.schemaOrderedFields(~schema=itemSchema),
-        ),
-      )
-    )
+  let ownTable = (~table: Table.table, ~itemSchema: S.t<unknown>, ~appendOnly=?) =>
+    registered(~table, () => client->register(~table, ~itemSchema, ~appendOnly?))
   let rawEventsTable = () =>
     ownTable(
-      ~kind=RawEvents,
       ~table=InternalTable.RawEvents.table,
       ~itemSchema=InternalTable.RawEvents.schema->S.toUnknown,
       ~appendOnly=true,
     )
   // Every cache table has the same two columns, whatever its effect's output.
   let cacheTable = (table: Table.table) =>
-    ownTable(~kind=EffectCache, ~table, ~itemSchema=Internal.cacheItemSchema->S.toUnknown)
+    ownTable(~table, ~itemSchema=Internal.cacheItemSchema->S.toUnknown)
   entities->Array.forEach(entityConfig => entityConfig->entityTable->ignore)
   let tableOf = (table: Table.table) =>
     switch registry->Utils.Dict.dangerouslyGetNonOption(table.tableName) {
@@ -1283,7 +1250,6 @@ let make = (
           ? Some(
               client->rowsOrThrow(
                 table,
-                ~store=Postgres,
                 ~itemSchema=entityConfig->getRowSchema->S.toUnknown,
                 entities->(Utils.magic: array<Internal.entity> => array<unknown>),
                 ~staged,
@@ -1426,12 +1392,7 @@ let make = (
         update->entityWrite(~rollback, ~config, ~staged)
       ),
       chainMeta: chainMetaData->Option.mapOr([], chainMeta),
-      addresses: {
-        ...registeredAddresses->Array.map(staged => staged.row)->addressColumns,
-        checkpointIds: registeredAddresses->Array.map(staged =>
-          staged.checkpointId->BigInt.toString
-        ),
-      },
+      addresses: registeredAddresses->Array.map(staged => staged.row)->addressColumns,
       frontier: {chainIds: frontierChainIds, checkpointIds: frontierCheckpointIds},
       // A checkpoint anchors the history its chain keeps, which the batch
       // decides chain by chain.
@@ -1488,7 +1449,7 @@ let make = (
   let close = () => client->StorageClient.close
 
   {
-    name: client->StorageClient.storeOfRecord->storeName,
+    name: postgresName,
     entityStoreName: entityConfig => (entityConfig->entityTable).home->storeName,
     holding,
     initialize,
@@ -1520,12 +1481,8 @@ let clientFromEnv = (
 ) =>
   makeClient(
     ~chainIdMode=config.chainIdMode,
-    ~postgres=?config.storage.postgres
-      ? Some(postgresOptions(~pgSchema, ~isHasuraEnabled, ~maxConnections?))
-      : None,
-    ~clickhouse=?config.storage.clickhouse
-      ? Some(ClickHouse.optionsFromEnvOrThrow(~alongsidePostgres=config.storage.postgres))
-      : None,
+    ~postgres=postgresOptions(~pgSchema, ~isHasuraEnabled, ~maxConnections?),
+    ~clickhouse=?config.storage.clickhouse ? Some(ClickHouse.optionsFromEnvOrThrow()) : None,
   )
 
 let makeStorageFromEnv = (
@@ -1536,12 +1493,6 @@ let makeStorageFromEnv = (
   ~cacheDir=?,
   ~client=?,
 ) => {
-  // Hasura serves what Postgres keeps, so without Postgres there is nothing
-  // for it to track. Its settings are read here rather than once the schema
-  // exists: a missing one would then fail the initialize after it created the
-  // schema, and the resume that follows never tracks it.
-  let isHasuraEnabled = isHasuraEnabled && config.storage.postgres
-  let hasura = isHasuraEnabled ? Some(Env.Hasura.connection()) : None
   make(
     ~client=switch client {
     | Some(client) => client
@@ -1551,20 +1502,22 @@ let makeStorageFromEnv = (
     ~cacheDir?,
     ~ecosystem=config.ecosystem.name,
     ~isolated=config.isolated,
-    ~onInitialize=?hasura->Option.map(({graphqlEndpoint, role, secret}: Env.Hasura.connection) =>
-      () =>
-        Hasura.trackDatabase(
-          ~endpoint=graphqlEndpoint,
-          ~auth={role, secret},
-          ~pgSchema,
-          ~userEntities=config->Config.getPgUserEntities,
-          ~responseLimit=Env.Hasura.responseLimit,
-          ~schema=Schema.make(config.userEntities->Array.map(e => e.table)),
-          ~aggregateEntities=Env.Hasura.aggregateEntities,
-        )->Promise.catch(err => {
-          Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
-        })
-    ),
+    ~onInitialize=?isHasuraEnabled
+      ? Some(
+          () =>
+            Hasura.trackDatabase(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={role: Env.Hasura.role, secret: Env.Hasura.secret},
+              ~pgSchema,
+              ~userEntities=config->Config.getPgUserEntities,
+              ~responseLimit=Env.Hasura.responseLimit,
+              ~schema=Schema.make(config.userEntities->Array.map(e => e.table)),
+              ~aggregateEntities=Env.Hasura.aggregateEntities,
+            )->Promise.catch(err => {
+              Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
+            }),
+        )
+      : None,
   )
 }
 

@@ -11,7 +11,6 @@ let first = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB1AA"
 let second = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB2BB"
 
 let scenario = Scenario.make(
-  ~unsupported=[{backend: #clickhouseOnly, reason: "asserts how Postgres truncates a name"}],
   ~configYaml=`
 name: long-history-names
 save_full_history: true

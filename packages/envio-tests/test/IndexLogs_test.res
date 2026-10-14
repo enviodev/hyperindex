@@ -30,7 +30,6 @@ type Tally {
 
 let indexed = Scenario.make(
   ~supervised=false,
-  ~unsupported=[{backend: #clickhouseOnly, reason: "builds a Postgres index"}],
   ~configYaml,
   ~schema=`
 type Token {

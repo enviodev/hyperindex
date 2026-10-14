@@ -1,10 +1,10 @@
-//! The indexer's storage, whichever databases hold it.
+//! The indexer's storage.
 //!
-//! A [`Backend`] is one database. Postgres and ClickHouse each implement it,
-//! and [`Storage`] composes them: the store of record keeps the indexer's own
-//! state — chains, checkpoints, addresses, the config record, effect caches —
-//! and every entity lives in the stores its schema names. With both
-//! configured Postgres is the store of record; ClickHouse alone is one too.
+//! Postgres keeps the indexer's own state — chains, checkpoints, addresses,
+//! the config record, effect caches, raw events — and the entities configured
+//! for it. ClickHouse, when configured, keeps the entities configured for it,
+//! and makes a batch readable only once Postgres has committed it. Handlers
+//! read an entity from the store that keeps it: Postgres, where both do.
 //!
 //! JavaScript reaches all of it through the one class in [`js`], which does
 //! only what needs the isolate: laying entity values into staged arenas and
@@ -25,26 +25,25 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use futures_util::future::{join_all, BoxFuture};
+use futures_util::future::BoxFuture;
 use tokio::io::AsyncWriteExt;
 
 use crate::clickhouse;
 use crate::columnar::Arena;
 use crate::entity_filter::Condition;
 use crate::postgres;
-use crate::postgres::index_definition::IndexDefinition;
 use crate::postgres::param::Param;
 use rows::ResultSet;
 use types::{
-    Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier,
-    Progress, ProgressDiff, ReorgCheckpoint, ResumedChain, Sequence, StoredConfig,
+    Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress,
+    ResumedChain, Sequence,
 };
 
 pub type Op<'a, T> = BoxFuture<'a, Result<T>>;
 
 /// A table as the indexer registered it, and what each store made of it. An
 /// entity lives in the stores its schema names; the indexer's own tables only
-/// in the store of record.
+/// in Postgres.
 pub struct Table {
     pub name: String,
     pub postgres: Option<Arc<postgres::storage::Table>>,
@@ -164,10 +163,9 @@ pub enum Store {
 pub enum Holding {
     Nothing,
     Initialized,
-    /// ClickHouse holds indexed data its store of record has none of.
+    /// ClickHouse holds indexed data Postgres has none of.
     Stranded,
-    /// The store of record holds indexed data the ClickHouse following it
-    /// doesn't.
+    /// Postgres holds indexed data the ClickHouse beside it doesn't.
     Diverged,
 }
 
@@ -197,7 +195,8 @@ pub struct Handoff {
     pub landed: Option<tokio::sync::oneshot::Sender<bool>>,
     pub commit: Option<Gate>,
     /// Told whether the store committed as soon as it knows, rather than once
-    /// the rest of its write is done.
+    /// the rest of its write is done. Postgres reports it right at its COMMIT,
+    /// which is what lets ClickHouse make the batch readable.
     pub committed: Option<tokio::sync::oneshot::Sender<bool>>,
 }
 
@@ -253,8 +252,8 @@ pub struct Initialize {
     pub enums: Vec<Enum>,
     pub chains: Vec<ChainConfig>,
     pub envio_info: String,
-    /// Written to every store, so a follower is told apart from one built by
-    /// another initialize of the same config.
+    /// Written to both stores, so a ClickHouse database is told apart from one
+    /// built beside another initialize of the same config.
     pub instance: String,
     pub contract_names: Vec<String>,
     pub addresses: Addresses,
@@ -280,26 +279,25 @@ pub struct AddChain {
     pub addresses: Addresses,
 }
 
+/// What ClickHouse resumes to.
 pub struct Resume {
     pub sequence: Sequence,
-    /// Every entity table, whose rows a store may have to trim back.
+    /// Every entity table, whose rows ClickHouse may have to trim back.
     pub tables: Vec<Arc<Table>>,
-    /// The chains this run drives. Only their rows are trimmed: a sibling
-    /// process driving another chain may be mid-write above its frontier.
-    pub chain_ids: Vec<i64>,
-    /// What the store of record committed, for a store that follows it: it
-    /// trims back to these rather than to what it has itself.
-    pub committed: Option<Vec<ResumedChain>>,
+    /// What Postgres committed for the chains this run drives. Only their rows
+    /// are trimmed: a sibling process driving another chain may be mid-write
+    /// above its frontier.
+    pub committed: Vec<ResumedChain>,
 }
 
 pub struct Resumed {
     pub chains: Vec<ResumedChain>,
     pub addresses: ResultSet,
-    pub reorg_checkpoints: Vec<ReorgCheckpoint>,
+    pub reorg_checkpoints: Vec<types::ReorgCheckpoint>,
 }
 
 pub struct StoredConfigRead {
-    pub config: StoredConfig,
+    pub config: types::StoredConfig,
     /// The addresses the config declared, as the stored rows hold them.
     pub config_addresses: ResultSet,
 }
@@ -342,6 +340,9 @@ impl CacheDump {
                 .with_context(|| format!("Failed creating {partial}"))?;
             write(&mut file).await?;
             file.flush().await?;
+            // On disk before the rename makes it the dump: a crash right after
+            // would otherwise leave the name pointing at a file still empty.
+            file.sync_all().await?;
             tokio::fs::rename(&partial, path)
                 .await
                 .with_context(|| format!("Failed replacing {path}"))
@@ -354,111 +355,42 @@ impl CacheDump {
     }
 }
 
-/// One database the indexer's storage lives in.
-///
-/// A store that follows another — ClickHouse beside Postgres — is only asked
-/// what concerns the entities it keeps and the chains' frontier; everything
-/// else is the store of record's.
-pub trait Backend: Send + Sync {
+/// What each store does for the entities it keeps.
+pub trait EntityStore: Send + Sync {
     fn store(&self) -> Store;
-    /// Refuses a database the indexer may not take over, before anything is
-    /// dropped: initializing starts it from nothing.
-    fn check_for_initialize(&self) -> Op<'_, ()>;
-    fn initialize<'a>(&'a self, input: &'a Initialize) -> Op<'a, ()>;
-    fn add_chain<'a>(&'a self, input: &'a AddChain) -> Op<'a, ()>;
-    fn read_stored_config(&self) -> Op<'_, StoredConfigRead>;
-    fn resume<'a>(&'a self, input: &'a Resume) -> Op<'a, Resumed>;
     fn load_where<'a>(&'a self, table: &'a Table, conditions: Vec<Condition>) -> Op<'a, ResultSet>;
-    fn set_chain_meta<'a>(&'a self, chains: &'a [ChainMeta]) -> Op<'a, ()>;
-    /// Builds the indexes the schema promises, then stamps `ready_at` on the
-    /// chains that have caught up.
-    fn finalize_backfill<'a>(
-        &'a self,
-        indexes: Vec<IndexDefinition>,
-        chain_ids: &'a [i64],
-        ready_at: f64,
-    ) -> Op<'a, ()>;
-    fn prune_checkpoints<'a>(&'a self, bounds: &'a Bounds) -> Op<'a, ()>;
-    fn prune_history<'a>(&'a self, table: &'a Table, bounds: &'a Bounds) -> Op<'a, ()>;
-    fn rollback_target_checkpoint(&self, chain_id: i64, block_number: i32) -> Op<'_, Option<i64>>;
-    fn rollback_progress_diff<'a>(&'a self, bounds: &'a Bounds) -> Op<'a, Vec<ProgressDiff>>;
     /// The keys a rollback removes, and the rows it restores the rest from.
     fn rollback_data<'a>(
         &'a self,
         table: &'a Table,
         bounds: &'a Bounds,
     ) -> Op<'a, (ResultSet, ResultSet)>;
-    fn effect_cache_tables(&self) -> Op<'_, Vec<CacheTable>>;
-    fn upload_effect_cache<'a>(&'a self, files: &'a [CacheFile]) -> Op<'a, ()>;
-    fn dump_effect_cache<'a>(&'a self, files: &'a [CacheDump]) -> Op<'a, ()>;
-    fn reset(&self) -> Op<'_, ()>;
-    fn write_batch(
-        &self,
-        batch: Batch,
-        handoff: Handoff,
-    ) -> BoxFuture<'_, std::result::Result<(), WriteError>>;
-    fn close(&self);
 }
 
-/// The stores the indexer writes to, and which of them answers what.
+/// Postgres, and the ClickHouse beside it if one is configured.
 pub struct Storage {
-    pub postgres: Option<Arc<postgres::storage::Storage>>,
+    pub postgres: Arc<postgres::storage::Storage>,
     pub clickhouse: Option<Arc<clickhouse::storage::Storage>>,
 }
 
 impl Storage {
-    /// The store of record.
-    pub fn primary(&self) -> &dyn Backend {
-        match (&self.postgres, &self.clickhouse) {
-            (Some(postgres), _) => postgres.as_ref(),
-            (None, Some(clickhouse)) => clickhouse.as_ref(),
-            (None, None) => unreachable!("a storage is built with at least one store"),
-        }
-    }
-
-    /// The store following the store of record, if one does.
-    fn follower(&self) -> Option<&dyn Backend> {
-        match (&self.postgres, &self.clickhouse) {
-            (Some(_), Some(clickhouse)) => Some(clickhouse.as_ref()),
-            _ => None,
-        }
-    }
-
-    fn all(&self) -> impl Iterator<Item = &dyn Backend> {
-        std::iter::once(self.primary()).chain(self.follower())
-    }
-
     /// The store an entity is read from: Postgres where it keeps one,
     /// ClickHouse otherwise.
-    pub fn home(&self, table: &Table) -> Result<&dyn Backend> {
-        match (
-            &self.postgres,
-            &table.postgres,
-            &self.clickhouse,
-            &table.clickhouse,
-        ) {
-            (Some(postgres), Some(_), _, _) => Ok(postgres.as_ref()),
-            (_, _, Some(clickhouse), Some(_)) => Ok(clickhouse.as_ref()),
+    pub fn home(&self, table: &Table) -> Result<&dyn EntityStore> {
+        match (&table.postgres, &self.clickhouse, &table.clickhouse) {
+            (Some(_), _, _) => Ok(self.postgres.as_ref()),
+            (None, Some(clickhouse), Some(_)) => Ok(clickhouse.as_ref()),
             _ => Err(anyhow!("\"{}\" is kept in no configured store", table.name)),
         }
     }
 
     pub async fn holding(&self) -> Result<Holding> {
-        let record = match &self.clickhouse {
-            Some(clickhouse) => clickhouse.record().await?,
+        let built = match &self.clickhouse {
+            Some(clickhouse) => clickhouse.instance().await?,
             None => None,
         };
-        let Some(postgres) = &self.postgres else {
-            return Ok(match record {
-                Some(clickhouse::storage::Record {
-                    follower: false, ..
-                }) => Holding::Initialized,
-                Some(_) => Holding::Stranded,
-                None => Holding::Nothing,
-            });
-        };
-        if !postgres.is_initialized().await? {
-            return Ok(match record {
+        if !self.postgres.is_initialized().await? {
+            return Ok(match built {
                 Some(_) => Holding::Stranded,
                 None => Holding::Nothing,
             });
@@ -466,75 +398,50 @@ impl Storage {
         if self.clickhouse.is_none() {
             return Ok(Holding::Initialized);
         }
-        let instance = postgres.instance().await?;
-        Ok(match record {
-            Some(clickhouse::storage::Record {
-                follower: true,
-                instance: followed,
-            }) if instance.as_ref() == Some(&followed) => Holding::Initialized,
+        Ok(match (self.postgres.instance().await?, built) {
+            (Some(instance), Some(built)) if instance == built => Holding::Initialized,
             _ => Holding::Diverged,
         })
     }
 
-    /// Every store starts from nothing. Each one is checked before any is
-    /// touched, so a refusal leaves them all as they were.
+    /// Both stores start from nothing. Each is checked before either is
+    /// touched, so a refusal leaves both as they were.
     ///
-    /// The store of record first: a follower that fails behind it is left
-    /// without the record of this initialize, which the next start refuses.
-    /// The other way round, a store of record that fails keeps its old state,
-    /// and a follower emptied under it would resume as if it held that state.
+    /// ClickHouse last: its record is written once all of it is in place, so a
+    /// ClickHouse that fails behind Postgres has none of this initialize's,
+    /// which the next start refuses as diverged.
     pub async fn initialize(&self, input: Initialize) -> Result<()> {
-        for backend in self.all() {
-            backend.check_for_initialize().await?;
+        self.postgres.check_schema_for_initialize().await?;
+        if let Some(clickhouse) = &self.clickhouse {
+            clickhouse.check_for_initialize().await?;
         }
-        self.primary().initialize(&input).await?;
-        match self.follower() {
-            Some(follower) => follower.initialize(&input).await,
+        self.postgres.initialize(&input).await?;
+        match &self.clickhouse {
+            Some(clickhouse) => clickhouse.initialize(&input).await,
             None => Ok(()),
         }
     }
 
-    /// The follower takes the added chain's row from the resume that follows.
-    pub async fn add_chain(&self, input: AddChain) -> Result<()> {
-        self.primary().add_chain(&input).await
-    }
-
-    pub async fn read_stored_config(&self) -> Result<StoredConfigRead> {
-        self.primary().read_stored_config().await
-    }
-
-    /// Resumes the store of record, and then the follower to what it
-    /// committed: a batch the follower wrote but the store of record never
-    /// did is trimmed away.
+    /// Resumes Postgres, and then ClickHouse to what Postgres committed: a
+    /// batch ClickHouse landed but Postgres never committed is trimmed away.
     pub async fn resume(
         &self,
         sequence: Sequence,
         tables: Vec<Arc<Table>>,
         chain_ids: Vec<i64>,
     ) -> Result<Resumed> {
-        let resumed = self
-            .primary()
-            .resume(&Resume {
-                sequence,
-                tables: tables.clone(),
-                chain_ids: chain_ids.clone(),
-                committed: None,
-            })
-            .await?;
-        if let Some(follower) = self.follower() {
-            follower
+        let resumed = self.postgres.resume().await?;
+        if let Some(clickhouse) = &self.clickhouse {
+            clickhouse
                 .resume(&Resume {
                     sequence,
                     tables,
-                    committed: Some(
-                        resumed
-                            .chains
-                            .iter()
-                            .filter(|chain| chain_ids.contains(&chain.id))
-                            .cloned()
-                            .collect(),
-                    ),
-                    chain_ids,
+                    committed: resumed
+                        .chains
+                        .iter()
+                        .filter(|chain| chain_ids.contains(&chain.id))
+                        .cloned()
+                        .collect(),
                 })
                 .await?;
         }
@@ -545,48 +452,6 @@ impl Storage {
         self.home(table)?.load_where(table, conditions).await
     }
 
-    /// The store of record's alone: a follower's resume takes the store of
-    /// record's chains, and its batches carry what metadata they have.
-    pub async fn set_chain_meta(&self, chains: &[ChainMeta]) -> Result<()> {
-        self.primary().set_chain_meta(chains).await
-    }
-
-    pub async fn finalize_backfill(
-        &self,
-        indexes: Vec<IndexDefinition>,
-        chain_ids: &[i64],
-        ready_at: f64,
-    ) -> Result<()> {
-        self.primary()
-            .finalize_backfill(indexes, chain_ids, ready_at)
-            .await
-    }
-
-    pub async fn prune_checkpoints(&self, bounds: &Bounds) -> Result<()> {
-        join_all(self.all().map(|backend| backend.prune_checkpoints(bounds)))
-            .await
-            .into_iter()
-            .collect()
-    }
-
-    pub async fn prune_history(&self, table: &Table, bounds: &Bounds) -> Result<()> {
-        self.home(table)?.prune_history(table, bounds).await
-    }
-
-    pub async fn rollback_target_checkpoint(
-        &self,
-        chain_id: i64,
-        block_number: i32,
-    ) -> Result<Option<i64>> {
-        self.primary()
-            .rollback_target_checkpoint(chain_id, block_number)
-            .await
-    }
-
-    pub async fn rollback_progress_diff(&self, bounds: &Bounds) -> Result<Vec<ProgressDiff>> {
-        self.primary().rollback_progress_diff(bounds).await
-    }
-
     pub async fn rollback_data(
         &self,
         table: &Table,
@@ -595,98 +460,84 @@ impl Storage {
         self.home(table)?.rollback_data(table, bounds).await
     }
 
-    pub async fn effect_cache_tables(&self) -> Result<Vec<CacheTable>> {
-        self.primary().effect_cache_tables().await
-    }
-
-    pub async fn upload_effect_cache(&self, files: &[CacheFile]) -> Result<()> {
-        self.primary().upload_effect_cache(files).await
-    }
-
-    pub async fn dump_effect_cache(&self, files: &[CacheDump]) -> Result<()> {
-        self.primary().dump_effect_cache(files).await
-    }
-
-    /// The follower first, and it refuses a database it may not empty before
-    /// the store of record is touched. Failing after it, the store of record
-    /// keeps data its follower no longer holds, which the next start refuses
-    /// until a reset finishes.
+    /// ClickHouse first, and it refuses a database it may not empty before
+    /// Postgres is touched. Failing after it, Postgres keeps data ClickHouse
+    /// no longer holds, which the next start refuses until a reset finishes.
     pub async fn reset(&self) -> Result<()> {
-        if let Some(follower) = self.follower() {
-            follower.reset().await?;
+        if let Some(clickhouse) = &self.clickhouse {
+            clickhouse.reset().await?;
         }
-        self.primary().reset().await
+        self.postgres.reset().await
     }
 
-    /// Writes a batch to every store, and says how long each took. A follower
-    /// writes its half first and the store of record commits only once it
-    /// has: a batch either reaches both, or the store of record never commits
-    /// it and a restart trims the follower back.
+    /// Writes a batch to every store, and says how long each took. ClickHouse
+    /// lands its half first and Postgres commits only once it has: a batch
+    /// either reaches both, or Postgres never commits it and a restart trims
+    /// ClickHouse back.
     pub async fn write_batch(
         &self,
         batch: Batch,
     ) -> std::result::Result<Vec<(Store, f64)>, Failure> {
-        let primary = self.primary();
-        let Some(follower) = self.follower() else {
+        let Some(clickhouse) = &self.clickhouse else {
             let started = Instant::now();
-            return match primary.write_batch(batch, Handoff::default()).await {
-                Ok(()) => Ok(vec![(primary.store(), started.elapsed().as_secs_f64())]),
+            return match self.postgres.write_batch(batch, Handoff::default()).await {
+                Ok(()) => Ok(vec![(Store::Postgres, started.elapsed().as_secs_f64())]),
                 Err(WriteError::Failed(failure)) => Err(failure),
                 Err(WriteError::Gated) => unreachable!("a write with no gate is never gated"),
             };
         };
-        let (primary_batch, follower_batch) = split(batch);
-        // The store of record commits once the follower's rows have landed,
-        // and the follower makes them readable once the store of record has
-        // committed: neither holds a batch the other refused, and nothing
-        // reads one before it is the store of record's.
-        let (landed, follower_landed) = tokio::sync::oneshot::channel();
-        let (committed, primary_committed) = tokio::sync::oneshot::channel();
-        let (primary_gate, primary_waited) = waited_on(follower_landed);
-        let (follower_gate, follower_waited) = waited_on(primary_committed);
+        let (postgres_batch, clickhouse_batch) = split(batch);
+        // Postgres commits once ClickHouse's rows have landed, and ClickHouse
+        // makes them readable once Postgres has committed: neither holds a
+        // batch the other refused, and nothing reads one before Postgres has
+        // it.
+        let (landed, clickhouse_landed) = tokio::sync::oneshot::channel();
+        let (committed, postgres_committed) = tokio::sync::oneshot::channel();
+        let (postgres_gate, postgres_waited) = waited_on(clickhouse_landed);
+        let (clickhouse_gate, clickhouse_waited) = waited_on(postgres_committed);
         let started = Instant::now();
         let own_seconds = |waited: &AtomicU64| {
             (started.elapsed() - Duration::from_nanos(waited.load(Ordering::Relaxed))).as_secs_f64()
         };
-        let follower_write = async {
-            follower
+        let clickhouse_write = async {
+            clickhouse
                 .write_batch(
-                    follower_batch,
+                    clickhouse_batch,
                     Handoff {
                         landed: Some(landed),
-                        commit: Some(follower_gate),
+                        commit: Some(clickhouse_gate),
                         committed: None,
                     },
                 )
                 .await
-                .map(|()| own_seconds(&follower_waited))
+                .map(|()| own_seconds(&clickhouse_waited))
         };
-        let primary_write = async {
-            primary
+        let postgres_write = async {
+            self.postgres
                 .write_batch(
-                    primary_batch,
+                    postgres_batch,
                     Handoff {
                         landed: None,
-                        commit: Some(primary_gate),
+                        commit: Some(postgres_gate),
                         committed: Some(committed),
                     },
                 )
                 .await
-                .map(|()| own_seconds(&primary_waited))
+                .map(|()| own_seconds(&postgres_waited))
         };
-        let (follower_outcome, primary_outcome) = tokio::join!(follower_write, primary_write);
+        let (clickhouse_outcome, postgres_outcome) = tokio::join!(clickhouse_write, postgres_write);
         // A store told not to commit was told so because the other failed,
         // and that failure is the one reported.
-        match (follower_outcome, primary_outcome) {
-            (Err(WriteError::Failed(follower)), Err(WriteError::Failed(primary))) => {
+        match (clickhouse_outcome, postgres_outcome) {
+            (Err(WriteError::Failed(on_clickhouse)), Err(WriteError::Failed(on_postgres))) => {
                 Err(Failure::new(
                     "Both stores failed writing the batch",
                     anyhow!(
                         "{}: {}\n{}: {}",
-                        follower.context,
-                        postgres::error::message_of(&follower.error),
-                        primary.context,
-                        postgres::error::message_of(&primary.error)
+                        on_clickhouse.context,
+                        postgres::error::message_of(&on_clickhouse.error),
+                        on_postgres.context,
+                        postgres::error::message_of(&on_postgres.error)
                     ),
                 ))
             }
@@ -697,17 +548,15 @@ impl Storage {
                 "Failed writing the batch",
                 anyhow!("a store refused its half of the batch"),
             )),
-            (Ok(follower_seconds), Ok(primary_seconds)) => Ok(vec![
-                (follower.store(), follower_seconds),
-                (primary.store(), primary_seconds),
+            (Ok(clickhouse_seconds), Ok(postgres_seconds)) => Ok(vec![
+                (Store::ClickHouse, clickhouse_seconds),
+                (Store::Postgres, postgres_seconds),
             ]),
         }
     }
 
     pub fn close(&self) {
-        for backend in self.all() {
-            backend.close();
-        }
+        self.postgres.client.close();
     }
 }
 
@@ -728,9 +577,9 @@ fn waited_on(word: tokio::sync::oneshot::Receiver<bool>) -> (Gate, Arc<AtomicU64
     (gate, waited)
 }
 
-/// Splits a batch between the store of record and its follower. Everything
-/// about the chains goes to both; an entity's rows go to the stores it lives
-/// in, and the indexer's own tables to the store of record alone.
+/// Splits a batch between Postgres and ClickHouse. ClickHouse takes the rows
+/// of the entities it keeps, and what moves the chains: their checkpoints,
+/// progress, metadata and frontier. Everything else is Postgres's alone.
 fn split(batch: Batch) -> (Batch, Batch) {
     let Batch {
         rollback,
@@ -743,8 +592,8 @@ fn split(batch: Batch) -> (Batch, Batch) {
         checkpoints,
         effect_caches,
     } = batch;
-    let mut primary_entities = Vec::with_capacity(entities.len());
-    let mut follower_entities = Vec::with_capacity(entities.len());
+    let mut postgres_entities = Vec::with_capacity(entities.len());
+    let mut clickhouse_entities = Vec::with_capacity(entities.len());
     for write in entities {
         let EntityWrite {
             table,
@@ -753,7 +602,7 @@ fn split(batch: Batch) -> (Batch, Batch) {
             clickhouse,
         } = write;
         if postgres.is_some() {
-            primary_entities.push(EntityWrite {
+            postgres_entities.push(EntityWrite {
                 table: table.clone(),
                 chain_id,
                 postgres,
@@ -761,7 +610,7 @@ fn split(batch: Batch) -> (Batch, Batch) {
             });
         }
         if clickhouse.is_some() {
-            follower_entities.push(EntityWrite {
+            clickhouse_entities.push(EntityWrite {
                 table,
                 chain_id,
                 postgres: None,
@@ -769,29 +618,27 @@ fn split(batch: Batch) -> (Batch, Batch) {
             });
         }
     }
-    let follower = Batch {
+    let clickhouse = Batch {
         rollback: rollback.clone(),
         progress: progress.clone(),
-        raw_events: None,
-        entities: follower_entities,
+        entities: clickhouse_entities,
         chain_meta: chain_meta.clone(),
-        addresses: Addresses::default(),
         frontier: frontier.clone(),
         checkpoints: checkpoints.clone(),
-        effect_caches: Vec::new(),
+        ..Batch::default()
     };
-    let primary = Batch {
+    let postgres = Batch {
         rollback,
         progress,
         raw_events,
-        entities: primary_entities,
+        entities: postgres_entities,
         chain_meta,
         addresses,
         frontier,
         checkpoints,
         effect_caches,
     };
-    (primary, follower)
+    (postgres, clickhouse)
 }
 
 #[cfg(test)]

@@ -178,7 +178,7 @@ pub enum LocalCommandTypes {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum LocalDockerSubcommands {
-    ///Start Docker containers for the configured storage (Postgres + Hasura, ClickHouse, or both) for local environment
+    ///Start Docker containers (Postgres + Hasura) for local environment
     Up,
     ///Stop and remove Docker containers for local environment
     Down,

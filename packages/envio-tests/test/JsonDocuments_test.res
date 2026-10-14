@@ -5,7 +5,6 @@ open Vitest
 // threshold, so both the entity's table and its history table take it.
 
 let scenario = Scenario.make(
-  ~unsupported=[{backend: #clickhouseOnly, reason: "asserts the jsonb Postgres stores"}],
   ~configYaml=`
 name: json-documents
 chains:

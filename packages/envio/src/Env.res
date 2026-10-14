@@ -101,56 +101,18 @@ Logging.setLogger(
   ),
 )
 
-// Read when a run first needs them rather than at startup, which refuses to
-// start without a required one: a run that keeps everything in ClickHouse
-// needs no Postgres and no Hasura.
-%%private(
-  let lazily = (read: EnvSafe.t => 'a): (unit => 'a) => {
-    let cached = ref(None)
-    () =>
-      switch cached.contents {
-      | Some(value) => value
-      | None =>
-        let envSafe = EnvSafe.make()
-        let value = read(envSafe)
-        envSafe->EnvSafe.close
-        cached := Some(value)
-        value
-      }
-  }
-)
-
 module Db = {
-  type connection = {
-    host: string,
-    port: int,
-    user: string,
-    password: string,
-    database: string,
-    ssl: Sql.sslMode,
-  }
-
-  let connection = lazily(envSafe => {
-    host: envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost"),
-    port: envSafe->EnvSafe.get("ENVIO_PG_PORT", S.int->S.port, ~devFallback=5433),
-    user: envSafe->EnvSafe.get("ENVIO_PG_USER", S.string, ~devFallback="postgres"),
-    password: envSafe->EnvSafe.get(
-      "ENVIO_PG_PASSWORD",
-      S.string,
-      ~fallback={
-        envSafe->EnvSafe.get("ENVIO_POSTGRES_PASSWORD", S.string, ~fallback="testing")
-      },
-    ),
-    database: envSafe->EnvSafe.get("ENVIO_PG_DATABASE", S.string, ~devFallback="envio-dev"),
-    ssl: envSafe->EnvSafe.get(
-      "ENVIO_PG_SSL_MODE",
-      Sql.sslModeSchema,
-      //this is a dev fallback option for local deployments, shouldn't run in the prod env
-      //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
-      ~devFallback=Bool(false),
-    ),
-  })
-
+  let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")
+  let port = envSafe->EnvSafe.get("ENVIO_PG_PORT", S.int->S.port, ~devFallback=5433)
+  let user = envSafe->EnvSafe.get("ENVIO_PG_USER", S.string, ~devFallback="postgres")
+  let password = envSafe->EnvSafe.get(
+    "ENVIO_PG_PASSWORD",
+    S.string,
+    ~fallback={
+      envSafe->EnvSafe.get("ENVIO_POSTGRES_PASSWORD", S.string, ~fallback="testing")
+    },
+  )
+  let database = envSafe->EnvSafe.get("ENVIO_PG_DATABASE", S.string, ~devFallback="envio-dev")
   let publicSchema = envSafe->EnvSafe.get(
     "ENVIO_PG_SCHEMA",
     S.string,
@@ -158,13 +120,18 @@ module Db = {
       envSafe->EnvSafe.get("ENVIO_PG_PUBLIC_SCHEMA", S.string, ~fallback="public")
     },
   )
+  let ssl = envSafe->EnvSafe.get(
+    "ENVIO_PG_SSL_MODE",
+    Sql.sslModeSchema,
+    //this is a dev fallback option for local deployments, shouldn't run in the prod env
+    //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
+    ~devFallback=Bool(false),
+  )
   // The budget for the whole run, not for one process: a run that splits across
   // workers divides it among them, and each caps its own pool to its share.
   // Splitting takes two workers and a worker takes two connections, so a budget
   // under 4 — the default among them — keeps the run in one process.
-  let maxConnections = lazily(envSafe =>
-    envSafe->EnvSafe.get("ENVIO_PG_MAX_CONNECTIONS", S.int, ~fallback=2)
-  )
+  let maxConnections = envSafe->EnvSafe.get("ENVIO_PG_MAX_CONNECTIONS", S.int, ~fallback=2)
 }
 
 // Reads run at call time instead of module load. `envio dev` injects these
@@ -207,27 +174,18 @@ module Hasura = {
   | None => envSafe->EnvSafe.get("HASURA_RESPONSE_LIMIT", S.option(S.int))
   }
 
-  type connection = {
-    graphqlEndpoint: string,
-    url: string,
-    role: string,
-    secret: string,
-  }
+  let graphqlEndpoint =
+    envSafe->EnvSafe.get(
+      "HASURA_GRAPHQL_ENDPOINT",
+      S.string,
+      ~devFallback="http://localhost:8080/v1/metadata",
+    )
 
-  let connection = lazily(envSafe => {
-    let graphqlEndpoint =
-      envSafe->EnvSafe.get(
-        "HASURA_GRAPHQL_ENDPOINT",
-        S.string,
-        ~devFallback="http://localhost:8080/v1/metadata",
-      )
-    {
-      graphqlEndpoint,
-      url: graphqlEndpoint->String.slice(~start=0, ~end=-("/v1/metadata"->String.length)),
-      role: envSafe->EnvSafe.get("HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin"),
-      secret: envSafe->EnvSafe.get("HASURA_GRAPHQL_ADMIN_SECRET", S.string, ~devFallback="testing"),
-    }
-  })
+  let url = graphqlEndpoint->String.slice(~start=0, ~end=-("/v1/metadata"->String.length))
+
+  let role = envSafe->EnvSafe.get("HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin")
+
+  let secret = envSafe->EnvSafe.get("HASURA_GRAPHQL_ADMIN_SECRET", S.string, ~devFallback="testing")
 
   let aggregateEntities = envSafe->EnvSafe.get(
     "ENVIO_HASURA_PUBLIC_AGGREGATE",

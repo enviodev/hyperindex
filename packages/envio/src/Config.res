@@ -1434,22 +1434,20 @@ let pickOne = (ways: array<(string, string)>) => {
 
 // `~runCommand` controls option 3 (parallel indexer recipe): when `None`,
 // option 3 is omitted — the migrate flow uses this because running a second
-// indexer doesn't apply. `~hasPostgres` and `~hasClickhouse` pick the env lines
-// that point a second indexer at stores of its own.
+// indexer doesn't apply. `~hasClickhouse` adds the env line that points a second
+// indexer at a ClickHouse database of its own.
 let incompatibleMessage = (
   changedPaths: array<string>,
   ~resetCommand: string,
   ~runCommand: option<string>,
-  ~hasPostgres: bool,
   ~hasClickhouse: bool,
 ) => {
   let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
   let option3 = switch runCommand {
   | None => ""
   | Some(cmd) =>
-    let postgresLine = hasPostgres ? "       ENVIO_PG_SCHEMA=<new_schema> \\\n" : ""
     let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
-    `\n  3. Run a second indexer alongside this one — keep both datasets:\n${postgresLine}${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
+    `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
   }
   `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n${pickOne([
       ("Revert the changes above", resume),
@@ -1459,25 +1457,15 @@ let incompatibleMessage = (
 
 let keepBoth = "keep the existing data and index from scratch"
 
-let strandedMessage = (~resetCommand, ~hasPostgres) => {
-  let (cause, revert) = hasPostgres
-    ? (
-        "ClickHouse holds indexed data that Postgres has none of: it was indexed without Postgres, or ENVIO_PG_SCHEMA names another schema than the one it was indexed alongside.",
-        "Drop Postgres from the storage config, or point ENVIO_PG_SCHEMA at that schema",
-      )
-    : (
-        "ClickHouse holds indexed data it kept behind Postgres, which the storage config no longer enables.",
-        "Enable Postgres in the storage config again",
-      )
-  `${cause}\n\nPick one:\n${pickOne([
-      (revert, resume),
+let strandedMessage = (~resetCommand) =>
+  `ClickHouse holds indexed data that Postgres has none of: ENVIO_PG_SCHEMA names another schema than the one it was indexed alongside, or that schema was dropped.\n\nPick one:\n${pickOne([
+      ("Point ENVIO_PG_SCHEMA at the schema it was indexed alongside", resume),
       (resetCommand, startOver),
       ("Point ENVIO_CLICKHOUSE_DATABASE at a new database", keepBoth),
     ])}`
-}
 
 let divergedMessage = (~resetCommand) =>
-  `ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one indexed alongside this ENVIO_PG_SCHEMA, an older envio version built it, or setting it up didn't finish.\n\nPick one:\n${pickOne([
+  `ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one indexed alongside this ENVIO_PG_SCHEMA, or setting it up didn't finish.\n\nPick one:\n${pickOne([
       ("Point ENVIO_CLICKHOUSE_DATABASE at the database indexed alongside it", resume),
       (resetCommand, startOver),
     ])}`

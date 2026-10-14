@@ -58,10 +58,7 @@ type Asset {
   amounts: [BigInt!]!
 }
 `,
-  ~unsupported=[
-    {backend: #clickhouse, reason: "reads the Postgres catalog"},
-    {backend: #clickhouseOnly, reason: "reads the Postgres catalog"},
-  ],
+  ~unsupported=[{backend: #clickhouse, reason: "reads the Postgres catalog"}],
 )
 
 type relation = {name: string, kind: string, columns: string}

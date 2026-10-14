@@ -108,8 +108,8 @@ type holding = StorageClient.holding = Nothing | Initialized | Stranded | Diverg
 type storage = {
   // Identifier used as the `storage` label on Prometheus metrics.
   name: string,
-  // The `storage` label for an entity's loads: an entity kept apart from the
-  // store of record is served by its own store.
+  // The `storage` label for an entity's loads: one Postgres doesn't keep is
+  // served by ClickHouse.
   entityStoreName: Internal.entityConfig => string,
   holding: unit => promise<holding>,
   // Should initialize the storage so we can start interacting with it
@@ -281,6 +281,10 @@ let init = {
     // keep it to their own log files.
     ~announceResume=true,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
+    // Off for a migration, which checks an existing storage and leaves it:
+    // resuming takes ClickHouse back to what Postgres committed, fencing off and
+    // trimming whatever a run still indexing goes on writing.
+    ~resume=true,
   ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
@@ -299,14 +303,7 @@ let init = {
         persistence.storageStatus = Initializing(promise)
         let holding = reset ? Nothing : await persistence.storage.holding()
         if holding === Stranded {
-          throw(
-            Refused(
-              Config.strandedMessage(
-                ~resetCommand,
-                ~hasPostgres=persistence.storage.name === "postgres",
-              ),
-            ),
-          )
+          throw(Refused(Config.strandedMessage(~resetCommand)))
         }
         if holding === Nothing {
           if isolated {
@@ -343,7 +340,11 @@ let init = {
           }
         ) {
           let logResume = announceResume ? Logging.info : Logging.trace
-          logResume(`Found existing indexer storage. Resuming indexing state...`)
+          logResume(
+            resume
+              ? `Found existing indexer storage. Resuming indexing state...`
+              : `Found existing indexer storage.`,
+          )
           let stored = await persistence.storage.readStoredConfig()
           switch ResumePlan.make(
             ~stored,
@@ -387,20 +388,24 @@ let init = {
               ~contractMapping=stored.contractMapping,
             )
           }
-          let initialState = await persistence.storage.resumeInitialState(
-            ~entities=persistence.allEntities,
-            ~chainIds=chainConfigs->Array.map(chain => chain.id),
-            ~contractMapping=stored.contractMapping,
-          )
-          persistence.storageStatus = Ready(initialState)
-          let progress = Dict.make()
-          initialState.chains->Array.forEach(c => {
-            progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
-          })
-          logResume({
-            "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
-            "progress": progress,
-          })
+          if resume {
+            let initialState = await persistence.storage.resumeInitialState(
+              ~entities=persistence.allEntities,
+              ~chainIds=chainConfigs->Array.map(chain => chain.id),
+              ~contractMapping=stored.contractMapping,
+            )
+            persistence.storageStatus = Ready(initialState)
+            let progress = Dict.make()
+            initialState.chains->Array.forEach(c => {
+              progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
+            })
+            logResume({
+              "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
+              "progress": progress,
+            })
+          } else {
+            persistence.storageStatus = Unknown
+          }
         }
         resolveRef.contents()
       }

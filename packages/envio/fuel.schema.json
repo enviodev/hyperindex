@@ -39,7 +39,7 @@
       "minimum": 0
     },
     "storage": {
-      "description": "Storage backends the indexer writes data to. Defaults to Postgres when omitted. With one backend enabled every entity is kept in it, so `postgres: false` and `clickhouse: true` keep everything in ClickHouse alone. With both, an entity is kept where its @storage directive in the schema says, or else in each backend marked `default: true`, e.g. `postgres: {default: true}` and `clickhouse: true`.",
+      "description": "Storage backends the indexer keeps entities in. Postgres is always enabled: it keeps the indexer's own state, and the entities by default. Set `clickhouse: true` to keep entities in ClickHouse as well, where handlers read and write them. An entity is kept where its @storage directive in the schema says, or else in each backend marked `default: true`, e.g. `clickhouse: {default: true}` keeps every entity in ClickHouse alone.",
       "anyOf": [
         {
           "$ref": "#/$defs/StorageConfig"
@@ -107,7 +107,7 @@
       "type": "object",
       "properties": {
         "postgres": {
-          "description": "Whether to use Postgres as a storage backend (default: true). Must be set to `true` or `false` when ClickHouse is enabled. Accepts a boolean or an options object (the object form implies the backend is enabled).",
+          "description": "Postgres keeps the indexer's own state, so it is always enabled; `false` is refused. Accepts `true` or an options object.",
           "anyOf": [
             {
               "type": [
@@ -119,7 +119,7 @@
               "type": "object",
               "properties": {
                 "default": {
-                  "description": "Whether entities without an @storage directive are stored in this backend (default: true when Postgres is the only enabled backend, false otherwise).",
+                  "description": "Whether entities without an @storage directive are stored in this backend (default: true when ClickHouse isn't enabled, false otherwise).",
                   "type": [
                     "boolean",
                     "null"
@@ -143,7 +143,7 @@
           ]
         },
         "clickhouse": {
-          "description": "Whether to use ClickHouse as a storage backend (default: false). Alongside Postgres it keeps the entities that opt into it; with `postgres: false` it keeps everything. Accepts a boolean or an options object (the object form implies the backend is enabled).",
+          "description": "Whether to keep entities in ClickHouse as well (default: false). Accepts a boolean or an options object (the object form implies the backend is enabled).",
           "anyOf": [
             {
               "type": [
@@ -155,7 +155,7 @@
               "type": "object",
               "properties": {
                 "default": {
-                  "description": "Whether entities without an @storage directive are stored in this backend (default: true when ClickHouse is the only enabled backend, false otherwise).",
+                  "description": "Whether entities without an @storage directive are stored in this backend (default: false).",
                   "type": [
                     "boolean",
                     "null"
@@ -180,68 +180,16 @@
         }
       },
       "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "postgres": {
-                "const": false
-              }
-            },
-            "required": [
-              "postgres"
-            ]
-          },
-          "then": {
-            "properties": {
-              "clickhouse": {
-                "anyOf": [
-                  {
-                    "const": true
-                  },
-                  {
-                    "type": "object"
-                  }
-                ]
-              }
-            },
-            "required": [
-              "clickhouse"
-            ]
+      "not": {
+        "properties": {
+          "postgres": {
+            "const": false
           }
         },
-        {
-          "if": {
-            "properties": {
-              "clickhouse": {
-                "anyOf": [
-                  {
-                    "const": true
-                  },
-                  {
-                    "type": "object"
-                  }
-                ]
-              }
-            },
-            "required": [
-              "clickhouse"
-            ]
-          },
-          "then": {
-            "properties": {
-              "postgres": {
-                "not": {
-                  "type": "null"
-                }
-              }
-            },
-            "required": [
-              "postgres"
-            ]
-          }
-        }
-      ]
+        "required": [
+          "postgres"
+        ]
+      }
     },
     "EcosystemTag": {
       "type": "string",

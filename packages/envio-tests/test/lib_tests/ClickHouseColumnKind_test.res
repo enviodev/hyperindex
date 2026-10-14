@@ -71,13 +71,14 @@ let everyColumn =
 
 let client = TestClickHouse.offlineClient()
 
+// An entity's history row, which stages its columns and then the checkpoint
+// and the change.
 let register = (columns: array<StorageClient.clickHouseColumn>) =>
   client->TestClickHouse.registered({
     name: "t",
-    kind: EffectCache,
     clickhouse: {
-      kind: EffectCache,
       name: "t",
+      historyTable: "envio_history_t",
       columns: columns->Array.mapWithIndex((column, index) => {
         ...column,
         name: `c${index->Int.toString}`,
@@ -120,7 +121,14 @@ describe("ClickHouse column type contract", () => {
         fieldType => ClickHouse.column(~name="c", ~fieldType),
       ),
     )
-    t.expect(columns->Array.map(column => column.kind)).toEqual([Staging.F64, U64, I64, Text])
+    t.expect(columns->Array.map(column => column.kind)).toEqual([
+      Staging.F64,
+      U64,
+      I64,
+      Text,
+      U64,
+      Text,
+    ])
   })
 
   // A kind added on the Rust side reaches a build of this one that has never

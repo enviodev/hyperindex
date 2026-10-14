@@ -411,10 +411,8 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let migrate = async (~reset) => {
-  let config = Config.load()
-  let persistence = Storage.makePersistenceFromConfig(~config)
-  await persistence->Persistence.init(
+let migrateStorage = (persistence, ~config: Config.t, ~reset) =>
+  persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
@@ -425,7 +423,13 @@ let migrate = async (~reset) => {
     // A migration command runs once and exits, with nobody watching it recover:
     // an unreachable chain should say so now rather than hold the command open.
     ~startBlockRetry=StartBlockResolver.Once,
+    ~resume=false,
   )
+
+let migrate = async (~reset) => {
+  let config = Config.load()
+  let persistence = Storage.makePersistenceFromConfig(~config)
+  await persistence->migrateStorage(~config, ~reset)
   await persistence.storage.close()
 }
 

@@ -1,6 +1,7 @@
 //! The ClickHouse store against a real server: every statement it builds is
 //! one the server has to accept, and what it reads back has to be what it
-//! wrote. Each test works in a database of its own.
+//! wrote. Each test works in a database of its own, and resumes to chains it
+//! makes up as Postgres would hand them over.
 //!
 //! Run with `cargo test --lib clickhouse::live -- --ignored`, against
 //! `ENVIO_CLICKHOUSE_HOST` (default `http://localhost:8123`).
@@ -11,20 +12,19 @@ use std::sync::Arc;
 use pretty_assertions::assert_eq;
 
 use super::client::{Client, Connection, Tuning};
-use super::storage::{Record, Settings, Storage};
+use super::storage::{Settings, Storage};
 use super::table::test_support::{column, entity_input};
-use super::table::{ClickHouseTableInput, ClickHouseTableKind};
+use super::table::ClickHouseTableInput;
 use crate::columnar::{Arena, ColumnKind};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::{Condition, Operator, ValueKind};
 use crate::storage::rows::{ReadKind, ResultSet};
 use crate::storage::types::{
-    Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress,
+    Addresses, Bounds, ChainConfig, Checkpoints, DiffCheckpoint, Frontier, Progress, ResumedChain,
     Sequence,
 };
 use crate::storage::{
-    Backend, Batch, CacheDump, CacheFile, EffectCacheWrite, EntityWrite, Initialize, Resume,
-    RollbackWrite, Rows, Table,
+    Batch, EntityStore, EntityWrite, Handoff, Initialize, Resume, RollbackWrite, Table, WriteError,
 };
 
 fn env(name: &str, default: &str) -> String {
@@ -46,13 +46,27 @@ pub(crate) fn connection(database: &str) -> Connection {
     }
 }
 
+fn store(database: &str) -> Storage {
+    Storage::new(
+        connection(database),
+        Tuning::default(),
+        Arc::new(|_: &str| {}),
+        Settings {
+            chain_id_mode: ChainIdMode::Int32,
+            replicated: false,
+            database_engine: None,
+        },
+    )
+    .unwrap()
+}
+
 struct Live {
     storage: Storage,
     database: String,
 }
 
 impl Live {
-    fn new(primary: bool) -> Self {
+    fn new() -> Self {
         let database = format!(
             "envio_rust_live_{}_{}_{}",
             std::process::id(),
@@ -62,35 +76,15 @@ impl Live {
                 .unwrap()
                 .as_millis()
         );
-        let storage = Storage::new(
-            connection(&database),
-            Tuning::default(),
-            Arc::new(|_: &str| {}),
-            Settings {
-                chain_id_mode: ChainIdMode::Int32,
-                replicated: false,
-                database_engine: None,
-                primary,
-            },
-        )
-        .unwrap();
-        Self { storage, database }
+        Self {
+            storage: store(&database),
+            database,
+        }
     }
 
-    /// Another process's store of record on the same database.
+    /// Another process's store on the same database.
     fn another_process(&self) -> Storage {
-        Storage::new(
-            connection(&self.database),
-            Tuning::default(),
-            Arc::new(|_: &str| {}),
-            Settings {
-                chain_id_mode: ChainIdMode::Int32,
-                replicated: false,
-                database_engine: None,
-                primary: true,
-            },
-        )
-        .unwrap()
+        store(&self.database)
     }
 
     fn table(&self, input: ClickHouseTableInput) -> Arc<Table> {
@@ -143,36 +137,76 @@ impl Live {
         self.execute(format!("SELECT count() FROM `{}`.`{table}`", self.database))
             .await
     }
-}
 
-fn chain(id: i64) -> ChainConfig {
-    ChainConfig {
-        id,
-        ecosystem: "evm".to_string(),
-        start_block: 0,
-        end_block: None,
-        max_reorg_depth: 200,
+    async fn load(&self, table: &Table, condition: Condition) -> Vec<Vec<String>> {
+        rows(
+            &self
+                .storage
+                .load_where(table, vec![condition])
+                .await
+                .unwrap(),
+        )
+    }
+
+    /// Chain 1's frontier, as the entities' views read it.
+    async fn frontier(&self) -> String {
+        self.execute(format!(
+            "SELECT checkpoint_id FROM `{}`.envio_chains FINAL WHERE chain_id = 1",
+            self.database
+        ))
+        .await
     }
 }
 
-async fn initialize(live: &Live, tables: Vec<Arc<Table>>, chains: Vec<ChainConfig>) {
+async fn initialize(live: &Live, tables: Vec<Arc<Table>>) {
     live.storage
         .initialize(&Initialize {
             sequence: Sequence::SharedAcrossChains,
             tables,
             partitions: Vec::new(),
             enums: Vec::new(),
-            chains,
+            chains: vec![ChainConfig {
+                id: 1,
+                ecosystem: "evm".to_string(),
+                start_block: 0,
+                end_block: None,
+                max_reorg_depth: 200,
+            }],
             envio_info: "{\"config\":1}".to_string(),
             instance: "instance".to_string(),
-            contract_names: vec!["Token".to_string()],
-            addresses: Addresses {
-                chain_ids: vec![1],
-                addresses: vec![vec![0xab; 20]],
-                contract_ids: vec![0],
-                registration_blocks: vec![-1],
-                checkpoint_ids: vec![],
-            },
+            contract_names: Vec::new(),
+            addresses: Addresses::default(),
+        })
+        .await
+        .unwrap();
+}
+
+/// Resumes `storage` to chain 1 as Postgres hands it over having committed
+/// up to `checkpoint_id`, at `progress_block`.
+async fn resume(
+    storage: &Storage,
+    tables: Vec<Arc<Table>>,
+    checkpoint_id: i64,
+    progress_block: i32,
+) {
+    storage
+        .resume(&Resume {
+            sequence: Sequence::SharedAcrossChains,
+            tables,
+            committed: vec![ResumedChain {
+                id: 1,
+                ecosystem: "evm".to_string(),
+                start_block: 0,
+                end_block: None,
+                max_reorg_depth: 200,
+                first_event_block: None,
+                ready_at: None,
+                events_processed: 0.0,
+                progress_block,
+                progress_block_time: None,
+                source_block: 1000,
+                checkpoint_id,
+            }],
         })
         .await
         .unwrap();
@@ -245,7 +279,6 @@ fn batch(
     frontier: (i64, i64),
 ) -> Batch {
     Batch {
-        rollback: None,
         progress: vec![Progress {
             chain_id: frontier.0,
             progress_block: checkpoint_entries.last().map_or(0, |(_, _, block)| *block),
@@ -253,39 +286,26 @@ fn batch(
             events_processed: checkpoint_entries.len() as f64,
             source_block: 1000,
         }],
-        raw_events: None,
-        entities: if changes.is_empty() {
-            Vec::new()
-        } else {
-            vec![EntityWrite {
-                table: table.clone(),
-                chain_id: None,
-                postgres: None,
-                clickhouse: Some(history(changes)),
-            }]
-        },
-        chain_meta: Vec::new(),
-        addresses: Addresses::default(),
+        entities: vec![EntityWrite {
+            table: table.clone(),
+            chain_id: None,
+            postgres: None,
+            clickhouse: Some(history(changes)),
+        }],
         frontier: Frontier {
             chain_ids: vec![frontier.0],
             checkpoint_ids: vec![frontier.1],
         },
         checkpoints: checkpoints(checkpoint_entries),
-        effect_caches: Vec::new(),
+        ..Batch::default()
     }
 }
 
 async fn write(live: &Live, batch: Batch) {
-    if let Err(error) = live
-        .storage
-        .write_batch(batch, crate::storage::Handoff::default())
-        .await
-    {
+    if let Err(error) = live.storage.write_batch(batch, Handoff::default()).await {
         match error {
-            crate::storage::WriteError::Failed(failure) => {
-                panic!("{}: {:#}", failure.context, failure.error)
-            }
-            crate::storage::WriteError::Gated => panic!("gated"),
+            WriteError::Failed(failure) => panic!("{}: {:#}", failure.context, failure.error),
+            WriteError::Gated => panic!("gated"),
         }
     }
 }
@@ -342,13 +362,13 @@ fn row(cells: &[&str]) -> Vec<String> {
     cells.iter().map(|cell| cell.to_string()).collect()
 }
 
-// A TTL reads the columns of every history row, and a delete leaves all but
-// its key at their defaults. Were the delete to expire before the set it
-// cancels, the entity would come back.
+/// A TTL reads the columns of every history row, and a delete leaves all but
+/// its key at their defaults. Were the delete to expire before the set it
+/// cancels, the entity would come back.
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
 async fn a_ttl_never_expires_a_delete_before_the_set_it_cancels() {
-    let live = Live::new(true);
+    let live = Live::new();
     let mut input = entity_input(
         "Account",
         vec![
@@ -360,7 +380,7 @@ async fn a_ttl_never_expires_a_delete_before_the_set_it_cancels() {
     input.ttl =
         Some("if(owner = '', toDateTime('2000-01-01'), toDateTime('2100-01-01'))".to_string());
     let account = live.table(input);
-    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
+    initialize(&live, vec![account.clone()]).await;
     write(
         &live,
         batch(
@@ -377,18 +397,14 @@ async fn a_ttl_never_expires_a_delete_before_the_set_it_cancels() {
     ))
     .await;
 
-    let loaded = live
-        .storage
-        .load_where(&account, vec![eq("id", "a")])
-        .await
-        .unwrap();
+    let loaded = live.load(&account, eq("id", "a")).await;
     live.drop_database().await;
-    assert_eq!(rows(&loaded), Vec::<Vec<String>>::new());
+    assert_eq!(loaded, Vec::<Vec<String>>::new());
 }
 
-// A query that fails once its first rows are on the wire has already answered
-// with a success status. Taking what arrived would hand a reader a partial
-// result — or none — as if it were the whole of it.
+/// A query that fails once its first rows are on the wire has already answered
+/// with a success status. Taking what arrived would hand a reader a partial
+/// result — or none — as if it were the whole of it.
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
 async fn a_read_that_fails_partway_is_an_error() {
@@ -411,56 +427,27 @@ async fn a_read_that_fails_partway_is_an_error() {
     );
 }
 
+/// The instance is what tells the database apart from one built beside
+/// another initialize of the same config, so there is none until an
+/// initialize has finished building it.
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
-async fn a_primary_reads_back_the_record_it_was_initialized_with() {
-    let live = Live::new(true);
-    let account = live.account();
-    let follower = |record: Option<Record>| record.map(|record| record.follower);
-    let before = follower(live.storage.record().await.unwrap());
-    initialize(&live, vec![account], vec![chain(1)]).await;
+async fn the_instance_reads_back_as_it_was_initialized() {
+    let live = Live::new();
+    let before = live.storage.instance().await.unwrap();
+    initialize(&live, vec![live.account()]).await;
 
-    let stored = live.storage.read_stored_config().await.unwrap();
-    let after = follower(live.storage.record().await.unwrap());
+    let after = live.storage.instance().await.unwrap();
     live.drop_database().await;
-    assert_eq!(
-        (
-            before,
-            after,
-            stored.config.envio_info,
-            stored.config.contract_names,
-            stored
-                .config
-                .chains
-                .iter()
-                .map(|chain| (chain.id, chain.ecosystem.clone(), chain.max_reorg_depth))
-                .collect::<Vec<_>>(),
-            names(&stored.config_addresses),
-            rows(&stored.config_addresses),
-        ),
-        (
-            None,
-            Some(false),
-            Some("{\"config\":1}".to_string()),
-            Some(vec!["Token".to_string()]),
-            vec![(1, "evm".to_string(), 200)],
-            vec![
-                "chainId".to_string(),
-                "address".to_string(),
-                "contractId".to_string(),
-                "registrationBlock".to_string()
-            ],
-            vec![row(&["1", &format!("{:?}", vec![0xabu8; 20]), "0", "-1"])],
-        )
-    );
+    assert_eq!((before, after), (None, Some("instance".to_string())));
 }
 
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
 async fn a_load_reads_each_entitys_latest_row() {
-    let live = Live::new(true);
+    let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
+    initialize(&live, vec![account.clone()]).await;
     write(
         &live,
         batch(
@@ -518,37 +505,15 @@ async fn a_load_reads_each_entitys_latest_row() {
     );
 }
 
-/// An insert resent after a timeout can land twice. The contracts are read by
-/// position, so a duplicate would shift every name after it.
+/// A process that died mid-write can leave an insert running on the server,
+/// one that finishes after the next process resumed and trimmed what never
+/// committed. Its rows would read as that run's once its frontier passed them.
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
-async fn the_contracts_read_back_once_however_often_they_landed() {
-    let live = Live::new(true);
-    initialize(&live, vec![live.account()], vec![chain(1)]).await;
-    live.execute(format!(
-        "INSERT INTO `{}`.envio_contracts VALUES (0, 'Token')",
-        live.database
-    ))
-    .await;
-
-    let stored = live.storage.read_stored_config().await.unwrap();
-
-    live.drop_database().await;
-    assert_eq!(
-        stored.config.contract_names,
-        Some(vec!["Token".to_string()])
-    );
-}
-
-/// A process that died mid-commit can still have its chains insert land after
-/// the next process resumed and trimmed that batch's rows away. Landing then,
-/// it must not claim the batch back.
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn a_commit_landing_after_the_next_resume_claims_nothing() {
-    let live = Live::new(true);
+async fn an_insert_a_dead_process_left_running_lands_nothing_after_the_resume() {
+    let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
+    initialize(&live, vec![account.clone()]).await;
     write(
         &live,
         batch(
@@ -559,24 +524,68 @@ async fn a_commit_landing_after_the_next_resume_claims_nothing() {
         ),
     )
     .await;
-    let resume = |storage: Storage| {
-        let account = account.clone();
-        async move {
-            storage
-                .resume(&Resume {
-                    sequence: Sequence::SharedAcrossChains,
-                    tables: vec![account],
-                    chain_ids: vec![1],
-                    committed: None,
-                })
-                .await
-                .unwrap()
-                .chains
-                .iter()
-                .map(|chain| chain.checkpoint_id)
-                .collect::<Vec<_>>()
-        }
-    };
+    let late = tokio::spawn(send_as(
+        format!("{}late", super::client::insert_tag(&live.database, &[1])),
+        format!(
+            "INSERT INTO `{}`.envio_history_Account (id, owner, balance, envio_checkpoint_id, \
+             envio_change) SELECT toString(number), 'mallory', '9', 2, 'SET' FROM numbers(3) \
+             WHERE sleepEachRow(1) = 0 SETTINGS max_block_size = 1",
+            live.database
+        ),
+    ));
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    resume(&live.another_process(), vec![account], 1, 10).await;
+    let _ = late.await;
+    let landed = live
+        .execute(format!(
+            "SELECT count() FROM `{}`.envio_history_Account WHERE envio_checkpoint_id = 2",
+            live.database
+        ))
+        .await;
+
+    live.drop_database().await;
+    assert_eq!(landed, "0");
+}
+
+/// Sends `statement` under `query_id`, answering whether it succeeded.
+async fn send_as(query_id: String, statement: String) -> bool {
+    reqwest::Client::new()
+        .post(env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"))
+        .query(&[("query_id", query_id)])
+        .basic_auth(
+            env("ENVIO_CLICKHOUSE_USERNAME", "default"),
+            Some(
+                std::env::var("ENVIO_CLICKHOUSE_PASSWORD")
+                    .unwrap_or_else(|_| "testing".to_string()),
+            ),
+        )
+        .body(statement)
+        .send()
+        .await
+        .is_ok_and(|response| response.status().is_success())
+}
+
+/// A process that died mid-commit can still have its chains insert land after
+/// the next process resumed and trimmed that batch's rows away. Landing then,
+/// it must not move the frontier back over the checkpoint the next process
+/// writes its own rows at before Postgres has committed them.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_commit_landing_after_the_next_resume_claims_nothing() {
+    let live = Live::new();
+    let account = live.account();
+    initialize(&live, vec![account.clone()]).await;
+    write(
+        &live,
+        batch(
+            &account,
+            &[("a", Some(("alice", "1")), 1)],
+            &[(1, 1, 10)],
+            (1, 1),
+        ),
+    )
+    .await;
 
     let (landed, rows_landed) = tokio::sync::oneshot::channel();
     let (commit, may_commit) = tokio::sync::oneshot::channel();
@@ -587,7 +596,7 @@ async fn a_commit_landing_after_the_next_resume_claims_nothing() {
             &[(2, 1, 20)],
             (1, 2),
         ),
-        crate::storage::Handoff {
+        Handoff {
             landed: Some(landed),
             commit: Some(Box::pin(async move { may_commit.await.unwrap_or(false) })),
             committed: None,
@@ -595,166 +604,19 @@ async fn a_commit_landing_after_the_next_resume_claims_nothing() {
     );
     let next = async {
         rows_landed.await.unwrap();
-        let resumed = resume(live.another_process()).await;
+        resume(&live.another_process(), vec![account.clone()], 1, 10).await;
+        let resumed = live.frontier().await;
         commit.send(true).unwrap();
         resumed
     };
-    let (_, resumed) = tokio::join!(dying, next);
-    let after = resume(live.another_process()).await;
+    let (dying, resumed) = tokio::join!(dying, next);
+    let after = live.frontier().await;
 
     live.drop_database().await;
-    assert_eq!((resumed, after), (vec![1], vec![1]));
-}
-
-/// Raw events are appended with the batch's other rows, so an interrupted
-/// write leaves some past the progress its chain committed, which the batch's
-/// replay would write a second time.
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn a_resume_trims_raw_events_past_the_committed_progress() {
-    let live = Live::new(true);
-    let account = live.account();
-    let raw_events = live.table(ClickHouseTableInput {
-        kind: ClickHouseTableKind::RawEvents,
-        history_table: None,
-        ..entity_input(
-            "raw_events",
-            vec![
-                column("chain_id", "ChainId"),
-                column("block_number", "Int32"),
-                column("log_index", "Int32"),
-            ],
-        )
-    });
-    let landed = raw_events.clickhouse.as_ref().unwrap().physical.clone();
-    initialize(&live, vec![account.clone(), raw_events], vec![chain(1)]).await;
-    write(
-        &live,
-        batch(
-            &account,
-            &[("a", Some(("alice", "1")), 1)],
-            &[(1, 1, 10)],
-            (1, 1),
-        ),
-    )
-    .await;
-    live.execute(format!(
-        "INSERT INTO `{}`.`{landed}` VALUES (1, 10, 0), (1, 20, 0)",
-        live.database
-    ))
-    .await;
-
-    live.storage
-        .resume(&Resume {
-            sequence: Sequence::SharedAcrossChains,
-            tables: vec![account],
-            chain_ids: vec![1],
-            committed: None,
-        })
-        .await
-        .unwrap();
-    let left = live
-        .execute(format!(
-            "SELECT groupArray(block_number) FROM `{}`.`{landed}`",
-            live.database
-        ))
-        .await;
-    live.drop_database().await;
-    assert_eq!(left, "[10]");
-}
-
-/// Raw events land with their batch's other rows, before its commit — and stay
-/// there when it never comes — so what reads them sees only the blocks their
-/// chain committed, each once however often it landed.
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn raw_events_read_as_their_chain_committed_them() {
-    let live = Live::new(true);
-    let account = live.account();
-    let raw_events = live.table(ClickHouseTableInput {
-        kind: ClickHouseTableKind::RawEvents,
-        history_table: None,
-        ..entity_input(
-            "raw_events",
-            vec![
-                column("chain_id", "ChainId"),
-                column("block_number", "Int32"),
-                column("log_index", "Int32"),
-            ],
-        )
-    });
-    initialize(
-        &live,
-        vec![account.clone(), raw_events.clone()],
-        vec![chain(1)],
-    )
-    .await;
-    write(
-        &live,
-        batch(
-            &account,
-            &[("a", Some(("alice", "1")), 1)],
-            &[(1, 1, 10)],
-            (1, 1),
-        ),
-    )
-    .await;
-    live.execute(format!(
-        "INSERT INTO `{}`.`{}` VALUES (1, 10, 0), (1, 10, 0), (1, 20, 0)",
-        live.database,
-        raw_events.clickhouse.as_ref().unwrap().physical
-    ))
-    .await;
-
-    let read = live
-        .execute(format!(
-            "SELECT groupArray(block_number) FROM `{}`.`raw_events`",
-            live.database
-        ))
-        .await;
-
-    live.drop_database().await;
-    assert_eq!(read, "[10]");
-}
-
-/// Checkpoints below the safe one can no longer be rolled back to, and are
-/// pruned as Postgres prunes them, or the table grows with every block a chain
-/// indexes at its head.
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn checkpoints_below_the_safe_one_are_pruned() {
-    let live = Live::new(true);
-    let account = live.account();
-    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
-    for (checkpoint, block) in [(1, 10), (2, 20), (3, 30)] {
-        write(
-            &live,
-            batch(
-                &account,
-                &[("a", Some(("alice", "1")), checkpoint as u64)],
-                &[(checkpoint, 1, block)],
-                (1, checkpoint),
-            ),
-        )
-        .await;
-    }
-
-    live.storage
-        .prune_checkpoints(&Bounds {
-            sequence: Sequence::SharedAcrossChains,
-            chain_ids: vec![1],
-            checkpoint_ids: vec![3],
-        })
-        .await
-        .unwrap();
-    let left = live
-        .execute(format!(
-            "SELECT groupArray(id) FROM (SELECT id FROM `{}`.envio_checkpoints ORDER BY id)",
-            live.database
-        ))
-        .await;
-    live.drop_database().await;
-    assert_eq!(left, "[3]");
+    assert_eq!(
+        (dying.is_ok(), resumed, after),
+        (true, "1".to_string(), "1".to_string())
+    );
 }
 
 /// A reset empties the indexer's database, so it refuses one that also holds
@@ -762,7 +624,7 @@ async fn checkpoints_below_the_safe_one_are_pruned() {
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
 async fn a_reset_leaves_a_database_with_someone_elses_tables_alone() {
-    let live = Live::new(true);
+    let live = Live::new();
     live.execute(format!("CREATE DATABASE `{}`", live.database))
         .await;
     live.execute(format!(
@@ -788,9 +650,9 @@ async fn a_reset_leaves_a_database_with_someone_elses_tables_alone() {
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
 async fn a_replayed_insert_lands_where_the_engine_deduplicates() {
-    let live = Live::new(true);
+    let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
+    initialize(&live, vec![account.clone()]).await;
     live.execute(format!(
         "ALTER TABLE `{}`.`envio_history_Account` MODIFY SETTING \
          non_replicated_deduplication_window = 100",
@@ -813,14 +675,14 @@ async fn a_replayed_insert_lands_where_the_engine_deduplicates() {
     assert_eq!(history, "2");
 }
 
-/// A write that never got to its chains' row is invisible, and a resume
-/// removes it.
+/// A write Postgres never committed lands its rows but is never told to make
+/// them readable, and the resume after it removes them.
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
 async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
-    let live = Live::new(true);
+    let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
+    initialize(&live, vec![account.clone()]).await;
     write(
         &live,
         batch(
@@ -831,56 +693,29 @@ async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
         ),
     )
     .await;
-    // The rows of checkpoint 2 land, but its chains row never does: the
-    // write is cut off, as a crash would.
-    let uncommitted = Live {
-        storage: Storage::new(
-            Connection {
-                url: env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"),
-                username: env("ENVIO_CLICKHOUSE_USERNAME", "default"),
-                password: std::env::var("ENVIO_CLICKHOUSE_PASSWORD")
-                    .unwrap_or_else(|_| "testing".to_string()),
-                database: live.database.clone(),
-            },
-            Tuning::default(),
-            Arc::new(|_: &str| {}),
-            Settings {
-                chain_id_mode: ChainIdMode::Int32,
-                replicated: false,
-                database_engine: None,
-                primary: true,
+    let uncommitted = live
+        .storage
+        .write_batch(
+            batch(
+                &account,
+                &[("a", Some(("alice", "2")), 2)],
+                &[(2, 1, 20)],
+                (1, 2),
+            ),
+            Handoff {
+                landed: None,
+                commit: Some(Box::pin(async { false })),
+                committed: None,
             },
         )
-        .unwrap(),
-        database: live.database.clone(),
-    };
-    let mut cut_off = batch(
-        &account,
-        &[("a", Some(("alice", "2")), 2)],
-        &[(2, 1, 20)],
-        (1, 2),
+        .await;
+    let (landed_history, landed_checkpoints) = (
+        live.count("envio_history_Account").await,
+        live.count("envio_checkpoints").await,
     );
-    // Nothing the uncommitted writer knows of to commit to: it never loaded
-    // the chains, so it writes the rows and no chain row.
-    cut_off.progress.clear();
-    cut_off.frontier = Frontier::default();
-    write(&uncommitted, cut_off).await;
 
-    let before = live
-        .storage
-        .load_where(&account, vec![eq("id", "a")])
-        .await
-        .unwrap();
-    let resumed = live
-        .storage
-        .resume(&Resume {
-            sequence: Sequence::SharedAcrossChains,
-            tables: vec![account.clone()],
-            chain_ids: vec![1],
-            committed: None,
-        })
-        .await
-        .unwrap();
+    let before = live.load(&account, eq("id", "a")).await;
+    resume(&live.storage, vec![account.clone()], 1, 10).await;
     let (history, checkpoints) = (
         live.count("envio_history_Account").await,
         live.count("envio_checkpoints").await,
@@ -888,33 +723,77 @@ async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
     live.drop_database().await;
     assert_eq!(
         (
-            rows(&before),
-            resumed
-                .chains
-                .iter()
-                .map(|chain| (chain.checkpoint_id, chain.progress_block))
-                .collect::<Vec<_>>(),
-            history,
-            checkpoints
+            matches!(uncommitted, Err(WriteError::Gated)),
+            (landed_history, landed_checkpoints),
+            before,
+            (history, checkpoints)
         ),
         (
+            true,
+            ("2".to_string(), "2".to_string()),
             vec![row(&["a", "alice", "1"])],
-            vec![(1, 10)],
+            ("1".to_string(), "1".to_string())
+        )
+    );
+}
+
+/// ClickHouse trims back to what Postgres committed, whatever its own chains'
+/// rows say.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_resume_trims_back_to_what_postgres_committed() {
+    let live = Live::new();
+    let account = live.account();
+    initialize(&live, vec![account.clone()]).await;
+    write(
+        &live,
+        batch(
+            &account,
+            &[("a", Some(("alice", "1")), 1)],
+            &[(1, 1, 10)],
+            (1, 1),
+        ),
+    )
+    .await;
+    write(
+        &live,
+        batch(
+            &account,
+            &[("a", Some(("alice", "2")), 2)],
+            &[(2, 1, 20)],
+            (1, 2),
+        ),
+    )
+    .await;
+
+    resume(&live.storage, vec![account.clone()], 1, 10).await;
+    let loaded = live.load(&account, eq("id", "a")).await;
+    let (history, frontier) = (
+        live.count("envio_history_Account").await,
+        live.frontier().await,
+    );
+    live.drop_database().await;
+    assert_eq!(
+        (loaded, history, frontier),
+        (
+            vec![row(&["a", "alice", "1"])],
             "1".to_string(),
             "1".to_string()
         )
     );
 }
 
-/// A rollback reads what each entity held at the target, and once its diff
-/// is written the orphaned checkpoints no longer count: not as a target, not
-/// in the progress the next rollback recomputes.
+/// A rollback writes, at its diff checkpoint, the row each entity it touched
+/// held at the target: restored, or deleted. The rows it orphaned stay in the
+/// history, so every read resolves an entity by its latest row at or below a
+/// standing checkpoint, and a later rollback to the diff checkpoint restores
+/// what the first one did rather than what it orphaned.
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
-async fn a_rollback_restores_the_target_and_orphans_what_came_after() {
-    let live = Live::new(true);
+async fn a_rollback_restores_the_target_at_its_diff_checkpoint() {
+    let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
+    initialize(&live, vec![account.clone()]).await;
     write(
         &live,
         batch(
@@ -938,22 +817,24 @@ async fn a_rollback_restores_the_target_and_orphans_what_came_after() {
         ),
     )
     .await;
-
-    let bounds = Bounds {
+    let bounds = |checkpoint_id: i64| Bounds {
         sequence: Sequence::SharedAcrossChains,
         chain_ids: vec![1],
-        checkpoint_ids: vec![1],
+        checkpoint_ids: vec![checkpoint_id],
     };
-    let target = live
+
+    let (removed, restored) = live
         .storage
-        .rollback_target_checkpoint(1, 15)
+        .rollback_data(&account, &bounds(1))
         .await
         .unwrap();
-    let diff = live.storage.rollback_progress_diff(&bounds).await.unwrap();
-    let (removed, restored) = live.storage.rollback_data(&account, &bounds).await.unwrap();
+    let before = (
+        rows(&removed),
+        rows(&restored),
+        live.load(&account, eq("id", "a")).await,
+        live.load(&account, eq("owner", "carol")).await,
+    );
 
-    // The diff: `a` back to what checkpoint 1 wrote, `c` gone, both stamped
-    // with checkpoint 4, which marks 2 and 3 as rolled back.
     let mut rollback = batch(
         &account,
         &[("a", Some(("alice", "1")), 4), ("c", None, 4)],
@@ -962,7 +843,7 @@ async fn a_rollback_restores_the_target_and_orphans_what_came_after() {
     );
     rollback.progress.clear();
     rollback.rollback = Some(RollbackWrite {
-        bounds: bounds.clone(),
+        bounds: bounds(1),
         tables: vec![account.clone()],
         progress: vec![Progress {
             chain_id: 1,
@@ -979,303 +860,43 @@ async fn a_rollback_restores_the_target_and_orphans_what_came_after() {
         }],
     });
     write(&live, rollback).await;
+    let rolled_back = (
+        live.load(&account, eq("id", "a")).await,
+        live.load(&account, eq("owner", "carol")).await,
+    );
 
-    let after = live
-        .storage
-        .load_where(&account, vec![eq("owner", "carol")])
-        .await
-        .unwrap();
-    let target_after = live
-        .storage
-        .rollback_target_checkpoint(1, 25)
-        .await
-        .unwrap();
-    let diff_after = live.storage.rollback_progress_diff(&bounds).await.unwrap();
-    live.drop_database().await;
-    assert_eq!(
-        (
-            target,
-            diff.iter()
-                .map(|diff| (diff.chain_id, diff.events_processed, diff.progress_block))
-                .collect::<Vec<_>>(),
-            rows(&removed),
-            rows(&restored),
-            rows(&after),
-            target_after,
-            diff_after.len(),
+    write(
+        &live,
+        batch(
+            &account,
+            &[
+                ("a", Some(("alice", "5")), 5),
+                ("d", Some(("dave", "6")), 5),
+            ],
+            &[(5, 1, 16)],
+            (1, 5),
         ),
+    )
+    .await;
+    let (removed, restored) = live
+        .storage
+        .rollback_data(&account, &bounds(4))
+        .await
+        .unwrap();
+    let to_the_diff = (rows(&removed), rows(&restored));
+
+    live.drop_database().await;
+    assert_eq!(
+        (before, rolled_back, to_the_diff),
         (
-            Some(1),
-            vec![(1, 2, 19)],
-            vec![row(&["c"])],
-            vec![row(&["a", "alice", "1", "SET"])],
-            Vec::<Vec<String>>::new(),
-            // Checkpoint 2 (block 20) was orphaned, so the latest standing one
-            // at or below block 25 is still 1.
-            Some(1),
-            0,
-        )
-    );
-}
-
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn addresses_follow_registrations_and_the_rollbacks_that_drop_them() {
-    let live = Live::new(true);
-    let account = live.account();
-    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
-    let mut registering = batch(&account, &[], &[(1, 1, 10)], (1, 1));
-    registering.entities.clear();
-    registering.addresses = Addresses {
-        chain_ids: vec![1, 1],
-        addresses: vec![vec![1; 20], vec![2; 20]],
-        contract_ids: vec![0, 0],
-        registration_blocks: vec![10, 10],
-        checkpoint_ids: vec![1, 1],
-    };
-    write(&live, registering).await;
-    let mut dropping = batch(&account, &[], &[], (1, 2));
-    dropping.entities.clear();
-    dropping.rollback = Some(RollbackWrite {
-        bounds: Bounds {
-            sequence: Sequence::SharedAcrossChains,
-            chain_ids: vec![1],
-            checkpoint_ids: vec![0],
-        },
-        tables: vec![account.clone()],
-        progress: Vec::new(),
-        removed_addresses: Addresses {
-            chain_ids: vec![1],
-            addresses: vec![vec![2; 20]],
-            contract_ids: vec![0],
-            registration_blocks: Vec::new(),
-            checkpoint_ids: Vec::new(),
-        },
-        diff_checkpoints: vec![DiffCheckpoint {
-            chain_id: 1,
-            checkpoint_id: 2,
-            block_number: 5,
-        }],
-    });
-    write(&live, dropping).await;
-
-    let resumed = live
-        .storage
-        .resume(&Resume {
-            sequence: Sequence::SharedAcrossChains,
-            tables: vec![account],
-            chain_ids: vec![1],
-            committed: None,
-        })
-        .await
-        .unwrap();
-    live.drop_database().await;
-    assert_eq!(
-        sorted(rows(&resumed.addresses)),
-        vec![
-            row(&["1", &format!("{:?}", vec![1u8; 20]), "0", "10"]),
-            row(&["1", &format!("{:?}", vec![0xabu8; 20]), "0", "-1"]),
-        ]
-    );
-}
-
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn chain_state_survives_a_restart() {
-    let live = Live::new(true);
-    let account = live.account();
-    initialize(&live, vec![account.clone()], vec![chain(1), chain(137)]).await;
-    let mut progressed = batch(
-        &account,
-        &[("a", Some(("alice", "1")), 1)],
-        &[(1, 1, 10)],
-        (1, 1),
-    );
-    progressed.chain_meta = vec![ChainMeta {
-        chain_id: 1,
-        first_event_block: Some(10),
-        buffer_block: 50,
-        ready_at: None,
-        is_hyper_sync: true,
-    }];
-    write(&live, progressed).await;
-    live.storage
-        .finalize_backfill(Vec::new(), &[1], 1_700_000_000_123.0)
-        .await
-        .unwrap();
-
-    let resumed = live
-        .storage
-        .resume(&Resume {
-            sequence: Sequence::SharedAcrossChains,
-            tables: vec![account],
-            chain_ids: vec![1],
-            committed: None,
-        })
-        .await
-        .unwrap();
-    live.drop_database().await;
-    assert_eq!(
-        resumed
-            .chains
-            .iter()
-            .map(|chain| (
-                chain.id,
-                chain.checkpoint_id,
-                chain.progress_block,
-                chain.progress_block_time,
-                chain.first_event_block,
-                chain.ready_at,
-                chain.events_processed,
-            ))
-            .collect::<Vec<_>>(),
-        vec![
             (
-                1,
-                1,
-                10,
-                Some(1_700_000_000.0),
-                Some(10),
-                Some(1_700_000_000_123.0),
-                1.0
+                vec![row(&["c"])],
+                vec![row(&["a", "alice", "1", "SET"])],
+                vec![row(&["a", "alice", "2"])],
+                vec![row(&["c", "carol", "3"])],
             ),
-            (137, 0, -1, None, None, None, 0.0),
-        ]
-    );
-}
-
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn an_effect_cache_round_trips_through_its_file() {
-    let live = Live::new(true);
-    let account = live.account();
-    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
-    let cache = live.table(ClickHouseTableInput {
-        kind: ClickHouseTableKind::EffectCache,
-        history_table: None,
-        ..entity_input(
-            "envio_effect_price",
-            vec![column("id", "String"), column("output", "Json")],
+            (vec![row(&["a", "alice", "1"])], Vec::<Vec<String>>::new()),
+            (vec![row(&["d"])], vec![row(&["a", "alice", "1", "SET"])]),
         )
-    });
-    let mut arena = Arena::new(2, &[ColumnKind::Text, ColumnKind::Text]).unwrap();
-    arena.set_bytes(0, 0, b"k1");
-    arena.set_bytes(1, 0, br#"{"price":"1\t2"}"#);
-    arena.set_bytes(0, 1, b"k2");
-    arena.set_bytes(1, 1, b"null");
-    arena
-        .seal_unlent(&["id", "output"].map(str::to_string))
-        .unwrap();
-    let mut cached = batch(&account, &[], &[], (1, 1));
-    cached.entities.clear();
-    cached.effect_caches = vec![EffectCacheWrite {
-        table: cache.clone(),
-        create: true,
-        rows: Rows::Staged(arena),
-    }];
-    write(&live, cached).await;
-
-    let directory = std::env::temp_dir().join(&live.database);
-    let path = directory.join("price.tsv").to_string_lossy().to_string();
-    let tables = live.storage.effect_cache_tables().await.unwrap();
-    live.storage
-        .dump_effect_cache(&[CacheDump {
-            table_name: "envio_effect_price".to_string(),
-            path: path.clone(),
-        }])
-        .await
-        .unwrap();
-    // Start over and load the cache back from the file.
-    initialize(&live, vec![account], vec![chain(1)]).await;
-    live.storage
-        .upload_effect_cache(&[CacheFile {
-            table: cache.clone(),
-            path: path.clone(),
-        }])
-        .await
-        .unwrap();
-    let loaded = live
-        .storage
-        .load_where(&cache, vec![eq("id", "k1")])
-        .await
-        .unwrap();
-    live.drop_database().await;
-    let _ = std::fs::remove_dir_all(directory);
-    assert_eq!(
-        (
-            tables
-                .iter()
-                .map(|table| (table.table_name.clone(), table.rows))
-                .collect::<Vec<_>>(),
-            rows(&loaded),
-        ),
-        (
-            vec![("envio_effect_price".to_string(), 2)],
-            vec![row(&["k1", r#"{"price":"1\t2"}"#])],
-        )
-    );
-}
-
-/// Following Postgres, ClickHouse trims back to what Postgres committed,
-/// whatever its own chains' rows say.
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn a_follower_resumes_to_what_the_store_of_record_committed() {
-    let live = Live::new(false);
-    let account = live.account();
-    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
-    write(
-        &live,
-        batch(
-            &account,
-            &[("a", Some(("alice", "1")), 1)],
-            &[(1, 1, 10)],
-            (1, 1),
-        ),
-    )
-    .await;
-    write(
-        &live,
-        batch(
-            &account,
-            &[("a", Some(("alice", "2")), 2)],
-            &[(2, 1, 20)],
-            (1, 2),
-        ),
-    )
-    .await;
-
-    live.storage
-        .resume(&Resume {
-            sequence: Sequence::SharedAcrossChains,
-            tables: vec![account.clone()],
-            chain_ids: vec![1],
-            committed: Some(vec![crate::storage::types::ResumedChain {
-                id: 1,
-                ecosystem: "evm".to_string(),
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: 200,
-                first_event_block: None,
-                ready_at: None,
-                events_processed: 1.0,
-                progress_block: 10,
-                progress_block_time: None,
-                source_block: 1000,
-                checkpoint_id: 1,
-            }]),
-        })
-        .await
-        .unwrap();
-    let loaded = live
-        .storage
-        .load_where(&account, vec![eq("id", "a")])
-        .await
-        .unwrap();
-    let history = live.count("envio_history_Account").await;
-    live.drop_database().await;
-    assert_eq!(
-        (rows(&loaded), history),
-        (vec![row(&["a", "alice", "1"])], "1".to_string())
     );
 }

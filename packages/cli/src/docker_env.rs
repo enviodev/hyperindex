@@ -801,13 +801,7 @@ async fn ensure_container_with_post_create(
 #[derive(Debug, Clone, Copy)]
 pub struct UpOptions<'a> {
     pub project_root: &'a Path,
-    pub postgres: bool,
     pub clickhouse: bool,
-}
-
-/// Hasura serves what Postgres keeps, so it only runs alongside it.
-fn runs_hasura(opts: &UpOptions<'_>, env: &EnvConfig) -> bool {
-    opts.postgres && env.hasura_enabled
 }
 
 /// Return value from `up()` so callers know which services are active and
@@ -821,31 +815,20 @@ pub struct UpResult {
 
 pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     let env = EnvConfig::from_project(opts.project_root);
-    let hasura_enabled = runs_hasura(&opts, &env);
-    // Only read for a service the project runs, so a bad value only fails a
-    // project that would use it. The 0 is never dialed.
-    let pg_host_port: u16 = if opts.postgres {
-        env.pg_port.parse().with_context(|| {
-            format!(
-                "ENVIO_PG_PORT={:?} is not a valid port number. Remove it from your .env / \
-                 environment to use the default (5433).",
-                env.pg_port
-            )
-        })?
-    } else {
-        0
-    };
-    let hasura_host_port: u16 = if hasura_enabled {
-        env.hasura_port.parse().with_context(|| {
-            format!(
-                "HASURA_EXTERNAL_PORT={:?} is not a valid port number. Remove it from your .env \
-                 / environment to use the default (8080).",
-                env.hasura_port
-            )
-        })?
-    } else {
-        0
-    };
+    let pg_host_port: u16 = env.pg_port.parse().with_context(|| {
+        format!(
+            "ENVIO_PG_PORT={:?} is not a valid port number. Remove it from your .env / \
+             environment to use the default (5433).",
+            env.pg_port
+        )
+    })?;
+    let hasura_host_port: u16 = env.hasura_port.parse().with_context(|| {
+        format!(
+            "HASURA_EXTERNAL_PORT={:?} is not a valid port number. Remove it from your .env / \
+             environment to use the default (8080).",
+            env.hasura_port
+        )
+    })?;
 
     // Parse the ClickHouse URL only when the project actually opts into
     // ClickHouse — garbage in ENVIO_CLICKHOUSE_HOST shouldn't break users
@@ -866,9 +849,9 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     let pg_external = env.pg_is_external();
     let ch_external = env.ch_is_external();
     let (pg_alive, hasura_alive, ch_alive) = tokio::join!(
-        async { opts.postgres && is_service_reachable(pg_probe_host, pg_host_port).await },
+        is_service_reachable(pg_probe_host, pg_host_port),
         async {
-            if !hasura_enabled {
+            if !env.hasura_enabled {
                 return false;
             }
             is_hasura_healthy(&probe_client, hasura_probe_host, hasura_host_port).await
@@ -883,7 +866,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
     // External + unreachable → bail with actionable guidance instead of
     // silently starting a Docker container the user didn't ask for.
-    if opts.postgres && pg_external && !pg_alive {
+    if pg_external && !pg_alive {
         anyhow::bail!(
             "Postgres is not reachable at {host}:{port} (from ENVIO_PG_HOST).\n\nPossible \
              fixes:\n- Verify the host is running and accepts connections on that port.\n- Unset \
@@ -908,13 +891,11 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         }
     }
 
-    let need_pg = opts.postgres && !pg_external && !pg_alive;
-    let need_hasura = hasura_enabled && !hasura_alive;
+    let need_pg = !pg_external && !pg_alive;
+    let need_hasura = env.hasura_enabled && !hasura_alive;
     let need_ch = opts.clickhouse && !ch_external && !ch_alive;
 
-    if !opts.postgres {
-        // Nothing to report: the storage config leaves Postgres out.
-    } else if pg_external {
+    if pg_external {
         println!(
             "Using your Postgres at {}:{} (from ENVIO_PG_HOST)",
             env.pg_host_str(),
@@ -923,10 +904,10 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     } else if pg_alive {
         println!("Using Postgres already running on port {pg_host_port}");
     }
-    if hasura_enabled && hasura_alive {
+    if env.hasura_enabled && hasura_alive {
         println!("Using Hasura already running on port {hasura_host_port}");
     }
-    if opts.postgres && !env.hasura_enabled {
+    if !env.hasura_enabled {
         println!("Hasura disabled (ENVIO_HASURA=false)");
     }
     if let Some(url) = ch_url_ref {
@@ -969,7 +950,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     // If all services are already running, nothing to do.
     if !need_pg && !need_hasura && !need_ch {
         return Ok(UpResult {
-            hasura_enabled,
+            hasura_enabled: env.hasura_enabled,
             clickhouse_enabled: opts.clickhouse,
             indexer_env,
         });
@@ -1311,7 +1292,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     tokio::try_join!(wait_pg, wait_hasura, wait_ch)?;
 
     Ok(UpResult {
-        hasura_enabled,
+        hasura_enabled: env.hasura_enabled,
         clickhouse_enabled: opts.clickhouse,
         indexer_env,
     })
@@ -1664,44 +1645,17 @@ mod tests {
 
     #[test]
     fn up_options_copies_values() {
-        // Smoke test that UpOptions threads its fields and is Copy so
+        // Smoke test that UpOptions threads both fields and is Copy so
         // callers don't need to clone before passing in.
         let root = Path::new("/tmp/project");
         let a = UpOptions {
             project_root: root,
-            postgres: false,
             clickhouse: true,
         };
         let b = a;
         assert_eq!(
-            (a.project_root, a.postgres, a.clickhouse, b.project_root),
-            (root, false, true, root)
-        );
-    }
-
-    // Hasura serves what Postgres keeps, so a project with no Postgres runs
-    // neither, whatever ENVIO_HASURA says.
-    #[test]
-    fn hasura_runs_only_with_postgres() {
-        let env = default_env();
-        let options = |postgres| UpOptions {
-            project_root: Path::new("/tmp/project"),
-            postgres,
-            clickhouse: true,
-        };
-        assert_eq!(
-            (
-                runs_hasura(&options(true), &env),
-                runs_hasura(&options(false), &env),
-                runs_hasura(
-                    &options(true),
-                    &EnvConfig {
-                        hasura_enabled: false,
-                        ..default_env()
-                    }
-                ),
-            ),
-            (true, false, false)
+            (a.project_root, a.clickhouse, b.project_root, b.clickhouse),
+            (root, true, root, true)
         );
     }
 }

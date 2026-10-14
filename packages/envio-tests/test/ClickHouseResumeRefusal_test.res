@@ -62,12 +62,9 @@ describe("Restarting ClickHouse storage with an added entity", () => {
       | exception Persistence.StorageError({message}) => message
       }
 
-      let postgresLine = switch IndexerRunner.selectedBackend {
-      | #clickhouseOnly => ""
-      | #clickhouse | #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\\n"
-      }
-      t.expect(message).toBe(
-        `The following config changes are incompatible with the existing indexer data:
+      t.expect(
+        message,
+      ).toBe(`The following config changes are incompatible with the existing indexer data:
 
     - entities[1]
 
@@ -75,10 +72,10 @@ Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
-${postgresLine}       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
-      )
+       envio dev`)
     },
   )
 })

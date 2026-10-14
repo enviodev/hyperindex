@@ -72,15 +72,10 @@ storage:
   postgres:
     default: true
 `
-let clickHouseBehindPostgres = `
+let clickHouseBesidePostgres = `
 storage:
   postgres:
     default: true
-  clickhouse: true
-`
-let clickHouseAlone = `
-storage:
-  postgres: false
   clickhouse: true
 `
 
@@ -259,43 +254,19 @@ describe("Changing the chains of a deployment", () => {
 
 describe("Changing which stores keep the data", () => {
   Migration.it(
-    "Refuses Postgres put in front of a ClickHouse-only deployment",
-    ~deployed=deployment(~chains=[chain(1)], ~storage=clickHouseAlone),
-    ~edited=deployment(~chains=[chain(1)], ~storage=clickHouseBehindPostgres),
-    ~expected=Failed(`ClickHouse holds indexed data that Postgres has none of: it was indexed without Postgres, or ENVIO_PG_SCHEMA names another schema than the one it was indexed alongside.
-
-Pick one:
-  1. Drop Postgres from the storage config, or point ENVIO_PG_SCHEMA at that schema  # resume indexing where it left off
-  2. envio dev -r                                                                    # delete all indexed data and start over
-  3. Point ENVIO_CLICKHOUSE_DATABASE at a new database                               # keep the existing data and index from scratch`),
-  )
-
-  Migration.it(
-    "Refuses ClickHouse alone over what it kept behind Postgres",
-    ~deployed=deployment(~chains=[chain(1)], ~storage=clickHouseBehindPostgres),
-    ~edited=deployment(~chains=[chain(1)], ~storage=clickHouseAlone),
-    ~expected=Failed(`ClickHouse holds indexed data it kept behind Postgres, which the storage config no longer enables.
-
-Pick one:
-  1. Enable Postgres in the storage config again        # resume indexing where it left off
-  2. envio dev -r                                       # delete all indexed data and start over
-  3. Point ENVIO_CLICKHOUSE_DATABASE at a new database  # keep the existing data and index from scratch`),
-  )
-
-  Migration.it(
-    "Refuses ClickHouse added behind a Postgres deployment",
+    "Refuses ClickHouse added beside a Postgres deployment",
     ~deployed=deployment(~chains=[chain(1)], ~storage=postgresAlone),
-    ~edited=deployment(~chains=[chain(1)], ~storage=clickHouseBehindPostgres),
+    ~edited=deployment(~chains=[chain(1)], ~storage=clickHouseBesidePostgres),
     ~expected=Refused(["storage.clickhouse"]),
   )
 
-  // As when ENVIO_CLICKHOUSE_DATABASE names another database, or the follower's
+  // As when ENVIO_CLICKHOUSE_DATABASE names another database, or ClickHouse's
   // setup died before it finished.
   deployment(
     ~chains=[chain(1)],
-    ~storage=clickHouseBehindPostgres,
+    ~storage=clickHouseBesidePostgres,
   )->Scenario.it(
-    "Refuses a store of record whose ClickHouse lost what it followed",
+    "Refuses a Postgres whose ClickHouse lost what it was indexed alongside",
     ~sources=[{chain: 1}],
     ~supervised=false,
     async (~t, ~indexer, ~source) => {
@@ -312,11 +283,44 @@ Pick one:
       }
 
       t.expect(refusal).toEqual(
-        Some(`ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one indexed alongside this ENVIO_PG_SCHEMA, an older envio version built it, or setting it up didn't finish.
+        Some(`ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one indexed alongside this ENVIO_PG_SCHEMA, or setting it up didn't finish.
 
 Pick one:
   1. Point ENVIO_CLICKHOUSE_DATABASE at the database indexed alongside it  # resume indexing where it left off
   2. envio dev -r                                                          # delete all indexed data and start over`),
+      )
+    },
+  )
+
+  // As when ENVIO_PG_SCHEMA names another schema, or the schema was dropped.
+  deployment(
+    ~chains=[chain(1)],
+    ~storage=clickHouseBesidePostgres,
+  )->Scenario.it(
+    "Refuses a ClickHouse whose Postgres is gone",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      let {sql, pgSchema} = indexer.pg
+      let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${pgSchema}" CASCADE;`)
+
+      let refusal = switch await indexer.restart() {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      t.expect(refusal).toEqual(
+        Some(`ClickHouse holds indexed data that Postgres has none of: ENVIO_PG_SCHEMA names another schema than the one it was indexed alongside, or that schema was dropped.
+
+Pick one:
+  1. Point ENVIO_PG_SCHEMA at the schema it was indexed alongside  # resume indexing where it left off
+  2. envio dev -r                                                  # delete all indexed data and start over
+  3. Point ENVIO_CLICKHOUSE_DATABASE at a new database             # keep the existing data and index from scratch`),
       )
     },
   )
@@ -348,7 +352,6 @@ describe("What a refused restart tells the operator", () => {
       let storageLines = switch IndexerRunner.selectedBackend {
       | #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\"
       | #clickhouse => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
-      | #clickhouseOnly => "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
       }
       t.expect(
         (refusal, indexer.logs()->Array.slice(~start=logged)),
@@ -407,7 +410,6 @@ ${storageLines}
       let storageLines = switch IndexerRunner.selectedBackend {
       | #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\"
       | #clickhouse => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
-      | #clickhouseOnly => "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
       }
       t.expect(refusal).toEqual(
         Some(
@@ -423,46 +425,6 @@ ${storageLines}
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev -d indexer --config config.head.yaml`,
         ),
-      )
-    },
-  )
-
-  deployment(
-    ~chains=[chain(1)],
-    ~storage=clickHouseAlone,
-  )->Scenario.it(
-    "Names only the ClickHouse database for a second indexer without Postgres",
-    ~sources=[{chain: 1}],
-    ~supervised=false,
-    async (~t, ~indexer, ~source) => {
-      let source = source(1)
-      source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.waitUntilReady()
-      await indexer.waitUntilIdle()
-      let config =
-        deployment(
-          ~chains=[chain(1, ~endBlock=1000)],
-          ~storage=clickHouseAlone,
-        ).config->Scenario.withMockSources(~sources=[(1, source)])
-
-      let refusal = switch await indexer.restart(~config, ()) {
-      | _ => None
-      | exception JsExn(e) => e->JsExn.message
-      }
-
-      t.expect(refusal).toEqual(
-        Some(`The following config changes are incompatible with the existing indexer data:
-
-    - chains.1.endBlock
-
-Pick one:
-  1. Revert the changes above  # resume indexing where it left off
-  2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
-       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
-       ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`),
       )
     },
   )

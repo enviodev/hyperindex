@@ -31,10 +31,6 @@ type PostgresNumericPrecisionEntityTester {
 `,
   ~unsupported=[
     {backend: #clickhouse, reason: "the schema's nullable arrays have no ClickHouse equivalent"},
-    {
-      backend: #clickhouseOnly,
-      reason: "the schema's nullable arrays have no ClickHouse equivalent",
-    },
   ],
 )
 

@@ -14,7 +14,6 @@ pub const INFO_TABLE: &str = "envio_info";
 pub const CONTRACTS_TABLE: &str = "envio_contracts";
 pub const ADDRESSES_TABLE: &str = "envio_addresses";
 pub const CHECKPOINTS_TABLE: &str = "envio_checkpoints";
-pub const RAW_EVENTS_TABLE: &str = "raw_events";
 
 /// How checkpoint ids are handed out. Under one shared counter a row's id is
 /// comparable with any other chain's, so a bound is a single id; with a counter
@@ -96,9 +95,6 @@ pub struct Addresses {
     pub addresses: Vec<Vec<u8>>,
     pub contract_ids: Vec<i32>,
     pub registration_blocks: Vec<i32>,
-    /// The checkpoint each registration belongs to. Only a store that keeps
-    /// addresses as a history of changes reads it.
-    pub checkpoint_ids: Vec<i64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -108,8 +104,9 @@ pub struct Checkpoints {
     pub block_numbers: Vec<i32>,
     pub block_hashes: Vec<Option<String>>,
     pub events_processed: Vec<i64>,
-    /// Whether each checkpoint anchors history its chain keeps. A store that
-    /// only keeps the checkpoints a rollback can reach writes just these.
+    /// Whether each checkpoint anchors history its chain keeps. Postgres only
+    /// keeps the checkpoints a rollback can reach; ClickHouse keeps every one,
+    /// which is what maps its history rows back to their blocks.
     pub keeps_history: Vec<bool>,
 }
 
@@ -120,8 +117,9 @@ impl Checkpoints {
 
     /// The ones anchoring history, in the same order.
     pub fn keeping_history(&self) -> Checkpoints {
-        let picked = |index: &usize| self.keeps_history.get(*index).copied().unwrap_or(true);
-        let indexes = (0..self.len()).filter(picked).collect::<Vec<_>>();
+        let indexes = (0..self.len())
+            .filter(|&index| self.keeps_history[index])
+            .collect::<Vec<_>>();
         Checkpoints {
             ids: indexes.iter().map(|&index| self.ids[index]).collect(),
             chain_ids: indexes.iter().map(|&index| self.chain_ids[index]).collect(),

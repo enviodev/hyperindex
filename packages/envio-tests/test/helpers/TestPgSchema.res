@@ -94,7 +94,7 @@ let write = async (
   ~create=false,
 ) => {
   let sql = client(~pgSchema, ~maxConnections=1)
-  let registered = sql->Storage.register(~kind=EffectCache, ~table, ~itemSchema)
+  let registered = sql->Storage.register(~table, ~itemSchema)
   try {
     let _ = await sql->StorageClient.writeBatch({
       ...emptyBatch,

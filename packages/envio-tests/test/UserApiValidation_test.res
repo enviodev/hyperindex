@@ -394,14 +394,14 @@ chains:
     ))
   })
 
-  it("keeps every entity in ClickHouse when it is the only storage", t => {
+  it("keeps every entity in ClickHouse alone when it is the default", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`type User { id: ID! }`,
       ~configYaml=`
-name: clickhouse-only
+name: clickhouse-entities
 storage:
-  postgres: false
-  clickhouse: true
+  clickhouse:
+    default: true
 chains:
   - id: 1
     start_block: 0
@@ -410,7 +410,7 @@ chains:
     t.expect((
       (config.storage.postgres, config.storage.clickhouse),
       (config.userEntitiesByName->Dict.getUnsafe("User")).storage,
-    )).toEqual(((false, true), {Internal.postgres: false, clickhouse: true}))
+    )).toEqual(((true, true), {Internal.postgres: false, clickhouse: true}))
   })
 
   it("preserves per-backend column names across the public config boundary", t => {
@@ -753,29 +753,17 @@ chains:
 
   [
     (
-      "asks whether Postgres stays when only ClickHouse is named",
+      "rejects disabling Postgres",
       `
 name: clickhouse-without-postgres
 storage:
+  postgres: false
   clickhouse: true
 chains:
   - id: 1
     start_block: 0
 `,
-      "With ClickHouse enabled, the \`storage\` config has to say whether Postgres stays: set \`postgres: true\` to keep it alongside ClickHouse, or \`postgres: false\` to keep everything in ClickHouse.",
-    ),
-    (
-      "rejects a config with every storage disabled",
-      `
-name: no-storage
-storage:
-  postgres: false
-  clickhouse: false
-chains:
-  - id: 1
-    start_block: 0
-`,
-      "At least one storage backend must be enabled. Please set \`postgres: true\` or \`clickhouse: true\` in the \`storage\` config (or omit the \`storage\` section entirely to use the default).",
+      "Postgres can't be disabled: it keeps the indexer's own state. To keep the entities in ClickHouse alone, set \`clickhouse: {default: true}\` in the \`storage\` config.",
     ),
     (
       "rejects end_block before start_block",
@@ -1926,26 +1914,6 @@ chains:
     start_block: 0
 `,
       "Schema validation failed:\n\nEntities with no storage backend (no @storage directive, and no backend is marked \`default: true\` in config.yaml):\n  - Apple\n  - Mango\n  - Zebra\n\nFixes:\n  - Set \`default: true\` on a backend under \`storage:\` in config.yaml to include these entities automatically. Example:\n      storage:\n        postgres:\n          default: true\n  - Or add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      type Apple @storage(postgres: true) { ... }",
-    )
-  })
-
-  it("points an entity without a storage route at ClickHouse when it's the only store", t => {
-    expectParseError(
-      t,
-      ~schema=`
-type Apple { id: ID! }
-`,
-      `
-name: missing-storage-route
-storage:
-  postgres: false
-  clickhouse:
-    default: false
-chains:
-  - id: 1
-    start_block: 0
-`,
-      "Schema validation failed:\n\nEntities with no storage backend (no @storage directive, and no backend is marked \`default: true\` in config.yaml):\n  - Apple\n\nFixes:\n  - Set \`default: true\` on a backend under \`storage:\` in config.yaml to include these entities automatically. Example:\n      storage:\n        clickhouse:\n          default: true\n  - Or add @storage(clickhouse: true) to the entities listed above. Example:\n      type Apple @storage(clickhouse: true) { ... }",
     )
   })
 

@@ -365,28 +365,15 @@ impl Storage {
             Some(s) => (s.postgres.as_ref(), s.clickhouse.as_ref()),
         };
         let clickhouse_enabled = clickhouse_config.is_some_and(|c| c.is_enabled());
-        // Either answer to an unset `postgres` would be a guess at where the
-        // data lives, and the two put it in different databases.
-        let postgres_enabled = match postgres_config {
-            Some(config) => config.is_enabled(),
-            None if clickhouse_enabled => {
-                return Err(anyhow!(
-                    "With ClickHouse enabled, the `storage` config has to say whether Postgres \
-                     stays: set `postgres: true` to keep it alongside ClickHouse, or `postgres: \
-                     false` to keep everything in ClickHouse."
-                ))
-            }
-            None => true,
-        };
-        if !postgres_enabled && !clickhouse_enabled {
+        if postgres_config.is_some_and(|c| !c.is_enabled()) {
             return Err(anyhow!(
-                "At least one storage backend must be enabled. Please set `postgres: true` or \
-                 `clickhouse: true` in the `storage` config (or omit the `storage` section \
-                 entirely to use the default)."
+                "Postgres can't be disabled: it keeps the indexer's own state. To keep the \
+                 entities in ClickHouse alone, set `clickhouse: {{default: true}}` in the \
+                 `storage` config."
             ));
         }
         Ok(Self {
-            postgres: postgres_enabled.then(|| StorageBackend {
+            postgres: Some(StorageBackend {
                 entity_default: postgres_config
                     .and_then(|c| c.entity_default())
                     .unwrap_or(!clickhouse_enabled),
@@ -397,7 +384,7 @@ impl Storage {
             clickhouse: clickhouse_enabled.then(|| StorageBackend {
                 entity_default: clickhouse_config
                     .and_then(|c| c.entity_default())
-                    .unwrap_or(!postgres_enabled),
+                    .unwrap_or(false),
                 column_name_format: clickhouse_config
                     .and_then(|c| c.column_name_format())
                     .unwrap_or(human_config::ColumnNameFormat::Original),
@@ -429,27 +416,15 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                 .map(|n| format!("  - {n}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            let enabled = [
-                ("postgres", storage.postgres.is_some()),
-                ("clickhouse", storage.clickhouse.is_some()),
-            ]
-            .into_iter()
-            .filter_map(|(backend, enabled)| enabled.then_some(backend))
-            .collect::<Vec<_>>();
-            let backend = enabled.first().copied().unwrap_or("postgres");
-            let directives = enabled
-                .iter()
-                .map(|backend| format!("@storage({backend}: true)"))
-                .collect::<Vec<_>>()
-                .join(" and/or ");
             return Err(anyhow!(
                 "Schema validation failed:\n\nEntities with no storage backend (no @storage \
-                 directive, and no backend is marked `default: true` in \
-                 config.yaml):\n{listed}\n\nFixes:\n  - Set `default: true` on a backend under \
-                 `storage:` in config.yaml to include these entities automatically. Example:\n      \
-                 storage:\n        {backend}:\n          default: true\n  - Or add {directives} \
-                 to the entities listed above. Example:\n      type {example} @storage({backend}: \
-                 true) {{ ... }}"
+                     directive, and no backend is marked `default: true` in \
+                     config.yaml):\n{listed}\n\nFixes:\n  - Set `default: true` on a backend \
+                     under `storage:` in config.yaml to include these entities automatically. \
+                     Example:\n      storage:\n        postgres:\n          default: true\n  - Or \
+                     add @storage(postgres: true) and/or @storage(clickhouse: true) to the \
+                     entities listed above. Example:\n      type {example} @storage(postgres: \
+                     true) {{ ... }}"
             ));
         }
     }
@@ -3377,6 +3352,19 @@ chains:
             }
         );
 
+        // Postgres left unsaid stays enabled: it keeps the indexer's state
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: None,
+                clickhouse: options(Some(true)),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: backend(false, ColumnNameFormat::Original),
+                clickhouse: backend(true, ColumnNameFormat::Original),
+            }
+        );
+
         // Both backends can be entity defaults when opted in explicitly
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
@@ -3455,26 +3443,6 @@ chains:
                 clickhouse: backend(false, ColumnNameFormat::Original),
             }
         );
-
-        // ClickHouse alone is the entity default, as Postgres alone is
-        assert_eq!(
-            super::Storage::resolve(Some(&StorageConfig {
-                postgres: enabled(false),
-                clickhouse: enabled(true),
-            }))
-            .unwrap(),
-            super::Storage {
-                postgres: None,
-                clickhouse: backend(true, ColumnNameFormat::Original),
-            }
-        );
-
-        // ClickHouse with Postgres left unsaid is refused rather than guessed
-        assert!(super::Storage::resolve(Some(&StorageConfig {
-            postgres: None,
-            clickhouse: enabled(true),
-        }))
-        .is_err());
     }
 
     // --- validate_entity_storage: per-entity storage routing checks ---

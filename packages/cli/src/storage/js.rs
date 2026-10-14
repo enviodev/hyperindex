@@ -93,21 +93,11 @@ pub struct PgTableInput {
     pub chain_id_column: Option<String>,
 }
 
-#[napi(string_enum)]
-#[derive(PartialEq, Eq)]
-pub enum TableKind {
-    Entity,
-    RawEvents,
-    EffectCache,
-}
-
-/// A table described for every store that could keep it. An entity is kept by
-/// each store it describes itself for; the indexer's own tables by the store
-/// of record alone.
+/// A table described for every store that keeps it: an entity for each store
+/// its schema names, the indexer's own tables for Postgres alone.
 #[napi(object)]
 pub struct TableInput {
     pub name: String,
-    pub kind: TableKind,
     pub postgres: Option<PgTableInput>,
     pub clickhouse: Option<ClickHouseTableInput>,
 }
@@ -227,7 +217,7 @@ pub struct ClickHouseOptions {
 pub struct StorageOptions {
     /// `Int32` or `Int64`.
     pub chain_id_mode: String,
-    pub postgres: Option<PostgresOptions>,
+    pub postgres: PostgresOptions,
     pub clickhouse: Option<ClickHouseOptions>,
 }
 
@@ -267,8 +257,6 @@ pub struct AddressesInput {
     pub contract_ids: Vec<i32>,
     /// Left out for a key.
     pub registration_blocks: Option<Vec<i32>>,
-    /// The checkpoint each registration belongs to.
-    pub checkpoint_ids: Option<Vec<String>>,
 }
 
 #[napi(object)]
@@ -551,40 +539,34 @@ impl JsStorage {
         #[allow(deprecated)]
         on_warning.unref(env)?;
         let chain_id_mode = ChainIdMode::parse(&options.chain_id_mode).map_err(to_napi)?;
-        let primary = options.postgres.is_none();
-        let postgres = options
-            .postgres
-            .map(|options| -> napi::Result<_> {
-                let port = u16::try_from(options.port).map_err(|_| {
-                    napi::Error::from_reason(format!("`{}` is not a port", options.port))
-                })?;
-                let client = client::PgClient::connect(PgConnectionOptions {
-                    host: options.host,
-                    port,
-                    user: options.user.clone(),
-                    password: options.password,
-                    database: options.database,
-                    ssl: SslSetting::parse(&options.ssl).map_err(to_napi)?,
-                    max_connections: options.max_connections as usize,
-                    application_name: Some(options.application_name),
-                    extra_ca_file: std::env::var_os("NODE_EXTRA_CA_CERTS").map(Into::into),
-                    connect_timeout: std::time::Duration::from_secs(30),
-                })
-                .map_err(to_napi)?;
-                Ok(Arc::new(postgres::storage::Storage::new(
-                    client,
-                    postgres::storage::Settings {
-                        pg_schema: options.pg_schema,
-                        pg_user: options.user,
-                        chain_id_mode,
-                        numeric_array_as_text: options.is_hasura_enabled,
-                    },
-                    Arc::new(move |event| {
-                        on_index_event.call(event, ThreadsafeFunctionCallMode::NonBlocking);
-                    }),
-                )))
-            })
-            .transpose()?;
+        let pg = options.postgres;
+        let port = u16::try_from(pg.port)
+            .map_err(|_| napi::Error::from_reason(format!("`{}` is not a port", pg.port)))?;
+        let client = client::PgClient::connect(PgConnectionOptions {
+            host: pg.host,
+            port,
+            user: pg.user.clone(),
+            password: pg.password,
+            database: pg.database,
+            ssl: SslSetting::parse(&pg.ssl).map_err(to_napi)?,
+            max_connections: pg.max_connections as usize,
+            application_name: Some(pg.application_name),
+            extra_ca_file: std::env::var_os("NODE_EXTRA_CA_CERTS").map(Into::into),
+            connect_timeout: std::time::Duration::from_secs(30),
+        })
+        .map_err(to_napi)?;
+        let postgres = Arc::new(postgres::storage::Storage::new(
+            client,
+            postgres::storage::Settings {
+                pg_schema: pg.pg_schema,
+                pg_user: pg.user,
+                chain_id_mode,
+                numeric_array_as_text: pg.is_hasura_enabled,
+            },
+            Arc::new(move |event| {
+                on_index_event.call(event, ThreadsafeFunctionCallMode::NonBlocking);
+            }),
+        ));
         let clickhouse = options
             .clickhouse
             .map(|options| -> napi::Result<_> {
@@ -605,18 +587,12 @@ impl JsStorage {
                             chain_id_mode,
                             replicated: options.replicated,
                             database_engine: options.database_engine,
-                            primary,
                         },
                     )
                     .map_err(to_napi)?,
                 ))
             })
             .transpose()?;
-        if postgres.is_none() && clickhouse.is_none() {
-            return Err(napi::Error::from_reason(
-                "A storage needs Postgres, ClickHouse or both",
-            ));
-        }
         Ok(Self {
             inner: super::Storage {
                 postgres,
@@ -629,32 +605,23 @@ impl JsStorage {
         })
     }
 
-    /// The store everything but an entity's own rows is kept in.
-    #[napi(getter)]
-    pub fn store_of_record(&self) -> Store {
-        self.inner.primary().store()
-    }
-
     /// Registers a table with every store that keeps it. A Postgres table's
     /// batches are staged when it has no column of arrays: unnesting one
     /// spreads it across the rows instead of keeping it as a value, so such a
     /// table binds a parameter per cell instead.
     #[napi]
     pub fn register_table(&self, input: TableInput) -> napi::Result<RegisteredTable> {
-        let is_own = input.kind != TableKind::Entity;
-        let postgres = match (&self.inner.postgres, input.postgres) {
-            (Some(store), Some(table)) => Some(Arc::new(
-                store
+        let postgres = match input.postgres {
+            Some(table) => Some(Arc::new(
+                self.inner
+                    .postgres
                     .register(pg_registration(table).map_err(to_napi)?)
                     .map_err(to_napi)?,
             )),
-            _ => None,
+            None => None,
         };
-        // The indexer's own tables live in the store of record only.
         let clickhouse = match (&self.inner.clickhouse, input.clickhouse) {
-            (Some(store), Some(table)) if !is_own || self.inner.postgres.is_none() => {
-                Some(Arc::new(store.register(table).map_err(to_napi)?))
-            }
+            (Some(store), Some(table)) => Some(Arc::new(store.register(table).map_err(to_napi)?)),
             _ => None,
         };
         let table = Table {
@@ -750,8 +717,8 @@ impl JsStorage {
         let _ = self.staged.abort(handle, buffers);
     }
 
-    /// Frees batches that were staged for a write that never happened — one
-    /// whose next table failed to convert.
+    /// Frees batches staged for a write the addon never took: one whose next
+    /// table failed to convert, or one `writeBatch` refused before reading.
     #[napi]
     pub fn discard_staged(&self, handles: Vec<u32>) {
         for handle in handles {
@@ -768,12 +735,9 @@ impl JsStorage {
         sql: String,
         params: Vec<Option<String>>,
     ) -> napi::Result<QueryResult> {
-        let store = self
+        let (rows, columns) = self
             .inner
             .postgres
-            .as_ref()
-            .ok_or_else(|| napi::Error::from_reason("No Postgres is configured"))?;
-        let (rows, columns) = store
             .client
             .query(&sql, &to_params(params))
             .await
@@ -872,12 +836,17 @@ impl JsStorage {
             partitions: self.partitions(input.partitions)?,
             addresses: addresses(input.addresses)?,
         };
-        self.inner.add_chain(input).await.map_err(to_napi)
+        self.inner.postgres.add_chain(&input).await.map_err(to_napi)
     }
 
     #[napi]
     pub async fn read_stored_config(&self) -> napi::Result<StoredConfigOutput> {
-        let read = self.inner.read_stored_config().await.map_err(to_napi)?;
+        let read = self
+            .inner
+            .postgres
+            .read_stored_config()
+            .await
+            .map_err(to_napi)?;
         Ok(StoredConfigOutput {
             envio_info: read.config.envio_info,
             contract_names: read.config.contract_names,
@@ -942,7 +911,11 @@ impl JsStorage {
     #[napi]
     pub async fn set_chain_meta(&self, chains: Vec<ChainMetaInput>) -> napi::Result<()> {
         let chains = chains.into_iter().map(chain_meta).collect::<Vec<_>>();
-        self.inner.set_chain_meta(&chains).await.map_err(to_napi)
+        self.inner
+            .postgres
+            .set_chain_meta(&chains)
+            .await
+            .map_err(to_napi)
     }
 
     /// `readyAt` in unix milliseconds.
@@ -956,6 +929,7 @@ impl JsStorage {
         let definitions = definitions_of(definitions)?;
         let chain_ids = chain_ids.into_iter().map(chain_id).collect::<Vec<_>>();
         self.inner
+            .postgres
             .finalize_backfill(definitions, &chain_ids, ready_at)
             .await
             .map_err(to_napi)
@@ -967,9 +941,11 @@ impl JsStorage {
     #[napi]
     pub async fn ensure_schema_indexes(&self, definitions: Vec<PgIndexInput>) -> napi::Result<()> {
         let definitions = definitions_of(definitions)?;
-        if let Some(store) = &self.inner.postgres {
-            store.indexes.ensure(definitions, Purpose::Schema).await;
-        }
+        self.inner
+            .postgres
+            .indexes
+            .ensure(definitions, Purpose::Schema)
+            .await;
         Ok(())
     }
 
@@ -987,9 +963,6 @@ impl JsStorage {
         columns: Vec<String>,
     ) -> napi::Result<Option<PromiseRaw<'env, ()>>> {
         let table = self.table(table)?;
-        let Some(store) = &self.inner.postgres else {
-            return Ok(None);
-        };
         if table.postgres.is_none() {
             return Ok(None);
         }
@@ -1004,7 +977,7 @@ impl JsStorage {
                 method: BTREE.to_string(),
             })
             .collect::<Vec<_>>();
-        let indexes = &store.indexes;
+        let indexes = &self.inner.postgres.indexes;
         if indexes.covers_all(&definitions, Coverage::LeadingColumns) {
             return Ok(None);
         }
@@ -1019,15 +992,22 @@ impl JsStorage {
     #[napi]
     pub async fn prune_checkpoints(&self, bounds: BoundsInput) -> napi::Result<()> {
         let bounds = to_bounds(bounds)?;
-        self.inner.prune_checkpoints(&bounds).await.map_err(to_napi)
+        self.inner
+            .postgres
+            .prune_checkpoints(&bounds)
+            .await
+            .map_err(to_napi)
     }
 
+    /// ClickHouse keeps every history row: its reads resolve the entities from
+    /// them.
     #[napi]
     pub async fn prune_history(&self, table: u32, bounds: BoundsInput) -> napi::Result<()> {
         let table = self.table(table)?;
         let bounds = to_bounds(bounds)?;
         self.inner
-            .prune_history(&table, &bounds)
+            .postgres
+            .prune_history(table.postgres().map_err(to_napi)?, &bounds)
             .await
             .map_err(to_napi)
     }
@@ -1040,6 +1020,7 @@ impl JsStorage {
     ) -> napi::Result<Option<String>> {
         Ok(self
             .inner
+            .postgres
             .rollback_target_checkpoint(self::chain_id(chain_id), block_number)
             .await
             .map_err(to_napi)?
@@ -1054,6 +1035,7 @@ impl JsStorage {
         let bounds = to_bounds(bounds)?;
         Ok(self
             .inner
+            .postgres
             .rollback_progress_diff(&bounds)
             .await
             .map_err(to_napi)?
@@ -1089,6 +1071,7 @@ impl JsStorage {
     pub async fn effect_cache_tables(&self) -> napi::Result<Vec<CacheTableOutput>> {
         Ok(self
             .inner
+            .postgres
             .effect_cache_tables()
             .await
             .map_err(to_napi)?
@@ -1112,6 +1095,7 @@ impl JsStorage {
             })
             .collect::<napi::Result<Vec<_>>>()?;
         self.inner
+            .postgres
             .upload_effect_cache(&files)
             .await
             .map_err(to_napi)
@@ -1126,7 +1110,11 @@ impl JsStorage {
                 path: file.path,
             })
             .collect::<Vec<_>>();
-        self.inner.dump_effect_cache(&files).await.map_err(to_napi)
+        self.inner
+            .postgres
+            .dump_effect_cache(&files)
+            .await
+            .map_err(to_napi)
     }
 
     #[napi]
@@ -1280,13 +1268,32 @@ impl JsStorage {
                 let postgres = write.postgres.map(|write| PgEntityWrite {
                     sets: write.sets.and_then(|rows| self.rows(rows, &mut problems)),
                     deletes: write.deletes,
-                    history: write.history.map(|history| HistoryWrite {
-                        backfill: history.backfill,
-                        sets: history.sets.and_then(|rows| {
-                            Some((self.rows(rows, &mut problems)?, history.set_checkpoint_ids))
-                        }),
-                        delete_ids: history.delete_ids,
-                        delete_checkpoint_ids: history.delete_checkpoint_ids,
+                    history: write.history.map(|history| {
+                        let sets = history.sets.and_then(|rows| {
+                            let rows = self.rows(rows, &mut problems)?;
+                            same_length(
+                                "history set",
+                                &[rows.len(), history.set_checkpoint_ids.len()],
+                            )
+                            .map_err(|problem| problems.push(problem))
+                            .ok()?;
+                            Some((rows, history.set_checkpoint_ids))
+                        });
+                        if let Err(problem) = same_length(
+                            "history delete",
+                            &[
+                                history.delete_ids.len(),
+                                history.delete_checkpoint_ids.len(),
+                            ],
+                        ) {
+                            problems.push(problem);
+                        }
+                        HistoryWrite {
+                            backfill: history.backfill,
+                            sets,
+                            delete_ids: history.delete_ids,
+                            delete_checkpoint_ids: history.delete_checkpoint_ids,
+                        }
                     }),
                 });
                 let clickhouse = write
@@ -1457,9 +1464,8 @@ fn addresses(addresses: AddressesInput) -> napi::Result<Addresses> {
         addresses.addresses.len(),
         addresses.contract_ids.len(),
     ];
-    // A key leaves both out.
+    // A key leaves them out.
     lengths.extend(addresses.registration_blocks.as_ref().map(Vec::len));
-    lengths.extend(addresses.checkpoint_ids.as_ref().map(Vec::len));
     same_length("address", &lengths)?;
     Ok(Addresses {
         chain_ids: addresses.chain_ids.into_iter().map(chain_id).collect(),
@@ -1470,12 +1476,6 @@ fn addresses(addresses: AddressesInput) -> napi::Result<Addresses> {
             .collect(),
         contract_ids: addresses.contract_ids,
         registration_blocks: addresses.registration_blocks.unwrap_or_default(),
-        checkpoint_ids: addresses
-            .checkpoint_ids
-            .unwrap_or_default()
-            .iter()
-            .map(|id| checkpoint_id(id))
-            .collect::<napi::Result<_>>()?,
     })
 }
 

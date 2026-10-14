@@ -5,7 +5,6 @@ open Vitest
 // lands a second time rather than being refused as a duplicate.
 
 let scenario = Scenario.make(
-  ~unsupported=[{backend: #clickhouseOnly, reason: "reads the raw_events table Postgres keeps"}],
   ~configYaml=`
 name: raw-events
 raw_events: true

@@ -383,7 +383,7 @@ mod tests {
     fn state() -> State {
         let mut state = State::new(TuiInfo {
             start_time: 0.,
-            graphql_url: Some("http://localhost:8080".to_string()),
+            graphql_url: "http://localhost:8080".to_string(),
             ..TuiInfo::default()
         });
         state.update(
@@ -648,7 +648,7 @@ mod tests {
         let emulator = Emulator::new(SIZE);
         let mut session = emulator.session_with(ColorLevel::None);
         let mut calculating = State::new(TuiInfo {
-            graphql_url: Some("http://localhost:8080".to_string()),
+            graphql_url: "http://localhost:8080".to_string(),
             ..TuiInfo::default()
         });
         calculating.update(

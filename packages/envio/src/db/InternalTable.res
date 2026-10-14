@@ -55,9 +55,8 @@ module Checkpoints = {
 
   // The checkpoint a rollback's diff rows are stamped with. It never reaches
   // Postgres — there the diff is written straight to the entity table — but
-  // ClickHouse appends rather than replaces, so it reads current state through
-  // the checkpoints: without one of these the diff sits above the frontier
-  // while the rows it supersedes sit below it.
+  // ClickHouse keeps the diff as history rows, and a checkpoint row for each,
+  // which is what maps a history row back to its block.
   type diffCheckpoint = {
     chainId: ChainId.t,
     checkpointId: Internal.checkpointId,

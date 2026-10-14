@@ -43,18 +43,13 @@ let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrTh
 // a config choice a user makes in YAML, so it's made there rather than by
 // patching the parsed config — that way the entities pick up their ClickHouse
 // storage flags through the same parse a user's would.
-let withStorage = (configYaml, storage) =>
+let withClickHouseStorage = configYaml =>
   if configYaml->String.match(/^storage:/m)->Option.isSome {
     // The scenario configures storage itself; leave its choice alone.
     configYaml
   } else {
-    configYaml ++ storage
+    configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
   }
-
-let withClickHouseStorage = configYaml =>
-  configYaml->withStorage(
-    "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n",
-  )
 
 let make = (
   ~configYaml,
@@ -74,9 +69,7 @@ let make = (
   // file down before the skip could apply.
   let configYaml = switch IndexerRunner.selectedBackend {
   | #clickhouse if !isUnsupported => configYaml->withClickHouseStorage
-  | #clickhouseOnly if !isUnsupported =>
-    configYaml->withStorage("\nstorage:\n  postgres: false\n  clickhouse: true\n")
-  | #clickhouse | #clickhouseOnly | #postgres => configYaml
+  | #clickhouse | #postgres => configYaml
   }
 
   let withIndexerTypes = handlers->Option.isSome

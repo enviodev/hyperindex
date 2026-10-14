@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use tokio::io::AsyncWriteExt;
 
 use super::row_binary::EncodedRows;
 
@@ -98,6 +97,8 @@ pub struct Client {
     /// the writes, so an address that starts balancing across replicas is an
     /// error, not a slower path.
     served_by: Mutex<Option<String>>,
+    /// What every insert's query id starts with: see [`insert_tag`].
+    tag: Mutex<String>,
 }
 
 impl Client {
@@ -120,11 +121,17 @@ impl Client {
             url: connection.url.trim_end_matches('/').to_string(),
             username: connection.username,
             password: connection.password,
+            tag: Mutex::new(insert_tag(&connection.database, &[])),
             database: connection.database,
             tuning,
             warn,
             served_by: Mutex::new(None),
         })
+    }
+
+    /// Tags this process's inserts as writing `chain_ids`.
+    pub fn tag_inserts(&self, chain_ids: &[i64]) {
+        *self.tag.lock().unwrap() = insert_tag(&self.database, chain_ids);
     }
 
     pub async fn statement(&self, query: String) -> Result<String> {
@@ -140,39 +147,12 @@ impl Client {
             .context("ClickHouse's answer broke off before its end")
     }
 
-    /// Writes the answer out as it arrives, so it is never held whole.
-    pub async fn read_into(&self, query: String, file: &mut tokio::fs::File) -> Result<()> {
-        let mut response = self.post(query).await?;
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .context("ClickHouse's answer broke off before its end")?
-        {
-            file.write_all(&chunk).await?;
-        }
-        Ok(())
-    }
-
-    /// Sends what `file` holds as the data `query` takes, once.
-    pub async fn send_file(&self, query: &str, file: tokio::fs::File) -> Result<()> {
-        let response = self
-            .http
-            .post(&self.url)
-            .timeout(self.tuning.statement_timeout)
-            .query(&[("query", query), ("async_insert", "0")])
-            .basic_auth(&self.username, Some(&self.password))
-            .body(file)
-            .send()
-            .await
-            .context("ClickHouse request failed")?;
-        self.answered(response).await.map(|_| ())
-    }
-
     /// Every statement the store sends this way is a read or idempotent, so one
-    /// is sent again for whatever an insert would be: a pooled connection the
-    /// server closed while idle, an overloaded server or proxy. One that timed
-    /// out after reaching the server already spent the whole statement timeout
-    /// and is not.
+    /// is sent again for what goes away by itself: a pooled connection the
+    /// server closed while idle, an overloaded server or proxy. Not for what an
+    /// insert would be halved for: a statement can't be, and the same one runs
+    /// out of the same memory or deadline again. One that timed out after
+    /// reaching the server already spent the whole statement timeout.
     async fn post(&self, query: String) -> Result<reqwest::Response> {
         let mut retries_left = self.tuning.retries;
         loop {
@@ -196,7 +176,7 @@ impl Client {
                     }
                     let text = response.text().await.unwrap_or_default();
                     let failure = anyhow!("ClickHouse returned {status}: {text}");
-                    if retry_for(status, &text) == Retry::Never {
+                    if retry_for(status, &text) != Retry::SameRows {
                         return Err(failure);
                     }
                     failure
@@ -219,16 +199,6 @@ impl Client {
             tokio::time::sleep(self.tuning.delay(retries_left)).await;
             retries_left -= 1;
         }
-    }
-
-    async fn answered(&self, response: reqwest::Response) -> Result<reqwest::Response> {
-        self.check_served_by(&response)?;
-        let status = response.status();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            bail!("ClickHouse returned {status}: {text}");
-        }
-        Ok(response)
     }
 
     /// ClickHouse names the node that answered in every response. The first
@@ -339,6 +309,7 @@ impl Client {
         // answering success. The setting that turns deduplication off is named
         // differently across server versions; the token works on all of them.
         let token = insert_token();
+        let query_id = format!("{}{token}", self.tag.lock().unwrap());
         let request = self
             .http
             .post(&self.url)
@@ -347,6 +318,7 @@ impl Client {
                 ("database", &self.database),
                 ("async_insert", "0"),
                 ("insert_deduplication_token", &token),
+                ("query_id", &query_id),
             ])
             // Base64 of the credentials rather than the X-ClickHouse-User/Key
             // headers: a header value may only carry visible ASCII, so a password
@@ -432,6 +404,20 @@ const NEVER_ERROR_CODES: &[u32] = &[
     497, // ACCESS_DENIED
     516, // AUTHENTICATION_FAILED
 ];
+
+/// What every insert of a process driving `chain_ids` in `database` starts its
+/// query id with, so the next process driving any of them can find the ones it
+/// left running. The chains sit between commas, each findable as `,<id>,`.
+pub fn insert_tag(database: &str, chain_ids: &[i64]) -> String {
+    let mut chain_ids = chain_ids.to_vec();
+    chain_ids.sort_unstable();
+    let chains = chain_ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("envio:{database}:,{chains},:")
+}
 
 /// Unique to this insert among every process writing to the database.
 fn insert_token() -> String {
@@ -664,6 +650,32 @@ mod tests {
                     "ClickHouse returned 400 Bad Request: Code: 62. DB::Exception: Syntax error"
                         .to_string()
                 ),
+                1
+            )
+        );
+    }
+
+    /// A statement can't be halved, and the same one runs out of the same
+    /// memory again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_read_too_big_for_the_server_is_not_sent_again() {
+        let server = MockClickHouse::rejecting_reads(
+            1,
+            500,
+            "Code: 241. DB::Exception: Memory limit (total) exceeded",
+            Arc::new(|_: &str| (200, "1".to_string())),
+        )
+        .await;
+        let client = client_for(&server, 4);
+
+        let answer = client.statement("SELECT 1".to_string()).await;
+
+        assert_eq!(
+            (answer.map_err(reason), server.queries_seen()),
+            (
+                Err("ClickHouse returned 500 Internal Server Error: Code: 241. \
+                     DB::Exception: Memory limit (total) exceeded"
+                    .to_string()),
                 1
             )
         );

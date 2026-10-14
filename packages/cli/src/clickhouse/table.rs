@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use napi_derive::napi;
 
 use super::ch_type::{ChType, FieldSpec};
-use super::ddl::{self, ColumnSpec, EntitySpec, SkippingIndexSpec, Topology};
+use super::ddl::{self, ColumnSpec, EntitySpec, SkippingIndexSpec};
 use crate::columnar::ColumnKind;
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::storage::rows::{ColumnRead, ReadKind};
@@ -25,22 +25,13 @@ pub struct ClickHouseColumnInput {
     pub enum_variants: Option<Vec<String>>,
 }
 
-#[napi(string_enum)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClickHouseTableKind {
-    Entity,
-    RawEvents,
-    EffectCache,
-}
-
 #[napi(object)]
 #[derive(Clone)]
 pub struct ClickHouseTableInput {
-    pub kind: ClickHouseTableKind,
-    /// An entity's name, which its view is called by, or the table's own.
+    /// The entity's name, which its view is called by.
     pub name: String,
-    /// Where an entity's rows are kept.
-    pub history_table: Option<String>,
+    /// Where the entity's rows are kept.
+    pub history_table: String,
     pub columns: Vec<ClickHouseColumnInput>,
     pub chain_id_column: Option<String>,
     pub partition_by: Option<String>,
@@ -58,22 +49,17 @@ pub struct Column {
     pub read: ReadKind,
 }
 
-pub enum Kind {
-    Entity(EntitySpec),
-    RawEvents,
-    EffectCache,
-}
-
+/// An entity as ClickHouse keeps it: every change a row of its history table.
 pub struct Table {
     pub name: String,
-    /// Where the rows are: an entity's history table, or the table itself.
+    /// The history table.
     pub physical: String,
     pub columns: Vec<Column>,
-    /// What a staged batch carries, in order. An entity's history row adds the
-    /// checkpoint and the change to its columns.
+    /// What a staged batch carries, in order: the entity's columns, then the
+    /// checkpoint and the change.
     pub staged: Vec<(String, ChType)>,
     pub insert_query: String,
-    pub kind: Kind,
+    pub entity: EntitySpec,
 }
 
 impl FieldSpec {
@@ -133,56 +119,30 @@ impl Table {
         if columns.is_empty() {
             bail!("{context} was registered with no columns");
         }
-        let (physical, kind, staged) = match input.kind {
-            ClickHouseTableKind::Entity => {
-                let Some(history_table) = input.history_table else {
-                    bail!("{context} is an entity with no history table");
-                };
-                let entity = EntitySpec {
-                    name: input.name.clone(),
-                    history_table: history_table.clone(),
-                    columns: specs,
-                    chain_id_column: input.chain_id_column,
-                    partition_by: input.partition_by,
-                    order_by: input.order_by,
-                    ttl: input.ttl,
-                    skipping_indexes: input.skipping_indexes.unwrap_or_default(),
-                };
-                let staged = entity.history_columns(chain_id_mode)?;
-                (history_table, Kind::Entity(entity), staged)
-            }
-            kind => {
-                let staged = columns
-                    .iter()
-                    .map(|column| (column.name.clone(), column.ch_type.clone()))
-                    .collect();
-                match kind {
-                    ClickHouseTableKind::RawEvents => (
-                        ddl::RAW_EVENTS_LANDED_TABLE.to_string(),
-                        Kind::RawEvents,
-                        staged,
-                    ),
-                    _ => (input.name.clone(), Kind::EffectCache, staged),
-                }
-            }
+        let entity = EntitySpec {
+            name: input.name.clone(),
+            history_table: input.history_table.clone(),
+            columns: specs,
+            chain_id_column: input.chain_id_column,
+            partition_by: input.partition_by,
+            order_by: input.order_by,
+            ttl: input.ttl,
+            skipping_indexes: input.skipping_indexes.unwrap_or_default(),
         };
-        let insert_query =
-            ddl::insert_query(database, &physical, staged.iter().map(|(name, _)| name));
+        let staged = entity.history_columns(chain_id_mode)?;
+        let insert_query = ddl::insert_query(
+            database,
+            &input.history_table,
+            staged.iter().map(|(name, _)| name),
+        );
         Ok(Self {
             name: input.name,
-            physical,
+            physical: input.history_table,
             columns,
             staged,
             insert_query,
-            kind,
+            entity,
         })
-    }
-
-    pub fn entity(&self) -> Option<&EntitySpec> {
-        match &self.kind {
-            Kind::Entity(entity) => Some(entity),
-            _ => None,
-        }
     }
 
     /// The column rows read as `row_name`.
@@ -214,23 +174,6 @@ impl Table {
             })
             .unzip()
     }
-
-    /// The table a raw events or effect cache table is kept in. An entity's
-    /// history table and view are the initialization's to create.
-    pub fn create(&self, database: &str, topology: Topology) -> Result<String> {
-        let order_by: &[&str] = match self.kind {
-            Kind::RawEvents => &["chain_id", "block_number", "log_index"],
-            Kind::EffectCache => &["id"],
-            Kind::Entity(_) => bail!("\"{}\" is an entity's table", self.name),
-        };
-        Ok(ddl::create_replacing_table(
-            database,
-            &self.physical,
-            &self.staged,
-            order_by,
-            topology,
-        ))
-    }
 }
 
 #[cfg(test)]
@@ -253,9 +196,8 @@ pub(crate) mod test_support {
 
     pub fn entity_input(name: &str, columns: Vec<ClickHouseColumnInput>) -> ClickHouseTableInput {
         ClickHouseTableInput {
-            kind: ClickHouseTableKind::Entity,
             name: name.to_string(),
-            history_table: Some(format!("envio_history_{name}")),
+            history_table: format!("envio_history_{name}"),
             columns,
             chain_id_column: None,
             partition_by: None,
@@ -307,29 +249,12 @@ pub(crate) mod test_support {
         )
         .unwrap()
     }
-
-    pub fn cache() -> Table {
-        Table::new(
-            ClickHouseTableInput {
-                kind: ClickHouseTableKind::EffectCache,
-                history_table: None,
-                ..entity_input(
-                    "envio_effect_price",
-                    vec![column("id", "String"), column("output", "Json")],
-                )
-            },
-            "db",
-            ChainIdMode::Int32,
-        )
-        .unwrap()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::test_support::*;
     use super::*;
-    use crate::clickhouse::ddl::test_support::plain;
     use pretty_assertions::assert_eq;
 
     /// What a value reads back as is what Postgres hands back for the same
@@ -392,15 +317,6 @@ mod tests {
                 "INSERT INTO `db`.`envio_history_Account` (`id`, `owner_name`, `balance`, \
                  `envio_checkpoint_id`, `envio_change`) FORMAT RowBinary"
             )
-        );
-    }
-
-    #[test]
-    fn an_effect_cache_is_replaced_by_id() {
-        assert_eq!(
-            cache().create("db", plain()).unwrap(),
-            "CREATE TABLE IF NOT EXISTS `db`.`envio_effect_price` (\n  `id` String,\n  \
-             `output` String\n)\nENGINE = ReplacingMergeTree()\nORDER BY (`id`)"
         );
     }
 

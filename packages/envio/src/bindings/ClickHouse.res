@@ -68,7 +68,6 @@ let fieldColumn = (field: Table.field) =>
 let entityTable = (entityConfig: Internal.entityConfig): StorageClient.clickHouseTable => {
   let options = entityConfig.storage.clickhouseOptions
   {
-    kind: Entity,
     name: entityConfig.name,
     historyTable: EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
@@ -101,16 +100,6 @@ let entityTable = (entityConfig: Internal.entityConfig): StorageClient.clickHous
       )
     ),
   }
-}
-
-let ownTable = (
-  ~kind: StorageClient.tableKind,
-  ~name,
-  ~fields: array<Table.field>,
-): StorageClient.clickHouseTable => {
-  kind,
-  name,
-  columns: fields->Array.map(fieldColumn),
 }
 
 // Visits every node on the way into JSON text. A bigint would make
@@ -173,17 +162,7 @@ let makeTable = (~handle, ~name, {names, kinds, nullable}: StorageClient.clickHo
 %%private(
   let documentText = (value: unknown) =>
     switch value->(Utils.magic: unknown => Nullable.t<JSON.t>) {
-    | Value(_) => value->Sql.stringifyDocument->(Utils.magic: string => unknown)
-    | Null | Undefined => "null"->(Utils.magic: string => unknown)
-    }
-)
-
-// A nullable document's absence, which a document already rendered as its text
-// keeps as null, stored as JSON `null` too.
-%%private(
-  let documentOrNullText = (value: unknown) =>
-    switch value->(Utils.magic: unknown => Nullable.t<unknown>) {
-    | Value(_) => value
+    | Value(_) => value->Sql.canonicalDocument->(Utils.magic: string => unknown)
     | Null | Undefined => "null"->(Utils.magic: string => unknown)
     }
 )
@@ -352,33 +331,9 @@ let stageChangesOrThrow = (
     })
   })
 
-// Rows of one of the indexer's own tables, a column of values per field in the
-// order the table was registered with, as the item schema serialized them —
-// documents already their text.
-let stageColumnsOrThrow = (
-  arena,
-  table,
-  ~fields: array<Table.field>,
-  ~values: array<array<unknown>>,
-  ~rows,
-) =>
-  arena->stageOrThrow(table, ~rows, ~fill=stage =>
-    values->Array.forEachWithIndex((column, index) => {
-      let isDocument = (fields->Array.getUnsafe(index)).fieldType === Json
-      for row in 0 to rows - 1 {
-        let value = column->Array.getUnsafe(row)
-        stage->Staging.writeValue(
-          ~column=index,
-          ~row,
-          isDocument ? value->documentOrNullText : value,
-        )
-      }
-    })
-  )
-
 // Every connection setting has to be there: an unset one would otherwise reach
 // the server as an empty value and fail there, for a reason naming neither.
-let optionsFromEnvOrThrow = (~alongsidePostgres): StorageClient.clickHouseOptions => {
+let optionsFromEnvOrThrow = (): StorageClient.clickHouseOptions => {
   let missing = []
   let required = (value, name) =>
     switch value {
@@ -392,11 +347,10 @@ let optionsFromEnvOrThrow = (~alongsidePostgres): StorageClient.clickHouseOption
   let password = Env.ClickHouse.password()->required("ENVIO_CLICKHOUSE_PASSWORD")
   let database = Env.ClickHouse.database()->required("ENVIO_CLICKHOUSE_DATABASE")
   if missing->Utils.Array.notEmpty {
-    let disable = alongsidePostgres ? " disable clickhouse in the `storage` config," : ""
     JsError.throwWithMessage(
       `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
           ", ",
-        )}. Please set them,${disable} or run \`envio dev\` for a pre-configured local ClickHouse.`,
+        )}. Please set them, disable clickhouse in the \`storage\` config, or run \`envio dev\` for a pre-configured local ClickHouse.`,
     )
   }
   {

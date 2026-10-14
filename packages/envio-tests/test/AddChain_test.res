@@ -96,9 +96,6 @@ let chainRows = async (indexer: IndexerRunner.t) =>
 let startBlocks = async (indexer: IndexerRunner.t) =>
   (await indexer.queryChains())->Array.map(row => (row.id->ChainId.toString, row.startBlock))
 
-let hasPostgres = IndexerRunner.selectedBackend !== #clickhouseOnly
-
-// Only Postgres partitions an entity by chain.
 let counterPartitions = async (indexer: IndexerRunner.t) => {
   let {sql, pgSchema} = indexer.pg
   let rows: array<{
@@ -135,7 +132,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
         (
           rows->Array.toSorted((a, b) => Int.compare(a.chainId, b.chainId)),
           await chainRows(resumed),
-          hasPostgres ? await counterPartitions(resumed) : [],
+          await counterPartitions(resumed),
           (await resumed.queryAddresses())->Array.map(
             row => (row.chainId->ChainId.toString, row.contractName),
           ),
@@ -145,7 +142,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       ).toEqual((
         [{id: "total", count: 1n, chainId: 1}, {id: "total", count: 10n, chainId: 137}],
         [("1", 100), ("137", 100)],
-        hasPostgres ? ["Counter$1", "Counter$137"] : [],
+        ["Counter$1", "Counter$137"],
         [("1", "Token"), ("137", "Token")],
         [
           (
@@ -230,8 +227,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       let {sql, pgSchema} = indexer.pg
       let _ = await sql->Sql.queryForTests(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
       switch IndexerRunner.selectedBackend {
-      | #clickhouse | #clickhouseOnly =>
-        await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
+      | #clickhouse => await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
       | #postgres => ()
       }
 

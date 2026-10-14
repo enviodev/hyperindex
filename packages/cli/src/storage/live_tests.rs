@@ -41,13 +41,12 @@ impl Live {
                 chain_id_mode: crate::config_parsing::system_config::ChainIdMode::Int32,
                 replicated: false,
                 database_engine: None,
-                primary: false,
             },
         )
         .unwrap();
         Self {
             storage: Storage {
-                postgres: Some(Arc::new(postgres)),
+                postgres: Arc::new(postgres),
                 clickhouse: Some(Arc::new(clickhouse)),
             },
             name,
@@ -93,26 +92,17 @@ impl Live {
             )
             .await
             .unwrap();
-        let clickhouse = clickhouse::client::Client::new(
-            clickhouse::live_tests::connection(&self.name),
-            clickhouse::client::Tuning::default(),
-            Arc::new(|_: &str| ()),
-        )
-        .unwrap()
-        .statement(format!(
-            "SELECT checkpoint_id FROM `{}`.envio_chains FINAL WHERE chain_id = 1 FORMAT \
-             TabSeparated",
-            self.name
-        ))
-        .await
-        .unwrap();
-        (
-            rows.first().unwrap().get::<_, String>(0),
-            clickhouse.trim().to_string(),
-        )
+        let clickhouse = self
+            .clickhouse_statement(format!(
+                "SELECT checkpoint_id FROM `{}`.envio_chains FINAL WHERE chain_id = 1 FORMAT \
+                 TabSeparated",
+                self.name
+            ))
+            .await;
+        (rows.first().unwrap().get::<_, String>(0), clickhouse)
     }
 
-    async fn clickhouse_statement(&self, statement: String) {
+    async fn clickhouse_statement(&self, statement: String) -> String {
         clickhouse::client::Client::new(
             clickhouse::live_tests::connection("default"),
             clickhouse::client::Tuning::default(),
@@ -121,7 +111,9 @@ impl Live {
         .unwrap()
         .statement(statement)
         .await
-        .unwrap();
+        .unwrap()
+        .trim()
+        .to_string()
     }
 
     async fn drop_clickhouse(&self) {
@@ -161,6 +153,24 @@ async fn a_follower_of_another_postgres_schema_has_diverged() {
     );
 }
 
+/// ClickHouse only ever holds what Postgres committed, so one whose Postgres
+/// schema is gone holds data nothing says how far it got.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn a_clickhouse_without_its_postgres_is_stranded() {
+    let live = Live::new("stranded");
+    live.initialize().await;
+    live.storage.postgres.reset().await.unwrap();
+
+    let holding = live.storage.holding().await;
+
+    live.drop_all().await;
+    assert_eq!(
+        holding.map_err(|error| format!("{error:#}")),
+        Ok(Holding::Stranded)
+    );
+}
+
 /// The follower commits once Postgres has: an effect cache write failing after
 /// the transaction committed fails the batch, not the follower's half of it.
 #[tokio::test]
@@ -173,8 +183,6 @@ async fn the_follower_commits_what_postgres_committed_whatever_its_caches_do() {
         postgres: Some(Arc::new(
             live.storage
                 .postgres
-                .as_ref()
-                .unwrap()
                 .register(postgres::storage::TableRegistration {
                     spec: postgres::ddl::TableSpec {
                         table_name: "envio_effect_price".to_string(),
@@ -242,23 +250,6 @@ async fn the_follower_commits_what_postgres_committed_whatever_its_caches_do() {
     );
 }
 
-/// Nothing reads a follower's `ready_at` either.
-#[tokio::test]
-#[ignore = "needs a Postgres and a ClickHouse server"]
-async fn finalizing_is_the_store_of_records_alone() {
-    let live = Live::new("finalize");
-    live.initialize().await;
-    live.drop_clickhouse().await;
-
-    let outcome = live
-        .storage
-        .finalize_backfill(Vec::new(), &[1], 1_700_000_000_000.0)
-        .await;
-
-    live.drop_all().await;
-    assert_eq!(outcome.map_err(|error| format!("{error:#}")), Ok(()));
-}
-
 /// Every store is checked before any is reset, as before an initialize: a
 /// refusal leaves them all as they were.
 #[tokio::test]
@@ -276,39 +267,61 @@ async fn a_reset_one_store_refuses_touches_neither() {
     .await;
 
     let refused = live.storage.reset().await.is_err();
-    let kept = live
-        .storage
-        .postgres
-        .as_ref()
-        .unwrap()
-        .is_initialized()
-        .await
-        .unwrap();
+    let kept = (
+        live.storage.postgres.is_initialized().await.unwrap(),
+        live.clickhouse_statement(format!(
+            "SELECT count() FROM system.tables WHERE database = '{}' AND name = 'someone_elses'",
+            live.name
+        ))
+        .await,
+    );
 
     live.drop_all().await;
-    assert_eq!((refused, kept), (true, true));
+    assert_eq!((refused, kept), (true, (true, "1".to_string())));
 }
 
-/// Nothing reads a follower's chain metadata, so a follower that cannot take
-/// it is no reason to fail the write the store of record took.
+/// Readiness and chain metadata are Postgres's alone, which the next resume
+/// hands ClickHouse: neither needs the ClickHouse beside it, even one that is
+/// gone.
 #[tokio::test]
 #[ignore = "needs a Postgres and a ClickHouse server"]
-async fn chain_metadata_is_the_store_of_records_alone() {
+async fn readiness_and_chain_metadata_are_postgres_alone() {
     let live = Live::new("meta");
     live.initialize().await;
     live.drop_clickhouse().await;
 
-    let outcome = live
-        .storage
-        .set_chain_meta(&[ChainMeta {
-            chain_id: 1,
-            first_event_block: Some(5),
-            buffer_block: 10,
-            ready_at: None,
-            is_hyper_sync: true,
-        }])
-        .await;
+    let postgres = &live.storage.postgres;
+    let outcomes = (
+        postgres
+            .set_chain_meta(&[ChainMeta {
+                chain_id: 1,
+                first_event_block: Some(5),
+                buffer_block: 10,
+                ready_at: None,
+                is_hyper_sync: true,
+            }])
+            .await
+            .map_err(|error| format!("{error:#}")),
+        postgres
+            .finalize_backfill(Vec::new(), &[1], 1_700_000_000_000.0)
+            .await
+            .map_err(|error| format!("{error:#}")),
+    );
+    let resumed = postgres
+        .resume()
+        .await
+        .unwrap()
+        .chains
+        .iter()
+        .map(|chain| (chain.id, chain.first_event_block, chain.ready_at))
+        .collect::<Vec<_>>();
 
     live.drop_all().await;
-    assert_eq!(outcome.map_err(|error| format!("{error:#}")), Ok(()));
+    assert_eq!(
+        (outcomes, resumed),
+        (
+            (Ok(()), Ok(())),
+            vec![(1, Some(5), Some(1_700_000_000_000.0))]
+        )
+    );
 }

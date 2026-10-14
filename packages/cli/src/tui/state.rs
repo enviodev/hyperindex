@@ -9,8 +9,7 @@ pub struct TuiInfo {
     pub project_dir: String,
     /// Indexer start, in epoch milliseconds.
     pub start_time: f64,
-    /// Hasura's, which only a run with Postgres has.
-    pub graphql_url: Option<String>,
+    pub graphql_url: String,
     /// Shown next to the GraphQL link, only while it is the default password.
     pub graphql_password: Option<String>,
     pub dev_console_url: Option<String>,

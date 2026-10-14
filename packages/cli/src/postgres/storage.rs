@@ -11,7 +11,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
-use futures_util::future::{join_all, BoxFuture};
+use futures_util::future::join_all;
 use tokio_postgres::Row;
 
 use crate::columnar::ColumnKind;
@@ -38,9 +38,9 @@ use crate::storage::types::{
     ReorgCheckpoint, ResumedChain, StoredChain, StoredConfig,
 };
 use crate::storage::{
-    self as composite, AddChain, Backend, Batch, CacheDump, CacheFile, EntityWrite, Failure,
-    Handoff, Initialize, Op, PgEntityWrite, Resume, Resumed, RollbackWrite, Rows, Store,
-    StoredConfigRead, WriteError,
+    self as composite, AddChain, Batch, CacheDump, CacheFile, EntityStore, EntityWrite, Failure,
+    Handoff, Initialize, Op, PgEntityWrite, Resumed, RollbackWrite, Rows, Store, StoredConfigRead,
+    WriteError,
 };
 
 pub struct Settings {
@@ -1341,29 +1341,9 @@ impl Storage {
     }
 }
 
-impl Backend for Storage {
+impl EntityStore for Storage {
     fn store(&self) -> Store {
         Store::Postgres
-    }
-
-    fn check_for_initialize(&self) -> Op<'_, ()> {
-        Box::pin(async move { self.check_schema_for_initialize().await.map(|_| ()) })
-    }
-
-    fn initialize<'a>(&'a self, input: &'a Initialize) -> Op<'a, ()> {
-        Box::pin(Storage::initialize(self, input))
-    }
-
-    fn add_chain<'a>(&'a self, input: &'a AddChain) -> Op<'a, ()> {
-        Box::pin(Storage::add_chain(self, input))
-    }
-
-    fn read_stored_config(&self) -> Op<'_, StoredConfigRead> {
-        Box::pin(Storage::read_stored_config(self))
-    }
-
-    fn resume<'a>(&'a self, _input: &'a Resume) -> Op<'a, Resumed> {
-        Box::pin(Storage::resume(self))
     }
 
     fn load_where<'a>(
@@ -1377,75 +1357,12 @@ impl Backend for Storage {
         })
     }
 
-    fn set_chain_meta<'a>(&'a self, chains: &'a [ChainMeta]) -> Op<'a, ()> {
-        Box::pin(Storage::set_chain_meta(self, chains))
-    }
-
-    fn finalize_backfill<'a>(
-        &'a self,
-        indexes: Vec<IndexDefinition>,
-        chain_ids: &'a [i64],
-        ready_at: f64,
-    ) -> Op<'a, ()> {
-        Box::pin(Storage::finalize_backfill(
-            self, indexes, chain_ids, ready_at,
-        ))
-    }
-
-    fn prune_checkpoints<'a>(&'a self, bounds: &'a Bounds) -> Op<'a, ()> {
-        Box::pin(Storage::prune_checkpoints(self, bounds))
-    }
-
-    fn prune_history<'a>(&'a self, table: &'a composite::Table, bounds: &'a Bounds) -> Op<'a, ()> {
-        Box::pin(async move { Storage::prune_history(self, table.postgres()?, bounds).await })
-    }
-
-    fn rollback_target_checkpoint(&self, chain_id: i64, block_number: i32) -> Op<'_, Option<i64>> {
-        Box::pin(Storage::rollback_target_checkpoint(
-            self,
-            chain_id,
-            block_number,
-        ))
-    }
-
-    fn rollback_progress_diff<'a>(&'a self, bounds: &'a Bounds) -> Op<'a, Vec<ProgressDiff>> {
-        Box::pin(Storage::rollback_progress_diff(self, bounds))
-    }
-
     fn rollback_data<'a>(
         &'a self,
         table: &'a composite::Table,
         bounds: &'a Bounds,
     ) -> Op<'a, (ResultSet, ResultSet)> {
         Box::pin(async move { Storage::rollback_data(self, table.postgres()?, bounds).await })
-    }
-
-    fn effect_cache_tables(&self) -> Op<'_, Vec<CacheTable>> {
-        Box::pin(Storage::effect_cache_tables(self))
-    }
-
-    fn upload_effect_cache<'a>(&'a self, files: &'a [CacheFile]) -> Op<'a, ()> {
-        Box::pin(Storage::upload_effect_cache(self, files))
-    }
-
-    fn dump_effect_cache<'a>(&'a self, files: &'a [CacheDump]) -> Op<'a, ()> {
-        Box::pin(Storage::dump_effect_cache(self, files))
-    }
-
-    fn reset(&self) -> Op<'_, ()> {
-        Box::pin(Storage::reset(self))
-    }
-
-    fn write_batch(
-        &self,
-        batch: Batch,
-        handoff: Handoff,
-    ) -> BoxFuture<'_, std::result::Result<(), WriteError>> {
-        Box::pin(Storage::write_batch(self, batch, handoff))
-    }
-
-    fn close(&self) {
-        self.client.close();
     }
 }
 

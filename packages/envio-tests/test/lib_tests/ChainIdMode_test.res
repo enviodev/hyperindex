@@ -124,25 +124,30 @@ ${evmChain(~id)}
 // Rust derives. The wire kind it resolves is how that reaches this side, and
 // picking the wrong one would hand the column the wrong typed array.
 describe("ChainIdMode ClickHouse schema", () => {
-  it("maps the raw events chain_id column from the mode", t => {
-    let chainIdKind = (config: Config.t) => {
-      let name = InternalTable.RawEvents.table.tableName
-      let table = TestClickHouse.offlineClient(
-        ~chainIdMode=config.chainIdMode,
-      )->TestClickHouse.registered({
-        name,
-        kind: RawEvents,
-        clickhouse: ClickHouse.ownTable(
-          ~kind=RawEvents,
-          ~name,
-          ~fields=InternalTable.RawEvents.table->Table.schemaOrderedFields(
-            ~schema=InternalTable.RawEvents.schema->S.toUnknown,
-          ),
-        ),
-      })
-      (table.columns->Array.find(column => column.name === "chain_id")->Option.getOrThrow).kind
+  it("maps a per-chain entity's chain id column from the mode", t => {
+    let chainIdKind = (~id) => {
+      let config = InternalTestIndexer.fromUserApi(
+        ~schema,
+        ~configYaml=`
+name: per-chain
+disable_default_cross_chain: true
+storage:
+  clickhouse:
+    default: true
+chains:
+${evmChain(~id)}
+`,
+      ).config
+      let entityConfig = config.userEntitiesByName->Dict.getUnsafe("Transfer")
+      let chainIdColumn =
+        entityConfig.table->Table.getChainIdField->Option.getOrThrow->Table.getClickHouseDbFieldName
+      let table =
+        TestClickHouse.offlineClient(~chainIdMode=config.chainIdMode)->TestClickHouse.entityTable(
+          entityConfig,
+        )
+      (table.columns->Array.find(column => column.name === chainIdColumn)->Option.getOrThrow).kind
     }
-    t.expect((maxInt32Config->chainIdKind, tronConfig->chainIdKind)).toEqual((
+    t.expect((chainIdKind(~id="2147483647"), chainIdKind(~id="2494104990"))).toEqual((
       Staging.F64,
       Staging.U64,
     ))
@@ -288,7 +293,6 @@ describe("ChainIdMode compat check", () => {
         ["chainIdMode"],
         ~resetCommand="envio local db-migrate setup",
         ~runCommand=None,
-        ~hasPostgres=true,
         ~hasClickhouse=false,
       ),
     ).toBe(`The following config changes are incompatible with the existing indexer data:
