@@ -60,6 +60,8 @@ pub enum CommandType {
     Start(StartArgs),
 
     ///Run the sidecar declared by `sidecar:` in config.yaml: your long-running process next to the indexer. `envio dev` starts it for you.
+    ///
+    ///Without `--config` or `ENVIO_CONFIG`, it reads the config file named by the `CONFIG_FILE` environment variable when that is set, as Envio Cloud does.
     Sidecar,
 
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint

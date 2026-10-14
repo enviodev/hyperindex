@@ -1,5 +1,11 @@
 import * as Sury from "rescript-schema";
 import type { default as BigDecimalT } from "bignumber.js";
+import type {
+  SidecarCaller,
+  SidecarContract,
+  SidecarFunctionInput,
+  SidecarFunctionName,
+} from "./src/sidecar/contract.js";
 export { default as BigDecimal } from "bignumber.js";
 
 // Runtime value stubs used by the `S.*` namespace declarations further down
@@ -307,20 +313,13 @@ type GlobalConfig = Global extends { config: infer C extends IndexerConfigTypes 
   ? C
   : {};
 
-/** The `sidecar.contract` module's default export, bound by codegen. */
-type GlobalSidecar = Global extends { sidecar: infer C } ? C : undefined;
-
-/** `context.sidecar`: one method per contract function. Each returns the call
- *  id at once and never waits for the sidecar. */
-type SidecarCallerOf<C> = C extends {
-  readonly kind: "envio.sidecarContract";
-  readonly functions: infer Functions;
-}
-  ? {
-      readonly [K in keyof Functions]: (
-        input: Functions[K] extends { readonly input: infer Input } ? Sury.Output<Input> : never,
-      ) => string;
-    }
+/** `context.sidecar` for the `sidecar.contract` module codegen binds. The
+ *  contract is matched with `infer C extends SidecarContract`: testing an alias
+ *  with `extends SidecarContract` and passing it on can hand `SidecarCaller`
+ *  its intersection with `SidecarContract`, whose index signature lets any
+ *  function name through. */
+type GlobalSidecarCaller = Global extends { sidecar: infer C extends SidecarContract }
+  ? SidecarCaller<C>
   : NotConfigured<"context.sidecar", "Add `sidecar: { contract, entry }`">;
 
 /** Error-message string returned by project-bound aliases when codegen has
@@ -600,7 +599,7 @@ type BaseHandlerContext<Config extends IndexerConfigTypes = GlobalConfig, ChainI
   /** Call the sidecar declared by `sidecar:` in config.yaml. A call returns its
    *  id synchronously, is skipped in preload, and is delivered after the batch
    *  commits. */
-  readonly sidecar: SidecarCallerOf<GlobalSidecar>;
+  readonly sidecar: GlobalSidecarCaller;
 } & {
   readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
 };
@@ -2234,6 +2233,32 @@ type SingleEcosystemTestChains<Config extends IndexerConfigTypes = GlobalConfig>
     ? SvmTestEcosystem<Config>
     : CodegenRequiredFallback;
 
+/** A `context.sidecar` call as the test indexer records it, with `input` as the
+ *  handler passed it (a bigint stays a bigint). */
+export type TestIndexerSidecarCall<C extends SidecarContract> = {
+  [K in SidecarFunctionName<C>]: {
+    readonly id: string;
+    readonly fn: K;
+    readonly chainId: number;
+    readonly blockNumber: number;
+    /** Absent for block handlers. */
+    readonly blockTimestamp?: number;
+    readonly input: SidecarFunctionInput<C, K>;
+  };
+}[SidecarFunctionName<C>];
+
+/** `indexer.sidecar` on a test indexer. The test indexer never talks to a
+ *  sidecar: it records the calls instead. */
+type TestIndexerSidecar = Global extends { sidecar: infer C extends SidecarContract }
+  ? {
+      /** Every call the handlers made, across `process` runs, in call order.
+       *  Calls made during preload are not recorded. */
+      readonly calls: readonly TestIndexerSidecarCall<C>[];
+      /** Forget the recorded calls. */
+      readonly clear: () => void;
+    }
+  : NotConfigured<"indexer.sidecar", "Add `sidecar: { contract, entry }`">;
+
 /**
  * Test indexer type resolved from config.
  * Allows running the indexer for specific block ranges and inspecting results.
@@ -2246,6 +2271,8 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes = GlobalConf
     /** Changes happened during the processing. */
     readonly changes: readonly EntityChange<Config>[];
   }>;
+  /** The `context.sidecar` calls the handlers made. */
+  readonly sidecar: TestIndexerSidecar;
 } & SingleEcosystemTestChains<Config> & {
   /** Entity operations for direct manipulation outside of handlers. */
   readonly [K in keyof ConfigEntities<Config>]: TestIndexerEntityOperations<

@@ -3,34 +3,71 @@
 type functionDef = {input: S.t<unknown>}
 type t = {functions: dict<functionDef>}
 
-// The slot `defineSidecar` writes. A symbol key, so no field access to type.
-let current: unit => option<t> = %raw(`() => globalThis[Symbol.for("envio.sidecarContract")]`)
+let current: ref<option<t>> = ref(None)
+// The test harness binds a fixture's contract itself, since the path its
+// config names is not on disk; `loadOrThrow` then leaves it alone.
+let isSetByHarness = ref(false)
 
-// Importing the contract module is what fills the slot. Skipped when it's
-// already filled, which is how a test that imports its contract itself runs
-// without one on disk.
+let get = () => current.contents
+
+let set = (contract: t) => {
+  current := Some(contract)
+  isSetByHarness := true
+}
+
+let asContract = (value: unknown): option<t> =>
+  if (
+    typeof(value) === #object &&
+    !(value->(Utils.magic: unknown => Nullable.t<unknown>)->Nullable.isNullable) &&
+    (value->(Utils.magic: unknown => {"kind": unknown}))["kind"] ===
+      "envio.sidecarContract"->(Utils.magic: string => unknown)
+  ) {
+    Some(value->(Utils.magic: unknown => t))
+  } else {
+    None
+  }
+
+// The default export, or `default.default` when an ES import reaches a
+// CommonJS build of the module (`exports.default = defineSidecar(...)`).
+let fromModuleOrThrow = (moduleExports: unknown, ~path) => {
+  let default = (moduleExports->(Utils.magic: unknown => {"default": unknown}))["default"]
+  switch default->asContract {
+  | Some(contract) => contract
+  | None =>
+    switch default
+    ->(Utils.magic: unknown => Nullable.t<{"default": unknown}>)
+    ->Nullable.toOption
+    ->Option.flatMap(nested => nested["default"]->asContract) {
+    | Some(contract) => contract
+    | None =>
+      JsError.throwWithMessage(
+        `The sidecar contract '${path}' must default-export defineSidecar({ functions }): \`export default defineSidecar(...)\`.`,
+      )
+    }
+  }
+}
+
 let loadOrThrow = async (~config: Config.t) =>
-  switch (config.sidecar, current()) {
-  | (None, _) | (Some(_), Some(_)) => ()
-  | (Some({contract}), None) =>
-    try {
-      let _ = await Utils.importPath(
-        NodeJs.Path.resolve([NodeJs.Process.cwd(), contract])
-        ->NodeJs.Path.toString
-        ->NodeJs.Url.pathToFileURL
-        ->NodeJs.Url.toString,
-      )
-    } catch {
-    | exn =>
-      JsError.throwWithMessage(
-        `Failed to load the sidecar contract '${contract}' named by \`sidecar.contract\`. Cause: ${exn
-          ->Utils.prettifyExn
-          ->Obj.magic}`,
-      )
-    }
-    if current()->Option.isNone {
-      JsError.throwWithMessage(
-        `The sidecar contract '${contract}' must default-export defineSidecar({ functions }): \`export default defineSidecar(...)\`.`,
-      )
-    }
+  if !isSetByHarness.contents {
+    current :=
+      switch config.sidecar {
+      | None => None
+      | Some({contract}) =>
+        let moduleExports = try {
+          await Utils.importPath(
+            NodeJs.Path.resolve([NodeJs.Process.cwd(), contract])
+            ->NodeJs.Path.toString
+            ->NodeJs.Url.pathToFileURL
+            ->NodeJs.Url.toString,
+          )
+        } catch {
+        | exn =>
+          JsError.throwWithMessage(
+            `Failed to load the sidecar contract '${contract}' named by \`sidecar.contract\`. Cause: ${exn
+              ->Utils.prettifyExn
+              ->Obj.magic}`,
+          )
+        }
+        Some(moduleExports->fromModuleOrThrow(~path=contract))
+      }
   }

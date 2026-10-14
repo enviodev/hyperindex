@@ -301,6 +301,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
       addresses: AddressRows.Table.make(),
       contractMapping: ContractMapping.empty,
       processChanges: [],
+      sidecarCalls: [],
     }
   }
 

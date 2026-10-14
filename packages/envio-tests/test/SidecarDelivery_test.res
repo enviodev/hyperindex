@@ -7,6 +7,9 @@ open Vitest
 @module("envio") external defineSidecar: {..} => unknown = "defineSidecar"
 
 let contract = defineSidecar({"functions": {"ping": {"input": {"n": S.int}}}})
+// `defineSidecar` is pure: the indexer side binds the contract itself, the way
+// the test harness does for a fixture.
+contract->(Utils.magic: unknown => SidecarContract.t)->SidecarContract.set
 
 type running = {internalPort: int, close: unit => promise<unknown>, waitIdle: unit => promise<unit>}
 type startOptions = {
@@ -90,7 +93,7 @@ describe("Sidecar call delivery", () => {
       #string,
       [
         {
-          "id": "1337:101:0:0",
+          "id": "1337:101:0r0:0",
           "fn": "ping",
           "chainId": 1337,
           "blockNumber": 101,
@@ -251,9 +254,9 @@ describe("Sidecar call delivery", () => {
           },
       ),
     ).toEqual([
-      ("/envio/calls", ["1337:101:0:0", "1337:102:0:0"]->Utils.magic),
+      ("/envio/calls", ["1337:101:0r0:0", "1337:102:0r0:0"]->Utils.magic),
       ("/envio/rollback", {"chainId": 1337, "rollbackToBlock": 101}->Utils.magic),
-      ("/envio/calls", ["1337:102:0:0"]->Utils.magic),
+      ("/envio/calls", ["1337:102:0r0:0"]->Utils.magic),
     ])
   })
 })
