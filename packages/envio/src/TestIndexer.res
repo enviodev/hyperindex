@@ -31,6 +31,31 @@ type entityChange = {
   deleted: array<EntityId.t>,
 }
 
+type sidecarCallView = {
+  id: string,
+  fn: string,
+  chainId: ChainId.t,
+  blockNumber: int,
+  blockTimestamp?: int,
+  input: unknown,
+}
+
+// The call as the handler made it: the input decoded back from the JSON the
+// sidecar would receive, so a bigint is a bigint again.
+let toSidecarCallView = (call: SidecarCall.t): sidecarCallView => {
+  id: call.id,
+  fn: call.fn,
+  chainId: call.chainId,
+  blockNumber: call.blockNumber,
+  blockTimestamp: ?call.blockTimestamp,
+  input: switch SidecarContract.get()->Option.flatMap(({functions}) =>
+    functions->Utils.Dict.dangerouslyGetNonOption(call.fn)
+  ) {
+  | Some({input}) => call.input->S.parseOrThrow(input)
+  | None => call.input->(Utils.magic: JSON.t => unknown)
+  },
+}
+
 type testIndexerState = {
   mutable processInProgress: bool,
   progressBlockByChain: dict<int>,
@@ -40,6 +65,8 @@ type testIndexerState = {
   addresses: AddressRows.Table.t,
   contractMapping: ContractMapping.t,
   mutable processChanges: array<unknown>,
+  // `indexer.sidecar.calls`: kept across `process` runs until `clear()`.
+  mutable sidecarCalls: array<sidecarCallView>,
 }
 
 let addressRowsByChain = (state: testIndexerState) =>
@@ -98,11 +125,27 @@ let handleWriteBatch = (
   ~config: Config.t,
   ~updatedEntities: array<Persistence.updatedEntity>,
   ~registeredAddresses: array<AddressRows.staged>,
+  ~sidecarCalls: array<SidecarCall.t>,
   ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<ChainId.t>,
   ~checkpointBlockNumbers: array<int>,
   ~checkpointEventsProcessed: array<int>,
 ): unit => {
+  let sidecarCallsByCheckpoint: dict<
+    array<{
+      "id": string,
+      "fn": string,
+      "input": JSON.t,
+    }>,
+  > = Dict.make()
+  sidecarCalls->Array.forEach(call => {
+    sidecarCallsByCheckpoint->Utils.Dict.push(
+      call.checkpointId->BigInt.toString,
+      {"id": call.id, "fn": call.fn, "input": call.input},
+    )
+    state.sidecarCalls->Array.push(call->toSidecarCallView)->ignore
+  })
+
   // Group entity changes by checkpointId
   // checkpointId -> entityName -> entityChange
   let changesByCheckpoint: dict<dict<entityChange>> = Dict.make()
@@ -206,6 +249,10 @@ let handleWriteBatch = (
         rendered->(Utils.magic: array<{"address": Address.t, "contract": string}> => unknown),
       )
       change->Dict.set("addresses", addressesObj->(Utils.magic: dict<unknown> => unknown))
+    | None => ()
+    }
+    switch sidecarCallsByCheckpoint->Utils.Dict.dangerouslyGetNonOption(checkpointKey) {
+    | Some(calls) => change->Dict.set("sidecar", {"calls": calls}->Utils.magic)
     | None => ()
     }
     switch changesByCheckpoint->Dict.get(checkpointKey) {
@@ -612,6 +659,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
       ~config,
       ~updatedEntities,
       ~registeredAddresses,
+      ~sidecarCalls=batch.sidecarCalls,
       ~checkpointIds=batch.checkpointIds,
       ~checkpointChainIds=batch.checkpointChainIds,
       ~checkpointBlockNumbers=batch.checkpointBlockNumbers,
@@ -700,6 +748,7 @@ let createTestIndexer = (): t<'processConfig> => {
     addresses,
     contractMapping,
     processChanges: [],
+    sidecarCalls: [],
   }
 
   // Per-instance in-memory storage over `state.entities`. Separate indexers
@@ -803,6 +852,19 @@ let createTestIndexer = (): t<'processConfig> => {
   let result: dict<unknown> = Dict.make()
   result->Dict.set("chainIds", chainIds->(Utils.magic: array<ChainId.t> => unknown))
   result->Dict.set("chains", chains->(Utils.magic: {..} => unknown))
+  result->Dict.set(
+    "sidecar",
+    Utils.Object.createNullObject()
+    ->Utils.Object.defineProperty(
+      "calls",
+      {enumerable: true, get: () => state.sidecarCalls->Array.copy},
+    )
+    ->Utils.Object.definePropertyWithValue(
+      "clear",
+      {enumerable: true, value: () => state.sidecarCalls = []},
+    )
+    ->(Utils.magic: {..} => unknown),
+  )
   entityOpsDict
   ->Dict.toArray
   ->Array.forEach(((name, ops)) => {

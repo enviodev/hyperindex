@@ -2,6 +2,18 @@ export const DEFAULT_PUBLIC_PORT = 9900;
 export const DEFAULT_SIDECAR_INTERNAL_URL = "http://127.0.0.1:9901";
 export const DEFAULT_INDEXER_INTERNAL_URL = "http://127.0.0.1:9899";
 export const DEFAULT_RESPONSE_LIMIT = 1000;
+/** Under the pod's terminationGracePeriodSeconds (30 s). */
+export const DEFAULT_GRACE_MS = 20_000;
+/** wiki 09 section 4: a function that runs longer is abandoned and counted. */
+export const DEFAULT_FUNCTION_TIMEOUT_MS = 60_000;
+/** wiki 09 section 3: accepted call ids kept for redelivery dedupe. */
+export const DEFAULT_DEDUPE_MAX = 100_000;
+/** wiki 09 section 4: how long `emit` retries before it rejects. */
+export const DEFAULT_EMIT_RETRY_MAX_MS = 600_000;
+/** Connection failures in a row before new emits fail fast; 0 turns the breaker off. */
+export const DEFAULT_EMIT_BREAKER_FAILURES = 5;
+/** How long the breaker stays open before the next emit probes the indexer. */
+export const DEFAULT_EMIT_BREAKER_COOLDOWN_MS = 5_000;
 
 export type SidecarEnv = {
   /** Routable user API port (`ENVIO_SIDECAR_PORT`). */
@@ -17,6 +29,18 @@ export type SidecarEnv = {
   readonly webhookSecret: string | undefined;
   readonly responseLimit: number;
   readonly logLevel: string;
+  /** Longest `close()` waits for running work (`ENVIO_SIDECAR_GRACE_MS`). */
+  readonly graceMs: number;
+  /** Default per-function timeout (`ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS`), 0 turns it off. */
+  readonly functionTimeoutMs: number;
+  /** Accepted call ids remembered to dedupe redelivery (`ENVIO_SIDECAR_DEDUPE_MAX`). */
+  readonly dedupeMax: number;
+  /** How long `emit` keeps retrying a webhook (`ENVIO_EMIT_RETRY_MAX_MS`). */
+  readonly emitRetryMaxMs: number;
+  /** Connection failures in a row that open the emit breaker (`ENVIO_EMIT_BREAKER_FAILURES`), 0 = off. */
+  readonly emitBreakerFailures: number;
+  /** Open time before a probe (`ENVIO_EMIT_BREAKER_COOLDOWN_MS`). */
+  readonly emitBreakerCooldownMs: number;
 };
 
 const readPort = (env: NodeJS.ProcessEnv, name: string, fallback: number): number => {
@@ -29,12 +53,12 @@ const readPort = (env: NodeJS.ProcessEnv, name: string, fallback: number): numbe
   return port;
 };
 
-const readInt = (env: NodeJS.ProcessEnv, name: string, fallback: number): number => {
+const readInt = (env: NodeJS.ProcessEnv, name: string, fallback: number, min = 1): number => {
   const raw = env[name];
   if (raw === undefined || raw === "") return fallback;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer, got '${raw}'`);
+  if (!Number.isInteger(value) || value < min) {
+    throw new Error(`${name} must be ${min === 0 ? "a non-negative" : "a positive"} integer, got '${raw}'`);
   }
   return value;
 };
@@ -75,4 +99,10 @@ export const readEnv = (env: NodeJS.ProcessEnv = process.env): SidecarEnv => ({
     readInt(env, "HASURA_RESPONSE_LIMIT", DEFAULT_RESPONSE_LIMIT),
   ),
   logLevel: optional(env, "LOG_LEVEL") ?? "info",
+  graceMs: readInt(env, "ENVIO_SIDECAR_GRACE_MS", DEFAULT_GRACE_MS, 0),
+  functionTimeoutMs: readInt(env, "ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS", DEFAULT_FUNCTION_TIMEOUT_MS, 0),
+  dedupeMax: readInt(env, "ENVIO_SIDECAR_DEDUPE_MAX", DEFAULT_DEDUPE_MAX),
+  emitRetryMaxMs: readInt(env, "ENVIO_EMIT_RETRY_MAX_MS", DEFAULT_EMIT_RETRY_MAX_MS, 0),
+  emitBreakerFailures: readInt(env, "ENVIO_EMIT_BREAKER_FAILURES", DEFAULT_EMIT_BREAKER_FAILURES, 0),
+  emitBreakerCooldownMs: readInt(env, "ENVIO_EMIT_BREAKER_COOLDOWN_MS", DEFAULT_EMIT_BREAKER_COOLDOWN_MS, 0),
 });

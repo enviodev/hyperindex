@@ -1,1 +1,7 @@
-export default { functions: {}, webhooks: {} };
+import { defineSidecar, S } from "envio";
+
+export default defineSidecar({
+  functions: {
+    greet: { input: { name: S.string } },
+  },
+});

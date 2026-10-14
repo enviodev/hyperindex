@@ -23,6 +23,7 @@ let make: (
   ~exitAfterFirstEventBlock: bool=?,
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
+  ~sidecarSender: SidecarSender.t=?,
 ) => t
 
 let makeFromDbState: (
@@ -39,6 +40,7 @@ let makeFromDbState: (
   ~holdRealtime: bool=?,
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
+  ~sidecarSender: SidecarSender.t=?,
 ) => t
 
 let unexpectedErrorMsg: string
@@ -112,6 +114,7 @@ let loadManager: t => LoadManager.t
 let keepProcessAlive: t => bool
 let exitAfterFirstEventBlock: t => bool
 let onExit: t => option<unit => unit>
+let sidecarSender: t => option<SidecarSender.t>
 let isStopped: t => bool
 let epoch: t => int
 let lastPrunedAtMillis: t => dict<float>

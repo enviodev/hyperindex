@@ -1,53 +1,21 @@
-import { createServer, type IncomingMessage, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { BigDecimal, S } from "envio";
 import { Schema as UtilsSchema } from "envio/src/Utils.res.mjs";
 import { createIndexerClient, IndexerClientError, testIndexerClient, toEntityMeta, type EntityMeta } from "envio/sidecar";
+import { fakeGraphql as fakeHasura, tableResponder, type HasuraType, type Responder } from "./fakeHasura.js";
 
 // Nullable entity columns use the same null-tolerant wrapper as the generated
 // entity schemas, so a GraphQL `null` decodes to `undefined` like a DB row does.
 const nullable = <T>(schema: S.Schema<T>): S.Schema<T | undefined> =>
   (UtilsSchema as { nullTolerant: (schema: S.Schema<T>) => S.Schema<T | undefined> }).nullTolerant(schema);
 
-type Request = { readonly query: string; readonly variables: Record<string, unknown> };
-type Responder = (request: Request, n: number) => unknown;
-
-const readBody = (request: IncomingMessage): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
-    request.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    request.on("error", reject);
-  });
-
-const fakeGraphql = async (respond: Responder) => {
-  const requests: Request[] = [];
-  const headers: IncomingMessage["headers"][] = [];
-  const server: Server = createServer((request, response) => {
-    void readBody(request).then((raw) => {
-      const parsed = JSON.parse(raw) as Request;
-      requests.push(parsed);
-      headers.push(request.headers);
-      const answer = respond(parsed, requests.length);
-      const status = typeof answer === "object" && answer !== null && "__status" in answer ? (answer as { __status: number }).__status : 200;
-      response.writeHead(status, { "content-type": "application/json" });
-      response.end(JSON.stringify(answer));
-    });
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string") throw new Error("no port");
-  return {
-    url: `http://127.0.0.1:${address.port}/v1/graphql`,
-    requests,
-    headers,
-    close: () =>
-      new Promise<void>((resolve) => {
-        server.closeAllConnections();
-        server.close(() => resolve());
-      }),
-  };
+// Hasura's view of the tables these tests read: `pool` is a relationship, so
+// selecting it like a column is refused.
+const types: Readonly<Record<string, HasuraType>> = {
+  Swap: { columns: ["id", "amount", "usd", "seenAt", "chainId", "tags"], objectRelations: ["pool"] },
+  Token: { columns: ["id", "symbol"] },
 };
+const fakeGraphql = (respond: Responder) => fakeHasura(respond, { types });
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -168,6 +136,50 @@ describe("indexer read client over GraphQL", () => {
     });
   });
 
+  it("fields narrows the selection to those columns plus id, decoded, on getWhere, getAll and iterate", async () => {
+    const swaps = [
+      { id: "x", amount: "1", usd: "2.5", seenAt: null, chainId: 1 },
+      { id: "y", amount: "20", usd: null, seenAt: "today", chainId: 2 },
+    ];
+    const graphql = await fakeGraphql(tableResponder({ Swap: swaps, Token: [{ id: "t", symbol: "T" }] }));
+    cleanups.push(graphql.close);
+    const client = createIndexerClient<Entities>({ url: graphql.url, entities: [swapMeta, tokenMeta] });
+    const where = await client.Swap.getWhere({ amount: { _gt: 5n } }, { fields: ["amount"] });
+    const all = await client.Swap.getAll({ fields: ["usd", "chainId"], orderBy: { amount: "asc" } });
+    const iterated: unknown[] = [];
+    for await (const swap of client.Swap.iterate({}, { fields: ["seenAt"], pageSize: 1 })) iterated.push(swap);
+    const ordered: unknown[] = [];
+    for await (const swap of client.Swap.iterate({}, { fields: ["amount"], orderBy: { amount: "desc" } })) ordered.push(swap);
+    const unknownField = await client.Swap.getWhere({}, { fields: ["nope" as "amount"] }).then(
+      () => "no error",
+      (error: Error) => error.message,
+    );
+    expect({
+      where,
+      all: all.map((swap) => ({ ...swap, usd: swap.usd?.toString() })),
+      iterated,
+      ordered,
+      unknownField,
+      selections: graphql.requests.map((request) => /\{ Swap\(.*\) \{ ([^}]*) \} \}$/.exec(request.query)?.[1]),
+    }).toEqual({
+      where: [{ id: "y", amount: 20n }],
+      all: [
+        { id: "x", usd: "2.5", chainId: 1 },
+        { id: "y", usd: undefined, chainId: 2 },
+      ],
+      iterated: [
+        { id: "x", seenAt: undefined },
+        { id: "y", seenAt: "today" },
+      ],
+      ordered: [
+        { id: "y", amount: 20n },
+        { id: "x", amount: 1n },
+      ],
+      unknownField: "Entity `Swap` has no field `nope` to select (it has id, amount, usd, seenAt, chainId)",
+      selections: ["id amount", "id usd chainId", "id seenAt chainId", "id seenAt chainId", "id seenAt chainId", "id amount"],
+    });
+  });
+
   it("meta reads chain freshness and query is the raw escape hatch", async () => {
     const graphql = await fakeGraphql((request) =>
       request.query.includes("_meta")
@@ -250,11 +262,12 @@ describe("indexer read client over GraphQL", () => {
           { TAG: "Field", _0: { fieldName: "id", isChainId: false } },
           { TAG: "DerivedFrom", _0: { fieldName: "positions" } },
           { TAG: "Field", _0: { fieldName: "amount", isChainId: false } },
+          { TAG: "Field", _0: { fieldName: "pool", isChainId: false, linkedEntity: "Pool" } },
           { TAG: "Field", _0: { fieldName: "chainId", isChainId: true } },
         ],
       },
     });
-    expect(meta).toEqual({ name: "Swap", fields: ["id", "amount", "chainId"], chainIdField: "chainId", schema: swapSchema });
+    expect(meta).toEqual({ name: "Swap", fields: ["id", "amount", "pool_id", "chainId"], chainIdField: "chainId", schema: swapSchema });
   });
 });
 
@@ -285,7 +298,10 @@ describe("testIndexerClient", () => {
     for await (const token of client.Token.iterate({}, { orderBy: { id: "desc" } })) iterated.push(token.id);
     const one = await client.Token.get("a");
     const meta = await client.meta();
-    expect({ page, where, iterated, one, meta }).toEqual({
+    const narrowed = await client.Token.getWhere({ id: { _in: ["a"] } }, { fields: ["symbol"] });
+    const narrowedIds: unknown[] = [];
+    for await (const token of client.Token.iterate({}, { fields: [] })) narrowedIds.push(token);
+    expect({ page, where, iterated, one, meta, narrowed, narrowedIds }).toEqual({
       page: [
         { id: "b", symbol: "BBB" },
         { id: "c", symbol: "CCC" },
@@ -297,6 +313,8 @@ describe("testIndexerClient", () => {
       iterated: ["c", "b", "a"],
       one: { id: "a", symbol: "AAA" },
       meta: [],
+      narrowed: [{ id: "a", symbol: "AAA" }],
+      narrowedIds: [{ id: "b" }, { id: "a" }, { id: "c" }],
     });
   });
 });

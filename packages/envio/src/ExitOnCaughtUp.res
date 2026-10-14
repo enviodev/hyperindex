@@ -13,6 +13,12 @@ let run = async (state: IndexerState.t) => {
       switch state->IndexerState.onExit {
       | Some(onExit) => onExit()
       | None =>
+        // Best effort: calls still queued when the deadline passes are lost,
+        // as delivery is at-most-once.
+        switch state->IndexerState.sidecarSender {
+        | Some(sender) => await sender->SidecarSender.flush(~timeoutMs=5_000)
+        | None => ()
+        }
         Logging.info("Exiting with success")
         if Worker.isEnabled {
           Worker.exitAfterReporting(~metrics=state->IndexerState.toMetrics)
