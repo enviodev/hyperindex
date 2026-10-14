@@ -75,6 +75,7 @@ import { fetchMappingPackages, missingMappingPackages } from "./toolchain.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
 import { runSyncCounted } from "./stats.ts";
+import { registerSlots } from "./register-slots.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
 const REGEX_SHIM_URL = new URL("./assemblyscript-regex.ts", import.meta.url).href;
@@ -539,6 +540,17 @@ type ChainPasses = {
 };
 const chainPasses = new Map<number, ChainPasses>();
 
+if (process.env.ENVIO_SUBGRAPH_LOG_MEMORY) {
+  const t = setInterval(() => {
+    let running = 0;
+    for (const p of chainPasses.values()) running += p.running.length;
+    const m = process.memoryUsage();
+    // eslint-disable-next-line no-console
+    console.log(`[mem] heap=${Math.round(m.heapUsed / 1e6)}MB ext=${Math.round(m.external / 1e6)}MB ab=${Math.round(m.arrayBuffers / 1e6)}MB passes=${running} inflight=${registerInFlight.size} cache=${registerCache.size} missers=${missers.size} slots=${JSON.stringify(registerSlots.stats())}`);
+  }, 5000);
+  t.unref();
+}
+
 /** Passes start in about the order of their events, so this mostly appends. */
 function insertByPosition<T extends { position: number }>(list: T[], item: T) {
   let at = list.length;
@@ -595,6 +607,7 @@ function onRegisterMiss(scope: Scope, key: string) {
     if (earlier) {
       (scope.waitedKeys ??= new Set()).add(key);
       (scope.awaiting ??= []).push(earlier.done);
+      scope.waitsOnPass = true;
       throw REGISTER_SUSPEND;
     }
   }
@@ -617,7 +630,8 @@ async function rerunProvisional(scope: Scope): Promise<boolean> {
   if (!pass?.provisional) return false;
   pass.provisional = false;
   scope.writes = undefined;
-  await earlierPassesSettled(pass);
+  const settled = earlierPassesSettled(pass);
+  await (scope.slot ? scope.slot.pause(settled) : settled);
   return true;
 }
 
@@ -663,7 +677,10 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
           "Please open an issue: https://github.com/enviodev/hyperindex/issues",
       );
     }
-    await Promise.all(awaiting);
+    const everything = Promise.all(awaiting);
+    const pausing = scope.waitsOnPass === true;
+    scope.waitsOnPass = false;
+    await (pausing && scope.slot ? scope.slot.pause(everything) : everything);
   }
   throw new Error(
     `Envio Subgraph replayed a mapping's dataSource.create() pass ${maxRegisterRounds} times ` +
@@ -1188,12 +1205,14 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             if (!owns(event) || !live(event)) return;
             await primeOnceHandlers(event.chainId, context);
             const scope = makeScope(event, context, "register");
+            scope.slot = await registerSlots.acquire(scope.position ?? 0);
             const { pass, settle } = startRegisterPass(event.chainId, scope.position ?? 0);
             scope.pass = pass;
             try {
               await runRegisterRounds(scope, () => fn(makeEvent(event)));
             } finally {
               settle();
+              scope.slot?.release();
             }
           },
         );
@@ -1266,12 +1285,14 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           if (kind !== null && !callInputDecodes(kind, event.params.callInput)) return;
           await primeOnceHandlers(event.chainId, context);
           const scope = callScope(event, context, "register");
+          scope.slot = await registerSlots.acquire(scope.position ?? 0);
           const { pass, settle } = startRegisterPass(event.chainId, scope.position ?? 0);
           scope.pass = pass;
           try {
             await runRegisterRounds(scope, () => run(event, make(event)));
           } finally {
             settle();
+            scope.slot?.release();
           }
         });
       }
