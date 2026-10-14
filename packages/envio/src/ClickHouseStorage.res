@@ -780,7 +780,13 @@ let make = (
       ->Option.map(row => {
         row.firstEventBlock = meta.firstEventBlockNumber
         row.bufferBlock = meta.latestFetchedBlockNumber
-        row.readyAt = meta.timestampCaughtUpToHeadOrEndblock->Null.map(Date.getTime)
+        // A chain that caught up never un-catches up: metadata goes out on a
+        // throttle of its own, and a snapshot taken before the ready stamp can
+        // land after it.
+        switch meta.timestampCaughtUpToHeadOrEndblock->Null.toOption {
+        | Some(readyAt) => row.readyAt = Null.make(readyAt->Date.getTime)
+        | None => ()
+        }
         row.isHyperSync = meta.isHyperSync
         row
       })
