@@ -13,7 +13,7 @@ const sidecar = {
       process.env.ENVIO_GRAPHQL_URL,
     ].join(" ");
     console.log(
-      `fake sidecar started entities=${entities} config=${process.env.ENVIO_CONFIG} pid=${process.pid} env=${env}`
+      `fake sidecar started entities=${entities} config=${process.env.ENVIO_CONFIG} cwd=${process.cwd()} pid=${process.pid} env=${env}`
     );
     return {
       internalPort: 9901,
