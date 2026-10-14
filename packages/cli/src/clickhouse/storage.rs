@@ -43,6 +43,12 @@ pub struct Settings {
 /// stand.
 const VERSION_FENCE: u64 = 1 << 32;
 
+fn unix_micros() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_micros() as u64)
+}
+
 #[derive(Default)]
 struct Chains {
     /// Each chain's frontier as its row last landed. Everything else about a
@@ -353,12 +359,11 @@ impl Storage {
         ))
         .await;
         // Read before the reset empties it: a previous run's commit still in
-        // flight lands in the tables built here, and its rows must lose.
-        let previous_version = if self.has_table(CHAINS_TABLE).await? {
-            self.read_version().await?
-        } else {
-            0
-        };
+        // flight lands in the tables built here, and its rows must lose. A
+        // table an older envio built has no version to read, and one a reset
+        // dropped none at all; the clock, in microseconds, is past any
+        // version a run counts up to one batch at a time.
+        let previous_version = self.read_version().await.unwrap_or(0).max(unix_micros());
         self.reset_database(topology).await?;
         self.client
             .statement(format!(
@@ -429,6 +434,19 @@ impl Storage {
             ))
             .await?;
         Ok(count.trim() != "0")
+    }
+
+    /// Whether any batch landed here: every one writes the checkpoints it
+    /// covers, which nothing prunes.
+    pub async fn holds_batches(&self) -> Result<bool> {
+        let answer = self
+            .client
+            .statement(format!(
+                "SELECT count() > 0 FROM {} FORMAT TabSeparated",
+                self.table_ref(CHECKPOINTS_TABLE)
+            ))
+            .await?;
+        Ok(answer.trim() == "1")
     }
 
     /// The instance of the initialize that built the database, if one finished
@@ -641,6 +659,47 @@ impl Storage {
         if committed.is_empty() {
             return Ok(());
         }
+        let mut missing = self.missing_checkpoints(&committed).await?;
+        // A replica answering for the first time since a restart can still be
+        // fetching what another took. Waiting on its fetches is best effort:
+        // what it still lacks afterwards is refused all the same.
+        if !missing.is_empty() && self.topology().replicated {
+            let synced = self
+                .client
+                .statement(format!(
+                    "SYSTEM SYNC REPLICA {} LIGHTWEIGHT",
+                    self.table_ref(CHECKPOINTS_TABLE)
+                ))
+                .await;
+            if let Err(error) = synced {
+                (self.client.warn)(&format!(
+                    "Couldn't wait for the ClickHouse replica to fetch the checkpoints: {error:#}"
+                ));
+            }
+            missing = self.missing_checkpoints(&committed).await?;
+        }
+        if !missing.is_empty() {
+            bail!(
+                "ClickHouse database \"{}\" doesn't hold batches Postgres committed: {}. A \
+                 replica still catching up holds them once it has: start again then, or point \
+                 ENVIO_CLICKHOUSE_HOST at the node that took the writes. Otherwise ClickHouse \
+                 lost them after taking them, or was restored from an older backup: index from \
+                 scratch, or point ENVIO_CLICKHOUSE_DATABASE at the database that holds them.",
+                self.database(),
+                missing
+                    .iter()
+                    .map(|(chain_id, checkpoint_id)| {
+                        format!("chain {chain_id} through checkpoint {checkpoint_id}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        Ok(())
+    }
+
+    /// Which of the chains' committed checkpoints the table doesn't hold.
+    async fn missing_checkpoints(&self, committed: &[(i64, i64)]) -> Result<Vec<(i64, i64)>> {
         let answer = self
             .client
             .statement(format!(
@@ -670,23 +729,11 @@ impl Storage {
                     .with_context(|| format!("Unexpected checkpoint row {line:?}"))
             })
             .collect::<Result<HashSet<_>>>()?;
-        let missing = committed
+        Ok(committed
             .iter()
+            .copied()
             .filter(|chain| !held.contains(chain))
-            .map(|(chain_id, checkpoint_id)| {
-                format!("chain {chain_id} through checkpoint {checkpoint_id}")
-            })
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            bail!(
-                "ClickHouse database \"{}\" is missing batches Postgres committed: {}. It lost \
-                 them after taking them, or was restored from an older backup. Index from \
-                 scratch, or point ENVIO_CLICKHOUSE_DATABASE at the database that holds them.",
-                self.database(),
-                missing.join(", ")
-            );
-        }
-        Ok(())
+            .collect())
     }
 
     /// Takes the chains' state from what Postgres committed, frontier first

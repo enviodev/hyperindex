@@ -390,9 +390,16 @@ impl Storage {
             None => None,
         };
         if !self.postgres.is_initialized().await? {
-            return Ok(match built {
-                Some(_) => Holding::Stranded,
-                None => Holding::Nothing,
+            // An initialize that failed in Postgres leaves a ClickHouse built
+            // for it, which holds no batch to strand.
+            let holds_batches = match (&self.clickhouse, &built) {
+                (Some(clickhouse), Some(_)) => clickhouse.holds_batches().await?,
+                _ => false,
+            };
+            return Ok(if holds_batches {
+                Holding::Stranded
+            } else {
+                Holding::Nothing
             });
         }
         if self.clickhouse.is_none() {
@@ -407,19 +414,17 @@ impl Storage {
     /// Both stores start from nothing. Each is checked before either is
     /// touched, so a refusal leaves both as they were.
     ///
-    /// ClickHouse last: its record is written once all of it is in place, so a
-    /// ClickHouse that fails behind Postgres has none of this initialize's,
-    /// which the next start refuses as diverged.
+    /// ClickHouse first: what a user writes into its tables — a `ttl`, an
+    /// `orderBy` — only its server checks, and a table it refuses then leaves
+    /// Postgres untouched. Postgres failing behind it leaves a ClickHouse that
+    /// holds no batch, which the next start sets up again.
     pub async fn initialize(&self, input: Initialize) -> Result<()> {
         self.postgres.check_schema_for_initialize().await?;
         if let Some(clickhouse) = &self.clickhouse {
             clickhouse.check_for_initialize().await?;
+            clickhouse.initialize(&input).await?;
         }
-        self.postgres.initialize(&input).await?;
-        match &self.clickhouse {
-            Some(clickhouse) => clickhouse.initialize(&input).await,
-            None => Ok(()),
-        }
+        self.postgres.initialize(&input).await
     }
 
     /// Resumes Postgres, and then ClickHouse to what Postgres committed: a

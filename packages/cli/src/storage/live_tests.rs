@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 
-use super::types::{Addresses, ChainConfig, Frontier, Progress, Sequence};
+use super::types::{Addresses, ChainConfig, Checkpoints, Frontier, Progress, Sequence};
 use super::{Batch, EffectCacheWrite, Holding, Initialize, Rows, Storage, Table};
 use crate::clickhouse;
 use crate::postgres;
@@ -15,6 +15,27 @@ use crate::postgres::param::Param;
 struct Live {
     storage: Storage,
     name: String,
+}
+
+/// An initialize of chain 1 with `tables`.
+fn initialize_with(tables: Vec<Arc<Table>>) -> Initialize {
+    Initialize {
+        sequence: Sequence::SharedAcrossChains,
+        tables,
+        partitions: Vec::new(),
+        enums: Vec::new(),
+        chains: vec![ChainConfig {
+            id: 1,
+            ecosystem: "evm".to_string(),
+            start_block: 0,
+            end_block: None,
+            max_reorg_depth: 200,
+        }],
+        envio_info: "{\"config\":1}".to_string(),
+        instance: super::new_instance(),
+        contract_names: Vec::new(),
+        addresses: Addresses::default(),
+    }
 }
 
 impl Live {
@@ -55,23 +76,7 @@ impl Live {
 
     async fn initialize(&self) {
         self.storage
-            .initialize(Initialize {
-                sequence: Sequence::SharedAcrossChains,
-                tables: Vec::new(),
-                partitions: Vec::new(),
-                enums: Vec::new(),
-                chains: vec![ChainConfig {
-                    id: 1,
-                    ecosystem: "evm".to_string(),
-                    start_block: 0,
-                    end_block: None,
-                    max_reorg_depth: 200,
-                }],
-                envio_info: "{\"config\":1}".to_string(),
-                instance: super::new_instance(),
-                contract_names: Vec::new(),
-                addresses: Addresses::default(),
-            })
+            .initialize(initialize_with(Vec::new()))
             .await
             .unwrap();
         self.storage
@@ -154,20 +159,45 @@ async fn a_clickhouse_built_alongside_another_postgres_schema_has_diverged() {
 }
 
 /// ClickHouse only ever holds what Postgres committed, so one whose Postgres
-/// schema is gone holds data nothing says how far it got.
+/// schema is gone holds data nothing says how far it got. One that took no
+/// batch yet holds nothing to lose.
 #[tokio::test]
 #[ignore = "needs a Postgres and a ClickHouse server"]
 async fn a_clickhouse_without_its_postgres_is_stranded() {
     let live = Live::new("stranded");
     live.initialize().await;
     live.storage.postgres.reset().await.unwrap();
+    let before_any_batch = live.storage.holding().await;
 
-    let holding = live.storage.holding().await;
+    live.initialize().await;
+    live.storage
+        .write_batch(Batch {
+            frontier: Frontier {
+                chain_ids: vec![1],
+                checkpoint_ids: vec![1],
+            },
+            checkpoints: Checkpoints {
+                ids: vec![1],
+                chain_ids: vec![1],
+                block_numbers: vec![10],
+                block_hashes: vec![Some("0x10".to_string())],
+                events_processed: vec![1],
+                keeps_history: vec![true],
+            },
+            ..Batch::default()
+        })
+        .await
+        .unwrap();
+    live.storage.postgres.reset().await.unwrap();
+    let after_a_batch = live.storage.holding().await;
 
     live.drop_all().await;
     assert_eq!(
-        holding.map_err(|error| format!("{error:#}")),
-        Ok(Holding::Stranded)
+        (
+            before_any_batch.map_err(|error| format!("{error:#}")),
+            after_a_batch.map_err(|error| format!("{error:#}"))
+        ),
+        (Ok(Holding::Nothing), Ok(Holding::Stranded))
     );
 }
 
@@ -248,6 +278,48 @@ async fn clickhouse_commits_what_postgres_committed_whatever_its_caches_do() {
         (written.is_err(), frontiers),
         (true, ("1".to_string(), "1".to_string()))
     );
+}
+
+/// What a user writes into a ClickHouse table's definition — a `ttl`, an
+/// `orderBy` — only the server checks. ClickHouse is built first, so a table it
+/// refuses leaves Postgres as it was, and the next start sets both up again
+/// rather than refusing them as diverged.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn a_table_clickhouse_refuses_leaves_postgres_unset() {
+    let live = Live::new("refused_table");
+    let refused = live
+        .storage
+        .clickhouse
+        .as_ref()
+        .unwrap()
+        .register(clickhouse::table::ClickHouseTableInput {
+            ttl: Some("no_such_column + INTERVAL 1 DAY".to_string()),
+            ..clickhouse::table::test_support::entity_input(
+                "Account",
+                vec![clickhouse::table::test_support::column("id", "String")],
+            )
+        })
+        .unwrap();
+    let table = Arc::new(Table {
+        name: "Account".to_string(),
+        postgres: None,
+        clickhouse: Some(Arc::new(refused)),
+    });
+
+    let initialized = live
+        .storage
+        .initialize(initialize_with(vec![table]))
+        .await
+        .is_ok();
+    let holding = live
+        .storage
+        .holding()
+        .await
+        .map_err(|error| format!("{error:#}"));
+
+    live.drop_all().await;
+    assert_eq!((initialized, holding), (false, Ok(Holding::Nothing)));
 }
 
 /// Every store is checked before any is reset, as before an initialize: a

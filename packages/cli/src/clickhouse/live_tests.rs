@@ -780,6 +780,48 @@ async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
     );
 }
 
+/// A database an older envio built holds a chains table without the version
+/// column, and initializing over it is how a deployment upgrades.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn initializing_takes_over_a_database_an_older_envio_built() {
+    let live = Live::new();
+    live.execute(format!("CREATE DATABASE `{}`", live.database))
+        .await;
+    live.execute(format!(
+        "CREATE TABLE `{}`.envio_chains (chain_id Int32, checkpoint_id UInt64) ENGINE = \
+         MergeTree ORDER BY chain_id",
+        live.database
+    ))
+    .await;
+
+    let account = live.account();
+    let initialized = live
+        .storage
+        .initialize(&Initialize {
+            sequence: Sequence::SharedAcrossChains,
+            tables: vec![account],
+            partitions: Vec::new(),
+            enums: Vec::new(),
+            chains: vec![ChainConfig {
+                id: 1,
+                ecosystem: "evm".to_string(),
+                start_block: 0,
+                end_block: None,
+                max_reorg_depth: 200,
+            }],
+            envio_info: "{\"config\":1}".to_string(),
+            instance: "instance".to_string(),
+            contract_names: Vec::new(),
+            addresses: Addresses::default(),
+        })
+        .await
+        .map_err(|error| format!("{error:#}"));
+    let frontier = live.frontier().await;
+    live.drop_database().await;
+    assert_eq!((initialized, frontier), (Ok(()), "0".to_string()));
+}
+
 /// The same commit landing after the next process initialized afresh lands in
 /// the tables that process built, and must not claim the checkpoint over the
 /// rows it hasn't written yet either.
@@ -902,9 +944,11 @@ async fn a_resume_refuses_a_database_missing_a_batch_postgres_committed() {
     assert_eq!(
         resumed,
         Err(format!(
-            "Failed to resume ClickHouse storage: ClickHouse database \"{}\" is missing \
-             batches Postgres committed: chain 1 through checkpoint 2. It lost them after \
-             taking them, or was restored from an older backup. Index from scratch, or point \
+            "Failed to resume ClickHouse storage: ClickHouse database \"{}\" doesn't hold \
+             batches Postgres committed: chain 1 through checkpoint 2. A replica still catching \
+             up holds them once it has: start again then, or point ENVIO_CLICKHOUSE_HOST at the \
+             node that took the writes. Otherwise ClickHouse lost them after taking them, or was \
+             restored from an older backup: index from scratch, or point \
              ENVIO_CLICKHOUSE_DATABASE at the database that holds them.",
             live.database
         ))

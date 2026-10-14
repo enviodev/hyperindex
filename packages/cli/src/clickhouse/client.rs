@@ -137,6 +137,16 @@ fn idle_timeout_of(keep_alive: &str) -> Option<Duration> {
 
 impl Client {
     pub fn new(connection: Connection, tuning: Tuning, warn: Warn) -> Result<Self> {
+        // `localhost:8123` parses too, as a URL whose scheme is `localhost`.
+        let reachable = reqwest::Url::parse(&connection.url)
+            .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.has_host());
+        if !reachable {
+            bail!(
+                "ENVIO_CLICKHOUSE_HOST \"{}\" is not a URL the indexer can reach: give its scheme \
+                 and port, as in http://localhost:8123",
+                connection.url
+            );
+        }
         Ok(Self {
             http: RwLock::new(http_client(&tuning, POOL_IDLE_TIMEOUT)?),
             idle_timeout: Mutex::new(POOL_IDLE_TIMEOUT),
@@ -214,22 +224,13 @@ impl Client {
     /// out of the same memory or deadline again. One that timed out after
     /// reaching the server already spent the whole statement timeout.
     async fn post(&self, read: Read) -> Result<reqwest::Response> {
-        // A statement with external data names it in the URL and sends it as
-        // a form, so the statement itself moves to the URL too.
-        let (params, content_type, body) = if read.external.is_empty() {
-            (Vec::new(), None, Bytes::from(read.sql))
+        // External data goes as a form, and the statement with it: a body has
+        // to be one or the other.
+        let (content_type, body) = if read.external.is_empty() {
+            (None, Bytes::from(read.sql))
         } else {
-            let (boundary, form) = multipart(&read.external);
-            let mut params = vec![("query".to_string(), read.sql)];
-            for external in &read.external {
-                params.push((
-                    format!("{}_structure", external.name),
-                    EXTERNAL_STRUCTURE.to_string(),
-                ));
-                params.push((format!("{}_format", external.name), "RowBinary".to_string()));
-            }
+            let (boundary, form) = multipart(&read.sql, &read.external);
             (
-                params,
                 Some(format!("multipart/form-data; boundary={boundary}")),
                 Bytes::from(form),
             )
@@ -243,7 +244,6 @@ impl Client {
                 .post(&self.url)
                 .timeout(self.tuning.statement_timeout)
                 .query(&[("wait_end_of_query", "1")])
-                .query(&params)
                 .basic_auth(&self.username, Some(&self.password))
                 .body(body.clone());
             if let Some(content_type) = &content_type {
@@ -490,18 +490,40 @@ const NEVER_ERROR_CODES: &[u32] = &[
     516, // AUTHENTICATION_FAILED
 ];
 
-/// External data as the form ClickHouse reads it: a file part per table. The
-/// rows are binary, so the boundary is one none of them happens to contain.
-fn multipart(external: &[External]) -> (String, Vec<u8>) {
-    let contains = |rows: &[u8], boundary: &str| {
-        rows.windows(boundary.len())
+/// A statement and its external data as the form ClickHouse reads them: the
+/// statement and each table's description as fields, each table's rows as a
+/// file. The rows are binary, so the boundary is one nothing in the form
+/// happens to contain.
+fn multipart(sql: &str, external: &[External]) -> (String, Vec<u8>) {
+    let mut fields = vec![("query".to_string(), sql.to_string())];
+    for table in external {
+        fields.push((
+            format!("{}_structure", table.name),
+            EXTERNAL_STRUCTURE.to_string(),
+        ));
+        fields.push((format!("{}_format", table.name), "RowBinary".to_string()));
+    }
+    let contains = |bytes: &[u8], boundary: &str| {
+        bytes
+            .windows(boundary.len())
             .any(|window| window == boundary.as_bytes())
     };
     let boundary = (0..)
         .map(|attempt| format!("envio-external-data-{attempt}"))
-        .find(|boundary| !external.iter().any(|table| contains(&table.rows, boundary)))
+        .find(|boundary| {
+            !external.iter().any(|table| contains(&table.rows, boundary))
+                && !contains(sql.as_bytes(), boundary)
+        })
         .expect("an unbounded range always yields a boundary");
     let mut form = Vec::new();
+    for (name, value) in &fields {
+        form.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
     for table in external {
         form.extend_from_slice(
             format!(
@@ -764,6 +786,63 @@ mod tests {
                         .to_string()
                 ),
                 1
+            )
+        );
+    }
+
+    /// A load names its ids beside the statement, as a form. The statement
+    /// goes in the form too: a wide entity's spans kilobytes, more than a
+    /// proxy in front of the server may take in a URL.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_read_with_external_data_keeps_its_statement_out_of_the_url() {
+        let server =
+            MockClickHouse::answering_statements(Arc::new(|_: &str| (200, String::new()))).await;
+        let client = client_for(&server, 0);
+
+        client
+            .read_with(Read {
+                sql: "SELECT 1 WHERE 'a' IN envio_list_0".to_string(),
+                external: vec![External {
+                    name: "envio_list_0".to_string(),
+                    rows: b"\x01a".to_vec(),
+                }],
+            })
+            .await
+            .unwrap();
+
+        let (head, form) = (server.heads().concat(), server.statements_seen().concat());
+        assert_eq!(
+            (
+                head.contains("SELECT"),
+                [
+                    "name=\"query\"\r\n\r\nSELECT 1 WHERE 'a' IN envio_list_0\r\n",
+                    "name=\"envio_list_0_structure\"\r\n\r\nvalue String\r\n",
+                    "name=\"envio_list_0_format\"\r\n\r\nRowBinary\r\n",
+                    "filename=\"envio_list_0\"",
+                ]
+                .map(|part| form.contains(part)),
+            ),
+            (false, [true; 4])
+        );
+    }
+
+    /// A host given without its scheme would otherwise fail every request to
+    /// it, and only after the whole retry ladder.
+    #[test]
+    fn a_host_without_a_scheme_is_refused_up_front() {
+        let refused = Client::new(
+            connection("localhost:8123".to_string()),
+            Tuning::default(),
+            Arc::new(|_: &str| {}),
+        )
+        .err()
+        .map(|error| format!("{error:#}"));
+        assert_eq!(
+            refused,
+            Some(
+                "ENVIO_CLICKHOUSE_HOST \"localhost:8123\" is not a URL the indexer can reach: \
+                 give its scheme and port, as in http://localhost:8123"
+                    .to_string()
             )
         );
     }

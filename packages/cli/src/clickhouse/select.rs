@@ -187,17 +187,23 @@ fn integer_key(canonical: &str) -> String {
     }
 }
 
-/// How many fractional digits a number spells, which a Decimal has to keep to
-/// compare it rather than a rounded neighbour.
-fn fraction_digits(text: &str) -> u32 {
+/// The scale a value is compared at against a Decimal column of `column_scale`:
+/// wide enough to keep every fractional digit the value spells, so it isn't
+/// compared as a rounded neighbour, as far as a Decimal256 has room beside its
+/// whole part. A value cut there is past what any such column holds anyway.
+fn decimal_scale(text: &str, column_scale: u32) -> u32 {
     let (mantissa, exponent) = match text.split_once(['e', 'E']) {
         Some((mantissa, exponent)) => (mantissa, exponent.parse::<i64>().unwrap_or(0)),
         None => (text, 0),
     };
-    let fraction = mantissa
+    let (whole, fraction) = mantissa
+        .trim_start_matches(['-', '+'])
         .split_once('.')
-        .map_or(0, |(_, fraction)| fraction.len() as i64);
-    (fraction - exponent).clamp(0, MAX_DECIMAL_SCALE.into()) as u32
+        .unwrap_or((mantissa.trim_start_matches(['-', '+']), ""));
+    let whole_digits = (whole.trim_start_matches('0').len() as i64 + exponent).max(0);
+    let fraction_digits = (fraction.len() as i64 - exponent).max(0);
+    let room = (i64::from(MAX_DECIMAL_SCALE) - whole_digits).max(0);
+    i64::from(column_scale).max(fraction_digits).min(room) as u32
 }
 
 /// One element as the column's own type reads it.
@@ -232,7 +238,7 @@ fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> R
                 format!(
                     "toDecimal256({}, {})",
                     literal(text),
-                    (*scale).max(fraction_digits(text))
+                    decimal_scale(text, *scale)
                 )
             }
             _ => number(text)?.to_string(),
@@ -705,6 +711,27 @@ mod tests {
                 Some("`0x0g` is not hex bytes to filter by".to_string()),
                 Some("`yes` is not a boolean to filter by".to_string()),
             ]
+        );
+    }
+
+    /// A Decimal256 holds 76 digits between its whole part and its scale, so
+    /// a value keeps every fractional digit it has only as far as its whole
+    /// part leaves room: a scale past that is refused by the server, failing
+    /// the whole load.
+    #[test]
+    fn a_decimal_value_keeps_its_digits_as_far_as_a_decimal_holds_them() {
+        assert_eq!(
+            [
+                ("1.555", 2),
+                ("1.5", 2),
+                (&format!("1.{}", "5".repeat(80)), 2),
+                ("12345678901234567.5", 60),
+                ("1.5e3", 2),
+                ("15e-3", 2),
+                ("-0.5", 2),
+            ]
+            .map(|(text, scale)| decimal_scale(text, scale)),
+            [3, 2, 75, 59, 2, 3, 2]
         );
     }
 
