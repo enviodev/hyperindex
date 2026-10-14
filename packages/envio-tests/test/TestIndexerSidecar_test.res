@@ -128,3 +128,29 @@ describe("context.sidecar through a test indexer", () => {
 });
 `,
 )
+
+// Without `sidecar:` in config.yaml, `context.sidecar` is the message saying
+// what to add, so any call on it is a type error.
+let _ = InternalTestIndexer.fromUserApi(
+  ~configYaml=`
+name: test-indexer-sidecar-not-configured
+chains:
+  - id: 1
+    start_block: 1
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "NewGravatar" }, async ({ context }) => {
+  const message: "context.sidecar is not available. Add \`sidecar: { contract, entry }\` in config.yaml and run 'envio codegen'" =
+    context.sidecar;
+  // @ts-expect-error no sidecar is configured
+  context.sidecar.notify({ text: message });
+});
+`,
+)
