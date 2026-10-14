@@ -10,6 +10,12 @@ let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.
 // live register pass and its contract calls until the response is merged, so
 // the pool of events ready to process is sized for that (CrossChainState).
 let subgraphMode = ref(false)
+
+// Most events with a register pass one subgraph response may hold before it is
+// cut after a block and the rest fetched again. 0 turns the cut off; unset, it
+// follows what the register passes cost (ChainFetching).
+let subgraphRegisterChunk =
+  envSafe->EnvSafe.get("ENVIO_SUBGRAPH_REGISTER_CHUNK", S.option(S.int))
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
 
 // Most parallel in-flight queries a single chain may have at once, across all
