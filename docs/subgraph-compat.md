@@ -54,7 +54,7 @@ by name. Newer than 0.0.9 is a §7 error.
 | Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
 | A template sharing a data source's name | graph-node keeps the two namespaces apart; envio has one, and one contract with a static address plus dynamically registered ones is the same thing — folded together, events unioned. The handlers stay apart: the data source's run for its static address, the template's for the addresses it created | ✅ |
 | Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass, which resolves host ops by suspend-and-replay of its own (§5) so a mapping can read a contract before deciding what to create. A new address's events in the block that created it run after that block's other events and block handlers, as graph-node runs a new data source's creation-block triggers — a constructor's logs precede the factory event that announces it | ✅ |
-| File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
+| File data sources (0.0.7, `kind: file/ipfs` / `file/arweave`) | **refused at translation** (§7): the runtime has no file-data-source path yet (a template created per CID whose handler gets the content, writing to entities only it can see). Not to be confused with `ipfs.cat`/`arweave` host calls, which are emulated (§4) | ❌ |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
 | `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` with a non-empty context → §7 error (nowhere to keep it per created address) | ⚠️ |
@@ -465,6 +465,7 @@ refuse instead, so behavior never silently diverges:
 | Feature | Detected |
 |---|---|
 | `callHandlers` | translation (manifest) |
+| File data sources (`file/ipfs`, `file/arweave`) | translation (manifest) |
 | `blockHandlers` with `filter: call` | translation (manifest) |
 | `blockHandlers` on a template | translation (manifest) |
 | `graft` | translation (manifest) |
