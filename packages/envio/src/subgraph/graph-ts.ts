@@ -693,6 +693,11 @@ export class Value {
   toBigInt(): BigInt_ {
     if (this.data instanceof BigInt_) return this.data;
     if (typeof this.data === "bigint") return new BigInt_(this.data);
+    // `Value.fromBigInt(x!)` of a null `x` (a mapping asking an event for a
+    // key it misspelt, GMX's "callbakGasLimit"): the `!` doesn't stop it in
+    // graph-node, the Value carries a null pointer, and the BigInt behind it
+    // reads as no bytes, i.e. 0.
+    if (this.data == null) return BigInt_.zero();
     return BigInt_.fromString(String(this.data));
   }
   toBigIntArray(): BigInt_[] {
