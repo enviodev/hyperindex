@@ -831,12 +831,17 @@ pub fn build_lookup_table(
     database: &str,
     history: &HistorySchema,
     chain_id_mode: ChainIdMode,
-) -> Result<[String; 2]> {
+) -> Result<[String; 4]> {
+    // Filled under another name and renamed into place: a resume takes an
+    // existing lookup table as complete, so one cut short has to be invisible.
+    let building = format!("{}_build", lookup_table_name(entity));
+    let db = quoted(database);
     Ok([
-        create_lookup_table(entity, database, history, chain_id_mode)?,
+        format!("DROP TABLE IF EXISTS {db}.{} SYNC", quoted(&building)),
+        create_lookup_table(entity, database, &building, history, chain_id_mode)?,
         format!(
             "INSERT INTO {db}.{} ({}, {}, {})\nSELECT {} AS {}, {}, {}\nFROM {db}.{} FINAL",
-            quoted(&lookup_table_name(entity)),
+            quoted(&building),
             quoted(LOOKUP_KEY_COLUMN),
             current_columns(entity, history).join(", "),
             quoted(IS_DELETED_COLUMN),
@@ -845,7 +850,11 @@ pub fn build_lookup_table(
             current_columns(entity, history).join(", "),
             quoted(IS_DELETED_COLUMN),
             quoted(&entity.name),
-            db = quoted(database),
+        ),
+        format!(
+            "RENAME TABLE {db}.{} TO {db}.{}",
+            quoted(&building),
+            quoted(&lookup_table_name(entity))
         ),
     ])
 }
@@ -853,6 +862,7 @@ pub fn build_lookup_table(
 fn create_lookup_table(
     entity: &EntitySpec,
     database: &str,
+    table: &str,
     history: &HistorySchema,
     chain_id_mode: ChainIdMode,
 ) -> Result<String> {
@@ -867,7 +877,7 @@ fn create_lookup_table(
     Ok(format!(
         "CREATE TABLE IF NOT EXISTS {}.{} (\n  {}\n)\nENGINE = EmbeddedRocksDB\nPRIMARY KEY {}",
         quoted(database),
-        quoted(&lookup_table_name(entity)),
+        quoted(table),
         definitions.join(",\n  "),
         quoted(LOOKUP_KEY_COLUMN),
     ))
