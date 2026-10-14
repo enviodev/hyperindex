@@ -152,3 +152,99 @@ describe("Webhook listener", () => {
     ))
   })
 })
+
+describe("Webhook metrics", () => {
+  Async.it("counts accepted webhooks by name and refusals by name and reason", async t => {
+    let ready = ref(false)
+    let (listener, _) = await start(
+      ~chainIds=[ChainId.fromInt(1), ChainId.fromInt(2)],
+      ~secret="s3cret",
+      ~isReady=_ => ready.contents,
+    )
+    let secret = dict{"x-envio-webhook-secret": "s3cret", "x-envio-chain-id": "1"}
+    // Not ready: retried by `emit`, so not a rejection.
+    let _ = await post(listener.url, ~name="swapPriced", ~body=priced, ~headers=secret)
+    ready := true
+    let _ = await post(listener.url, ~name="swapPriced", ~body=priced, ~headers=secret)
+    let _ = await post(
+      listener.url,
+      ~name="swapPriced",
+      ~body=priced,
+      ~headers=dict{
+        "x-envio-webhook-secret": "s3cret",
+        "x-envio-chain-id": "1",
+        "idempotency-key": "k",
+      },
+    )
+    // The same key again is answered from memory, not received twice.
+    let _ = await post(
+      listener.url,
+      ~name="swapPriced",
+      ~body=priced,
+      ~headers=dict{
+        "x-envio-webhook-secret": "s3cret",
+        "x-envio-chain-id": "1",
+        "idempotency-key": "k",
+      },
+    )
+    let _ = await post(listener.url, ~name="custom", ~body=priced, ~headers=secret)
+    let _ = await post(
+      listener.url,
+      ~name="swapPriced",
+      ~body={"swapId": "s1", "usd": "lots"}->Utils.magic,
+      ~headers=secret,
+    )
+    let _ = await post(
+      listener.url,
+      ~name="swapPriced",
+      ~body=priced,
+      ~headers=dict{"x-envio-webhook-secret": "wrong", "x-envio-chain-id": "1"},
+    )
+    let _ = await post(listener.url, ~name="sidecar.ack", ~body=priced, ~headers=secret)
+    let _ = await post(
+      listener.url,
+      ~name="swapPriced",
+      ~body=priced,
+      ~headers=dict{"x-envio-webhook-secret": "s3cret", "x-envio-chain-id": "7"},
+    )
+    await listener.close()
+
+    t.expect(
+      listener.stats->WebhookListener.renderMetrics(~contract=Some(contract)),
+    ).toBe(`# HELP envio_webhooks_received_total Webhooks from the sidecar the indexer accepted onto a chain's queue, by webhook. A resent idempotency key is not counted again.
+# TYPE envio_webhooks_received_total counter
+envio_webhooks_received_total{webhook="custom"} 1
+envio_webhooks_received_total{webhook="swapPriced"} 2
+
+# HELP envio_webhooks_rejected_total Webhooks the indexer refused for good, by webhook and reason (unauthorized, reserved, chain, schema). The 503 while it starts is retried by the sidecar and not counted.
+# TYPE envio_webhooks_rejected_total counter
+envio_webhooks_rejected_total{webhook="sidecar.ack",reason="reserved"} 1
+envio_webhooks_rejected_total{webhook="swapPriced",reason="chain"} 1
+envio_webhooks_rejected_total{webhook="swapPriced",reason="schema"} 1
+envio_webhooks_rejected_total{webhook="swapPriced",reason="unauthorized"} 1`)
+  })
+
+  Async.it("starts every contract webhook at zero and goes on the indexer's /metrics", async t => {
+    let (listener, _) = await start()
+    let metrics = Some(TestChainMetrics.emptySnapshot)
+    let body = await Server.collectMetrics(
+      ~metrics,
+      ~webhooks=Some(listener.stats),
+      ~contract=Some(contract),
+    )
+    let without = await Server.collectMetrics(~metrics, ~webhooks=None)
+    await listener.close()
+
+    t.expect((body, without)).toEqual((
+      Metrics.collect(~metrics) ++ `
+# HELP envio_webhooks_received_total Webhooks from the sidecar the indexer accepted onto a chain's queue, by webhook. A resent idempotency key is not counted again.
+# TYPE envio_webhooks_received_total counter
+envio_webhooks_received_total{webhook="swapPriced"} 0
+
+# HELP envio_webhooks_rejected_total Webhooks the indexer refused for good, by webhook and reason (unauthorized, reserved, chain, schema). The 503 while it starts is retried by the sidecar and not counted.
+# TYPE envio_webhooks_rejected_total counter
+`,
+      Metrics.collect(~metrics),
+    ))
+  })
+})

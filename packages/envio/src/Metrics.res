@@ -234,6 +234,27 @@ let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds, ~tar
         ),
         // Every worker holds its own queue, bounded the same.
         queueMax: stats->Array.reduce(0, (acc, s) => acc + s.queueMax),
+        deliverySeconds: {
+          let merged = Dict.make()
+          stats->Array.forEach(s =>
+            s.deliverySeconds->Dict.forEachWithKey((histogram, key) =>
+              merged->Dict.set(
+                key,
+                switch merged->Utils.Dict.dangerouslyGetNonOption(key) {
+                | Some(sum) => SidecarSender.addHistograms(sum, histogram)
+                | None => histogram
+                },
+              )
+            )
+          )
+          merged
+        },
+        commitToAckSeconds: stats
+        ->Array.map(s => s.commitToAckSeconds)
+        ->Array.reduce(
+          SidecarSender.makeHistogram(SidecarSender.commitToAckBuckets),
+          SidecarSender.addHistograms,
+        ),
       })
     },
     rollbackEventsCount: sumFloat(s => s.rollbackEventsCount),
@@ -365,6 +386,30 @@ let seriesOpt = (
 let single = (b: builder, ~name, ~help, ~kind, ~value) => {
   b->block(~name, ~help, ~kind)
   b->sample(~name, ~value)
+}
+
+// A histogram family, one set of `_bucket`/`_sum`/`_count` samples per entry.
+// Entry labels are pre-rendered without braces (`kind="calls"`), or "".
+let histograms = (b: builder, ~name, ~help, ~entries: array<(string, SidecarSender.histogram)>) => {
+  b->block(~name, ~help, ~kind="histogram")
+  entries->Array.forEach(((labels, h: SidecarSender.histogram)) => {
+    let withLe = le => labels === "" ? `{le="${le}"}` : `{${labels},le="${le}"}`
+    let cumulative = ref(0)
+    h.buckets->Array.forEachWithIndex((upper, i) => {
+      cumulative := cumulative.contents + h.counts->Array.getUnsafe(i)
+      b->sample(
+        ~name=name ++ "_bucket",
+        ~labels=withLe(upper->Float.toString),
+        ~value=cumulative.contents->Int.toFloat,
+      )
+    })
+    b->sample(~name=name ++ "_bucket", ~labels=withLe("+Inf"), ~value=h.count->Int.toFloat)
+    let labels = labels === "" ? "" : `{${labels}}`
+
+    // Unrounded: `formatValue` keeps 3 decimals, too coarse for loopback POSTs.
+    b.out = b.out ++ "\n" ++ name ++ "_sum" ++ labels ++ " " ++ h.sum->Float.toString
+    b->sample(~name=name ++ "_count", ~labels, ~value=h.count->Int.toFloat)
+  })
 }
 
 let renderMetrics = (b: builder, metrics: t) => {
@@ -812,6 +857,18 @@ let renderMetrics = (b: builder, metrics: t) => {
       ~help="Rollback notices the sidecar acknowledged.",
       ~kind="counter",
       ~value=sidecar.rollbacksSent->Int.toFloat,
+    )
+    b->histograms(
+      ~name="envio_sidecar_delivery_seconds",
+      ~help="How long one POST to the sidecar took until its answer, by kind (calls, rollback) and outcome (delivered; retry: refused connection, timeout, 5xx or 429, sent again; refused: any other 4xx, dropped).",
+      ~entries=sidecar.deliverySeconds
+      ->Dict.toArray
+      ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b)),
+    )
+    b->histograms(
+      ~name="envio_sidecar_commit_to_ack_seconds",
+      ~help="From the write that committed a sidecar call to the sidecar accepting it, queueing and retries included.",
+      ~entries=[("", sidecar.commitToAckSeconds)],
     )
   | None => ()
   }
