@@ -824,6 +824,7 @@ let drainBatchRun = (state: t): Batch.t => {
   let checkpointItemsCount = []
   let checkpointEventsProcessed = []
   let registeredAddresses = []
+  let sidecarCalls = []
   all->Array.forEach(batch => {
     // Once one batch lands in rest, all later ones follow it, preserving order.
     if rest->Utils.Array.isEmpty && batch.history == history {
@@ -839,6 +840,7 @@ let drainBatchRun = (state: t): Batch.t => {
       checkpointItemsCount->Array.pushMany(batch.checkpointItemsCount)
       checkpointEventsProcessed->Array.pushMany(batch.checkpointEventsProcessed)
       registeredAddresses->Array.pushMany(batch.registeredAddresses)
+      sidecarCalls->Array.pushMany(batch.sidecarCalls)
     } else {
       rest->Array.push(batch)
     }
@@ -857,6 +859,7 @@ let drainBatchRun = (state: t): Batch.t => {
     checkpointItemsCount,
     checkpointEventsProcessed,
     registeredAddresses,
+    sidecarCalls,
   }
 }
 

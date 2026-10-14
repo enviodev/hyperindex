@@ -307,6 +307,22 @@ type GlobalConfig = Global extends { config: infer C extends IndexerConfigTypes 
   ? C
   : {};
 
+/** The `sidecar.contract` module's default export, bound by codegen. */
+type GlobalSidecar = Global extends { sidecar: infer C } ? C : undefined;
+
+/** `context.sidecar`: one method per contract function. Each returns the call
+ *  id at once and never waits for the sidecar. */
+type SidecarCallerOf<C> = C extends {
+  readonly kind: "envio.sidecarContract";
+  readonly functions: infer Functions;
+}
+  ? {
+      readonly [K in keyof Functions]: (
+        input: Functions[K] extends { readonly input: infer Input } ? Sury.Output<Input> : never,
+      ) => string;
+    }
+  : NotConfigured<"context.sidecar", "Add `sidecar: { contract, entry }`">;
+
 /** Error-message string returned by project-bound aliases when codegen has
  *  not run yet. Resolves to `string` so handler signatures stay assignable.
  *  Wording is package-manager-neutral — `envio init` lets users pick pnpm,
@@ -581,6 +597,10 @@ type BaseHandlerContext<Config extends IndexerConfigTypes = GlobalConfig, ChainI
     readonly id: ChainId;
     readonly isRealtime: boolean;
   };
+  /** Call the sidecar declared by `sidecar:` in config.yaml. A call returns its
+   *  id synchronously, is skipped in preload, and is delivered after the batch
+   *  commits. */
+  readonly sidecar: SidecarCallerOf<GlobalSidecar>;
 } & {
   readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
 };
@@ -2065,6 +2085,11 @@ type EntityChange<Config extends IndexerConfigTypes = GlobalConfig> = {
   /** Dynamic contract address registrations for this block. */
   readonly addresses?: {
     readonly sets?: readonly AddressRegistration[];
+  };
+  /** `context.sidecar` calls made in this block, in call order. `input` is the
+   *  JSON form the sidecar receives (bigint as a string). */
+  readonly sidecar?: {
+    readonly calls: readonly { readonly id: string; readonly fn: string; readonly input: unknown }[];
   };
 } & {
   readonly [K in keyof ConfigEntities<Config>]?: EntityChangeValue<

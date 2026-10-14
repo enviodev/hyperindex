@@ -107,8 +107,15 @@ export function defineSidecar<const Def extends SidecarContractDef>(def: Def): S
     }
     webhooks[name] = { body: toSchema(whDef.body) };
   }
-  return { kind: "envio.sidecarContract", functions, webhooks } as unknown as SidecarContract<Def>;
+  const contract = { kind: "envio.sidecarContract", functions, webhooks };
+  // `context.sidecar` binds to the contract through this slot rather than an
+  // import: an indexer has one sidecar, and handlers never import the contract.
+  // Keyed on globalThis so a second copy of this module still finds it.
+  (globalThis as Record<symbol, unknown>)[CURRENT_CONTRACT] = contract;
+  return contract as unknown as SidecarContract<Def>;
 }
+
+const CURRENT_CONTRACT = Symbol.for("envio.sidecarContract");
 
 export const isSidecarContract = (value: unknown): value is SidecarContract =>
   isPlainObject(value) && value.kind === "envio.sidecarContract";

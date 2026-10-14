@@ -98,11 +98,26 @@ let handleWriteBatch = (
   ~config: Config.t,
   ~updatedEntities: array<Persistence.updatedEntity>,
   ~registeredAddresses: array<AddressRows.staged>,
+  ~sidecarCalls: array<SidecarCall.t>,
   ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<ChainId.t>,
   ~checkpointBlockNumbers: array<int>,
   ~checkpointEventsProcessed: array<int>,
 ): unit => {
+  let sidecarCallsByCheckpoint: dict<
+    array<{
+      "id": string,
+      "fn": string,
+      "input": JSON.t,
+    }>,
+  > = Dict.make()
+  sidecarCalls->Array.forEach(({id, fn, input, checkpointId}) =>
+    sidecarCallsByCheckpoint->Utils.Dict.push(
+      checkpointId->BigInt.toString,
+      {"id": id, "fn": fn, "input": input},
+    )
+  )
+
   // Group entity changes by checkpointId
   // checkpointId -> entityName -> entityChange
   let changesByCheckpoint: dict<dict<entityChange>> = Dict.make()
@@ -206,6 +221,10 @@ let handleWriteBatch = (
         rendered->(Utils.magic: array<{"address": Address.t, "contract": string}> => unknown),
       )
       change->Dict.set("addresses", addressesObj->(Utils.magic: dict<unknown> => unknown))
+    | None => ()
+    }
+    switch sidecarCallsByCheckpoint->Utils.Dict.dangerouslyGetNonOption(checkpointKey) {
+    | Some(calls) => change->Dict.set("sidecar", {"calls": calls}->Utils.magic)
     | None => ()
     }
     switch changesByCheckpoint->Dict.get(checkpointKey) {
@@ -612,6 +631,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
       ~config,
       ~updatedEntities,
       ~registeredAddresses,
+      ~sidecarCalls=batch.sidecarCalls,
       ~checkpointIds=batch.checkpointIds,
       ~checkpointChainIds=batch.checkpointChainIds,
       ~checkpointBlockNumbers=batch.checkpointBlockNumbers,

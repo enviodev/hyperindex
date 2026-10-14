@@ -1,6 +1,7 @@
 // Type-checks user source against a config's generated `indexer` surface.
 // Lives in TypeScript (`TypeChecker.ts`) since it drives the TS compiler API.
-type sources = {handlers?: string, test?: string}
+type sidecarContractSource = {path: string, source: string}
+type sources = {handlers?: string, test?: string, sidecarContract?: sidecarContractSource}
 @module("./TypeChecker.ts")
 external checkSources: (string, sources) => array<string> = "checkSources"
 
@@ -55,8 +56,11 @@ let tmpDir = pathJoin([pathDirname(fileURLToPath(importMetaUrl)), "..", ".tmp"])
 // fails, so they must outlive the run. `globalSetup.ts` clears the directory
 // before any worker starts.
 let writeModule = (~kind, ~site, ~source) => {
-  let slug = site->String.replaceRegExp(%re("/[^a-zA-Z0-9]+/g"), "-")
-  let file = pathJoin([tmpDir, `${slug}-${kind}-${randomUUID()->String.slice(~start=0, ~end=8)}.ts`])
+  let slug = site->String.replaceRegExp(/[^a-zA-Z0-9]+/g, "-")
+  let file = pathJoin([
+    tmpDir,
+    `${slug}-${kind}-${randomUUID()->String.slice(~start=0, ~end=8)}.ts`,
+  ])
   writeFileSync(file, source)
   file
 }
@@ -78,7 +82,13 @@ let claimProcess = (~site) => {
 }
 
 let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array<string> => {
-  let {indexerTypes} = Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes=true, configYaml)
+  let {indexerTypes} = Core.fromUserApi(
+    ~schema?,
+    ~env?,
+    ~files?,
+    ~withIndexerTypes=true,
+    configYaml,
+  )
   switch indexerTypes->Null.toOption {
   | Some(typesDts) => completionsAtUnsafe(typesDts, handlers)
   | None => JsError.throwWithMessage("Config parsed without generated indexer types.")
@@ -100,6 +110,10 @@ let fromUserApi = (
   ~files=?,
   ~handlers=?,
   ~test=?,
+  // Source of the module `sidecar.contract` names. Type-checked where the
+  // generated types import it from, and imported before the handlers, the way
+  // the indexer loads it on start.
+  ~sidecarContract=?,
   // Run the `handlers` module, so `indexer.onEvent` registers for real, and
   // expose what it registered as `parsed.registrations`. Without it a
   // `handlers` source is only type-checked.
@@ -107,24 +121,38 @@ let fromUserApi = (
   ~configYaml,
 ): parsed => {
   let withIndexerTypes = handlers->Option.isSome || test->Option.isSome
-  let {config: configJson, indexerTypes} =
-    Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes, configYaml)
+  let {config: configJson, indexerTypes} = Core.fromUserApi(
+    ~schema?,
+    ~env?,
+    ~files?,
+    ~withIndexerTypes,
+    configYaml,
+  )
+
+  let publicConfigJson = configJson->JSON.parseOrThrow
+  let config = Config.fromPublic(publicConfigJson)
+
+  let sidecarContract = switch (sidecarContract, config.sidecar) {
+  | (Some(source), Some({contract: path})) => Some({path, source})
+  | (Some(_), None) =>
+    JsError.throwWithMessage(
+      "fromUserApi was given ~sidecarContract but the config has no `sidecar:`.",
+    )
+  | (None, _) => None
+  }
 
   let typeErrors = if withIndexerTypes {
     let typesDts = switch indexerTypes->Null.toOption {
     | Some(typesDts) => typesDts
     | None => JsError.throwWithMessage("Config parsed without generated indexer types.")
     }
-    switch checkSources(typesDts, {handlers: ?handlers, test: ?test}) {
+    switch checkSources(typesDts, {?handlers, ?test, ?sidecarContract}) {
     | [] => None
     | errors => Some("Type errors:\n" ++ errors->Array.join("\n"))
     }
   } else {
     None
   }
-
-  let publicConfigJson = configJson->JSON.parseOrThrow
-  let config = Config.fromPublic(publicConfigJson)
 
   let registrationsRef = ref(None)
   let registrations = () =>
@@ -139,7 +167,9 @@ let fromUserApi = (
     }
 
   if registerHandlers && handlers->Option.isNone {
-    JsError.throwWithMessage("fromUserApi was called with ~registerHandlers but no ~handlers source.")
+    JsError.throwWithMessage(
+      "fromUserApi was called with ~registerHandlers but no ~handlers source.",
+    )
   }
 
   switch (test, registerHandlers ? handlers : None) {
@@ -168,13 +198,11 @@ let fromUserApi = (
       registrationsRef := Some(HandlerRegister.finishRegistration(~config))
       collected := true
     })
-    Vitest.it(
-      `indexerHandlers(${site}) collected`,
-      t =>
-        t.expect(
-          collected.contents,
-          ~message="handlers module was not imported during collection",
-        ).toBe(true),
+    Vitest.it(`indexerHandlers(${site}) collected`, t =>
+      t.expect(
+        collected.contents,
+        ~message="handlers module was not imported during collection",
+      ).toBe(true)
     )
   | (Some(test), _) =>
     let site = callSite()
@@ -193,6 +221,9 @@ let fromUserApi = (
 
       mkdirSync(tmpDir, {"recursive": true})
       Ok((
+        sidecarContract->Option.map(({source}) =>
+          writeModule(~kind="sidecar-contract", ~site, ~source)
+        ),
         handlers->Option.map(source => writeModule(~kind="handlers", ~site, ~source)),
         writeModule(~kind="test", ~site, ~source=test),
       ))
@@ -201,9 +232,13 @@ let fromUserApi = (
     }
 
     switch setup {
-    | Ok((handlersFile, testFile)) =>
+    | Ok((contractFile, handlersFile, testFile)) =>
       let collected = ref(false)
       describeAsync(suiteName, async () => {
+        switch contractFile {
+        | Some(file) => await importModule(file)
+        | None => ()
+        }
         // Handlers must finish registering before the test module's bodies run.
         switch handlersFile {
         | Some(file) => await importModule(file)
@@ -217,9 +252,11 @@ let fromUserApi = (
       // simply never register — the suite shrinks instead of failing, which no
       // reporter flags. This sentinel is registered outside the callback, so it
       // still runs and turns that silence into a failure.
-      Vitest.it(
-        `${suiteName} collected`,
-        t => t.expect(collected.contents, ~message="test module was not imported during collection").toBe(true),
+      Vitest.it(`${suiteName} collected`, t =>
+        t.expect(
+          collected.contents,
+          ~message="test module was not imported during collection",
+        ).toBe(true)
       )
     // Surface setup failures as a named test rather than a collection crash, so
     // the reporter attributes them to this fixture.

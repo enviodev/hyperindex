@@ -8,6 +8,11 @@ type contextParams = {
   chains: Internal.chains,
   config: Config.t,
   mutable isResolved: bool,
+  // The batch's calls; a preload context never adds to it.
+  sidecarCalls: array<SidecarCall.t>,
+  // Counts this handler run's sidecar calls, which makes the call id
+  // deterministic: each run gets a fresh context, in item order.
+  mutable sidecarSeq: int,
 }
 
 // We don't want to expose the params to the user
@@ -288,6 +293,110 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   },
 }
 
+// `chainId:blockNumber:logIndex:seq`, the same in the preload and the real
+// pass, so the sidecar can dedupe a redelivery. A block handler has no log
+// index and takes its registration's index instead; an SVM instruction shares
+// its transaction's log index, so its position in the CPI tree is appended.
+let nextSidecarCallId = (params: contextParams) => {
+  let seq = params.sidecarSeq
+  params.sidecarSeq = seq + 1
+  let chainId = params.item->Internal.getItemChainId->ChainId.toString
+  let blockNumber = params.item->Internal.getItemBlockNumber->Int.toString
+  let position = switch params.item {
+  | Block({onBlockRegistration: {index}}) => `b${index->Int.toString}`
+  | Event({logIndex}) =>
+    switch params.item->Internal.getItemOrderPath->Nullable.toOption {
+    | Some(path) =>
+      `${logIndex->Int.toString}.${path->Array.map(step => step->Int.toString)->Array.join(".")}`
+    | None => logIndex->Int.toString
+    }
+  }
+  `${chainId}:${blockNumber}:${position}:${seq->Int.toString}`
+}
+
+let sidecarBlockTimestamp = (params: contextParams) =>
+  switch params.item {
+  | Block(_) => None
+  | Event(_) =>
+    (params.item->Internal.castUnsafeEventItem).payload
+    ->Internal.getPayloadBlock
+    ->Nullable.toOption
+    ->Option.flatMap(block =>
+      block
+      ->(Utils.magic: Internal.eventBlock => dict<unknown>)
+      ->Utils.Dict.dangerouslyGetNonOption(params.config.ecosystem.blockTimestampName)
+    )
+    ->Option.map(timestamp => timestamp->(Utils.magic: unknown => int))
+  }
+
+// Never throws into the handler and never waits: a bad input is logged and
+// dropped, and the id is still returned.
+let callSidecar = (
+  params: contextParams,
+  ~fn,
+  ~def: SidecarContract.functionDef,
+  input: unknown,
+) => {
+  let id = params->nextSidecarCallId
+  if !params.isPreload {
+    // The handler holds the output form (a bigint, not its string), and
+    // converting it doesn't check types, so the JSON is parsed back to check.
+    switch {
+      let json = input->S.reverseConvertToJsonOrThrow(def.input)
+      let _ = json->S.parseOrThrow(def.input)
+      json
+    } {
+    | json =>
+      params.sidecarCalls
+      ->Array.push({
+        id,
+        fn,
+        chainId: params.item->Internal.getItemChainId,
+        blockNumber: params.item->Internal.getItemBlockNumber,
+        blockTimestamp: params->sidecarBlockTimestamp,
+        checkpointId: params.checkpointId,
+        input: json,
+      })
+      ->ignore
+    | exception exn =>
+      Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem)->Logging.childWarn({
+        "msg": `Dropped the sidecar call ${fn}: its input doesn't match the contract`,
+        "callId": id,
+        "err": exn->Utils.prettifyExn,
+      })
+    }
+  }
+  id
+}
+
+let sidecarTraps: Utils.Proxy.traps<contextParams> = {
+  get: (~target as params, ~prop: unknown) =>
+    if typeof(prop) !== #string {
+      %raw(`undefined`)
+    } else {
+      let fn = prop->(Utils.magic: unknown => string)
+      switch SidecarContract.current() {
+      | None =>
+        JsError.throwWithMessage(
+          `context.sidecar.${fn} has no sidecar to call: add \`sidecar: { contract, entry }\` to config.yaml.`,
+        )
+      | Some({functions}) =>
+        switch functions->Utils.Dict.dangerouslyGetNonOption(fn) {
+        | Some(def) =>
+          (input => params->callSidecar(~fn, ~def, input))->(
+            Utils.magic: (unknown => string) => unknown
+          )
+        | None =>
+          JsError.throwWithMessage(
+            `context.sidecar.${fn} is not a function of the sidecar contract. It has: ${functions
+              ->Dict.keysToArray
+              ->Array.join(", ")}.`,
+          )
+        }
+      }
+    },
+}
+
 let handlerTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
@@ -314,6 +423,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       )
 
     | "isPreload" => params.isPreload->(Utils.magic: bool => unknown)
+    | "sidecar" => params->Utils.Proxy.make(sidecarTraps)->(Utils.magic: contextParams => unknown)
     | "chain" =>
       let chainId = params.item->Internal.getItemChainId
       params.chains
@@ -332,6 +442,8 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
           chains: params.chains,
           isResolved: params.isResolved,
           config: params.config,
+          sidecarCalls: params.sidecarCalls,
+          sidecarSeq: params.sidecarSeq,
           entityConfig,
         }
         ->Utils.Proxy.make(entityTraps)

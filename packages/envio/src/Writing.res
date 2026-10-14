@@ -165,6 +165,7 @@ let runOneWrite = async (state: IndexerState.t) => {
     ))
 
     state->IndexerState.markCommitted(~writtenFrontier)
+    batch.sidecarCalls->SidecarDelivery.onCommitted
 
     switch rollback {
     | Some({progressedChains}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>

@@ -109,6 +109,8 @@ let registerAllHandlers = async (
 ): HandlerRegister.registrationsByChainId => {
   HandlerRegister.startRegistration(~config)
   registerTsHooks()
+  // Before the handlers, which bind `context.sidecar` to it.
+  await SidecarContract.loadOrThrow(~config)
 
   let _ = await autoLoadFiles
   ->Array.map(file => {

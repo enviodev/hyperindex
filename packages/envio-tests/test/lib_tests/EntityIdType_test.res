@@ -309,6 +309,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
     state->TestIndexer.handleWriteBatch(
       ~config=idTypesConfig,
       ~registeredAddresses=[],
+      ~sidecarCalls=[],
       ~updatedEntities=[
         {
           entityConfig,

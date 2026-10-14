@@ -35,6 +35,7 @@ let runEventHandlerOrThrow = async (
   ~persistence,
   ~chains: Internal.chains,
   ~config: Config.t,
+  ~sidecarCalls,
 ) => {
   let eventItem = item->Internal.castUnsafeEventItem
 
@@ -52,6 +53,8 @@ let runEventHandlerOrThrow = async (
       chains,
       config,
       isResolved: false,
+      sidecarCalls,
+      sidecarSeq: 0,
     }
     await handler(
       (
@@ -89,6 +92,7 @@ let runHandlerOrThrow = async (
   ~persistence: Persistence.t,
   ~config: Config.t,
   ~chains: Internal.chains,
+  ~sidecarCalls,
 ) => {
   switch item {
   | Block({onBlockRegistration: {handler}, blockNumber}) =>
@@ -103,6 +107,8 @@ let runHandlerOrThrow = async (
         chains,
         config,
         isResolved: false,
+        sidecarCalls,
+        sidecarSeq: 0,
       }
       await handler(
         Ecosystem.makeOnBlockArgs(
@@ -133,6 +139,7 @@ let runHandlerOrThrow = async (
         ~persistence,
         ~chains,
         ~config,
+        ~sidecarCalls,
       )
     | None => ()
     }
@@ -188,6 +195,8 @@ let preloadBatchOrThrow = async (
                   chains,
                   isResolved: false,
                   config,
+                  sidecarCalls: [],
+                  sidecarSeq: 0,
                 }),
               })
               ->Promise.thenResolve(_ => {
@@ -223,6 +232,8 @@ let preloadBatchOrThrow = async (
                   chains,
                   isResolved: false,
                   config,
+                  sidecarCalls: [],
+                  sidecarSeq: 0,
                 }),
               )
             })->Utils.Promise.silentCatch,
@@ -264,6 +275,7 @@ let runBatchHandlersOrThrow = async (
         ~persistence,
         ~config,
         ~chains,
+        ~sidecarCalls=batch.sidecarCalls,
       )
     }
     itemIdx := itemIdx.contents + checkpointItemsCount
