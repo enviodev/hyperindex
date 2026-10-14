@@ -2306,3 +2306,14 @@ export const indexer: Indexer;
 
 /** Construct a {@link TestIndexer} for use in unit tests. */
 export const createTestIndexer: () => TestIndexer;
+
+// ============== Sidecars ==============
+
+export {
+  defineSidecar,
+  type SidecarContract,
+  type SidecarContractDef,
+  type SidecarCaller,
+  type SidecarFunctionInput,
+  type SidecarWebhookBody,
+} from "./src/sidecar/contract.js";

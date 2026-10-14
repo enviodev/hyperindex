@@ -134,3 +134,7 @@ lib
 *.res.js
 *.res.mjs
 .pnpm-store
+
+# TypeScript emit for the sidecar runtime (sources are the .ts files next to them)
+src/sidecar/**/*.js
+src/sidecar/**/*.d.ts
