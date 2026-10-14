@@ -20,6 +20,7 @@ import { spawn } from "node:child_process";
 import { totalmem } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
+import { warn } from "../Logging.res.mjs";
 
 const WORKER = new URL("./graph-cli-worker.mjs", import.meta.url);
 
@@ -132,9 +133,12 @@ const RELATIVE_IMPORT = /\bfrom\s*["'](\.\.?\/[^"']+)["']/g;
  * moves it, and the mappings are the only record of where. Every generated
  * tree has a `schema.ts`, and a template's a `templates.ts`.
  */
-export function generatedDir(root: string, mappingFiles: string[]): string {
-  // Breadth first from the manifest's files: an entry file may only re-export
-  // handlers written elsewhere (Uniswap v4's do), and those import the code.
+/**
+ * The project files the manifest's mappings reach through relative imports,
+ * breadth first, each with the relative specifiers it imports: an entry file
+ * may only re-export handlers written elsewhere (Uniswap v4's do).
+ */
+function* scanImports(root: string, mappingFiles: string[]): Generator<{ file: string; specifiers: string[] }> {
   const queue = [...new Set(mappingFiles)].map((mappingFile) => path.resolve(root, mappingFile));
   const seen = new Set(queue);
   for (let index = 0; index < queue.length && index < MAX_SCANNED_FILES; index++) {
@@ -145,24 +149,50 @@ export function generatedDir(root: string, mappingFiles: string[]): string {
     } catch {
       continue;
     }
-    const next: string[] = [];
-    for (const [, specifier] of source.matchAll(RELATIVE_IMPORT)) {
-      const base = path.basename(specifier).replace(/\.ts$/, "");
-      if (base === "schema" || base === "templates") {
-        return path.resolve(path.dirname(file), path.dirname(specifier));
-      }
+    const specifiers = [...source.matchAll(RELATIVE_IMPORT)].map(([, specifier]) => specifier);
+    yield { file, specifiers };
+    for (const specifier of specifiers) {
       const target = path.resolve(path.dirname(file), specifier);
       for (const candidate of [target, `${target}.ts`, path.join(target, "index.ts")]) {
         if (!seen.has(candidate) && existsSync(candidate) && statSync(candidate).isFile()) {
           seen.add(candidate);
-          next.push(candidate);
+          queue.push(candidate);
           break;
         }
       }
     }
-    queue.push(...next);
+  }
+}
+
+export function generatedDir(root: string, mappingFiles: string[]): string {
+  for (const { file, specifiers } of scanImports(root, mappingFiles)) {
+    for (const specifier of specifiers) {
+      const base = path.basename(specifier).replace(/\.ts$/, "");
+      if (base === "schema" || base === "templates") {
+        return path.resolve(path.dirname(file), path.dirname(specifier));
+      }
+    }
   }
   return path.join(root, "generated");
+}
+
+/**
+ * The generated files the mappings import that aren't there. A directory that
+ * exists isn't enough: Envio Cloud recreates generated/ empty before the build.
+ */
+export function missingGeneratedFiles(root: string, mappingFiles: string[], dir: string): string[] {
+  const missing = new Set<string>();
+  for (const { file, specifiers } of scanImports(root, mappingFiles)) {
+    for (const specifier of specifiers) {
+      const target = path.resolve(path.dirname(file), specifier);
+      if (!target.startsWith(dir + path.sep)) continue;
+      const candidates = [target, `${target}.ts`, path.join(target, "index.ts")];
+      if (!candidates.some((candidate) => existsSync(candidate) && statSync(candidate).isFile())) {
+        missing.add(path.relative(root, target));
+      }
+    }
+  }
+  return [...missing];
 }
 
 const MAX_SCANNED_FILES = 2_000;
@@ -245,9 +275,20 @@ export async function ensureGeneratedCode(
   root: string,
   dir: string,
   manifestFile = "subgraph.yaml",
+  mappingFiles: string[] = [],
 ): Promise<void> {
-  if (existsSync(dir)) return;
   const graphCli = graphCliPackage(root);
+  const complete = existsSync(dir) && missingGeneratedFiles(root, mappingFiles, dir).length === 0;
+  if (complete) {
+    if (!graphCli) {
+      warn(
+        `Envio Subgraph is running the generated code in "${path.relative(root, dir)}/" as it is: ` +
+          "@graphprotocol/graph-cli isn't installed, so it can't be rebuilt. If subgraph.yaml, the " +
+          "schema or an ABI changed since it was generated, install the project's dependencies.",
+      );
+    }
+    return;
+  }
   // Reported when a mapping fails to import it, naming that mapping.
   if (!graphCli) return;
 

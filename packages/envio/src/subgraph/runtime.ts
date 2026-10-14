@@ -632,7 +632,12 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     config.root,
     sources.map((source) => source.mappingFile),
   );
-  await ensureGeneratedCode(config.root, generated, config.manifestFile);
+  await ensureGeneratedCode(
+    config.root,
+    generated,
+    config.manifestFile,
+    sources.map((source) => source.mappingFile),
+  );
 
   if (config.isDev) {
     await typeCheckMappings(config.root, config.manifestFile);
