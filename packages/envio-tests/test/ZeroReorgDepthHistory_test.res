@@ -35,10 +35,11 @@ let chainYaml = (chainId, ~maxReorgDepth) =>
       - name: Token
         address: "0x0000000000000000000000000000000000000001"`
 
-// History is what fills a ClickHouse-only indexer's current tables, so every
-// chain writes it there.
 let unsupported: array<Scenario.unsupported> = [
-  {backend: #clickhouseOnly, reason: "ClickHouse-only storage keeps every history row"},
+  {
+    backend: #clickhouseOnly,
+    reason: "ClickHouse-only storage keeps a checkpoint for every batch, on every chain",
+  },
 ]
 
 // One chain, and the default cross-chain entities that make its checkpoint

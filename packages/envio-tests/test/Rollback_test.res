@@ -49,13 +49,12 @@ import { indexer } from "envio";
 indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async () => {});
 `
 
-// History is what fills a ClickHouse-only indexer's current tables, so it keeps
-// every change, the rollback's diff among them, and nothing prunes it or the
-// checkpoints yet.
+// ClickHouse-only storage writes a checkpoint for every batch, before the reorg
+// threshold too, and prunes neither checkpoints nor history yet.
 let keepsHistory: array<Scenario.unsupported> = [
   {
     backend: #clickhouseOnly,
-    reason: "ClickHouse-only storage keeps every history row and checkpoint",
+    reason: "ClickHouse-only storage keeps every checkpoint and prunes no history yet",
   },
 ]
 

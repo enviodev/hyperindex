@@ -62,10 +62,11 @@ let scenario = Scenario.make(
   ~configYaml=makeConfigYaml("per-chain-prune", ~laggingChainId=1337),
 )
 
-// History is what fills a ClickHouse-only indexer's current tables, so it is
-// written for every chain, and nothing prunes it yet.
 let noPrune: array<Scenario.unsupported> = [
-  {backend: #clickhouseOnly, reason: "ClickHouse-only storage keeps every history row"},
+  {
+    backend: #clickhouseOnly,
+    reason: "ClickHouse-only storage keeps every checkpoint and prunes no history yet",
+  },
 ]
 
 let crossChainSchema =
