@@ -116,6 +116,9 @@ importers:
       '@types/ws':
         specifier: 8.18.1
         version: 8.18.1
+      postgres:
+        specifier: 3.4.8
+        version: 3.4.8
       rescript:
         specifier: 12.2.0
         version: 12.2.0
