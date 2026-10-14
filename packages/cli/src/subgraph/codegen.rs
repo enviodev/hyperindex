@@ -55,7 +55,8 @@ impl CodegenMode {
 /// files written, relative to it. Needs only the manifest, its schema and its
 /// ABI files: no install, no network.
 pub fn generate(manifest_file: &Path, output_dir: &Path) -> Result<Vec<String>> {
-    let files = generate_files(manifest_file)?;
+    let graph_ts = GraphTs::detect(manifest_file.parent().unwrap_or(Path::new(".")));
+    let files = generate_files(manifest_file, graph_ts)?;
     let mut written = Vec::new();
     for (relative, text) in files {
         let target = output_dir.join(&relative);
@@ -70,7 +71,7 @@ pub fn generate(manifest_file: &Path, output_dir: &Path) -> Result<Vec<String>> 
 }
 
 /// The generated tree in memory: relative path to file text.
-pub fn generate_files(manifest_file: &Path) -> Result<BTreeMap<String, String>> {
+pub fn generate_files(manifest_file: &Path, graph_ts: GraphTs) -> Result<BTreeMap<String, String>> {
     let text = std::fs::read_to_string(manifest_file)
         .with_context(|| format!("reading {}", manifest_file.display()))?;
     let manifest: Yaml = serde_yaml::from_str(&text)
@@ -85,7 +86,7 @@ pub fn generate_files(manifest_file: &Path) -> Result<BTreeMap<String, String>> 
         .unwrap_or("schema.graphql");
     let schema_text = std::fs::read_to_string(base.join(schema_file))
         .with_context(|| format!("reading the schema {schema_file}"))?;
-    files.insert("schema.ts".to_string(), schema_ts(&schema_text)?);
+    files.insert("schema.ts".to_string(), schema_ts(&schema_text, graph_ts)?);
 
     let list = |key: &str| -> Vec<&Yaml> {
         manifest
@@ -116,11 +117,11 @@ pub fn generate_files(manifest_file: &Path) -> Result<BTreeMap<String, String>> 
         let Some(name) = template.get("name").and_then(Yaml::as_str) else {
             continue;
         };
+        for (abi_name, file) in mapping_abis(template) {
+            let abi = load_abi(&abi_name, &base.join(&file))?;
+            files.insert(format!("templates/{name}/{}.ts", abi.name), abi_ts(&abi)?);
+        }
         if kind.starts_with("ethereum") {
-            for (abi_name, file) in mapping_abis(template) {
-                let abi = load_abi(&abi_name, &base.join(&file))?;
-                files.insert(format!("templates/{name}/{}.ts", abi.name), abi_ts(&abi)?);
-            }
             template_imports.insert("Address");
             templates.push_str(&template_class(
                 name,
@@ -168,6 +169,60 @@ fn template_class(name: &str, param: &str, param_type: &str, argument: &str) -> 
     format!(
         "\nexport class {name} extends DataSourceTemplate {{\n  static create({param}: {param_type}): void {{\n    DataSourceTemplate.create('{name}', [{argument}])\n  }}\n\n  static createWithContext({param}: {param_type}, context: DataSourceContext): void {{\n    DataSourceTemplate.createWithContext('{name}', [{argument}], context)\n  }}\n}}\n"
     )
+}
+
+/// What the project's own `@graphprotocol/graph-ts` exports. graph-cli emits
+/// what its own release knows, and AssemblyScript compiles only what a mapping
+/// reaches, so extra methods are harmless but an extra import or a changed
+/// signature (`envio dev`'s `graph build` type check) is not; the
+/// runtime's shim has all of it, so without a graph-ts everything is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphTs {
+    /// `Int8` is exported (graph-ts 0.31+).
+    pub int8: bool,
+    /// `store.loadRelated`, behind the derived-field loaders (graph-ts 0.35+);
+    /// without it a derived field reads like any other.
+    pub related: bool,
+    /// `Value.displayData`, in `save()`'s assertion message.
+    pub display: bool,
+}
+
+impl GraphTs {
+    pub const ALL: GraphTs = GraphTs {
+        int8: true,
+        related: true,
+        display: true,
+    };
+
+    /// The graph-ts Node would resolve from the manifest's directory.
+    pub fn detect(manifest_dir: &Path) -> GraphTs {
+        let Ok(start) = std::fs::canonicalize(manifest_dir) else {
+            return GraphTs::ALL;
+        };
+        for dir in start.ancestors() {
+            let package = dir.join("node_modules/@graphprotocol/graph-ts");
+            if !package.join("package.json").is_file() {
+                continue;
+            }
+            let mut text = String::new();
+            for file in [
+                "index.ts",
+                "common/numbers.ts",
+                "common/value.ts",
+                "common/collections.ts",
+            ] {
+                if let Ok(source) = std::fs::read_to_string(package.join(file)) {
+                    text.push_str(&source);
+                }
+            }
+            return GraphTs {
+                int8: text.contains("Int8"),
+                related: text.contains("loadRelated"),
+                display: text.contains("displayData"),
+            };
+        }
+        GraphTs::ALL
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1103,7 +1158,12 @@ impl AbiGen<'_> {
                         })
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!("new {return_type}({args})")
+                    let result = format!("new {return_type}({args})");
+                    if is_tuple_type(&outputs[0].ty) {
+                        format!("changetype<{return_type}>({result})")
+                    } else {
+                        result
+                    }
                 }
             };
             methods.push(format!(
@@ -1278,6 +1338,7 @@ fn is_primitive(name: &str) -> bool {
 
 struct SchemaGen<'a> {
     document: &'a Document<'a, String>,
+    graph_ts: GraphTs,
 }
 
 impl<'a> SchemaGen<'a> {
@@ -1367,8 +1428,8 @@ impl<'a> SchemaGen<'a> {
         }
     }
 
-    fn is_derived(field: &SchemaField<'_>) -> bool {
-        field.directives.iter().any(|d| d.name == "derivedFrom")
+    fn is_derived(&self, field: &SchemaField<'_>) -> bool {
+        self.graph_ts.related && field.directives.iter().any(|d| d.name == "derivedFrom")
     }
 
     fn entity_type(&self, object: &graphql_parser::schema::ObjectType<'a, String>) -> String {
@@ -1379,10 +1440,17 @@ impl<'a> SchemaGen<'a> {
             id.type_name(),
             id.value_from()
         )];
+        let assertion = if self.graph_ts.display {
+            format!(
+                "`Entities of type {name} must have an ID of type {gql} but the id '${{id.displayData()}}' is of type ${{id.displayKind()}}`",
+                gql = id.gql_name()
+            )
+        } else {
+            format!("'Cannot save {name} entity with non-{gql} ID. Considering using .toHex() to convert the \"id\" to a string.'", gql = id.gql_name())
+        };
         methods.push(format!(
-            "\n  save(): void {{\n    let id = this.get('id')\n    assert(id != null,\n           'Cannot save {name} entity without an ID')\n    if (id) {{\n      assert(id.kind == {kind},\n             `Entities of type {name} must have an ID of type {gql} but the id '${{id.displayData()}}' is of type ${{id.displayKind()}}`)\n      store.set('{name}', {to_string}, this)\n    }}\n  }}\n",
+            "\n  save(): void {{\n    let id = this.get('id')\n    assert(id != null,\n           'Cannot save {name} entity without an ID')\n    if (id) {{\n      assert(id.kind == {kind},\n             {assertion})\n      store.set('{name}', {to_string}, this)\n    }}\n  }}\n",
             kind = id.value_kind(),
-            gql = id.gql_name(),
             to_string = id.value_to_string(),
         ));
         methods.push(format!(
@@ -1390,6 +1458,7 @@ impl<'a> SchemaGen<'a> {
             ty = id.type_name(),
             s = id.to_string_expr()
         ));
+
         methods.push(format!(
             "\n  static load(id: {ty}): {name} | null {{\n    return changetype<{name} | null>(store.get('{name}', {s}))\n  }}\n",
             ty = id.type_name(),
@@ -1413,7 +1482,7 @@ impl<'a> SchemaGen<'a> {
     ) -> Option<String> {
         let name = &field.name;
         let safe = reserved(name);
-        if Self::is_derived(field) {
+        if self.is_derived(field) {
             // Only a derived field whose type is an object type gets a getter.
             self.object(named_type(&field.field_type))?;
             let loader = format!("{}Loader", named_type(&field.field_type));
@@ -1455,7 +1524,7 @@ impl<'a> SchemaGen<'a> {
     }
 
     fn field_setter(&self, field: &SchemaField) -> Option<String> {
-        if Self::is_derived(field) {
+        if self.is_derived(field) {
             return None;
         }
         let name = &field.name;
@@ -1487,7 +1556,7 @@ impl<'a> SchemaGen<'a> {
         let mut type_names: Vec<String> = Vec::new();
         for entity in self.entities() {
             for field in &entity.fields {
-                if Self::is_derived(field) {
+                if self.is_derived(field) {
                     let name = named_type(&field.field_type).to_string();
                     if !type_names.contains(&name) {
                         type_names.push(name);
@@ -1517,21 +1586,25 @@ impl<'a> SchemaGen<'a> {
     }
 }
 
-fn schema_ts(schema_text: &str) -> Result<String> {
+fn schema_ts(schema_text: &str, graph_ts: GraphTs) -> Result<String> {
     let document: Document<'_, String> = graphql_parser::parse_schema(schema_text)
         .map_err(|error| anyhow!("Failed to parse the GraphQL schema: {error}"))?;
     let generator = SchemaGen {
         document: &document,
+        graph_ts,
     };
     let mut out = String::from(NOTE);
-    out.push_str(
-        "\nimport { TypedMap,Entity,Value,ValueKind,store,Bytes,BigInt,BigDecimal,Int8 } from \"@graphprotocol/graph-ts\"\n",
-    );
+    out.push_str(&format!(
+        "\nimport {{ TypedMap,Entity,Value,ValueKind,store,Bytes,BigInt,BigDecimal{} }} from \"@graphprotocol/graph-ts\"\n",
+        if graph_ts.int8 { ",Int8" } else { "" }
+    ));
     for entity in generator.entities() {
         out.push_str(&generator.entity_type(entity));
     }
-    for loader in generator.derived_loaders() {
-        out.push_str(&loader);
+    if graph_ts.related {
+        for loader in generator.derived_loaders() {
+            out.push_str(&loader);
+        }
     }
     Ok(out)
 }
@@ -1690,6 +1763,7 @@ mod tests {
             "type Token @entity { id: Bytes! symbol: String owner: Account! holders: [Account!]! \
              balances: [Balance!]! @derivedFrom(field: \"token\") decimals: Int! } \
              type Account @entity { id: ID! } type Balance @entity { id: ID! token: Token! }",
+            GraphTs::ALL,
         )
         .unwrap();
         assert!(ts.contains("export class Token extends Entity"));
@@ -1734,7 +1808,7 @@ mod tests {
 
     #[test]
     fn covers_the_graph_cli_golden() {
-        let ours = generate_files(&fixture().join("subgraph.yaml")).unwrap();
+        let ours = generate_files(&fixture().join("subgraph.yaml"), GraphTs::ALL).unwrap();
         let mut missing = Vec::new();
         for (file, golden) in [
             ("schema.ts", "generated/schema.ts"),
@@ -1757,10 +1831,13 @@ mod tests {
     #[test]
     fn bundled_fixture_is_current() {
         let dir = fixture().join("generated-bundled");
-        let ours = generate_files(&fixture().join("subgraph.yaml")).unwrap();
+        let ours = generate_files(&fixture().join("subgraph.yaml"), GraphTs::ALL).unwrap();
         if std::env::var("UPDATE_BUNDLED_GOLDENS").is_ok() {
             std::fs::remove_dir_all(&dir).ok();
-            generate(&fixture().join("subgraph.yaml"), &dir).unwrap();
+            for (file, text) in &ours {
+                std::fs::create_dir_all(dir.join(file).parent().unwrap()).unwrap();
+                std::fs::write(dir.join(file), text).unwrap();
+            }
         }
         let committed: BTreeMap<String, String> = ours
             .keys()
@@ -1772,6 +1849,26 @@ mod tests {
             })
             .collect();
         assert_eq!(committed, ours);
+    }
+
+    #[test]
+    fn older_graph_ts_gets_only_what_it_exports() {
+        let old = GraphTs {
+            int8: false,
+            related: false,
+            display: false,
+        };
+        let ts = schema_ts(
+            "type Token @entity { id: ID! balances: [Balance!]! @derivedFrom(field: \"token\") } \
+             type Balance @entity { id: ID! token: Token! }",
+            old,
+        )
+        .unwrap();
+        assert!(!ts.contains("Int8"));
+        assert!(!ts.contains("Loader"));
+        assert!(!ts.contains("displayData"));
+        assert!(ts.contains("get balances(): Array<string>"));
+        assert!(ts.contains("set balances(value: Array<string>)"));
     }
 
     #[test]
