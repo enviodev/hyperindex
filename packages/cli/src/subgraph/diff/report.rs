@@ -119,7 +119,23 @@ pub struct EntityReport {
     /// Fields ours fails to serve: a mismatch, since any query selecting one
     /// breaks.
     pub unservable_fields: Vec<Skipped>,
+    /// Relations of ours' sampled rows that store an id with no entity behind
+    /// it. graph-node serves such a relation as `null` and leaves such an id
+    /// out of a list, so they were compared that way: a note, not a mismatch.
+    pub dangling_relations: Vec<DanglingRelation>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DanglingRelation {
+    pub field: String,
+    /// The entity type it points at.
+    pub target: String,
+    pub list: bool,
+    /// Sampled rows (for a list: ids in sampled lists) pointing at a missing
+    /// entity.
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -370,6 +386,34 @@ impl Report {
         if !details.is_empty() {
             out.push_str("\nDifferences:\n");
             for line in details {
+                out.push_str(&line);
+                out.push('\n');
+            }
+        }
+        let notes: Vec<String> = self
+            .entities
+            .iter()
+            .flat_map(|entity| {
+                entity.dangling_relations.iter().map(move |dangling| {
+                    if dangling.list {
+                        format!(
+                            "  {}.{}: {} ids in sampled lists name a {} ours doesn't have; left \
+                             out, as graph-node serves the list",
+                            entity.name, dangling.field, dangling.count, dangling.target
+                        )
+                    } else {
+                        format!(
+                            "  {}.{}: {} sampled rows point at a {} ours doesn't have; read as \
+                             null, as graph-node serves it",
+                            entity.name, dangling.field, dangling.count, dangling.target
+                        )
+                    }
+                })
+            })
+            .collect();
+        if !notes.is_empty() {
+            out.push_str("\nNotes:\n");
+            for line in notes {
                 out.push_str(&line);
                 out.push('\n');
             }

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
-use graphql_parser::schema::{Definition, Document, TypeDefinition, Value};
+use graphql_parser::schema::{Definition, Document, Type, TypeDefinition, Value};
 
 use crate::subgraph::{errors::Report, schema};
 
@@ -45,6 +45,11 @@ pub struct Field {
     pub name: String,
     pub kind: FieldKind,
     pub list: bool,
+    /// Whether the schema lets the field be null (`Account` rather than
+    /// `Account!`).
+    pub nullable: bool,
+    /// The type a relation points at.
+    pub target: Option<String>,
     /// The subgraph's own spelling of the type, for messages.
     pub declared: String,
 }
@@ -111,7 +116,23 @@ impl Model {
                 .get(&object.name)
                 .cloned()
                 .unwrap_or_default();
-            entities.push(entity(&object.name, &order, &types, &translation));
+            let nullable: BTreeMap<String, bool> = object
+                .fields
+                .iter()
+                .map(|field| {
+                    (
+                        field.name.clone(),
+                        !matches!(field.field_type, Type::NonNullType(_)),
+                    )
+                })
+                .collect();
+            entities.push(entity(
+                &object.name,
+                &order,
+                &types,
+                &nullable,
+                &translation,
+            ));
         }
 
         Ok(Model { entities, skipped })
@@ -122,6 +143,7 @@ fn entity(
     name: &str,
     order: &[String],
     types: &BTreeMap<String, schema::FieldType>,
+    nullable: &BTreeMap<String, bool>,
     translation: &schema::SchemaTranslation,
 ) -> Entity {
     let id_of = |entity: &str| {
@@ -157,6 +179,8 @@ fn entity(
             name: field_name.clone(),
             kind,
             list: field_type.list,
+            nullable: nullable.get(field_name).copied().unwrap_or(true),
+            target: field_type.target.clone(),
             declared: if field_type.list {
                 format!("[{base}]")
             } else {
@@ -220,8 +244,11 @@ enum Status {
 
         let field = |name: &str, kind: FieldKind, list: bool, declared: &str| Field {
             name: name.to_string(),
+            target: matches!(kind, FieldKind::Entity { .. })
+                .then(|| declared.trim_matches(['[', ']']).to_string()),
             kind,
             list,
+            nullable: ["status", "frozen"].contains(&name),
             declared: declared.to_string(),
         };
         assert_eq!(

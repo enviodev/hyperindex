@@ -23,8 +23,10 @@ use sha2::{Digest, Sha256};
 
 use graph::{Exposed, GraphClient};
 use model::{Entity, Field, FieldKind, Model};
-use postgres::{Column, PgConfig, PgSide};
-use report::{EntityReport, FieldMismatch, Report, Side, Skipped, Status, Tolerance};
+use postgres::{Column, PgConfig, PgSide, Planned, Relation};
+use report::{
+    DanglingRelation, EntityReport, FieldMismatch, Report, Side, Skipped, Status, Tolerance,
+};
 
 use crate::utils::project_env::ProjectEnv;
 
@@ -322,6 +324,8 @@ async fn diff_one(context: &Run<'_>, index: usize, entity: &Entity) -> (usize, E
 struct Compared<'a> {
     field: &'a Field,
     column: Option<Column>,
+    /// The table of the entity a leniently resolved relation points at.
+    relation: Option<Relation>,
 }
 
 async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport) -> Result<()> {
@@ -370,7 +374,14 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
             None => None,
         };
         out.fields_compared.push(field.name.clone());
-        compared.push(Compared { field, column });
+        compared.push(Compared {
+            field,
+            column,
+            relation: None,
+        });
+    }
+    if let Ours::Postgres(pg) = context.ours {
+        resolve_relations(pg, &mut compared).await?;
     }
     for derived in &entity.derived {
         out.skipped_fields.push(Skipped {
@@ -527,8 +538,22 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
 
     let mut our_rows = BTreeMap::new();
     let mut their_rows = BTreeMap::new();
+    let mut dangling: BTreeMap<&str, usize> = BTreeMap::new();
     for result in fetched {
-        let (ours, theirs) = result.map_err(|failed| failed.error)?;
+        let (mut ours, theirs) = result.map_err(|failed| failed.error)?;
+        for row in &mut ours {
+            for compared in compared.iter().filter(|c| c.relation.is_some()) {
+                let name = compared.field.name.as_str();
+                let count = row
+                    .as_object_mut()
+                    .and_then(|row| row.remove(&postgres::dangling_key(name)))
+                    .and_then(|count| count.as_u64())
+                    .unwrap_or(0);
+                if count > 0 {
+                    *dangling.entry(name).or_default() += count as usize;
+                }
+            }
+        }
         for (rows, into) in [(ours, &mut our_rows), (theirs, &mut their_rows)] {
             for row in rows {
                 if let Some(id) = normalize::id(entity.id, &row["id"]) {
@@ -537,6 +562,17 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
             }
         }
     }
+    out.dangling_relations = compared
+        .iter()
+        .filter_map(|c| {
+            Some(DanglingRelation {
+                field: c.field.name.clone(),
+                target: c.field.target.clone()?,
+                list: c.field.list,
+                count: *dangling.get(c.field.name.as_str())?,
+            })
+        })
+        .collect();
 
     for id in &sample {
         let (Some(ours), Some(theirs)) = (our_rows.get(*id), their_rows.get(*id)) else {
@@ -572,20 +608,53 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
     Ok(())
 }
 
-fn plan_of(compared: &[Compared<'_>]) -> Vec<(String, Column)> {
+/// Ours stores a relation as the id it points at, which graph-node resolves by
+/// joining the target's table: a nullable relation to an entity that doesn't
+/// exist is served as `null`, and a list leaves such ids out. (A non-null one
+/// fails the query, which the first batch already handles.) Each such field
+/// gets the table to check against, when ours has one for the target; an
+/// interface has none, and is compared as stored.
+async fn resolve_relations(pg: &PgSide, compared: &mut [Compared<'_>]) -> Result<()> {
+    let mut id_udts: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for compared in compared.iter_mut() {
+        let field = compared.field;
+        let Some(target) = &field.target else {
+            continue;
+        };
+        if !(field.nullable || field.list) {
+            continue;
+        }
+        if !id_udts.contains_key(target) {
+            let columns = pg.columns(target).await?;
+            id_udts.insert(
+                target.clone(),
+                columns.get("id").map(|column| column.udt.clone()),
+            );
+        }
+        compared.relation = id_udts[target].clone().map(|id_udt| Relation {
+            table: target.clone(),
+            id_udt,
+        });
+    }
+    Ok(())
+}
+
+fn plan_of(compared: &[Compared<'_>]) -> Vec<Planned> {
     compared
         .iter()
         .filter_map(|c| {
-            c.column
-                .clone()
-                .map(|column| (c.field.name.clone(), column))
+            c.column.clone().map(|column| Planned {
+                field: c.field.name.clone(),
+                column,
+                relation: c.relation.clone(),
+            })
         })
         .collect()
 }
 
 struct Fetch<'a> {
     entity: &'a Entity,
-    plan: &'a [(String, Column)],
+    plan: &'a [Planned],
     id_udt: &'a str,
     selection: &'a str,
     their_collection: &'a str,

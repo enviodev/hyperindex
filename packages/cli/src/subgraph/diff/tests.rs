@@ -15,6 +15,7 @@ type Account @entity {
 type Token @entity(immutable: true) {
   id: ID!
   minter: Account!
+  owner: Account
   supply: BigInt!
   decimals: Int!
   hash: Bytes!
@@ -65,6 +66,7 @@ fn reference_data() -> Dataset {
             json!({
                 "id": format!("t{i:02}"),
                 "minter": {"id": "0xaa"},
+                "owner": if i == 1 { json!({"id": "0xbb"}) } else { Value::Null },
                 "supply": format!("{}", i * 1000),
                 "decimals": 18,
                 "hash": format!("0x{i:02x}ff"),
@@ -166,7 +168,7 @@ fn introspection(data: &Dataset) -> Value {
         (
             "Token",
             vec![
-                "id", "minter", "supply", "decimals", "hash", "frozen", "labels",
+                "id", "minter", "owner", "supply", "decimals", "hash", "frozen", "labels",
             ],
         ),
     ]
@@ -274,7 +276,7 @@ async fn reports_missing_entities_and_wrong_fields() {
     tokens.remove(4);
     tokens[0]["supply"] = json!("999");
     tokens.push(
-        json!({"id": "t99", "minter": {"id": "0xaa"}, "supply": "1", "decimals": 18,
+        json!({"id": "t99", "minter": {"id": "0xaa"}, "owner": null, "supply": "1", "decimals": 18,
         "hash": "0x00", "frozen": true, "labels": ["x"]}),
     );
     let ours = graph_node(ours, BLOCK).await;
@@ -351,7 +353,7 @@ async fn drops_a_field_the_reference_cannot_resolve() {
                      )]},
                 ],
             }),
-            ["supply", "decimals", "hash", "frozen", "labels"]
+            ["owner", "supply", "decimals", "hash", "frozen", "labels"]
                 .map(String::from)
                 .to_vec()
         )
@@ -398,7 +400,7 @@ async fn fails_parity_on_a_field_ours_cannot_serve() {
 async fn calls_a_capped_listing_incomplete_not_a_match() {
     let many: Vec<Value> = (0..1500)
         .map(|i| {
-            json!({"id": format!("t{i:05}"), "minter": {"id": "0xaa"}, "supply": "1",
+            json!({"id": format!("t{i:05}"), "minter": {"id": "0xaa"}, "owner": null, "supply": "1",
                 "decimals": 18, "hash": "0x01", "frozen": null, "labels": null})
         })
         .collect();
@@ -478,7 +480,11 @@ fn samples_the_same_ids_whatever_the_order() {
 
 /// The Postgres path end to end, against a scratch database laid out the way
 /// subgraph mode stores entities. Needs a server to create it on:
-/// `ENVIO_DIFF_TEST_PG=postgres://postgres:postgres@localhost:5432`.
+/// `ENVIO_DIFF_TEST_PG=postgres://postgres:postgres@localhost:5432` (and
+/// optionally `ENVIO_DIFF_TEST_PG_PREFIX` for the scratch database's name).
+///
+/// Ours also stores two relations to entities it doesn't have, which
+/// graph-node serves as a `null` and as a list without that id.
 #[tokio::test]
 async fn compares_the_indexers_postgres() {
     let Ok(server) = std::env::var("ENVIO_DIFF_TEST_PG") else {
@@ -486,7 +492,11 @@ async fn compares_the_indexers_postgres() {
         return;
     };
     let url = url::Url::parse(&server).unwrap();
-    let database = format!("diff_test_{}", std::process::id());
+    let database = format!(
+        "{}_{}",
+        std::env::var("ENVIO_DIFF_TEST_PG_PREFIX").unwrap_or_else(|_| "diff_test".to_string()),
+        std::process::id()
+    );
     let connect = |db: &str| {
         let mut config = tokio_postgres::Config::new();
         config
@@ -515,15 +525,21 @@ async fn compares_the_indexers_postgres() {
 CREATE TABLE envio_chains (id integer PRIMARY KEY, progress_block integer NOT NULL);
 INSERT INTO envio_chains VALUES (1, 1234);
 CREATE TABLE "Account" (id text PRIMARY KEY, balance numeric NOT NULL, tokens text[] NOT NULL);
-INSERT INTO "Account" VALUES ('0xaa', 1.50, '{t02,t01}'), ('0xbb', 0.000, '{}');
-CREATE TABLE "Token" (id text PRIMARY KEY, minter_id text NOT NULL, supply numeric NOT NULL,
-  decimals integer NOT NULL, hash bytea NOT NULL, frozen boolean, labels text[]);
+INSERT INTO "Account" VALUES ('0xaa', 1.50, '{t02,t77,t01}'), ('0xbb', 0.000, '{}');
+CREATE TABLE "Token" (id text PRIMARY KEY, minter_id text NOT NULL, owner_id text,
+  supply numeric NOT NULL, decimals integer NOT NULL, hash bytea NOT NULL, frozen boolean,
+  labels text[]);
 "#,
     );
     for i in 1..=12 {
         let supply = if i == 3 { 7 } else { i * 1000 };
+        let owner = match i {
+            1 => "'0xbb'",
+            2 => "'0xcc'",
+            _ => "NULL",
+        };
         inserts.push_str(&format!(
-            "INSERT INTO \"Token\" VALUES ('t{i:02}', '0xaa', {supply}, 18, '\\x{i:02x}ff', NULL, NULL);\n"
+            "INSERT INTO \"Token\" VALUES ('t{i:02}', '0xaa', {owner}, {supply}, 18, '\\x{i:02x}ff', NULL, NULL);\n"
         ));
     }
     db.batch_execute(&inserts).await.unwrap();
@@ -549,18 +565,32 @@ CREATE TABLE "Token" (id text PRIMARY KEY, minter_id text NOT NULL, supply numer
         .unwrap();
 
     assert_eq!(
-        outcome(&report),
-        json!({
-            "status": "mismatch", "exitCode": 1, "block": BLOCK, "errors": [],
-            "entities": [
-                {"type": "Account", "status": "match", "ours": 2, "theirs": 2, "onlyOurs": [],
-                 "onlyTheirs": [], "sampled": 2, "fieldMismatches": {}, "examples": [],
-                 "skipped": ["minted: derived (@derivedFrom), not stored"]},
-                {"type": "Token", "status": "mismatch", "ours": 12, "theirs": 12, "onlyOurs": [],
-                 "onlyTheirs": [], "sampled": 12, "fieldMismatches": {"supply": 1},
-                 "examples": [{"id": "t03", "field": "supply", "ours": "7", "theirs": "3000"}],
-                 "skipped": []},
-            ],
-        })
+        (
+            outcome(&report),
+            report
+                .entities
+                .iter()
+                .map(|e| json!(e.dangling_relations))
+                .collect::<Vec<_>>()
+        ),
+        (
+            json!({
+                "status": "mismatch", "exitCode": 1, "block": BLOCK, "errors": [],
+                "entities": [
+                    {"type": "Account", "status": "match", "ours": 2, "theirs": 2, "onlyOurs": [],
+                     "onlyTheirs": [], "sampled": 2, "fieldMismatches": {}, "examples": [],
+                     "skipped": ["minted: derived (@derivedFrom), not stored"]},
+                    {"type": "Token", "status": "mismatch", "ours": 12, "theirs": 12,
+                     "onlyOurs": [], "onlyTheirs": [], "sampled": 12,
+                     "fieldMismatches": {"supply": 1},
+                     "examples": [{"id": "t03", "field": "supply", "ours": "7", "theirs": "3000"}],
+                     "skipped": []},
+                ],
+            }),
+            vec![
+                json!([{"field": "tokens", "target": "Token", "list": true, "count": 1}]),
+                json!([{"field": "owner", "target": "Account", "list": false, "count": 1}]),
+            ]
+        )
     );
 }

@@ -89,6 +89,31 @@ pub struct Column {
     pub udt: String,
 }
 
+/// A compared field as ours stores it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Planned {
+    pub field: String,
+    pub column: Column,
+    /// For a relation graph-node resolves leniently (a nullable one, or a
+    /// list), the entity it points at, so an id with no entity behind it reads
+    /// the way graph-node serves it.
+    pub relation: Option<Relation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relation {
+    /// The target entity's table.
+    pub table: String,
+    /// The type of its `id` column.
+    pub id_udt: String,
+}
+
+/// The JSON key a row carries the count of a field's dangling ids under. `:`
+/// can't appear in a GraphQL name, so it never collides with a field.
+pub fn dangling_key(field: &str) -> String {
+    format!("dangling:{field}")
+}
+
 impl PgSide {
     pub async fn connect(config: &PgConfig) -> Result<Self> {
         let mut pg = tokio_postgres::Config::new();
@@ -229,20 +254,39 @@ impl PgSide {
 
     /// The rows for `ids`, each a JSON object keyed by the subgraph's field
     /// names, values rendered as text the normalizer reads like graph-node's.
+    /// A relation in the plan also yields, under [`dangling_key`], how many of
+    /// its ids point at no entity: graph-node serves such a relation as `null`
+    /// and leaves such an id out of a list, and so does this read.
     pub async fn rows(
         &self,
         entity: &Entity,
-        plan: &[(String, Column)],
+        plan: &[Planned],
         id_udt: &str,
         ids: &[Value],
     ) -> Result<Vec<Value>> {
         let mut select = vec![format!("{} AS \"id\"", render("id", id_udt))];
-        for (field, column) in plan {
-            select.push(format!(
-                "{} AS {}",
-                render(&quote(&column.name), &column.udt),
-                quote(field)
-            ));
+        for planned in plan {
+            let column = format!("e.{}", quote(&planned.column.name));
+            match &planned.relation {
+                None => select.push(format!(
+                    "{} AS {}",
+                    render(&column, &planned.column.udt),
+                    quote(&planned.field)
+                )),
+                Some(relation) => {
+                    let (value, dangling) = render_relation(
+                        &column,
+                        &planned.column.udt,
+                        &self.table(&relation.table),
+                        &relation.id_udt,
+                    );
+                    select.push(format!("{value} AS {}", quote(&planned.field)));
+                    select.push(format!(
+                        "{dangling} AS {}",
+                        quote(&dangling_key(&planned.field))
+                    ));
+                }
+            }
         }
         let id_filter = if id_udt == "text" {
             "\"id\" = ANY($1::text[])".to_string()
@@ -250,7 +294,7 @@ impl PgSide {
             format!("\"id\" = ANY($1::text[]::{}[])", quote(id_udt))
         };
         let sql = format!(
-            "SELECT row_to_json(t)::text FROM (SELECT {} FROM {} WHERE {id_filter}) t",
+            "SELECT row_to_json(t)::text FROM (SELECT {} FROM {} e WHERE {id_filter}) t",
             select.join(", "),
             self.table(&entity.name)
         );
@@ -288,22 +332,74 @@ pub fn quote(identifier: &str) -> String {
 /// bytes, microseconds for a timestamp, and text for everything else, so no
 /// numeric precision is lost on the way to JSON.
 pub fn render(column: &str, udt: &str) -> String {
-    let element = |x: &str| match udt.trim_start_matches('_') {
-        "bytea" => format!("'0x' || encode({x}, 'hex')"),
-        "timestamptz" | "timestamp" => {
-            format!("trunc(extract(epoch from {x}) * 1000000)::text")
-        }
-        _ => format!("{x}::text"),
-    };
     if udt.starts_with('_') {
         // `ARRAY(... unnest(NULL))` is `{}`, and an unset list is null.
         format!(
             "CASE WHEN {column} IS NULL THEN NULL ELSE ARRAY(SELECT {} FROM unnest({column}) \
              WITH ORDINALITY AS u(x, i) ORDER BY i) END",
-            element("u.x")
+            element("u.x", udt)
         )
     } else {
-        element(column)
+        element(column, udt)
+    }
+}
+
+/// One stored value (a list's element type for a list `udt`) as text.
+fn element(x: &str, udt: &str) -> String {
+    match udt.trim_start_matches('_') {
+        "bytea" => format!("'0x' || encode({x}, 'hex')"),
+        "timestamptz" | "timestamp" => {
+            format!("trunc(extract(epoch from {x}) * 1000000)::text")
+        }
+        _ => format!("{x}::text"),
+    }
+}
+
+/// A relation column the way graph-node serves it: graph-node joins the
+/// target table, so a single relation whose entity doesn't exist is `null`,
+/// and a list keeps only the ids that do (`relational_queries.rs`, child types
+/// C and D). Returns that SQL and the SQL counting the ids it dropped.
+pub fn render_relation(
+    column: &str,
+    udt: &str,
+    target: &str,
+    target_udt: &str,
+) -> (String, String) {
+    let element_udt = udt.trim_start_matches('_');
+    let exists = |x: &str| {
+        let matches = if element_udt == target_udt {
+            format!("r.\"id\" = {x}")
+        } else {
+            format!(
+                "{} = {}",
+                element("r.\"id\"", target_udt),
+                element(x, element_udt)
+            )
+        };
+        format!("EXISTS (SELECT 1 FROM {target} r WHERE {matches})")
+    };
+    if udt.starts_with('_') {
+        (
+            format!(
+                "CASE WHEN {column} IS NULL THEN NULL ELSE ARRAY(SELECT {} FROM unnest({column}) \
+                 WITH ORDINALITY AS u(x, i) WHERE {} ORDER BY i) END",
+                element("u.x", udt),
+                exists("u.x")
+            ),
+            format!(
+                "(SELECT count(*) FROM unnest({column}) AS u(x) WHERE NOT {})::int",
+                exists("u.x")
+            ),
+        )
+    } else {
+        (
+            format!(
+                "CASE WHEN {} THEN {} END",
+                exists(column),
+                element(column, udt)
+            ),
+            format!("({column} IS NOT NULL AND NOT {})::int", exists(column)),
+        )
     }
 }
 
@@ -332,6 +428,47 @@ mod tests {
                 "trunc(extract(epoch from \"minted\") * 1000000)::text",
                 "CASE WHEN \"tags\" IS NULL THEN NULL ELSE ARRAY(SELECT u.x::text FROM \
                  unnest(\"tags\") WITH ORDINALITY AS u(x, i) ORDER BY i) END",
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_a_relation_as_graph_node_resolves_it() {
+        assert_eq!(
+            [
+                render_relation("e.\"owner_id\"", "text", "public.\"Account\"", "text"),
+                render_relation("e.\"owner_id\"", "text", "public.\"Account\"", "bytea"),
+                render_relation("e.\"tokens\"", "_text", "public.\"Token\"", "text"),
+            ]
+            .to_vec(),
+            [
+                (
+                    "CASE WHEN EXISTS (SELECT 1 FROM public.\"Account\" r WHERE r.\"id\" = \
+                     e.\"owner_id\") THEN e.\"owner_id\"::text END"
+                        .to_string(),
+                    "(e.\"owner_id\" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM \
+                     public.\"Account\" r WHERE r.\"id\" = e.\"owner_id\"))::int"
+                        .to_string()
+                ),
+                (
+                    "CASE WHEN EXISTS (SELECT 1 FROM public.\"Account\" r WHERE '0x' || \
+                     encode(r.\"id\", 'hex') = e.\"owner_id\"::text) THEN \
+                     e.\"owner_id\"::text END"
+                        .to_string(),
+                    "(e.\"owner_id\" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM \
+                     public.\"Account\" r WHERE '0x' || encode(r.\"id\", 'hex') = \
+                     e.\"owner_id\"::text))::int"
+                        .to_string()
+                ),
+                (
+                    "CASE WHEN e.\"tokens\" IS NULL THEN NULL ELSE ARRAY(SELECT u.x::text FROM \
+                     unnest(e.\"tokens\") WITH ORDINALITY AS u(x, i) WHERE EXISTS (SELECT 1 \
+                     FROM public.\"Token\" r WHERE r.\"id\" = u.x) ORDER BY i) END"
+                        .to_string(),
+                    "(SELECT count(*) FROM unnest(e.\"tokens\") AS u(x) WHERE NOT EXISTS \
+                     (SELECT 1 FROM public.\"Token\" r WHERE r.\"id\" = u.x))::int"
+                        .to_string()
+                ),
             ]
         );
     }

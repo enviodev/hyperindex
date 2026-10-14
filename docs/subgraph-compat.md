@@ -406,7 +406,10 @@ digits, Bytes as lowercase `0x` hex, relations by id, stored entity lists as
 sorted id sets. `@derivedFrom` fields aren't stored on either side and aren't
 compared; a field the reference can't resolve (graph-node fails the whole
 query over a non-null relation to a missing entity) is dropped and listed
-under "Not compared".
+under "Not compared". A relation ours stores as an id with no entity behind
+it is read the way graph-node serves it — a nullable one as `null`, a list
+without that id — and counted under "Notes" (`danglingRelations` in the
+JSON), not as a mismatch.
 
 Exit 0: every type within `--tolerance` (percent of the reference count,
 default 0.1) and at most `--max-field-mismatches` (default 0) across the run.
