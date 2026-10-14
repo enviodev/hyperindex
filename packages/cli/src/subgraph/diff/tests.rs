@@ -478,7 +478,7 @@ fn samples_the_same_ids_whatever_the_order() {
 
 /// The Postgres path end to end, against a scratch database laid out the way
 /// subgraph mode stores entities. Needs a server to create it on:
-/// `ENVIO_DIFF_TEST_PG=postgres://postgres:testing@127.0.0.1:4532`.
+/// `ENVIO_DIFF_TEST_PG=postgres://postgres:postgres@localhost:5432`.
 #[tokio::test]
 async fn compares_the_indexers_postgres() {
     let Ok(server) = std::env::var("ENVIO_DIFF_TEST_PG") else {
