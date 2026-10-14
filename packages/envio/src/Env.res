@@ -238,6 +238,9 @@ module Sidecar = {
   let internalUrl =
     envSafe->EnvSafe.get("ENVIO_SIDECAR_INTERNAL_URL", S.string, ~fallback="http://127.0.0.1:9901")
   let queueMax = envSafe->EnvSafe.get("ENVIO_SIDECAR_QUEUE_MAX", S.int, ~fallback=10_000)
+  // How often the indexer checks the sidecar's /readyz while it has nothing to
+  // deliver, so `envio_sidecar_up` stays right for an idle sidecar. 0 turns it off.
+  let probeMs = envSafe->EnvSafe.get("ENVIO_SIDECAR_PROBE_MS", S.int, ~fallback=10_000)
 }
 
 // You need to close the envSafe after you're done with it so that it immediately tells you about your  misconfigured environment on startup.
