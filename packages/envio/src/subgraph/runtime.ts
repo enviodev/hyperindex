@@ -59,6 +59,7 @@ import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappi
 import { unknown, unsupported } from "./errors.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
+const REGEX_SHIM_URL = new URL("./assemblyscript-regex.ts", import.meta.url).href;
 const ENVIO_PACKAGE_URL = new URL("../../", import.meta.url).href;
 
 const jsonFromString = (line: string) => (jsonNamespace as any).fromString(line);
@@ -173,6 +174,9 @@ function installResolveHook(root: string) {
       ) {
         return { url: SHIM_URL, shortCircuit: true };
       }
+      // A library of AssemblyScript's own memory-level matching, which the
+      // JavaScript transform of a mapping library can't run.
+      if (specifier === "assemblyscript-regex") return { url: REGEX_SHIM_URL, shortCircuit: true };
       const resolved = nextResolve(specifier, context);
       // A subgraph project's package.json has no `type`, so its mappings and
       // its `generated/` would load as CommonJS and reach the shim — a real ES

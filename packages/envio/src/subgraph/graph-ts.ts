@@ -94,10 +94,34 @@ function fitted(value: bigint, min: bigint, max: bigint, target: string): bigint
 
 const utf8Decoder = new TextDecoder("utf-8");
 
+/** `I8.parseInt(pair, 16)` as AssemblyScript reads it, kept to a byte. */
+function parseHexPair(pair: string): number {
+  let at = 0;
+  let sign = 1;
+  if (pair[0] === "-" || pair[0] === "+") {
+    sign = pair[0] === "-" ? -1 : 1;
+    at = 1;
+  }
+  let value = 0;
+  for (; at < pair.length; at++) {
+    const digit = parseInt(pair[at], 16);
+    if (Number.isNaN(digit)) break;
+    value = value * 16 + digit;
+  }
+  return (sign * value) & 0xff;
+}
+
 export class ByteArray extends Uint8Array {
   static fromHexString(hex: string): ByteArray {
-    const normalized = hex.startsWith("0x") ? hex : "0x" + hex;
-    return new ByteArray(hexToBytes(normalized as `0x${string}`));
+    // graph-ts asserts on the whole string, strips one `0x`, then reads each
+    // pair with `I8.parseInt(pair, 16)`, which stops at the first character
+    // that isn't a hex digit: Croc pads "0x00000000" on the left with `0`s and
+    // the pair that holds the `x` reads as 0.
+    if (hex.length % 2 !== 0) throw new Error(`input ${hex} has odd length`);
+    const digits = hex.startsWith("0x") ? hex.slice(2) : hex;
+    const bytes = new Uint8Array(digits.length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseHexPair(digits.slice(2 * i, 2 * i + 2));
+    return new ByteArray(bytes);
   }
   static fromUTF8(input: string): ByteArray {
     return new ByteArray(new TextEncoder().encode(input));

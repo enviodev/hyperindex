@@ -308,9 +308,14 @@ function makeRpcRequest(rpcUrls: string[]): RpcRequest {
     });
 }
 
-/** The block and transaction data an RPC call trigger carries. */
-async function blockAndTransactions(request: RpcRequest, blockNumber: number) {
-  const raw = await request("eth_getBlockByNumber", [toHex(blockNumber), true]);
+/**
+ * The block, and the transactions at `wanted` positions, an RPC call trigger
+ * carries. Some endpoints answer `eth_getBlockByNumber(…, true)` with no
+ * transactions at all (BNB Chain's, through dRPC), so the block comes as hashes
+ * and each transaction a handler needs is read by its own hash.
+ */
+async function blockAndTransactions(request: RpcRequest, blockNumber: number, wanted: Set<number>) {
+  const raw = await request("eth_getBlockByNumber", [toHex(blockNumber), false]);
   if (!raw) throw new Error(`The RPC node has no block ${blockNumber}.`);
   const block: BlockInfo = {
     number: blockNumber,
@@ -330,20 +335,25 @@ async function blockAndTransactions(request: RpcRequest, blockNumber: number) {
     baseFeePerGas: raw.baseFeePerGas === undefined ? null : hexToBigInt(raw.baseFeePerGas),
   };
   const transactions = new Map<string, TxInfo>();
-  for (const tx of raw.transactions as any[]) {
-    transactions.set(txKey(blockNumber, Number(tx.transactionIndex)), {
-      hash: tx.hash,
-      transactionIndex: Number(tx.transactionIndex),
-      from: lower(tx.from),
-      to: tx.to ? lower(tx.to) : null,
-      value: hexToBigInt(tx.value),
-      gas: hexToBigInt(tx.gas),
-      gasPrice: tx.gasPrice === undefined ? null : hexToBigInt(tx.gasPrice),
-      input: tx.input,
-      nonce: hexToBigInt(tx.nonce),
-      status: null,
-    });
-  }
+  await Promise.all(
+    [...wanted].map(async (transactionIndex) => {
+      const entry = raw.transactions[transactionIndex];
+      const tx = typeof entry === "string" ? await request("eth_getTransactionByHash", [entry]) : entry;
+      if (!tx) throw new Error(`The RPC node has no transaction ${transactionIndex} in block ${blockNumber}.`);
+      transactions.set(txKey(blockNumber, transactionIndex), {
+        hash: tx.hash,
+        transactionIndex,
+        from: lower(tx.from),
+        to: tx.to ? lower(tx.to) : null,
+        value: hexToBigInt(tx.value),
+        gas: hexToBigInt(tx.gas),
+        gasPrice: tx.gasPrice === undefined ? null : hexToBigInt(tx.gasPrice),
+        input: tx.input,
+        nonce: hexToBigInt(tx.nonce),
+        status: null,
+      });
+    }),
+  );
   return { block, transactions };
 }
 
@@ -351,7 +361,7 @@ async function blockAndTransactions(request: RpcRequest, blockNumber: number) {
 async function fillStatuses(request: RpcRequest, blockNumber: number, transactions: Map<string, TxInfo>) {
   let receipts: any[] | null = null;
   try {
-    receipts = await request("eth_getBlockReceipts", [toHex(blockNumber)]);
+    receipts = await request("eth_getBlockReceipts", [toHex(blockNumber)], { maxTries: 2 });
   } catch {
     receipts = null;
   }
@@ -437,9 +447,9 @@ function rpcBackend(): Backend {
     request: CallRequest,
     selections: Selection[],
     rpc: RpcRequest,
-    options?: { maxTries?: number },
+    options?: { maxTries?: number; span?: number },
   ) => {
-    const span = positive("ENVIO_SUBGRAPH_TRACE_FILTER_BLOCKS", 500);
+    const span = options?.span ?? positive("ENVIO_SUBGRAPH_TRACE_FILTER_BLOCKS", 500);
     const toBlock = Math.min(request.toBlock, request.fromBlock + span - 1);
     const anyAddress = selections.some((selection) => selection.addresses.length === 0);
     const addresses = [...new Set(selections.flatMap((selection) => selection.addresses))];
@@ -489,8 +499,9 @@ function rpcBackend(): Backend {
       else if (mode === "trace_filter") result = await viaTraceFilter(request, selections, rpc);
       else {
         try {
-          // A node without trace_filter answers every try alike, so this one doesn't wait out a rate limit.
-          result = await viaTraceFilter(request, selections, rpc, { maxTries: 2 });
+          // A node without trace_filter answers every try alike — or, for an address filter over
+          // old blocks, doesn't answer — so this probe is short and doesn't wait out a rate limit.
+          result = await viaTraceFilter(request, selections, rpc, { maxTries: 2, span: 10 });
           mode = "trace_filter";
         } catch (error) {
           warn(
@@ -502,14 +513,20 @@ function rpcBackend(): Backend {
         }
       }
 
-      // Only blocks holding a call that could matter need their body and receipts.
-      const wanted = new Set<number>();
-      for (const call of result.calls) wanted.add(call.blockNumber);
+      // Only blocks holding a call a handler wants need their body and receipts.
+      const watched = watchedRegistrations(request);
+      result.calls = result.calls.filter((call) => watched(call).length > 0);
+      const wanted = new Map<number, Set<number>>();
+      for (const call of result.calls) {
+        const positions = wanted.get(call.blockNumber) ?? new Set<number>();
+        positions.add(call.transactionIndex);
+        wanted.set(call.blockNumber, positions);
+      }
       const blocks = new Map<number, BlockInfo>();
       const transactions = new Map<string, TxInfo>();
       await Promise.all(
-        [...wanted].map(async (blockNumber) => {
-          const body = await blockAndTransactions(rpc, blockNumber);
+        [...wanted].map(async ([blockNumber, positions]) => {
+          const body = await blockAndTransactions(rpc, blockNumber, positions);
           await fillStatuses(rpc, blockNumber, body.transactions);
           blocks.set(blockNumber, body.block);
           for (const [key, tx] of body.transactions) transactions.set(key, tx);
@@ -544,6 +561,22 @@ function rpcBackend(): Backend {
  * handler's `WithCallTo` trigger takes every such call; it is not held to the
  * transaction's status.
  */
+/** The registrations a call is a trigger for, before its transaction's status is known. */
+export function watchedRegistrations(request: CallRequest): (call: RawCall) => CallRegistration[] {
+  const owned = new Map<string, Set<string>>();
+  for (const [contract, addresses] of Object.entries(request.addresses)) owned.set(contract, new Set(addresses));
+  return (call) => {
+    if (call.error || (call.input.length - 2) / 2 < 4) return [];
+    const selector = call.input.slice(0, 10);
+    return request.registrations.filter(
+      (registration) =>
+        (registration.startBlock === null || call.blockNumber >= registration.startBlock) &&
+        (registration.isWildcard || owned.get(registration.contractName)?.has(call.to)) &&
+        (registration.rank === 2 || registration.selector === selector),
+    );
+  };
+}
+
 export function buildItems(request: CallRequest, page: TracePage): CallItem[] {
   const items: CallItem[] = [];
   const calls = page.calls
@@ -554,18 +587,10 @@ export function buildItems(request: CallRequest, page: TracePage): CallItem[] {
         a.transactionIndex - b.transactionIndex ||
         compareTraceAddress(a.traceAddress, b.traceAddress),
     );
-
-  const owned = new Map<string, Set<string>>();
-  for (const [contract, addresses] of Object.entries(request.addresses)) owned.set(contract, new Set(addresses));
+  const watched = watchedRegistrations(request);
 
   for (const call of calls) {
-    if (call.error || (call.input.length - 2) / 2 < 4) continue;
-    const selector = call.input.slice(0, 10);
-    for (const registration of request.registrations) {
-      if (registration.startBlock !== null && call.blockNumber < registration.startBlock) continue;
-      if (!registration.isWildcard && !owned.get(registration.contractName)?.has(call.to)) continue;
-      if (registration.rank === 1 && registration.selector !== selector) continue;
-
+    for (const registration of watched(call)) {
       const transaction = page.transactions.get(txKey(call.blockNumber, call.transactionIndex));
       const block = page.blocks.get(call.blockNumber);
       if (!transaction || !block) {

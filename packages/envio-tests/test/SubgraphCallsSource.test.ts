@@ -324,6 +324,19 @@ const parity = (over: Record<string, unknown>, action: Record<string, unknown> =
   ...over,
 });
 
+const rpcTx = (number: number, index: number) => ({
+  hash: "0x" + number.toString(16).padStart(32, "0") + index.toString(16).padStart(32, "0"),
+  transactionIndex: "0x" + index.toString(16),
+  from: user,
+  to: staking,
+  value: "0x0",
+  gas: "0x5208",
+  gasPrice: "0x1",
+  input: stakeInput,
+  nonce: "0x7",
+});
+
+/** As the block comes without its transactions' bodies: hashes only. */
 const rpcBlock = (number: number, transactions: number) => ({
   hash: "0x" + number.toString(16).padStart(64, "0"),
   parentHash: "0x" + "00".repeat(32),
@@ -331,21 +344,15 @@ const rpcBlock = (number: number, transactions: number) => ({
   gasUsed: "0x10",
   gasLimit: "0x20",
   timestamp: "0x" + (1_000 + number).toString(16),
-  transactions: Array.from({ length: transactions }, (_, index) => ({
-    hash: "0x" + number.toString(16).padStart(32, "0") + index.toString(16).padStart(32, "0"),
-    transactionIndex: "0x" + index.toString(16),
-    from: user,
-    to: staking,
-    value: "0x0",
-    gas: "0x5208",
-    gasPrice: "0x1",
-    input: stakeInput,
-    nonce: "0x7",
-  })),
+  transactions: Array.from({ length: transactions }, (_, index) => rpcTx(number, index).hash),
 });
+
+const rpcTransactionByHash = (hash: string) =>
+  rpcTx(parseInt(hash.slice(2, 34), 16), parseInt(hash.slice(34), 16));
 
 describe("an RPC node", () => {
   it("reads calls with trace_filter and the status of their transactions from the block's receipts", async () => {
+    process.env.ENVIO_SUBGRAPH_TRACE_MODE = "trace_filter";
     handler = (body) => {
       switch (body.method) {
         case "trace_filter":
@@ -365,6 +372,8 @@ describe("an RPC node", () => {
           };
         case "eth_getBlockByNumber":
           return { body: { id: body.id, result: rpcBlock(110, 2) } };
+        case "eth_getTransactionByHash":
+          return { body: { id: body.id, result: rpcTransactionByHash(body.params[0]) } };
         case "eth_getBlockReceipts":
           return {
             body: {
@@ -388,7 +397,7 @@ describe("an RPC node", () => {
     expect(response.latestFetchedBlockNumber).toBe(200);
   });
 
-  it("falls back to debug_traceBlockByNumber on a node without trace_filter, one block at a time", async () => {
+  it("probes trace_filter over a few blocks, and without it reads debug_traceBlockByNumber one block at a time", async () => {
     process.env.ENVIO_SUBGRAPH_TRACE_BLOCKS_PER_PAGE = "3";
     handler = (body) => {
       switch (body.method) {
@@ -440,6 +449,8 @@ describe("an RPC node", () => {
         }
         case "eth_getBlockByNumber":
           return { body: { id: body.id, result: rpcBlock(101, 2) } };
+        case "eth_getTransactionByHash":
+          return { body: { id: body.id, result: rpcTransactionByHash(body.params[0]) } };
         case "eth_getBlockReceipts":
           return {
             body: {
