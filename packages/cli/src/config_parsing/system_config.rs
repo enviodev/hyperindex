@@ -1482,15 +1482,25 @@ impl SystemConfig {
         mapping_sources: &[String],
     ) -> Result<Self> {
         let rpc_env = env.get(crate::subgraph::RPC_ENV_VAR).map(|s| s.as_str());
-        let translation = crate::subgraph::translate(
-            manifest_yaml,
-            schema_text,
-            project_name,
-            rpc_env,
-            root,
-            files,
-            mapping_sources,
-        )?;
+        let missing_abis =
+            crate::subgraph::missing_abi_files(manifest_yaml, files, Path::new(root));
+        let translation = match (
+            crate::subgraph::translate(
+                manifest_yaml,
+                schema_text,
+                project_name,
+                rpc_env,
+                root,
+                files,
+                mapping_sources,
+            ),
+            missing_abis,
+        ) {
+            (Ok(translation), None) => translation,
+            (Ok(_), Some(missing)) => return Err(anyhow!("{missing}")),
+            (Err(err), Some(missing)) => return Err(anyhow!("{missing}\n\n{err:#}")),
+            (Err(err), None) => return Err(err),
+        };
 
         // subgraph.yaml has nowhere to name an endpoint, so a project that calls
         // contracts without one is misconfigured rather than broken. Saying so

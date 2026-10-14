@@ -102,6 +102,70 @@ pub struct SubgraphRuntimeConfig {
 
 pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
 
+/// The ABI files the manifest's data sources and templates decode with that
+/// aren't among `files`, as one message naming each, or `None`. envio's own
+/// check names only a "Virtual config file", once per run.
+pub fn missing_abi_files(
+    manifest_yaml: &str,
+    files: &HashMap<String, String>,
+    root: &std::path::Path,
+) -> Option<String> {
+    let mut discard = Report::new();
+    let manifest = manifest::parse(manifest_yaml, &mut discard)?;
+    let mut lines = Vec::new();
+    for source in manifest.all_sources() {
+        let Some(path) = source.abi.as_ref().and_then(|abi| source.abis.get(abi)) else {
+            continue;
+        };
+        if files.contains_key(path) || files.contains_key(path.trim_start_matches("./")) {
+            continue;
+        }
+        let line = format!("  {path}, the ABI of \"{}\"", source.name);
+        if !lines.contains(&line) {
+            lines.push(line);
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let mut message = format!(
+        "These ABI files the manifest names don't exist under {}:\n{}\n\
+         The manifest's paths are resolved against its own directory, as graph-cli \
+         resolves them. If a build step writes them (forge build, a git submodule, a copy \
+         script), run it first.",
+        root.canonicalize()
+            .unwrap_or_else(|_| root.to_path_buf())
+            .display(),
+        lines.join("\n")
+    );
+    // A manifest written on macOS can name `WrappedPunks.json` for a file
+    // committed as `wrappedpunks.json` (CryptoPunks); only a case-sensitive
+    // filesystem tells them apart.
+    for source in manifest.all_sources() {
+        let Some(path) = source.abi.as_ref().and_then(|abi| source.abis.get(abi)) else {
+            continue;
+        };
+        let wanted = root.join(path);
+        let (Some(dir), Some(name)) = (wanted.parent(), wanted.file_name()) else {
+            continue;
+        };
+        let name = name.to_string_lossy().to_lowercase();
+        let found = std::fs::read_dir(dir).ok().and_then(|entries| {
+            entries
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name().to_string_lossy().to_string())
+                .find(|entry| entry.to_lowercase() == name && !wanted.ends_with(entry))
+        });
+        if let Some(found) = found {
+            let hint = format!("\n{path} differs only in case from {found}, which does exist.");
+            if !message.contains(&hint) {
+                message.push_str(&hint);
+            }
+        }
+    }
+    Some(message)
+}
+
 /// Whether a YAML document is a subgraph manifest rather than an envio config.
 pub fn is_manifest(yaml: &str) -> bool {
     serde_yaml::from_str::<serde_yaml::Value>(yaml)
@@ -1662,6 +1726,40 @@ type Renewal implements Event @entity {
                 config.schema.entities.contains_key("Gravatar"),
             ),
             (true, true)
+        );
+    }
+
+    // CryptoPunks names `./abis/WrappedPunks.json` and commits
+    // `abis/wrappedpunks.json`; envio said only `Virtual config file
+    // "./abis/WrappedPunks.json" was not provided`.
+    #[test]
+    fn names_a_missing_abi_file_and_a_case_only_match() {
+        let dir = tempdir::TempDir::new("envio-subgraph-abi").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::rename(
+            root.join("abis/Gravity.json"),
+            root.join("abis/gravity.json"),
+        )
+        .unwrap();
+
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            err,
+            format!(
+                "These ABI files the manifest names don't exist under {}:\n  \
+                 ./abis/Gravity.json, the ABI of \"Gravity\"\n\
+                 The manifest's paths are resolved against its own directory, as graph-cli \
+                 resolves them. If a build step writes them (forge build, a git submodule, a \
+                 copy script), run it first.\n\
+                 ./abis/Gravity.json differs only in case from gravity.json, which does exist.",
+                root.display()
+            )
         );
     }
 
