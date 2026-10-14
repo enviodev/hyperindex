@@ -192,6 +192,7 @@ type storage = {
   getRollbackTargetCheckpoint: (
     ~reorgChainId: ChainId.t,
     ~lastKnownValidBlockNumber: int,
+    ~sequence: CheckpointSequence.t,
   ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
   getRollbackProgressDiff: (

@@ -762,6 +762,27 @@ impl Storage {
         rows.first().map(|row| cell(row, 0)).transpose()
     }
 
+    /// The lowest checkpoint kept, which is the chain's own under a counter per
+    /// chain.
+    pub async fn lowest_checkpoint(
+        &self,
+        chain_id: i64,
+        sequence: Sequence,
+    ) -> Result<Option<i64>> {
+        let params = match sequence {
+            Sequence::PerChain => vec![Param::Text(chain_id.to_string())],
+            Sequence::SharedAcrossChains => vec![],
+        };
+        let (rows, _) = self
+            .client
+            .query(
+                &internal::lowest_checkpoint(self.schema(), sequence),
+                &params,
+            )
+            .await?;
+        rows.first().map(|row| cell(row, 0)).transpose()
+    }
+
     pub async fn rollback_progress_diff(&self, bounds: &Bounds) -> Result<Vec<ProgressDiff>> {
         let (rows, _) = self
             .client

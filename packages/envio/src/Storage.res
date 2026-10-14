@@ -1097,8 +1097,14 @@ let make = (
   let pruneStaleEntityHistory = (~entityConfig, ~safeCheckpoints) =>
     client->StorageClient.pruneHistory((entityConfig->entityTable).handle, safeCheckpoints->bounds)
 
-  let getRollbackTargetCheckpoint = async (~reorgChainId, ~lastKnownValidBlockNumber) =>
-    (await client->StorageClient.rollbackTargetCheckpoint(reorgChainId, lastKnownValidBlockNumber))
+  let getRollbackTargetCheckpoint = async (~reorgChainId, ~lastKnownValidBlockNumber, ~sequence) =>
+    (
+      await client->StorageClient.rollbackTargetCheckpoint(
+        reorgChainId,
+        lastKnownValidBlockNumber,
+        sequence->sequenceName,
+      )
+    )
     ->Nullable.toOption
     ->Option.map(BigInt.fromStringOrThrow)
 

@@ -1017,10 +1017,12 @@ impl JsStorage {
         &self,
         chain_id: f64,
         block_number: i32,
+        sequence: String,
     ) -> napi::Result<Option<String>> {
+        let sequence = Sequence::parse(&sequence).map_err(to_napi)?;
         Ok(self
             .inner
-            .rollback_target_checkpoint(self::chain_id(chain_id), block_number)
+            .rollback_target_checkpoint(self::chain_id(chain_id), block_number, sequence)
             .await
             .map_err(to_napi)?
             .map(|id| id.to_string()))

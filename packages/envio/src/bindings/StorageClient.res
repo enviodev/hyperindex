@@ -436,7 +436,7 @@ external ensureQueryIndexes: (t, int, string, array<string>) => Null.t<promise<u
 @send external pruneHistory: (t, int, bounds) => promise<unit> = "pruneHistory"
 
 @send
-external rollbackTargetCheckpoint: (t, ChainId.t, int) => promise<Nullable.t<string>> =
+external rollbackTargetCheckpoint: (t, ChainId.t, int, string) => promise<Nullable.t<string>> =
   "rollbackTargetCheckpoint"
 
 @send

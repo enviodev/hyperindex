@@ -930,6 +930,68 @@ describe("E2E rollback tests", () => {
     },
   )
 
+  // Under one shared counter, the other chain's last batch before the threshold
+  // takes an id above the reorg chain's, and Postgres keeps neither: landing
+  // between them would revert a batch nothing rewinds the other chain to redo.
+  multichainScenario->Scenario.it(
+    "Keeps another chain's batch from before the reorg threshold when the rollback has no checkpoint to land on",
+    ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let sourceMock100 = source(100)
+      let sourceMock1337 = source(1337)
+      await Utils.delay(0)
+      let _ = await Promise.all2((
+        Scenario.resolveInitialHeight(~t, ~source=sourceMock100, ~head=300),
+        Scenario.resolveInitialHeight(~t, ~source=sourceMock1337, ~head=300),
+      ))
+
+      let setEntity = (~id, ~value): MockSource.mockSourceHandler =>
+        async args => (args.context->asContext).simpleEntity.set({id, value})
+      sourceMock100.resolveGetItemsOrThrow([
+        {blockNumber: 50, logIndex: 0, handler: setEntity(~id="reorged-chain", ~value="early")},
+      ])
+      sourceMock1337.resolveGetItemsOrThrow([
+        {blockNumber: 99, logIndex: 0, handler: setEntity(~id="other-chain", ~value="early")},
+      ])
+      while (await indexer.queryChains())->Array.some(chain => chain.progressBlock < 100) {
+        await Utils.delay(1)
+      }
+
+      sourceMock100.resolveGetItemsOrThrow(
+        [{blockNumber: 101, logIndex: 0, handler: setEntity(~id="reorged-chain", ~value="late")}],
+        ~latestFetchedBlockNumber=102,
+      )
+      await indexer.getBatchWritePromise()
+
+      sourceMock100.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=103,
+        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+      sourceMock100.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
+      ])
+      await indexer.getRollbackReadyPromise()
+
+      sourceMock100.resolveGetItemsOrThrow(
+        [],
+        ~filter=MockSource.coveringBlock(101),
+        ~latestFetchedBlockNumber=102,
+        ~latestFetchedBlockHash="0x102a",
+      )
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        await querySimpleEntities(indexer),
+        ~message="Only the reorged chain's batch inside the threshold is rolled back",
+      ).toEqual([{id: "other-chain", value: "early"}, {id: "reorged-chain", value: "early"}])
+    },
+  )
+
   scenario->Scenario.it(
     "Stores checkpoints inside of the reorg threshold for batches without items",
     ~sources=[{chain: 1337, methods}],
@@ -3145,11 +3207,11 @@ describe("E2E rollback tests", () => {
       // Record an ordering violation instead of relying on timing alone:
       // the rollback must not read checkpoints while a stalled batch
       // write is still pending.
-      getRollbackTargetCheckpoint: (~reorgChainId, ~lastKnownValidBlockNumber) => {
+      getRollbackTargetCheckpoint: (~reorgChainId, ~lastKnownValidBlockNumber, ~sequence) => {
         if stallWriteBatch.contents->Option.isSome {
           rollbackReadBeforeFlush := true
         }
-        storage.getRollbackTargetCheckpoint(~reorgChainId, ~lastKnownValidBlockNumber)
+        storage.getRollbackTargetCheckpoint(~reorgChainId, ~lastKnownValidBlockNumber, ~sequence)
       },
       getRollbackProgressDiff: (~floors) => {
         if stallWriteBatch.contents->Option.isSome {

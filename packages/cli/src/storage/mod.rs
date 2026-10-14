@@ -441,26 +441,31 @@ impl Storage {
 
     /// Postgres keeps only the checkpoints anchoring its history, and a
     /// rollback below all of them lands on 0, where its backfill holds what
-    /// came before. ClickHouse rows carry every batch's checkpoint, so there it
-    /// lands on the last batch below the fork instead: 0 would revert what was
-    /// written before the reorg threshold, which is never indexed again.
+    /// came before. ClickHouse rows carry every batch's checkpoint, and 0
+    /// would revert the batches before the reorg threshold, which no chain's
+    /// progress is rewound to redo: the rollback only replays what Postgres
+    /// keeps. So with ClickHouse it lands on the last checkpoint below those
+    /// Postgres keeps — every chain's under a shared counter, where one
+    /// chain's rollback reverts them all.
     pub async fn rollback_target_checkpoint(
         &self,
         chain_id: i64,
         block_number: i32,
+        sequence: Sequence,
     ) -> Result<Option<i64>> {
         let target = self
             .postgres
             .rollback_target_checkpoint(chain_id, block_number)
             .await?;
-        match (target, &self.clickhouse) {
-            (None, Some(clickhouse)) => {
-                clickhouse
-                    .rollback_target_checkpoint(chain_id, block_number)
-                    .await
-            }
-            (target, _) => Ok(target),
-        }
+        let (None, Some(clickhouse)) = (target, &self.clickhouse) else {
+            return Ok(target);
+        };
+        let kept_from = self.postgres.lowest_checkpoint(chain_id, sequence).await?;
+        let chain_id = match sequence {
+            Sequence::PerChain => Some(chain_id),
+            Sequence::SharedAcrossChains => None,
+        };
+        clickhouse.last_checkpoint_below(chain_id, kept_from).await
     }
 
     /// Resumes Postgres, and then ClickHouse to what Postgres committed: a

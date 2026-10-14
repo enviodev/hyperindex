@@ -726,23 +726,30 @@ impl Storage {
         Ok(())
     }
 
-    /// The last checkpoint of the chain at or below the block. One a rollback
-    /// reverted is never it: that rollback's own checkpoint, stamped where it
-    /// left the chain, sits above it.
-    pub async fn rollback_target_checkpoint(
+    /// The last checkpoint below `below`, of the one chain if one is named.
+    /// One a rollback reverted is never it while that rollback's own
+    /// checkpoint, above it, is below `below` too.
+    pub async fn last_checkpoint_below(
         &self,
-        chain_id: i64,
-        block_number: i32,
+        chain_id: Option<i64>,
+        below: Option<i64>,
     ) -> Result<Option<i64>> {
+        let id = quoted(ID_COLUMN);
+        let conditions = chain_id
+            .map(|chain_id| format!("{} = {chain_id}", quoted(CHAIN_ID_COLUMN)))
+            .into_iter()
+            .chain(below.map(|below| format!("{id} < {below}")))
+            .collect::<Vec<_>>();
+        let filter = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
         let answer = self
             .client
             .statement(format!(
-                "SELECT {id} FROM {} WHERE {chain} = {chain_id} AND {block} <= {block_number} \
-                 ORDER BY {id} DESC LIMIT 1 FORMAT TabSeparated",
+                "SELECT {id} FROM {}{filter} ORDER BY {id} DESC LIMIT 1 FORMAT TabSeparated",
                 self.table_ref(CHECKPOINTS_TABLE),
-                id = quoted(ID_COLUMN),
-                chain = quoted(CHAIN_ID_COLUMN),
-                block = quoted(ddl::BLOCK_NUMBER_COLUMN),
             ))
             .await?;
         match answer.trim() {

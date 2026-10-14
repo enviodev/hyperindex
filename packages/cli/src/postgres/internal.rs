@@ -398,6 +398,18 @@ pub fn rollback_target_checkpoint(pg_schema: &str) -> String {
     )
 }
 
+/// The chain's first checkpoint under a counter per chain, given as `$1`;
+/// every chain's under a shared one, which takes no parameter.
+pub fn lowest_checkpoint(pg_schema: &str, sequence: Sequence) -> String {
+    let chain = match sequence {
+        Sequence::PerChain => "\nWHERE \"chain_id\" = $1",
+        Sequence::SharedAcrossChains => "",
+    };
+    format!(
+        "SELECT \"id\"::int8 FROM \"{pg_schema}\".\"{CHECKPOINTS}\"{chain}\nORDER BY \"id\"\nLIMIT 1;"
+    )
+}
+
 pub fn rollback_progress_diff(pg_schema: &str, sequence: Sequence) -> anyhow::Result<String> {
     let bounds = bounds(sequence, Some("chain_id"), "t")?;
     Ok(format!(

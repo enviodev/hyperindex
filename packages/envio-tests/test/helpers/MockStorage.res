@@ -143,8 +143,11 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
       pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
       pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
-      getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
-        JsError.throwWithMessage("Not implemented"),
+      getRollbackTargetCheckpoint: (
+        ~reorgChainId as _,
+        ~lastKnownValidBlockNumber as _,
+        ~sequence as _,
+      ) => JsError.throwWithMessage("Not implemented"),
       getRollbackProgressDiff: (~floors as _) => JsError.throwWithMessage("Not implemented"),
       getRollbackData: (~entityConfig as _, ~floors as _) =>
         JsError.throwWithMessage("Not implemented"),
