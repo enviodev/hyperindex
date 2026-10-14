@@ -138,6 +138,40 @@ const fieldSchemasOf = (meta: EntityMeta): Map<string, S.Schema<unknown>> => {
   return schemas;
 };
 
+// HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES (envio dev and hosted) sends float8
+// columns as strings too, while the entity schema of a `Float` field wants a
+// number: `t` is "number", or a null or array schema around one.
+const floatFieldsCache = new WeakMap<EntityMeta, Map<string, "plain" | "array">>();
+const floatFieldsOf = (meta: EntityMeta): Map<string, "plain" | "array"> => {
+  let floats = floatFieldsCache.get(meta);
+  if (floats === undefined) {
+    floats = new Map();
+    const isNumber = (t: unknown) => t === "number";
+    for (const [field, schema] of fieldSchemasOf(meta)) {
+      const t = (schema as { t?: unknown }).t;
+      const inner = isPlainObject(t) && isPlainObject(t._0) ? t._0.t : undefined;
+      if (isNumber(t) || (isPlainObject(t) && t.TAG === "null" && isNumber(inner))) floats.set(field, "plain");
+      else if (isPlainObject(t) && t.TAG === "array" && isNumber(inner)) floats.set(field, "array");
+    }
+    floatFieldsCache.set(meta, floats);
+  }
+  return floats;
+};
+
+const toFloat = (value: unknown): unknown => (typeof value === "string" ? Number(value) : value);
+
+const unstringifyFloats = (meta: EntityMeta, row: Record<string, unknown>): Record<string, unknown> => {
+  const floats = floatFieldsOf(meta);
+  if (floats.size === 0) return row;
+  const out = { ...row };
+  for (const [field, kind] of floats) {
+    if (!(field in out)) continue;
+    const value = out[field];
+    out[field] = kind === "array" && Array.isArray(value) ? value.map(toFloat) : toFloat(value);
+  }
+  return out;
+};
+
 type RescriptField =
   | { TAG: "Field"; _0: { fieldName: string; isChainId: boolean; linkedEntity?: string | undefined } }
   | { TAG: "DerivedFrom" };
@@ -287,7 +321,7 @@ export function createIndexerClient<Entities extends Record<string, object> = Co
 
   const decode = (meta: EntityMeta, row: Record<string, unknown>): unknown => {
     if (meta.schema === undefined) return row;
-    const parsed = S.parseOrThrow(row, meta.schema);
+    const parsed = S.parseOrThrow(unstringifyFloats(meta, row), meta.schema);
     if (meta.chainIdField !== undefined && isPlainObject(parsed) && !(meta.chainIdField in parsed)) {
       return { ...parsed, [meta.chainIdField]: row[meta.chainIdField] };
     }
@@ -296,10 +330,11 @@ export function createIndexerClient<Entities extends Record<string, object> = Co
 
   const decodeSelected = (meta: EntityMeta, row: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> => {
     const schemas = fieldSchemasOf(meta);
+    const unstringified = unstringifyFloats(meta, row);
     const out: Record<string, unknown> = {};
     for (const field of fields) {
       const schema = schemas.get(field);
-      out[field] = schema === undefined ? row[field] : S.parseOrThrow(row[field], schema);
+      out[field] = schema === undefined ? unstringified[field] : S.parseOrThrow(unstringified[field], schema);
     }
     return out;
   };
