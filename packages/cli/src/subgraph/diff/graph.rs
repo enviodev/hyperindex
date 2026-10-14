@@ -319,31 +319,19 @@ pub fn selection(entity: &Entity, fields: &[&str]) -> String {
         .join(" ")
 }
 
-/// graph-node's plural for an entity collection, for endpoints that refuse
-/// introspection. It covers the regular English plurals graph-node's
-/// inflector produces for typical entity names.
-pub fn guess_collection(entity: &str) -> String {
-    let mut chars = entity.chars();
-    let mut camel = chars
-        .next()
-        .map(|first| first.to_lowercase().collect::<String>())
-        .unwrap_or_default();
-    camel.push_str(chars.as_str());
-    let lower = camel.to_lowercase();
-    if lower.ends_with('y')
-        && !lower.ends_with("ay")
-        && !lower.ends_with("ey")
-        && !lower.ends_with("oy")
-        && !lower.ends_with("uy")
-    {
-        format!("{}ies", &camel[..camel.len() - 1])
-    } else if ["s", "x", "z", "ch", "sh"]
-        .iter()
-        .any(|suffix| lower.ends_with(suffix))
-    {
-        format!("{camel}es")
+/// graph-node's collection field for an entity, for endpoints that refuse
+/// introspection: `camel_cased_names` (graph/src/data/graphql/ext.rs) with the
+/// Inflector version graph-node pins, so `ATokenBalanceHistoryItem` is
+/// `atokenBalanceHistoryItems` and a name whose plural is itself gets
+/// `_collection` (`DynamicQuorumParams` → `dynamicQuorumParams_collection`).
+pub fn plural_collection(entity: &str) -> String {
+    use inflector::Inflector;
+    let singular = entity.to_camel_case();
+    let plural = entity.to_plural().to_camel_case();
+    if plural == singular {
+        format!("{plural}_collection")
     } else {
-        format!("{camel}s")
+        plural
     }
 }
 
@@ -724,31 +712,37 @@ pub mod tests {
         );
     }
 
+    /// graph-node's own answers: spec/GRAPH_DIALECT.md §2.1, and the Aave v3
+    /// and Nouns names checked on the network.
     #[test]
-    fn guesses_graph_node_plurals() {
+    fn names_collections_as_graph_node_does() {
+        let names = [
+            ("Pool", "pools"),
+            ("PoolDayData", "poolDayDatas"),
+            ("Factory", "factories"),
+            ("Day", "days"),
+            ("Status", "statuses"),
+            ("Box", "boxes"),
+            ("Match", "matches"),
+            ("UserReserve", "userReserves"),
+            ("Child", "childs"),
+            ("Person", "persons"),
+            ("Metadata", "metadata_collection"),
+            ("Stats", "stats_collection"),
+            ("Users", "users_collection"),
+            ("ERC20Token", "erc20Tokens"),
+            ("ENSName", "ensnames"),
+            ("USDPrice", "usdprices"),
+            ("Leaf", "leaves"),
+            ("Analysis", "analyses"),
+            ("snake_case_name", "snakeCaseNames"),
+            ("ATokenBalanceHistoryItem", "atokenBalanceHistoryItems"),
+            ("EModeCategory", "emodeCategories"),
+            ("DynamicQuorumParams", "dynamicQuorumParams_collection"),
+        ];
         assert_eq!(
-            [
-                "Pool",
-                "PoolDayData",
-                "Factory",
-                "Day",
-                "Status",
-                "Box",
-                "Match",
-                "UserReserve"
-            ]
-            .map(guess_collection)
-            .to_vec(),
-            [
-                "pools",
-                "poolDayDatas",
-                "factories",
-                "days",
-                "statuses",
-                "boxes",
-                "matches",
-                "userReserves"
-            ]
+            names.map(|(entity, _)| plural_collection(entity)).to_vec(),
+            names.map(|(_, plural)| plural.to_string()).to_vec()
         );
     }
 

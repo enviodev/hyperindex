@@ -78,6 +78,9 @@ libc = "0.2"
 # graph-node endpoint.
 tokio-postgres = "0.7.13"
 postgres-native-tls = "0.5.1"
+# graph-node names collection fields with exactly this version's plural rules
+# (graph/src/data/graphql/ext.rs `camel_cased_names`).
+Inflector = "=0.11.4"
 native-tls = "0.2"
 
 # Severity lives here rather than in the CI command line, so `cargo clippy`

@@ -290,17 +290,24 @@ async fn exposed_or_guess(client: &GraphClient, who: &str, warnings: &mut Vec<St
         Ok(exposed) => exposed,
         Err(err) => {
             warnings.push(format!(
-                "Introspection failed on {who} ({err:#}); guessing collection names and \
-                 selecting every schema field."
+                "Introspection failed on {who} ({err:#}); using the other side's collection \
+                 names (or graph-node's naming rule) and selecting every schema field."
             ));
             Exposed::default()
         }
     }
 }
 
-fn collection(exposed: &Exposed, entity: &str, who: &str) -> Result<String> {
+/// The collection field listing `entity` on a side. One that can't be
+/// introspected is a graph-node API for the same schema, so it names
+/// collections as the other side does, or by graph-node's rule.
+fn collection(exposed: &Exposed, other: &Exposed, entity: &str, who: &str) -> Result<String> {
     if exposed.collections.is_empty() {
-        return Ok(graph::guess_collection(entity));
+        return Ok(other
+            .collections
+            .get(entity)
+            .cloned()
+            .unwrap_or_else(|| graph::plural_collection(entity)));
     }
     exposed
         .collections
@@ -334,7 +341,17 @@ struct Compared<'a> {
 
 async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport) -> Result<()> {
     let options = context.options;
-    let their_collection = collection(context.reference_exposed, &entity.name, "The reference")?;
+    let empty = Exposed::default();
+    let our_exposed = match context.ours {
+        Ours::Graph { exposed, .. } => exposed,
+        Ours::Postgres(_) => &empty,
+    };
+    let their_collection = collection(
+        context.reference_exposed,
+        our_exposed,
+        &entity.name,
+        "The reference",
+    )?;
     let their_fields = context.reference_exposed.fields.get(&entity.name);
 
     let (our_columns, our_collection, our_fields) = match context.ours {
@@ -347,7 +364,12 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
         }
         Ours::Graph { exposed, .. } => (
             None,
-            Some(collection(exposed, &entity.name, "Ours")?),
+            Some(collection(
+                exposed,
+                context.reference_exposed,
+                &entity.name,
+                "Ours",
+            )?),
             exposed.fields.get(&entity.name),
         ),
     };

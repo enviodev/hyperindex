@@ -51,9 +51,13 @@ dataSources:
 "#;
 
 fn project() -> tempdir::TempDir {
+    project_with(SCHEMA)
+}
+
+fn project_with(schema: &str) -> tempdir::TempDir {
     let dir = tempdir::TempDir::new("envio-subgraph-diff").unwrap();
     std::fs::write(dir.path().join("subgraph.yaml"), MANIFEST).unwrap();
-    std::fs::write(dir.path().join("schema.graphql"), SCHEMA).unwrap();
+    std::fs::write(dir.path().join("schema.graphql"), schema).unwrap();
     dir
 }
 
@@ -167,7 +171,12 @@ fn serve(data: &Dataset, block: u64, query: &str) -> (u16, String) {
 }
 
 fn introspection(data: &Dataset) -> Value {
-    let types = [("accounts", "Account"), ("tokens", "Token")];
+    let types = [
+        ("accounts", "Account"),
+        ("tokens", "Token"),
+        ("emodeCategories", "EModeCategory"),
+        ("dynamicQuorumParams_collection", "DynamicQuorumParams"),
+    ];
     let list_of = |name: &str| {
         json!({"kind": "NON_NULL", "name": null, "ofType": {"kind": "LIST", "name": null,
             "ofType": {"kind": "NON_NULL", "name": null, "ofType": {"kind": "OBJECT", "name": name}}}})
@@ -185,6 +194,8 @@ fn introspection(data: &Dataset) -> Value {
                 "id", "minter", "owner", "supply", "decimals", "hash", "frozen", "labels",
             ],
         ),
+        ("EModeCategory", vec!["id", "label"]),
+        ("DynamicQuorumParams", vec!["id", "minQuorumVotesBPS"]),
     ]
     .iter()
     .map(|(name, fields)| {
@@ -376,6 +387,64 @@ async fn asks_again_before_reporting_a_difference() {
                    "oursListingMissed": 0, "samplesResolved": 2, "unchecked": 0,
                    "error": null}),
             2
+        )
+    );
+}
+
+/// envio-serve answers no introspection, so ours' collection names come from
+/// the reference's: graph-node's, which a naive plural gets wrong for these.
+#[tokio::test]
+async fn names_ours_collections_as_the_reference_does() {
+    let schema = r#"
+type EModeCategory @entity {
+  id: ID!
+  label: String!
+}
+
+type DynamicQuorumParams @entity {
+  id: ID!
+  minQuorumVotesBPS: Int!
+}
+"#;
+    let data = || {
+        BTreeMap::from([
+            (
+                "emodeCategories",
+                vec![json!({"id": "1", "label": "ETH correlated"})],
+            ),
+            (
+                "dynamicQuorumParams_collection",
+                vec![json!({"id": "LATEST", "minQuorumVotesBPS": 1000})],
+            ),
+        ])
+    };
+    let reference = graph_node(data(), BLOCK).await;
+    let ours_data = Arc::new(data());
+    let ours = mock_graph(move |query| {
+        if query.contains("__schema") {
+            let refusal = json!({"errors": [{"message": "Introspection is not supported"}]});
+            return (200, refusal.to_string());
+        }
+        serve(&ours_data, BLOCK, query)
+    })
+    .await;
+    let dir = project_with(schema);
+    let report = run(dir.path(), &options(&reference.url, Some(&ours.url))).await;
+    assert_eq!(
+        (
+            report.status,
+            report
+                .entities
+                .iter()
+                .map(|e| (e.name.as_str(), e.status, e.ours, e.error.clone()))
+                .collect::<Vec<_>>()
+        ),
+        (
+            Status::Match,
+            vec![
+                ("EModeCategory", Some(Status::Match), Some(1), None),
+                ("DynamicQuorumParams", Some(Status::Match), Some(1), None),
+            ]
         )
     );
 }
