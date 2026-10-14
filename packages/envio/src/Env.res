@@ -233,5 +233,12 @@ module ThrottleWrites = {
     )
 }
 
+// The same names the controller sets in both containers of an indexer pod.
+module Sidecar = {
+  let internalUrl =
+    envSafe->EnvSafe.get("ENVIO_SIDECAR_INTERNAL_URL", S.string, ~fallback="http://127.0.0.1:9901")
+  let queueMax = envSafe->EnvSafe.get("ENVIO_SIDECAR_QUEUE_MAX", S.int, ~fallback=10_000)
+}
+
 // You need to close the envSafe after you're done with it so that it immediately tells you about your  misconfigured environment on startup.
 envSafe->EnvSafe.close

@@ -536,6 +536,11 @@ exception FatalError(exn)
       ~exitAfterFirstEventBlock,
       ~holdRealtime=Worker.config->Option.mapOr(false, worker => worker.holdRealtime),
       ~onError,
+      // Each worker of a split run sends its own chains' calls; ids lead with
+      // the chain id, so the sidecar never sees two workers' calls collide.
+      ~sidecarSender=?config.sidecar->Option.isSome && !isTest
+        ? Some(SidecarSender.make(~url=Env.Sidecar.internalUrl, ~queueMax=Env.Sidecar.queueMax))
+        : None,
     )
     if shouldUseTui {
       Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
