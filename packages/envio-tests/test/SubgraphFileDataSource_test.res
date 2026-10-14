@@ -126,7 +126,13 @@ export function handlePublished(event: any): void {
   seed.setString("content", "seed");
   seed.setBoolean("sawChain", false);
   store.set("Meta", "seed:" + hash, seed);
-  if (hash.startsWith("tx:")) {
+  if (hash == "b58") {
+    // A digest behind a CID prefix reads as a CID.
+    let meta = new Entity();
+    meta.setString("content", Bytes.fromUTF8("hello world").toBase58() + "," + Bytes.fromHexString("0x000001").toBase58() + "," + Bytes.fromHexString("0x1220" + "00".repeat(32)).toBase58());
+    meta.setBoolean("sawChain", false);
+    store.set("Meta", "b58", meta);
+  } else if (hash.startsWith("tx:")) {
     DataSourceTemplate.create("Tx", [hash.slice(3)]);
   } else if (hash.startsWith("lines:")) {
     DataSourceTemplate.create("Lines", [hash.slice(6)]);
@@ -313,6 +319,13 @@ describe("file data sources", () => {
       ["line:a", "au"],
       ["line:b", "bu"],
     ]);
+  });
+
+  it("renders bytes as base58, as graph-node does", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({ chains: { 1: { simulate: [published("b58")] } } });
+    const row = (await indexer.Meta.getAll()).find((meta: any) => meta.id === "b58");
+    t.expect(row.content).toBe("StV1DL6CwTryKyV,112,QmNLei78zWmzUdbeRB3CiUfAizWUrbeeZh5K1rhAQKCh51");
   });
 
   it("runs the data sources a file handler creates", async (t) => {

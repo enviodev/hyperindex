@@ -94,6 +94,30 @@ function fitted(value: bigint, min: bigint, max: bigint, target: string): bigint
 
 const utf8Decoder = new TextDecoder("utf-8");
 
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function toBase58(bytes: Uint8Array): string {
+  let zeros = 0;
+  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
+  // Repeated division of the big-endian number by 58, in base 256.
+  const digits: number[] = [];
+  for (let index = zeros; index < bytes.length; index++) {
+    let carry = bytes[index];
+    for (let digit = 0; digit < digits.length; digit++) {
+      carry += digits[digit] << 8;
+      digits[digit] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = Math.floor(carry / 58);
+    }
+  }
+  let out = "1".repeat(zeros);
+  for (let digit = digits.length - 1; digit >= 0; digit--) out += BASE58_ALPHABET[digits[digit]];
+  return out;
+}
+
 export class ByteArray extends Uint8Array {
   static fromHexString(hex: string): ByteArray {
     const normalized = hex.startsWith("0x") ? hex : "0x" + hex;
@@ -137,8 +161,13 @@ export class ByteArray extends Uint8Array {
   toString(): string {
     return utf8Decoder.decode(this).replace(/\u0000+$/, "");
   }
+  /**
+   * graph-node's `bytes_to_base58`: Bitcoin-alphabet base58, each leading zero
+   * byte a leading `1`. Turns a bytes32 digest behind a `Qm` prefix into the
+   * CID a subgraph hands to `ipfs.cat` or a file data source.
+   */
   toBase58(): string {
-    throw unsupported("ByteArray.toBase58", "a mapping handler");
+    return toBase58(this);
   }
   toU32(): number {
     return Number(fitted(fromLittleEndian(this, false), 0n, 4294967295n, "u32"));
