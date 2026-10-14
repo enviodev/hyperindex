@@ -85,8 +85,16 @@ let collectMetrics = async (
   ~metrics: option<Metrics.t>,
   ~sidecarUrl=Env.Sidecar.internalUrl,
   ~timeoutMs=1_000,
+  ~webhooks=WebhookListener.current.contents,
+  ~contract=SidecarContract.get(),
 ) => {
-  let own = Metrics.collect(~metrics)
+  // The webhook listener runs in this process (a split run's supervisor owns
+  // it), so its counters go straight in, not through the workers' snapshots.
+  let own = switch webhooks {
+  | Some(stats) =>
+    Metrics.collect(~metrics) ++ "\n" ++ stats->WebhookListener.renderMetrics(~contract) ++ "\n"
+  | None => Metrics.collect(~metrics)
+  }
   switch metrics {
   | Some({sidecar: Some(_)}) =>
     switch await SidecarSender.fetchMetrics(~url=sidecarUrl, ~timeoutMs) {

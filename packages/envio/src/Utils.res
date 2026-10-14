@@ -809,6 +809,7 @@ module Proxy = {
   type traps<'a> = {
     get?: (~target: 'a, ~prop: unknown) => unknown,
     ownKeys?: (~target: 'a) => array<string>,
+    has?: (~target: 'a, ~prop: unknown) => bool,
     getOwnPropertyDescriptor?: (~target: 'a, ~prop: unknown) => option<propertyDescriptor>,
   }
 

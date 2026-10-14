@@ -15,6 +15,10 @@ type handler = (req, res) => unit
 type middleware = (req, res, unit => unit) => unit
 
 @module("express") external jsonMiddleware: unit => middleware = "json"
+@module("express") external jsonMiddlewareWith: {"limit": string} => middleware = "json"
+
+@get external body: req => JSON.t = "body"
+@get external params: req => dict<string> = "params"
 
 @send external use: (app, middleware) => unit = "use"
 @send external useFor: (app, string, middleware) => unit = "use"
@@ -25,10 +29,15 @@ type middleware = (req, res, unit => unit) => unit
 type server
 
 @send external listen: (app, int) => server = "listen"
+@send external listenOn: (app, int, string, unit => unit) => server = "listen"
 @send external onError: (server, @as("error") _, JsExn.t => unit) => unit = "on"
+@send external address: server => {"port": int} = "address"
+@send external closeAllConnections: server => unit = "closeAllConnections"
+@send external close: (server, unit => unit) => unit = "close"
 
 // res methods
 @send external sendStatus: (res, int) => unit = "sendStatus"
+@send external status: (res, int) => res = "status"
 @send external set: (res, string, string) => unit = "set"
 @send external json: (res, JSON.t) => unit = "json"
 @send external endWithData: (res, 'a) => res = "end"

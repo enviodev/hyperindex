@@ -37,6 +37,11 @@ if (mode === "print") {
   setTimeout(() => process.exit(0), 50);
 }
 
+// Reports back every message its supervisor sends it.
+if (mode === "echo") {
+  process.on("message", (message) => process.send({ kind: "snapshot", metrics: { echo: message } }));
+}
+
 // Nothing else keeps a "linger" worker alive; it waits to be stopped.
 if (mode === "linger") setInterval(() => {}, 1000);
 

@@ -216,6 +216,8 @@ let stats = (~up=?, ~lastAckSeconds=?, ~queueMax=10_000): SidecarSender.stats =>
   up,
   lastAckSeconds,
   queueMax,
+  deliverySeconds: Dict.make(),
+  commitToAckSeconds: SidecarSender.makeHistogram(SidecarSender.commitToAckBuckets),
 }
 
 let withSidecar = sidecar => {...TestChainMetrics.emptySnapshot, sidecar: Some(sidecar)}

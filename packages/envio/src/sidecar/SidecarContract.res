@@ -1,7 +1,11 @@
 // What `defineSidecar` builds (contract.ts): every input already wrapped with
 // `S.schema`.
 type functionDef = {input: S.t<unknown>}
-type t = {functions: dict<functionDef>}
+type webhookDef = {body: S.t<unknown>}
+type t = {functions: dict<functionDef>, webhooks?: dict<webhookDef>}
+
+let webhookBodySchema = (contract: t, ~name) =>
+  contract.webhooks->Option.flatMap(webhooks => webhooks->Utils.Dict.dangerouslyGetNonOption(name))
 
 let current: ref<option<t>> = ref(None)
 // The test harness binds a fixture's contract itself, since the path its

@@ -69,7 +69,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~maxOnBlockBufferSize=5000, ~onBloc
 }
 
 let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
-  chainId: chainId,
+  chainId,
   blockNumber,
   // Carries an `index` so the buffer's dedup key (blockNumber, logIndex, index)
   // resolves; the rest of the registration is unused by these tests.
@@ -91,6 +91,7 @@ let itemCoordinate = (item: Internal.item) =>
       blockNumber,
       blockHandler(onBlockRegistration.index),
     )
+  | Internal.Webhook({blockNumber}) => (blockNumber, "webhook")
   }
 
 describe("FetchState onBlock functionality", () => {
@@ -122,11 +123,12 @@ describe("FetchState onBlock functionality", () => {
 
     let lastBlockItem =
       updatedFetchState.buffer
-      ->Array.filter(item =>
-        switch item {
-        | Block(_) => true
-        | Event(_) => false
-        }
+      ->Array.filter(
+        item =>
+          switch item {
+          | Block(_) => true
+          | Event(_) | Webhook(_) => false
+          },
       )
       ->Array.last
       ->Option.map(Internal.getItemBlockNumber)
@@ -287,7 +289,9 @@ describe("FetchState onBlock functionality", () => {
     // Create two onBlock configs with different intervals
     let onBlockRegistration1 = makeOnBlockRegistration(~name="config1", ~index=0, ~interval=2)
     let onBlockRegistration2 = makeOnBlockRegistration(~name="config2", ~index=1, ~interval=3)
-    let fetchState = makeInitialWithOnBlock(~onBlockRegistrations=Some([onBlockRegistration1, onBlockRegistration2]))
+    let fetchState = makeInitialWithOnBlock(
+      ~onBlockRegistrations=Some([onBlockRegistration1, onBlockRegistration2]),
+    )
 
     // Process a batch
     let query: FetchState.query = {

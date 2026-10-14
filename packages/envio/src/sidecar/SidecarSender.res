@@ -8,6 +8,44 @@ type rollbackTarget = {chainId: ChainId.t, rollbackToBlock: int}
 
 type item = Rollback(rollbackTarget) | Call(SidecarCall.t)
 
+// A Prometheus histogram: `counts` holds one non-cumulative count per upper
+// bound in `buckets`, plus a last one for what lies above them all.
+type histogram = {buckets: array<float>, counts: array<int>, mutable sum: float, mutable count: int}
+
+// One POST to the sidecar, answer included: milliseconds over loopback, up to
+// the 30 s rollback timeout (the runtime answers a rollback after `onRollback`).
+let deliveryBuckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1., 2.5, 5., 10., 30.]
+// From the commit to the sidecar accepting the call: queueing and retries
+// while the sidecar is down included, so it reaches further.
+let commitToAckBuckets = [0.01, 0.05, 0.1, 0.25, 0.5, 1., 2.5, 5., 10., 30., 60., 300.]
+
+let makeHistogram = buckets => {
+  buckets,
+  counts: Array.make(~length=buckets->Array.length + 1, 0),
+  sum: 0.,
+  count: 0,
+}
+
+let observe = (h, value) => {
+  let index = switch h.buckets->Array.findIndex(upper => value <= upper) {
+  | -1 => h.buckets->Array.length
+  | index => index
+  }
+  h.counts->Array.setUnsafe(index, h.counts->Array.getUnsafe(index) + 1)
+  h.sum = h.sum +. value
+  h.count = h.count + 1
+}
+
+let copyHistogram = h => {...h, counts: h.counts->Array.copy}
+
+// Two workers' histograms of the same series; their buckets are the same.
+let addHistograms = (a, b) => {
+  buckets: a.buckets,
+  counts: a.counts->Array.mapWithIndex((count, i) => count + b.counts->Array.getUnsafe(i)),
+  sum: a.sum +. b.sum,
+  count: a.count + b.count,
+}
+
 type stats = {
   queued: int,
   sent: int,
@@ -19,6 +57,9 @@ type stats = {
   // Unix seconds of the last POST the sidecar answered with a 2xx.
   lastAckSeconds: option<float>,
   queueMax: int,
+  // Keyed by the rendered labels, `kind="calls",outcome="delivered"`.
+  deliverySeconds: dict<histogram>,
+  commitToAckSeconds: histogram,
 }
 
 type probeTimer
@@ -30,8 +71,10 @@ type t = {
   rollbackTimeoutMs: int,
   backoffBaseMs: int,
   backoffCapMs: int,
-  onAcked: array<string> => unit,
-  onDropped: (array<SidecarCall.t>, ~reason: string) => unit,
+  // Bound by the indexer state that owns the sender, which turns them into the
+  // built-in `sidecar.ack` and `sidecar.dropped` webhooks.
+  mutable onAcked: array<SidecarCall.t> => unit,
+  mutable onDropped: (array<SidecarCall.t>, ~reason: string) => unit,
   // 0 turns the readiness probe off.
   probeMs: int,
   queue: array<item>,
@@ -49,6 +92,10 @@ type t = {
   mutable lastAckSeconds: option<float>,
   mutable probeTimer: option<probeTimer>,
   mutable probing: bool,
+  deliverySeconds: dict<histogram>,
+  commitToAckSeconds: histogram,
+  // When each queued call was committed, for `commitToAckSeconds`.
+  committedAt: Utils.WeakMap.t<SidecarCall.t, Performance.timeRef>,
 }
 
 // What the runtime accepts in one POST is bounded by its 10 MB body limit, not
@@ -101,7 +148,14 @@ type outcome =
   // Any other non-2xx: the payload itself is wrong, resending won't help.
   | Refused(int)
 
-let post = async (t, ~path, ~body: JSON.t, ~timeoutMs) =>
+let outcomeLabel = outcome =>
+  switch outcome {
+  | Delivered(_) => "delivered"
+  | Retry(_) => "retry"
+  | Refused(_) => "refused"
+  }
+
+let postOnce = async (t, ~path, ~body: JSON.t, ~timeoutMs) =>
   switch await fetch(
     t.url ++ path,
     {
@@ -133,6 +187,22 @@ let post = async (t, ~path, ~body: JSON.t, ~timeoutMs) =>
     t->setUp(false)
     Retry((exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"])
   }
+
+// One attempt, timed into `envio_sidecar_delivery_seconds{kind,outcome}`.
+let post = async (t, ~kind, ~path, ~body, ~timeoutMs) => {
+  let startedAt = Performance.now()
+  let outcome = await t->postOnce(~path, ~body, ~timeoutMs)
+  let key = `kind="${kind}",outcome="${outcome->outcomeLabel}"`
+  let histogram = switch t.deliverySeconds->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(histogram) => histogram
+  | None =>
+    let histogram = makeHistogram(deliveryBuckets)
+    t.deliverySeconds->Dict.set(key, histogram)
+    histogram
+  }
+  histogram->observe(startedAt->Performance.secondsSince)
+  outcome
+}
 
 // The sidecar's readiness (wiki/09-reliability.md 2): 200 when it takes calls,
 // 503 `starting` or `closing` when it does not. Only asked while the sender is
@@ -227,6 +297,9 @@ let make = (
     lastAckSeconds: None,
     probeTimer: None,
     probing: false,
+    deliverySeconds: Dict.make(),
+    commitToAckSeconds: makeHistogram(commitToAckBuckets),
+    committedAt: Utils.WeakMap.make(),
   }
   t->startProbe
   t
@@ -249,6 +322,8 @@ let stats = (t): stats => {
   up: t.up,
   lastAckSeconds: t.lastAckSeconds,
   queueMax: t.queueMax,
+  deliverySeconds: t.deliverySeconds->Utils.Dict.mapValues(copyHistogram),
+  commitToAckSeconds: t.commitToAckSeconds->copyHistogram,
 }
 
 let drop = (t, calls: array<SidecarCall.t>, ~reason, ~detail=reason) =>
@@ -296,7 +371,16 @@ let settleCalls = (t, ~calls: array<SidecarCall.t>, ~reply: JSON.t) => {
   let accepted = accepted->Option.getOr([])
   t.sent = t.sent + accepted->Array.length
   if accepted->Utils.Array.notEmpty {
-    t.onAcked(accepted)
+    let acceptedIds = accepted->Utils.Set.fromArray
+    let acked = calls->Array.filter(call => acceptedIds->Utils.Set.has(call.id))
+    acked->Array.forEach(call =>
+      t.committedAt
+      ->Utils.WeakMap.get(call)
+      ->Option.forEach(committedAt =>
+        t.commitToAckSeconds->observe(committedAt->Performance.secondsSince)
+      )
+    )
+    t.onAcked(acked)
   }
   rejected
   ->Option.getOr([])
@@ -330,6 +414,7 @@ let sendCalls = async t => {
     t.inFlight->Utils.Array.isEmpty
       ? Promise.resolve(Delivered(JSON.Null))
       : t->post(
+          ~kind="calls",
           ~path="/envio/calls",
           ~body={"batchId": batchId, "calls": t.inFlight->Array.map(toWire)}->Utils.magic,
           ~timeoutMs=t.callsTimeoutMs,
@@ -353,7 +438,12 @@ let sendCalls = async t => {
 let sendRollback = async (t, target: rollbackTarget) => {
   let body = {"chainId": target.chainId->ChainId.toInt, "rollbackToBlock": target.rollbackToBlock}
   switch await t->deliver(~send=() =>
-    t->post(~path="/envio/rollback", ~body=body->Utils.magic, ~timeoutMs=t.rollbackTimeoutMs)
+    t->post(
+      ~kind="rollback",
+      ~path="/envio/rollback",
+      ~body=body->Utils.magic,
+      ~timeoutMs=t.rollbackTimeoutMs,
+    )
   ) {
   | Some(Delivered(_)) => t.rollbacksSent = t.rollbacksSent + 1
   | Some(Refused(code)) =>
@@ -472,7 +562,11 @@ let enqueueCommitted = (t, ~rollbackTargets: array<rollbackTarget>, ~calls: arra
       t->purge(target)
       t.queue->Array.push(Rollback(target))->ignore
     })
-    calls->Array.forEach(call => t.queue->Array.push(Call(call))->ignore)
+    let committedAt = Performance.now()
+    calls->Array.forEach(call => {
+      t.committedAt->Utils.WeakMap.set(call, committedAt)->ignore
+      t.queue->Array.push(Call(call))->ignore
+    })
     t->enforceBound
     t->startDraining
   }

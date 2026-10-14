@@ -14,6 +14,31 @@ export const DEFAULT_EMIT_RETRY_MAX_MS = 600_000;
 export const DEFAULT_EMIT_BREAKER_FAILURES = 5;
 /** How long the breaker stays open before the next emit probes the indexer. */
 export const DEFAULT_EMIT_BREAKER_COOLDOWN_MS = 5_000;
+/** wiki 11 section 5.3: per statement, the user may raise it up to the Hasura ceiling. */
+export const DEFAULT_SQL_TIMEOUT_MS = 10_000;
+export const MAX_SQL_TIMEOUT_MS = 60_000;
+/** One under the hosted role's CONNECTION LIMIT 6. */
+export const DEFAULT_SQL_POOL_SIZE = 5;
+export const DEFAULT_SQL_POOL_WAIT_MS = 10_000;
+
+/** As postgres.js takes it; `ENVIO_SIDECAR_PG_SSL_MODE=true` reads as "require". */
+export type SidecarSqlSslMode = false | "require" | "allow" | "prefer" | "verify-full";
+
+/** Read-only Postgres access for `sql` (`ENVIO_SIDECAR_PG_*`), dedicated deployments only. */
+export type SidecarSqlEnv = {
+  readonly host: string;
+  readonly port: number;
+  readonly database: string;
+  readonly user: string;
+  readonly password: string | undefined;
+  readonly schema: string;
+  readonly ssl: SidecarSqlSslMode;
+  /** Through a transaction-mode pooler: no named prepared statements. */
+  readonly poolerBacked: boolean;
+  readonly timeoutMs: number;
+  readonly poolSize: number;
+  readonly poolWaitMs: number;
+};
 
 export type SidecarEnv = {
   /** Routable user API port (`ENVIO_SIDECAR_PORT`). */
@@ -47,6 +72,8 @@ export type SidecarEnv = {
   readonly emitBreakerFailures: number;
   /** Open time before a probe (`ENVIO_EMIT_BREAKER_COOLDOWN_MS`). */
   readonly emitBreakerCooldownMs: number;
+  /** Undefined unless `ENVIO_SIDECAR_PG_HOST`, `_USER` and `_DATABASE` are all set. */
+  readonly sql: SidecarSqlEnv | undefined;
 };
 
 const readPort = (env: NodeJS.ProcessEnv, name: string, fallback: number): number => {
@@ -85,6 +112,46 @@ const optional = (env: NodeJS.ProcessEnv, name: string): string | undefined => {
   return raw === undefined || raw === "" ? undefined : raw;
 };
 
+const SSL_MODES = new Set(["require", "allow", "prefer", "verify-full"]);
+
+// The controller renders sslmode "disable" as an empty value and envio dev
+// passes the indexer's ENVIO_PG_SSL_MODE (default false), so all of those
+// mean no TLS.
+const readSslMode = (env: NodeJS.ProcessEnv, name: string): SidecarSqlSslMode => {
+  const raw = optional(env, name);
+  if (raw === undefined || raw === "false" || raw === "disable" || raw === "off") return false;
+  if (raw === "true") return "require";
+  if (SSL_MODES.has(raw)) return raw as SidecarSqlSslMode;
+  throw new Error(`${name} must be one of disable, off, false, true, require, allow, prefer, verify-full; got '${raw}'`);
+};
+
+const readBool = (env: NodeJS.ProcessEnv, name: string): boolean => {
+  const raw = optional(env, name);
+  if (raw === undefined || raw === "false" || raw === "0") return false;
+  if (raw === "true" || raw === "1") return true;
+  throw new Error(`${name} must be true or false, got '${raw}'`);
+};
+
+const readSqlEnv = (env: NodeJS.ProcessEnv): SidecarSqlEnv | undefined => {
+  const host = optional(env, "ENVIO_SIDECAR_PG_HOST");
+  const user = optional(env, "ENVIO_SIDECAR_PG_USER");
+  const database = optional(env, "ENVIO_SIDECAR_PG_DATABASE");
+  if (host === undefined || user === undefined || database === undefined) return undefined;
+  return {
+    host,
+    port: readPort(env, "ENVIO_SIDECAR_PG_PORT", 5432),
+    database,
+    user,
+    password: optional(env, "ENVIO_SIDECAR_PG_PASSWORD"),
+    schema: optional(env, "ENVIO_SIDECAR_PG_SCHEMA") ?? "public",
+    ssl: readSslMode(env, "ENVIO_SIDECAR_PG_SSL_MODE"),
+    poolerBacked: readBool(env, "ENVIO_SIDECAR_PG_POOLER_BACKED"),
+    timeoutMs: Math.min(readInt(env, "ENVIO_SIDECAR_SQL_TIMEOUT_MS", DEFAULT_SQL_TIMEOUT_MS), MAX_SQL_TIMEOUT_MS),
+    poolSize: readInt(env, "ENVIO_SIDECAR_SQL_POOL_SIZE", DEFAULT_SQL_POOL_SIZE),
+    poolWaitMs: DEFAULT_SQL_POOL_WAIT_MS,
+  };
+};
+
 export const readEnv = (env: NodeJS.ProcessEnv = process.env): SidecarEnv => ({
   publicPort: readPort(env, "ENVIO_SIDECAR_PORT", DEFAULT_PUBLIC_PORT),
   internalPort: portOfUrl(
@@ -113,4 +180,5 @@ export const readEnv = (env: NodeJS.ProcessEnv = process.env): SidecarEnv => ({
   emitRetryMaxMs: readInt(env, "ENVIO_EMIT_RETRY_MAX_MS", DEFAULT_EMIT_RETRY_MAX_MS, 0),
   emitBreakerFailures: readInt(env, "ENVIO_EMIT_BREAKER_FAILURES", DEFAULT_EMIT_BREAKER_FAILURES, 0),
   emitBreakerCooldownMs: readInt(env, "ENVIO_EMIT_BREAKER_COOLDOWN_MS", DEFAULT_EMIT_BREAKER_COOLDOWN_MS, 0),
+  sql: readSqlEnv(env),
 });

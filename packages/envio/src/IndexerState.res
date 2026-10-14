@@ -142,6 +142,98 @@ type t = {
   mutable rollbackEventsCount: float,
 }
 
+// Queued on the chain for its next batch. Only a handler is waited for: a
+// webhook nobody registered for is accepted and goes no further.
+let enqueueWebhook = (state: t, delivery: Internal.webhookDelivery, ~body=?) =>
+  switch state.crossChainState
+  ->CrossChainState.chainStates
+  ->Utils.Dict.dangerouslyGetNonOption(delivery.chainId->ChainId.toString) {
+  | None =>
+    Logging.warn({
+      "msg": "Dropped a webhook for a chain this process doesn't index",
+      "webhook": delivery.name,
+      "chainId": delivery.chainId,
+    })
+  | Some(cs) =>
+    switch cs->ChainState.webhookRegistration(~name=delivery.name) {
+    | None =>
+      Logging.debug({
+        "msg": "No indexer.onWebhook handler for this webhook; accepted and not applied",
+        "webhook": delivery.name,
+        "id": delivery.id,
+      })
+    | Some(onWebhookRegistration) =>
+      switch switch body {
+      | Some(body) => body
+      | None =>
+        switch SidecarContract.get()->Option.flatMap(contract =>
+          contract->SidecarContract.webhookBodySchema(~name=delivery.name)
+        ) {
+        | Some({body: schema}) => delivery.body->S.parseJsonOrThrow(schema)
+        | None => delivery.body->(Utils.magic: JSON.t => unknown)
+        }
+      } {
+      | body =>
+        cs->ChainState.enqueueWebhook({onWebhookRegistration, delivery, body})
+        state.scheduleProcessing()
+      | exception exn =>
+        Logging.errorWithExn(
+          exn->Utils.prettifyExn,
+          `Dropped webhook '${delivery.name}': its body doesn't match the sidecar contract`,
+        )
+      }
+    }
+  }
+
+%%private(
+  let webhookCounter = ref(0)
+
+  let enqueueBuiltin = (state: t, ~name, calls: array<SidecarCall.t>, ~reason=?) =>
+    calls->Array.forEach(call => {
+      let input = switch SidecarContract.get()->Option.flatMap(contract =>
+        contract.functions->Utils.Dict.dangerouslyGetNonOption(call.fn)
+      ) {
+      | Some({input: schema}) =>
+        try call.input->S.parseJsonOrThrow(schema) catch {
+        | _ => call.input->(Utils.magic: JSON.t => unknown)
+        }
+      | None => call.input->(Utils.magic: JSON.t => unknown)
+      }
+      let wire = dict{
+        "callId": call.id->JSON.Encode.string,
+        "fn": call.fn->JSON.Encode.string,
+        "input": call.input,
+      }
+      let body = dict{
+        "callId": call.id->(Utils.magic: string => unknown),
+        "fn": call.fn->(Utils.magic: string => unknown),
+        "input": input,
+      }
+      reason->Option.forEach(reason => {
+        wire->Dict.set("reason", reason->JSON.Encode.string)
+        body->Dict.set("reason", reason->(Utils.magic: string => unknown))
+      })
+      webhookCounter := webhookCounter.contents + 1
+      state->enqueueWebhook(
+        {
+          id: `${name}_${webhookCounter.contents->Int.toString}`,
+          chainId: call.chainId,
+          name,
+          body: wire->JSON.Encode.object,
+          receivedAt: Date.now(),
+        },
+        ~body=body->(Utils.magic: dict<unknown> => unknown),
+      )
+    })
+
+  let bindSidecarBuiltins = (state: t) =>
+    state.sidecarSender->Option.forEach(sender => {
+      sender.onAcked = calls => state->enqueueBuiltin(~name="sidecar.ack", calls)
+      sender.onDropped = (calls, ~reason) =>
+        state->enqueueBuiltin(~name="sidecar.dropped", calls, ~reason)
+    })
+)
+
 let make = (
   ~config: Config.t,
   ~persistence: Persistence.t,
@@ -170,7 +262,7 @@ let make = (
     )
   }
 
-  {
+  let state = {
     config,
     persistence,
     allEntities: persistence.allEntities,
@@ -222,6 +314,8 @@ let make = (
     rollbackCount: 0,
     rollbackEventsCount: 0.,
   }
+  state->bindSidecarBuiltins
+  state
 }
 
 // Check if progress is past the reorg threshold (safe block).

@@ -91,6 +91,8 @@ type rec t = {
   // Stands in for the supervisor's go-ahead in a run started with
   // `~holdRealtime`.
   releaseRealtime: unit => unit,
+  // Where the webhook listener of a run started with `~webhookPort` listens.
+  webhookUrl: unit => string,
 }
 
 // How often the stand-in supervisor of a supervised pass asks whether the run
@@ -164,6 +166,9 @@ let run = async (
   // Opts the run into delivering `context.sidecar` calls; without it nothing is
   // sent, as in any test indexer.
   ~sidecarSender=?,
+  // Starts the sidecar webhook listener on this port (0 picks one), as an
+  // indexer with `sidecar:` configured does.
+  ~webhookPort=?,
   ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   // Runs after `restart` has stopped the previous indexer and before the next
   // one starts, so mocked sources can void what the stopped one left in flight.
@@ -290,6 +295,22 @@ let run = async (
     )
     state->IndexerLoop.start
 
+    let webhookListener = switch webhookPort {
+    | Some(port) =>
+      Some(
+        await WebhookListener.start(
+          ~host="127.0.0.1",
+          ~port,
+          ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
+          ~secret=None,
+          ~contract=SidecarContract.get,
+          ~isReady=_ => true,
+          ~deliver=delivery => state->IndexerState.enqueueWebhook(delivery),
+        ),
+      )
+    | None => None
+    }
+
     // Only when the test didn't ask for the hold itself: one that did is
     // testing the barrier and owns its own release.
     let releaseCheck = ref(None)
@@ -317,6 +338,10 @@ let run = async (
           async () => {
             releaseCheck.contents->Option.forEach(clearInterval)
             releaseCheck := None
+            switch webhookListener {
+            | Some(listener) => await listener.close()
+            | None => ()
+            }
             await state->Writing.flush
             state->IndexerState.stop
             // Tests deliberately leave handlers that never resolve, which pins
@@ -511,6 +536,11 @@ let run = async (
         }
       },
       releaseRealtime: () => state->IndexerState.releaseRealtime,
+      webhookUrl: () =>
+        switch webhookListener {
+        | Some(listener) => listener.url
+        | None => JsError.throwWithMessage("Start the run with ~webhookPort to post webhooks.")
+        },
       waitUntilReady: async () => {
         let isReady = () =>
           state

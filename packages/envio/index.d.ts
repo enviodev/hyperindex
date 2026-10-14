@@ -5,6 +5,8 @@ import type {
   SidecarContract,
   SidecarFunctionInput,
   SidecarFunctionName,
+  SidecarWebhookBody,
+  SidecarWebhookName,
 } from "./src/sidecar/contract.js";
 export { default as BigDecimal } from "bignumber.js";
 
@@ -321,6 +323,56 @@ type GlobalConfig = Global extends { config: infer C extends IndexerConfigTypes 
 type GlobalSidecarCaller = Global extends { sidecar: infer C extends SidecarContract }
   ? SidecarCaller<C>
   : NotConfigured<"context.sidecar", "Add `sidecar: { contract, entry }`">;
+
+/** The webhooks the indexer itself posts about `context.sidecar` calls. */
+export type SidecarBuiltinWebhookName = "sidecar.ack" | "sidecar.dropped";
+
+/** A name `indexer.onWebhook` accepts: the contract's webhooks, the built-ins,
+ *  or any other name `emit.raw` may post. The contract is inferred where it is
+ *  used, as for `GlobalSidecarCaller`, so its index signature never leaks in. */
+export type WebhookName =
+  | (Global extends { sidecar: infer C extends SidecarContract } ? SidecarWebhookName<C> : never)
+  | SidecarBuiltinWebhookName
+  | (string & {});
+
+/** The call a built-in webhook is about, with its input decoded. */
+type SidecarCallRefOf<C extends SidecarContract> = {
+  [K in SidecarFunctionName<C>]: {
+    readonly callId: string;
+    readonly fn: K;
+    readonly input: SidecarFunctionInput<C, K>;
+  };
+}[SidecarFunctionName<C>];
+
+type WebhookBodyFrom<C extends SidecarContract, N extends string> = N extends "sidecar.ack"
+  ? SidecarCallRefOf<C>
+  : N extends "sidecar.dropped"
+    ? SidecarCallRefOf<C> & { readonly reason: string }
+    : N extends SidecarWebhookName<C>
+      ? SidecarWebhookBody<C, N>
+      : unknown;
+
+type WebhookBodyOf<N extends string> = Global extends { sidecar: infer C extends SidecarContract }
+  ? WebhookBodyFrom<C, N>
+  : N extends SidecarBuiltinWebhookName
+    ? { readonly callId: string; readonly fn: string; readonly input: unknown; readonly reason?: string }
+    : unknown;
+
+/** What an `indexer.onWebhook` handler is handed about the webhook. */
+export type OnWebhookEvent<N extends string = string> = {
+  readonly name: N;
+  /** Decoded with the contract's `webhooks.<name>.body` schema. */
+  readonly body: WebhookBodyOf<N>;
+  /** The id the listener answered the sidecar with. */
+  readonly id: string;
+  readonly chainId: number;
+  /** When the listener accepted it, in milliseconds since the epoch. */
+  readonly receivedAt: number;
+  readonly idempotencyKey?: string;
+  /** The block the webhook's writes are recorded at: where its chain's batch
+   *  left the chain. */
+  readonly block: { readonly number: number; readonly timestamp?: number };
+};
 
 /** Error-message string returned by project-bound aliases when codegen has
  *  not run yet. Resolves to `string` so handler signatures stay assignable.
@@ -1878,6 +1930,20 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes = GlobalConfig> 
       callback: (args: {
         readonly chainId: number;
         readonly rollbackToBlock: number;
+      }) => Promise<void>,
+    ) => void;
+    /**
+     * Handle a webhook the sidecar posts with `emit.<name>(body)`, or a
+     * built-in one about a `context.sidecar` call (`sidecar.ack`,
+     * `sidecar.dropped`). It runs once, in the next batch of its chain after
+     * that batch's events, with a normal handler context. A webhook undone by
+     * a reorg is not replayed.
+     */
+    readonly onWebhook: <const N extends WebhookName>(
+      options: { readonly name: N },
+      handler: (args: {
+        readonly webhook: OnWebhookEvent<N>;
+        readonly context: BaseHandlerContext<Config, number>;
       }) => Promise<void>,
     ) => void;
   } & SingleEcosystemChains<Config>
