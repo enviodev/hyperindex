@@ -12,6 +12,16 @@ const NOT_FOUND_CODES = new Set([
 
 let registered = false;
 
+// Node documents `context.conditions` as an array, but some releases (24.4
+// among them) pass a Set on the `require()` path. Throwing here breaks every
+// lazy `require()` in a dependency (iconv-lite's codecs, so every JSON body
+// the sidecar or the webhook listener parses answers 400).
+const isRequire = (conditions) =>
+  conditions != null &&
+  (typeof conditions.has === "function"
+    ? conditions.has("require")
+    : Array.prototype.includes.call(conditions, "require"));
+
 // Node's own resolver still resolves every candidate the addon offers, so
 // package exports and conditions behave as they do without the hooks.
 export const register = (addon) => {
@@ -74,7 +84,7 @@ export const register = (addon) => {
       // Handlers are ES modules, so `require()` only comes from dependencies,
       // including the one Node makes to read a CommonJS module's named
       // exports. It resolves as it would without the hooks.
-      if (specifier.startsWith("node:") || context.conditions?.includes("require")) {
+      if (specifier.startsWith("node:") || isRequire(context.conditions)) {
         return nextResolve(specifier, context);
       }
       const [path, query] = specifier.split("?");
