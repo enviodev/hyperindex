@@ -1004,15 +1004,10 @@ let make = (
         | None => ()
         }
       )
-      ClickHouse.stageCheckpointsOrThrow(
-        sink,
-        ~registry,
-        ~batch,
-        ~diffCheckpoints=switch rollback {
-        | Some({diffCheckpoints}) => diffCheckpoints
-        | None => []
-        },
-      )
+      // No rows for a rollback's diff: the current tables don't resolve through
+      // checkpoints, and a later rollback reading one back would take its chain
+      // to the block before the one the diff left it at.
+      ClickHouse.stageCheckpointsOrThrow(sink, ~registry, ~batch, ~diffCheckpoints=[])
     } catch {
     | exn =>
       sink->ClickHouseSink.discard(entities)
@@ -1028,6 +1023,13 @@ let make = (
       writeEffectCaches(updatedEffectsCache),
     ))
 
+    // A chain the rollback moved and the batch then progressed ends where the
+    // batch took it.
+    switch rollback {
+    | Some({progressedChains}) =>
+      progressedChains->Array.forEach(progress => progress->applyProgress->Option.forEach(touch))
+    | None => ()
+    }
     batch.progressedChainsById->Utils.Dict.forEach(chainAfterBatch =>
       applyProgress({
         chainId: chainAfterBatch.fetchState.chainId,
@@ -1037,11 +1039,6 @@ let make = (
         totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
       })->Option.forEach(touch)
     )
-    switch rollback {
-    | Some({progressedChains}) =>
-      progressedChains->Array.forEach(progress => progress->applyProgress->Option.forEach(touch))
-    | None => ()
-    }
     chainMetaData->Option.forEach(meta => meta->applyMeta->Array.forEach(touch))
     Persistence.writtenFrontier(~batch, ~rollback)
     ->Frontier.entries
