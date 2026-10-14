@@ -11,6 +11,7 @@
  */
 
 import BigNumber from "bignumber.js";
+import { type Document, isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
 import * as GraphNodeDecimal from "./graph-node-decimal.ts";
 import {
   keccak256 as viemKeccak256,
@@ -95,6 +96,30 @@ function fitted(value: bigint, min: bigint, max: bigint, target: string): bigint
 
 const utf8Decoder = new TextDecoder("utf-8");
 
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function toBase58(bytes: Uint8Array): string {
+  let zeros = 0;
+  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
+  // Repeated division of the big-endian number by 58, in base 256.
+  const digits: number[] = [];
+  for (let index = zeros; index < bytes.length; index++) {
+    let carry = bytes[index];
+    for (let digit = 0; digit < digits.length; digit++) {
+      carry += digits[digit] << 8;
+      digits[digit] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = Math.floor(carry / 58);
+    }
+  }
+  let out = "1".repeat(zeros);
+  for (let digit = digits.length - 1; digit >= 0; digit--) out += BASE58_ALPHABET[digits[digit]];
+  return out;
+}
+
 export class ByteArray extends Uint8Array {
   static fromHexString(hex: string): ByteArray {
     const normalized = hex.startsWith("0x") ? hex : "0x" + hex;
@@ -138,8 +163,13 @@ export class ByteArray extends Uint8Array {
   toString(): string {
     return utf8Decoder.decode(this).replace(/\u0000+$/, "");
   }
+  /**
+   * graph-node's `bytes_to_base58`: Bitcoin-alphabet base58, each leading zero
+   * byte a leading `1`. Turns a bytes32 digest behind a `Qm` prefix into the
+   * CID a subgraph hands to `ipfs.cat` or a file data source.
+   */
   toBase58(): string {
-    throw unsupported("ByteArray.toBase58", "a mapping handler");
+    return toBase58(this);
   }
   toU32(): number {
     return Number(fitted(fromLittleEndian(this, false), 0n, 4294967295n, "u32"));
@@ -1305,19 +1335,41 @@ function registerWrite(scope: Scope, entityType: string, id: string, row: Record
   scope.writes.set(registerStoreKey(scope.dataSource.chainId, entityType, id), row);
 }
 
+/**
+ * A file data source reaches the types its manifest entry lists, as graph-node
+ * enforces, and only what it wrote itself. Returns whether the entity is one it
+ * wrote; `false` for a scope that isn't a file data source's.
+ */
+function fileAccess(scope: Scope, entityType: string, id: string): boolean | null {
+  const file = scope.file;
+  if (!file) return null;
+  if (!file.entities.has(entityType)) {
+    throw new Error(
+      `entity type \`${entityType}\` is not on the 'entities' list for data source ` +
+        `\`${scope.dataSource.name}\`. Hint: Add \`${entityType}\` to the 'entities' list, which ` +
+        `currently is: \`${[...file.entities].join(", ")}\`.`,
+    );
+  }
+  return file.written.has(`${entityType}\u0000${id}`);
+}
+
 const storeImpl = {
   get(entityType: string, id: string): Entity | null {
     const scope = currentScope();
+    if (fileAccess(scope, entityType, id) === false) return null;
     if (scope.mode === "register") return registerRead(scope, entityType, id, false);
     return toEntity(entityType, entityContext(entityType).getSync(id));
   },
   get_in_block(entityType: string, id: string): Entity | null {
     const scope = currentScope();
+    if (fileAccess(scope, entityType, id) === false) return null;
     if (scope.mode === "register") return registerRead(scope, entityType, id, true);
     return toEntity(entityType, entityContext(entityType).getInBlockSync(id));
   },
   set(entityType: string, id: string, data: Entity): void {
     const scope = currentScope();
+    const own = fileAccess(scope, entityType, id);
+    if (scope.file) scope.file.written.add(`${entityType}\u0000${id}`);
     const row = toRow(entityType, data);
     row.id = id;
     // graph-node merges a save onto the stored entity (EntityCache::set is an
@@ -1337,11 +1389,14 @@ const storeImpl = {
       row.timestamp = new Date(Number(scope.blockSeconds?.() ?? 0) * 1000);
       return table.set(withUnsetAsNull(scope, entityType, row));
     }
-    const stored = table.getSync(id);
+    // A file data source's first write of an id is a new entity of its own,
+    // whatever a chain handler stored under the same id.
+    const stored = own === false ? undefined : table.getSync(id);
     table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {
     const scope = currentScope();
+    if (fileAccess(scope, entityType, id) === false) return;
     if (scope.mode === "register") return registerWrite(scope, entityType, id, null);
     entityContext(entityType).deleteUnsafe(id);
   },
@@ -1351,8 +1406,9 @@ const storeImpl = {
    * filtered on the field that points back — is resolved from the schema.
    */
   loadRelated(entityType: string, id: string, field: string): Entity[] {
-    const { mode, schema } = currentScope();
+    const { mode, schema, file } = currentScope();
     if (mode === "register") return [];
+    if (file && !file.entities.has(entityType)) fileAccess(currentScope(), entityType, id);
     const declared = schema.entityFieldTypes[entityType]?.[field];
     if (!declared?.target || !declared.derivedFrom) {
       throw unknown(`the derived field ${entityType}.${field}`, "a mapping handler");
@@ -1371,7 +1427,11 @@ const storeImpl = {
       ? `${declared.derivedFrom}_id`
       : declared.derivedFrom;
     const rows = entityContext(target).getWhereSync({ [back]: { _eq: id } });
-    return rows.map((row: any) => toEntity(target, row) as Entity);
+    // A file data source sees the related entities it wrote, and no others.
+    const visible = file
+      ? rows.filter((row: any) => file.entities.has(target) && file.written.has(`${target}\u0000${row.id}`))
+      : rows;
+    return visible.map((row: any) => toEntity(target, row) as Entity);
   },
 };
 
@@ -2365,8 +2425,44 @@ export function installHandlerCreateHook(hook: typeof handlerCreateHook) {
   handlerCreateHook = hook;
 }
 
+/** The manifest's file templates: `create` queues these instead of registering an address. */
+let fileTemplates = new Map<string, "ipfs" | "arweave">();
+
+export function installFileTemplates(templates: Map<string, "ipfs" | "arweave">) {
+  fileTemplates = templates;
+}
+
+/** A context, as a string that two equal contexts share (graph-node dedupes on it). */
+function contextKey(context: DataSourceContext | undefined): string {
+  if (!context || context.entries.length === 0) return "";
+  const entries = context.entries.map((entry) => [entry.key, entry.value.kind, String(entry.value.data)]);
+  return JSON.stringify(entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
+}
+
+/** Two creations of the same file with the same context are one data source. */
+export function fileCreateId(create: { template: string; source: string; context?: unknown }): string {
+  const key = contextKey(create.context as DataSourceContext | undefined);
+  return key === "" ? `${create.template}:${create.source}` : `${create.template}:${create.source}:${key}`;
+}
+
+function createFile(name: string, params: string[], context?: DataSourceContext): void {
+  const scope = currentScope();
+  const source = params[0];
+  if (!source) {
+    throw new Error(`${name}.create() was called without a file parameter`);
+  }
+  // Only the handler pass runs a file's handler; the register pass exists to
+  // collect contract addresses.
+  if (scope.mode === "register") return;
+  const create = { template: name, source, context };
+  const key = fileCreateId(create);
+  scope.fileCreates ??= new Map();
+  if (!scope.fileCreates.has(key)) scope.fileCreates.set(key, create);
+}
+
 export class DataSourceTemplate {
   static create(name: string, params: string[]): void {
+    if (fileTemplates.has(name)) return createFile(name, params);
     const { mode, registered } = currentScope();
     const address = params[0];
     if (!address) {
@@ -2381,6 +2477,7 @@ export class DataSourceTemplate {
     registerHook?.(name, address);
   }
   static createWithContext(name: string, params: string[], context: DataSourceContext): void {
+    if (fileTemplates.has(name)) return createFile(name, params, context);
     // The created data source would have to carry the context to every event it
     // ever sees, and there is nowhere to keep it — `dataSource.context()` in the
     // template's handlers would quietly come back empty.
@@ -2421,13 +2518,21 @@ function contextValue(kind: string, data: string, key: string): Value {
 
 const dataSourceImpl = {
   address(): Address {
-    return Address.fromString(currentScope().dataSource.address);
+    const scope = currentScope();
+    if (scope.file) {
+      throw unsupported("dataSource.address() in a file data source, which has no contract", scope.dataSource.name);
+    }
+    return Address.fromString(scope.dataSource.address);
   },
   network(): string {
     return currentScope().dataSource.network;
   },
   context(): DataSourceContext {
     const context = new DataSourceContext();
+    const created = currentScope().file?.context as DataSourceContext | undefined;
+    if (created) {
+      for (const entry of created.entries) context.set(entry.key, entry.value);
+    }
     for (const [key, entry] of Object.entries(currentScope().dataSource.context ?? {})) {
       context.set(key, contextValue(entry.type, entry.data, key));
     }
@@ -2637,7 +2742,7 @@ function hostsOrThrow(): Hosts {
   return hosts;
 }
 
-function decodeBase64(encoded: string | null): Bytes | null {
+export function decodeBase64(encoded: string | null): Bytes | null {
   return encoded === null ? null : new Bytes(Buffer.from(encoded, "base64"));
 }
 
@@ -2904,31 +3009,256 @@ export enum YAMLValueKind {
   TAGGED = 6,
 }
 
+/**
+ * graph-ts' YAML value, over graph-node's `serde_yaml::Value`: numbers are kept
+ * as the text they print as, an object's keys are YAML values themselves, and a
+ * `!tag` wraps its value.
+ */
 export class YAMLValue {
-  constructor(_kind: YAMLValueKind, _data: unknown) {
-    throw unsupported("the yaml API", "a mapping handler");
+  constructor(
+    public kind: YAMLValueKind,
+    public data: any,
+  ) {}
+
+  static newNull(): YAMLValue {
+    return new YAMLValue(YAMLValueKind.NULL, 0);
+  }
+  static newBool(data: boolean): YAMLValue {
+    return new YAMLValue(YAMLValueKind.BOOL, data);
+  }
+  static newI64(data: bigint): YAMLValue {
+    return new YAMLValue(YAMLValueKind.NUMBER, data.toString());
+  }
+  static newU64(data: bigint): YAMLValue {
+    return new YAMLValue(YAMLValueKind.NUMBER, data.toString());
+  }
+  static newF64(data: number): YAMLValue {
+    return new YAMLValue(YAMLValueKind.NUMBER, String(data));
+  }
+  static newBigInt(data: BigInt_): YAMLValue {
+    return new YAMLValue(YAMLValueKind.STRING, data.toString());
+  }
+  static newString(data: string): YAMLValue {
+    return new YAMLValue(YAMLValueKind.STRING, data);
+  }
+  static newArray(data: YAMLValue[]): YAMLValue {
+    return new YAMLValue(YAMLValueKind.ARRAY, data);
+  }
+  static newObject(data: TypedMap<YAMLValue, YAMLValue>): YAMLValue {
+    const map = new YAMLMap();
+    for (const entry of data.entries) map.set(entry.key, entry.value);
+    return new YAMLValue(YAMLValueKind.OBJECT, map);
+  }
+  static newTagged(tag: string, value: YAMLValue): YAMLValue {
+    return new YAMLValue(YAMLValueKind.TAGGED, new YAMLTaggedValue(tag, value));
+  }
+
+  isNull(): boolean {
+    return this.kind === YAMLValueKind.NULL;
+  }
+  isBool(): boolean {
+    return this.kind === YAMLValueKind.BOOL;
+  }
+  isNumber(): boolean {
+    return this.kind === YAMLValueKind.NUMBER;
+  }
+  isString(): boolean {
+    return this.kind === YAMLValueKind.STRING;
+  }
+  isArray(): boolean {
+    return this.kind === YAMLValueKind.ARRAY;
+  }
+  isObject(): boolean {
+    return this.kind === YAMLValueKind.OBJECT;
+  }
+  isTagged(): boolean {
+    return this.kind === YAMLValueKind.TAGGED;
+  }
+
+  toBool(): boolean {
+    assertYaml(this.isBool(), "YAML value is not a boolean");
+    return this.data === true;
+  }
+  toNumber(): string {
+    assertYaml(this.isNumber(), "YAML value is not a number");
+    return this.data as string;
+  }
+  toI64(): bigint {
+    return BigInt.asIntN(64, BigInt(this.toNumber()));
+  }
+  toU64(): bigint {
+    return BigInt.asUintN(64, BigInt(this.toNumber()));
+  }
+  toF64(): number {
+    return Number(this.toNumber());
+  }
+  toBigInt(): BigInt_ {
+    assertYaml(this.isNumber() || this.isString(), "YAML value is not numeric");
+    return BigInt_.fromString(this.data as string);
+  }
+  toString(): string {
+    assertYaml(this.isString(), "YAML value is not a string");
+    return this.data as string;
+  }
+  toArray(): YAMLValue[] {
+    assertYaml(this.isArray(), "YAML value is not an array");
+    return this.data as YAMLValue[];
+  }
+  toObject(): TypedMap<YAMLValue, YAMLValue> {
+    assertYaml(this.isObject(), "YAML value is not an object");
+    return this.data as TypedMap<YAMLValue, YAMLValue>;
+  }
+  toTagged(): YAMLTaggedValue {
+    assertYaml(this.isTagged(), "YAML value is not tagged");
+    return this.data as YAMLTaggedValue;
+  }
+
+  /** graph-ts' `==` overload: structural, so a `TypedMap` keyed by YAML values finds its key. */
+  equals(other: YAMLValue): boolean {
+    return YAMLValue.eq(this, other);
+  }
+  static eq(a: YAMLValue, b: YAMLValue): boolean {
+    if (a.isBool() && b.isBool()) return a.data === b.data;
+    if (a.isNumber() && b.isNumber()) return a.data === b.data;
+    if (a.isString() && b.isString()) return a.data === b.data;
+    if (a.isArray() && b.isArray()) {
+      const left = a.toArray();
+      const right = b.toArray();
+      return left.length === right.length && left.every((item, index) => YAMLValue.eq(item, right[index]));
+    }
+    if (a.isObject() && b.isObject()) {
+      const left = a.toObject();
+      const right = b.toObject();
+      return (
+        left.entries.length === right.entries.length &&
+        left.entries.every((entry) => {
+          const other = right.get(entry.key);
+          return other !== null && YAMLValue.eq(entry.value, other);
+        })
+      );
+    }
+    if (a.isTagged() && b.isTagged()) return YAMLTaggedValue.eq(a.toTagged(), b.toTagged());
+    return false;
+  }
+  static ne(a: YAMLValue | null, b: YAMLValue | null): boolean {
+    if (!a || !b) return true;
+    return !YAMLValue.eq(a, b);
+  }
+
+  /** `value["key"]` on an object, `value["0"]` on an array; aborts when the key is absent. */
+  get(index: string): YAMLValue {
+    assertYaml(this.isArray() || this.isObject(), "YAML value can not be accessed by index");
+    if (this.isArray()) {
+      const item = this.toArray()[Number.parseInt(index, 10)];
+      assertYaml(item !== undefined, "Array index out of range");
+      return item;
+    }
+    return this.toObject().mustGet(YAMLValue.newString(index));
+  }
+}
+
+/** AssemblyScript's `==` on YAML keys compares their content, which is how `toObject().get(newString("k"))` finds "k". */
+class YAMLMap extends TypedMap<YAMLValue, YAMLValue> {
+  getEntry(key: YAMLValue): TypedMapEntry<YAMLValue, YAMLValue> | null {
+    return this.entries.find((entry) => YAMLValue.eq(entry.key, key)) ?? null;
   }
 }
 
 export class YAMLTaggedValue {
-  constructor(_tag: string, _value: YAMLValue) {
-    throw unsupported("the yaml API", "a mapping handler");
+  constructor(
+    public tag: string,
+    public value: YAMLValue,
+  ) {}
+  equals(other: YAMLTaggedValue): boolean {
+    return YAMLTaggedValue.eq(this, other);
+  }
+  static eq(a: YAMLTaggedValue, b: YAMLTaggedValue): boolean {
+    return a.tag === b.tag && YAMLValue.eq(a.value, b.value);
+  }
+  static ne(a: YAMLTaggedValue | null, b: YAMLTaggedValue | null): boolean {
+    if (!a || !b) return true;
+    return !YAMLTaggedValue.eq(a, b);
   }
 }
 
+function assertYaml(condition: boolean, message: string): void {
+  if (!condition) throw new Error(message);
+}
+
+/** graph-node refuses a document over this many bytes. */
+const YAML_MAX_SIZE_BYTES = 10_000_000;
+
+/**
+ * A parsed node as graph-node hands it to the mapping. Numbers keep the text
+ * serde_yaml prints them as (an integer as its digits, a float with its
+ * fraction), a mapping key is a YAML value of its own, and an alias is its
+ * target.
+ */
+function yamlFromNode(node: unknown, document: Document): YAMLValue {
+  if (isAlias(node)) {
+    return yamlFromNode(node.resolve(document), document);
+  }
+  if (isMap(node)) {
+    const map = new YAMLMap();
+    for (const pair of node.items) {
+      map.set(yamlFromNode(pair.key, document), yamlFromNode(pair.value, document));
+    }
+    return taggedOr(node, YAMLValue.newObject(map));
+  }
+  if (isSeq(node)) {
+    return taggedOr(node, YAMLValue.newArray(node.items.map((item) => yamlFromNode(item, document))));
+  }
+  if (isScalar(node)) {
+    const value = node.value;
+    let result: YAMLValue;
+    if (value === null || value === undefined) result = YAMLValue.newNull();
+    else if (typeof value === "boolean") result = YAMLValue.newBool(value);
+    else if (typeof value === "bigint") result = new YAMLValue(YAMLValueKind.NUMBER, value.toString());
+    else if (typeof value === "number") {
+      const source = (node as { srcToken?: { source?: string } }).srcToken?.source ?? "";
+      // YAML `1.0` is the float 1.0, which serde_yaml prints as such.
+      const isFloat = /[.eE]/.test(source) && Number.isFinite(value);
+      const text = Number.isNaN(value)
+        ? "NaN"
+        : value === Infinity
+          ? "inf"
+          : value === -Infinity
+            ? "-inf"
+            : isFloat && Number.isInteger(value)
+              ? `${value}.0`
+              : String(value);
+      result = new YAMLValue(YAMLValueKind.NUMBER, text);
+    } else result = YAMLValue.newString(String(value));
+    return taggedOr(node, result);
+  }
+  return YAMLValue.newNull();
+}
+
+/** A local tag (`!Ref x`) wraps its value; the core tags (`!!str`) are the value itself. */
+function taggedOr(node: unknown, value: YAMLValue): YAMLValue {
+  const tag = (node as { tag?: string }).tag;
+  if (typeof tag === "string" && tag.startsWith("!") && !tag.startsWith("!!")) {
+    return YAMLValue.newTagged(tag, value);
+  }
+  return value;
+}
+
+function parseYaml(text: string): YAMLValue {
+  if (Buffer.byteLength(text) > YAML_MAX_SIZE_BYTES) {
+    throw new Error(`YAML size exceeds max size of ${YAML_MAX_SIZE_BYTES} bytes`);
+  }
+  const document = parseDocument(text, { intAsBigInt: true, keepSourceTokens: true });
+  if (document.errors.length > 0) {
+    throw new Error(`failed to parse YAML from bytes: ${document.errors[0].message}`);
+  }
+  return yamlFromNode(document.contents, document);
+}
+
 const yamlImpl = {
-  fromBytes: (_: Bytes): YAMLValue => {
-    throw unsupported("yaml.fromBytes", "a mapping handler");
-  },
-  try_fromBytes: (_: Bytes): unknown => {
-    throw unsupported("yaml.try_fromBytes", "a mapping handler");
-  },
-  fromString: (_: string): YAMLValue => {
-    throw unsupported("yaml.fromString", "a mapping handler");
-  },
-  try_fromString: (_: string): unknown => {
-    throw unsupported("yaml.try_fromString", "a mapping handler");
-  },
+  fromBytes: (bytes: Bytes): YAMLValue => parseYaml(utf8Decoder.decode(bytes)),
+  try_fromBytes: (bytes: Bytes): Result<YAMLValue, boolean> => tryParse(() => parseYaml(utf8Decoder.decode(bytes))),
+  fromString: (text: string): YAMLValue => parseYaml(text),
+  try_fromString: (text: string): Result<YAMLValue, boolean> => tryParse(() => parseYaml(text)),
 };
 
 export const yaml = strictNamespace("yaml", yamlImpl);

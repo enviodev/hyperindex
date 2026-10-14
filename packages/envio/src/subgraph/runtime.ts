@@ -19,6 +19,7 @@ import {
   currentScope,
   runInScope,
   runInScopeUntilSettled,
+  type FileCreate,
   type RegisterPass,
   type Scope,
   type SubgraphSchema,
@@ -36,6 +37,9 @@ import {
   installHandlerCreateHook,
   installRegisterHook,
   installRegisterMissHook,
+  installFileTemplates,
+  fileCreateId,
+  decodeBase64,
   ethereum,
   type EventInput,
   type EventKind,
@@ -56,7 +60,8 @@ import {
   RETAG_HELPER,
   operators,
 } from "./assemblyscript.ts";
-import { makeHostEffects } from "./hosts.ts";
+import { makeHostEffects, normalizeIpfsPath } from "./hosts.ts";
+import { createHash } from "node:crypto";
 import { advanceRollup } from "./rollup.ts";
 import { graftBaseNotice } from "./graft.ts";
 import { fetchMappingPackages, missingMappingPackages } from "./toolchain.ts";
@@ -100,6 +105,7 @@ type DataSource = {
   startBlock?: number;
   endBlock?: number;
   mappingFile: string;
+  entities?: string[];
   eventHandlers: EventHandler[];
   blockHandlers: BlockHandler[];
   context?: Record<string, { type: string; data: string }>;
@@ -351,6 +357,11 @@ type Effect = {
 };
 
 const REGISTER_SUSPEND = Symbol("envio.subgraph.register.suspend");
+
+/** envio's `Suspend` (a ReScript exception) and the register pass's own: control flow, not errors. */
+function isBridgeSignal(error: unknown): boolean {
+  return error === REGISTER_SUSPEND || (typeof error === "object" && error !== null && "RE_EXN_ID" in error);
+}
 
 /**
  * Results the register pass has already fetched, across events and blocks.
@@ -623,6 +634,113 @@ const registeredTemplates = new Set<string>();
 const REGISTERED_TEMPLATES_LIMIT = 100_000;
 const unregisteredCreates = new Set<string>();
 
+type FileTemplate = {
+  name: string;
+  kind: "ipfs" | "arweave";
+  /** The mapping function the manifest names. */
+  handler: string;
+  /** The `entities` the manifest lists: all a file data source may touch. */
+  entities: Set<string>;
+  mapping: Record<string, any>;
+};
+
+/** The table that records which file data sources have run (`FILE_DATA_SOURCE_ENTITY`, Rust). */
+const FILE_DATA_SOURCE_ENTITY = "EnvioFileDataSource";
+/** A mapping that makes its file data sources create more, forever, is stopped here. */
+const MAX_FILES_PER_TRIGGER = 10_000;
+
+/**
+ * Runs the file data sources a handler created, right after it, in the block
+ * that created them (graph-node runs them when their file arrives, which is
+ * some later block; running at the creating block is deterministic, and
+ * entities a file handler writes are in the store the moment the creating block
+ * is). Each runs in isolation, as graph-node's do:
+ *
+ * - only once per template, file and context (a record in its own table, so a
+ *   reorg or a restart doesn't run it twice, and a second create is ignored);
+ * - it may touch only the entities its manifest entry lists, and sees only what
+ *   it wrote itself — never a chain entity (`graph-ts.ts` store);
+ * - a file that isn't there after `ENVIO_SUBGRAPH_FILE_ATTEMPTS` attempts
+ *   skips the handler, with a warning (graph-node polls on, with backoff);
+ * - a CID that doesn't parse is ignored, as graph-node ignores it.
+ *
+ * A file handler may itself create file data sources; those run after it.
+ * During preload only the files are fetched, so a batch's files download
+ * concurrently and the execute pass finds them cached.
+ */
+function makeFileRunner(
+  fileTemplates: Map<string, FileTemplate>,
+  hosts: ReturnType<typeof makeHostEffects>,
+  schema: SubgraphSchema,
+) {
+  return async (parent: Scope | undefined, context: any): Promise<void> => {
+    if (!parent?.fileCreates || parent.fileCreates.size === 0) return;
+    const queue: FileCreate[] = [...parent.fileCreates.values()];
+    for (let index = 0; index < queue.length; index++) {
+      if (index >= MAX_FILES_PER_TRIGGER) {
+        throw new Error(
+          `A handler created more than ${MAX_FILES_PER_TRIGGER} file data sources from one trigger; ` +
+            "a file data source that keeps creating more is not going to stop.",
+        );
+      }
+      const create = queue[index];
+      const template = fileTemplates.get(create.template);
+      if (!template) continue;
+      const path =
+        template.kind === "ipfs" ? normalizeIpfsPath(create.source) : create.source.trim().replace(/^\//, "") || null;
+      if (path === null) {
+        context.log.warn(
+          `${template.name}.create() was given "${create.source}", which isn't a content id; ignoring the file data source.`,
+        );
+        continue;
+      }
+      const input = `${template.kind}:${path}`;
+      if (context.isPreload) {
+        await context.effect(hosts.fileData, input);
+        continue;
+      }
+      const handler = template.mapping[template.handler];
+      if (typeof handler !== "function") continue;
+
+      const doneId = createHash("sha1").update(fileCreateId(create)).digest("hex");
+      const done = context[schema.entityAccessors[FILE_DATA_SOURCE_ENTITY]];
+      if (await done.get(doneId)) continue;
+
+      const content: string | null = await context.effect(hosts.fileData, input);
+      if (content === null) {
+        context.log.warn(`${template.name}: ${input} isn't available; its handler is skipped.`);
+        continue;
+      }
+      done.set({ id: doneId });
+
+      const ran: { scope?: Scope } = {};
+      await context.runSync(() =>
+        runInScope(
+          (ran.scope = {
+            context,
+            event: parent.event,
+            mode: "handler",
+            schema,
+            dataSource: { ...parent.dataSource, name: template.name, address: path, context: {} },
+            registered: new Set(),
+            blockNumber: parent.blockNumber,
+            position: parent.position,
+            mappingExports: template.mapping,
+            file: {
+              kind: template.kind,
+              entities: template.entities,
+              written: new Set(),
+              context: create.context,
+            },
+          }),
+          () => handler(decodeBase64(content)),
+        ),
+      );
+      if (ran.scope?.fileCreates) queue.push(...ran.scope.fileCreates.values());
+    }
+  };
+}
+
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook(config.root);
   resetRpcClients();
@@ -661,23 +779,36 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   };
 
   installHosts({
-    ipfsCat: (hash) => callSync(hosts.ipfsCat, hash, "ipfs.cat()"),
+    ipfsCat: (hash) => callSync(hosts.ipfsCat, normalizeIpfsPath(hash) ?? hash, "ipfs.cat()"),
     ipfsMap: (hash, callback, userData, flags) => {
       const scope = currentScope();
+      // graph-node: `ensure!(flags.contains("json"), "Flags must contain 'json'")`.
+      if (!flags.includes("json")) throw new Error("ipfs.map(): Flags must contain 'json'");
       const fn = scope.mappingExports[callback];
       if (typeof fn !== "function") {
         throw new Error(
           `ipfs.map() names the callback "${callback}", which the mapping doesn't export.`,
         );
       }
-      const encoded: string | null = callSync(hosts.ipfsCat, hash, "ipfs.map()");
+      const encoded: string | null = callSync(hosts.ipfsCat, normalizeIpfsPath(hash) ?? hash, "ipfs.map()");
       if (encoded === null) return;
       const body = Buffer.from(encoded, "base64").toString("utf8");
-      for (const line of body.split("\n")) {
+      // One JSON value per line, each handed to the callback in turn; a line
+      // that isn't JSON, or a callback that throws, fails the call, as
+      // graph-node's `ipfs_map: callback '<name>' failed when processing file`.
+      const lines = body.split("\n");
+      for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
         if (line.trim() === "") continue;
-        fn(jsonFromString(line), userData);
+        try {
+          fn(jsonFromString(line), userData);
+        } catch (error) {
+          // A suspend is the sync bridge asking for a replay, not a failure.
+          if (isBridgeSignal(error) || !(error instanceof Error)) throw error;
+          error.message = `ipfs_map: callback '${callback}' failed when processing file '${hash}' (line ${index + 1}): ${error.message}`;
+          throw error;
+        }
       }
-      void flags;
     },
     arweaveData: (txId) => callSync(hosts.arweaveData, txId, "arweave.transactionData()"),
     ensName: (hash) => callSync(hosts.ensName, hash, "ens.nameByHash()"),
@@ -773,6 +904,8 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // handler checks first; the timeseries it saves carry the block's time.
   const startRun = (scope: Scope) => {
     scope.timeseriesSequence = 0;
+    // A replayed round creates its file data sources again.
+    scope.fileCreates = undefined;
     if (schema.aggregations.length > 0) {
       advanceRollup(scope, BigInt(scope.blockSeconds!()) * 1_000_000n);
     }
@@ -807,7 +940,36 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     await typeCheckMappings(config.root, config.manifestFile);
   }
 
-  const templateNames = new Set(config.templates.map((template) => template.name));
+  // A file template has no contract: nothing is registered for it, so it takes
+  // no part in the create analysis or the folding below.
+  const isFile = (source: DataSource) => source.kind === "fileIpfs" || source.kind === "fileArweave";
+  const templateNames = new Set(
+    config.templates.filter((template) => !isFile(template)).map((template) => template.name),
+  );
+  const fileTemplates = new Map<string, FileTemplate>();
+  for (const source of config.templates) {
+    if (!isFile(source)) continue;
+    const mapping = await loadMapping(config.root, generated, source.mappingFile, {
+      context: null,
+      event: null,
+      mode: "handler",
+      schema,
+      dataSource: { name: source.name, address: "", chainId: 0, network: "", context: {} },
+      registered: new Set(),
+      blockNumber: 0,
+      mappingExports: {},
+    });
+    await indexEventClasses();
+    fileTemplates.set(source.name, {
+      name: source.name,
+      kind: source.kind === "fileArweave" ? "arweave" : "ipfs",
+      handler: source.eventHandlers[0]?.handler ?? "",
+      entities: new Set(source.entities ?? []),
+      mapping,
+    });
+  }
+  installFileTemplates(new Map([...fileTemplates].map(([name, template]) => [name, template.kind])));
+  const runFileDataSources = makeFileRunner(fileTemplates, hosts, schema);
 
   // A template sharing a data source's name is folded into its envio contract,
   // so both sets of handlers fire for every address of it. graph-node runs the
@@ -938,6 +1100,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               return fn(graphEvent);
             }),
           );
+          await runFileDataSources(scope, context);
         },
       );
 
@@ -1039,6 +1202,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               return fn(graphBlock);
             }),
           );
+          await runFileDataSources(scope, context);
         },
       );
     }
