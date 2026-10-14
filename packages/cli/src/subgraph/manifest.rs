@@ -75,12 +75,31 @@ static GRAPH_NETWORKS: LazyLock<BTreeMap<String, GraphRegistryNetwork>> = LazyLo
         .expect("graph_networks.json is the sync script's output")
 });
 
-/// Names other subgraph hosts give chains the registry doesn't list, mapped to
-/// Envio's name for the chain.
-const OTHER_HOST_NETWORKS: &[(&str, &str)] = &[("pulse", "pulsechain")];
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HostNetwork {
+    name: String,
+    chain_id: u64,
+}
 
-/// The registry's id or one of its aliases first, then Envio's kebab-case so
-/// `hyperliquid` still works when someone writes our name.
+/// Network slugs Goldsky and Ormi accept in `subgraph.yaml` that the Graph
+/// registry doesn't list, with the chain id each stands for. `source` in
+/// `host_networks.json` says where each came from: the repos that use them,
+/// Ormi's supported-chains table, or Goldsky's supported-networks list. Chain
+/// ids were cross-checked against chainlist and, where dRPC serves the chain,
+/// its `eth_chainId`.
+static HOST_NETWORKS: LazyLock<BTreeMap<String, u64>> = LazyLock::new(|| {
+    serde_json::from_str::<Vec<HostNetwork>>(include_str!("host_networks.json"))
+        .expect("host_networks.json is valid")
+        .into_iter()
+        .map(|network| (network.name, network.chain_id))
+        .collect()
+});
+
+/// The registry's id or one of its aliases first, then the slugs other hosts
+/// use, then Envio's kebab-case so `hyperliquid` still works when someone
+/// writes our name. A chain id Envio has no name for is fine: it indexes over
+/// `ENVIO_SUBGRAPH_RPC` when HyperSync doesn't serve it.
 fn network_to_chain_id(network: &str) -> Option<u64> {
     let registered = GRAPH_NETWORKS.iter().find(|(id, registered)| {
         *id == network || registered.aliases.iter().any(|alias| alias == network)
@@ -88,13 +107,10 @@ fn network_to_chain_id(network: &str) -> Option<u64> {
     if let Some((_, registered)) = registered {
         return Some(registered.chain_id);
     }
-    let envio_name = OTHER_HOST_NETWORKS
-        .iter()
-        .find(|(name, _)| *name == network)
-        .map_or(network, |(_, envio_name)| *envio_name);
-    Network::from_str(envio_name)
-        .ok()
-        .map(|n| n.get_network_id())
+    if let Some(chain_id) = HOST_NETWORKS.get(network) {
+        return Some(*chain_id);
+    }
+    Network::from_str(network).ok().map(|n| n.get_network_id())
 }
 
 /// A YAML mapping being read, tracking which keys were consumed so the rest can
@@ -941,6 +957,53 @@ templates:
             .filter(|(name, chain_id)| network_to_chain_id(name) != Some(*chain_id))
             .collect();
         assert_eq!(wrong, Vec::<(String, u64)>::new());
+    }
+
+    // The slugs Goldsky and Ormi subgraph.yaml files use, with the chain ids the
+    // hosts' own docs and chainlist give (each also checked with eth_chainId).
+    #[test]
+    fn resolves_the_network_slugs_goldsky_and_ormi_use() {
+        let expected = [
+            ("filecoin", 314),
+            ("plasma-mainnet", 9745),
+            ("manta-pacific-mainnet", 169),
+            ("manta-pacific-sepolia", 3441006),
+            ("mezo-testnet", 31611),
+            ("fluent", 25363),
+            ("story", 1514),
+            ("citrea-testnet-tangerine", 5115),
+            ("kite-ai-testnet", 2368),
+            ("andromeda", 1088),
+            ("telos", 40),
+            ("mantle-sepolia", 5003),
+            ("pulse", 369),
+        ];
+        let wrong: Vec<_> = expected
+            .iter()
+            .filter(|(name, id)| network_to_chain_id(name) != Some(*id))
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:?}");
+    }
+
+    // The table only adds names: a slug the registry already knows keeps the
+    // registry's chain id, and no two slugs for a chain id disagree on a name.
+    #[test]
+    fn host_networks_never_shadow_the_registry() {
+        let table: Vec<HostNetwork> = serde_json::from_str(include_str!("host_networks.json"))
+            .expect("host_networks.json is valid");
+        let mut seen = HashSet::new();
+        for network in &table {
+            assert!(network.chain_id > 0, "{}", network.name);
+            assert!(seen.insert(network.name.clone()), "{} twice", network.name);
+            let in_registry = GRAPH_NETWORKS.iter().any(|(id, registered)| {
+                *id == network.name || registered.aliases.contains(&network.name)
+            });
+            assert!(
+                !in_registry,
+                "{} is in the registry; drop it from host_networks.json",
+                network.name
+            );
+        }
     }
 
     #[test]
