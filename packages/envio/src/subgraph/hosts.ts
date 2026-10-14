@@ -45,6 +45,33 @@ async function isLabelNotFound(response: Response): Promise<boolean> {
 
 class RainbowDown extends Error {}
 
+/**
+ * A failure no retry can mend: the host's certificate isn't its own (Railway
+ * serves api.ensrainbow.io's name with its own certificate), or it doesn't
+ * resolve at all.
+ */
+const PERMANENT_FETCH_CODES = new Set([
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "ENOTFOUND",
+]);
+
+async function fetchRainbow(url: string, signal: AbortSignal): Promise<Response> {
+  try {
+    return await fetch(url, { signal });
+  } catch (error) {
+    const code = (error as { cause?: { code?: unknown } })?.cause?.code;
+    if (typeof code === "string" && PERMANENT_FETCH_CODES.has(code)) {
+      const detail = (error as { cause?: { message?: unknown } }).cause?.message;
+      throw new RainbowDown(`${code}: ${String(detail ?? "")}`.trim());
+    }
+    throw error;
+  }
+}
+
 const nullableString = Sury.union([Sury.string, null]);
 
 /**
@@ -139,7 +166,9 @@ export function makeHostEffects(rpcUrls: string[]) {
           `the lookup of ${url}`,
           (signal) =>
             ensGate(async () => {
-              const response = await fetch(url, { signal });
+              // Lookups already backing off when another found it down stop here.
+              if (Date.now() < (ensDownUntil.get(base) ?? 0)) throw new RainbowDown("already found down");
+              const response = await fetchRainbow(url, signal);
               if (response.status === 400) return null;
               if (response.status === 404) {
                 if (await isLabelNotFound(response)) return null;
