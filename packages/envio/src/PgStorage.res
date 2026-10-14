@@ -1550,6 +1550,8 @@ let makeStorageFromEnv = (
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Schema.make(config.userEntities->Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
+              ~resolvers=config.resolvers,
+              ~resolverTypes=config.resolverTypes,
             )->Promise.catch(err => {
               Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
             })

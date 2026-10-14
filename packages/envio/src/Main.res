@@ -494,6 +494,9 @@ exception FatalError(exn)
       persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode),
       typeCheck,
     ))
+    if isDevelopmentMode && !Worker.isEnabled {
+      ServeProcess.launchForDev(~config)
+    }
 
     // Loads user handler files, which register handler/contractRegister/where
     // state into the global `HandlerRegister` registry as a side effect; this

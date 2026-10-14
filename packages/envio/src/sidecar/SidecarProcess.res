@@ -4,7 +4,13 @@ type handle = {close: unit => promise<unit>}
 // The entities let the read client decode bigint / BigDecimal columns exactly
 // instead of learning them by introspection.
 // `entry` only labels `envio_sidecar_info`.
-type startOptions = {entities: array<Internal.entityConfig>, entry: string}
+// `resolvers`: the names config.yaml answers with `handler: sidecar`, which
+// the runtime checks against its own.
+type startOptions = {
+  entities: array<Internal.entityConfig>,
+  entry: string,
+  resolvers: array<string>,
+}
 type runtime = {start: startOptions => promise<handle>}
 
 // How long a signalled `envio sidecar` waits for `close()` before exiting
@@ -85,13 +91,17 @@ let closeOnSignals = (started: promise<handle>) => {
 // Envio Cloud (D-003), plus read-only SQL on the indexer's own database as
 // `envio_sidecar`, the role the Rust CLI creates on `envio dev` start
 // (`docker_env::ensure_sidecar_role`). A value the developer already set wins.
-let devEnv = (~env=NodeJs.Process.process.env, ()) => {
+let devEnv = (~env=NodeJs.Process.process.env, ~hasuraEnabled=Env.Hasura.enabled, ()) => {
   let env = env->Dict.copy
+  let graphqlUrl =
+    !hasuraEnabled && ServeProcess.isEnabled(~env)
+      ? ServeProcess.graphqlUrl(~env, ~hasuraEnabled)
+      : `${Env.Hasura.url}/v1/graphql`
   [
     ("ENVIO_SIDECAR_INTERNAL_URL", "http://127.0.0.1:9901"),
     ("ENVIO_INDEXER_INTERNAL_URL", "http://127.0.0.1:9899"),
     ("ENVIO_SIDECAR_PORT", "9900"),
-    ("ENVIO_GRAPHQL_URL", `${Env.Hasura.url}/v1/graphql`),
+    ("ENVIO_GRAPHQL_URL", graphqlUrl),
     ("ENVIO_SIDECAR_PG_HOST", Env.Db.host),
     ("ENVIO_SIDECAR_PG_PORT", Env.Db.port->Int.toString),
     ("ENVIO_SIDECAR_PG_DATABASE", Env.Db.database),
@@ -109,23 +119,6 @@ let devEnv = (~env=NodeJs.Process.process.env, ()) => {
   env
 }
 
-let pipeLines = (stream: Null.t<NodeJs.ChildProcess.Stream.t>, ~print) =>
-  switch stream->Null.toOption {
-  | None => ()
-  | Some(stream) =>
-    stream->NodeJs.ChildProcess.Stream.setEncoding("utf8")
-    let pending = ref("")
-    stream->NodeJs.ChildProcess.Stream.onData(chunk => {
-      let lines = (pending.contents ++ chunk)->String.split("\n")
-      pending := lines->Array.pop->Option.getOr("")
-      lines->Array.forEach(line => print(`[sidecar] ${line}`))
-    })
-    stream->NodeJs.ChildProcess.Stream.onEnd(() =>
-      if pending.contents !== "" {
-        print(`[sidecar] ${pending.contents}`)
-      }
-    )
-  }
 
 // `envio dev` only. Deployed, the sidecar is its own container and is never
 // started from the indexer. The indexer never waits for it: a sidecar that
@@ -163,8 +156,12 @@ let startForDev = (~config: Config.t) =>
       },
     )
     if pipeOutput {
-      child->NodeJs.ChildProcess.Child.stdout->pipeLines(~print=line => Console.log(line))
-      child->NodeJs.ChildProcess.Child.stderr->pipeLines(~print=line => Console.error(line))
+      child
+      ->NodeJs.ChildProcess.Child.stdout
+      ->ChildOutput.pipeLines(~label="sidecar", ~print=line => Console.log(line))
+      child
+      ->NodeJs.ChildProcess.Child.stderr
+      ->ChildOutput.pipeLines(~label="sidecar", ~print=line => Console.error(line))
     }
     let exited = ref(false)
     child->NodeJs.ChildProcess.Child.onExit((code, signal) => {
@@ -215,6 +212,9 @@ let run = async (~config: Config.t) => {
   let handle = await runtime.start({
     entities: config->Config.getPgUserEntities,
     entry: sidecar.entry,
+    resolvers: config.resolvers
+    ->Dict.toArray
+    ->Array.filterMap(((name, resolver)) => resolver.handler === "sidecar" ? Some(name) : None),
   })
   resolveStarted.contents(handle)
 }

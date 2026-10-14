@@ -33,6 +33,18 @@ describe("Config.toEnvioInfo", () => {
     t.expect(Config.toEnvioInfo(input)).toEqual(json(`{"name": "demo"}`))
   })
 
+  // Resolvers are published to the GraphQL layer only, so adding one never
+  // forces a resync.
+  it("leaves out resolvers and their types", t => {
+    let input = json(`{
+      "name": "demo",
+      "resolvers": {"top": {"args": {}, "output": "Int", "handler": "sidecar", "timeoutMs": 30000}},
+      "types": {"T": {"a": "Int"}}
+    }`)
+
+    t.expect(Config.toEnvioInfo(input)).toEqual(json(`{"name": "demo"}`))
+  })
+
   it("does not mutate the input JSON", t => {
     let input = json(`{"isDev": true, "evm": {"chains": {"1": {"id": 1}}}}`)
     let _ = Config.toEnvioInfo(input)

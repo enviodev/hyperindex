@@ -45,6 +45,7 @@ const CH_DEFAULT_USER_OVERRIDE_XML: &str = r#"<clickhouse>
 
 const PG_CONTAINER: &str = "envio-postgres";
 const HASURA_CONTAINER: &str = "envio-hasura";
+const HASURA_EXTRA_HOST: &str = "host.docker.internal:host-gateway";
 const CH_CONTAINER: &str = "envio-clickhouse";
 const VOLUME: &str = "envio-postgres-data";
 const CH_VOLUME: &str = "envio-clickhouse-data";
@@ -379,6 +380,9 @@ impl EnvConfig {
         h.update(&self.hasura_port);
         h.update(&self.hasura_enable_console);
         h.update(&self.hasura_admin_secret);
+        // Part of the container, not of the env: hashed so a container created
+        // before the mapping existed is recreated with it.
+        h.update(HASURA_EXTRA_HOST);
         format!("{:x}", h.finalize())
     }
 
@@ -1098,6 +1102,10 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
                     name: Some(RestartPolicyNameEnum::ALWAYS),
                     ..Default::default()
                 }),
+                // Resolver actions point Hasura at the sidecar on the host.
+                // Docker Desktop resolves host.docker.internal itself; Linux
+                // only with this mapping.
+                extra_hosts: Some(vec![HASURA_EXTRA_HOST.to_string()]),
                 ..Default::default()
             }),
             networking_config: Some(make_networking_config(NETWORK)),

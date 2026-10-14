@@ -173,6 +173,8 @@ pub mod evm {
                     // scoped to its chain unless it opts into `@crossChain`.
                     disable_default_cross_chain: Some(true),
                     sidecar: None,
+                    resolvers: None,
+                    types: None,
                 },
                 ecosystem: None,
                 contracts,
@@ -319,6 +321,8 @@ pub mod fuel {
                     // scoped to its chain unless it opts into `@crossChain`.
                     disable_default_cross_chain: Some(true),
                     sidecar: None,
+                    resolvers: None,
+                    types: None,
                 },
                 ecosystem: EcosystemTag::Fuel,
                 contracts: None,

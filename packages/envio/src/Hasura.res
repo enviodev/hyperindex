@@ -373,6 +373,54 @@ let makeTableConfigs = (~userEntities: array<Internal.entityConfig>) => {
   [exposedInternalTableConfigs, userTableConfigs]->Array.flat
 }
 
+// `resolvers:` as Hasura actions. Runs after the tables are tracked, which
+// begins with `clear_metadata`, so every initialisation writes them afresh. A
+// failure is logged rather than thrown: the entity API stays up without them.
+let publishResolvers = async (
+  ~endpoint,
+  ~auth: auth,
+  ~resolvers: dict<Config.resolver>,
+  ~resolverTypes,
+) =>
+  if resolvers->Dict.keysToArray->Array.length > 0 {
+    let sidecarUrl = switch Env.Sidecar.resolversUrl {
+    | Some(url) => url
+    | None =>
+      let port =
+        NodeJs.Process.process.env->Dict.get("ENVIO_SIDECAR_PORT")->Option.getOr("9900")
+      `http://host.docker.internal:${port}`
+    }
+    let metadata = ResolverActions.build(
+      resolvers,
+      resolverTypes,
+      {
+        sidecarUrl,
+        secret: ?Env.Sidecar.resolverSecret->Option.map((value): ResolverActions.secret => {
+          value: value,
+        }),
+      },
+    )
+    switch await ResolverActions.apply({
+      endpoint,
+      role: auth.role,
+      adminSecret: auth.secret,
+      metadata,
+    }) {
+    | () =>
+      Logging.info(
+        `Published ${resolvers
+          ->Dict.keysToArray
+          ->Array.length
+          ->Int.toString} resolvers to Hasura (sidecar at ${sidecarUrl})`,
+      )
+    | exception exn =>
+      Logging.errorWithExn(
+        exn->Utils.prettifyExn,
+        "Failed to publish the resolvers to Hasura; the entity API is unaffected",
+      )
+    }
+  }
+
 let trackDatabase = async (
   ~endpoint,
   ~auth,
@@ -381,6 +429,8 @@ let trackDatabase = async (
   ~aggregateEntities,
   ~responseLimit,
   ~schema,
+  ~resolvers,
+  ~resolverTypes,
 ) => {
   let tableConfigs = makeTableConfigs(~userEntities)
   let tableNames = tableConfigs->Array.map(c => c.tableName)
@@ -474,6 +524,8 @@ let trackDatabase = async (
       )
     }
   }
+
+  await publishResolvers(~endpoint, ~auth, ~resolvers, ~resolverTypes)
 
   Logging.info("Hasura configuration completed")
 }

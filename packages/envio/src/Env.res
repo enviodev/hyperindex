@@ -246,6 +246,12 @@ module Sidecar = {
   // How often the indexer checks the sidecar's /readyz while it has nothing to
   // deliver, so `envio_sidecar_up` stays right for an idle sidecar. 0 turns it off.
   let probeMs = envSafe->EnvSafe.get("ENVIO_SIDECAR_PROBE_MS", S.int, ~fallback=10_000)
+  // Where Hasura reaches the sidecar's public port for `handler: sidecar`
+  // resolvers. Envio Cloud sets it; unset, it is the host as `envio dev`'s
+  // Hasura container sees it.
+  let resolversUrl = envSafe->EnvSafe.get("ENVIO_SIDECAR_RESOLVERS_URL", S.option(S.string))
+  // Shared with the sidecar, which refuses resolver calls without it when set.
+  let resolverSecret = envSafe->EnvSafe.get("ENVIO_RESOLVER_SECRET", S.option(S.string))
 }
 
 // You need to close the envSafe after you're done with it so that it immediately tells you about your  misconfigured environment on startup.

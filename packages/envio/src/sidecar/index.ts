@@ -22,6 +22,8 @@ export {
   type SidecarJob,
   type SidecarJobArgs,
   type SidecarRoutesApp,
+  type SidecarResolver,
+  type SidecarResolverArgs,
   type SidecarStats,
   type StartOptions,
   type CloseOptions,
@@ -62,6 +64,18 @@ export {
   type GetWhereOperator,
   type ChainMeta,
 } from "./client.js";
+export {
+  applyResolverMetadata,
+  buildResolverMetadata,
+  ResolverError,
+  RESOLVER_SECRET_HEADER,
+  type ApplyOptions,
+  type BuildOptions,
+  type HasuraAction,
+  type ResolverDef,
+  type ResolverMetadata,
+  type ResolverTypes,
+} from "./resolvers.js";
 export { readEnv, type SidecarEnv, type SidecarSqlEnv, type SidecarSqlSslMode } from "./env.js";
 export {
   createSidecarSql,

@@ -11,6 +11,36 @@ use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct PublicResolver<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    args: BTreeMap<&'a str, &'a str>,
+    output: &'a str,
+    handler: &'a str,
+    timeout_ms: u64,
+}
+
+impl<'a> From<&'a human_config::ResolverConfig> for PublicResolver<'a> {
+    fn from(resolver: &'a human_config::ResolverConfig) -> Self {
+        PublicResolver {
+            description: resolver.description.as_deref(),
+            args: resolver
+                .args
+                .iter()
+                .flatten()
+                .map(|(name, type_ref)| (name.as_str(), type_ref.as_str()))
+                .collect(),
+            output: &resolver.output,
+            handler: &resolver.handler,
+            timeout_ms: resolver
+                .timeout_ms
+                .unwrap_or(super::resolvers::DEFAULT_TIMEOUT_MS),
+        }
+    }
+}
+
 fn is_true(v: &bool) -> bool {
     *v
 }
@@ -39,6 +69,12 @@ pub(crate) struct PublicConfigJson<'a> {
     // envio_info fingerprint; the runtime also strips it from the resume diff.
     #[serde(skip_serializing_if = "Option::is_none")]
     sidecar: Option<&'a human_config::SidecarConfig>,
+    // Same as `sidecar`: published to the GraphQL layer, never part of what
+    // the indexer stores, so absent when unset and stripped from the resume diff.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolvers: Option<BTreeMap<&'a str, PublicResolver<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    types: Option<&'a BTreeMap<String, BTreeMap<String, String>>>,
     #[serde(skip_serializing_if = "is_false")]
     is_dev: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -889,6 +925,18 @@ impl SystemConfig {
             description: cfg.human_config.get_base_config().description.as_deref(),
             handlers: cfg.handlers.as_deref(),
             sidecar: cfg.human_config.get_base_config().sidecar.as_ref(),
+            resolvers: cfg
+                .human_config
+                .get_base_config()
+                .resolvers
+                .as_ref()
+                .map(|resolvers| {
+                    resolvers
+                        .iter()
+                        .map(|(name, resolver)| (name.as_str(), resolver.into()))
+                        .collect()
+                }),
+            types: cfg.human_config.get_base_config().types.as_ref(),
             is_dev,
             full_batch_size: cfg.human_config.get_base_config().full_batch_size,
             rollback_on_reorg: cfg.rollback_on_reorg,

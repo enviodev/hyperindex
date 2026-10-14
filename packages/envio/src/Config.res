@@ -108,11 +108,24 @@ type sidecar = {
   entry: string,
 }
 
+// A `resolvers:` entry, validated by the CLI. Types are GraphQL type strings.
+type resolver = {
+  description?: string,
+  args: dict<string>,
+  output: string,
+  // "sidecar", or the URL of a webhook.
+  handler: string,
+  timeoutMs: int,
+}
+
 type t = {
   name: string,
   description: option<string>,
   handlers: string,
   sidecar: option<sidecar>,
+  resolvers: dict<resolver>,
+  // `types:`: output object type name to its field name to GraphQL type string.
+  resolverTypes: dict<dict<string>>,
   contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
@@ -604,12 +617,22 @@ let sidecarSchema = S.schema(s => {
   entry: s.matches(S.string),
 })
 
+let resolverSchema: S.t<resolver> = S.object(s => {
+  description: ?s.field("description", S.option(S.string)),
+  args: s.field("args", S.dict(S.string)),
+  output: s.field("output", S.string),
+  handler: s.field("handler", S.string),
+  timeoutMs: s.field("timeoutMs", S.int),
+})
+
 let publicConfigSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
     "sidecar": s.matches(S.option(sidecarSchema)),
+    "resolvers": s.matches(S.option(S.dict(resolverSchema))),
+    "types": s.matches(S.option(S.dict(S.dict(S.string)))),
     "isDev": s.matches(S.option(S.bool)),
     "isolatedChains": s.matches(S.option(S.array(ChainId.schema))),
     "projectFlags": s.matches(S.option(S.string)),
@@ -698,8 +721,9 @@ let withProjectFlags = (command, ~config: t) =>
 let ecosystemFields = ["evm", "fuel", "svm"]
 
 // Configured beside the indexer without shaping what it stores, so adding or
-// moving the sidecar must not make a running indexer refuse to resume.
-let besideIndexerFields = ["sidecar"]
+// moving the sidecar, or a resolver, must not make a running indexer refuse to
+// resume.
+let besideIndexerFields = ["sidecar", "resolvers", "types"]
 
 // What `envio_info` records: the public config without the command's fields
 // or its chains. A chain is recorded by its own `envio_chains` row and its
@@ -1178,6 +1202,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     description: publicConfig["description"],
     handlers: publicConfig["handlers"]->Option.getOr("src/handlers"),
     sidecar: publicConfig["sidecar"],
+    resolvers: publicConfig["resolvers"]->Option.getOr(Dict.make()),
+    resolverTypes: publicConfig["types"]->Option.getOr(Dict.make()),
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
