@@ -9,6 +9,9 @@
  * name formats, and the views' checkpoint dedup — which is what a reader
  * actually queries and which nothing else exercises.
  *
+ * It then runs the same indexer with ClickHouse alone, and asserts that what
+ * it ends with is what Postgres ended with.
+ *
  * Needs Postgres and ClickHouse but no Docker: it drives `envio start` with
  * Hasura disabled rather than `envio dev`.
  */
@@ -26,6 +29,7 @@ import { pgRows, closePg, isPgReachable } from "../utils/pg-direct.js";
 const PROJECT_DIR = path.join(config.scenariosDir, "e2e_test");
 const PG_SCHEMA = "e2e_ch_parity";
 const CH_DATABASE = "e2e_ch_parity";
+const CH_ONLY_DATABASE = "e2e_ch_only";
 const END_BLOCK = "10861774";
 
 const indexerEnv = {
@@ -40,6 +44,18 @@ const indexerEnv = {
   ENVIO_INDEXER_PORT: "9899",
   ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
   E2E_EXPECTED_END_BLOCK: END_BLOCK,
+};
+
+// Postgres and Hasura are pointed at ports nothing listens on, so a run that
+// still reached for either would fail rather than quietly use the real ones.
+const clickHouseOnlyEnv = {
+  ...indexerEnv,
+  ENVIO_CONFIG: "config.clickhouse-only.yaml",
+  ENVIO_CLICKHOUSE_DATABASE: CH_ONLY_DATABASE,
+  ENVIO_PG_HOST: "127.0.0.1",
+  ENVIO_PG_PORT: "1",
+  ENVIO_HASURA: "true",
+  HASURA_GRAPHQL_ENDPOINT: "http://127.0.0.1:1/v1/metadata",
 };
 
 const reachable = (await isPgReachable()) && (await isClickHouseReachable());
@@ -64,24 +80,29 @@ const chRows = async (query: string) => {
 };
 
 describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
-  beforeAll(async () => {
+  // `-r` resets every backend, so a run starts from empty tables and the
+  // comparison sees only what it wrote. The indexer exits by itself once every
+  // chain reaches its end block. The default config runs last, so the project
+  // is left generated for it.
+  const run = async (env: Record<string, string>) => {
     const codegen = await runCommand(
       config.envioCommand,
       [...config.envioArgs, "codegen"],
-      { cwd: PROJECT_DIR, env: indexerEnv, timeout: config.timeouts.codegen }
+      { cwd: PROJECT_DIR, env, timeout: config.timeouts.codegen }
     );
     expect(codegen.exitCode, `codegen failed: ${codegen.stderr}`).toBe(0);
-
-    // `-r` resets both backends, so the run starts from empty tables and the
-    // comparison sees only what this run wrote. The indexer exits by itself once
-    // every chain reaches its end block.
     const start = await runCommand(
       config.envioCommand,
       [...config.envioArgs, "start", "-r"],
-      { cwd: PROJECT_DIR, env: indexerEnv, timeout: config.timeouts.test }
+      { cwd: PROJECT_DIR, env, timeout: config.timeouts.test }
     );
     expect(start.exitCode, `indexer failed: ${start.stderr}`).toBe(0);
-  }, config.timeouts.test + config.timeouts.codegen);
+  };
+
+  beforeAll(async () => {
+    await run(clickHouseOnlyEnv);
+    await run(indexerEnv);
+  }, 2 * (config.timeouts.test + config.timeouts.codegen));
 
   afterAll(async () => {
     await closePg();
@@ -200,5 +221,59 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
        )`
     );
     expect(above).toEqual([["0"]]);
+  });
+
+  // The same indexer run with ClickHouse alone ends with what the run above
+  // left in Postgres.
+  describe("ClickHouse alone", () => {
+    it("Transfer", async () =>
+      expectParity(
+        `SELECT "id", "from", "to", "value", "block_number", "transaction_hash"
+         FROM "${PG_SCHEMA}"."Transfer" ORDER BY "id" COLLATE "C"`,
+        `SELECT id, \`from\`, \`to\`, value, blockNumber, transactionHash
+         FROM ${CH_ONLY_DATABASE}.\`Transfer\` ORDER BY id`
+      ));
+
+    // Written alongside every transfer and read back by the handler before it
+    // is, so its rows are what the handler's reads saw.
+    it("TransferPgOnly", async () =>
+      expectParity(
+        `SELECT "id", "from", "value"
+         FROM "${PG_SCHEMA}"."TransferPgOnly" ORDER BY "id" COLLATE "C"`,
+        `SELECT id, \`from\`, value
+         FROM ${CH_ONLY_DATABASE}.\`TransferPgOnly\` ORDER BY id`
+      ));
+
+    it("Holder, after repeated writes and deletes", async () =>
+      expectParity(
+        `SELECT "id", "last_block", "last_value"
+         FROM "${PG_SCHEMA}"."Holder" ORDER BY "id" COLLATE "C"`,
+        `SELECT id, lastBlock, lastValue
+         FROM ${CH_ONLY_DATABASE}.\`Holder\` ORDER BY id`
+      ));
+
+    it("ChainTransfer, chain id included", async () =>
+      expectParity(
+        `SELECT "id", "from", "value", "chain_id"
+         FROM "${PG_SCHEMA}"."ChainTransfer" ORDER BY "chain_id", "id" COLLATE "C"`,
+        `SELECT id, \`from\`, value, chainId
+         FROM ${CH_ONLY_DATABASE}.\`ChainTransfer\` ORDER BY chainId, id`
+      ));
+
+    it("one raw event per log", async () =>
+      expectParity(
+        `SELECT "block_number", "log_index", "event_name"
+         FROM "${PG_SCHEMA}"."raw_events" ORDER BY "block_number", "log_index"`,
+        `SELECT block_number, log_index, event_name
+         FROM ${CH_ONLY_DATABASE}.raw_events FINAL ORDER BY block_number, log_index`
+      ));
+
+    it("the chain's progress", async () =>
+      expectParity(
+        `SELECT "id", "progress_block", "events_processed"
+         FROM "${PG_SCHEMA}"."envio_chains" ORDER BY "id"`,
+        `SELECT chain_id, progress_block, events_processed
+         FROM ${CH_ONLY_DATABASE}.envio_chains FINAL ORDER BY chain_id`
+      ));
   });
 });

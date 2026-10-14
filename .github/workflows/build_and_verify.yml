@@ -132,9 +132,10 @@ jobs:
     timeout-minutes: 15
     needs: authorize
 
-    # For the Postgres client's live tests: what it does when a connection
-    # dies, a statement fails mid-transaction or the server cancels one, which
-    # no indexer run can bring about.
+    # For the stores' live tests: what the Postgres client does when a
+    # connection dies, a statement fails mid-transaction or the server cancels
+    # one, which no indexer run can bring about, and every statement the
+    # ClickHouse store builds against a server that has to accept it.
     services:
       postgres:
         image: postgres:16
@@ -149,6 +150,18 @@ jobs:
           --health-retries 5
         ports:
           - 5433:5432
+
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.2.15.4
+        env:
+          CLICKHOUSE_PASSWORD: testing
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 8123:8123
 
     steps:
       - uses: actions/checkout@v6
@@ -176,6 +189,9 @@ jobs:
       # server has just freed is one it can hand to another test's connection.
       - name: Live Postgres client tests
         run: cargo test --lib postgres::live -- --ignored --test-threads=1
+
+      - name: Live ClickHouse store tests
+        run: cargo test --lib clickhouse::live -- --ignored --test-threads=1
 
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:
@@ -219,8 +235,10 @@ jobs:
 
   # The scenario suite is backend-agnostic, so it runs once per storage
   # backend, one runner each. A scenario that can't run on a backend skips
-  # itself with a reason. The ClickHouse leg still needs Postgres: ClickHouse
-  # is a sink attached to Postgres storage, not a replacement for it.
+  # itself with a reason. The ClickHouse leg keeps Postgres as the store of
+  # record with ClickHouse alongside it; a scenario whose config leaves
+  # Postgres out runs on ClickHouse alone on either leg, which is why both
+  # have a ClickHouse server.
   envio-tests:
     runs-on: ubuntu-latest
     needs: build-envio-package

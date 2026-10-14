@@ -355,10 +355,8 @@ let makeRowsSchema = (table, ~rowFieldName, ~skipChainId=false) =>
     })->(Utils.magic: S.t<dict<unknown>> => S.t<unknown>),
   )
 
-// Rows loaded from Postgres are keyed by the possibly renamed column names.
-// Lives here rather than in PgStorage because InMemoryStore also parses
-// Postgres rollback rows and can't depend on PgStorage without a module
-// cycle.
+// Rows a store returns are keyed by the possibly renamed Postgres column names,
+// ClickHouse's included: one schema then parses what either store holds.
 let pgRowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
   table->makeRowsSchema(~rowFieldName=getPgDbFieldName)
 )

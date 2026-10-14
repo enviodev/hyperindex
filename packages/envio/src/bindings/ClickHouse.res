@@ -189,7 +189,21 @@ let makeTable = (~handle, ~name, {names, kinds, nullable}: StorageClient.clickHo
     )
 )
 
-// What a field's value is staged as.
+%%private(
+  let documentsText = (f: Table.field): (unknown => unknown) =>
+    if f.isArray {
+      value =>
+        switch value->(Utils.magic: unknown => Nullable.t<array<unknown>>) {
+        | Value(documents) =>
+          documents->Array.map(documentText)->(Utils.magic: array<unknown> => unknown)
+        | Null | Undefined => value
+        }
+    } else {
+      documentText
+    }
+)
+
+// What an entity field's value is staged as.
 %%private(
   let serializerOf = (f: Table.field): (unknown => unknown) => {
     let shaped = baseSchema =>
@@ -201,14 +215,7 @@ let makeTable = (~handle, ~name, {names, kinds, nullable}: StorageClient.clickHo
         baseSchema
       }
     switch f.fieldType {
-    | Json if f.isArray =>
-      value =>
-        switch value->(Utils.magic: unknown => Nullable.t<array<unknown>>) {
-        | Value(documents) =>
-          documents->Array.map(documentText)->(Utils.magic: array<unknown> => unknown)
-        | Null | Undefined => value
-        }
-    | Json => documentText
+    | Json => documentsText(f)
     | Date => compileSerializer(shaped(Utils.Schema.clickHouseDate->S.toUnknown))
     | Bytea => compileSerializer(shaped(S.json(~validate=false)->S.toUnknown))
     | ChainId => compileSerializer(ChainId.schema->S.toUnknown)
@@ -341,7 +348,8 @@ let stageChangesOrThrow = (
   })
 
 // Rows of one of the indexer's own tables, each column read from the item's
-// field of the same name.
+// field of the same name. Their values are already what the columns hold, a
+// document aside.
 let stageRowsOrThrow = (arena, table, ~fields: array<Table.field>, items: array<unknown>) =>
   arena->stageOrThrow(table, ~rows=items->Array.length, ~fill=stage => {
     let cells = switch table.rowCells {
@@ -350,7 +358,7 @@ let stageRowsOrThrow = (arena, table, ~fields: array<Table.field>, items: array<
       let cells = table.columns->Array.map(({name}) =>
         switch fields->Array.find(field => field->Table.getClickHouseDbFieldName === name) {
         | Some(field) =>
-          let serialize = serializerOf(field)
+          let serialize = field.fieldType === Json ? documentsText(field) : value => value
           let fieldName = field->Table.getApiFieldName
           item =>
             serialize(item->(Utils.magic: unknown => dict<unknown>)->Dict.getUnsafe(fieldName))

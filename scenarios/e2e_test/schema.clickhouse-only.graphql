@@ -1,0 +1,63 @@
+# schema.graphql with every entity in ClickHouse, for config.clickhouse-only.yaml.
+# The entities and fields have to stay those of schema.graphql: the same
+# handlers write both, and the parity suite compares what each run stored.
+
+type Transfer @crossChain @storage(clickhouse: {
+  skippingIndexes: [
+    { name: "idx_from", expr: "from", type: "bloom_filter(0.01)", granularity: 4 }
+    { name: "idx_to", expr: "to", type: "bloom_filter(0.01)" }
+  ]
+}) {
+  id: ID!
+  from: String! @index
+  to: String! @index
+  value: BigInt!
+  blockNumber: Int!
+  transactionHash: String!
+}
+
+type Account @crossChain {
+  id: ID!
+  outgoing: [Transfer!]! @derivedFrom(field: "from")
+}
+
+type TransferPgOnly @crossChain {
+  id: ID!
+  from: String!
+  value: BigInt!
+}
+
+type TransferChOnly @crossChain {
+  id: ID!
+  from: String!
+  value: BigInt!
+}
+
+type Holder @crossChain {
+  id: ID!
+  lastBlock: Int!
+  lastValue: BigInt!
+}
+
+type TransferInternal @crossChain @internal {
+  id: ID!
+  from: String!
+  value: BigInt!
+}
+
+type NumericArrays @crossChain {
+  id: ID!
+  bigInts: [BigInt!]!
+  bigDecimals: [BigDecimal!]!
+}
+
+type ChainTransfer {
+  id: ID!
+  from: String! @index
+  value: BigInt!
+}
+
+type ChainAccount {
+  id: ID!
+  transfers: [ChainTransfer!]! @derivedFrom(field: "from")
+}
