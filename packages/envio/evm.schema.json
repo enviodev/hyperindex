@@ -161,7 +161,7 @@
               "type": "object",
               "properties": {
                 "default": {
-                  "description": "Whether entities without an @storage directive are stored in this backend (default: true when ClickHouse isn't enabled, false otherwise).",
+                  "description": "Whether entities without an @storage directive are stored in this backend (default: true, unless ClickHouse is set as the default with `clickhouse: {default: true}`).",
                   "type": [
                     "boolean",
                     "null"

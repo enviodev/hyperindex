@@ -350,7 +350,8 @@ impl JsonSchema for StorageConfig {
                     "Postgres keeps the indexer's own state, so it is always enabled; `false` is \
                      refused. Accepts `true` or an options object.",
                     "Whether entities without an @storage directive are stored in this backend \
-                     (default: true when ClickHouse isn't enabled, false otherwise)."
+                     (default: true, unless ClickHouse is set as the default with \
+                     `clickhouse: {default: true}`)."
                 )),
                 "clickhouse": (backend(
                     "Whether to keep entities in ClickHouse as well (default: false). Accepts a \
