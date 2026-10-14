@@ -332,6 +332,13 @@ let sidecarBlockTimestamp = (params: contextParams) =>
     ->Option.map(timestamp => timestamp->(Utils.magic: unknown => int))
   }
 
+let warnDroppedSidecarCall = (params: contextParams, ~fn, ~id, ~reason, ~err=?) =>
+  Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem)->Logging.childWarn({
+    "msg": `Dropped the sidecar call ${fn}: ${reason}`,
+    "callId": id,
+    "err": err->Option.map(Utils.prettifyExn),
+  })
+
 // Never throws into the handler and never waits: a bad input is logged and
 // dropped, and the id is still returned.
 let callSidecar = (
@@ -362,15 +369,29 @@ let callSidecar = (
       })
       ->ignore
     | exception exn =>
-      Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem)->Logging.childWarn({
-        "msg": `Dropped the sidecar call ${fn}: its input doesn't match the contract`,
-        "callId": id,
-        "err": exn->Utils.prettifyExn,
-      })
+      params->warnDroppedSidecarCall(
+        ~fn,
+        ~id,
+        ~reason="its input doesn't match the contract",
+        ~err=exn,
+      )
     }
   }
   id
 }
+
+// A name the contract can't define (`defineSidecar` checks the same pattern),
+// or one that `await`, serializers and test matchers probe for, reads as
+// undefined: touching `context.sidecar` must not throw or look like a promise.
+let sidecarFunctionName = /^[A-Za-z_][A-Za-z0-9_]*$/
+let sidecarProbes = Utils.Set.fromArray(["then", "toJSON", "asymmetricMatch", "nodeType"])
+let isObjectPrototypeKey: string => bool = %raw(`name => name in Object.prototype`)
+let isSidecarProbe = name =>
+  !(sidecarFunctionName->RegExp.test(name)) ||
+  sidecarProbes->Utils.Set.has(name) ||
+  isObjectPrototypeKey(name)
+
+@val @scope("Object") external hasOwn: (dict<'a>, string) => bool = "hasOwn"
 
 let sidecarTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) =>
@@ -378,25 +399,38 @@ let sidecarTraps: Utils.Proxy.traps<contextParams> = {
       %raw(`undefined`)
     } else {
       let fn = prop->(Utils.magic: unknown => string)
-      switch SidecarContract.get() {
-      | None =>
-        JsError.throwWithMessage(
-          `context.sidecar.${fn} has no sidecar to call: add \`sidecar: { contract, entry }\` to config.yaml.`,
+      let functions = SidecarContract.get()->Option.map(({functions}) => functions)
+      // Not even a contract function may be `then`: `await context.sidecar`
+      // would call it and never resolve.
+      switch functions->Option.flatMap(functions =>
+        fn !== "then" && functions->hasOwn(fn) ? Some(functions->Dict.getUnsafe(fn)) : None
+      ) {
+      | Some(def) =>
+        (input => params->callSidecar(~fn, ~def, input))->(
+          Utils.magic: (unknown => string) => unknown
         )
-      | Some({functions}) =>
-        switch functions->Utils.Dict.dangerouslyGetNonOption(fn) {
-        | Some(def) =>
-          (input => params->callSidecar(~fn, ~def, input))->(
-            Utils.magic: (unknown => string) => unknown
-          )
 
-        | None =>
-          JsError.throwWithMessage(
-            `context.sidecar.${fn} is not a function of the sidecar contract. It has: ${functions
-              ->Dict.keysToArray
-              ->Array.join(", ")}.`,
-          )
+      | None if isSidecarProbe(fn) => %raw(`undefined`)
+      // Reachable from JavaScript or past a cast: dropped like a bad input,
+      // still with an id, since nothing throws into the handler.
+      | None =>
+        let reason = switch functions {
+        | Some(functions) =>
+          `the sidecar contract has no such function (it has: ${functions
+            ->Dict.keysToArray
+            ->Array.join(", ")})`
+        | None => "config.yaml has no `sidecar: { contract, entry }`"
         }
+
+        (
+          _input => {
+            let id = params->nextSidecarCallId
+            if !params.isPreload {
+              params->warnDroppedSidecarCall(~fn, ~id, ~reason)
+            }
+            id
+          }
+        )->(Utils.magic: (unknown => string) => unknown)
       }
     },
 }

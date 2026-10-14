@@ -19,6 +19,7 @@ chains:
 type Probe {
   id: ID!
   callIds: String!
+  probes: String!
 }
 `,
   ~sidecarContract=`
@@ -39,7 +40,24 @@ indexer.onEvent({ contract: "Gravatar", event: "NewGravatar" }, async ({ event, 
   const notified = context.sidecar.notify({ text: event.params.displayName });
   // Input that slipped past the types is dropped, never thrown into the handler.
   const dropped = context.sidecar.notify({ text: 42 } as unknown as { text: string });
-  context.Probe.set({ id: priced, callIds: [notified, dropped].join(",") });
+  // So is a function the contract doesn't have (a JS caller, a stale build).
+  const unknown = (context.sidecar as unknown as { missing: (input: unknown) => string }).missing({});
+
+  // \`await\`, serializers and matchers probe the object: what can't be a
+  // contract function reads as undefined instead of throwing.
+  const sidecar = context.sidecar;
+  const probed = sidecar as unknown as Record<string | symbol, unknown>;
+  const probes = JSON.stringify({
+    then: typeof probed.then,
+    toJSON: typeof probed.toJSON,
+    constructor: typeof probed.constructor,
+    $$typeof: typeof probed.$$typeof,
+    iterator: typeof probed[Symbol.iterator],
+    awaited: (await sidecar) === sidecar,
+    json: JSON.stringify(sidecar),
+  });
+
+  context.Probe.set({ id: priced, callIds: [notified, dropped, unknown].join(","), probes });
 
   if (event.params.displayName === "never") {
     // @ts-expect-error not a function of the contract
@@ -96,7 +114,23 @@ describe("context.sidecar through a test indexer", () => {
             { id: "1:5:3r3:0", fn: "notify", input: { text: "again hi" } },
           ],
         },
-        Probe: { sets: [{ id: "1:5:3r2:0", callIds: "1:5:3r2:1,1:5:3r2:2" }] },
+        Probe: {
+          sets: [
+            {
+              id: "1:5:3r2:0",
+              callIds: "1:5:3r2:1,1:5:3r2:2,1:5:3r2:3",
+              probes: JSON.stringify({
+                then: "undefined",
+                toJSON: "undefined",
+                constructor: "undefined",
+                $$typeof: "undefined",
+                iterator: "undefined",
+                awaited: true,
+                json: "{}",
+              }),
+            },
+          ],
+        },
       },
     ]);
   });
