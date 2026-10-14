@@ -656,9 +656,13 @@ impl Storage {
                 "DROP SCHEMA IF EXISTS \"{schema}\" CASCADE;\nCREATE SCHEMA \"{schema}\";"
             ));
         }
+        // Every other role may read the schema but not create in it, or a
+        // read-only login could still add its own objects. The REVOKE matters
+        // for a reused `public` schema, which carries CREATE for everyone
+        // before Postgres 15.
         ddl.push(format!(
-            "GRANT ALL ON SCHEMA \"{schema}\" TO \"{}\";\nGRANT ALL ON SCHEMA \"{schema}\" TO \
-             public;",
+            "GRANT ALL ON SCHEMA \"{schema}\" TO \"{}\";\nREVOKE ALL ON SCHEMA \"{schema}\" FROM \
+             public;\nGRANT USAGE ON SCHEMA \"{schema}\" TO public;",
             self.settings.pg_user
         ));
         for enum_type in &input.enums {
