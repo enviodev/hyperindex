@@ -1271,16 +1271,8 @@ type Gravatar @entity {
             "ENVIO_SUBGRAPH_RPC".to_string(),
             "https://rpc.example.test".to_string(),
         )]);
-        SystemConfig::parse_subgraph(
-            &yaml,
-            SCHEMA,
-            "gravatar",
-            &env,
-            &files,
-            ".",
-            &ambiguous(),
-        )
-        .expect("filecoin over RPC");
+        SystemConfig::parse_subgraph(&yaml, SCHEMA, "gravatar", &env, &files, ".", &ambiguous())
+            .expect("filecoin over RPC");
     }
 
     #[test]

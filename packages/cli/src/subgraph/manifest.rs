@@ -110,6 +110,15 @@ fn network_to_chain_id(network: &str) -> Option<u64> {
     if let Some(chain_id) = HOST_NETWORKS.get(network) {
         return Some(*chain_id);
     }
+    // The registry spells every chain `evm-<chain id>` too; for a chain it
+    // doesn't list, that is a way to name one without a slug.
+    if let Some(chain_id) = network
+        .strip_prefix("evm-")
+        .and_then(|id| id.parse::<u64>().ok())
+        .filter(|id| *id > 0)
+    {
+        return Some(chain_id);
+    }
     Network::from_str(network).ok().map(|n| n.get_network_id())
 }
 
@@ -977,6 +986,8 @@ templates:
             ("telos", 40),
             ("mantle-sepolia", 5003),
             ("pulse", 369),
+            // Any chain by id, for one no host's slug list has.
+            ("evm-9999991", 9999991),
         ];
         let wrong: Vec<_> = expected
             .iter()
