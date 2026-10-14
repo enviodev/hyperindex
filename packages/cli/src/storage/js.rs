@@ -1020,7 +1020,6 @@ impl JsStorage {
     ) -> napi::Result<Option<String>> {
         Ok(self
             .inner
-            .postgres
             .rollback_target_checkpoint(self::chain_id(chain_id), block_number)
             .await
             .map_err(to_napi)?

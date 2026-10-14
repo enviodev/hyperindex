@@ -152,7 +152,7 @@ Event processing:
 - `BatchProcessing.res` – the single batch-processing loop (usually 5000-event batches).
 - `Rollback.res` – the reorg rollback state machine.
 - `EventProcessing.res` – runs handlers & builds in-memory entity updates.
-- `Writing.res` – flushes the batch to every configured store, committing it in each or in none.
+- `Writing.res` – flushes the batch to every configured store: Postgres commits once ClickHouse holds the rows, and ClickHouse makes them readable once Postgres committed.
 
 Monitoring & health:
 

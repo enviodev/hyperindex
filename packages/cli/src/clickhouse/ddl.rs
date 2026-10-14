@@ -86,7 +86,8 @@ impl Topology {
     /// identical replayed block would be discarded while still reporting success
     /// — a permanent gap nothing surfaces. Trim-then-replay is what makes
     /// recovery correct here, and the duplicates dedup would have caught are
-    /// already collapsed by every read's `LIMIT 1 BY`. Plain MergeTree goes by
+    /// already collapsed by every read, which keeps one row per key and
+    /// checkpoint. Plain MergeTree goes by
     /// `non_replicated_deduplication_window` (0 by default), so it needs no
     /// clause.
     fn settings(&self) -> &'static str {

@@ -477,10 +477,11 @@ struct InsertFailure {
 /// What sending a failed insert again can change. Whether the server already
 /// took the rows doesn't come into it: every insert carries a token of its own
 /// (see `post_rows`), so a resend can land them twice, and that costs storage
-/// rather than correctness — every read collapses rows sharing a key and a
-/// checkpoint with `LIMIT 1 BY`, a resent row repeats the values of the one it
-/// duplicates, and the chains' rows replace each other by version. Only a
-/// direct query of a history table sees a duplicate.
+/// rather than correctness — every read keeps one row per key and checkpoint
+/// (`argMax` in handler loads, `LIMIT 1 BY` in the views and rollbacks), a
+/// resent row repeats the values of the one it duplicates, and the chains' rows
+/// replace each other by version. Only a direct query of a history table sees
+/// a duplicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Retry {
     Never,

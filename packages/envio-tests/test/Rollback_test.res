@@ -814,6 +814,122 @@ describe("E2E rollback tests", () => {
     },
   )
 
+  // No checkpoint inside the threshold sits at or below the valid block, so
+  // the rollback resolves its target to checkpoint 0, below the batch that
+  // wrote the entity before the threshold.
+  scenario->Scenario.it(
+    "Keeps an entity written before the reorg threshold when the rollback has no checkpoint to land on",
+    ~sources=[{chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Utils.delay(0)
+      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=300)
+
+      sourceMock.resolveGetItemsOrThrow([
+        {
+          blockNumber: 50,
+          logIndex: 0,
+          handler: async args => {
+            let context = args.context->asContext
+            context.simpleEntity.set({id: "early", value: "before-threshold"})
+          },
+        },
+      ])
+      await indexer.getBatchWritePromise()
+
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 101,
+            logIndex: 0,
+            handler: async args => {
+              let context = args.context->asContext
+              context.simpleEntity.set({id: "late", value: "inside-threshold"})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=102,
+      )
+      await indexer.getBatchWritePromise()
+
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=103,
+        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+      sourceMock.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
+      ])
+      await indexer.getRollbackReadyPromise()
+
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=102,
+        ~latestFetchedBlockHash="0x102a",
+      )
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        await querySimpleEntities(indexer),
+        ~message="Only the entity written inside the reorged range is rolled back",
+      ).toEqual([{id: "early", value: "before-threshold"}])
+
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 103,
+            logIndex: 0,
+            handler: async args => {
+              let context = args.context->asContext
+              context.simpleEntity.set({id: "early", value: "overwritten"})
+              context.simpleEntity.set({id: "late", value: "reindexed"})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=103,
+        ~latestFetchedBlockHash="0x103a",
+      )
+      await indexer.getBatchWritePromise()
+
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=104,
+        ~prevRangeLastBlock={blockNumber: 103, blockHash: "0x103b"},
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+      sourceMock.resolveGetBlockHashes(
+        sourceMock.getBlockHashesCalls
+        ->Utils.Array.last
+        ->Option.getOr([])
+        ->Array.map(
+          blockNumber => {
+            BlockStore.blockNumber,
+            blockHash: blockNumber > 100 ? `0x${blockNumber->Int.toString}b` : "0x0100",
+            blockTimestamp: blockNumber,
+          },
+        ),
+      )
+      await indexer.getRollbackReadyPromise()
+
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=104,
+        ~latestFetchedBlockHash="0x104b",
+      )
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        await querySimpleEntities(indexer),
+        ~message="A second rollback to the same block lands on the first one's checkpoint",
+      ).toEqual([{id: "early", value: "before-threshold"}])
+    },
+  )
+
   scenario->Scenario.it(
     "Stores checkpoints inside of the reorg threshold for batches without items",
     ~sources=[{chain: 1337, methods}],

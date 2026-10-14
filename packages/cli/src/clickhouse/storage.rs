@@ -726,6 +726,34 @@ impl Storage {
         Ok(())
     }
 
+    /// The last checkpoint of the chain at or below the block. One a rollback
+    /// reverted is never it: that rollback's own checkpoint, stamped where it
+    /// left the chain, sits above it.
+    pub async fn rollback_target_checkpoint(
+        &self,
+        chain_id: i64,
+        block_number: i32,
+    ) -> Result<Option<i64>> {
+        let answer = self
+            .client
+            .statement(format!(
+                "SELECT {id} FROM {} WHERE {chain} = {chain_id} AND {block} <= {block_number} \
+                 ORDER BY {id} DESC LIMIT 1 FORMAT TabSeparated",
+                self.table_ref(CHECKPOINTS_TABLE),
+                id = quoted(ID_COLUMN),
+                chain = quoted(CHAIN_ID_COLUMN),
+                block = quoted(ddl::BLOCK_NUMBER_COLUMN),
+            ))
+            .await?;
+        match answer.trim() {
+            "" => Ok(None),
+            id => id
+                .parse()
+                .map(Some)
+                .with_context(|| format!("Unexpected checkpoint id {id:?}")),
+        }
+    }
+
     /// Which of the chains' committed checkpoints the table doesn't hold.
     async fn missing_checkpoints(&self, committed: &[(i64, i64)]) -> Result<Vec<(i64, i64)>> {
         let answer = self

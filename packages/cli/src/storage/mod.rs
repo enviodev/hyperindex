@@ -439,6 +439,30 @@ impl Storage {
         }
     }
 
+    /// Postgres keeps only the checkpoints anchoring its history, and a
+    /// rollback below all of them lands on 0, where its backfill holds what
+    /// came before. ClickHouse rows carry every batch's checkpoint, so there it
+    /// lands on the last batch below the fork instead: 0 would revert what was
+    /// written before the reorg threshold, which is never indexed again.
+    pub async fn rollback_target_checkpoint(
+        &self,
+        chain_id: i64,
+        block_number: i32,
+    ) -> Result<Option<i64>> {
+        let target = self
+            .postgres
+            .rollback_target_checkpoint(chain_id, block_number)
+            .await?;
+        match (target, &self.clickhouse) {
+            (None, Some(clickhouse)) => {
+                clickhouse
+                    .rollback_target_checkpoint(chain_id, block_number)
+                    .await
+            }
+            (target, _) => Ok(target),
+        }
+    }
+
     /// Resumes Postgres, and then ClickHouse to what Postgres committed: a
     /// batch ClickHouse landed but Postgres never committed is trimmed away.
     pub async fn resume(
