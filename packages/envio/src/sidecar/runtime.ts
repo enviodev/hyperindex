@@ -8,6 +8,7 @@ import { readEnv } from "./env.js";
 import { createRootLogger, toUserLogger, type SidecarLogger } from "./log.js";
 import { createIndexerClient, type EntityMetaInput, type IndexerClient } from "./client.js";
 import { createMetricsRegistry, PROMETHEUS_CONTENT_TYPE } from "./metrics.js";
+import { createSidecarSql, type SidecarSql } from "./sql.js";
 
 export type SidecarCall = {
   readonly id: string;
@@ -23,6 +24,8 @@ export type SidecarFunctionArgs<C extends SidecarContract, K extends keyof C["fu
   readonly call: SidecarCall;
   readonly emit: Emit<C>;
   readonly indexer: IndexerClient;
+  /** Read-only SQL on the indexer's database (dedicated deployments, envio dev). */
+  readonly sql: SidecarSql;
   readonly log: SidecarLogger;
   /** Aborted when the call times out. JavaScript cannot stop a running
    * function, so long work should check it (or pass it to `fetch`). */
@@ -50,6 +53,7 @@ export type SidecarFunctionImpl<C extends SidecarContract, K extends keyof C["fu
 export type SidecarJobArgs<C extends SidecarContract> = {
   readonly emit: Emit<C>;
   readonly indexer: IndexerClient;
+  readonly sql: SidecarSql;
   readonly log: SidecarLogger;
 };
 
@@ -64,6 +68,7 @@ export type SidecarJob<C extends SidecarContract> = {
 
 export type SidecarRoutesApp<C extends SidecarContract> = express.Express & {
   readonly indexer: IndexerClient;
+  readonly sql: SidecarSql;
   readonly emit: Emit<C>;
   readonly log: SidecarLogger;
 };
@@ -103,6 +108,9 @@ export type StartOptions = {
   /** Emit circuit breaker. Defaults `ENVIO_EMIT_BREAKER_FAILURES` (5, 0 = off) and
    * `ENVIO_EMIT_BREAKER_COOLDOWN_MS` (5000). */
   readonly emitBreaker?: { readonly failures?: number; readonly cooldownMs?: number };
+  /** A ready handle used instead of one built from `ENVIO_SIDECAR_PG_*`. The
+   * caller owns it: `close()` does not end it. */
+  readonly sql?: SidecarSql;
 };
 
 export type CloseOptions = {
@@ -426,6 +434,10 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       ...(options.entities === undefined ? {} : { entities: options.entities }),
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     });
+    // postgres.js connects lazily, so a database that is down fails the
+    // queries, never the start.
+    const ownSql = options.sql === undefined ? createSidecarSql(env.sql, { log, metrics }) : undefined;
+    const sql: SidecarSql = options.sql ?? (ownSql as SidecarSql);
 
     const queues = new Map<string, QueuedCall[]>();
     const running = new Map<string, number>();
@@ -501,6 +513,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             call: item.call,
             emit,
             indexer,
+            sql,
             log: callLog,
             signal: controller.signal,
           }),
@@ -688,7 +701,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       res.status(200).json({ status: "ok" });
     });
     const routeEmit = createEmit(contract, transport);
-    const app = Object.assign(pub, { indexer, emit: routeEmit, log }) as SidecarRoutesApp<C>;
+    const app = Object.assign(pub, { indexer, sql, emit: routeEmit, log }) as SidecarRoutesApp<C>;
     impl.routes?.(app);
     pub.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
       log.error("route failed", error instanceof Error ? error : { error: String(error) });
@@ -721,7 +734,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
           runningJobs++;
           const startedAt = performance.now();
           Promise.resolve()
-            .then(() => job.run({ emit: jobEmit, indexer, log: jobLog }))
+            .then(() => job.run({ emit: jobEmit, indexer, sql, log: jobLog }))
             .then(
               () => {
                 jobRuns.inc({ job: name, outcome: "succeeded" });
@@ -753,6 +766,22 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       publicPort: portOf(publicServer),
       functions: Object.keys(contractFunctions),
       jobs: Object.keys(jobs),
+      sql:
+        options.sql !== undefined
+          ? { enabled: options.sql.enabled, injected: true }
+          : env.sql === undefined
+            ? { enabled: false }
+            : {
+                enabled: true,
+                host: env.sql.host,
+                port: env.sql.port,
+                database: env.sql.database,
+                user: env.sql.user,
+                schema: env.sql.schema,
+                ssl: env.sql.ssl,
+                poolSize: env.sql.poolSize,
+                timeoutMs: env.sql.timeoutMs,
+              },
     });
 
     const unfinished = (): CloseReport["abandoned"] => ({
@@ -792,6 +821,8 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       // emits made after close (a timed out function waking up) fail at once.
       stopEmits.abort(new Error("sidecar closed before it was delivered"));
       await Promise.all([closeServer(internalServer), closeServer(publicServer)]);
+      // After the servers: a function still draining may be mid query.
+      await ownSql?.end();
       log.info("sidecar stopped", { drained });
       return { drained, graceMs, abandoned };
     };

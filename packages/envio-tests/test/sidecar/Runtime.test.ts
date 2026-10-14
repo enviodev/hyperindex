@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { defineSidecar, S } from "envio";
 import {
   createSidecar,
+  createSidecarSql,
+  readEnv,
   SidecarEmitError,
+  SidecarSqlDisabledError,
+  type SidecarSql,
   sidecarContractHash,
   type RetryPolicy,
   type RunningSidecar,
@@ -1551,5 +1555,129 @@ describe("sidecar runtime: public server", () => {
       'Job interval \'5x\' is not like "30s", "5m", "1h" or a number of ms',
       'createSidecar: function \'notify\' timeout \'soon\' is not like "30s", "5m" or a number of ms',
     ]);
+  });
+});
+
+// The suite's own Postgres; the handle refuses writes whoever it logs in as.
+const sqlEnv = {
+  ENVIO_SIDECAR_PG_HOST: process.env.ENVIO_PG_HOST ?? "localhost",
+  ENVIO_SIDECAR_PG_PORT: process.env.ENVIO_PG_PORT ?? "5433",
+  ENVIO_SIDECAR_PG_DATABASE: process.env.ENVIO_PG_DATABASE ?? "envio-dev",
+  ENVIO_SIDECAR_PG_USER: process.env.ENVIO_PG_USER ?? "postgres",
+  ENVIO_SIDECAR_PG_PASSWORD: process.env.ENVIO_PG_PASSWORD ?? "testing",
+};
+
+const rejection = async (promise: Promise<unknown>) => {
+  try {
+    await promise;
+    return "resolved";
+  } catch (error) {
+    return error;
+  }
+};
+
+describe("sidecar runtime: sql", () => {
+  it("hands sql from ENVIO_SIDECAR_PG_* to functions, jobs and routes, counts it on /metrics, and ends it on close", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const seen: Record<string, unknown> = {};
+    const jobRan = deferred();
+    let captured: SidecarSql | undefined;
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: {
+          ...noop,
+          priceSwap: async ({ input, sql }) => {
+            captured = sql;
+            seen.function = [...(await sql<{ id: string }[]>`select ${input.swapId}::text as id`)];
+          },
+        },
+        jobs: {
+          snapshot: {
+            every: "1h",
+            runOnStart: true,
+            run: async ({ sql }) => {
+              seen.job = [...(await sql.transaction(async (tx) => tx`select 2 as n`))];
+              jobRan.resolve();
+            },
+          },
+        },
+        routes: (app) => {
+          app.get("/n", async (_req, res) => {
+            res.json({ rows: await app.sql`select 3 as n`, enabled: app.sql.enabled, schema: app.sql.schema });
+          });
+        },
+      },
+      { startJobs: true, env: { ...process.env, ...sqlEnv } },
+    );
+    await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+      batchId: "b-sql",
+      calls: [call("1:100:1:0", "priceSwap", { swapId: "s1", amount: "1" })],
+    });
+    await running.waitIdle();
+    await jobRan.promise;
+    seen.route = await (await fetch(`http://127.0.0.1:${running.publicPort}/n`)).json();
+    const metrics = await (await fetch(`http://127.0.0.1:${running.internalPort}/metrics`)).text();
+    await running.close();
+    const afterClose = await rejection((captured as SidecarSql)`select 1`);
+    expect({
+      seen,
+      metrics: metrics.split("\n").filter((line) => /^envio_sidecar_sql_(queries_total|pool_in_use|query_seconds_count)/.test(line)),
+      afterClose,
+    }).toEqual({
+      seen: {
+        function: [{ id: "s1" }],
+        job: [{ n: 2 }],
+        route: { rows: [{ n: 3 }], enabled: true, schema: "public" },
+      },
+      metrics: [
+        'envio_sidecar_sql_queries_total{outcome="ok"} 3',
+        "envio_sidecar_sql_query_seconds_count 3",
+        "envio_sidecar_sql_pool_in_use 0",
+      ],
+      afterClose: expect.objectContaining({ name: "SidecarSqlError", code: "QUERY_FAILED" }),
+    });
+  });
+
+  it("starts without ENVIO_SIDECAR_PG_* (sql then rejects with SidecarSqlDisabledError) and uses an injected handle as is", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const outcomes: unknown[] = [];
+    const impl: SidecarImpl<Contract> = {
+      functions: {
+        ...noop,
+        priceSwap: async ({ sql }) => {
+          outcomes.push(sql.enabled ? [...(await sql`select 1 as n`)] : await rejection(sql`select 1`));
+        },
+      },
+    };
+    const send = async (running: RunningSidecar, id: string) => {
+      await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+        batchId: id,
+        calls: [call(id, "priceSwap", { swapId: "s", amount: "1" })],
+      });
+      await running.waitIdle();
+    };
+    const disabled = await startSidecar(indexer, impl, { env: {} });
+    await send(disabled, "1:1:1:0");
+
+    const injected = createSidecarSql(readEnv(sqlEnv).sql);
+    cleanups.push(() => injected.end(1_000));
+    const withInjected = await createSidecar(contract, impl).start({
+      internalPort: 0,
+      publicPort: 0,
+      indexerInternalUrl: indexer.url,
+      logLevel: "silent",
+      env: {},
+      sql: injected,
+    });
+    await send(withInjected, "1:1:2:0");
+    await withInjected.close();
+    expect({
+      disabled: outcomes[0] instanceof SidecarSqlDisabledError,
+      injected: outcomes[1],
+      stillOpen: [...(await injected`select 4 as n`)],
+    }).toEqual({ disabled: true, injected: [{ n: 1 }], stillOpen: [{ n: 4 }] });
   });
 });
