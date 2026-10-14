@@ -413,6 +413,8 @@ let getGlobalIndexer = (): 'indexer => {
 
 let migrate = async (~reset) => {
   let config = Config.load()
+  // Resolving a `latest` start block asks the chain's sources for its head.
+  config->Config.primeUserAgent
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   await persistence->Persistence.init(
     ~reset,
@@ -571,6 +573,7 @@ let start = async (
   // An unsupported Node fails here, before the database is touched.
   HandlerLoader.registerTsHooks()
   let config = Config.load()
+  config->Config.primeUserAgent
   switch isTest ? None : Supervisor.planForRun(~config) {
   | Some(workers) => await Supervisor.run(~config, ~workers, ~reset)
   | None =>

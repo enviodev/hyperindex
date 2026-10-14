@@ -120,15 +120,13 @@ external classNew: (
   AddressStore.t,
 ) => t = "new"
 
-let make = (cfg: cfg, ~eventRegistrations, ~addressStore) => {
-  let envioVersion = Utils.EnvioPackage.value.version
+let make = (cfg: cfg, ~eventRegistrations, ~addressStore) =>
   Core.getAddon().fuelHyperSyncClient->classNew(
     cfg,
-    ~userAgent=`hyperindex/${envioVersion}`,
+    ~userAgent=UserAgent.get(),
     eventRegistrations,
     addressStore,
   )
-}
 
 // Returns the routed items/blocks plus the page's block store (Fuel blocks
 // keyed by height); the store's ids drive reorg detection on merge.

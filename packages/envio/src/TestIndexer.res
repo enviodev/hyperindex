@@ -678,6 +678,7 @@ let getRegistrations = (~config) =>
 
 let createTestIndexer = (): t<'processConfig> => {
   let config = Config.load()
+  config->Config.primeUserAgent
   let allEntities = config.userEntities
   let entities = Dict.make()
   let entityConfigs = Dict.make()
