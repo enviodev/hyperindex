@@ -28,6 +28,7 @@ use crate::{
     utils::unique_hashmap,
 };
 use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
+use alloy_primitives::B256;
 use anyhow::{anyhow, Context, Result};
 use itertools::Itertools;
 
@@ -2384,12 +2385,21 @@ impl Event {
 
         for event_config in events_config.iter() {
             let alloy_event = Event::get_abi_event(&event_config.event, &abi_from_file)?;
-            // Use alloy's selector() method which computes keccak256 of the signature
-            // Note: selector() returns B256 which formats as lowercase hex with 0x prefix
-            let sighash = alloy_event.selector().to_string();
 
             let abi_name = alloy_event.name.clone();
             let name = event_config.name.clone().unwrap_or(abi_name.clone());
+            // Use alloy's selector() method which computes keccak256 of the signature
+            // Note: selector() returns B256 which formats as lowercase hex with 0x prefix
+            let sighash = match &event_config.topic0 {
+                Some(topic0) => topic0.parse::<B256>().map_err(|_| {
+                    anyhow!(
+                        "Invalid topic0 \"{topic0}\" for event {name}. Expected 0x followed by \
+                         64 hex characters."
+                    )
+                })?,
+                None => alloy_event.selector(),
+            }
+            .to_string();
             let event_signature = EvmAbi::event_signature_from_abi_event(&alloy_event);
 
             // Convert alloy params to our abi_compat EventParam
