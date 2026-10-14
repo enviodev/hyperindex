@@ -128,7 +128,7 @@ query and is dropped; stored, it is an error.
 | `Entity.load`, `store.get`, derived loaders | sync try-read; miss → suspend (§5) |
 | `getInBlock` | never suspends, and checkpoint-filtered: the in-memory table spans the whole batch, so a hit counts only if its change record's checkpoint falls in the current block — everything else (including entities written in an *earlier* block of the same batch) = `null` |
 | `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary. `BigDecimal` arithmetic reproduces graph-node's digit for digit: every value is normalized to 34 significant digits through the `bigdecimal` 0.1.2 rounding graph-node pins (positives half up, negatives truncated), so residues match; checked against vectors that crate computes |
-| `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` (log's index within its tx — envio has no per-tx log index) → §7 error on access |
+| `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` = `logIndex`, as graph-node answers it (no Ethereum client sets the per-transaction index; `chain/ethereum/src/trigger.rs`) |
 | `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A call the register pass already made at the same block is answered from its memo. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it is asked again (below), so a flaky RPC never fabricates `reverted` data |
 | `ethereum.Value` | its own class, tagged with graph-ts' ABI `ValueKind` from the ABI type (event inputs, call outputs, `ethereum.decode`'s type string); accessors refuse another kind exactly as graph-ts' asserts do |
 | `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak) |
@@ -464,7 +464,7 @@ refuse instead, so behavior never silently diverges:
      unknown error. Known lookups never reach the trap — zero overhead;
      unknown names fall through the chain and throw.
   3. **Plain throwing getters** for known-but-refused fields
-     (`receipt.logs`, `transactionLogIndex`, block fields beyond `number`) —
+     (`receipt.logs`, block fields beyond `number`) —
      enumerable names need no Proxy and throw the *unsupported* error,
      keeping the unsupported/unknown distinction crisp.
 
@@ -486,7 +486,6 @@ refuse instead, so behavior never silently diverges:
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
 | Timeseries & aggregations | translation (schema) |
 | `event.receipt.logs` | runtime, on access (receipt scalars keep working) |
-| `event.transactionLogIndex` | runtime, on access |
 | Block-handler `ethereum.Block` fields other than `number`/`timestamp` | runtime, on access |
 
 ## 8. Implementation plan

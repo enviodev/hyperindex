@@ -2007,9 +2007,11 @@ class EthereumEvent {
     });
     return (this._params = params);
   }
+  // graph-node answers the log's index in its block here (trigger.rs,
+  // `transaction_log_index`): Geth never set the per-transaction one, and
+  // subgraphs read it only to tell logs apart.
   get transactionLogIndex(): BigInt_ {
-    if (this._transactionLogIndex !== undefined) return this._transactionLogIndex;
-    throw unsupported("event.transactionLogIndex", this._kind.location);
+    return (this._transactionLogIndex ??= this.logIndex);
   }
   set transactionLogIndex(value: BigInt_) {
     this._transactionLogIndex = value;
