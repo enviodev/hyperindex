@@ -5,6 +5,8 @@
 // - `matchstick-as` re-exports graph-ts' `log`, and Beefy's mappings import it
 //   from there. Only `@graphprotocol/graph-ts` reached the shim, so the import
 //   failed at link time.
+// - 10 ** i64 is an i64 power: JavaScript's ** refuses to mix a bigint with a
+//   number (harvest-base's normalizePrecision).
 // - An i64 times an integer literal is an i64, and `new Date(ms)` takes one:
 //   p2p.me's `timestamp.toI64() * 1000` mixed a bigint with a number, which
 //   JavaScript refuses, and `new Date()` refuses a bigint too.
@@ -40,6 +42,8 @@ type Init @entity {
   id: ID!
   back: BigInt!
   month: String!
+  power: BigInt!
+  bigPower: BigInt!
 }
 `,
   ~files=Dict.fromArray([
@@ -67,7 +71,14 @@ export function handlePoolInitialized(event: any): void {
   let date = new Date(ms);
   let seconds = date.getTime() / 1000;
 
+  // 10 ** x with an i64 exponent is an i64 power (harvest-base's
+  // normalizePrecision), and BigInt ** 10 is graph-ts' BigInt.pow.
+  let power = 10 ** event.logIndex.toI64();
+  let bigPower = BigInt.fromI32(2) ** 10;
+
   let entity = new Entity();
+  entity.setBigInt("power", BigInt.fromI64(power));
+  entity.setBigInt("bigPower", bigPower);
   entity.setBigInt("back", BigInt.fromU64(view.getUint64(0, false)));
   entity.setString("month", date.getUTCFullYear().toString() + "-" + (date.getUTCMonth() + 1).toString() + ":" + seconds.toString());
   store.set("Init", id.toHexString(), entity);
@@ -98,7 +109,7 @@ describe("AssemblyScript's standard library and helper imports", () => {
       },
     });
     t.expect(await indexer.Init.getAll()).toEqual([
-      { id: "0x00000000000001020000000700000003", back: 258n, month: "2025-10:1760400000" },
+      { id: "0x00000000000001020000000700000003", back: 258n, month: "2025-10:1760400000", power: 1000n, bigPower: 1024n },
     ]);
   });
 });

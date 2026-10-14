@@ -37,6 +37,9 @@ use schema::SchemaTranslation;
 pub const RPC_ENV_VAR: &str = "ENVIO_SUBGRAPH_RPC";
 /// envio's `maxReorgDepth` for a chain it has no figure for.
 const DEFAULT_MAX_REORG_DEPTH: u32 = 200;
+pub const BATCH_SIZE_ENV_VAR: &str = "ENVIO_SUBGRAPH_BATCH_SIZE";
+/// Events per batch for a mapping that calls contracts.
+const CALLING_BATCH_SIZE: u64 = 500;
 pub const BLOCK_LAG_ENV_VAR: &str = "ENVIO_SUBGRAPH_BLOCK_LAG";
 pub const API_TOKEN_ENV_VAR: &str = "ENVIO_API_TOKEN";
 
@@ -412,6 +415,24 @@ fn contract_config(
     }
 }
 
+/// A mapping that calls contracts commits a batch only once every call in it has
+/// been answered, and a handler's calls run one after another. At envio's 5,000
+/// events a batch, an endpoint a second away took minutes to commit the first,
+/// with nothing to show for it meanwhile (harvest-base, dhedge, gooddollar). A
+/// smaller batch commits sooner and costs no calls: they all run concurrently
+/// either way. `ENVIO_SUBGRAPH_BATCH_SIZE` overrides it.
+fn calling_batch_size(mapping_sources: &[String]) -> Option<u64> {
+    let configured = std::env::var(BATCH_SIZE_ENV_VAR)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|size| *size > 0);
+    configured.or_else(|| {
+        usage::rpc_call_site(mapping_sources)
+            .is_some()
+            .then_some(CALLING_BATCH_SIZE)
+    })
+}
+
 /// Builds the envio config a translated manifest indexes with.
 pub fn translate(
     manifest_yaml: &str,
@@ -658,7 +679,7 @@ pub fn translate(
             description: None,
             schema: None,
             handlers: None,
-            full_batch_size: None,
+            full_batch_size: calling_batch_size(mapping_sources),
             storage: None,
             disable_default_cross_chain: None,
         },
@@ -1029,6 +1050,32 @@ type Gravatar @entity {
         assert_eq!(
             lag("export function handleBlock(block: ethereum.Block): void { new Block(block.hash); }"),
             (depth, depth)
+        );
+    }
+
+    #[test]
+    fn a_mapping_that_calls_contracts_batches_fewer_events() {
+        let batch_size = |source: &str| {
+            translate(
+                MANIFEST,
+                SCHEMA,
+                "gravatar",
+                None,
+                ".",
+                &HashMap::new(),
+                &[source.to_string()],
+            )
+            .unwrap()
+            .human_config
+            .base
+            .full_batch_size
+        };
+        assert_eq!(
+            (
+                batch_size("let token = Token.bind(event.address); token.try_decimals();"),
+                batch_size("store.set('A', 'b', entity);"),
+            ),
+            (Some(CALLING_BATCH_SIZE), None)
         );
     }
 
