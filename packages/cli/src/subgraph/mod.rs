@@ -1122,6 +1122,32 @@ type Gravatar @entity {
     }
 
     #[test]
+    fn accepts_topic0_when_it_is_the_signatures_hash_and_refuses_it_otherwise() {
+        let own =
+            manifest::canonical_event_hash("NewGravatar(uint256,address,string,string)").unwrap();
+        let with = |topic0: &str| {
+            let manifest = MANIFEST.replacen(
+                "          handler: handleNewGravatar",
+                &format!("          topic0: \"{topic0}\"\n          handler: handleNewGravatar"),
+                1,
+            );
+            translate(
+                &manifest,
+                SCHEMA,
+                "gravatar",
+                None,
+                ".",
+                &HashMap::new(),
+                &ambiguous(),
+            )
+        };
+        assert_eq!(
+            (with(&own).is_ok(), with(&"0x".repeat(1)).is_ok()),
+            (true, false)
+        );
+    }
+
+    #[test]
     fn selects_receipt_fields_only_where_declared() {
         let translation = translate(
             MANIFEST,
