@@ -12,6 +12,8 @@ import { registerHooks } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { indexer } from "../Api.res.mjs";
+import { Db, Hasura, serverPort } from "../Env.res.mjs";
+import { info } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
 import { currentScope, runInScope, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
@@ -445,10 +447,28 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
   );
 }
 
+/**
+ * A subgraph team's first move is to POST a query to the indexer's port, the
+ * way graph-node serves one — which answers /metrics only.
+ */
+function announceWhereToQuery() {
+  info(
+    `Envio Subgraph writes the subgraph's entities to Postgres (database "${Db.database}", ` +
+      `schema "${Db.publicSchema}"). This process serves no GraphQL: port ${serverPort} answers ` +
+      "/metrics and /healthz only. " +
+      (Hasura.enabled
+        ? `Hasura (${Hasura.url}) serves envio's own GraphQL over those tables, not The Graph's query API. `
+        : "") +
+      "The Graph's query API (/subgraphs/name/<name>) is served from the same database by " +
+      "envio-serve's subgraph API.",
+  );
+}
+
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook(config.root);
   resetRpcClients();
   resetRegisterStore();
+  announceWhereToQuery();
 
   // One effect for every contract call: envio already batches and dedupes
   // effect calls in preload, and the block number in the input is what keeps
