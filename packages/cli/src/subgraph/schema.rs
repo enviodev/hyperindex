@@ -771,6 +771,7 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
             directive,
             &entity_names,
             &enum_names,
+            &interfaces,
             &mut translation,
             &mut out,
             report,
@@ -832,6 +833,7 @@ fn translate_aggregation(
     directive: &Directive<'_, String>,
     entity_names: &BTreeSet<String>,
     enum_names: &BTreeSet<String>,
+    interfaces: &Interfaces,
     translation: &mut SchemaTranslation,
     out: &mut String,
     report: &mut Report,
@@ -964,6 +966,7 @@ fn translate_aggregation(
             &object.fields,
             entity_names,
             enum_names,
+            interfaces,
             translation,
             report,
         );
