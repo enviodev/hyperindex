@@ -1741,6 +1741,18 @@ class EthereumCall {
 /** One of an event's parameters, as the translator read it off the ABI. */
 export type EventInput = { name: string; key: string; type: string; indexed?: boolean };
 
+/**
+ * An indexed parameter of a dynamic type — string, bytes, an array, a tuple —
+ * is in the log only as the keccak256 of its value. graph-node hands the
+ * mapping that hash as `FixedBytes(32)`, and graph codegen types the getter
+ * `Bytes` (`event.params.username.toHexString()`), so it is converted as one.
+ */
+export function eventInputType(input: EventInput): string {
+  if (!input.indexed) return input.type;
+  const { type } = input;
+  return type === "string" || type === "bytes" || type.endsWith("]") || type.startsWith("(") ? "bytes32" : type;
+}
+
 /** What every occurrence of one kind of event shares. */
 export type EventKind = {
   /** `data source "X" → "Event"`, for what a refusal names. */
@@ -2006,7 +2018,10 @@ class EthereumEvent {
   get parameters(): EthereumEventParam[] {
     return (this._parameters ??= this._kind.inputs.map(
       (input) =>
-        new EthereumEventParam(input.name, ethereumConverter(input.type)(this._raw.params?.[input.key])),
+        new EthereumEventParam(
+          input.name,
+          ethereumConverter(eventInputType(input))(this._raw.params?.[input.key]),
+        ),
     ));
   }
   set parameters(value: EthereumEventParam[]) {
@@ -2026,7 +2041,7 @@ class EthereumEvent {
       return (this._params = params);
     }
     this._kind.inputs.forEach((input, index) => {
-      params[input.name || `param${index}`] = graphConverter(input.type)(this._raw.params?.[input.key]);
+      params[input.name || `param${index}`] = graphConverter(eventInputType(input))(this._raw.params?.[input.key]);
     });
     return (this._params = params);
   }
