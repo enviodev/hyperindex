@@ -274,6 +274,50 @@ pub fn graph_codegen_failed_message() -> String {
         .to_string()
 }
 
+/// Every call trigger is an envio event with this prefix: envio has no call
+/// type, and a call is one more thing that happens at a position in a block.
+/// The source that fetches traces produces these items, so nothing downstream of
+/// the fetch (partitioning, ordering, the register pass, rollback) tells them
+/// from a log. No log ever carries one's topic.
+pub const CALL_EVENT_PREFIX: &str = "__envio_call_";
+
+/// The call trigger for every call to the address when a `filter: call` block
+/// handler asks for it.
+pub const CALL_ANY_EVENT: &str = "__envio_call_any";
+
+/// What a call item carries as its event params: the call's raw input and
+/// output and who made it, decoded by the runtime from the function's ABI.
+const CALL_EVENT_PARAMS: &str =
+    "bytes callInput, bytes callOutput, address callFrom, uint256 callValue, uint256 callGasUsed";
+
+/// graph-node reads the selector off the keccak of the signature as the
+/// manifest spells it.
+pub fn function_selector(function: &str) -> [u8; 4] {
+    let hash = alloy_primitives::keccak256(function.as_bytes());
+    [hash[0], hash[1], hash[2], hash[3]]
+}
+
+fn call_event_name(function: &str) -> String {
+    let selector = function_selector(function);
+    let name = function.split('(').next().unwrap_or_default().trim();
+    format!(
+        "{CALL_EVENT_PREFIX}{:02x}{:02x}{:02x}{:02x}_{name}",
+        selector[0], selector[1], selector[2], selector[3]
+    )
+}
+
+fn call_event_config(name: &str) -> EventConfig {
+    EventConfig {
+        event: format!("{name}({CALL_EVENT_PARAMS})"),
+        name: None,
+        // The source builds the block and transaction of a call itself.
+        field_selection: Some(FieldSelection {
+            transaction_fields: Some(vec![]),
+            block_fields: Some(vec![]),
+        }),
+    }
+}
+
 /// The name envio routes an event by: its own unless one was minted.
 fn envio_event_name(event: &EventConfig) -> String {
     event
@@ -396,6 +440,44 @@ fn contract_config(
         })
         .collect();
 
+    let mut events: Vec<EventConfig> = events;
+
+    // graph-node runs the first call handler whose selector matches.
+    let mut selectors = HashSet::new();
+    source
+        .call_handlers
+        .retain(|handler| selectors.insert(function_selector(&handler.function)));
+    for handler in source.call_handlers.iter_mut() {
+        match abi::function_params(&handler.function, abi_json.as_deref()) {
+            Some((inputs, outputs)) => {
+                handler.inputs = inputs;
+                handler.outputs = outputs;
+            }
+            None => report.unknown(
+                format!("a function \"{}\" in the ABI", handler.function),
+                format!(
+                    "data source \"{source_name}\" → callHandlers → \"{}\"",
+                    handler.handler
+                ),
+            ),
+        }
+        handler.name = call_event_name(&handler.function);
+        events.push(call_event_config(&handler.name));
+    }
+    let mut block_calls = 0;
+    for handler in source
+        .block_handlers
+        .iter_mut()
+        .filter(|handler| handler.filter == manifest::BlockFilter::Call)
+    {
+        handler.call_event = match block_calls {
+            0 => CALL_ANY_EVENT.to_string(),
+            n => format!("{CALL_ANY_EVENT}_{n}"),
+        };
+        block_calls += 1;
+        events.push(call_event_config(&handler.call_event));
+    }
+
     ContractConfig {
         abi_file_path: abi_path,
         // Every mapping is loaded by the subgraph runtime, not by envio's
@@ -515,6 +597,22 @@ pub fn translate(
                     .event_handlers
                     .iter_mut()
                     .filter(|handler| !handler.name.is_empty());
+                let call_events: Vec<EventConfig> = config
+                    .events
+                    .iter()
+                    .filter(|event| event.event.starts_with(CALL_EVENT_PREFIX))
+                    .cloned()
+                    .collect();
+                for event in call_events {
+                    if !existing
+                        .config
+                        .events
+                        .iter()
+                        .any(|known| known.event == event.event)
+                    {
+                        existing.config.events.push(event);
+                    }
+                }
                 for (handler, mut event) in handlers.zip(config.events) {
                     let known = existing
                         .config
@@ -826,30 +924,92 @@ type Gravatar @entity {
         assert_eq!(translation.human_config.chains[0].id, 1);
     }
 
+    const SET_GRAVATAR_ABI: &str = r#"[
+      {"type":"function","name":"setGravatar","stateMutability":"nonpayable",
+       "inputs":[{"name":"name","type":"string"}],"outputs":[{"name":"ok","type":"bool"}]},
+      {"type":"function","name":"updateGravatarName","stateMutability":"nonpayable",
+       "inputs":[{"name":"name","type":"string"}],"outputs":[]}
+    ]"#;
+
     #[test]
-    fn refuses_to_run_when_a_data_source_has_call_handlers() {
-        let manifest = MANIFEST.replace(
+    fn translates_call_handlers_into_call_triggers() {
+        let manifest = MANIFEST.replacen(
             "      eventHandlers:",
             "      callHandlers:\n        - function: setGravatar(string)\n          handler: \
-             handleSetGravatar\n      eventHandlers:",
+             handleSetGravatar\n        - function: setGravatar(string)\n          handler: \
+             handleShadowed\n      eventHandlers:",
+            1,
         );
-        let error = translate(
+        let mut files = HashMap::new();
+        files.insert("./abis/Gravity.json".to_string(), SET_GRAVATAR_ABI.to_string());
+        let translation = translate(
             &manifest,
             SCHEMA,
             "gravatar",
             None,
             ".",
-            &HashMap::new(),
+            &files,
             &ambiguous(),
         )
-        .unwrap_err()
-        .to_string();
+        .unwrap();
+        let source = &translation.runtime.manifest.data_sources[0];
+        // The first handler for a selector wins, as in graph-node.
+        assert_eq!(
+            source
+                .call_handlers
+                .iter()
+                .map(|handler| (handler.handler.as_str(), handler.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("handleSetGravatar", "__envio_call_9a6e09c9_setGravatar")]
+        );
         assert_eq!(
             (
-                error.contains("doesn't support call handlers"),
-                error.contains("callHandlers → \"handleSetGravatar\""),
+                source.call_handlers[0]
+                    .inputs
+                    .iter()
+                    .map(|input| (input.name.as_str(), input.abi_type.as_str()))
+                    .collect::<Vec<_>>(),
+                source.call_handlers[0]
+                    .outputs
+                    .iter()
+                    .map(|output| (output.name.as_str(), output.abi_type.as_str()))
+                    .collect::<Vec<_>>(),
             ),
-            (true, true)
+            (vec![("name", "string")], vec![("ok", "bool")])
+        );
+        let contract = &translation.human_config.contracts.as_ref().unwrap()[0];
+        let call_events: Vec<_> = contract
+            .config
+            .events
+            .iter()
+            .filter(|event| event.event.starts_with(CALL_EVENT_PREFIX))
+            .map(|event| event.event.as_str())
+            .collect();
+        assert_eq!(
+            call_events,
+            vec![
+                "__envio_call_9a6e09c9_setGravatar(bytes callInput, bytes callOutput, address \
+                 callFrom, uint256 callValue, uint256 callGasUsed)"
+            ]
+        );
+    }
+
+    #[test]
+    fn refuses_a_call_handler_whose_function_the_abi_lacks() {
+        let manifest = MANIFEST.replacen(
+            "      eventHandlers:",
+            "      callHandlers:\n        - function: setGravatar(uint256)\n          handler: \
+             handleSetGravatar\n      eventHandlers:",
+            1,
+        );
+        let mut files = HashMap::new();
+        files.insert("./abis/Gravity.json".to_string(), SET_GRAVATAR_ABI.to_string());
+        let error = translate(&manifest, SCHEMA, "gravatar", None, ".", &files, &ambiguous())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("setGravatar(uint256)") && error.contains("handleSetGravatar"),
+            "{error}"
         );
     }
 
@@ -1236,8 +1396,7 @@ type Gravatar @entity {
     fn reports_manifest_and_schema_findings_together() {
         let manifest = MANIFEST.replace(
             "      file: ./src/gravity.ts",
-            "      callHandlers:\n        - function: setGravatar(string)\n          handler: \
-             handleSetGravatar\n      file: ./src/gravity.ts",
+            "      entityHandlers:\n        - handler: handleEntity\n      file: ./src/gravity.ts",
         );
         let error = translate(
             &manifest,
@@ -1253,7 +1412,7 @@ type Gravatar @entity {
 
         assert_eq!(
             (
-                error.contains("doesn't support call handlers"),
+                error.contains("doesn't support subgraph composition"),
                 error.contains("doesn't know the type NotAType"),
             ),
             (true, true)

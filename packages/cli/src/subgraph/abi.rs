@@ -8,7 +8,10 @@
 
 use serde_json::Value;
 
-use super::{errors::Report, manifest::EventInput};
+use super::{
+    errors::Report,
+    manifest::{CallParam, EventInput},
+};
 
 /// The parameter types a manifest signature declares, in order, each paired
 /// with whether it is indexed. Indexing is part of what identifies an overload:
@@ -202,6 +205,60 @@ pub fn event_inputs(manifest_signature: &str, abi_json: Option<&str>) -> Vec<Eve
         .collect()
 }
 
+fn abi_entries(abi_json: Option<&str>) -> Vec<Value> {
+    let Some(abi_json) = abi_json else {
+        return vec![];
+    };
+    let Ok(abi) = serde_json::from_str::<Value>(abi_json) else {
+        return vec![];
+    };
+    abi.as_array()
+        .or_else(|| abi.get("abi").and_then(Value::as_array))
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn call_params(params: Option<&Value>) -> Vec<CallParam> {
+    params
+        .and_then(Value::as_array)
+        .map(|params| {
+            params
+                .iter()
+                .map(|param| CallParam {
+                    name: abi_name(param).to_string(),
+                    abi_type: solidity_type(param),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The inputs and outputs of the function a call handler's signature names, in
+/// ABI order. The signature is matched as graph-node does: the function's name
+/// and its parameter types, written with tuples spelled out, nothing else.
+pub fn function_params(
+    manifest_signature: &str,
+    abi_json: Option<&str>,
+) -> Option<(Vec<CallParam>, Vec<CallParam>)> {
+    let wanted: String = manifest_signature.split_whitespace().collect();
+    abi_entries(abi_json).iter().find_map(|entry| {
+        if entry.get("type").and_then(Value::as_str).unwrap_or("function") != "function" {
+            return None;
+        }
+        let name = entry.get("name").and_then(Value::as_str)?;
+        let inputs = call_params(entry.get("inputs"));
+        let canonical = format!(
+            "{name}({})",
+            inputs
+                .iter()
+                .map(|input| input.abi_type.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        (canonical == wanted).then(|| (inputs, call_params(entry.get("outputs"))))
+    })
+}
+
 /// What to put in the generated config's `event:` field.
 pub fn resolve_event(
     manifest_signature: &str,
@@ -377,6 +434,40 @@ mod tests {
                 .to_string()
                 .contains("doesn't know which overload of \"Transfer\""),
             "{report}"
+        );
+    }
+
+    #[test]
+    fn reads_a_functions_inputs_and_outputs_by_its_signature() {
+        const FUNCTIONS: &str = r#"[
+          {"type":"function","name":"stake","inputs":[
+            {"name":"amount","type":"uint256"},{"name":"to","type":"address"}],
+           "outputs":[{"name":"","type":"uint256"}]},
+          {"type":"function","name":"stake","inputs":[{"name":"amount","type":"uint256"}],"outputs":[]},
+          {"type":"function","name":"submit","inputs":[
+            {"name":"order","type":"tuple[]","components":[
+              {"name":"maker","type":"address"},{"name":"amount","type":"uint256"}]}],"outputs":[]}
+        ]"#;
+        let param = |name: &str, abi_type: &str| CallParam {
+            name: name.to_string(),
+            abi_type: abi_type.to_string(),
+        };
+        assert_eq!(
+            (
+                function_params("stake(uint256,address)", Some(FUNCTIONS)),
+                function_params("stake(uint256)", Some(FUNCTIONS)).map(|(i, o)| (i.len(), o.len())),
+                function_params("submit((address,uint256)[])", Some(FUNCTIONS)).map(|(i, _)| i),
+                function_params("stake(address)", Some(FUNCTIONS)),
+            ),
+            (
+                Some((
+                    vec![param("amount", "uint256"), param("to", "address")],
+                    vec![param("", "uint256")]
+                )),
+                Some((1, 0)),
+                Some(vec![param("order", "(address,uint256)[]")]),
+                None
+            )
         );
     }
 
