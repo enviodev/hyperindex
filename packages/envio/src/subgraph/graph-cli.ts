@@ -207,14 +207,20 @@ async function withCodegenManifest<T>(manifest: string, use: (file: string) => P
  * declared version, then two pins), since no one version reads every manifest.
  * Returns false when no provider has one.
  */
-async function runCodegen(root: string, manifestFile: string, outputDir: string, needed: boolean): Promise<boolean> {
+async function runCodegen(
+  root: string,
+  manifestFile: string,
+  outputDir: string,
+  needed: boolean,
+  flags: string[] = [],
+): Promise<boolean> {
   for (const provider of codegenProviders) {
     if (provider.fetches && !needed) continue;
     const candidates = await provider.locate(root);
     if (candidates.length === 0) continue;
     for (const [index, graphCli] of candidates.entries()) {
       const outcome = await withCodegenManifest(path.resolve(root, manifestFile), (manifest) =>
-        runGraphCli(graphCli, root, "codegen", [manifest, "--output-dir", outputDir, "--skip-migrations"]),
+        runGraphCli(graphCli, root, "codegen", [manifest, "--output-dir", outputDir, "--skip-migrations", ...flags]),
       );
       if (outcome === "ok") return true;
       if (outcome === "outOfMemory") throw outOfMemory("codegen");
@@ -326,6 +332,34 @@ export function missingGeneratedCode(root: string, dir: string): Error {
 }
 
 const GRAPH_CODEGEN = /^(?:(?:npx|pnpm exec|pnpm|yarn|bunx)\s+)?graph\s+codegen\b/;
+
+/**
+ * The flags of a `graph codegen` step that change what it writes, which the
+ * run envio makes would otherwise drop: `-u` / `--uncrashable` also writes
+ * `generated/UncrashableEntityHelpers.ts` (Wildcat's mappings import it), from
+ * `--uncrashable-config <file>` or `uncrashable-config.yaml`. Only graph-cli
+ * can write it; the bundled codegen has no such helper.
+ */
+export function codegenFlags(root: string, step: string): string[] {
+  const words = step.split(/\s+/);
+  const flags: string[] = [];
+  for (let index = words.indexOf("codegen") + 1; index > 0 && index < words.length; index++) {
+    const word = words[index];
+    const [name, inline] = word.split("=", 2);
+    if (name === "-u" || name === "--uncrashable") {
+      flags.push("--uncrashable");
+    } else if (name === "--uncrashable-config" || name === "--uc") {
+      const file = inline ?? words[++index];
+      if (file) flags.push("--uncrashable-config", path.resolve(root, file.replace(/^["']|["']$/g, "")));
+    }
+  }
+  // graph-cli looks for the default config in its own working directory.
+  const fallback = path.join(root, "uncrashable-config.yaml");
+  if (flags.length > 0 && !flags.includes("--uncrashable-config") && existsSync(fallback)) {
+    flags.push("--uncrashable-config", fallback);
+  }
+  return flags;
+}
 
 /**
  * The project's `codegen` script, step by step, when it runs `graph codegen`
@@ -446,7 +480,8 @@ export async function ensureGeneratedCode(
     return;
   }
   let bundledFailed = false;
-  if (!graphCli && mode === "auto") {
+  const needsGraphCli = (codegenSteps(root) ?? []).some((step) => codegenFlags(root, step).length > 0);
+  if (!graphCli && mode === "auto" && !needsGraphCli) {
     // Nothing to build when no mapping imports a generated file.
     if (missingGeneratedFiles(root, mappingFiles, dir).length === 0) return;
     info("Envio Subgraph found no @graphprotocol/graph-cli in the project; writing the generated code itself.");
@@ -482,7 +517,7 @@ export async function ensureGeneratedCode(
       }
       // With no graph-cli anywhere, the mapping that imports the missing code
       // reports it, naming that mapping.
-      if (!(await runCodegen(root, manifestFile, dir, importsFrom(root, mappingFiles, dir)))) return;
+      if (!(await runCodegen(root, manifestFile, dir, importsFrom(root, mappingFiles, dir), codegenFlags(root, step)))) return;
     }
   } catch (error) {
     if (mode === "graph-cli" || bundledFailed) throw error;
