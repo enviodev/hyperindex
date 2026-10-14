@@ -44,7 +44,13 @@ class AttemptTimeout extends Error {
 }
 
 const TRANSIENT_TEXT =
-  /rate.?limit|too many requests|timed? ?out|timeout|header not found|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|fetch failed|network|temporar|unavailable|overloaded|busy|try again/i;
+  /rate.?limit|too many requests|capacity|limit exceeded|exceeds? (the |its |defined )?limit|timed? ?out|timeout|header not found|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|fetch failed|network|temporar|unavailable|overloaded|busy|try again/i;
+
+/**
+ * JSON-RPC codes public endpoints send for "slow down": -32005 "limit
+ * exceeded" (Infura, Tenderly), -32097 (blastapi), -32090 (Alchemy).
+ */
+const RATE_LIMIT_CODES = new Set([-32005, -32097, -32090]);
 
 function transientStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;
@@ -60,8 +66,7 @@ export function isTransient(error: unknown): boolean {
     if (current instanceof AttemptTimeout) return true;
     if (current.name === "AbortError" || current.name === "TimeoutError") return true;
     if (typeof current.status === "number") return transientStatus(current.status);
-    // JSON-RPC "limit exceeded", which public endpoints send for rate limits.
-    if (current.code === -32005) return true;
+    if (RATE_LIMIT_CODES.has(current.code)) return true;
     for (const text of [current.shortMessage, current.details, current.message]) {
       if (typeof text === "string" && TRANSIENT_TEXT.test(text)) return true;
     }

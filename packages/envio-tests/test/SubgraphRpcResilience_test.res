@@ -101,6 +101,16 @@ beforeAll(async () => {
           }),
         );
       }
+      // blastapi's, with a code of its own and no "rate limit" in the words.
+      if (next === "capacity") {
+        return res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { code: -32097, message: "Your app has exceeded its compute units per second capacity" },
+          }),
+        );
+      }
       if (next === "unavailable") {
         res.statusCode = 503;
         return res.end("upstream unavailable");
@@ -124,13 +134,15 @@ describe("a contract call over a flaky RPC", () => {
   it("rides out a rate limit and a 5xx", async (t) => {
     plans.set(1n, Array(9).fill("rate-limit"));
     plans.set(2n, Array(9).fill("unavailable"));
+    plans.set(4n, Array(3).fill("capacity"));
     const indexer = createTestIndexer();
 
-    await indexer.process({ chains: { 1: { simulate: [ping(1n), ping(2n)] } } });
+    await indexer.process({ chains: { 1: { simulate: [ping(1n), ping(2n), ping(4n)] } } });
 
     t.expect((await indexer.Probe.getAll()).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
       { id: "1", value: 10n },
       { id: "2", value: 20n },
+      { id: "4", value: 40n },
     ]);
   });
 
