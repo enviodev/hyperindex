@@ -207,10 +207,12 @@ export class Bytes extends ByteArray {
 
 export class Address extends Bytes {
   static fromString(address: string): Address {
-    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    // graph-node's `string_to_h160` trims a leading `0x` and parses the rest,
+    // so the prefix is optional (Livepeer's constants are bare hex).
+    if (!/^(0x)?[0-9a-fA-F]{40}$/.test(address)) {
       throw new Error(`Address.fromString: ${address} is not a valid 20-byte hex address`);
     }
-    return new Address(ByteArray.fromHexString(address.toLowerCase()));
+    return new Address(ByteArray.fromHexString((address.startsWith("0x") ? address : "0x" + address).toLowerCase()));
   }
   static fromBytes(bytes: Bytes): Address {
     if (bytes.length !== 20) {
