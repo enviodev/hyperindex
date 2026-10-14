@@ -15,38 +15,9 @@ use std::borrow::Cow;
 use tokio_postgres::types::{FromSql, Kind, Type};
 use tokio_postgres::Row;
 
-use crate::columnar::{Arena, ColumnKind, ColumnSpec};
-
-/// A decoded column value, in the shape it will take in JavaScript.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Cell<'a> {
-    Null,
-    Bool(bool),
-    Num(f64),
-    /// Borrowed where the column's text is already the value's text, which is
-    /// every type but the two that have to render themselves.
-    Str(Cow<'a, str>),
-    Bytes(Cow<'a, [u8]>),
-    /// Milliseconds since the Unix epoch, becoming a `Date`.
-    Timestamp(f64),
-    Arr(Vec<Cell<'a>>),
-}
-
-impl Cell<'_> {
-    /// The same value owning what it borrowed.
-    #[cfg(test)]
-    pub fn into_owned(self) -> Cell<'static> {
-        match self {
-            Cell::Null => Cell::Null,
-            Cell::Bool(value) => Cell::Bool(value),
-            Cell::Num(value) => Cell::Num(value),
-            Cell::Str(value) => Cell::Str(Cow::Owned(value.into_owned())),
-            Cell::Bytes(value) => Cell::Bytes(Cow::Owned(value.into_owned())),
-            Cell::Timestamp(value) => Cell::Timestamp(value),
-            Cell::Arr(items) => Cell::Arr(items.into_iter().map(Cell::into_owned).collect()),
-        }
-    }
-}
+use super::client::Column;
+use crate::storage::rows::{lay_out, ColumnRead, ResultSet};
+pub use crate::storage::rows::{Cell, ReadKind};
 
 /// Days between 2000-01-01, which Postgres counts from, and the Unix epoch.
 const POSTGRES_EPOCH_DAYS: i64 = 10957;
@@ -260,41 +231,6 @@ impl<'a> FromSql<'a> for Cell<'a> {
     }
 }
 
-/// Which arena slot a value of this type is laid into, and so which view
-/// JavaScript builds over it.
-pub fn scalar_kind(ty: &Type) -> ColumnKind {
-    read_kind(ty).slot()
-}
-
-/// What JavaScript makes of a column, which is more than the slot it travels
-/// in: a boolean, a timestamp and a float all ride in the same eight bytes and
-/// come out as three different things.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub enum ReadKind {
-    Float = 0,
-    Bool = 1,
-    /// Milliseconds, which is what a `Date` is built from.
-    Timestamp = 2,
-    Text = 3,
-    Bytes = 4,
-    List = 5,
-    /// The document's own text, parsed on the other side.
-    Json = 6,
-}
-
-impl ReadKind {
-    /// The slot it travels in. Three of them share one.
-    fn slot(self) -> ColumnKind {
-        match self {
-            ReadKind::Float | ReadKind::Bool | ReadKind::Timestamp => ColumnKind::F64,
-            ReadKind::Text | ReadKind::Json => ColumnKind::Text,
-            ReadKind::Bytes => ColumnKind::Bytes,
-            ReadKind::List => ColumnKind::List,
-        }
-    }
-}
-
 /// What a scalar of this type becomes. `int8` and `numeric` are text: a float
 /// would lose digits the schemas on the other side keep.
 pub fn read_kind(ty: &Type) -> ReadKind {
@@ -308,60 +244,25 @@ pub fn read_kind(ty: &Type) -> ReadKind {
     }
 }
 
-/// What JavaScript makes of a column: a list where the type is an array, and
-/// the scalar's own reading otherwise.
-pub fn column_read_kind(ty: &Type) -> ReadKind {
-    match ty.kind() {
-        Kind::Array(_) => ReadKind::List,
-        _ => read_kind(ty),
+/// What JavaScript makes of a column: a list of its elements' reading where
+/// the type is an array, the scalar's own reading otherwise.
+fn column_read(column: &Column) -> ColumnRead {
+    match column.ty.kind() {
+        Kind::Array(element) => ColumnRead::list(&column.name, read_kind(element)),
+        _ => ColumnRead::scalar(&column.name, read_kind(&column.ty)),
     }
 }
 
-/// What a list column's elements become, where the column is a list.
-pub fn element_read_kind(ty: &Type) -> Option<u8> {
-    match ty.kind() {
-        Kind::Array(element) => Some(read_kind(element) as u8),
-        _ => None,
-    }
-}
-
-fn write_cell(arena: &mut Arena, column: usize, row: usize, cell: &Cell<'_>) -> Result<()> {
-    match cell {
-        Cell::Null => arena.mark_null(column, row),
-        Cell::Bool(value) => arena.set_f64(column, row, if *value { 1.0 } else { 0.0 }),
-        Cell::Num(value) | Cell::Timestamp(value) => arena.set_f64(column, row, *value),
-        Cell::Str(value) => arena.set_bytes(column, row, value.as_bytes()),
-        Cell::Bytes(value) => arena.set_bytes(column, row, value),
-        Cell::Arr(_) => bail!("column {column} holds an array inside an array"),
-    }
-    Ok(())
-}
-
-fn write_element(arena: &mut Arena, column: usize, element: usize, cell: &Cell<'_>) -> Result<()> {
-    match cell {
-        Cell::Null => arena.mark_element_null(column, element),
-        Cell::Bool(value) => arena.set_element_f64(column, element, if *value { 1.0 } else { 0.0 }),
-        Cell::Num(value) | Cell::Timestamp(value) => arena.set_element_f64(column, element, *value),
-        Cell::Str(value) => arena.set_element_bytes(column, element, value.as_bytes()),
-        Cell::Bytes(value) => arena.set_element_bytes(column, element, value),
-        Cell::Arr(_) => bail!("column {column} holds an array inside an array"),
-    }
-    Ok(())
-}
-
-/// Lays a result set out column by column, ready to be lent to JavaScript.
+/// Lays a result set out for JavaScript to read.
 ///
-/// The types come from the statement rather than from the rows, so an empty
-/// result still describes its columns and the other side builds the same views
-/// over it as for a full one. The values are decoded before the columns are
-/// sized because a list column cannot be laid out until its elements have been
-/// counted.
-pub fn into_arena(rows: &[Row], types: &[Type]) -> Result<Arena> {
+/// The columns come from the statement rather than from the rows, so an empty
+/// result still describes them.
+pub fn into_result(rows: &[Row], columns: &[Column]) -> Result<ResultSet> {
     // One run of cells for the whole result rather than a `Vec` per row: the
     // cells borrow the bytes the rows already hold, so this is the only
     // allocation the decode makes, and `int8` and `numeric` the only values in
     // it that own anything.
-    let width = types.len();
+    let width = columns.len();
     let mut decoded = Vec::with_capacity(rows.len() * width);
     for row in rows {
         for column in 0..width {
@@ -371,63 +272,7 @@ pub fn into_arena(rows: &[Row], types: &[Type]) -> Result<Arena> {
             );
         }
     }
-
-    let specs = types
-        .iter()
-        .enumerate()
-        .map(|(column, ty)| match ty.kind() {
-            Kind::Array(element) => ColumnSpec::List {
-                element: scalar_kind(element),
-                elements: decoded
-                    .iter()
-                    .skip(column)
-                    .step_by(width)
-                    .map(|cell| match cell {
-                        Cell::Arr(items) => items.len(),
-                        _ => 0,
-                    })
-                    .sum(),
-            },
-            _ => ColumnSpec::Scalar(scalar_kind(ty)),
-        })
-        .collect::<Vec<_>>();
-
-    let mut arena = Arena::new_filled(rows.len(), &specs);
-    let mut written = vec![0usize; width];
-
-    // Indexed rather than chunked: a statement that returns no columns at all —
-    // which is every insert, update and delete — has nothing to chunk by.
-    for row in 0..rows.len() {
-        let cells = &decoded[row * width..(row + 1) * width];
-        for (column, cell) in cells.iter().enumerate() {
-            match (&specs[column], cell) {
-                (ColumnSpec::List { .. }, Cell::Arr(items)) => {
-                    for item in items {
-                        write_element(&mut arena, column, written[column], item)?;
-                        written[column] += 1;
-                    }
-                    arena.end_list_row(column, row, written[column]);
-                }
-                // A null array is a row with no elements of its own and the
-                // null flag set, not an empty one.
-                (ColumnSpec::List { .. }, Cell::Null) => {
-                    arena.mark_null(column, row);
-                    arena.end_list_row(column, row, written[column]);
-                }
-                (ColumnSpec::List { .. }, other) => {
-                    bail!("column {column} is an array but holds {other:?}")
-                }
-                (ColumnSpec::Scalar(_), cell) => write_cell(&mut arena, column, row, cell)?,
-            }
-        }
-    }
-
-    let names = types
-        .iter()
-        .map(|ty| ty.name().to_string())
-        .collect::<Vec<_>>();
-    arena.seal(&names)?;
-    Ok(arena)
+    lay_out(&decoded, columns.iter().map(column_read).collect())
 }
 
 #[cfg(test)]

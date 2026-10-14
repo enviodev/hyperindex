@@ -332,19 +332,17 @@ async fn array_columns_lay_out_as_lists() {
         )
         .await
         .expect("the query runs");
-    let types = columns
-        .iter()
-        .map(|column| column.ty.clone())
-        .collect::<Vec<_>>();
 
-    let arena = super::rows::into_arena(&rows, &types).expect("the rows lay out");
+    let result = super::rows::into_result(&rows, &columns).expect("the rows lay out");
+    let arena = &result.arena;
 
     assert_eq!(
         (
             arena.rows(),
-            types
+            result
+                .columns
                 .iter()
-                .map(super::rows::column_read_kind)
+                .map(|column| column.kind)
                 .collect::<Vec<_>>(),
             // the null array in the third row, and nothing else
             (0..3)
@@ -360,7 +358,7 @@ async fn array_columns_lay_out_as_lists() {
 }
 
 /// Every column type the schema can declare, in one result, laid out without
-/// complaint. The point is coverage of `into_arena`'s dispatch rather than of
+/// complaint. The point is coverage of `into_result`'s dispatch rather than of
 /// any one value.
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
@@ -375,12 +373,8 @@ async fn every_column_type_lays_out() {
         )
         .await
         .expect("the query runs");
-    let types = columns
-        .iter()
-        .map(|column| column.ty.clone())
-        .collect::<Vec<_>>();
-    let arena = super::rows::into_arena(&rows, &types).expect("the rows lay out");
-    assert_eq!(arena.rows(), 1);
+    let result = super::rows::into_result(&rows, &columns).expect("the rows lay out");
+    assert_eq!(result.rows(), 1);
 }
 
 /// A query matching nothing still has to describe its columns, or the other
@@ -396,12 +390,8 @@ async fn an_empty_result_still_describes_its_columns() {
         )
         .await
         .expect("the query runs");
-    let types = columns
-        .iter()
-        .map(|column| column.ty.clone())
-        .collect::<Vec<_>>();
-    let arena = super::rows::into_arena(&rows, &types).expect("the rows lay out");
-    assert_eq!((arena.rows(), arena.columns().len()), (0, 2));
+    let result = super::rows::into_result(&rows, &columns).expect("the rows lay out");
+    assert_eq!((result.rows(), result.arena.columns().len()), (0, 2));
 }
 
 /// A transaction holds one connection, so a temporary table made inside it is
@@ -727,7 +717,7 @@ async fn a_statement_that_returns_no_columns_is_an_empty_result() {
         .await
         .unwrap();
     assert_eq!((rows.len(), columns.len()), (0, 0));
-    super::rows::into_arena(&rows, &[]).unwrap();
+    super::rows::into_result(&rows, &[]).unwrap();
 }
 
 /// A prepared statement carries the plan the server made for it, and the plan

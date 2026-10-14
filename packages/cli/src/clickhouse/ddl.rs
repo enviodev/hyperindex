@@ -1,3 +1,6 @@
+//! Every statement that shapes the ClickHouse database, and the ones a resume
+//! trims it back with.
+
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -9,6 +12,24 @@ use regex::{Captures, Regex};
 use super::ch_type::{ChType, FieldSpec};
 use super::{literal, quoted};
 use crate::config_parsing::system_config::ChainIdMode;
+use crate::storage::types::{
+    ADDRESSES_TABLE, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN,
+    CONTRACTS_TABLE, DELETE, INFO_TABLE, SET,
+};
+
+pub const ID_COLUMN: &str = "id";
+pub const CHAIN_ID_COLUMN: &str = "chain_id";
+pub const BLOCK_NUMBER_COLUMN: &str = "block_number";
+/// On a checkpoints row a rollback wrote, the checkpoint it rolled its chain
+/// back to — which can be 0, nothing at all — and NULL on every other row.
+/// Between them a marker's own id and its target bound the checkpoints the
+/// rollback orphaned, which stay in the table: the store never deletes, so what
+/// the rollback took away is read off the markers.
+pub const ROLLBACK_TARGET_COLUMN: &str = "rollback_target";
+/// What a chains row is ordered by among the rows written for the same chain.
+/// The latest one written is the chain's state.
+pub const VERSION_COLUMN: &str = "version";
+pub const FRONTIER_COLUMN: &str = "checkpoint_id";
 
 #[derive(Debug, Clone)]
 pub struct ColumnSpec {
@@ -38,81 +59,6 @@ pub struct EntitySpec {
     pub skipping_indexes: Vec<SkippingIndexSpec>,
 }
 
-#[napi(object)]
-#[derive(Debug, Clone)]
-pub struct HistorySchema {
-    pub id_column: String,
-    pub checkpoint_id_column: String,
-    pub change_column: String,
-    pub change_variants: Vec<String>,
-    pub set_variant: String,
-    pub checkpoints_table: String,
-    /// Columns of the checkpoints table a resume reads to decide which
-    /// checkpoints each chain's recorded progress already covers.
-    pub checkpoint_chain_id_column: String,
-    pub checkpoint_block_number_column: String,
-    /// One row per chain, mirroring the Postgres table of the same name: the
-    /// highest checkpoint id the chain has landed, kept by a materialized view
-    /// over the checkpoints table. The entity views read it as their commit
-    /// marker.
-    pub chains_table: String,
-    pub chains_checkpoint_id_column: String,
-}
-
-/// The rows a resume has to remove: everything written past the checkpoint it
-/// resumes from. One id every chain is held to under a shared sequence, one id
-/// per chain when each chain counts its own — a chain's ids then say nothing
-/// about another's, so one bound cannot stand for all of them.
-#[derive(Debug, Clone)]
-pub enum ResumeBounds {
-    SharedAcrossChains(String),
-    PerChain(Vec<(String, String)>),
-}
-
-impl ResumeBounds {
-    /// One `(chain_id, checkpoint_id)` row per chain: a shared bound holds
-    /// every chain to the same id.
-    pub fn frontier_rows<'a>(
-        &self,
-        chain_ids: impl Iterator<Item = &'a str>,
-    ) -> Vec<(String, String)> {
-        match self {
-            ResumeBounds::SharedAcrossChains(checkpoint_id) => chain_ids
-                .map(|chain_id| (chain_id.to_string(), checkpoint_id.clone()))
-                .collect(),
-            ResumeBounds::PerChain(bounds) => bounds.clone(),
-        }
-    }
-
-    /// The predicate matching the rows above the bound in a table whose chain
-    /// column is `chain_column`. Per-chain bounds need that column: without it
-    /// a row can't be attributed to the sequence its id came from.
-    pub fn above(&self, chain_column: Option<&str>, checkpoint_column: &str) -> Result<String> {
-        let checkpoint = quoted(checkpoint_column);
-        match self {
-            ResumeBounds::SharedAcrossChains(checkpoint_id) => {
-                Ok(format!("{checkpoint} > {checkpoint_id}"))
-            }
-            ResumeBounds::PerChain(bounds) => {
-                let Some(chain_column) = chain_column else {
-                    bail!(
-                        "Internal error: per-chain checkpoint bounds can't bound a table with no \
-                         chain-id column. Only a schema whose entities are all per-chain has them."
-                    )
-                };
-                let chain = quoted(chain_column);
-                Ok(bounds
-                    .iter()
-                    .map(|(chain_id, checkpoint_id)| {
-                        format!("({chain} = {chain_id} AND {checkpoint} > {checkpoint_id})")
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" OR "))
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct Topology {
     pub replicated: bool,
@@ -131,11 +77,16 @@ impl Topology {
         }
     }
 
-    fn replacing_engine(&self) -> &'static str {
+    fn replacing_engine(&self, version: Option<&str>) -> String {
+        let version = version.map(quoted).unwrap_or_default();
         if self.replicated {
-            "ReplicatedReplacingMergeTree"
+            if version.is_empty() {
+                "ReplicatedReplacingMergeTree".to_string()
+            } else {
+                format!("ReplicatedReplacingMergeTree({version})")
+            }
         } else {
-            "ReplacingMergeTree()"
+            format!("ReplacingMergeTree({version})")
         }
     }
 
@@ -145,11 +96,11 @@ impl Topology {
 
     /// ReplicatedMergeTree drops an insert whose block hash is already in
     /// Keeper, and mutations don't clear those hashes. Crash recovery trims the
-    /// history tail past the committed Postgres checkpoint and replays it, so an
+    /// history tail past the committed checkpoint and replays it, so an
     /// identical replayed block would be discarded while still reporting success
     /// — a permanent gap nothing surfaces. Trim-then-replay is what makes
     /// recovery correct here, and the duplicates dedup would have caught are
-    /// already collapsed by the view's `LIMIT 1 BY`. Plain MergeTree goes by
+    /// already collapsed by every read's `LIMIT 1 BY`. Plain MergeTree goes by
     /// `non_replicated_deduplication_window` (0 by default), so it needs no
     /// clause.
     fn settings(&self) -> &'static str {
@@ -186,17 +137,9 @@ pub fn database_engine_name(engine_spec: &str) -> &str {
         .trim()
 }
 
-impl HistorySchema {
-    fn trailing_columns(&self) -> Vec<(String, ChType)> {
-        vec![
-            (self.checkpoint_id_column.clone(), ChType::UInt64),
-            (
-                self.change_column.clone(),
-                ChType::Enum {
-                    variants: self.change_variants.clone(),
-                },
-            ),
-        ]
+pub fn change_type() -> ChType {
+    ChType::Enum {
+        variants: vec![SET.to_string(), DELETE.to_string()],
     }
 }
 
@@ -211,19 +154,32 @@ impl ColumnSpec {
 }
 
 impl EntitySpec {
-    pub fn history_columns(
-        &self,
-        history: &HistorySchema,
-        chain_id_mode: ChainIdMode,
-    ) -> Result<Vec<(String, ChType)>> {
+    /// The entity's own columns, typed.
+    pub fn entity_columns(&self, chain_id_mode: ChainIdMode) -> Result<Vec<(String, ChType)>> {
         let context = format!("entity `{}`", self.name);
-        let mut columns = self
-            .columns
+        self.columns
             .iter()
             .map(|column| column.typed(chain_id_mode, &context))
-            .collect::<Result<Vec<_>>>()?;
-        columns.extend(history.trailing_columns());
+            .collect()
+    }
+
+    /// What a history row carries: the entity's columns, then the checkpoint
+    /// it was written at and whether it set or deleted the entity.
+    pub fn history_columns(&self, chain_id_mode: ChainIdMode) -> Result<Vec<(String, ChType)>> {
+        let mut columns = self.entity_columns(chain_id_mode)?;
+        columns.push((CHECKPOINT_ID_COLUMN.to_string(), ChType::UInt64));
+        columns.push((CHANGE_COLUMN.to_string(), change_type()));
         Ok(columns)
+    }
+
+    /// The columns naming one entity: its id, and the chain a per-chain one
+    /// belongs to.
+    pub fn key(&self) -> Vec<String> {
+        let mut key = vec![ID_COLUMN.to_string()];
+        if let Some(chain_id_column) = &self.chain_id_column {
+            key.push(chain_id_column.clone());
+        }
+        key
     }
 
     fn column_by_field_name(&self) -> HashMap<&str, &str> {
@@ -263,19 +219,25 @@ fn resolve_expression_columns(expression: &str, columns: &HashMap<&str, &str>) -
         .into_owned()
 }
 
+fn definitions(columns: &[(String, ChType)]) -> String {
+    columns
+        .iter()
+        .map(|(name, ch_type)| format!("{} {ch_type}", quoted(name)))
+        .collect::<Vec<_>>()
+        .join(",\n  ")
+}
+
+fn table_ref(database: &str, table: &str) -> String {
+    format!("{}.{}", quoted(database), quoted(table))
+}
+
 pub fn create_history_table(
     entity: &EntitySpec,
     database: &str,
-    history: &HistorySchema,
     topology: Topology,
     chain_id_mode: ChainIdMode,
 ) -> Result<String> {
-    let columns = entity.history_columns(history, chain_id_mode)?;
-    let definitions: Vec<String> = columns
-        .iter()
-        .map(|(name, ch_type)| format!("{} {ch_type}", quoted(name)))
-        .collect();
-
+    let columns = entity.history_columns(chain_id_mode)?;
     let by_field_name = entity.column_by_field_name();
 
     let order_by = match &entity.order_by {
@@ -290,17 +252,9 @@ pub fn create_history_table(
                     ),
                 }
             }
-            format!(
-                "{}, {}",
-                resolved.join(", "),
-                quoted(&history.checkpoint_id_column)
-            )
+            format!("{}, {}", resolved.join(", "), quoted(CHECKPOINT_ID_COLUMN))
         }
-        None => format!(
-            "{}, {}",
-            quoted(&history.id_column),
-            quoted(&history.checkpoint_id_column)
-        ),
+        None => format!("{}, {}", quoted(ID_COLUMN), quoted(CHECKPOINT_ID_COLUMN)),
     };
 
     let renamed = entity.renamed_column_by_field_name();
@@ -333,157 +287,234 @@ pub fn create_history_table(
     }
 
     Ok(format!(
-        "CREATE TABLE IF NOT EXISTS {}.{}{} (\n  {}{indexes}\n)\nENGINE = {}{partition_by}\nORDER BY ({order_by}){ttl}{}",
-        quoted(database),
-        quoted(&entity.history_table),
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}{indexes}\n)\nENGINE = {}{partition_by}\nORDER BY ({order_by}){ttl}{}",
+        table_ref(database, &entity.history_table),
         topology.on_cluster(),
-        definitions.join(",\n  "),
+        definitions(&columns),
         topology.engine(),
         topology.settings(),
     ))
 }
 
-pub fn create_checkpoints_table(
-    columns: &[(String, ChType)],
-    database: &str,
-    history: &HistorySchema,
-    topology: Topology,
-) -> String {
-    let definitions: Vec<String> = columns
-        .iter()
-        .map(|(name, ch_type)| format!("  {} {ch_type}", quoted(name)))
-        .collect();
-    // The chain leads the key: nothing reads the table without naming a chain
-    // — the entity views take their marker from the frontier table — and the
-    // per-chain resume trims a chain's rows as one range.
-    format!(
-        "CREATE TABLE IF NOT EXISTS {}.{}{} (\n{}\n)\nENGINE = {}\nORDER BY ({}, {}){}",
-        quoted(database),
-        quoted(&history.checkpoints_table),
-        topology.on_cluster(),
-        definitions.join(",\n"),
-        topology.engine(),
-        quoted(&history.checkpoint_chain_id_column),
-        quoted(&history.id_column),
-        topology.settings(),
-    )
+pub fn checkpoint_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
+    vec![
+        (CHAIN_ID_COLUMN.to_string(), chain_id_type.clone()),
+        (ID_COLUMN.to_string(), ChType::UInt64),
+        (BLOCK_NUMBER_COLUMN.to_string(), ChType::Int32),
+        (
+            "block_hash".to_string(),
+            ChType::Nullable(Box::new(ChType::String)),
+        ),
+        // A count of every event a chain has processed outgrows an Int32 where
+        // Postgres keeps one, and ClickHouse has the id's width to spare.
+        ("events_processed".to_string(), ChType::UInt64),
+        (
+            ROLLBACK_TARGET_COLUMN.to_string(),
+            ChType::Nullable(Box::new(ChType::UInt64)),
+        ),
+    ]
 }
 
-/// One row per chain, replaced on every write: a batch's checkpoints raise its
-/// checkpoint id through the materialized view, a resume lowers it by inserting
-/// the id it trims back to. The row a chain settles on is the last one written,
-/// so the table has no version column and is read with FINAL — which also means
-/// every writer has to write the whole row once it grows past this column.
+/// Every checkpoint a write made, which is what maps a history row's checkpoint
+/// back to the block it came from.
 ///
-/// The dedup window is off for the same reason as on the other tables: a chain
-/// lowered by a resume and later raised to an id it once held would insert a
-/// block identical to one already seen, and a dropped insert would leave the
-/// chain's rows unreadable.
-pub fn create_chains_table(
+/// The chain leads the key: every read of the table names one, and a resume
+/// trims a chain's rows as one range. Within a chain ids grow with the block, so
+/// a block range is narrowed by the min-max index rather than read in full.
+pub fn create_checkpoints_table(
     chain_id_type: &ChType,
     database: &str,
-    history: &HistorySchema,
     topology: Topology,
 ) -> String {
     format!(
-        "CREATE TABLE IF NOT EXISTS {}.{}{} (\n  {} {chain_id_type},\n  {} UInt64\n)\nENGINE = {}\nORDER BY ({}){}",
-        quoted(database),
-        quoted(&history.chains_table),
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {},\n  INDEX `block_number_minmax` {} TYPE minmax GRANULARITY 1\n)\nENGINE = {}\nORDER BY ({}, {}){}",
+        table_ref(database, CHECKPOINTS_TABLE),
         topology.on_cluster(),
-        quoted(&history.checkpoint_chain_id_column),
-        quoted(&history.chains_checkpoint_id_column),
-        topology.replacing_engine(),
-        quoted(&history.checkpoint_chain_id_column),
+        definitions(&checkpoint_columns(chain_id_type)),
+        quoted(BLOCK_NUMBER_COLUMN),
+        topology.engine(),
+        quoted(CHAIN_ID_COLUMN),
+        quoted(ID_COLUMN),
         topology.settings(),
     )
 }
 
-/// Feeds the chains table from every checkpoint insert. It runs as part of that
-/// insert, after the entity rows the checkpoints cover, so a chain's marker can
-/// never get ahead of the rows it makes readable.
-pub fn create_chains_materialized_view(
-    database: &str,
-    history: &HistorySchema,
-    topology: Topology,
-) -> String {
+pub fn chain_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
+    let nullable = |ch_type: ChType| ChType::Nullable(Box::new(ch_type));
+    vec![
+        (CHAIN_ID_COLUMN.to_string(), chain_id_type.clone()),
+        (FRONTIER_COLUMN.to_string(), ChType::UInt64),
+        (VERSION_COLUMN.to_string(), ChType::UInt64),
+        ("ecosystem".to_string(), ChType::String),
+        ("start_block".to_string(), ChType::Int32),
+        ("end_block".to_string(), nullable(ChType::Int32)),
+        ("max_reorg_depth".to_string(), ChType::Int32),
+        ("buffer_block".to_string(), ChType::Int32),
+        ("source_block".to_string(), ChType::Int32),
+        ("first_event_block".to_string(), nullable(ChType::Int32)),
+        ("ready_at".to_string(), nullable(ChType::DateTime64)),
+        ("events_processed".to_string(), ChType::UInt64),
+        ("_is_hyper_sync".to_string(), ChType::Bool),
+        ("progress_block".to_string(), ChType::Int32),
+        (
+            "progress_block_time".to_string(),
+            nullable(ChType::DateTime64),
+        ),
+    ]
+}
+
+/// One row per chain, written whole every time anything about the chain
+/// changes. A write's last insert is its chains' rows, which is what commits
+/// it: `checkpoint_id` is the chain's frontier, and nothing a write stamped
+/// past it is readable until the row carrying it lands. The latest version of
+/// a chain's row is its state, so the table is read with FINAL.
+///
+/// The dedup window is off for the same reason as on the other tables: a row
+/// identical to one already written would otherwise be dropped while the insert
+/// reports success.
+pub fn create_chains_table(chain_id_type: &ChType, database: &str, topology: Topology) -> String {
     format!(
-        "CREATE MATERIALIZED VIEW IF NOT EXISTS {db}.{}{} TO {db}.{} AS\nSELECT {chain}, max({id}) AS {checkpoint_id}\nFROM {db}.{}\nGROUP BY {chain}",
-        quoted(&chains_view_name(history)),
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
+        table_ref(database, CHAINS_TABLE),
         topology.on_cluster(),
-        quoted(&history.chains_table),
-        quoted(&history.checkpoints_table),
-        db = quoted(database),
-        chain = quoted(&history.checkpoint_chain_id_column),
-        id = quoted(&history.id_column),
-        checkpoint_id = quoted(&history.chains_checkpoint_id_column),
+        definitions(&chain_columns(chain_id_type)),
+        topology.replacing_engine(Some(VERSION_COLUMN)),
+        quoted(CHAIN_ID_COLUMN),
+        topology.settings(),
     )
 }
 
-fn chains_view_name(history: &HistorySchema) -> String {
-    format!("{}_mv", history.chains_table)
+pub fn info_columns() -> Vec<(String, ChType)> {
+    vec![
+        (ID_COLUMN.to_string(), ChType::Int32),
+        ("config".to_string(), ChType::String),
+    ]
 }
 
-/// Sets each chain's frontier to the id a resume trims it back to. Inserted
-/// before the trims so nothing above the id is readable while they run.
-pub fn set_chains_frontier(
-    database: &str,
-    history: &HistorySchema,
-    rows: &[(String, String)],
-) -> String {
-    let values: Vec<String> = rows
-        .iter()
-        .map(|(chain_id, checkpoint_id)| format!("({chain_id}, {checkpoint_id})"))
-        .collect();
+/// A singleton holding the config the schema was created from, which a resume
+/// is checked against. Text rather than JSON so it reads back byte for byte.
+pub fn create_info_table(database: &str, topology: Topology) -> String {
     format!(
-        "INSERT INTO {}.{} ({}, {}) VALUES {}",
-        quoted(database),
-        quoted(&history.chains_table),
-        quoted(&history.checkpoint_chain_id_column),
-        quoted(&history.chains_checkpoint_id_column),
-        values.join(", "),
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
+        table_ref(database, INFO_TABLE),
+        topology.on_cluster(),
+        definitions(&info_columns()),
+        topology.engine(),
+        quoted(ID_COLUMN),
+        topology.settings(),
+    )
+}
+
+pub fn contract_columns() -> Vec<(String, ChType)> {
+    vec![
+        (ID_COLUMN.to_string(), ChType::Int32),
+        ("name".to_string(), ChType::String),
+    ]
+}
+
+/// The canonical contract ids: a name's position in the list written at
+/// initialize, so an id names the same contract on every chain and across
+/// restarts.
+pub fn create_contracts_table(database: &str, topology: Topology) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
+        table_ref(database, CONTRACTS_TABLE),
+        topology.on_cluster(),
+        definitions(&contract_columns()),
+        topology.engine(),
+        quoted(ID_COLUMN),
+        topology.settings(),
+    )
+}
+
+pub fn address_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
+    vec![
+        (CHAIN_ID_COLUMN.to_string(), chain_id_type.clone()),
+        ("address".to_string(), ChType::Bytes),
+        ("contract_id".to_string(), ChType::Int32),
+        ("registration_block".to_string(), ChType::Int32),
+        (CHECKPOINT_ID_COLUMN.to_string(), ChType::UInt64),
+        (CHANGE_COLUMN.to_string(), change_type()),
+    ]
+}
+
+/// Address registrations kept the way an entity's history is: a row per
+/// change, stamped with the checkpoint it belongs to. A registration is a set
+/// and a rollback that drops one writes a delete, so the addresses a chain has
+/// are the latest row of each at or below its frontier that sets it.
+pub fn create_addresses_table(
+    chain_id_type: &ChType,
+    database: &str,
+    topology: Topology,
+) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}, `address`, `contract_id`, {}){}",
+        table_ref(database, ADDRESSES_TABLE),
+        topology.on_cluster(),
+        definitions(&address_columns(chain_id_type)),
+        topology.engine(),
+        quoted(CHAIN_ID_COLUMN),
+        quoted(CHECKPOINT_ID_COLUMN),
+        topology.settings(),
+    )
+}
+
+/// A table whose rows are replaced rather than accumulated: a row written again
+/// under the same key is the same row, and a read through FINAL sees it once.
+pub fn create_replacing_table(
+    database: &str,
+    table: &str,
+    columns: &[(String, ChType)],
+    order_by: &[&str],
+    topology: Topology,
+) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
+        table_ref(database, table),
+        topology.on_cluster(),
+        definitions(columns),
+        topology.replacing_engine(None),
+        order_by
+            .iter()
+            .map(|column| quoted(column))
+            .collect::<Vec<_>>()
+            .join(", "),
+        topology.settings(),
     )
 }
 
 /// The rows an entity view reads as current: the latest at or below its
-/// chain's frontier, which the checkpoint insert raises only after the entity
-/// rows it covers have landed. A per-chain entity's row compares against its
-/// own chain's id — a sibling's id says nothing about it, and under a per-chain
-/// sequence isn't even comparable. A cross-chain entity's rows belong to no one
-/// chain; they only exist under one shared sequence, where the highest id is
-/// the frontier of the whole run.
+/// chain's frontier, which a write raises only once the rows it covers have
+/// landed. A per-chain entity's row compares against its own chain's id — a
+/// sibling's id says nothing about it, and under a per-chain sequence isn't
+/// even comparable. A cross-chain entity's rows belong to no one chain; they
+/// only exist under one shared sequence, where the highest id is the frontier
+/// of the whole run.
 ///
 /// The frontier is read once per query as a scalar and looked up per row, which
 /// costs one comparison and leaves the predicate free to run as PREWHERE. A
 /// chain the frontier doesn't name reads as 0, so its rows stay hidden.
-pub fn create_view(
-    entity: &EntitySpec,
-    database: &str,
-    history: &HistorySchema,
-    topology: Topology,
-) -> String {
-    let mut dedup_key = vec![quoted(&history.id_column)];
-    if let Some(chain_id_column) = &entity.chain_id_column {
-        dedup_key.push(quoted(chain_id_column));
-    }
+pub fn create_view(entity: &EntitySpec, database: &str, topology: Topology) -> String {
+    let dedup_key = entity
+        .key()
+        .iter()
+        .map(|column| quoted(column))
+        .collect::<Vec<_>>();
 
-    let entity_fields: Vec<String> = entity
+    let entity_fields = entity
         .columns
         .iter()
         .map(|column| quoted(&column.name))
-        .collect();
-    let entity_fields = entity_fields.join(", ");
+        .collect::<Vec<_>>()
+        .join(", ");
 
-    let chains = format!(
-        "{}.{} FINAL",
-        quoted(database),
-        quoted(&history.chains_table)
-    );
-    let checkpoint_id = quoted(&history.chains_checkpoint_id_column);
+    let chains = format!("{} FINAL", table_ref(database, CHAINS_TABLE));
+    let checkpoint_id = quoted(FRONTIER_COLUMN);
     let (with, marker) = match &entity.chain_id_column {
         Some(chain_id_column) => (
             format!(
                 "WITH (SELECT mapFromArrays(groupArray({chain}), groupArray({checkpoint_id})) FROM {chains}) AS envio_frontier\n",
-                chain = quoted(&history.checkpoint_chain_id_column),
+                chain = quoted(CHAIN_ID_COLUMN),
             ),
             format!("envio_frontier[{}]", quoted(chain_id_column)),
         ),
@@ -497,26 +528,24 @@ pub fn create_view(
     // arrive together: the history table is sorted by that key already (or by a
     // prefix of it, under a custom `orderBy`), so ClickHouse reads in order and
     // a `LIMIT n` over the view stops after n groups instead of sorting every
-    // version in the table first. Sorting by the checkpoint alone forced that
-    // full sort on every read. The checkpoint stays last and descending, which
-    // is what makes the surviving row per key the latest one.
+    // version in the table first. The checkpoint stays last and descending,
+    // which is what makes the surviving row per key the latest one.
     let dedup_sort = format!(
         "{}, {} DESC",
         dedup_key.join(", "),
-        quoted(&history.checkpoint_id_column)
+        quoted(CHECKPOINT_ID_COLUMN)
     );
 
     format!(
-        "CREATE VIEW IF NOT EXISTS {db}.{}{} AS\n{with}SELECT {entity_fields}\nFROM (\n  SELECT {entity_fields}, {}\n  FROM {db}.{}\n  WHERE {} <= {marker}\n  ORDER BY {dedup_sort}\n  LIMIT 1 BY {}\n)\nWHERE {} = {}",
-        quoted(&entity.name),
+        "CREATE VIEW IF NOT EXISTS {}{} AS\n{with}SELECT {entity_fields}\nFROM (\n  SELECT {entity_fields}, {}\n  FROM {}\n  WHERE {} <= {marker}\n  ORDER BY {dedup_sort}\n  LIMIT 1 BY {}\n)\nWHERE {} = {}",
+        table_ref(database, &entity.name),
         topology.on_cluster(),
-        quoted(&history.change_column),
-        quoted(&entity.history_table),
-        quoted(&history.checkpoint_id_column),
+        quoted(CHANGE_COLUMN),
+        table_ref(database, &entity.history_table),
+        quoted(CHECKPOINT_ID_COLUMN),
         dedup_key.join(", "),
-        quoted(&history.change_column),
-        literal(&history.set_variant),
-        db = quoted(database),
+        quoted(CHANGE_COLUMN),
+        literal(SET),
     )
 }
 
@@ -527,9 +556,8 @@ pub fn insert_query(
 ) -> String {
     let names: Vec<String> = columns.map(|name| quoted(name.as_ref())).collect();
     format!(
-        "INSERT INTO {}.{} ({}) FORMAT RowBinary",
-        quoted(database),
-        quoted(table),
+        "INSERT INTO {} ({}) FORMAT RowBinary",
+        table_ref(database, table),
         names.join(", ")
     )
 }
@@ -550,11 +578,10 @@ pub fn holds_rows_above_checkpoint(database: &str, above_by_table: &[(String, St
         .iter()
         .map(|(table, above)| {
             format!(
-                "SELECT {} AS `_envio_table`, count() AS `_envio_holds` FROM (SELECT 1 FROM {}.{} \
+                "SELECT {} AS `_envio_table`, count() AS `_envio_holds` FROM (SELECT 1 FROM {} \
                  WHERE {above} LIMIT 1)",
                 literal(table),
-                quoted(database),
-                quoted(table),
+                table_ref(database, table),
             )
         })
         .collect();
@@ -564,7 +591,7 @@ pub fn holds_rows_above_checkpoint(database: &str, above_by_table: &[(String, St
     )
 }
 
-/// Trims one history table's rows past the checkpoint being resumed from.
+/// Trims one table's rows past the checkpoint being resumed from.
 ///
 /// `ALTER ... DELETE` schedules a mutation rather than running one, so without
 /// `mutations_sync` the statement returns while the rows are still there and
@@ -572,27 +599,10 @@ pub fn holds_rows_above_checkpoint(database: &str, above_by_table: &[(String, St
 /// (`1`) is what makes the storage actually be at the checkpoint by the time
 /// the indexer starts writing again; the indexer reads and writes this node
 /// alone, and the replicas behind it catch up on their own.
-pub fn trim_history_table(database: &str, table: &str, above: &str) -> String {
+pub fn trim_table(database: &str, table: &str, above: &str) -> String {
     format!(
-        "ALTER TABLE {}.{} DELETE WHERE {above} SETTINGS mutations_sync = 1",
-        quoted(database),
-        quoted(table),
-    )
-}
-
-/// Trims the checkpoints past the one being resumed from.
-///
-/// `DELETE FROM` is a lightweight delete, which `mutations_sync` has no say
-/// over — `lightweight_deletes_sync` is the setting that makes the statement
-/// wait for the rows to actually be masked. Named explicitly rather than left to
-/// the server default, which a profile is free to set to 0: resume would then
-/// return with checkpoints still above the frontier, and replayed rows would
-/// become readable through a checkpoint that no longer covers them.
-pub fn trim_checkpoints(database: &str, history: &HistorySchema, above: &str) -> String {
-    format!(
-        "DELETE FROM {}.{} WHERE {above} SETTINGS lightweight_deletes_sync = 1",
-        quoted(database),
-        quoted(&history.checkpoints_table),
+        "ALTER TABLE {} DELETE WHERE {above} SETTINGS mutations_sync = 1",
+        table_ref(database, table),
     )
 }
 
@@ -600,21 +610,6 @@ pub fn trim_checkpoints(database: &str, history: &HistorySchema, above: &str) ->
 pub(crate) mod test_support {
     use super::*;
     use crate::clickhouse::ch_type::test_support::field;
-
-    pub fn history_schema() -> HistorySchema {
-        HistorySchema {
-            id_column: "id".to_string(),
-            checkpoint_id_column: "envio_checkpoint_id".to_string(),
-            change_column: "envio_change".to_string(),
-            change_variants: vec!["SET".to_string(), "DELETE".to_string()],
-            set_variant: "SET".to_string(),
-            checkpoints_table: "envio_checkpoints".to_string(),
-            checkpoint_chain_id_column: "chain_id".to_string(),
-            checkpoint_block_number_column: "block_number".to_string(),
-            chains_table: "envio_chains".to_string(),
-            chains_checkpoint_id_column: "checkpoint_id".to_string(),
-        }
-    }
 
     pub fn plain() -> Topology {
         Topology {
@@ -659,26 +654,8 @@ mod tests {
     use crate::clickhouse::ch_type::test_support::field;
     use pretty_assertions::assert_eq;
 
-    fn typed(columns: &[ColumnSpec]) -> Vec<(String, ChType)> {
-        columns
-            .iter()
-            .map(|column| {
-                column
-                    .typed(ChainIdMode::Int32, "the checkpoints table")
-                    .unwrap()
-            })
-            .collect()
-    }
-
     fn render(entity: &EntitySpec, topology: Topology) -> String {
-        create_history_table(
-            entity,
-            "test_db",
-            &history_schema(),
-            topology,
-            ChainIdMode::Int32,
-        )
-        .unwrap()
+        create_history_table(entity, "test_db", topology, ChainIdMode::Int32).unwrap()
     }
 
     #[test]
@@ -824,40 +801,25 @@ mod tests {
         let mut entity = entity("Account", vec![column("id", "String")]);
         entity.order_by = Some(vec!["missing".to_string()]);
         assert_eq!(
-            create_history_table(
-                &entity,
-                "test_db",
-                &history_schema(),
-                plain(),
-                ChainIdMode::Int32
-            )
-            .unwrap_err()
-            .to_string(),
+            create_history_table(&entity, "test_db", plain(), ChainIdMode::Int32)
+                .unwrap_err()
+                .to_string(),
             "ClickHouse orderBy field \"missing\" is not defined on entity \"Account\""
         );
     }
 
     #[test]
     fn creates_the_checkpoints_table() {
-        let columns = [
-            column("chain_id", "ChainId"),
-            column("id", "UInt64"),
-            column("block_number", "Int32"),
-            ColumnSpec {
-                field: FieldSpec {
-                    is_nullable: true,
-                    ..field("String")
-                },
-                ..column("block_hash", "String")
-            },
-        ];
         assert_eq!(
-            create_checkpoints_table(&typed(&columns), "test_db", &history_schema(), plain()),
+            create_checkpoints_table(&ChType::Int32, "test_db", plain()),
             "CREATE TABLE IF NOT EXISTS `test_db`.`envio_checkpoints` (\n  \
              `chain_id` Int32,\n  \
              `id` UInt64,\n  \
              `block_number` Int32,\n  \
-             `block_hash` Nullable(String)\n\
+             `block_hash` Nullable(String),\n  \
+             `events_processed` UInt64,\n  \
+             `rollback_target` Nullable(UInt64),\n  \
+             INDEX `block_number_minmax` `block_number` TYPE minmax GRANULARITY 1\n\
              )\n\
              ENGINE = MergeTree()\n\
              ORDER BY (`chain_id`, `id`)"
@@ -865,70 +827,101 @@ mod tests {
     }
 
     #[test]
-    fn creates_the_chains_table_and_the_view_that_feeds_it() {
+    fn a_replicated_checkpoints_table_carries_the_engine_cluster_and_dedup_settings() {
+        let created = create_checkpoints_table(&ChType::UInt64, "test_db", replicated());
         assert_eq!(
             (
-                create_chains_table(&ChType::Int32, "test_db", &history_schema(), plain()),
-                create_chains_materialized_view("test_db", &history_schema(), plain()),
+                created.lines().next(),
+                created.lines().nth(1),
+                created.lines().rev().take(3).collect::<Vec<_>>()
             ),
             (
-                "CREATE TABLE IF NOT EXISTS `test_db`.`envio_chains` (\n  \
-                 `chain_id` Int32,\n  \
-                 `checkpoint_id` UInt64\n\
-                 )\n\
-                 ENGINE = ReplacingMergeTree()\n\
-                 ORDER BY (`chain_id`)"
-                    .to_string(),
-                "CREATE MATERIALIZED VIEW IF NOT EXISTS `test_db`.`envio_chains_mv` TO \
-                 `test_db`.`envio_chains` AS\n\
-                 SELECT `chain_id`, max(`id`) AS `checkpoint_id`\n\
-                 FROM `test_db`.`envio_checkpoints`\n\
-                 GROUP BY `chain_id`"
-                    .to_string(),
+                Some("CREATE TABLE IF NOT EXISTS `test_db`.`envio_checkpoints` ON CLUSTER '{cluster}' ("),
+                Some("  `chain_id` UInt64,"),
+                vec![
+                    "SETTINGS replicated_deduplication_window = 0",
+                    "ORDER BY (`chain_id`, `id`)",
+                    "ENGINE = ReplicatedMergeTree"
+                ]
             )
         );
     }
 
     #[test]
+    fn the_chains_table_keeps_the_latest_version_of_each_chain() {
+        assert_eq!(
+            create_chains_table(&ChType::Int32, "test_db", plain()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_chains` (\n  \
+             `chain_id` Int32,\n  \
+             `checkpoint_id` UInt64,\n  \
+             `version` UInt64,\n  \
+             `ecosystem` String,\n  \
+             `start_block` Int32,\n  \
+             `end_block` Nullable(Int32),\n  \
+             `max_reorg_depth` Int32,\n  \
+             `buffer_block` Int32,\n  \
+             `source_block` Int32,\n  \
+             `first_event_block` Nullable(Int32),\n  \
+             `ready_at` Nullable(DateTime64(3, 'UTC')),\n  \
+             `events_processed` UInt64,\n  \
+             `_is_hyper_sync` Bool,\n  \
+             `progress_block` Int32,\n  \
+             `progress_block_time` Nullable(DateTime64(3, 'UTC'))\n\
+             )\n\
+             ENGINE = ReplacingMergeTree(`version`)\n\
+             ORDER BY (`chain_id`)"
+        );
+    }
+
+    #[test]
     fn a_replicated_chains_table_carries_the_engine_cluster_and_dedup_settings() {
+        let created = create_chains_table(&ChType::UInt64, "test_db", replicated());
         assert_eq!(
-            create_chains_table(&ChType::Int64, "test_db", &history_schema(), replicated()),
-            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_chains` ON CLUSTER '{cluster}' (\n  \
-             `chain_id` Int64,\n  \
-             `checkpoint_id` UInt64\n\
-             )\n\
-             ENGINE = ReplicatedReplacingMergeTree\n\
-             ORDER BY (`chain_id`)\n\
-             SETTINGS replicated_deduplication_window = 0"
+            created.lines().rev().take(3).collect::<Vec<_>>(),
+            vec![
+                "SETTINGS replicated_deduplication_window = 0",
+                "ORDER BY (`chain_id`)",
+                "ENGINE = ReplicatedReplacingMergeTree(`version`)"
+            ]
         );
     }
 
     #[test]
-    fn sets_every_chains_frontier_in_one_insert() {
+    fn addresses_are_kept_as_a_history_of_registrations() {
         assert_eq!(
-            set_chains_frontier(
+            create_addresses_table(&ChType::Int32, "test_db", plain()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_addresses` (\n  \
+             `chain_id` Int32,\n  \
+             `address` String,\n  \
+             `contract_id` Int32,\n  \
+             `registration_block` Int32,\n  \
+             `envio_checkpoint_id` UInt64,\n  \
+             `envio_change` Enum8('SET' = 1, 'DELETE' = 2)\n\
+             )\n\
+             ENGINE = MergeTree()\n\
+             ORDER BY (`chain_id`, `address`, `contract_id`, `envio_checkpoint_id`)"
+        );
+    }
+
+    #[test]
+    fn a_replacing_table_is_keyed_by_what_it_is_ordered_by() {
+        assert_eq!(
+            create_replacing_table(
                 "test_db",
-                &history_schema(),
+                "envio_effect_price",
                 &[
-                    ("1".to_string(), "5".to_string()),
-                    ("137".to_string(), "9".to_string())
-                ]
+                    ("id".to_string(), ChType::String),
+                    ("output".to_string(), ChType::String)
+                ],
+                &["id"],
+                plain()
             ),
-            "INSERT INTO `test_db`.`envio_chains` (`chain_id`, `checkpoint_id`) VALUES (1, 5), (137, 9)"
-        );
-    }
-
-    #[test]
-    fn a_replicated_checkpoints_table_carries_the_engine_cluster_and_dedup_settings() {
-        let columns = [column("id", "UInt64")];
-        assert_eq!(
-            create_checkpoints_table(&typed(&columns), "test_db", &history_schema(), replicated()),
-            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_checkpoints` ON CLUSTER '{cluster}' (\n  \
-             `id` UInt64\n\
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_effect_price` (\n  \
+             `id` String,\n  \
+             `output` String\n\
              )\n\
-             ENGINE = ReplicatedMergeTree\n\
-             ORDER BY (`chain_id`, `id`)\n\
-             SETTINGS replicated_deduplication_window = 0"
+             ENGINE = ReplacingMergeTree()\n\
+             ORDER BY (`id`)"
         );
     }
 
@@ -939,7 +932,7 @@ mod tests {
             vec![column("id", "String"), column("balance", "Int32")],
         );
         assert_eq!(
-            create_view(&entity, "test_db", &history_schema(), plain()),
+            create_view(&entity, "test_db", plain()),
             "CREATE VIEW IF NOT EXISTS `test_db`.`Account` AS\n\
              SELECT `id`, `balance`\n\
              FROM (\n  \
@@ -969,7 +962,7 @@ mod tests {
             )
         };
         assert_eq!(
-            create_view(&entity, "test_db", &history_schema(), plain()),
+            create_view(&entity, "test_db", plain()),
             "CREATE VIEW IF NOT EXISTS `test_db`.`Account` AS\n\
              WITH (SELECT mapFromArrays(groupArray(`chain_id`), groupArray(`checkpoint_id`)) FROM \
              `test_db`.`envio_chains` FINAL) AS envio_frontier\n\
@@ -989,23 +982,9 @@ mod tests {
     fn a_replicated_view_is_created_on_the_cluster() {
         let entity = entity("Account", vec![column("id", "String")]);
         assert_eq!(
-            create_view(&entity, "test_db", &history_schema(), replicated())
-                .lines()
-                .next(),
+            create_view(&entity, "test_db", replicated()).lines().next(),
             Some("CREATE VIEW IF NOT EXISTS `test_db`.`Account` ON CLUSTER '{cluster}' AS")
         );
-    }
-
-    #[test]
-    fn a_per_chain_entity_dedups_on_id_and_chain() {
-        let mut entity = entity(
-            "Account",
-            vec![column("id", "String"), column("chain_id", "ChainId")],
-        );
-        entity.chain_id_column = Some("chain_id".to_string());
-        let sql = create_view(&entity, "test_db", &history_schema(), plain());
-        assert!(sql.contains("ORDER BY `id`, `chain_id`, `envio_checkpoint_id` DESC"));
-        assert!(sql.contains("LIMIT 1 BY `id`, `chain_id`"));
     }
 
     #[test]
@@ -1035,27 +1014,11 @@ mod tests {
     }
 
     #[test]
-    fn trims_history_and_checkpoints_past_a_checkpoint() {
-        let history = history_schema();
-        let bounds = ResumeBounds::SharedAcrossChains("42".to_string());
-        let above = |column: &str| bounds.above(None, column).unwrap();
+    fn trims_a_table_past_a_checkpoint() {
         assert_eq!(
-            (
-                trim_history_table(
-                    "db",
-                    "envio_history_Account",
-                    &above(&history.checkpoint_id_column)
-                ),
-                trim_checkpoints("db", &history, &above(&history.id_column))
-            ),
-            (
-                "ALTER TABLE `db`.`envio_history_Account` DELETE WHERE \
-                 `envio_checkpoint_id` > 42 SETTINGS mutations_sync = 1"
-                    .to_string(),
-                "DELETE FROM `db`.`envio_checkpoints` WHERE `id` > 42 \
-                 SETTINGS lightweight_deletes_sync = 1"
-                    .to_string()
-            )
+            trim_table("db", "envio_history_Account", "`envio_checkpoint_id` > 42"),
+            "ALTER TABLE `db`.`envio_history_Account` DELETE WHERE `envio_checkpoint_id` > 42 \
+             SETTINGS mutations_sync = 1"
         );
     }
 }

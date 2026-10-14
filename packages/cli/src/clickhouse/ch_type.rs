@@ -46,6 +46,14 @@ pub enum ChType {
 pub const MAX_DECIMAL_PRECISION: u32 = 38;
 
 impl ChType {
+    /// The type a value has once it is known to be there.
+    pub fn base(&self) -> &ChType {
+        match self {
+            ChType::Nullable(inner) => inner,
+            other => other,
+        }
+    }
+
     pub fn enum_value(&self, name: &str) -> Option<i16> {
         match self {
             ChType::Enum { variants } => variants

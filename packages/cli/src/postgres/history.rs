@@ -8,33 +8,11 @@
 
 use anyhow::{bail, Result};
 
-pub const CHECKPOINT_COLUMN: &str = "envio_checkpoint_id";
-pub const CHANGE_COLUMN: &str = "envio_change";
+pub use crate::storage::types::{
+    Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUMN as CHECKPOINT_COLUMN, DELETE, SET,
+};
+
 pub const CHANGE_TYPE: &str = "ENVIO_HISTORY_CHANGE";
-pub const SET: &str = "SET";
-pub const DELETE: &str = "DELETE";
-
-/// How checkpoint ids are handed out, which decides what a row is compared
-/// against.
-///
-/// Under one shared counter every chain is held to a single id. Per chain the
-/// ids are not comparable across chains, so each row is compared against its own
-/// chain's — which is what the joined-in relation carries.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Sequence {
-    SharedAcrossChains,
-    PerChain,
-}
-
-impl Sequence {
-    pub fn parse(value: &str) -> Result<Self> {
-        match value {
-            "SharedAcrossChains" => Ok(Sequence::SharedAcrossChains),
-            "PerChain" => Ok(Sequence::PerChain),
-            other => bail!("`{other}` is not a checkpoint sequence"),
-        }
-    }
-}
 
 /// The pieces a statement splices in to read its bound as `checkpoint_id`: a
 /// join for a select, a `USING` for a delete.

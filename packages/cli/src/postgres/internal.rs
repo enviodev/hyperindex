@@ -3,18 +3,14 @@
 use super::ddl::{ColumnSpec, TableSpec};
 use super::history::{bounds, Sequence};
 use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
+pub use crate::storage::types::{
+    ChainConfig, ADDRESSES_TABLE as ADDRESSES, CHAINS_TABLE as CHAINS,
+    CHECKPOINTS_TABLE as CHECKPOINTS, CONFIG_REGISTRATION_BLOCK, CONTRACTS_TABLE as CONTRACTS,
+    INFO_TABLE as INFO,
+};
 
-pub const CHAINS: &str = "envio_chains";
-pub const INFO: &str = "envio_info";
-pub const CONTRACTS: &str = "envio_contracts";
-pub const ADDRESSES: &str = "envio_addresses";
-pub const CHECKPOINTS: &str = "envio_checkpoints";
 pub const META_VIEW: &str = "_meta";
 pub const CHAIN_METADATA_VIEW: &str = "chain_metadata";
-
-/// The registration block a config-declared address is stored with, which
-/// tells it apart from one a handler registered.
-pub const CONFIG_REGISTRATION_BLOCK: i32 = -1;
 
 fn column(name: &str, field_type: FieldType) -> ColumnSpec {
     ColumnSpec {
@@ -150,15 +146,6 @@ pub fn chain_id_array(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
         false,
         chain_id_mode,
     )
-}
-
-/// What a chain starts out as.
-pub struct ChainConfig {
-    pub id: i64,
-    pub ecosystem: String,
-    pub start_block: i32,
-    pub end_block: Option<i32>,
-    pub max_reorg_depth: i32,
 }
 
 /// One `INSERT` for the chains' first rows, values written in: it runs inside
@@ -299,7 +286,7 @@ pub fn read_resumed_chains(pg_schema: &str) -> String {
          \"first_event_block\", (extract(epoch from \"ready_at\") * 1000)::float8, \
          \"events_processed\"::float8, \"progress_block\", \
          extract(epoch from \"progress_block_time\")::float8, \"source_block\", \
-         \"checkpoint_id\"::TEXT FROM \"{pg_schema}\".\"{CHAINS}\";"
+         \"checkpoint_id\"::TEXT, \"ecosystem\" FROM \"{pg_schema}\".\"{CHAINS}\";"
     )
 }
 
