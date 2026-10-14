@@ -205,9 +205,10 @@ describe("the register pass", () => {
       ],
       // The factory's symbol() at block 10 once, for both register passes,
       // which run concurrently, and for both handlers, which reuse their
-      // answer; then one per Sync, from the handler itself — none from a
-      // register pass.
-      ethCalls: 3,
+      // answer; then the pair's symbol() once for its two Syncs (a symbol
+      // asked at block 20 is the symbol at block 30), from the handler itself
+      // — none from a register pass.
+      ethCalls: 2,
     });
   });
 });
