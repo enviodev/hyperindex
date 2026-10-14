@@ -151,6 +151,7 @@ export function makeCallEffect(rpcUrls: string[], recall: (encoded: string) => s
             throw error;
           }
         },
+        { deadline: false },
       ));
       if (result === null) {
         return JSON.stringify({ reverted: true, values: null });

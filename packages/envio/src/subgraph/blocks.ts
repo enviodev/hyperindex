@@ -213,8 +213,10 @@ async function fromRpc(blockNumber: number): Promise<bigint> {
     );
   }
   const client = rpcClient(rpcUrls);
-  const block = await untilAnswered(`block ${blockNumber} from RPC`, () =>
-    client.getBlock({ blockNumber: BigInt(blockNumber) }),
+  const block = await untilAnswered(
+    `block ${blockNumber} from RPC`,
+    () => client.getBlock({ blockNumber: BigInt(blockNumber) }),
+    { deadline: false },
   );
   return block.timestamp;
 }

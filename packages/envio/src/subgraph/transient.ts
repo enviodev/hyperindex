@@ -110,11 +110,17 @@ export async function withDeadline<T>(
 export async function untilAnswered<T>(
   what: string,
   attempt: (signal: AbortSignal) => Promise<T>,
-  { maxTries = Infinity }: { maxTries?: number } = {},
+  {
+    maxTries = Infinity,
+    // An attempt that goes through a gate (`rpc.ts`) gets its deadline there,
+    // once it holds a slot: timed from here, a request still queued behind
+    // the gate would time out unsent, be asked again, and be sent twice.
+    deadline = true,
+  }: { maxTries?: number; deadline?: boolean } = {},
 ): Promise<T> {
   for (let tries = 0; ; tries++) {
     try {
-      return await withDeadline(what, attempt);
+      return await (deadline ? withDeadline(what, attempt) : attempt(new AbortController().signal));
     } catch (error) {
       if (!isTransient(error) || tries + 1 >= maxTries) throw error;
       const wait = Math.min(firstBackoffMs() * 2 ** tries, MAX_BACKOFF_MS);

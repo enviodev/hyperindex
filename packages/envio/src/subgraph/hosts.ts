@@ -180,7 +180,7 @@ export function makeHostEffects(rpcUrls: string[]) {
               const body = (await response.json()) as { label?: string };
               return body.label ?? null;
             }),
-          { maxTries: ENS_TRIES },
+          { maxTries: ENS_TRIES, deadline: false },
         );
       } catch (error) {
         const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
@@ -203,8 +203,10 @@ export function makeHostEffects(rpcUrls: string[]) {
     async ({ input }: { input: string }) => {
       const { address, blockNumber } = JSON.parse(input);
       const client = clientOrThrow("ethereum.getBalance");
-      const balance = await untilAnswered(`the balance of ${address} at block ${blockNumber}`, () =>
-        client.getBalance({ address, blockNumber: BigInt(blockNumber) }),
+      const balance = await untilAnswered(
+        `the balance of ${address} at block ${blockNumber}`,
+        () => client.getBalance({ address, blockNumber: BigInt(blockNumber) }),
+        { deadline: false },
       );
       return balance.toString();
     },
@@ -222,8 +224,10 @@ export function makeHostEffects(rpcUrls: string[]) {
     async ({ input }: { input: string }) => {
       const { address, blockNumber } = JSON.parse(input);
       const client = clientOrThrow("ethereum.hasCode");
-      const code = await untilAnswered(`the code of ${address} at block ${blockNumber}`, () =>
-        client.getCode({ address, blockNumber: BigInt(blockNumber) }),
+      const code = await untilAnswered(
+        `the code of ${address} at block ${blockNumber}`,
+        () => client.getCode({ address, blockNumber: BigInt(blockNumber) }),
+        { deadline: false },
       );
       return code !== undefined && code !== "0x";
     },
