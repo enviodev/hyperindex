@@ -3284,7 +3284,20 @@ export const near = otherEcosystem("near", "NEAR") as unknown as typeof GraphTsT
 export const cosmos = otherEcosystem("cosmos", "Cosmos") as unknown as typeof GraphTsTypes.cosmos;
 export const starknet = otherEcosystem("starknet", "Starknet") as unknown as typeof GraphTsTypes.starknet;
 
+/**
+ * AssemblyScript's fixed-length array, which as-base64 builds its lookup table
+ * from: `StaticArray.fromArray<u8>([...])`. A JavaScript Array holds the same.
+ */
+class StaticArray<T> extends Array<T> {
+  static fromArray<T>(values: T[]): StaticArray<T> {
+    const array = new StaticArray<T>(values.length);
+    for (let index = 0; index < values.length; index++) array[index] = values[index];
+    return array;
+  }
+}
+
 export const assemblyScriptPrimitives: Record<string, unknown> = {
+  StaticArray,
   i8: integerNamespace("i8", 8, true),
   u8: integerNamespace("u8", 8, false),
   i16: integerNamespace("i16", 16, true),
