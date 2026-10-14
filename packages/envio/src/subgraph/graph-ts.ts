@@ -12,7 +12,15 @@
 
 import BigNumber from "bignumber.js";
 import * as GraphNodeDecimal from "./graph-node-decimal.ts";
-import { keccak256 as viemKeccak256, toHex, hexToBytes, decodeAbiParameters, parseAbiParameters } from "viem";
+import {
+  keccak256 as viemKeccak256,
+  toHex,
+  hexToBytes,
+  decodeAbiParameters,
+  encodeAbiParameters,
+  parseAbiParameters,
+  type AbiParameter,
+} from "viem";
 import { currentScope } from "./scope.ts";
 import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-enums.ts";
 import { parseSignature, splitTypes } from "./abi-types.ts";
@@ -1387,6 +1395,37 @@ export function ethereumValueToJs(value: EthereumValue): unknown {
   }
 }
 
+function abiParameterOf(value: EthereumValue): AbiParameter {
+  switch (value.kind) {
+    case EthereumValueKind.ADDRESS:
+      return { type: "address" };
+    case EthereumValueKind.BOOL:
+      return { type: "bool" };
+    case EthereumValueKind.STRING:
+      return { type: "string" };
+    case EthereumValueKind.BYTES:
+      return { type: "bytes" };
+    case EthereumValueKind.FIXED_BYTES:
+      return { type: `bytes${(value.data as Bytes).length}` };
+    case EthereumValueKind.INT:
+      return { type: "int256" };
+    case EthereumValueKind.UINT:
+      return { type: "uint256" };
+    case EthereumValueKind.ARRAY:
+    case EthereumValueKind.FIXED_ARRAY: {
+      const items = value.data as EthereumValue[];
+      // An empty array encodes as its length alone, whatever it holds.
+      const element: AbiParameter = items.length > 0 ? abiParameterOf(items[0]) : { type: "uint256" };
+      const suffix = value.kind === EthereumValueKind.ARRAY ? "[]" : `[${items.length}]`;
+      return { ...element, type: `${element.type}${suffix}` } as AbiParameter;
+    }
+    case EthereumValueKind.TUPLE:
+      return { type: "tuple", components: (value.data as EthereumValue[]).map(abiParameterOf) };
+    default:
+      throw new Error(`ethereum.encode can't encode a value of kind ${value.kind}`);
+  }
+}
+
 class EthereumBlock {
   declare hash: Bytes;
   declare parentHash: Bytes;
@@ -1736,8 +1775,16 @@ const ethereumImpl = {
       return null;
     }
   },
-  encode(_value: EthereumValue): Bytes | null {
-    throw unsupported("ethereum.encode", "a mapping handler");
+  // graph-node's `ethabi::encode(&[token])`, which is Solidity's `abi.encode`
+  // of the one value. A token carries no integer width and every integer
+  // takes a full word, so 256 bits encodes the same bytes.
+  encode(value: EthereumValue): Bytes | null {
+    try {
+      const parameters: readonly AbiParameter[] = [abiParameterOf(value)];
+      return Bytes.fromHexString(encodeAbiParameters(parameters, [ethereumValueToJs(value)] as readonly unknown[]));
+    } catch {
+      return null;
+    }
   },
   getBalance(address: Address): BigInt_ {
     return BigInt_.fromString(hostsOrThrow().getBalance(address.toHexString()));
