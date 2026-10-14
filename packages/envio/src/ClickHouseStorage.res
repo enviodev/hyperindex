@@ -207,6 +207,64 @@ let byIds = (conditions: array<LoadCondition.t>) => {
 
 type lookup = Requested | Ready
 
+// The columns Postgres would index for the schema — every `@index`, the first
+// column of every composite index, and the column each `@derivedFrom` reads —
+// as data-skipping indexes: a bloom filter for a column filtered by equality,
+// a min/max for one filtered by range.
+let skippingIndexes = (entities: array<Internal.entityConfig>) => {
+  let derivedSchema = Schema.make(entities->Array.map(e => e.table))
+  let tables = Dict.make()
+  entities->Array.forEach(entityConfig =>
+    tables->Dict.set(entityConfig.table.tableName, entityConfig.table)
+  )
+  let columns = []
+  entities->Array.forEach(({table}) => {
+    table->Table.getSingleIndexes->Array.forEach(column => columns->Array.push((table, column)))
+    table
+    ->Table.getCompositeIndexes
+    ->Array.forEach(indexFields =>
+      switch indexFields->Array.get(0) {
+      | Some({fieldName}) => columns->Array.push((table, fieldName))
+      | None => ()
+      }
+    )
+    table
+    ->Table.getDerivedFromFields
+    ->Array.forEach(derivedFromField =>
+      switch (
+        tables->Utils.Dict.dangerouslyGetNonOption(derivedFromField.derivedFromEntity),
+        derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField),
+      ) {
+      | (Some(target), Ok(column)) => columns->Array.push((target, column))
+      | _ => ()
+      }
+    )
+  })
+  let seen = Utils.Set.make()
+  columns->Array.filterMap(((table: Table.table, column)) => {
+    let identity = `${table.tableName}.${column}`
+    let field = table.fields->Array.find(field =>
+      switch field {
+      | Field(f) => f->Table.getPgDbFieldName === column
+      | DerivedFrom(_) => false
+      }
+    )
+    switch field {
+    | Some(Field(f)) if !(seen->Utils.Set.has(identity)) && column !== Table.idFieldName =>
+      seen->Utils.Set.add(identity)->ignore
+      Some((
+        table.tableName,
+        f->Table.getClickHouseDbFieldName,
+        switch f.fieldType {
+        | String | Bytea | Enum(_) => "bloom_filter(0.01)"
+        | _ => "minmax"
+        },
+      ))
+    | _ => None
+    }
+  })
+}
+
 // The rows above each chain's bound, for a table whose chain column is
 // `chainColumn`. One shared counter holds every chain to its lowest bound.
 let aboveBounds = (
@@ -1041,7 +1099,24 @@ let make = (
     loadOrThrow,
     ensureQueryIndexes: async (~entityConfig as _, ~scope as _, ~filters as _) => (),
     ensureSchemaIndexes: async (~entities as _, ~chainIds as _) => (),
-    finalizeBackfill: (~entities as _, ~chainIds, ~readyAt) => setReadyAt(~chainIds, ~readyAt),
+    finalizeBackfill: async (~entities, ~chainIds, ~readyAt) => {
+      // Built once the backfill is done, as Postgres builds its indexes, and
+      // waited on so `ready_at` means the queries can use them.
+      let _ = await entities
+      ->primaryEntities
+      ->skippingIndexes
+      ->Array.map(async ((tableName, column, indexType)) => {
+        let index = `envio_idx_${column}`->quoteIdent
+        let _ = await query(
+          `ALTER TABLE ${tableName->tableRef} ADD INDEX IF NOT EXISTS ${index} ${column->quoteIdent} TYPE ${indexType} GRANULARITY 1`,
+        )
+        let _ = await query(
+          `ALTER TABLE ${tableName->tableRef} MATERIALIZE INDEX ${index} SETTINGS mutations_sync = 2`,
+        )
+      })
+      ->Promise.all
+      await setReadyAt(~chainIds, ~readyAt)
+    },
     dumpEffectCache: async () =>
       Logging.info("Dumping the effect cache is not supported by ClickHouse-only storage yet."),
     reset,
