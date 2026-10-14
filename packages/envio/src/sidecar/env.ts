@@ -21,8 +21,8 @@ export const MAX_SQL_TIMEOUT_MS = 60_000;
 export const DEFAULT_SQL_POOL_SIZE = 5;
 export const DEFAULT_SQL_POOL_WAIT_MS = 10_000;
 
-/** As postgres.js takes it; the indexer's `ENVIO_PG_SSL_MODE` spells the same values. */
-export type SidecarSqlSslMode = boolean | "require" | "allow" | "prefer" | "verify-full";
+/** As postgres.js takes it; `ENVIO_SIDECAR_PG_SSL_MODE=true` reads as "require". */
+export type SidecarSqlSslMode = false | "require" | "allow" | "prefer" | "verify-full";
 
 /** Read-only Postgres access for `sql` (`ENVIO_SIDECAR_PG_*`), dedicated deployments only. */
 export type SidecarSqlEnv = {
@@ -112,14 +112,15 @@ const optional = (env: NodeJS.ProcessEnv, name: string): string | undefined => {
 
 const SSL_MODES = new Set(["require", "allow", "prefer", "verify-full"]);
 
-// The controller renders sslmode "disable" as an empty value, so empty and
-// unset both mean no TLS, like the indexer's ENVIO_PG_SSL_MODE.
+// The controller renders sslmode "disable" as an empty value and envio dev
+// passes the indexer's ENVIO_PG_SSL_MODE (default false), so all of those
+// mean no TLS.
 const readSslMode = (env: NodeJS.ProcessEnv, name: string): SidecarSqlSslMode => {
   const raw = optional(env, name);
-  if (raw === undefined || raw === "false" || raw === "disable") return false;
-  if (raw === "true") return true;
+  if (raw === undefined || raw === "false" || raw === "disable" || raw === "off") return false;
+  if (raw === "true") return "require";
   if (SSL_MODES.has(raw)) return raw as SidecarSqlSslMode;
-  throw new Error(`${name} must be one of disable, require, allow, prefer, verify-full, true, false; got '${raw}'`);
+  throw new Error(`${name} must be one of disable, off, false, true, require, allow, prefer, verify-full; got '${raw}'`);
 };
 
 const readBool = (env: NodeJS.ProcessEnv, name: string): boolean => {

@@ -269,8 +269,8 @@ describe("sidecar sql: disabled and env", () => {
         ENVIO_SIDECAR_SQL_TIMEOUT_MS: "120000",
         ENVIO_SIDECAR_SQL_POOL_SIZE: "2",
       }).sql,
-      sslOff: ["", "disable", "false"].map((mode) => readEnv({ ...base, ENVIO_SIDECAR_PG_SSL_MODE: mode }).sql?.ssl),
-      sslOn: ["true", "allow", "prefer", "verify-full"].map(
+      sslOff: ["", "disable", "false", "off"].map((mode) => readEnv({ ...base, ENVIO_SIDECAR_PG_SSL_MODE: mode }).sql?.ssl),
+      sslOn: ["true", "require", "allow", "prefer", "verify-full"].map(
         (mode) => readEnv({ ...base, ENVIO_SIDECAR_PG_SSL_MODE: mode }).sql?.ssl,
       ),
     }).toEqual({
@@ -302,11 +302,11 @@ describe("sidecar sql: disabled and env", () => {
         poolSize: 2,
         poolWaitMs: 10_000,
       },
-      sslOff: [false, false, false],
-      sslOn: [true, "allow", "prefer", "verify-full"],
+      sslOff: [false, false, false, false],
+      sslOn: ["require", "require", "allow", "prefer", "verify-full"],
     });
     expect(() => readEnv({ ...base, ENVIO_SIDECAR_PG_SSL_MODE: "sometimes" })).toThrow(
-      "ENVIO_SIDECAR_PG_SSL_MODE must be one of disable, require, allow, prefer, verify-full, true, false; got 'sometimes'",
+      "ENVIO_SIDECAR_PG_SSL_MODE must be one of disable, off, false, true, require, allow, prefer, verify-full; got 'sometimes'",
     );
   });
 });
