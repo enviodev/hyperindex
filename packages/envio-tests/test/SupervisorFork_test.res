@@ -298,4 +298,49 @@ describe("Supervisor.isRunAtHead", () => {
       false,
     ))
   })
+
+  // The supervisor owns the run's one webhook listener; a webhook goes to the
+  // worker that drives its chain, and to no other.
+  Async.it("Forwards a webhook to the worker that drives its chain", async t => {
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "echo")
+    let running = [[1], [137]]->Array.map(chainIds => forkFixture(~chainIds))
+    let echoed = running->Array.map(
+      r =>
+        Promise.make(
+          (resolve, _) =>
+            r.child->NodeJs.ChildProcess.Child.onMessage(
+              message =>
+                switch message {
+                | Worker.Snapshot({metrics}) =>
+                  switch (
+                    metrics->(Utils.magic: Metrics.t => {"echo": Nullable.t<unknown>})
+                  )["echo"] {
+                  | Nullable.Value(echo) => resolve(Some(echo))
+                  | _ => ()
+                  }
+                },
+            ),
+        ),
+    )
+    let delivery: Internal.webhookDelivery = {
+      id: "wh_1_1",
+      chainId: ChainId.fromInt(137),
+      name: "swapPriced",
+      body: {"usd": 1}->(Utils.magic: {..} => JSON.t),
+      receivedAt: 1.,
+    }
+    let routed = running->Supervisor.routeWebhook(delivery)
+    let forwarded = await echoed->Array.getUnsafe(1)
+    let toFirst = await Promise.race([
+      echoed->Array.getUnsafe(0),
+      Utils.delay(100)->Promise.thenResolve(() => None),
+    ])
+    running->Array.forEach(r => r.child->NodeJs.ChildProcess.Child.kill("SIGTERM")->ignore)
+
+    t.expect((routed, forwarded, toFirst)).toStrictEqual((
+      true,
+      Some(Worker.Webhook({delivery: delivery})->(Utils.magic: Worker.parentMessage => unknown)),
+      None,
+    ))
+  })
 })

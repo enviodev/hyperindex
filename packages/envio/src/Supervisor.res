@@ -214,6 +214,14 @@ let fork = (
   running
 }
 
+// False when no worker drives the chain, which the listener has already ruled
+// out for any chain of the run.
+let routeWebhook = (running: array<running>, delivery: Internal.webhookDelivery) =>
+  switch running->Array.find(r => r.worker.chainIds->Array.includes(delivery.chainId)) {
+  | Some(r) => r.child->NodeJs.ChildProcess.Child.send(Worker.Webhook({delivery: delivery}))
+  | None => false
+  }
+
 // The forked workers of one run, and whether their supervisor is the one
 // taking them down, which is what tells an expected exit from the rest.
 type group = {
@@ -487,6 +495,21 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
         ~onSnapshot=() => group->releaseIfAtHead,
       )
     )
+
+  if config.sidecar->Option.isSome {
+    // The listener checks bodies against the contract; the workers load
+    // their own for `context.sidecar`.
+    await SidecarContract.loadOrThrow(~config)
+    let _ = WebhookListener.startForRun(
+      ~config,
+      // A worker that has reported is past building its indexer state.
+      ~isReady=chainId =>
+        group.running->Array.some(r =>
+          r.snapshot->Option.isSome && r.worker.chainIds->Array.includes(chainId)
+        ),
+      ~deliver=delivery => group.running->routeWebhook(delivery)->ignore,
+    )
+  }
 
   let reported = () => group.running->Array.filterMap(r => r.snapshot)
   let merge = snapshots =>

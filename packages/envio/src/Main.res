@@ -407,6 +407,11 @@ let getGlobalIndexer = (): 'indexer => {
         target->(Utils.magic: {..} => dict<unknown>)->Dict.getUnsafe(prop->Utils.magic)
       },
     ownKeys: (~target as _) => getKeys(),
+    // `"onWebhook" in indexer` is how a project shared across envio versions
+    // asks whether a method exists without the throw a read of a missing one
+    // gives.
+    has: (~target as _, ~prop) =>
+      typeof(prop) === #string && getKeys()->Array.includes(prop->(Utils.magic: unknown => string)),
     getOwnPropertyDescriptor: (~target as _, ~prop) =>
       if (
         typeof(prop) === #string &&
@@ -540,6 +545,17 @@ exception FatalError(exn)
       )
     }
 
+    // A split run's supervisor listens for the whole run and forwards each
+    // webhook to the worker driving its chain.
+    if config.sidecar->Option.isSome && !isTest && !Worker.isEnabled {
+      let _ = WebhookListener.startForRun(
+        ~config,
+        ~isReady=_ => getIndexerState()->Option.isSome,
+        ~deliver=delivery =>
+          getIndexerState()->Option.forEach(state => state->IndexerState.enqueueWebhook(delivery)),
+      )
+    }
+
     let state = IndexerState.makeFromDbState(
       ~config,
       ~persistence,
@@ -562,6 +578,7 @@ exception FatalError(exn)
     Worker.bindRun(
       ~getMetrics=() => state->IndexerState.toMetrics,
       ~onReleaseRealtime=() => state->IndexerState.releaseRealtime,
+      ~onWebhook=delivery => state->IndexerState.enqueueWebhook(delivery),
     )
     setIndexerState(state)
     state->IndexerLoop.start

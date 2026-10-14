@@ -24,6 +24,30 @@ let hostAndPort = (url: string) => {
 
 type accepted = {id: string, chainId: ChainId.t}
 
+let promiseListening = (app, ~host, ~port): promise<t> =>
+  Promise.make((resolve, reject) => {
+    let server = ref(None)
+    let listening = app->Express.listenOn(port, host, () =>
+      server.contents->Option.forEach(
+        server => {
+          let boundPort = (server->Express.address)["port"]
+          resolve({
+            url: `http://${host}:${boundPort->Int.toString}`,
+            close: () =>
+              Promise.make(
+                (resolve, _) => {
+                  server->Express.closeAllConnections
+                  server->Express.close(() => resolve())
+                },
+              ),
+          })
+        },
+      )
+    )
+    server := Some(listening)
+    listening->Express.onError(error => reject(error->JsExn.anyToExnInternal))
+  })
+
 let start = (
   ~host,
   ~port,
@@ -122,26 +146,30 @@ let start = (
     }
   })
 
-  Promise.make((resolve, reject) => {
-    let server = ref(None)
-    let listening = app->Express.listenOn(port, host, () =>
-      server.contents->Option.forEach(
-        server => {
-          let boundPort = (server->Express.address)["port"]
-          resolve({
-            url: `http://${host}:${boundPort->Int.toString}`,
-            close: () =>
-              Promise.make(
-                (resolve, _) => {
-                  server->Express.closeAllConnections
-                  server->Express.close(() => resolve())
-                },
-              ),
-          })
-        },
-      )
+  promiseListening(app, ~host, ~port)
+}
+
+// Where `ENVIO_INDEXER_INTERNAL_URL` says, for an indexer with `sidecar:`
+// configured. A port that is taken costs the webhooks, not the indexing.
+let startForRun = async (~config: Config.t, ~isReady, ~deliver) => {
+  let (host, port) = Env.Sidecar.indexerInternalUrl->hostAndPort
+  switch await start(
+    ~host,
+    ~port,
+    ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
+    ~secret=Env.Sidecar.webhookSecret,
+    ~contract=SidecarContract.get,
+    ~isReady,
+    ~deliver,
+  ) {
+  | listener =>
+    Logging.info({"msg": "Listening for sidecar webhooks", "url": listener.url})
+    Some(listener)
+  | exception exn =>
+    Logging.errorWithExn(
+      exn->Utils.prettifyExn,
+      `Failed to listen for sidecar webhooks at ${Env.Sidecar.indexerInternalUrl} (ENVIO_INDEXER_INTERNAL_URL). Indexing goes on; the sidecar's webhooks won't arrive.`,
     )
-    server := Some(listening)
-    listening->Express.onError(error => reject(error->JsExn.anyToExnInternal))
-  })
+    None
+  }
 }

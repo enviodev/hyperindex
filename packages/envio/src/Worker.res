@@ -57,6 +57,8 @@ type parentMessage =
   // Every chain in the run has reached the head, so this worker may enter the
   // reorg threshold and switch to realtime with the rest of them.
   | @as("release-realtime") ReleaseRealtime
+  // A webhook the supervisor's listener accepted for one of this worker's chains.
+  | @as("webhook") Webhook({delivery: Internal.webhookDelivery})
 
 @tag("kind")
 type workerMessage =
@@ -94,7 +96,11 @@ let exitAfterReporting = (~metrics: Metrics.t) =>
 // the supervisor can merge every worker's into the one snapshot the run serves,
 // and listens for the one decision the supervisor makes on the run's behalf.
 // Does nothing in a process nobody forked.
-let bindRun = (~getMetrics: unit => Metrics.t, ~onReleaseRealtime: unit => unit) =>
+let bindRun = (
+  ~getMetrics: unit => Metrics.t,
+  ~onReleaseRealtime: unit => unit,
+  ~onWebhook: Internal.webhookDelivery => unit,
+) =>
   if isEnabled {
     Metrics.startRuntimeCollectors()
     let _intervalId = setInterval(
@@ -104,6 +110,7 @@ let bindRun = (~getMetrics: unit => Metrics.t, ~onReleaseRealtime: unit => unit)
     NodeJs.Process.onMessage((message: parentMessage) =>
       switch message {
       | ReleaseRealtime => onReleaseRealtime()
+      | Webhook({delivery}) => onWebhook(delivery)
       }
     )
   }

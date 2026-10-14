@@ -324,37 +324,39 @@ type GlobalSidecarCaller = Global extends { sidecar: infer C extends SidecarCont
   ? SidecarCaller<C>
   : NotConfigured<"context.sidecar", "Add `sidecar: { contract, entry }`">;
 
-type GlobalSidecarContract = Global extends { sidecar: infer C extends SidecarContract } ? C : never;
-
 /** The webhooks the indexer itself posts about `context.sidecar` calls. */
 export type SidecarBuiltinWebhookName = "sidecar.ack" | "sidecar.dropped";
 
-type ContractWebhookName = [GlobalSidecarContract] extends [never]
-  ? never
-  : SidecarWebhookName<GlobalSidecarContract>;
-
 /** A name `indexer.onWebhook` accepts: the contract's webhooks, the built-ins,
- *  or any other name `emit.raw` may post. */
-export type WebhookName = ContractWebhookName | SidecarBuiltinWebhookName | (string & {});
+ *  or any other name `emit.raw` may post. The contract is inferred where it is
+ *  used, as for `GlobalSidecarCaller`, so its index signature never leaks in. */
+export type WebhookName =
+  | (Global extends { sidecar: infer C extends SidecarContract } ? SidecarWebhookName<C> : never)
+  | SidecarBuiltinWebhookName
+  | (string & {});
 
 /** The call a built-in webhook is about, with its input decoded. */
-export type SidecarCallRef = [GlobalSidecarContract] extends [never]
-  ? { readonly callId: string; readonly fn: string; readonly input: unknown }
-  : {
-      [K in SidecarFunctionName<GlobalSidecarContract>]: {
-        readonly callId: string;
-        readonly fn: K;
-        readonly input: SidecarFunctionInput<GlobalSidecarContract, K>;
-      };
-    }[SidecarFunctionName<GlobalSidecarContract>];
+type SidecarCallRefOf<C extends SidecarContract> = {
+  [K in SidecarFunctionName<C>]: {
+    readonly callId: string;
+    readonly fn: K;
+    readonly input: SidecarFunctionInput<C, K>;
+  };
+}[SidecarFunctionName<C>];
 
-type WebhookBodyOf<N extends string> = N extends "sidecar.ack"
-  ? SidecarCallRef
+type WebhookBodyFrom<C extends SidecarContract, N extends string> = N extends "sidecar.ack"
+  ? SidecarCallRefOf<C>
   : N extends "sidecar.dropped"
-    ? SidecarCallRef & { readonly reason: string }
-    : N extends ContractWebhookName
-      ? SidecarWebhookBody<GlobalSidecarContract, N>
+    ? SidecarCallRefOf<C> & { readonly reason: string }
+    : N extends SidecarWebhookName<C>
+      ? SidecarWebhookBody<C, N>
       : unknown;
+
+type WebhookBodyOf<N extends string> = Global extends { sidecar: infer C extends SidecarContract }
+  ? WebhookBodyFrom<C, N>
+  : N extends SidecarBuiltinWebhookName
+    ? { readonly callId: string; readonly fn: string; readonly input: unknown; readonly reason?: string }
+    : unknown;
 
 /** What an `indexer.onWebhook` handler is handed about the webhook. */
 export type OnWebhookEvent<N extends string = string> = {
