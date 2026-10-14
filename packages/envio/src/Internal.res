@@ -770,6 +770,38 @@ external getItemRunsAfterBlock: item => bool = "runsAfterBlock"
 @set
 external markItemRunsAfterBlock: (item, bool) => unit = "runsAfterBlock"
 
+// Subgraph mode only. A call trigger travels through fetch and batching as an
+// event item (see `subgraph/calls-source.ts`), and graph-node orders it by its
+// transaction among the logs, so its item carries a rank: 1 for a call
+// handler's, 2 for the `filter: call` block handler's. Absent on every log.
+@get
+external getItemCallRank: item => option<int> = "callRank"
+@set
+external setItemCallRank: (item, int) => unit = "callRank"
+@get
+external getItemTransactionIndex: item => int = "transactionIndex"
+
+// Flips on when the first call item is built, so a run without call triggers
+// compares items exactly as before.
+let callOrderingActive = ref(false)
+
+// The call trigger an event of this name is, if it is one: the subgraph
+// translator names them `__envio_call_<selector>_<function>`, and the block
+// handler's `__envio_call_any`. No log carries either name.
+let callRankOfEventName = (name: string): option<int> =>
+  if name->String.startsWith("__envio_call_any") {
+    Some(2)
+  } else if name->String.startsWith("__envio_call_") {
+    Some(1)
+  } else {
+    None
+  }
+
+let markItemCall = (item, ~rank) => {
+  item->setItemCallRank(rank)
+  callOrderingActive := true
+}
+
 let getItemChainId = item =>
   switch item {
   | Event({chainId})

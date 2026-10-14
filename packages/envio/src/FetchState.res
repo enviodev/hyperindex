@@ -959,6 +959,62 @@ let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
   }
 }
 
+// Within a block, graph-node runs a subgraph's triggers in this order: logs and
+// calls by transaction — a transaction's logs, then its calls in trace order —
+// then the block triggers of `filter: call` handlers, one per call, then the
+// block handlers. A call item is told apart by its rank (see
+// `Internal.getItemCallRank`), and only a run that has one pays for this
+// comparison. Creation-block items (rank 4) keep their place after everything
+// else, ordered among themselves by the same transaction rule.
+let blockOrderRank = (item: Internal.item) =>
+  if item->Internal.getItemRunsAfterBlock {
+    4
+  } else if item->Internal.getItemKind !== 0 {
+    3
+  } else if item->Internal.getItemCallRank === Some(2) {
+    2
+  } else {
+    0
+  }
+
+let compareWithCalls = (a: Internal.item, b: Internal.item): int => {
+  let ra = blockOrderRank(a)
+  let rb = blockOrderRank(b)
+  if ra !== rb {
+    ra < rb ? -1 : 1
+  } else if ra === 3 {
+    // Block handlers: as before.
+    let la = a->Internal.getItemLogIndex
+    let lb = b->Internal.getItemLogIndex
+    if la != lb {
+      la < lb ? -1 : 1
+    } else {
+      compareTiebreak(a, b)
+    }
+  } else {
+    let ta = a->Internal.getItemTransactionIndex
+    let tb = b->Internal.getItemTransactionIndex
+    if ta != tb {
+      ta < tb ? -1 : 1
+    } else {
+      // A transaction's logs precede its calls.
+      let ca = a->Internal.getItemCallRank->Option.isSome ? 1 : 0
+      let cb = b->Internal.getItemCallRank->Option.isSome ? 1 : 0
+      if ca !== cb {
+        ca < cb ? -1 : 1
+      } else {
+        let la = a->Internal.getItemLogIndex
+        let lb = b->Internal.getItemLogIndex
+        if la != lb {
+          la < lb ? -1 : 1
+        } else {
+          compareTiebreak(a, b)
+        }
+      }
+    }
+  }
+}
+
 // Total order on buffer items: block, then item kind, then the ecosystem's
 // within-block order, then registration index. Returns a plain int (-1/0/1)
 // with explicit field comparisons so it can be called directly from the
@@ -976,6 +1032,8 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   let bb = b->Internal.getItemBlockNumber
   if ba != bb {
     ba < bb ? -1 : 1
+  } else if Internal.callOrderingActive.contents {
+    compareWithCalls(a, b)
   } else {
     let ka = a->Internal.getItemRunsAfterBlock ? 2 : a->Internal.getItemKind
     let kb = b->Internal.getItemRunsAfterBlock ? 2 : b->Internal.getItemKind
@@ -1000,6 +1058,7 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
 let isSameLog = (a: Internal.item, b: Internal.item): bool =>
   a->Internal.getItemKind === 0 &&
   b->Internal.getItemKind === 0 &&
+  a->Internal.getItemCallRank === b->Internal.getItemCallRank &&
   a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
   a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
   switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {

@@ -15,6 +15,8 @@ import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
+import { install as installCallSource } from "../sources/CallSource.res.mjs";
+import { fetchCalls, resetCallBackends } from "./calls-source.ts";
 import {
   currentScope,
   runInScope,
@@ -46,6 +48,10 @@ import {
   json as jsonNamespace,
   makeBlockHandlerBlock,
   makeEvent as makeGraphEvent,
+  makeCall as makeGraphCall,
+  makeCallBlock,
+  callInputDecodes,
+  type CallKind,
   commitRegisterWrites,
   resetRegisterStore,
   POSITION_BLOCK,
@@ -70,6 +76,7 @@ import { unknown, unsupported } from "./errors.ts";
 import { runSyncCounted } from "./stats.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
+const REGEX_SHIM_URL = new URL("./assemblyscript-regex.ts", import.meta.url).href;
 const ENVIO_PACKAGE_URL = new URL("../../", import.meta.url).href;
 
 const jsonFromString = (line: string) => (jsonNamespace as any).fromString(line);
@@ -94,8 +101,21 @@ type EventHandler = {
   /** `topic1`–`topic3`, keyed by position among the indexed parameters. */
   topics?: Record<string, string[]>;
 };
+type CallHandler = {
+  function: string;
+  handler: string;
+  /** The call trigger the translator minted for it. */
+  name: string;
+  inputs?: { name: string; type: string }[];
+  outputs?: { name: string; type: string }[];
+};
 /** As the translator serialises its `BlockFilter`. */
-type BlockHandler = { handler: string; filter: { every: number } | "once" };
+type BlockHandler = {
+  handler: string;
+  filter: { every: number } | "once" | "call";
+  /** The call trigger a `filter: call` handler runs on. */
+  callEvent?: string;
+};
 type DataSource = {
   kind: string;
   name: string;
@@ -107,6 +127,7 @@ type DataSource = {
   mappingFile: string;
   entities?: string[];
   eventHandlers: EventHandler[];
+  callHandlers?: CallHandler[];
   blockHandlers: BlockHandler[];
   context?: Record<string, { type: string; data: string }>;
   isTemplate: boolean;
@@ -133,6 +154,19 @@ type SubgraphConfig = {
 } & SubgraphSchema;
 
 const AS_DATE = Symbol.for("envio.subgraph.date");
+
+/**
+ * Where a call sits in its chain for the register pass's store: after every log
+ * of its block, then by transaction and position in the transaction. graph-node
+ * orders a call by its transaction among the logs (after that transaction's own
+ * events); the handler pass follows that order exactly, so this only steers
+ * what a register pass may read — a create decided on state written by a log of
+ * a later transaction of the same block reads it one transaction early.
+ */
+function callPosition(event: any): number {
+  const transaction = Math.min(Number(event.transaction?.transactionIndex ?? 0), 499);
+  return event.block.number * POSITION_BLOCK + 500_000 + transaction * 1000 + Math.min(event.logIndex, 999);
+}
 
 let hooksInstalled = false;
 let projectRoot: string | null = null;
@@ -172,6 +206,9 @@ function installResolveHook(root: string) {
       ) {
         return { url: SHIM_URL, shortCircuit: true };
       }
+      // A library of AssemblyScript's own memory-level matching, which the
+      // JavaScript transform of a mapping library can't run.
+      if (specifier === "assemblyscript-regex") return { url: REGEX_SHIM_URL, shortCircuit: true };
       let resolved;
       try {
         resolved = nextResolve(specifier, context);
@@ -744,6 +781,9 @@ function makeFileRunner(
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook(config.root);
   resetRpcClients();
+  resetCallBackends();
+  // The chain's sources read calls only when a handler wants them.
+  installCallSource(fetchCalls, config.rpcUrls ?? []);
   resetRegisterStore();
   registeredTemplates.clear();
   unregisteredCreates.clear();
@@ -1038,10 +1078,14 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       templateNames.size === 0
         ? []
         : registerEveryHandler
-          ? source.eventHandlers.map((handler) => handler.handler)
+          ? [...source.eventHandlers, ...(source.callHandlers ?? []), ...source.blockHandlers].map(
+              (handler) => handler.handler,
+            )
           : subgraphCreatingHandlers(
               path.resolve(config.root, source.mappingFile),
-              source.eventHandlers.map((handler) => handler.handler),
+              [...source.eventHandlers, ...(source.callHandlers ?? []), ...source.blockHandlers].map(
+                (handler) => handler.handler,
+              ),
             ),
     );
     // graph-node matches a data source without `source.address` against every
@@ -1129,7 +1173,102 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       }
     }
 
+    // A call is an envio item like a log: the source that reads traces produces
+    // it, and everything between the fetch and here — partitioning, order, the
+    // register pass, rollback — treats it as one. Its params carry the raw
+    // calldata and return data, decoded against the function's ABI on demand.
+    const callScope = (event: any, context: any, mode: Scope["mode"]): Scope => ({
+      context,
+      event,
+      mode,
+      schema,
+      dataSource: {
+        name: source.name,
+        address: event.srcAddress,
+        chainId: event.chainId,
+        network: source.network ?? "",
+        context: source.context ?? {},
+      },
+      registered: new Set(),
+      blockNumber: event.block.number,
+      position: callPosition(event),
+      mappingExports: mapping,
+    });
+
+    const registerCallHandler = (
+      trigger: string,
+      handlerName: string,
+      kind: CallKind | null,
+      run: (event: any, call: unknown) => unknown,
+    ) => {
+      const fn = mapping[handlerName];
+      if (typeof fn !== "function") return;
+      const CallClass = mapping[EVENT_CLASSES_EXPORT]?.[handlerName] ?? eventClasses.get(fn) ?? ethereum.Call;
+      const make = (event: any) =>
+        kind === null ? makeCallBlock(event.block) : makeGraphCall(event, kind, CallClass);
+      const target = { contract: config.contractAccessors[source.name], event: trigger };
+
+      indexer.onEvent(target, async ({ event, context }: any) => {
+        if ((skipPreload && context.isPreload) || !owns(event) || !live(event)) return;
+        // graph-node skips a call whose calldata doesn't decode against the
+        // function, with a warning — a proxy's fallback shares selectors.
+        if (kind !== null && !callInputDecodes(kind, event.params.callInput)) {
+          if (!context.isPreload) {
+            context.log.warn(
+              `Skipping a call to ${event.srcAddress} in transaction ${event.transaction.hash}: its input does not decode as ${kind.location}`,
+            );
+          }
+          return;
+        }
+        const call = make(event);
+        await (context as any).runSync(() =>
+          runInScope(callScope(event, context, "handler"), () => run(event, call)),
+        );
+      });
+
+      if (creating.has(handlerName)) {
+        indexer.contractRegister(target, async ({ event, context }: any) => {
+          if (!owns(event) || !live(event)) return;
+          if (kind !== null && !callInputDecodes(kind, event.params.callInput)) return;
+          await primeOnceHandlers(event.chainId, context);
+          const call = make(event);
+          const scope = callScope(event, context, "register");
+          const { pass, settle } = startRegisterPass(scope.position ?? 0);
+          scope.pass = pass;
+          try {
+            await runRegisterRounds(scope, () => run(event, call));
+          } finally {
+            settle();
+          }
+        });
+      }
+    };
+
+    for (const handler of source.callHandlers ?? []) {
+      registerCallHandler(
+        handler.name,
+        handler.handler,
+        {
+          location: `data source "${source.name}" → callHandlers → "${handler.function}"`,
+          inputs: handler.inputs ?? [],
+          outputs: handler.outputs ?? [],
+        },
+        (_, call) => mapping[handler.handler](call),
+      );
+    }
+
     for (const handler of source.blockHandlers) {
+      // Once per call to the data source's address in the block, after the
+      // block's logs and calls — graph-node's `WithCallTo` block trigger.
+      if (handler.filter === "call" && handler.callEvent) {
+        registerCallHandler(handler.callEvent, handler.handler, null, (_, block) =>
+          mapping[handler.handler](block),
+        );
+      }
+    }
+
+    for (const handler of source.blockHandlers) {
+      if (handler.filter === "call") continue;
       const fn = mapping[handler.handler];
       if (typeof fn !== "function") continue;
       const start = source.startBlock ?? 0;

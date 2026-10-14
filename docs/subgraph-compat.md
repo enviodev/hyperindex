@@ -62,7 +62,9 @@ by name. Newer than 0.0.9 is a §7 error.
 | `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` with a non-empty context → §7 error (nowhere to keep it per created address) | ⚠️ |
 | `features: [...]` | a declaration, not a use — whatever it enables is refused where the manifest or schema uses it | — |
 | `graft` | **ignored**: envio can't copy another deployment's data, so the subgraph indexes from its data sources' own `startBlock`s — a full re-index. Startup logs a warning saying so, and a louder one naming any data source that starts after the graft block (the base deployment may hold data from before it that a re-index cannot reproduce; lower that `startBlock` to the base's start). The result equals the grafted deployment only if the base's mappings produced the same data as these mappings do up to the graft block. graph-node's docs and source give no rule that can be applied offline (a graft is a store-level copy: `Graft::validate` only checks the base's head and health); the one record of where the base started is its manifest on IPFS, which startup reads best-effort (`ENVIO_SUBGRAPH_GRAFT_CHECK=off` skips it, following `graft.base` up its own grafts) and reports the exact blocks a re-index would miss | ⚠️ |
-| `callHandlers`, block `filter: call`, block handlers on a template, composition (1.3.0) | — | ❌ §7 error |
+| `callHandlers` | an envio event named `__envio_call_<selector>_<function>` on the data source's contract; the source reads **calls** instead of logs for it (§4a). The first handler for a selector wins, as in graph-node | ✅ needs traces (§4a) |
+| Block handler `filter: {kind: call}` | an envio event `__envio_call_any`: one item per call to the address, ordered after the block's logs and calls and before its block handlers | ✅ needs traces (§4a) |
+| Block handlers on a template, composition (1.3.0) | — | ❌ §7 error |
 
 ## 3. Schema → envio schema
 
@@ -215,6 +217,49 @@ later block, with a causality region of its own. Here:
   404 is cached as `null`; a gateway that never answered is not, so a later create asks again.
 - *Bad CID.* A source that doesn't parse as a CID is ignored with a warning, as graph-node does.
 - Arweave sources are the transaction id (with an optional path).
+
+### 4a. Call triggers
+
+graph-node runs a call handler for a successful call to the data source's
+address — top level or internal, `CALL`, `STATICCALL`, `DELEGATECALL` or
+`CALLCODE` (a delegatecall's `to` is the implementation, so a proxy's logic
+contract is watched under its own address) — whose input is at least a
+selector long and begins with the handler's, from a transaction that
+succeeded. A call that itself reverted is not a trigger; a successful call
+under a reverted parent frame is, as in graph-node. A `filter: call` block
+handler runs once per such call to the address, whatever the function.
+
+*Where it runs.* Each of a chain's sources is wrapped (`sources/CallSource.res`):
+it fetches a query's logs as before and the calls of the same block range from
+a trace backend (`subgraph/calls-source.ts`), returning each as an event item.
+Partitioning, the address gate, `startBlock`/`endBlock`, the register pass (a
+call handler may `create()` a template), reorg hashes and rollback therefore
+treat a call as one more event. The item carries the call's raw input and
+output and its immediate caller as event params; the runtime decodes them
+against the function's ABI into `ethereum.Call` (`inputValues`,
+`outputValues`, `from`, `to`, `block`, `transaction`; the generated call class
+is the handler's declared parameter type, as for events). A call whose calldata
+doesn't decode is skipped with a warning, as graph-node skips it.
+
+*Order.* graph-node orders a block's triggers by transaction: a transaction's
+logs, then its calls in trace order; then the `filter: call` block triggers,
+one per call; then the block handlers. The buffer's comparator does the same
+once a call item exists (a run without call handlers compares exactly as
+before): `transactionIndex`, logs before calls, then the call's trace address
+(a depth-first position, so a parent precedes its children). The register
+pass's store sees calls after every log of their block (it is an approximation
+in what a register pass may read; the handler pass is exact).
+
+*Backends.* HyperSync serves traces at `<chainId>-traces.hypersync.xyz` for
+Ethereum (1), Gnosis (100), Base (8453), Arbitrum One (42161) and Monad (143);
+every other chain, Polygon, BNB Chain and Optimism included, answers connection
+refused there. Everywhere else the node is asked, through `ENVIO_SUBGRAPH_RPC`:
+`trace_filter` where it answers a short probe, else `debug_traceBlockByNumber`
+with the `callTracer`, **one request per block** — bound the block window on
+those chains. `ENVIO_SUBGRAPH_TRACE_MODE` (`hypersync`, `trace_filter`,
+`debug`) forces one; `ENVIO_SUBGRAPH_TRACES_URL` points HyperSync's at another
+endpoint (`{chainId}` is replaced); `ENVIO_SUBGRAPH_TRACE_BLOCKS_PER_PAGE`
+(default 25) and `ENVIO_SUBGRAPH_TRACE_FILTER_BLOCKS` (500) size a page.
 
 **Register pass.** `dataSource.create` must reach envio's `contractRegister`,
 which runs at fetch time — before any entities exist. For each
@@ -557,9 +602,8 @@ refuse instead, so behavior never silently diverges:
 
 | Feature | Detected |
 |---|---|
-| `callHandlers` | translation (manifest) |
+| A call handler on a data source with no `source.address`, or whose function the ABI lacks | translation (manifest) |
 | File data sources outside `templates` (`file/ipfs`, `file/arweave`) | translation (manifest) |
-| `blockHandlers` with `filter: call` | translation (manifest) |
 | `blockHandlers` on a template | translation (manifest) |
 | `graft` | accepted; startup warning, loud when a source starts after the graft block |
 | Subgraph composition (`kind: subgraph`, `entityHandlers`) | translation (manifest) |

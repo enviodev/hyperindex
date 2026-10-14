@@ -225,6 +225,9 @@ pub enum BlockFilter {
     Every(u64),
     /// `filter: {kind: once}` — runs a single time at the start block.
     Once,
+    /// `filter: {kind: call}` — runs once per call to the data source's address
+    /// (any function, internal calls included) in a block that has one.
+    Call,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -277,6 +280,39 @@ impl EventInput {
 pub struct BlockHandler {
     pub handler: String,
     pub filter: BlockFilter,
+    /// The name of the call trigger that carries a `filter: call` handler;
+    /// minted by the translator, empty for every other filter.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub call_event: String,
+}
+
+/// One `callHandlers` entry: the handler runs for a successful call to the data
+/// source's address whose input starts with the function's 4-byte selector.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallHandler {
+    /// The function signature exactly as the manifest spells it. graph-node
+    /// takes the selector from the keccak of this text, as written.
+    pub function: String,
+    pub handler: String,
+    /// The name the runtime registers the handler under: the call trigger the
+    /// translator minted for it, which carries the call through envio's fetch.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// The function's parameters in ABI order, filled in from the ABI.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<CallParam>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<CallParam>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallParam {
+    /// As the ABI spells it, empty when the ABI left it unnamed.
+    pub name: String,
+    #[serde(rename = "type")]
+    pub abi_type: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -302,6 +338,7 @@ pub struct DataSource {
     pub mapping_file: String,
     pub entities: Vec<String>,
     pub event_handlers: Vec<EventHandler>,
+    pub call_handlers: Vec<CallHandler>,
     pub block_handlers: Vec<BlockHandler>,
     /// Values the manifest attaches to this data source, read back by
     /// `dataSource.context()`.
@@ -608,6 +645,7 @@ fn parse_data_source(
     let mut mapping_file = String::new();
     let mut entities = Vec::new();
     let mut event_handlers = Vec::new();
+    let mut call_handlers: Vec<CallHandler> = Vec::new();
     let mut block_handlers = Vec::new();
 
     if let Some(mapping) = obj.get("mapping") {
@@ -690,16 +728,14 @@ fn parse_data_source(
             }
 
             for (idx, raw) in mapping.seq("callHandlers").into_iter().enumerate() {
-                let handler = raw
-                    .as_mapping()
-                    .and_then(|m| m.get(Value::String("handler".into())))
-                    .and_then(|v| v.as_str())
-                    .map(|s| format!(" → \"{s}\""))
-                    .unwrap_or_else(|| format!("[{idx}]"));
-                report.unsupported(
-                    "call handlers",
-                    format!("data source \"{name}\" → callHandlers{handler}"),
-                );
+                if let Some(handler) = parse_call_handler(
+                    raw,
+                    &format!("{path}.mapping.callHandlers[{idx}]"),
+                    &name,
+                    report,
+                ) {
+                    call_handlers.push(handler);
+                }
             }
 
             for (idx, raw) in mapping.seq("entityHandlers").into_iter().enumerate() {
@@ -739,6 +775,19 @@ fn parse_data_source(
 
     obj.finish(report);
 
+    // graph-node refuses a call trigger it has no address to look for.
+    let needs_address = !call_handlers.is_empty()
+        || block_handlers
+            .iter()
+            .any(|handler| handler.filter == BlockFilter::Call);
+    if needs_address && address.is_none() && !is_template {
+        report.unknown(
+            "a call handler on a data source without `source.address`, which graph-node refuses \
+             as well",
+            where_("callHandlers"),
+        );
+    }
+
     Some(DataSource {
         kind,
         name,
@@ -753,6 +802,7 @@ fn parse_data_source(
         mapping_file,
         entities,
         event_handlers,
+        call_handlers,
         block_handlers,
         context,
         is_template,
@@ -945,6 +995,35 @@ pub fn canonical_event_hash(event: &str) -> Option<String> {
     Some(alloy_primitives::keccak256(signature.as_bytes()).to_string())
 }
 
+fn parse_call_handler(
+    raw: &Value,
+    path: &str,
+    data_source: &str,
+    report: &mut Report,
+) -> Option<CallHandler> {
+    let mut obj = Obj::new(raw, path, report)?;
+    let function = obj.string("function").unwrap_or_default();
+    let handler = obj.string("handler").unwrap_or_default();
+    obj.finish(report);
+
+    if function.trim().is_empty() || !function.contains('(') || !function.trim_end().ends_with(')')
+    {
+        report.unknown(
+            "the call handler without a function signature",
+            format!("data source \"{data_source}\" → callHandlers → \"{handler}\""),
+        );
+        return None;
+    }
+
+    Some(CallHandler {
+        function,
+        handler,
+        name: String::new(),
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+    })
+}
+
 fn parse_block_handler(
     raw: &Value,
     path: &str,
@@ -961,9 +1040,7 @@ fn parse_block_handler(
             let kind = filter_obj.string("kind").unwrap_or_default();
             let every = filter_obj.u64("every");
             match kind.as_str() {
-                "call" => {
-                    report.unsupported("block handlers with `filter: call`", where_.clone());
-                }
+                "call" => filter = BlockFilter::Call,
                 "polling" => filter = BlockFilter::Every(every.unwrap_or(1).max(1)),
                 "once" => filter = BlockFilter::Once,
                 other => report.unknown(
@@ -977,7 +1054,11 @@ fn parse_block_handler(
 
     obj.finish(report);
 
-    Some(BlockHandler { handler, filter })
+    Some(BlockHandler {
+        handler,
+        filter,
+        call_event: String::new(),
+    })
 }
 
 #[cfg(test)]
@@ -1172,11 +1253,74 @@ dataSources:
             (
                 report.findings().len(),
                 rendered.contains("doesn't support grafting"),
-                rendered.contains("doesn't support call handlers"),
-                rendered.contains("doesn't support block handlers with `filter: call`"),
-                rendered.contains("data source \"Token\" → callHandlers → \"handleApprove\""),
             ),
-            (2, false, true, true, true)
+            (0, false)
+        );
+    }
+
+    #[test]
+    fn reads_call_handlers_and_call_filtered_block_handlers() {
+        let yaml = r#"
+specVersion: 0.0.8
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Token
+    network: mainnet
+    source:
+      address: "0x1"
+      abi: Token
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      callHandlers:
+        - function: approve(address,uint256)
+          handler: handleApprove
+      blockHandlers:
+        - handler: handleBlockCall
+          filter:
+            kind: call
+      file: ./src/token.ts
+  - kind: ethereum/contract
+    name: Anywhere
+    network: mainnet
+    source:
+      abi: Token
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      callHandlers:
+        - function: approve(address,uint256)
+          handler: handleApprove
+      file: ./src/token.ts
+"#;
+        let (manifest, report) = parse_ok(yaml);
+        let manifest = manifest.unwrap();
+        let token = &manifest.data_sources[0];
+        assert_eq!(
+            (
+                token.call_handlers[0].function.as_str(),
+                token.call_handlers[0].handler.as_str(),
+                token.block_handlers[0].filter.clone(),
+            ),
+            (
+                "approve(address,uint256)",
+                "handleApprove",
+                BlockFilter::Call
+            )
+        );
+        // graph-node refuses a call trigger on a data source with no address.
+        let rendered = report.to_string();
+        assert!(
+            report.findings().len() == 1 && rendered.contains("data source \"Anywhere\""),
+            "{rendered}"
         );
     }
 

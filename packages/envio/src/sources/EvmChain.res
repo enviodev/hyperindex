@@ -83,5 +83,11 @@ let makeSources = (
     let _ = sources->Array.push(source)
   })
 
-  sources
+  sources->CallSource.wrapSources(
+    ~onEventRegistrations=onEventRegistrations->(
+      Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
+    ),
+    ~addressStore,
+    ~ecosystem=Evm,
+  )
 }
