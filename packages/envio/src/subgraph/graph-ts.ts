@@ -398,24 +398,54 @@ class BigInt_ extends Uint8Array {
 export { BigInt_ as BigInt };
 
 /**
+ * Carried by each BigNumber `value` handed to envio's store: the decimal it was
+ * made from, so an entity read back from memory isn't printed and parsed again.
+ */
+const DECIMAL = Symbol("envio.subgraph.decimal");
+
+/** Mappings parse the same few literals over and over: `"1"`, `"10"`, `"0"`. */
+const parsedDecimals = new Map<string, GraphNodeDecimal.Decimal>();
+
+function parseDecimal(text: string): GraphNodeDecimal.Decimal {
+  let decimal = parsedDecimals.get(text);
+  if (decimal === undefined) {
+    decimal = GraphNodeDecimal.parse(text);
+    if (parsedDecimals.size >= 1024) parsedDecimals.clear();
+    parsedDecimals.set(text, decimal);
+  }
+  return decimal;
+}
+
+/**
  * Every value is held as graph-node holds it: normalized to 34 significant
- * digits by `graph-node-decimal`, on construction and after every operation.
- * `value` is the same number for envio's store and comparisons.
+ * digits by `graph-node-decimal` after every operation, and once more as it
+ * would be crossing back into graph-node's host (`BigDecimal::new`), which is
+ * what a later operation, `toString` or the store sees. `value` is the same
+ * number for envio's store, made only when something asks for it.
  */
 export class BigDecimal {
   readonly decimal: GraphNodeDecimal.Decimal;
-  readonly value: BigNumber;
+  private _value: BigNumber | undefined;
 
   constructor(value: GraphNodeDecimal.Decimal | BigNumber | BigInt_ | string | number) {
     this.decimal =
       value instanceof BigInt_
         ? GraphNodeDecimal.fromInteger(value.value)
         : value instanceof BigNumber
-          ? GraphNodeDecimal.parse(value.toFixed())
+          ? ((value as BigNumber & { [DECIMAL]?: GraphNodeDecimal.Decimal })[DECIMAL] ??
+            GraphNodeDecimal.parse(value.toFixed()))
           : typeof value === "object"
             ? GraphNodeDecimal.normalize(value)
-            : GraphNodeDecimal.parse(String(value));
-    this.value = new BigNumber(GraphNodeDecimal.format(this.decimal));
+            : parseDecimal(String(value));
+  }
+
+  get value(): BigNumber {
+    if (this._value === undefined) {
+      const value = new BigNumber(GraphNodeDecimal.format(this.decimal));
+      (value as BigNumber & { [DECIMAL]?: GraphNodeDecimal.Decimal })[DECIMAL] = this.decimal;
+      this._value = value;
+    }
+    return this._value;
   }
 
   static fromString(value: string): BigDecimal {
@@ -425,7 +455,7 @@ export class BigDecimal {
     return new BigDecimal(0);
   }
   static compare(a: BigDecimal, b: BigDecimal): number {
-    return a.value.comparedTo(b.value);
+    return GraphNodeDecimal.compare(a.decimal, b.decimal);
   }
 
   toString(): string {
@@ -447,22 +477,22 @@ export class BigDecimal {
     return new BigDecimal(GraphNodeDecimal.divide(this.decimal, other.decimal));
   }
   equals(other: BigDecimal): boolean {
-    return this.value.isEqualTo(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) === 0;
   }
   notEqual(other: BigDecimal): boolean {
-    return !this.value.isEqualTo(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) !== 0;
   }
   lt(other: BigDecimal): boolean {
-    return this.value.isLessThan(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) < 0;
   }
   le(other: BigDecimal): boolean {
-    return this.value.isLessThanOrEqualTo(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) <= 0;
   }
   gt(other: BigDecimal): boolean {
-    return this.value.isGreaterThan(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) > 0;
   }
   ge(other: BigDecimal): boolean {
-    return this.value.isGreaterThanOrEqualTo(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) >= 0;
   }
   // graph-ts negates by subtracting from zero, which normalizes like any other
   // operation.
