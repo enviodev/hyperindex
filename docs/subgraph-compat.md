@@ -44,6 +44,7 @@ by name. Newer than 0.0.9 is a §7 error.
 | Feature | Mapping | Status |
 |---|---|---|
 | Data source (`address`, `abi`, `startBlock`) | `contracts` + `chains[].contracts`, `start_block` | ✅ |
+| `source.addresses` (a list; not a graph-node field) | read as graph-node reads it: its `Source` has no such field and ignores unknown keys, so the data source has no address and matches every emitter (wildcard). graph-cli only lets it through when a file data source skips manifest validation | ✅ (parity, not the list) |
 | Data source `endBlock` | the chain's `end_block` when every data source on the network has one and no template is on it (graph-node's `max_end_block` rule); envio ends whole chains, so an endBlock that would stop only its own data source (beside open-ended sources or templates, or before another source's) is a §7 error | ⚠️ |
 | `network: mainnet` | `chains[].id` through a snapshot of The Graph's networks registry (ids and aliases; `scripts/sync-graph-networks.mjs`, drift reported in CI), then Envio's own chain names | ✅ |
 | Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper | ✅ |

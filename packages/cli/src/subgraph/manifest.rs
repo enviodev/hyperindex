@@ -522,6 +522,13 @@ fn parse_data_source(
             abi = source.string("abi");
             // File data sources point at a CID instead of a contract.
             source.get("file");
+            // Not a graph-node field: its `Source` (graph/src/data/subgraph)
+            // has `address` only and doesn't deny unknown keys, so a list here
+            // is dropped and the data source matches every emitter, as one
+            // without an address does. graph-cli lets it through when the
+            // manifest has a file data source, which skips its validation
+            // (flaunch). Read the same way, so the same events are indexed.
+            source.get("addresses");
             source.finish(report);
         }
     }
@@ -1363,6 +1370,21 @@ dataSources:
             manifest.unwrap().data_sources[0].address.clone(),
             Some("0x35Bcf3c30594191d53231E4FF333E8A770453e40".to_string())
         );
+    }
+
+    // flaunch's BidWall1 lists `addresses:`, which graph-node never reads: the
+    // data source has no address there, so it has none here either.
+    #[test]
+    fn reads_a_source_addresses_list_as_graph_node_does() {
+        let yaml = TOPIC0_MANIFEST
+            .replace(
+                "      address: \"35Bcf3c30594191d53231E4FF333E8A770453e40\"",
+                "      addresses:\n        - \"0x66681f10BA90496241A25e33380004f30Dfd8aa8\"",
+            )
+            .replace("          topic0: \"TOPIC0\"\n", "");
+        let (manifest, report) = parse_ok(&yaml);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(manifest.unwrap().data_sources[0].address, None);
     }
 
     // Balancer's cow-amm matches its anonymous LOG_CALL on topic0, the called
