@@ -1,8 +1,17 @@
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createRequire } from "node:module";
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { defineSidecar, S } from "envio";
-import { createSidecar, SidecarEmitError, type RetryPolicy, type RunningSidecar, type SidecarImpl } from "envio/sidecar";
+import {
+  createSidecar,
+  SidecarEmitError,
+  sidecarContractHash,
+  type RetryPolicy,
+  type RunningSidecar,
+  type SidecarImpl,
+} from "envio/sidecar";
 
 type Received = {
   readonly name: string;
@@ -130,7 +139,7 @@ afterEach(async () => {
 const startSidecar = async (
   indexer: FakeIndexer,
   impl: SidecarImpl<Contract>,
-  options: { startJobs?: boolean; env?: NodeJS.ProcessEnv; retry?: RetryPolicy } = {},
+  options: { startJobs?: boolean; env?: NodeJS.ProcessEnv; retry?: RetryPolicy; entry?: string } = {},
 ): Promise<RunningSidecar> => {
   // Off unless a test is about the breaker: other tests count every attempt.
   const env = { ENVIO_EMIT_BREAKER_FAILURES: "0", ...(options.env ?? process.env) };
@@ -143,12 +152,15 @@ const startSidecar = async (
     retry: options.retry ?? { attempts: 4, baseMs: 1, capMs: 5 },
     startJobs: options.startJobs ?? false,
     env,
+    ...(options.entry === undefined ? {} : { entry: options.entry }),
   });
   cleanups.push(running.close);
   return running;
 };
 
 const noop = { priceSwap: async () => {}, notify: async () => {} };
+
+const envioVersion = (createRequire(import.meta.url)("envio/package.json") as { version: string }).version;
 
 describe("sidecar runtime: calls", () => {
   it("acknowledges each call before running it, rejects what it cannot run, dedupes redelivery", async () => {
@@ -1100,7 +1112,7 @@ describe("sidecar runtime: /metrics", () => {
           },
         },
       },
-      { env: { ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS: "30" } },
+      { env: { ENVIO_SIDECAR_FUNCTION_TIMEOUT_MS: "30" }, entry: "src/sidecar.ts" },
     );
     const base = `http://127.0.0.1:${running.internalPort}`;
     await postJson(`${base}/envio/calls`, {
@@ -1149,7 +1161,11 @@ describe("sidecar runtime: /metrics", () => {
         "# TYPE envio_sidecar_emit_breaker_opened_total counter",
         "# TYPE envio_sidecar_job_runs_total counter",
         "# TYPE envio_sidecar_job_duration_seconds histogram",
+        "# TYPE envio_sidecar_job_last_run_timestamp_seconds gauge",
+        "# TYPE envio_sidecar_job_interval_seconds gauge",
         "# TYPE envio_sidecar_ready gauge",
+        "# TYPE envio_sidecar_start_time_seconds gauge",
+        "# TYPE envio_sidecar_info gauge",
       ],
       samples: {
         'envio_sidecar_function_calls_total{fn="priceSwap",outcome="accepted"}': 1,
@@ -1174,61 +1190,296 @@ describe("sidecar runtime: /metrics", () => {
         envio_sidecar_emits_pending: 0,
         envio_sidecar_emit_breaker_open: 0,
         envio_sidecar_ready: 1,
+        envio_sidecar_start_time_seconds: expect.any(Number),
+        [`envio_sidecar_info{version="${envioVersion}",contract_hash="${sidecarContractHash(contract)}",entry="src/sidecar.ts"}`]: 1,
       },
+    });
+  });
+
+  it("times jobs: last run per outcome, interval, and the start time", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const before = Date.now() / 1_000;
+    const running = await startSidecar(
+      indexer,
+      {
+        functions: noop,
+        jobs: {
+          ok: { every: "1h", runOnStart: true, run: () => {} },
+          bad: {
+            every: "5m",
+            runOnStart: true,
+            run: () => {
+              throw new Error("no prices");
+            },
+          },
+          idle: { every: 90_000, run: () => {} },
+        },
+      },
+      { startJobs: true },
+    );
+    const url = `http://127.0.0.1:${running.internalPort}/metrics`;
+    const bothRan = (text: string) => /job="ok",outcome="succeeded"\} /.test(text) && /job="bad",outcome="failed"\} /.test(text);
+    let text = await (await fetch(url)).text();
+    for (let attempt = 0; attempt < 100 && !bothRan(text); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      text = await (await fetch(url)).text();
+    }
+    const after = Date.now() / 1_000;
+    const samples = Object.fromEntries(
+      text
+        .split("\n")
+        .filter((line) => /^envio_sidecar_(job_last_run_timestamp_seconds|job_interval_seconds|start_time_seconds)/.test(line))
+        .map((line) => {
+          const at = line.lastIndexOf(" ");
+          const value = Number(line.slice(at + 1));
+          return [line.slice(0, at), line.includes("_interval_") ? value : value >= before && value <= after];
+        }),
+    );
+    expect(samples).toEqual({
+      'envio_sidecar_job_last_run_timestamp_seconds{job="ok",outcome="succeeded"}': true,
+      'envio_sidecar_job_last_run_timestamp_seconds{job="bad",outcome="failed"}': true,
+      'envio_sidecar_job_interval_seconds{job="ok"}': 3600,
+      'envio_sidecar_job_interval_seconds{job="bad"}': 300,
+      'envio_sidecar_job_interval_seconds{job="idle"}': 90,
+      envio_sidecar_start_time_seconds: true,
     });
   });
 });
 
-describe("sidecar runtime: LOG_LEVEL", () => {
-  it("accepts the indexer's u-levels and falls back to info on anything else", async () => {
-    const indexer = await fakeIndexer();
-    cleanups.push(indexer.close);
-    const linesAt = async (level: string) => {
-      const lines: Array<{ level: number; msg: string }> = [];
-      const destination = new Writable({
-        write(chunk: Buffer, _encoding, done) {
-          for (const line of chunk.toString("utf8").split("\n")) {
-            if (line !== "") lines.push(JSON.parse(line) as { level: number; msg: string });
+describe("sidecar runtime: contract hash", () => {
+  it("is the first 16 hex chars of sha256 over the sorted function and webhook type names, blind to declaration order", () => {
+    const canonical = JSON.stringify({
+      functions: [
+        ["notify", "{ text: string; }"],
+        ["priceSwap", "{ swapId: string; amount: BigInt; }"],
+      ],
+      webhooks: [
+        ["swapPriced", "{ swapId: string; usd: number; amount: BigInt; }"],
+        ["tick", "{ at: number; }"],
+      ],
+    });
+    const reordered = defineSidecar({
+      webhooks: {
+        tick: { body: { at: S.number } },
+        swapPriced: { body: { swapId: S.string, usd: S.number, amount: S.bigint } },
+      },
+      functions: {
+        notify: { input: { text: S.string } },
+        priceSwap: { input: { swapId: S.string, amount: S.bigint } },
+      },
+    });
+    const changed = defineSidecar({
+      functions: {
+        priceSwap: { input: { swapId: S.string, amount: S.string } },
+        notify: { input: { text: S.string } },
+      },
+      webhooks: contract.webhooks,
+    });
+    expect({
+      hash: sidecarContractHash(contract),
+      reordered: sidecarContractHash(reordered),
+      changed: sidecarContractHash(changed) === sidecarContractHash(contract),
+    }).toEqual({
+      hash: createHash("sha256").update(canonical).digest("hex").slice(0, 16),
+      reordered: createHash("sha256").update(canonical).digest("hex").slice(0, 16),
+      changed: false,
+    });
+  });
+});
+
+// Runs one `notify` call and, with `jobs`, each job once, collecting raw log lines.
+const logLinesOf = async (
+  env: NodeJS.ProcessEnv,
+  impl: Partial<SidecarImpl<Contract>> = {},
+): Promise<string[]> => {
+  const indexer = await fakeIndexer();
+  cleanups.push(indexer.close);
+  const lines: string[] = [];
+  const destination = new Writable({
+    write(chunk: Buffer, _encoding, done) {
+      for (const line of chunk.toString("utf8").split("\n")) {
+        if (line !== "") lines.push(line);
+      }
+      done();
+    },
+  });
+  const jobsDone = Object.keys(impl.jobs ?? {}).map(() => deferred());
+  const jobs = Object.fromEntries(
+    Object.entries(impl.jobs ?? {}).map(([name, job], n) => [
+      name,
+      {
+        ...job,
+        runOnStart: true,
+        run: async (args: Parameters<typeof job.run>[0]) => {
+          try {
+            await job.run(args);
+          } finally {
+            jobsDone[n]?.resolve();
           }
-          done();
         },
-      });
-      const sidecar = createSidecar(contract, {
-        functions: {
-          ...noop,
-          notify: ({ log }) => {
-            log.debug("d");
-            log.info("i");
-            log.warn("w");
-          },
-        },
-      });
-      const running = await sidecar.start({
-        internalPort: 0,
-        publicPort: 0,
-        indexerInternalUrl: indexer.url,
-        env: { LOG_LEVEL: level },
-        logDestination: destination,
-        startJobs: false,
-      });
-      await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
-        batchId: "b-11",
-        calls: [call("1:1:1:0", "notify", { text: "hi" })],
-      });
-      await running.waitIdle();
-      await running.close();
-      return lines.filter((line) => ["d", "i", "w"].includes(line.msg) || line.msg.startsWith("LOG_LEVEL")).map((line) => line.msg);
+      },
+    ]),
+  );
+  const sidecar = createSidecar(contract, { functions: noop, ...impl, jobs });
+  const running = await sidecar.start({
+    internalPort: 0,
+    publicPort: 0,
+    indexerInternalUrl: indexer.url,
+    env: { ENVIO_EMIT_BREAKER_FAILURES: "0", ...env },
+    logDestination: destination,
+    startJobs: true,
+  });
+  await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+    batchId: "b-11",
+    calls: [call("1:1:1:0", "notify", { text: "hi" })],
+  });
+  await running.waitIdle();
+  await Promise.all(jobsDone.map((done) => done.promise));
+  await running.close();
+  return lines;
+};
+
+describe("sidecar runtime: log level", () => {
+  it("takes ENVIO_SIDECAR_LOG_LEVEL (default info, the pod's LOG_LEVEL ignored), u-levels, and falls back to info on anything else", async () => {
+    const notify = ({ log }: { log: { debug: (m: string) => void; info: (m: string) => void; warn: (m: string) => void } }) => {
+      log.debug("d");
+      log.info("i");
+      log.warn("w");
     };
-    const levels = ["udebug", "uinfo", "uwarn", "uerror", "debug", "silent", "nonsense"];
-    const seen = await Promise.all(levels.map(linesAt));
-    expect(Object.fromEntries(levels.map((level, n) => [level, seen[n]]))).toEqual({
+    const cases: Record<string, NodeJS.ProcessEnv> = {
+      udebug: { ENVIO_SIDECAR_LOG_LEVEL: "udebug" },
+      uinfo: { ENVIO_SIDECAR_LOG_LEVEL: "uinfo" },
+      uwarn: { ENVIO_SIDECAR_LOG_LEVEL: "uwarn" },
+      uerror: { ENVIO_SIDECAR_LOG_LEVEL: "uerror" },
+      debug: { ENVIO_SIDECAR_LOG_LEVEL: "debug" },
+      silent: { ENVIO_SIDECAR_LOG_LEVEL: "silent" },
+      nonsense: { ENVIO_SIDECAR_LOG_LEVEL: "nonsense" },
+      podTraceOnly: { LOG_LEVEL: "trace" },
+      sidecarWins: { LOG_LEVEL: "trace", ENVIO_SIDECAR_LOG_LEVEL: "warn" },
+    };
+    const names = Object.keys(cases);
+    const seen = await Promise.all(
+      names.map(async (name) =>
+        (await logLinesOf(cases[name] ?? {}, { functions: { ...noop, notify } }))
+          .map((line) => (JSON.parse(line) as { msg: string }).msg)
+          .filter((msg) => ["d", "i", "w"].includes(msg) || msg.startsWith("ENVIO_SIDECAR_LOG_LEVEL")),
+      ),
+    );
+    expect(Object.fromEntries(names.map((name, n) => [name, seen[n]]))).toEqual({
       udebug: ["d", "i", "w"],
       uinfo: ["i", "w"],
       uwarn: ["w"],
       uerror: [],
       debug: ["d", "i", "w"],
       silent: [],
-      nonsense: ["LOG_LEVEL 'nonsense' is not a known level, using 'info'", "i", "w"],
+      nonsense: ["ENVIO_SIDECAR_LOG_LEVEL 'nonsense' is not a known level, using 'info'", "i", "w"],
+      podTraceOnly: ["i", "w"],
+      sidecarWins: ["w"],
+    });
+  });
+});
+
+// What Alloy's `id-pods` pipeline (k8s charts/global/alloy/configs/id-pods.alloy)
+// does with a container line: `stage.json` with the JMESPath expressions
+// `"@timestamp"`, `"ecs.version"` and `"log.level"` (quoted, so literal top
+// level keys, not nested paths), then templates that default a missing
+// ecsVersion to 1.6.0 and a missing level to `stdout`.
+const alloyIdPods = (line: string) => {
+  const parsed = JSON.parse(line) as Record<string, unknown>;
+  const ecsVersion = parsed["ecs.version"];
+  const logLevel = parsed["log.level"];
+  return {
+    labels: {
+      ecsVersion: typeof ecsVersion === "string" && ecsVersion !== "" ? ecsVersion : "1.6.0",
+      level: typeof logLevel === "string" && logLevel !== "" ? logLevel : "stdout",
+    },
+    parsed,
+  };
+};
+
+describe("sidecar runtime: ECS logs under LOG_STRATEGY=ecs-*", () => {
+  it("writes ECS JSON that the id-pods Alloy pipeline labels by level, with fn, callId, chainId and job kept", async () => {
+    const lines = await logLinesOf(
+      { LOG_STRATEGY: "ecs-console", LOG_LEVEL: "trace", ENVIO_SIDECAR_LOG_LEVEL: "debug" },
+      {
+        functions: {
+          ...noop,
+          notify: ({ log }) => {
+            log.debug("pricing", { swaps: 2 });
+            log.error("price feed down", new Error("boom"));
+          },
+        },
+        jobs: {
+          sweep: {
+            every: "1h",
+            run: ({ log }) => {
+              log.warn("swept", { stale: 3 });
+            },
+          },
+        },
+      },
+    );
+    const parsed = lines.map(alloyIdPods);
+    const byMessage = (message: string) => parsed.find((line) => line.parsed.message === message);
+    const isoTimestamp = expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    expect({
+      everyLineLabelled: parsed.every(
+        ({ labels, parsed }) => labels.level !== "stdout" && parsed["ecs.version"] === "1.6.0" && !("level" in parsed) && !("msg" in parsed),
+      ),
+      pricing: byMessage("pricing"),
+      failed: byMessage("price feed down"),
+      swept: byMessage("swept"),
+      started: byMessage("sidecar started")?.labels,
+    }).toEqual({
+      everyLineLabelled: true,
+      pricing: {
+        labels: { ecsVersion: "1.6.0", level: "debug" },
+        parsed: {
+          "@timestamp": isoTimestamp,
+          "log.level": "debug",
+          "ecs.version": "1.6.0",
+          fn: "notify",
+          callId: "1:1:1:0",
+          chainId: 1,
+          swaps: 2,
+          message: "pricing",
+        },
+      },
+      failed: {
+        labels: { ecsVersion: "1.6.0", level: "error" },
+        parsed: {
+          "@timestamp": isoTimestamp,
+          "log.level": "error",
+          "ecs.version": "1.6.0",
+          fn: "notify",
+          callId: "1:1:1:0",
+          chainId: 1,
+          error: { type: "Error", message: "boom", stack_trace: expect.stringContaining("Error: boom") },
+          message: "price feed down",
+        },
+      },
+      swept: {
+        labels: { ecsVersion: "1.6.0", level: "warn" },
+        parsed: {
+          "@timestamp": isoTimestamp,
+          "log.level": "warn",
+          "ecs.version": "1.6.0",
+          job: "sweep",
+          stale: 3,
+          message: "swept",
+        },
+      },
+      started: { ecsVersion: "1.6.0", level: "info" },
+    });
+  });
+
+  it("keeps plain pino JSON under any other LOG_STRATEGY", async () => {
+    const lines = await logLinesOf({ LOG_STRATEGY: "console-pretty" });
+    const started = lines.map((line) => JSON.parse(line) as Record<string, unknown>).find((line) => line.msg === "sidecar started");
+    expect({ level: started?.level, labels: started === undefined ? undefined : alloyIdPods(JSON.stringify(started)).labels }).toEqual({
+      level: 30,
+      labels: { ecsVersion: "1.6.0", level: "stdout" },
     });
   });
 });

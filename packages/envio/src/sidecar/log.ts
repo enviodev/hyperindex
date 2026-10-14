@@ -1,3 +1,4 @@
+import ecsFormat from "@elastic/ecs-pino-format";
 import pino from "pino";
 import pretty from "pino-pretty";
 
@@ -14,6 +15,8 @@ export type SidecarLogger = {
 export type LoggerOptions = {
   readonly level?: string;
   readonly pretty?: boolean;
+  /** ECS JSON (`@timestamp`, `ecs.version`, `log.level`, `message`); wins over `pretty`. */
+  readonly ecs?: boolean;
   readonly destination?: pino.DestinationStream;
 };
 
@@ -51,14 +54,20 @@ export const resolveLogLevel = (raw: string | undefined): { level: string; unkno
 
 export const createRootLogger = (options: LoggerOptions = {}): pino.Logger => {
   const { level, unknown } = resolveLogLevel(options.level);
-  const usePretty = options.pretty ?? (process.stdout.isTTY === true && process.env.ENVIO_SIDECAR_LOG_JSON !== "true");
+  // The indexer's options under LOG_STRATEGY=ecs-* (Logging.res): an empty base
+  // drops pid and hostname. Alloy's id-pods pipeline reads the top level
+  // `log.level` and `ecs.version` keys to label the line.
+  const pinoOptions: pino.LoggerOptions = options.ecs === true ? { ...ecsFormat(), base: {}, level } : { level };
+  const usePretty =
+    options.ecs !== true &&
+    (options.pretty ?? (process.stdout.isTTY === true && process.env.ENVIO_SIDECAR_LOG_JSON !== "true"));
   const logger =
     options.destination !== undefined
-      ? pino({ level }, options.destination)
+      ? pino(pinoOptions, options.destination)
       : usePretty
-        ? pino({ level }, pretty({ colorize: true, ignore: "pid,hostname" }))
-        : pino({ level });
-  if (unknown !== undefined) logger.warn(`LOG_LEVEL '${unknown}' is not a known level, using 'info'`);
+        ? pino(pinoOptions, pretty({ colorize: true, ignore: "pid,hostname" }))
+        : pino(pinoOptions);
+  if (unknown !== undefined) logger.warn(`ENVIO_SIDECAR_LOG_LEVEL '${unknown}' is not a known level, using 'info'`);
   return logger;
 };
 

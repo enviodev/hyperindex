@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as S from "rescript-schema";
 
 // Same sugar as `createEffect`: a plain object is an object schema, an array a
@@ -112,3 +113,27 @@ export function defineSidecar<const Def extends SidecarContractDef>(def: Def): S
 
 export const isSidecarContract = (value: unknown): value is SidecarContract =>
   isPlainObject(value) && value.kind === "envio.sidecarContract";
+
+const sortedTypeNames = <D>(defs: Readonly<Record<string, D>>, schemaOf: (def: D) => S.Schema<unknown>) =>
+  Object.entries(defs)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([name, def]) => [name, S.name(schemaOf(def))]);
+
+/** Identifies a contract by what crosses the wire: the first 16 hex chars of the
+ * sha256 of `JSON.stringify({ functions: [[name, S.name(input)], ...], webhooks:
+ * [[name, S.name(body)], ...] })`, each list sorted by name. The indexer loads the
+ * same module (`sidecar.contract`), so both sides compute the same value; it
+ * changes when a function or webhook is added, removed, renamed or retyped
+ * (field order inside a schema counts), not when functions or webhooks are
+ * declared in another order or only a refinement changes. */
+export const sidecarContractHash = (contract: SidecarContract): string => {
+  const canonical = JSON.stringify({
+    functions: sortedTypeNames(contract.functions, (def) => def.input),
+    // `?? {}`: a contract built outside defineSidecar may have no webhooks.
+    webhooks: sortedTypeNames(
+      (contract.webhooks as Readonly<Record<string, { readonly body: S.Schema<unknown> }>> | undefined) ?? {},
+      (def) => def.body,
+    ),
+  });
+  return createHash("sha256").update(canonical).digest("hex").slice(0, 16);
+};
