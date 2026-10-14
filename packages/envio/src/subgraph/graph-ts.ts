@@ -525,7 +525,11 @@ export class TypedMap<K, V> {
     }
   }
   getEntry(key: K): TypedMapEntry<K, V> | null {
-    return this.entries.find((entry) => entry.key === key) ?? null;
+    const entries = this.entries;
+    for (let index = 0; index < entries.length; index++) {
+      if (entries[index].key === key) return entries[index];
+    }
+    return null;
   }
   get(key: K): V | null {
     const entry = this.getEntry(key);
@@ -946,14 +950,61 @@ Object.setPrototypeOf(TypedMap.prototype, entityTail);
 // store
 // ---------------------------------------------------------------------------
 
+/**
+ * What converting one entity type's rows needs from the schema, worked out the
+ * first time it is needed: every load and every save converts a row, and the
+ * schema doesn't change under a running indexer.
+ */
+type EntityLayout = {
+  timestampFields: Set<string>;
+  refFields: Set<string>;
+  listFields: Set<string>;
+  /** A stored column as the field it reads back into, and that field's kind. */
+  columns: Map<string, { key: string; kind: string | undefined; timestamp: boolean }>;
+};
+
+const entityLayouts = new WeakMap<Scope["schema"], Map<string, EntityLayout>>();
+
+function entityLayout(schema: Scope["schema"], entityType: string): EntityLayout {
+  let layouts = entityLayouts.get(schema);
+  if (!layouts) {
+    layouts = new Map();
+    entityLayouts.set(schema, layouts);
+  }
+  let layout = layouts.get(entityType);
+  if (!layout) {
+    layout = {
+      timestampFields: new Set(schema.timestampFields[entityType] ?? []),
+      refFields: new Set(schema.entityRefFields[entityType] ?? []),
+      listFields: new Set(schema.entityListFields[entityType] ?? []),
+      columns: new Map(),
+    };
+    layouts.set(entityType, layout);
+  }
+  return layout;
+}
+
+function columnOf(schema: Scope["schema"], entityType: string, layout: EntityLayout, column: string) {
+  let known = layout.columns.get(column);
+  if (!known) {
+    const key =
+      column.endsWith("_id") && layout.refFields.has(column.slice(0, -3)) ? column.slice(0, -3) : column;
+    known = {
+      key,
+      kind: declaredKind(schema, (schema.entityFieldTypes[entityType] ?? {})[key]),
+      timestamp: layout.timestampFields.has(key),
+    };
+    layout.columns.set(column, known);
+  }
+  return known;
+}
+
 /** graph-ts `Value`s -> the plain scalars envio stores. */
 function toRow(entityType: string, entity: Entity): Record<string, unknown> {
   const { schema } = currentScope();
-  const timestampFields = new Set(schema.timestampFields[entityType] ?? []);
   // graph-ts holds a relation as the related entity's id under the field's own
   // name; envio's column for it is `<field>_id`.
-  const refFields = new Set(schema.entityRefFields[entityType] ?? []);
-  const listFields = new Set(schema.entityListFields[entityType] ?? []);
+  const { timestampFields, refFields, listFields } = entityLayout(schema, entityType);
   const row: Record<string, unknown> = {};
   for (const entry of entity.entries) {
     const column = refFields.has(entry.key) ? `${entry.key}_id` : entry.key;
@@ -995,21 +1046,17 @@ function toEntity(entityType: string, row: Record<string, unknown> | undefined |
     return null;
   }
   const { schema } = currentScope();
-  const timestampFields = new Set(schema.timestampFields[entityType] ?? []);
-  const refFields = new Set(schema.entityRefFields[entityType] ?? []);
-  const declared = schema.entityFieldTypes[entityType] ?? {};
+  const layout = entityLayout(schema, entityType);
   const entity = new Entity();
   Object.defineProperty(entity, ENTITY_TYPE, { value: entityType });
-  for (const [column, value] of Object.entries(row)) {
-    const key =
-      column.endsWith("_id") && refFields.has(column.slice(0, -3))
-        ? column.slice(0, -3)
-        : column;
+  for (const column of Object.keys(row)) {
+    const value = row[column];
+    const { key, kind, timestamp } = columnOf(schema, entityType, layout, column);
     entity.set(
       key,
-      timestampFields.has(key) && value !== null && value !== undefined
+      timestamp && value !== null && value !== undefined
         ? Value.fromTimestamp(BigInt((value as Date).getTime()) * 1000n)
-        : toValue(value, declaredKind(schema, declared[key])),
+        : toValue(value, kind),
     );
   }
   return entity;
@@ -1043,7 +1090,7 @@ function toValue(value: unknown, kind?: string): Value {
       return typeof value === "string" ? Value.fromBytes(Bytes.fromHexString(value)) : Value.fromNull();
     case "BigInt":
     case "Int8":
-      return Value.fromBigInt(BigInt_.fromString(String(value)));
+      return Value.fromBigInt(typeof value === "bigint" ? new BigInt_(value) : BigInt_.fromString(String(value)));
     case "BigDecimal":
       return Value.fromBigDecimal(
         value instanceof BigNumber ? new BigDecimal(value) : BigDecimal.fromString(String(value)),
@@ -1610,11 +1657,43 @@ class EthereumTransaction {
   }
 }
 
+const NOT_DECODED = Symbol("envio.subgraph.notDecoded");
+
 class EthereumEventParam {
-  constructor(
-    public name: string,
-    public value: EthereumValue,
-  ) {}
+  name: string;
+  private _value: EthereumValue | typeof NOT_DECODED;
+  private _raw: unknown = undefined;
+  private _type = "";
+
+  constructor(name: string, value: EthereumValue) {
+    this.name = name;
+    this._value = value;
+  }
+
+  /**
+   * One of the runtime's own events' parameters, converted the first time it
+   * is read: a handler reads a few of them, and graph codegen's getters reach
+   * each one through the whole `parameters` array.
+   */
+  static decoded(name: string, type: string, raw: unknown): EthereumEventParam {
+    const param = new EthereumEventParam(name, undefined as unknown as EthereumValue);
+    param._value = NOT_DECODED;
+    param._type = type;
+    param._raw = raw;
+    return param;
+  }
+
+  get value(): EthereumValue {
+    if (this._value === NOT_DECODED) {
+      this._value = ethereumConverter(this._type)(this._raw);
+      this._raw = undefined;
+    }
+    return this._value;
+  }
+  set value(value: EthereumValue) {
+    this._value = value;
+    this._raw = undefined;
+  }
 }
 
 /**
@@ -1961,7 +2040,7 @@ class EthereumEvent {
   get parameters(): EthereumEventParam[] {
     return (this._parameters ??= this._kind.inputs.map(
       (input) =>
-        new EthereumEventParam(input.name, ethereumConverter(input.type)(this._raw.params?.[input.key])),
+        EthereumEventParam.decoded(input.name, input.type, this._raw.params?.[input.key]),
     ));
   }
   set parameters(value: EthereumEventParam[]) {
