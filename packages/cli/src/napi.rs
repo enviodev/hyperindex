@@ -114,6 +114,15 @@ pub fn subgraph_file_to_javascript(source: String, path: String) -> napi::Result
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))
 }
 
+/// graph-ts' `crypto.keccak256`. ENS hashes a node on every event and again in
+/// every replay round, and the JavaScript keccak was 15% of indexing CPU.
+#[napi_derive::napi]
+pub fn subgraph_keccak256(
+    input: napi::bindgen_prelude::Uint8ArraySlice,
+) -> napi::bindgen_prelude::Buffer {
+    alloy_primitives::keccak256(&*input).to_vec().into()
+}
+
 /// The handlers of the mapping at `mapping_file` whose code can reach
 /// `DataSourceTemplate.create` — the only ones the register pass reruns.
 #[napi_derive::napi]

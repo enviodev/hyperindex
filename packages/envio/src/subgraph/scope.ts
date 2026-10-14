@@ -1,5 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-
 /** What a wrapper is doing when it runs the mapping. */
 export type Mode = "handler" | "register";
 
@@ -65,14 +63,39 @@ export type Scope = {
   mappingExports: Record<string, any>;
 };
 
-const storage = new AsyncLocalStorage<Scope>();
+// A mapping runs synchronously from start to end of a round, so the scope is a
+// plain variable rather than an AsyncLocalStorage: in this Node, a live
+// AsyncLocalStorage installs promise hooks that tax every promise the indexer
+// makes (~4% of indexing CPU).
+let current: Scope | undefined;
 
 export function runInScope<T>(scope: Scope, fn: () => T): T {
-  return storage.run(scope, fn);
+  const previous = current;
+  current = scope;
+  try {
+    return fn();
+  } finally {
+    current = previous;
+  }
+}
+
+/**
+ * A mapping module's top level runs during its import, after `import()` has
+ * returned. Mappings are imported one at a time, so the scope is held until
+ * the import settles.
+ */
+export async function runInScopeUntilSettled<T>(scope: Scope, fn: () => Promise<T>): Promise<T> {
+  const previous = current;
+  current = scope;
+  try {
+    return await fn();
+  } finally {
+    current = previous;
+  }
 }
 
 export function currentScope(): Scope {
-  const scope = storage.getStore();
+  const scope = current;
   if (!scope) {
     throw new Error(
       "A graph-ts API was called outside of a mapping handler. Envio Subgraph " +

@@ -15,7 +15,14 @@ import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
-import { currentScope, runInScope, type RegisterPass, type Scope, type SubgraphSchema } from "./scope.ts";
+import {
+  currentScope,
+  runInScope,
+  runInScopeUntilSettled,
+  type RegisterPass,
+  type Scope,
+  type SubgraphSchema,
+} from "./scope.ts";
 import {
   Address,
   assemblyScriptPrimitives,
@@ -51,6 +58,7 @@ import {
 import { makeHostEffects } from "./hosts.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
+import { runSyncCounted } from "./stats.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
 const ENVIO_PACKAGE_URL = new URL("../../", import.meta.url).href;
@@ -265,7 +273,7 @@ async function loadMapping(
     // context already in place, so a mapping may read `dataSource.network()`
     // at module top level — Balancer's constants do. The import runs inside a
     // scope carrying that data source for the same reason.
-    return await runInScope(scope, () => import(url));
+    return await runInScopeUntilSettled(scope, () => import(url));
   } catch (exn) {
     const message = exn instanceof Error ? exn.message : String(exn);
     // Only reachable when codegen couldn't run up front, so this reports why
@@ -766,7 +774,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         async ({ event, context }: any) => {
           if ((skipPreload && context.isPreload) || !owns(event) || !live(event)) return;
           const graphEvent = makeEvent(event);
-          await (context as any).runSync(() =>
+          await runSyncCounted(context, () =>
             runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
           );
         },
@@ -847,7 +855,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             block.number,
             `data source "${source.name}" → "${handler.handler}"`,
           );
-          await (context as any).runSync(() =>
+          await runSyncCounted(context, () =>
             runInScope(
               {
                 context,

@@ -40,6 +40,7 @@ type addon = {
   fromSubgraph: (string, string, fromSubgraphOptions) => fromUserApiResult,
   subgraphFileToJavascript: (string, string) => string,
   subgraphCreatingHandlers: (string, array<string>) => array<string>,
+  subgraphKeccak256: Uint8Array.t => Uint8Array.t,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -331,6 +332,8 @@ let subgraphCreatingHandlers = (~mappingFile, ~handlers) => {
   let addon = getAddon()
   addon.subgraphCreatingHandlers(mappingFile, handlers)
 }
+
+let subgraphKeccak256 = bytes => getAddon().subgraphKeccak256(bytes)
 
 let runCli = args => {
   let addon = getAddon()
