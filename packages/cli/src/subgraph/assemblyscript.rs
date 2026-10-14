@@ -94,9 +94,85 @@ fn class_ref<'b>(
     }
 }
 
+/// AssemblyScript takes a decorator on a top-level function or variable —
+/// Beefy writes `@inline` above its helpers — which TypeScript's grammar
+/// refuses. Those are blanked to spaces before parsing, so every offset the
+/// source map records stays where it was. A decorator on a class or a member
+/// parses as it is and is dropped with the rest.
+fn blank_statement_decorators(source: &str) -> String {
+    fn decorator_len(text: &str) -> Option<usize> {
+        let rest = text.strip_prefix('@')?;
+        let name = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$' || c == '.'))
+            .unwrap_or(rest.len());
+        if name == 0 {
+            return None;
+        }
+        let mut len = 1 + name;
+        if text[len..].starts_with('(') {
+            len += text[len..].find(')')? + 1;
+        }
+        Some(len)
+    }
+    fn declares_statement(text: &str) -> bool {
+        let mut text = text.trim_start();
+        for prefix in ["export ", "declare "] {
+            if let Some(rest) = text.strip_prefix(prefix) {
+                text = rest.trim_start();
+            }
+        }
+        ["function", "let ", "const ", "var ", "namespace ", "enum "]
+            .iter()
+            .any(|keyword| text.starts_with(keyword))
+    }
+
+    let mut out = source.to_string();
+    let lines: Vec<(usize, &str)> = source
+        .split_inclusive('\n')
+        .scan(0, |offset, line| {
+            let start = *offset;
+            *offset += line.len();
+            Some((start, line))
+        })
+        .collect();
+    for (index, (start, line)) in lines.iter().enumerate() {
+        let indent = line.len() - line.trim_start().len();
+        let mut at = indent;
+        let mut decorators = vec![];
+        while let Some(len) = decorator_len(&line[at..]) {
+            decorators.push((start + at, len));
+            at += len;
+            at += line[at..].len() - line[at..].trim_start_matches([' ', '\t']).len();
+        }
+        if decorators.is_empty() {
+            continue;
+        }
+        let tail = line[at..].trim();
+        let follows = if tail.is_empty() {
+            // The decorated statement starts on a later line, past any other
+            // decorators and comments.
+            lines[index + 1..]
+                .iter()
+                .map(|(_, next)| next.trim())
+                .find(|next| !next.is_empty() && !next.starts_with("//") && !next.starts_with('@'))
+                .is_some_and(declares_statement)
+        } else {
+            declares_statement(tail)
+        };
+        if follows {
+            for (offset, len) in decorators {
+                out.replace_range(offset..offset + len, &" ".repeat(len));
+            }
+        }
+    }
+    out
+}
+
 /// The JavaScript to run for one AssemblyScript file, with an inline source map
 /// back to the original so a mapping's stack trace names its own lines.
 pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
+    let blanked = blank_statement_decorators(source);
+    let source = blanked.as_str();
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::ts()).parse();
     if parsed.panicked || parsed.diagnostics.has_errors() {
@@ -592,6 +668,24 @@ export class Token {
 \t\treturn amount;
 \t}
 }
+"
+        );
+    }
+
+    #[test]
+    fn drops_a_decorator_on_a_top_level_function() {
+        assert_eq!(
+            js("// @ts-ignore
+@inline
+function scaled(amount: i32): i32 {
+  return amount;
+}
+@inline export const TEN: i32 = 10;"),
+            "// @ts-ignore
+function scaled(amount) {
+\treturn amount;
+}
+export const TEN = 10;
 "
         );
     }

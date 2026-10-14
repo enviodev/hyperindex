@@ -150,8 +150,8 @@ mapping in register mode: `create()` → `context.chain.<Name>.add(addr)`
 (deduped, so replays are idempotent); logs → no-ops; **writes go to the
 register pass's own store, and reads see what an earlier register pass wrote**
 (no envio entity state exists at fetch time). A read sees only writes from
-strictly earlier events on its chain, kept up to 200k entities (then dropped,
-reading `null` again); a `once` block handler runs in register mode too, at its
+strictly earlier events on its chain, for the 50k most recently used
+entities (an evicted one reads `null` again); a `once` block handler runs in register mode too, at its
 block, before the first register pass of its chain (Venus saves its
 Comptroller there); an entity saved only by a handler that creates nothing —
 which gets no register pass — or by a polling block handler reads `null`, so a

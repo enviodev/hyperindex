@@ -1080,13 +1080,14 @@ function entityContext(entityType: string) {
  * creating handler saved — Aave's `handleReserveInitialized` before
  * `ATokenContract.create()`, Venus's `getOrCreateMarket` — sees it, as it
  * would on graph-node, instead of null. A read only sees writes from strictly
- * earlier events on its chain; anything older than the cap, or written by a
+ * earlier events on its chain; anything evicted past the cap, or written by a
  * handler that creates nothing (and so gets no register pass), reads null as
  * before.
  */
 const registerStore = new Map<string, { position: number; row: Record<string, unknown> | null }[]>();
-const REGISTER_STORE_LIMIT = 200_000;
-const REGISTER_STORE_VERSIONS = 8;
+/** Least recently used entities go first: a factory's own entity stays hot. */
+const REGISTER_STORE_LIMIT = 50_000;
+const REGISTER_STORE_VERSIONS = 4;
 
 function registerStoreKey(chainId: number, entityType: string, id: string): string {
   return `${chainId}\u0000${entityType}\u0000${id}`;
@@ -1097,6 +1098,10 @@ function registerRead(scope: Scope, entityType: string, id: string, sameBlock: b
   if (scope.writes?.has(key)) return toEntity(entityType, scope.writes.get(key));
   const position = scope.position ?? 0;
   const versions = registerStore.get(key) ?? [];
+  if (versions.length > 0) {
+    registerStore.delete(key);
+    registerStore.set(key, versions);
+  }
   for (let index = versions.length - 1; index >= 0; index--) {
     const version = versions[index];
     if (version.position >= position) continue;
@@ -1119,11 +1124,15 @@ export function commitRegisterWrites(scope: Scope): void {
   const position = scope.position ?? 0;
   for (const [key, row] of writes) {
     let versions = registerStore.get(key);
-    if (!versions) {
-      if (registerStore.size >= REGISTER_STORE_LIMIT) registerStore.clear();
+    if (versions) {
+      registerStore.delete(key);
+    } else {
       versions = [];
-      registerStore.set(key, versions);
+      if (registerStore.size >= REGISTER_STORE_LIMIT) {
+        registerStore.delete(registerStore.keys().next().value!);
+      }
     }
+    registerStore.set(key, versions);
     const at = versions.findIndex((version) => version.position >= position);
     if (at === -1) versions.push({ position, row });
     else if (versions[at].position === position) versions[at] = { position, row };

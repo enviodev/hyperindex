@@ -239,8 +239,10 @@ impl Analysis {
 
     fn import(&mut self, from: &Path, source: &str, what: &Imported) -> Vec<Node> {
         if source == GRAPH_TS || source.starts_with(&format!("{GRAPH_TS}/")) {
+            // `ipfs.map` calls back into a mapping function named by a string,
+            // which no reference leads to.
             return match what {
-                Imported::Name(name) if name != "DataSourceTemplate" => vec![],
+                Imported::Name(name) if name != "DataSourceTemplate" && name != "ipfs" => vec![],
                 _ => vec![Node::Creates],
             };
         }
@@ -446,9 +448,10 @@ export class Swap__Params { constructor(public event: Swap) {} get amount(): Big
 
     #[test]
     fn assumes_a_create_behind_whatever_it_cannot_see() {
-        let dir = project(&[(
-            "src/mapping.ts",
-            r#"
+        let dir = project(&[
+            (
+                "src/mapping.ts",
+                r#"
 import { helper } from "some-package";
 import { missing } from "./not-there";
 import * as graph from "@graphprotocol/graph-ts";
@@ -457,7 +460,20 @@ export function viaMissingFile(): void { missing(); }
 export function viaNamespace(): void { graph.log.info("x", []); }
 export function plain(): void {}
 "#,
-        )]);
+            ),
+            (
+                "src/files.ts",
+                r#"
+import { ipfs, Bytes } from "@graphprotocol/graph-ts";
+export function processItem(value: Bytes): void {}
+export function viaIpfsMap(): void { ipfs.map("Qm", "processItem", null, []); }
+"#,
+            ),
+        ]);
+        assert_eq!(
+            creating(&dir, "src/files.ts", &["viaIpfsMap"]),
+            vec!["viaIpfsMap".to_string()]
+        );
         assert_eq!(
             creating(
                 &dir,
