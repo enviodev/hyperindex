@@ -71,6 +71,22 @@ pub struct SchemaTranslation {
     /// `@aggregation` types, rolled up by the runtime into one entity per
     /// interval, named `<Aggregation>_<interval>`.
     pub aggregations: Vec<Aggregation>,
+    /// Derived fields that list an aggregation's rows (`stats: [Stat!]
+    /// @derivedFrom(field: "pool")`), by owning entity. envio has no table for
+    /// the aggregation under that name, so they are not part of the entity;
+    /// a query answers them from the `<Aggregation>_<interval>` tables.
+    pub aggregation_derived_fields: BTreeMap<String, Vec<AggregationDerivedField>>,
+    #[serde(skip)]
+    aggregation_names: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregationDerivedField {
+    pub field: String,
+    pub aggregation: String,
+    /// The dimension of the aggregation that points back at the owner.
+    pub via: String,
 }
 
 /// An `@aggregation(intervals: [...], source: "...")` type.
@@ -281,6 +297,18 @@ fn render_fields(
             );
 
         if let Some(derived_field) = derived_from {
+            if translation.aggregation_names.contains(&base) {
+                translation
+                    .aggregation_derived_fields
+                    .entry(owner.to_string())
+                    .or_default()
+                    .push(AggregationDerivedField {
+                        field: field.name.clone(),
+                        aggregation: base,
+                        via: derived_field,
+                    });
+                continue;
+            }
             // Rendered as a list whatever the subgraph wrote. The Graph accepts
             // the one-to-one `Registration @derivedFrom(...)` and answers it
             // with the same lookup; envio only spells a derived field as a
@@ -408,6 +436,13 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
         match definition {
             Definition::TypeDefinition(TypeDefinition::Object(object)) => {
                 entity_names.insert(object.name.clone());
+                if object
+                    .directives
+                    .iter()
+                    .any(|d| directive_name(d) == "aggregation")
+                {
+                    translation.aggregation_names.insert(object.name.clone());
+                }
             }
             // An interface names a shape shared by entities, so a field may
             // point at it the same way it points at an entity.
@@ -1065,6 +1100,32 @@ type TradeStats @aggregation(intervals: ["hour", "day"], source: "Trade") {
                     ("open".to_string(), "first".to_string(), Some("price".to_string()), false),
                     ("trades".to_string(), "count".to_string(), None, true),
                 ]),
+            )
+        );
+    }
+
+    #[test]
+    fn leaves_a_derived_list_of_aggregation_rows_out_of_the_entity() {
+        let schema = TRADES.replace(
+            "type Token @entity {\n  id: ID!\n}",
+            "type Token @entity {\n  id: ID!\n  stats: [TradeStats!]! @derivedFrom(field: \"token\")\n}",
+        );
+        let (translation, report) = translate_ok(&schema);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            (
+                translation
+                    .text
+                    .starts_with("type Token {\n  id: ID!\n}\n\n"),
+                translation.aggregation_derived_fields.get("Token").cloned(),
+            ),
+            (
+                true,
+                Some(vec![AggregationDerivedField {
+                    field: "stats".to_string(),
+                    aggregation: "TradeStats".to_string(),
+                    via: "token".to_string(),
+                }])
             )
         );
     }
