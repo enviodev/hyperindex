@@ -199,8 +199,9 @@ async fn execute_command(
                 .context("Failed parsing config")?;
             if config.human_config.get_base_config().sidecar.is_none() {
                 anyhow::bail!(
-                    "`envio sidecar` has nothing to run: config.yaml has no `sidecar:` key. Add \
-                     `sidecar: {{ contract: src/sidecar/contract.ts, entry: src/sidecar/index.ts }}`."
+                    "`envio sidecar` has nothing to run: {} has no `sidecar:` key. Add \
+                     `sidecar: {{ contract: src/sidecar/contract.ts, entry: src/sidecar/index.ts }}`.",
+                    config.parsed_project_paths.config_relative_to_root().display()
                 );
             }
             Ok(Some(build_sidecar_command(&config)?))
@@ -580,6 +581,30 @@ mod sidecar_command_tests {
                 }),
                 Some(true),
             )
+        );
+    }
+
+    // A hosted tenant's config is rarely named config.yaml.
+    #[tokio::test]
+    async fn names_the_config_file_that_has_no_sidecar() {
+        let directory = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let error = execute(
+            CommandLineArgs::parse_from([
+                "envio",
+                "sidecar",
+                "-d",
+                &directory,
+                "--config",
+                "configs/config1.yaml",
+            ]),
+            None,
+        )
+        .await
+        .expect_err("a config without a sidecar has nothing to run");
+        assert_eq!(
+            error.to_string(),
+            "`envio sidecar` has nothing to run: configs/config1.yaml has no `sidecar:` key. Add \
+             `sidecar: { contract: src/sidecar/contract.ts, entry: src/sidecar/index.ts }`."
         );
     }
 
