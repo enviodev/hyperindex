@@ -637,6 +637,10 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
 
     await indexEventClasses();
     const owns = ownerOf(source);
+    // graph-node runs none of a data source's handlers past its endBlock
+    // (`has_expired`), while its chain and every template instance go on.
+    const live = (event: any) =>
+      source.isTemplate || source.endBlock === undefined || event.block.number <= source.endBlock;
     // After codegen, so the analysis can follow the mapping into
     // `generated/templates.ts`.
     const creating = new Set<string>(
@@ -695,7 +699,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       indexer.onEvent(
         { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
         async ({ event, context }: any) => {
-          if ((skipPreload && context.isPreload) || !owns(event)) return;
+          if ((skipPreload && context.isPreload) || !owns(event) || !live(event)) return;
           const graphEvent = makeEvent(event);
           await (context as any).runSync(() =>
             runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
@@ -712,7 +716,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         indexer.contractRegister(
           { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
           async ({ event, context }: any) => {
-            if (!owns(event)) return;
+            if (!owns(event) || !live(event)) return;
             await primeOnceHandlers(event.chainId, context);
             const graphEvent = makeEvent(event);
             await runRegisterRounds(makeScope(event, context, "register"), () => fn(graphEvent));
@@ -756,7 +760,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       const blocks =
         handler.filter === "once"
           ? { _gte: start, _lte: start }
-          : { _gte: start, _every: handler.filter.every };
+          : source.endBlock === undefined
+            ? { _gte: start, _every: handler.filter.every }
+            : { _gte: start, _lte: source.endBlock, _every: handler.filter.every };
       indexer.onBlock(
         {
           name: `${source.name}_${handler.handler}`,
