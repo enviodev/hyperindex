@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { defineSidecar, S } from "envio";
 import { createSidecar, SidecarEmitError, type RunningSidecar, type SidecarImpl } from "envio/sidecar";
@@ -495,6 +496,60 @@ describe("sidecar runtime: webhooks from outside a call", () => {
       overlapping: 0,
       atLeastTwo: true,
       boundedBySerialRuns: true,
+    });
+  });
+});
+
+describe("sidecar runtime: LOG_LEVEL", () => {
+  it("accepts the indexer's u-levels and falls back to info on anything else", async () => {
+    const indexer = await fakeIndexer();
+    cleanups.push(indexer.close);
+    const linesAt = async (level: string) => {
+      const lines: Array<{ level: number; msg: string }> = [];
+      const destination = new Writable({
+        write(chunk: Buffer, _encoding, done) {
+          for (const line of chunk.toString("utf8").split("\n")) {
+            if (line !== "") lines.push(JSON.parse(line) as { level: number; msg: string });
+          }
+          done();
+        },
+      });
+      const sidecar = createSidecar(contract, {
+        functions: {
+          ...noop,
+          notify: ({ log }) => {
+            log.debug("d");
+            log.info("i");
+            log.warn("w");
+          },
+        },
+      });
+      const running = await sidecar.start({
+        internalPort: 0,
+        publicPort: 0,
+        indexerInternalUrl: indexer.url,
+        env: { LOG_LEVEL: level },
+        logDestination: destination,
+        startJobs: false,
+      });
+      await postJson(`http://127.0.0.1:${running.internalPort}/envio/calls`, {
+        batchId: "b-11",
+        calls: [call("1:1:1:0", "notify", { text: "hi" })],
+      });
+      await running.waitIdle();
+      await running.close();
+      return lines.filter((line) => ["d", "i", "w"].includes(line.msg) || line.msg.startsWith("LOG_LEVEL")).map((line) => line.msg);
+    };
+    const levels = ["udebug", "uinfo", "uwarn", "uerror", "debug", "silent", "nonsense"];
+    const seen = await Promise.all(levels.map(linesAt));
+    expect(Object.fromEntries(levels.map((level, n) => [level, seen[n]]))).toEqual({
+      udebug: ["d", "i", "w"],
+      uinfo: ["i", "w"],
+      uwarn: ["w"],
+      uerror: [],
+      debug: ["d", "i", "w"],
+      silent: [],
+      nonsense: ["LOG_LEVEL 'nonsense' is not a known level, using 'info'", "i", "w"],
     });
   });
 });
