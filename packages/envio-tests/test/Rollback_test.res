@@ -114,6 +114,12 @@ let queryDynamicAddresses = (indexer: IndexerRunner.t) =>
     rows->Array.filter(r => r.registrationBlock !== -1)
   )
 
+// Neither store orders the rows it reads back, and the two order them apart.
+let querySimpleEntities = (indexer: IndexerRunner.t) =>
+  (indexer.query("SimpleEntity"): promise<array<simpleEntity>>)->Promise.thenResolve(rows =>
+    rows->Array.toSorted((a, b) => String.compare(a.id, b.id))
+  )
+
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
     ~t,
@@ -218,8 +224,12 @@ describe("E2E rollback tests", () => {
     t.expect(
       await Promise.all3((
         indexer.queryCheckpoints(),
-        (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-        (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
+        querySimpleEntities(indexer),
+        (
+          Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
+            option<array<Change.t<simpleEntity>>>,
+          >
+        ),
       )),
       ~message="Should have two entities in the db",
     ).toEqual((
@@ -253,7 +263,7 @@ describe("E2E rollback tests", () => {
           value: "value-1",
         },
       ],
-      [
+      Scenario.expectedPostgresHistory([
         Set({
           checkpointId: firstHistoryCheckpointId,
           entityId: "1"->EntityId.unsafeOfString,
@@ -290,7 +300,7 @@ describe("E2E rollback tests", () => {
           checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
           entityId: "4"->EntityId.unsafeOfString,
         }),
-      ],
+      ]),
     ))
 
     t.expect(sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last).toEqual(
@@ -377,8 +387,12 @@ describe("E2E rollback tests", () => {
     t.expect(
       await Promise.all3((
         indexer.queryCheckpoints(),
-        (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-        (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
+        querySimpleEntities(indexer),
+        (
+          Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
+            option<array<Change.t<simpleEntity>>>,
+          >
+        ),
       )),
       ~message="Should correctly rollback entities",
     ).toEqual((
@@ -401,7 +415,7 @@ describe("E2E rollback tests", () => {
           value: "value-2",
         },
       ],
-      [
+      Scenario.expectedPostgresHistory([
         Set({
           checkpointId: firstHistoryCheckpointId->BigInt.add(afterRollback),
           entityId: "1"->EntityId.unsafeOfString,
@@ -418,7 +432,7 @@ describe("E2E rollback tests", () => {
             value: "value-2",
           },
         }),
-      ],
+      ]),
     ))
   }
 
@@ -531,7 +545,6 @@ describe("E2E rollback tests", () => {
 
   scenario->Scenario.it(
     "Rollback of a single chain indexer",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -550,7 +563,6 @@ describe("E2E rollback tests", () => {
 
   scenario->Scenario.it(
     "Rolls back SET -> DELETE -> SET to the deleted state",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     ~onError=errHandler => {
@@ -605,46 +617,49 @@ describe("E2E rollback tests", () => {
 
       // getBatchWritePromise can observe the loop between the response resolving
       // and processing starting, so wait until this specific batch is visible.
-      let shouldKeepWaitingForHistory = ref(true)
-      let rec waitForRecreatedEntityHistory = async () => {
-        if shouldKeepWaitingForHistory.contents {
-          let hasRecreatedEntityHistory =
-            (
-              await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>)
-            )->Array.length === 3
-          if shouldKeepWaitingForHistory.contents && !hasRecreatedEntityHistory {
+      let shouldKeepWaiting = ref(true)
+      let rec waitForRecreatedEntity = async () => {
+        if shouldKeepWaiting.contents {
+          let isRecreated =
+            (await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>)) == [
+                {id: "1", value: "after-recreate"},
+              ]
+          if shouldKeepWaiting.contents && !isRecreated {
             await Utils.delay(1)
-            await waitForRecreatedEntityHistory()
+            await waitForRecreatedEntity()
           }
         }
       }
-      let historyWaitTimeoutId = ref(None)
-      let historyWaitTimeout = Promise.make((resolve, _reject) => {
-        historyWaitTimeoutId := Some(setTimeout(resolve, 5_000))
+      let waitTimeoutId = ref(None)
+      let waitTimeout = Promise.make((resolve, _reject) => {
+        waitTimeoutId := Some(setTimeout(resolve, 5_000))
       })
-      let historyWaitResult = await Promise.race([
-        waitForRecreatedEntityHistory()->Promise.thenResolve(_ => Ok()),
+      let waitResult = await Promise.race([
+        waitForRecreatedEntity()->Promise.thenResolve(_ => Ok()),
         indexerErrorPromise->Promise.thenResolve(errHandler => Error(Some(errHandler))),
-        historyWaitTimeout->Promise.thenResolve(_ => Error(None)),
+        waitTimeout->Promise.thenResolve(_ => Error(None)),
       ])
-      shouldKeepWaitingForHistory := false
-      historyWaitTimeoutId.contents->Option.forEach(clearTimeout)
-      switch historyWaitResult {
+      shouldKeepWaiting := false
+      waitTimeoutId.contents->Option.forEach(clearTimeout)
+      switch waitResult {
       | Ok() => ()
       | Error(Some(errHandler)) => errHandler->ErrorHandling.raiseExn
-      | Error(None) =>
-        JsError.throwWithMessage("Timed out waiting for SET -> DELETE -> SET history")
+      | Error(None) => JsError.throwWithMessage("Timed out waiting for the recreated entity")
       }
 
       t.expect(
         await Promise.all2((
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
+          (
+            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
+              option<array<Change.t<simpleEntity>>>,
+            >
+          ),
         )),
         ~message="Should establish SET -> DELETE -> SET history before the rollback",
       ).toEqual((
         [{id: "1", value: "after-recreate"}],
-        [
+        Scenario.expectedPostgresHistory([
           Set({
             checkpointId: 2n,
             entityId: "1"->EntityId.unsafeOfString,
@@ -656,7 +671,7 @@ describe("E2E rollback tests", () => {
             entityId: "1"->EntityId.unsafeOfString,
             entity: {id: "1", value: "after-recreate"},
           }),
-        ],
+        ]),
       ))
 
       // Detect a reorg at block 103, then establish block 102 (the DELETE
@@ -772,7 +787,6 @@ describe("E2E rollback tests", () => {
 
   scenario->Scenario.it(
     "Fires onRollbackCommit per affected chain after the rollback write",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -900,7 +914,6 @@ describe("E2E rollback tests", () => {
 
   multichainScenario->Scenario.it(
     "Single chain rollback should also work for multichain indexer when another chains are stale",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1171,7 +1184,6 @@ describe("E2E rollback tests", () => {
 
   multichainScenario->Scenario.it(
     "Rollback of multichain indexer (single entity id change)",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1270,7 +1282,11 @@ describe("E2E rollback tests", () => {
         await Promise.all3((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
+          (
+            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
+              option<array<Change.t<simpleEntity>>>,
+            >
+          ),
         )),
         ~message=`Should create history rows and checkpoints`,
       ).toEqual((
@@ -1326,7 +1342,7 @@ describe("E2E rollback tests", () => {
             value: "call-5",
           },
         ],
-        [
+        Scenario.expectedPostgresHistory([
           Set({
             checkpointId: 3n,
             entityId: "1"->EntityId.unsafeOfString,
@@ -1367,7 +1383,7 @@ describe("E2E rollback tests", () => {
               value: "call-5",
             },
           }),
-        ],
+        ]),
       ))
 
       t.expect(
@@ -1539,7 +1555,11 @@ describe("E2E rollback tests", () => {
         await Promise.all3((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
+          (
+            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
+              option<array<Change.t<simpleEntity>>>,
+            >
+          ),
         )),
       ).toEqual((
         [
@@ -1581,7 +1601,7 @@ describe("E2E rollback tests", () => {
             value: "call-4",
           },
         ],
-        [
+        Scenario.expectedPostgresHistory([
           Set({
             checkpointId: 3n,
             entityId: "1"->EntityId.unsafeOfString,
@@ -1606,7 +1626,7 @@ describe("E2E rollback tests", () => {
               value: "call-4",
             },
           }),
-        ],
+        ]),
       ))
     },
   )
@@ -1614,7 +1634,6 @@ describe("E2E rollback tests", () => {
   // Fixes duplicate history bug before 2.31
   multichainScenario->Scenario.it(
     "Rollback of multichain indexer (single entity id change + another entity on non-reorg chain)",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1726,7 +1745,11 @@ describe("E2E rollback tests", () => {
         await Promise.all3((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
+          (
+            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
+              option<array<Change.t<simpleEntity>>>,
+            >
+          ),
         )),
         ~message=`Should create history rows and checkpoints`,
       ).toEqual((
@@ -1782,7 +1805,7 @@ describe("E2E rollback tests", () => {
             value: "call-5",
           },
         ],
-        [
+        Scenario.expectedPostgresHistory([
           Set({
             checkpointId: 3n,
             entityId: "1"->EntityId.unsafeOfString,
@@ -1823,14 +1846,14 @@ describe("E2E rollback tests", () => {
               value: "call-5",
             },
           }),
-        ],
+        ]),
       ))
       t.expect(
         await Promise.all2((
           (indexer.query("EntityWithBigDecimal"): promise<array<entityWithBigDecimal>>),
           (
-            indexer.queryHistory("EntityWithBigDecimal"): promise<
-              array<Change.t<entityWithBigDecimal>>,
+            Scenario.postgresHistory(indexer, "EntityWithBigDecimal"): promise<
+              option<array<Change.t<entityWithBigDecimal>>>,
             >
           ),
         )),
@@ -1842,7 +1865,7 @@ describe("E2E rollback tests", () => {
             bigDecimal: BigDecimal.fromFloat(0.),
           },
         ],
-        [
+        Scenario.expectedPostgresHistory([
           Set({
             checkpointId: 6n,
             entityId: "foo"->EntityId.unsafeOfString,
@@ -1851,7 +1874,7 @@ describe("E2E rollback tests", () => {
               bigDecimal: BigDecimal.fromFloat(0.),
             },
           }),
-        ],
+        ]),
       ))
 
       // Should trigger rollback
@@ -1942,7 +1965,11 @@ describe("E2E rollback tests", () => {
         await Promise.all3((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
+          (
+            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
+              option<array<Change.t<simpleEntity>>>,
+            >
+          ),
         )),
       ).toEqual((
         [
@@ -1984,7 +2011,7 @@ describe("E2E rollback tests", () => {
             value: "call-4",
           },
         ],
-        [
+        Scenario.expectedPostgresHistory([
           Set({
             checkpointId: 3n,
             entityId: "1"->EntityId.unsafeOfString,
@@ -2009,14 +2036,14 @@ describe("E2E rollback tests", () => {
               value: "call-4",
             },
           }),
-        ],
+        ]),
       ))
       t.expect(
         await Promise.all2((
           (indexer.query("EntityWithBigDecimal"): promise<array<entityWithBigDecimal>>),
           (
-            indexer.queryHistory("EntityWithBigDecimal"): promise<
-              array<Change.t<entityWithBigDecimal>>,
+            Scenario.postgresHistory(indexer, "EntityWithBigDecimal"): promise<
+              option<array<Change.t<entityWithBigDecimal>>>,
             >
           ),
         )),
@@ -2028,7 +2055,7 @@ describe("E2E rollback tests", () => {
             bigDecimal: BigDecimal.fromFloat(0.),
           },
         ],
-        [
+        Scenario.expectedPostgresHistory([
           Set({
             checkpointId: 11n,
             entityId: "foo"->EntityId.unsafeOfString,
@@ -2037,7 +2064,7 @@ describe("E2E rollback tests", () => {
               bigDecimal: BigDecimal.fromFloat(0.),
             },
           }),
-        ],
+        ]),
       ))
     },
   )
@@ -2995,7 +3022,6 @@ describe("E2E rollback tests", () => {
 
   multichainScenario->Scenario.it(
     "Flushes in-flight batch write before computing rollback diffs (no silent data loss on non-reorg chain)",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     ~mapStorage=storage => {
@@ -3236,7 +3262,11 @@ describe("E2E rollback tests", () => {
             a,
             b,
           ) => String.compare(a.id, b.id)),
-          await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
+          await (
+            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
+              option<array<Change.t<simpleEntity>>>,
+            >
+          ),
           await indexer.metric("envio_rollback_events"),
         ),
         ~message="Chain 100's in-flight entity change should be rolled back together with its progress and reapplied on refetch",
@@ -3251,7 +3281,7 @@ describe("E2E rollback tests", () => {
             value: "reapplied",
           },
         ],
-        [
+        Scenario.expectedPostgresHistory([
           Set({
             checkpointId: 4n,
             entityId: "reorg"->EntityId.unsafeOfString,
@@ -3276,7 +3306,7 @@ describe("E2E rollback tests", () => {
               value: "reapplied",
             },
           }),
-        ],
+        ]),
         [{value: "2", labels: Dict.make()}],
       ))
     },

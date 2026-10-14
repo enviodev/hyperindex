@@ -12,6 +12,20 @@ type unsupported = {backend: backend, reason: string}
 let assertsPostgresHistory = [
   {backend: #clickhouse, reason: "asserts the history Postgres keeps of an entity"},
 ]
+// On the ClickHouse leg an entity is kept in ClickHouse alone, with no
+// Postgres history: both sides read `None` there, so a case asserting state
+// and history together still checks the state on both legs.
+let postgresHistory = (indexer: IndexerRunner.t, name): promise<option<array<Change.t<'entity>>>> =>
+  switch IndexerRunner.selectedBackend {
+  | #postgres => indexer.queryHistory(name)->Promise.thenResolve(history => Some(history))
+  | #clickhouse => Promise.resolve(None)
+  }
+let expectedPostgresHistory = (history: array<Change.t<'entity>>) =>
+  switch IndexerRunner.selectedBackend {
+  | #postgres => Some(history)
+  | #clickhouse => None
+  }
+
 let assertsPostgresIndexes = [
   {backend: #clickhouse, reason: "asserts the indexes Postgres builds on an entity"},
 ]
