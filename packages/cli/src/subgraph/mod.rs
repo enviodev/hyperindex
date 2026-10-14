@@ -313,9 +313,12 @@ pub fn translate(
     };
     let schema = schema::translate(schema_text, &mut report);
 
-    let rpc = match rpc_env {
-        Some(raw) => Some(parse_rpc_env(raw)?),
-        None => None,
+    // Held back until the manifest and schema have been checked too, so a
+    // mistyped endpoint doesn't hide what else this subgraph needs changed.
+    let (rpc, rpc_error) = match rpc_env.map(parse_rpc_env) {
+        Some(Ok(rpc)) => (Some(rpc), None),
+        Some(Err(err)) => (None, Some(err)),
+        None => (None, None),
     };
     let rpc_urls = match &rpc {
         Some(RpcSelection::Url(url)) => vec![url.clone()],
@@ -473,7 +476,11 @@ pub fn translate(
         }
     }
 
-    report.into_result()?;
+    match (rpc_error, report.into_result()) {
+        (Some(rpc_error), Err(findings)) => return Err(anyhow!("{rpc_error}\n\n{findings}")),
+        (Some(rpc_error), Ok(())) => return Err(rpc_error),
+        (None, result) => result?,
+    }
 
     if chains.is_empty() {
         return Err(anyhow!(
@@ -1081,6 +1088,32 @@ type Gravatar @entity {
             (true, true)
         );
     }
+
+    // CryptoPunks learned of its RPC value on one run and of its schema on the
+    // next.
+    #[test]
+    fn reports_a_bad_rpc_value_with_the_other_findings() {
+        let error = translate(
+            MANIFEST,
+            "type Gravatar @entity { id: ID! bad: NotAType! }",
+            "gravatar",
+            Some("[1, 2]"),
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(
+            (
+                error.contains("Invalid ENVIO_SUBGRAPH_RPC"),
+                error.contains("doesn't know the type NotAType"),
+            ),
+            (true, true),
+            "{error}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1159,6 +1192,100 @@ dataSources:
             ),
             (true, true, true, true, true, true)
         );
+    }
+
+    const GRAVITY_ABI: &str = r#"[{"type":"event","name":"NewGravatar","anonymous":false,"inputs":[{"name":"id","type":"uint256","indexed":false}]}]"#;
+
+    const GRAVITY_MANIFEST: &str = r#"
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Gravity
+    network: mainnet
+    source:
+      address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
+      abi: Gravity
+      startBlock: 6175244
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Gravatar
+      abis:
+        - name: Gravity
+          file: ./abis/Gravity.json
+      eventHandlers:
+        - event: NewGravatar(uint256)
+          handler: handleNewGravatar
+      file: ./src/gravity.ts
+"#;
+
+    fn parse_in_memory(schema: &str) -> anyhow::Result<SystemConfig> {
+        let files = std::collections::HashMap::from([(
+            "./abis/Gravity.json".to_string(),
+            GRAVITY_ABI.to_string(),
+        )]);
+        SystemConfig::parse_subgraph(
+            GRAVITY_MANIFEST,
+            schema,
+            "gravatar",
+            &std::collections::HashMap::new(),
+            &files,
+            ".",
+            &[],
+        )
+    }
+
+    // CryptoPunks: `Ask.nft: NFT` (one implementor) and `Ask.created: Event`
+    // (nine) were refused one after the other by envio's own schema checks.
+    #[test]
+    fn indexes_fields_typed_as_an_interface() {
+        let config = parse_in_memory(
+            r#"
+interface NFT {
+  id: ID!
+}
+interface Event {
+  id: ID!
+  nft: NFT
+}
+type Punk implements NFT @entity {
+  id: ID!
+  events: [Event!]! @derivedFrom(field: "nft")
+}
+type Ask @entity {
+  id: ID!
+  nft: NFT
+  created: Event
+}
+type Sale implements Event @entity {
+  id: ID!
+  nft: NFT
+  asks: [Ask!]! @derivedFrom(field: "created")
+}
+type Transfer implements Event @entity {
+  id: ID!
+  nft: NFT
+}
+"#,
+        )
+        .unwrap();
+        let ask = config.schema.entities.get("Ask").unwrap();
+        let mut columns: Vec<String> = ask
+            .get_fields()
+            .iter()
+            .filter_map(|field| {
+                field
+                    .get_postgres_field(&config.schema, ask)
+                    .unwrap()
+                    .map(|pg| pg.field_name.clone())
+            })
+            .collect();
+        columns.sort();
+        assert_eq!(columns, vec!["created_id", "id", "nft"]);
     }
 
     #[test]

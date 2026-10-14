@@ -110,8 +110,13 @@ trips it, so working subgraphs lose nothing.
 
 **Interfaces** carry through to the entity parser, which folds each one into
 the entities that implement it — the interface itself has no table. A field
-*typed* as an interface points at several tables at once: derived, it is only a
-query and is dropped; stored, it is an error.
+*typed* as an interface with **one** implementor is translated as that
+implementor (stored, derived or a list). With several implementors it points at
+several tables at once: derived, it is only a query and is dropped from the
+envio schema; stored, it keeps what graph-node stores — the referenced id —
+in a `<field>_id` column (the name a relation's column has), and a
+`@derivedFrom` naming it reads that column; a stored list is a list of ids
+like any other entity list.
 
 §7 error: **timeseries/aggregations** (`@entity(timeseries: true)`,
 `@aggregation`).

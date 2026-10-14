@@ -95,7 +95,9 @@ impl Schema {
             })
             .collect();
 
-        let entities = document
+        // Every entity's interface fields are resolved before any is refused, so
+        // a schema with several learns about all of them in one run.
+        let (resolved, refused): (Vec<_>, Vec<_>) = document
             .definitions
             .iter()
             .filter_map(|d| match d {
@@ -106,13 +108,20 @@ impl Schema {
                 TypeDefinition::Object(obj) => Some(obj),
                 _ => None,
             })
-            .map(|obj| {
-                Entity::from_object(
-                    &resolve_interfaces(obj, &interfaces)?,
-                    default_scope,
-                    source,
-                )
-            })
+            .map(|obj| resolve_interfaces(obj, &interfaces))
+            .partition(|result| result.is_ok());
+        if !refused.is_empty() {
+            let messages: Vec<String> = refused
+                .into_iter()
+                .filter_map(|result| result.err())
+                .map(|err| err.to_string())
+                .collect();
+            return Err(anyhow!("{}", messages.join("\n")));
+        }
+        let entities = resolved
+            .into_iter()
+            .filter_map(|result| result.ok())
+            .map(|obj| Entity::from_object(&obj, default_scope, source))
             .collect::<anyhow::Result<Vec<Entity>>>()?;
 
         let enums = document
@@ -1300,6 +1309,7 @@ fn resolve_interfaces<'a>(
     }
 
     let mut kept = Vec::with_capacity(resolved.fields.len());
+    let mut refused = Vec::new();
     for field in resolved.fields {
         match interfaces.get(named_type(&field.field_type)) {
             None => kept.push(field),
@@ -1309,17 +1319,17 @@ fn resolve_interfaces<'a>(
                     .iter()
                     .any(|directive| directive.name == "derivedFrom")
                 {
-                    return Err(anyhow!(
+                    refused.push(format!(
                         "Field '{}' on entity '{}' is typed as the interface '{}', which has no \
                          table of its own. Give it one of the entity types that implement {}.",
-                        field.name,
-                        obj.name,
-                        interface.name,
-                        interface.name
+                        field.name, obj.name, interface.name, interface.name
                     ));
                 }
             }
         }
+    }
+    if !refused.is_empty() {
+        return Err(anyhow!("{}", refused.join("\n")));
     }
     resolved.fields = kept;
 
@@ -3272,6 +3282,41 @@ type Transfer implements DomainEvent {
         assert!(
             message.contains("Field 'latest' on entity 'Domain' is typed as the interface"),
             "unexpected error: {message}"
+        );
+    }
+
+    // Refused one at a time, a schema with many of these takes a run per field
+    // to learn what to change.
+    #[test]
+    fn refuses_every_interface_typed_stored_field_at_once() {
+        let schema_str = r#"
+interface DomainEvent {
+  id: ID!
+}
+type Domain {
+  id: ID!
+  latest: DomainEvent!
+  first: DomainEvent
+}
+type Account {
+  id: ID!
+  lastSeen: DomainEvent
+}
+type Transfer implements DomainEvent {
+  id: ID!
+}
+        "#;
+        let err = Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex)
+            .expect_err("expected the interface-typed stored fields to be refused");
+        let message = format!("{err:#}");
+        assert_eq!(
+            (
+                message.contains("Field 'latest' on entity 'Domain'"),
+                message.contains("Field 'first' on entity 'Domain'"),
+                message.contains("Field 'lastSeen' on entity 'Account'"),
+            ),
+            (true, true, true),
+            "{message}"
         );
     }
 
