@@ -292,7 +292,7 @@ pub fn read_resumed_chains(pg_schema: &str) -> String {
          \"first_event_block\", (extract(epoch from \"ready_at\") * 1000)::float8, \
          \"events_processed\"::float8, \"progress_block\", \
          extract(epoch from \"progress_block_time\")::float8, \"source_block\", \
-         \"checkpoint_id\"::int8, \"ecosystem\" FROM \"{pg_schema}\".\"{CHAINS}\";"
+         \"checkpoint_id\"::int8 FROM \"{pg_schema}\".\"{CHAINS}\";"
     )
 }
 

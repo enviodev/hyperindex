@@ -31,8 +31,8 @@ type counter = {id: string, count: bigint}
 type counterOps = {set: counter => unit}
 type counterContext = {@as("Counter") counter: counterOps}
 
-describe("Scenario ClickHouse alongside Postgres", () => {
-  scenario->Scenario.it("mirrors an indexed entity into ClickHouse", ~sources=[{chain: 1}], async (
+describe("Scenario ClickHouse", () => {
+  scenario->Scenario.it("keeps an indexed entity in ClickHouse", ~sources=[{chain: 1}], async (
     ~t,
     ~indexer,
     ~source,
@@ -55,8 +55,7 @@ describe("Scenario ClickHouse alongside Postgres", () => {
     )
     await indexer.getBatchWritePromise()
 
-    // The current-state view ClickHouse builds over its history table, which is
-    // what mirrors the Postgres row.
+    // The current-state view ClickHouse builds over its history table.
     let database = TestClickHouse.currentDatabase()
     let rows = await TestClickHouse.query(
       `SELECT id, count FROM \`${database}\`.\`Counter\` FORMAT JSONEachRow`,

@@ -184,7 +184,6 @@ pub struct StoredConfig {
 #[derive(Clone, Debug)]
 pub struct ResumedChain {
     pub id: i64,
-    pub ecosystem: String,
     pub start_block: i32,
     pub end_block: Option<i32>,
     pub max_reorg_depth: i32,

@@ -57,7 +57,7 @@ fn put_bytes(out: &mut Vec<u8>, value: &[u8]) {
 
 /// Without its NUL bytes: Postgres keeps none in text, and both stores have to
 /// hold the same value for one entity.
-fn put_string(out: &mut Vec<u8>, value: &str) {
+pub(super) fn put_string(out: &mut Vec<u8>, value: &str) {
     if value.contains('\0') {
         put_bytes(out, value.replace('\0', "").as_bytes());
     } else {
@@ -457,8 +457,9 @@ impl EncodedRows {
 pub enum Value {
     Null,
     Int(i128),
-    Bool(bool),
     Text(String),
+    #[cfg(test)]
+    Bool(bool),
     #[cfg(test)]
     Bytes(Vec<u8>),
     #[cfg(test)]
@@ -484,6 +485,7 @@ fn encode_value(out: &mut Vec<u8>, ch_type: &ChType, value: &Value) -> Result<()
         }
         #[cfg(test)]
         (ChType::Float64, Value::Float(float)) => out.extend_from_slice(&float.to_le_bytes()),
+        #[cfg(test)]
         (ChType::Bool, Value::Bool(bit)) => out.push(u8::from(*bit)),
         (ChType::String, Value::Text(text)) => put_string(out, text),
         #[cfg(test)]

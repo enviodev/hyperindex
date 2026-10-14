@@ -100,7 +100,7 @@ type store = | @as("Postgres") Postgres | @as("ClickHouse") ClickHouse
 // What each store made of a table: present for the stores that keep it.
 type registeredTable = {
   handle: int,
-  // The store the table is read from, and its own rows staged for.
+  // The store the table is read from.
   home: store,
   postgres?: postgresRegistered,
   clickhouse?: clickHouseRegistered,

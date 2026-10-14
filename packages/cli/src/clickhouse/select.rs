@@ -17,6 +17,27 @@ use crate::storage::types::{Bounds, Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUM
 /// belongs to a write that has not committed.
 pub type Frontier = BTreeMap<i64, i64>;
 
+/// A read, and the lists it sends beside its text. A batch loads thousands of
+/// ids at once, more than the server's cap on a statement's length holds as
+/// literals, so a list of text goes as external data instead: rows the server
+/// reads rather than parses.
+#[derive(Debug, PartialEq)]
+pub struct Read {
+    pub sql: String,
+    pub external: Vec<External>,
+}
+
+/// A one-column table the server reads beside a statement, its rows in
+/// RowBinary.
+#[derive(Debug, PartialEq)]
+pub struct External {
+    pub name: String,
+    pub rows: Vec<u8>,
+}
+
+/// The column of every [`External`].
+pub const EXTERNAL_STRUCTURE: &str = "value String";
+
 /// The highest id any chain has committed, which is how far a cross-chain
 /// entity's rows are readable: they only exist under one shared sequence.
 fn frontier_max(frontier: &Frontier) -> i64 {
@@ -198,7 +219,40 @@ fn value(column: &Column, condition: &Condition, value: &[Option<String>]) -> Re
     }
 }
 
-pub fn condition(table: &Table, condition: &Condition) -> Result<String> {
+/// A list of text a String column is compared against, as rows of its own.
+/// Anything else a value can be — NULL, a number read off text — is spelled
+/// in the statement.
+fn external_list(
+    column: &Column,
+    condition: &Condition,
+    external: &mut Vec<External>,
+) -> Option<String> {
+    if condition.is_list
+        || condition.kind != ValueKind::Text
+        || *column.ch_type.base() != ChType::String
+    {
+        return None;
+    }
+    let mut rows = Vec::new();
+    for value in &condition.values {
+        let [Some(text)] = value.as_slice() else {
+            return None;
+        };
+        super::row_binary::put_string(&mut rows, text);
+    }
+    let name = format!("envio_list_{}", external.len());
+    external.push(External {
+        name: name.clone(),
+        rows,
+    });
+    Some(name)
+}
+
+pub fn condition(
+    table: &Table,
+    condition: &Condition,
+    external: &mut Vec<External>,
+) -> Result<String> {
     let column = table.column(&condition.column).with_context(|| {
         format!(
             "\"{}\" has no column \"{}\" to filter by",
@@ -209,6 +263,9 @@ pub fn condition(table: &Table, condition: &Condition) -> Result<String> {
     Ok(match condition.operator {
         Operator::In if condition.values.is_empty() => "false".to_string(),
         Operator::In => {
+            if let Some(list) = external_list(column, condition, external) {
+                return Ok(format!("{compared} IN {list}"));
+            }
             let candidates = condition
                 .values
                 .iter()
@@ -296,13 +353,14 @@ pub fn load(
     table: &Table,
     conditions: &[Condition],
     frontier: &Frontier,
-) -> Result<String> {
+) -> Result<Read> {
     let entity = &table.entity;
     let key = entity.key();
+    let mut external = Vec::new();
     let mut on_key = Vec::new();
     let mut on_values = Vec::new();
     for filter in conditions {
-        let rendered = condition(table, filter)?;
+        let rendered = condition(table, filter, &mut external)?;
         let column = table
             .column(&filter.column)
             .map(|column| column.name.as_str());
@@ -349,7 +407,7 @@ pub fn load(
         .join(", ");
     let mut current = on_values;
     current.insert(0, format!("{} = {}", quoted(CHANGE_COLUMN), literal(SET)));
-    Ok(format!(
+    let sql = format!(
         "SELECT {} FROM (SELECT {key}, {untupled} FROM (SELECT {key}, argMax(tuple({}), {}) AS \
          {LATEST} FROM {source} WHERE {} GROUP BY {key})) WHERE {} FORMAT RowBinary",
         as_row_names(table),
@@ -362,7 +420,8 @@ pub fn load(
         conjunction(&narrowing),
         conjunction(&current),
         key = joined(&key),
-    ))
+    );
+    Ok(Read { sql, external })
 }
 
 /// What a load names each entity's latest row by. Not a column's name: an
@@ -463,7 +522,8 @@ mod tests {
     }
 
     /// A load by id narrows the history by the primary key before picking each
-    /// entity's latest row, and asks for nothing past the frontier.
+    /// entity's latest row, and asks for nothing past the frontier. The ids go
+    /// beside the statement, each as a RowBinary string.
     #[test]
     fn a_load_by_id_narrows_on_the_key() {
         let mut by_ids = eq("id", ValueKind::Text, "a");
@@ -471,12 +531,44 @@ mod tests {
         by_ids.values = vec![vec![Some("a".to_string())], vec![Some("b'c".to_string())]];
         assert_eq!(
             load("db", &account(), &[by_ids], &frontier(&[(1, 7)])).unwrap(),
-            "SELECT `id` AS `id`, `owner_name` AS `ownerName`, `balance` AS `balance` FROM \
-             (SELECT `id`, envio_latest.1 AS `owner_name`, envio_latest.2 AS `balance`, \
-             envio_latest.3 AS `envio_change` FROM (SELECT `id`, argMax(tuple(`owner_name`, \
-             `balance`, `envio_change`), `envio_checkpoint_id`) AS envio_latest FROM \
-             `db`.`envio_history_Account` WHERE `id` IN ('a', 'b''c') AND `envio_checkpoint_id` \
-             <= 7 GROUP BY `id`)) WHERE `envio_change` = 'SET' FORMAT RowBinary"
+            Read {
+                sql: "SELECT `id` AS `id`, `owner_name` AS `ownerName`, `balance` AS `balance` \
+                      FROM (SELECT `id`, envio_latest.1 AS `owner_name`, envio_latest.2 AS \
+                      `balance`, envio_latest.3 AS `envio_change` FROM (SELECT `id`, \
+                      argMax(tuple(`owner_name`, `balance`, `envio_change`), \
+                      `envio_checkpoint_id`) AS envio_latest FROM `db`.`envio_history_Account` \
+                      WHERE `id` IN envio_list_0 AND `envio_checkpoint_id` <= 7 GROUP BY `id`)) \
+                      WHERE `envio_change` = 'SET' FORMAT RowBinary"
+                    .to_string(),
+                external: vec![External {
+                    name: "envio_list_0".to_string(),
+                    rows: b"\x01a\x03b'c".to_vec(),
+                }],
+            }
+        );
+    }
+
+    /// Only a list of text goes beside the statement: a NULL has no row to be,
+    /// and a number kept as text is compared as the number it spells.
+    #[test]
+    fn a_list_with_anything_but_text_is_spelled_in_the_statement() {
+        let mut with_null = eq("ownerName", ValueKind::Text, "a");
+        with_null.operator = Operator::In;
+        with_null.values = vec![vec![Some("a".to_string())], vec![None]];
+        let mut numbers = eq("balance", ValueKind::Number, "1");
+        numbers.operator = Operator::In;
+        let mut external = Vec::new();
+        assert_eq!(
+            (
+                condition(&account(), &with_null, &mut external).unwrap(),
+                condition(&account(), &numbers, &mut external).unwrap(),
+                external,
+            ),
+            (
+                "`owner_name` IN ('a', NULL)".to_string(),
+                "toInt256OrNull(`balance`) IN (toInt256('1'))".to_string(),
+                Vec::new(),
+            )
         );
     }
 
@@ -492,7 +584,8 @@ mod tests {
                 &[eq("ownerName", ValueKind::Text, "alice")],
                 &frontier(&[(1, 7)])
             )
-            .unwrap(),
+            .unwrap()
+            .sql,
             "SELECT `id` AS `id`, `owner_name` AS `ownerName`, `balance` AS `balance` FROM \
              (SELECT `id`, envio_latest.1 AS `owner_name`, envio_latest.2 AS `balance`, \
              envio_latest.3 AS `envio_change` FROM (SELECT `id`, argMax(tuple(`owner_name`, \
@@ -517,7 +610,8 @@ mod tests {
                 &[eq("id", ValueKind::Text, "a"), on_chain],
                 &frontier(&[(1, 7), (137, 9)])
             )
-            .unwrap(),
+            .unwrap()
+            .sql,
             "SELECT `id` AS `id`, `chain_id` AS `chainId` FROM (SELECT `id`, `chain_id`, \
              envio_latest.1 AS `envio_change` FROM (SELECT `id`, `chain_id`, \
              argMax(tuple(`envio_change`), `envio_checkpoint_id`) AS envio_latest FROM \
@@ -535,7 +629,7 @@ mod tests {
             eq("id", ValueKind::Boolean, "yes"),
         ]
         .map(|filter| {
-            condition(&account(), &filter)
+            condition(&account(), &filter, &mut Vec::new())
                 .err()
                 .map(|error| error.to_string())
         });
@@ -556,7 +650,7 @@ mod tests {
         let mut gt = eq("balance", ValueKind::Number, "10");
         gt.operator = Operator::Gt;
         assert_eq!(
-            condition(&account(), &gt).unwrap(),
+            condition(&account(), &gt, &mut Vec::new()).unwrap(),
             "toInt256OrNull(`balance`) > toInt256('10')"
         );
     }

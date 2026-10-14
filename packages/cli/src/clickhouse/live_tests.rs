@@ -193,23 +193,27 @@ async fn resume(
         .resume(&Resume {
             sequence: Sequence::SharedAcrossChains,
             tables,
-            committed: vec![ResumedChain {
-                id: 1,
-                ecosystem: "evm".to_string(),
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: 200,
-                first_event_block: None,
-                ready_at: None,
-                events_processed: 0.0,
-                progress_block,
-                progress_block_time: None,
-                source_block: 1000,
-                checkpoint_id,
-            }],
+            committed: vec![committed(checkpoint_id, progress_block)],
         })
         .await
         .unwrap();
+}
+
+/// Chain 1 as Postgres hands it over having committed up to `checkpoint_id`.
+fn committed(checkpoint_id: i64, progress_block: i32) -> ResumedChain {
+    ResumedChain {
+        id: 1,
+        start_block: 0,
+        end_block: None,
+        max_reorg_depth: 200,
+        first_event_block: None,
+        ready_at: None,
+        events_processed: 0.0,
+        progress_block,
+        progress_block_time: None,
+        source_block: 1000,
+        checkpoint_id,
+    }
 }
 
 /// An account history row: set to `(owner, balance)`, or a delete.
@@ -505,6 +509,45 @@ async fn a_load_reads_each_entitys_latest_row() {
     );
 }
 
+/// A batch loads every id its handlers touch in one read, thousands at a time,
+/// and with a value condition beside them the ids appear in the read twice. The
+/// server caps how long a statement may be, which a read has to fit under
+/// whatever the ids add up to.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_load_of_more_ids_than_a_statement_holds_reads_them_all() {
+    let live = Live::new();
+    let account = live.account();
+    initialize(&live, vec![account.clone()]).await;
+    let ids = (0..6000)
+        .map(|index| format!("0x{index:040x}"))
+        .collect::<Vec<_>>();
+    let changes = ids
+        .iter()
+        .map(|id| (id.as_str(), Some(("alice", "1")), 1))
+        .collect::<Vec<_>>();
+    write(&live, batch(&account, &changes, &[(1, 1, 10)], (1, 1))).await;
+
+    let by_ids = Condition {
+        operator: Operator::In,
+        values: ids.iter().map(|id| vec![Some(id.clone())]).collect(),
+        ..eq("id", "")
+    };
+    let loaded = |conditions: Vec<Condition>| async {
+        live.storage
+            .load_where(&account, conditions)
+            .await
+            .map(|result| result.arena.rows())
+            .map_err(|error| format!("{error:#}"))
+    };
+    let (by_id, by_id_and_owner) = (
+        loaded(vec![by_ids.clone()]).await,
+        loaded(vec![by_ids, eq("owner", "alice")]).await,
+    );
+    live.drop_database().await;
+    assert_eq!((by_id, by_id_and_owner), (Ok(6000), Ok(6000)));
+}
+
 /// A process that died mid-write can leave an insert running on the server,
 /// one that finishes after the next process resumed and trimmed what never
 /// committed. Its rows would read as that run's once its frontier passed them.
@@ -737,6 +780,47 @@ async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
     );
 }
 
+/// The same commit landing after the next process initialized afresh lands in
+/// the tables that process built, and must not claim the checkpoint over the
+/// rows it hasn't written yet either.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_commit_landing_after_the_next_initialize_claims_nothing() {
+    let live = Live::new();
+    let account = live.account();
+    initialize(&live, vec![account.clone()]).await;
+
+    let (landed, rows_landed) = tokio::sync::oneshot::channel();
+    let (commit, may_commit) = tokio::sync::oneshot::channel();
+    let dying = live.storage.write_batch(
+        batch(
+            &account,
+            &[("a", Some(("alice", "1")), 1)],
+            &[(1, 1, 10)],
+            (1, 1),
+        ),
+        Handoff {
+            landed: Some(landed),
+            commit: Some(Box::pin(async move { may_commit.await.unwrap_or(false) })),
+            committed: None,
+        },
+    );
+    let next = async {
+        rows_landed.await.unwrap();
+        let next = Live {
+            storage: live.another_process(),
+            database: live.database.clone(),
+        };
+        initialize(&next, vec![next.account()]).await;
+        commit.send(true).unwrap();
+    };
+    let (dying, ()) = tokio::join!(dying, next);
+    let after = live.frontier().await;
+
+    live.drop_database().await;
+    assert_eq!((dying.is_ok(), after), (true, "0".to_string()));
+}
+
 /// ClickHouse trims back to what Postgres committed, whatever its own chains'
 /// rows say.
 #[tokio::test]
@@ -780,6 +864,50 @@ async fn a_resume_trims_back_to_what_postgres_committed() {
             "1".to_string(),
             "1".to_string()
         )
+    );
+}
+
+/// Every batch Postgres committed landed in ClickHouse first, as the
+/// checkpoint its frontier names. A database without that checkpoint lost the
+/// batch after taking it — a server that dropped an acknowledged insert, a
+/// restore from an older backup — and a resume over it would serve the
+/// entities as they were before it, for good.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_resume_refuses_a_database_missing_a_batch_postgres_committed() {
+    let live = Live::new();
+    let account = live.account();
+    initialize(&live, vec![account.clone()]).await;
+    write(
+        &live,
+        batch(
+            &account,
+            &[("a", Some(("alice", "1")), 1)],
+            &[(1, 1, 10)],
+            (1, 1),
+        ),
+    )
+    .await;
+
+    let resumed = live
+        .storage
+        .resume(&Resume {
+            sequence: Sequence::SharedAcrossChains,
+            tables: vec![account],
+            committed: vec![committed(2, 20)],
+        })
+        .await
+        .map_err(|error| format!("{error:#}"));
+    live.drop_database().await;
+    assert_eq!(
+        resumed,
+        Err(format!(
+            "Failed to resume ClickHouse storage: ClickHouse database \"{}\" is missing \
+             batches Postgres committed: chain 1 through checkpoint 2. It lost them after \
+             taking them, or was restored from an older backup. Index from scratch, or point \
+             ENVIO_CLICKHOUSE_DATABASE at the database that holds them.",
+            live.database
+        ))
     );
 }
 

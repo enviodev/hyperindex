@@ -53,8 +53,8 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     );
   }
 
-  // Per-entity storage override: under config.yaml only Postgres receives
-  // this row (declared in schema.graphql via @storage(postgres: true)).
+  // Per-entity storage override: only Postgres receives this row (declared in
+  // schema.graphql via @storage(postgres: true)).
   context.TransferPgOnly.set({
     id,
     from: event.params.from,

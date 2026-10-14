@@ -84,7 +84,7 @@ let raiseOnIndexerError = promise =>
 
 describe("Rollback with a ClickHouse-only entity", () => {
   scenario->Scenario.it(
-    "Skips ClickHouse-only entities on rollback instead of querying their missing history tables",
+    "Rolls back a ClickHouse-only entity without a Postgres history table to query",
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     ~onError=errHandler => {
@@ -165,9 +165,12 @@ describe("Rollback with a ClickHouse-only entity", () => {
       await indexer.getBatchWritePromise()->raiseOnIndexerError
 
       t.expect(
-        await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-        ~message="The Postgres entity created after the rollback target should be reverted",
-      ).toEqual([])
+        (
+          await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
+          await (indexer.query(chOnlyEntityName): promise<array<entityWithTimestamp>>),
+        ),
+        ~message="Both entities created after the rollback target should be reverted",
+      ).toEqual(([], []))
     },
   )
 })

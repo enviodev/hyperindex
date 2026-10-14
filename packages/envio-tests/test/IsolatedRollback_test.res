@@ -91,8 +91,8 @@ type Total @crossChain {
 )
 
 // ClickHouse is append-only: an isolated rollback reaches it as the diff rows the
-// next batch carries, and its current-state view has to resolve to the same
-// thing Postgres holds.
+// next batch carries, and its current-state view has to resolve to the rows the
+// rollback restored.
 let clickHouseScenario = Scenario.make(
   ~supervised=false,
   ~schema=perChainSchema,
@@ -1140,7 +1140,7 @@ describe("Isolated multichain rollback", () => {
   )
 
   clickHouseScenario->Scenario.it(
-    "Mirrors the isolated rollback into ClickHouse",
+    "Rolls back the reorg chain alone in ClickHouse",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {

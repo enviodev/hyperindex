@@ -644,7 +644,6 @@ impl Storage {
                         progress_block_time: cell(row, 8)?,
                         source_block: cell(row, 9)?,
                         checkpoint_id: cell(row, 10)?,
-                        ecosystem: cell(row, 11)?,
                     })
                 })
                 .collect::<Result<_>>()?,

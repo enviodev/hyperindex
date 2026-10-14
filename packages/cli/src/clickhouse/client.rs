@@ -5,6 +5,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 
 use super::row_binary::EncodedRows;
+use super::select::{External, Read, EXTERNAL_STRUCTURE};
 
 const MAX_RETRIES: u32 = 8;
 
@@ -140,7 +141,15 @@ impl Client {
     }
 
     pub async fn read(&self, query: String) -> Result<Bytes> {
-        self.post(query)
+        self.read_with(Read {
+            sql: query,
+            external: Vec::new(),
+        })
+        .await
+    }
+
+    pub async fn read_with(&self, read: Read) -> Result<Bytes> {
+        self.post(read)
             .await?
             .bytes()
             .await
@@ -153,20 +162,43 @@ impl Client {
     /// insert would be halved for: a statement can't be, and the same one runs
     /// out of the same memory or deadline again. One that timed out after
     /// reaching the server already spent the whole statement timeout.
-    async fn post(&self, query: String) -> Result<reqwest::Response> {
+    async fn post(&self, read: Read) -> Result<reqwest::Response> {
+        // A statement with external data names it in the URL and sends it as
+        // a form, so the statement itself moves to the URL too.
+        let (params, content_type, body) = if read.external.is_empty() {
+            (Vec::new(), None, Bytes::from(read.sql))
+        } else {
+            let (boundary, form) = multipart(&read.external);
+            let mut params = vec![("query".to_string(), read.sql)];
+            for external in &read.external {
+                params.push((
+                    format!("{}_structure", external.name),
+                    EXTERNAL_STRUCTURE.to_string(),
+                ));
+                params.push((format!("{}_format", external.name), "RowBinary".to_string()));
+            }
+            (
+                params,
+                Some(format!("multipart/form-data; boundary={boundary}")),
+                Bytes::from(form),
+            )
+        };
         let mut retries_left = self.tuning.retries;
         loop {
             // Held until the query has finished, so one that fails after its
             // first rows would have been sent answers with an error status.
-            let sent = self
+            let mut request = self
                 .http
                 .post(&self.url)
                 .timeout(self.tuning.statement_timeout)
                 .query(&[("wait_end_of_query", "1")])
+                .query(&params)
                 .basic_auth(&self.username, Some(&self.password))
-                .body(query.clone())
-                .send()
-                .await;
+                .body(body.clone());
+            if let Some(content_type) = &content_type {
+                request = request.header(reqwest::header::CONTENT_TYPE, content_type);
+            }
+            let sent = request.send().await;
             let failure = match sent {
                 Ok(response) => {
                     self.check_served_by(&response)?;
@@ -404,6 +436,34 @@ const NEVER_ERROR_CODES: &[u32] = &[
     497, // ACCESS_DENIED
     516, // AUTHENTICATION_FAILED
 ];
+
+/// External data as the form ClickHouse reads it: a file part per table. The
+/// rows are binary, so the boundary is one none of them happens to contain.
+fn multipart(external: &[External]) -> (String, Vec<u8>) {
+    let contains = |rows: &[u8], boundary: &str| {
+        rows.windows(boundary.len())
+            .any(|window| window == boundary.as_bytes())
+    };
+    let boundary = (0..)
+        .map(|attempt| format!("envio-external-data-{attempt}"))
+        .find(|boundary| !external.iter().any(|table| contains(&table.rows, boundary)))
+        .expect("an unbounded range always yields a boundary");
+    let mut form = Vec::new();
+    for table in external {
+        form.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; \
+                 filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n",
+                name = table.name
+            )
+            .as_bytes(),
+        );
+        form.extend_from_slice(&table.rows);
+        form.extend_from_slice(b"\r\n");
+    }
+    form.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    (boundary, form)
+}
 
 /// What every insert of a process driving `chain_ids` in `database` starts its
 /// query id with, so the next process driving any of them can find the ones it

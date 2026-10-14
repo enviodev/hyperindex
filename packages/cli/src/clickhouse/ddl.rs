@@ -350,34 +350,17 @@ pub fn create_checkpoints_table(
 }
 
 pub fn chain_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
-    let nullable = |ch_type: ChType| ChType::Nullable(Box::new(ch_type));
     vec![
         (CHAIN_ID_COLUMN.to_string(), chain_id_type.clone()),
         (FRONTIER_COLUMN.to_string(), ChType::UInt64),
         (VERSION_COLUMN.to_string(), ChType::UInt64),
-        ("ecosystem".to_string(), ChType::String),
-        ("start_block".to_string(), ChType::Int32),
-        ("end_block".to_string(), nullable(ChType::Int32)),
-        ("max_reorg_depth".to_string(), ChType::Int32),
-        ("buffer_block".to_string(), ChType::Int32),
-        ("source_block".to_string(), ChType::Int32),
-        ("first_event_block".to_string(), nullable(ChType::Int32)),
-        ("ready_at".to_string(), nullable(ChType::DateTime64)),
-        ("events_processed".to_string(), ChType::UInt64),
-        ("_is_hyper_sync".to_string(), ChType::Bool),
-        ("progress_block".to_string(), ChType::Int32),
-        (
-            "progress_block_time".to_string(),
-            nullable(ChType::DateTime64),
-        ),
     ]
 }
 
-/// One row per chain, written whole every time anything about the chain
-/// changes. A write's last insert is its chains' rows, which is what commits
-/// it: `checkpoint_id` is the chain's frontier, and nothing a write stamped
-/// past it is readable until the row carrying it lands. The latest version of
-/// a chain's row is its state, so the table is read with FINAL.
+/// One row per chain, holding its frontier. A write's last insert is its
+/// chains' rows, which is what commits it: nothing a write stamped past
+/// `checkpoint_id` is readable until the row carrying it lands. The latest
+/// version of a chain's row is its frontier, so the table is read with FINAL.
 ///
 /// The dedup window is off for the same reason as on the other tables: a row
 /// identical to one already written would otherwise be dropped while the insert
@@ -397,13 +380,12 @@ pub fn create_chains_table(chain_id_type: &ChType, database: &str, topology: Top
 pub fn info_columns() -> Vec<(String, ChType)> {
     vec![
         (ID_COLUMN.to_string(), ChType::Int32),
-        ("config".to_string(), ChType::String),
         ("instance".to_string(), ChType::String),
     ]
 }
 
-/// A singleton holding the config the schema was created from, which a resume
-/// is checked against. Text rather than JSON so it reads back byte for byte.
+/// A singleton naming the initialize that built the database, which pairs it
+/// with the Postgres schema built alongside it.
 pub fn create_info_table(database: &str, topology: Topology) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
@@ -791,19 +773,7 @@ mod tests {
             "CREATE TABLE IF NOT EXISTS `test_db`.`envio_chains` (\n  \
              `chain_id` Int32,\n  \
              `checkpoint_id` UInt64,\n  \
-             `version` UInt64,\n  \
-             `ecosystem` String,\n  \
-             `start_block` Int32,\n  \
-             `end_block` Nullable(Int32),\n  \
-             `max_reorg_depth` Int32,\n  \
-             `buffer_block` Int32,\n  \
-             `source_block` Int32,\n  \
-             `first_event_block` Nullable(Int32),\n  \
-             `ready_at` Nullable(DateTime64(3, 'UTC')),\n  \
-             `events_processed` UInt64,\n  \
-             `_is_hyper_sync` Bool,\n  \
-             `progress_block` Int32,\n  \
-             `progress_block_time` Nullable(DateTime64(3, 'UTC'))\n\
+             `version` UInt64\n\
              )\n\
              ENGINE = ReplacingMergeTree(`version`)\n\
              ORDER BY (`chain_id`)"

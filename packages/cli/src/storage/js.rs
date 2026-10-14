@@ -119,7 +119,7 @@ pub struct ClickHouseRegistered {
 #[napi(object)]
 pub struct RegisteredTable {
     pub handle: u32,
-    /// The store the table is read from, and its own rows staged for.
+    /// The store the table is read from.
     pub home: Store,
     pub postgres: Option<PgRegistered>,
     pub clickhouse: Option<ClickHouseRegistered>,

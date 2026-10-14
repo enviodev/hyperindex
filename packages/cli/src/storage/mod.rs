@@ -473,7 +473,11 @@ impl Storage {
     /// Writes a batch to every store, and says how long each took. ClickHouse
     /// lands its half first and Postgres commits only once it has: a batch
     /// either reaches both, or Postgres never commits it and a restart trims
-    /// ClickHouse back.
+    /// ClickHouse back. Past Postgres's COMMIT, ClickHouse can still fail to
+    /// move its frontier: the batch is reported failed though Postgres holds
+    /// it, and only a restart, raising the frontier to what Postgres
+    /// committed, makes its rows readable. So a failed write is never retried
+    /// by the process that made it.
     pub async fn write_batch(
         &self,
         batch: Batch,
@@ -578,8 +582,9 @@ fn waited_on(word: tokio::sync::oneshot::Receiver<bool>) -> (Gate, Arc<AtomicU64
 }
 
 /// Splits a batch between Postgres and ClickHouse. ClickHouse takes the rows
-/// of the entities it keeps, and what moves the chains: their checkpoints,
-/// progress, metadata and frontier. Everything else is Postgres's alone.
+/// of the entities it keeps, the checkpoints mapping them to blocks — a
+/// rollback's included — and the frontier making them readable. Everything
+/// else is Postgres's alone.
 fn split(batch: Batch) -> (Batch, Batch) {
     let Batch {
         rollback,
@@ -620,9 +625,7 @@ fn split(batch: Batch) -> (Batch, Batch) {
     }
     let clickhouse = Batch {
         rollback: rollback.clone(),
-        progress: progress.clone(),
         entities: clickhouse_entities,
-        chain_meta: chain_meta.clone(),
         frontier: frontier.clone(),
         checkpoints: checkpoints.clone(),
         ..Batch::default()

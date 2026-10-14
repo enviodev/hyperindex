@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 
-use super::types::{Addresses, ChainConfig, ChainMeta, Frontier, Progress, Sequence};
+use super::types::{Addresses, ChainConfig, Frontier, Progress, Sequence};
 use super::{Batch, EffectCacheWrite, Holding, Initialize, Rows, Storage, Table};
 use crate::clickhouse;
 use crate::postgres;
@@ -131,10 +131,10 @@ impl Live {
 }
 
 /// Two deployments of one config each pair a Postgres schema with the
-/// ClickHouse database following it. Crossing them resumes neither.
+/// ClickHouse database built alongside it. Crossing them resumes neither.
 #[tokio::test]
 #[ignore = "needs a Postgres and a ClickHouse server"]
-async fn a_follower_of_another_postgres_schema_has_diverged() {
+async fn a_clickhouse_built_alongside_another_postgres_schema_has_diverged() {
     let (a, b) = (Live::new("pair_a"), Live::new("pair_b"));
     a.initialize().await;
     b.initialize().await;
@@ -171,11 +171,11 @@ async fn a_clickhouse_without_its_postgres_is_stranded() {
     );
 }
 
-/// The follower commits once Postgres has: an effect cache write failing after
-/// the transaction committed fails the batch, not the follower's half of it.
+/// ClickHouse commits once Postgres has: an effect cache write failing after
+/// the transaction committed fails the batch, not ClickHouse's half of it.
 #[tokio::test]
 #[ignore = "needs a Postgres and a ClickHouse server"]
-async fn the_follower_commits_what_postgres_committed_whatever_its_caches_do() {
+async fn clickhouse_commits_what_postgres_committed_whatever_its_caches_do() {
     let live = Live::new("cache_after_commit");
     live.initialize().await;
     let cache = Arc::new(Table {
@@ -278,50 +278,4 @@ async fn a_reset_one_store_refuses_touches_neither() {
 
     live.drop_all().await;
     assert_eq!((refused, kept), (true, (true, "1".to_string())));
-}
-
-/// Readiness and chain metadata are Postgres's alone, which the next resume
-/// hands ClickHouse: neither needs the ClickHouse beside it, even one that is
-/// gone.
-#[tokio::test]
-#[ignore = "needs a Postgres and a ClickHouse server"]
-async fn readiness_and_chain_metadata_are_postgres_alone() {
-    let live = Live::new("meta");
-    live.initialize().await;
-    live.drop_clickhouse().await;
-
-    let postgres = &live.storage.postgres;
-    let outcomes = (
-        postgres
-            .set_chain_meta(&[ChainMeta {
-                chain_id: 1,
-                first_event_block: Some(5),
-                buffer_block: 10,
-                ready_at: None,
-                is_hyper_sync: true,
-            }])
-            .await
-            .map_err(|error| format!("{error:#}")),
-        postgres
-            .finalize_backfill(Vec::new(), &[1], 1_700_000_000_000.0)
-            .await
-            .map_err(|error| format!("{error:#}")),
-    );
-    let resumed = postgres
-        .resume()
-        .await
-        .unwrap()
-        .chains
-        .iter()
-        .map(|chain| (chain.id, chain.first_event_block, chain.ready_at))
-        .collect::<Vec<_>>();
-
-    live.drop_all().await;
-    assert_eq!(
-        (outcomes, resumed),
-        (
-            (Ok(()), Ok(())),
-            vec![(1, Some(5), Some(1_700_000_000_000.0))]
-        )
-    );
 }

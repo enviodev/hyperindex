@@ -5,14 +5,14 @@
 //! over them. A read only sees rows at or below its chain's frontier, and a
 //! resume trims away whatever a batch Postgres never committed left above it.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::future::{try_join_all, BoxFuture};
 
 use super::ch_type::{ChType, FieldSpec};
-use super::client::{error_code, Client, Connection, Tuning, Warn};
+use super::client::{Client, Connection, Tuning, Warn};
 use super::ddl::{self, Topology, CHAIN_ID_COLUMN, ID_COLUMN};
 use super::row_binary::{self, encode_values, EncodedRows, Value};
 use super::select::{self, Frontier};
@@ -23,8 +23,8 @@ use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
 use crate::storage::rows::{self, Cell, ColumnRead, ReadKind, ResultSet};
 use crate::storage::types::{
-    Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Progress, ResumedChain, Sequence,
-    CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN, INFO_TABLE,
+    Bounds, Checkpoints, DiffCheckpoint, Sequence, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE,
+    CHECKPOINT_ID_COLUMN, INFO_TABLE,
 };
 use crate::storage::{
     Batch, EntityStore, Failure, Handoff, Initialize, Op, Resume, Store, WriteError,
@@ -36,117 +36,18 @@ pub struct Settings {
     pub database_engine: Option<String>,
 }
 
-/// How far a resume moves the chains' version past the highest it read. A
-/// process that died mid-commit can still have its chains insert land after
-/// the next one resumed — with a version a little above what that one read —
-/// and the rows with the higher version are the ones that stand.
-const RESUME_FENCE: u64 = 1 << 32;
-
-/// A chain as its row holds it. A write rewrites the whole row, so the latest
-/// one is kept here to write the next from.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ChainRow {
-    pub id: i64,
-    pub checkpoint_id: i64,
-    pub ecosystem: String,
-    pub start_block: i32,
-    pub end_block: Option<i32>,
-    pub max_reorg_depth: i32,
-    pub buffer_block: i32,
-    pub source_block: i32,
-    pub first_event_block: Option<i32>,
-    /// Unix milliseconds.
-    pub ready_at: Option<f64>,
-    pub events_processed: f64,
-    pub is_hyper_sync: bool,
-    pub progress_block: i32,
-    /// Unix seconds.
-    pub progress_block_time: Option<f64>,
-}
-
-impl ChainRow {
-    fn new(config: &ChainConfig) -> Self {
-        Self {
-            id: config.id,
-            checkpoint_id: 0,
-            ecosystem: config.ecosystem.clone(),
-            start_block: config.start_block,
-            end_block: config.end_block,
-            max_reorg_depth: config.max_reorg_depth,
-            buffer_block: -1,
-            source_block: 0,
-            first_event_block: None,
-            ready_at: None,
-            events_processed: 0.0,
-            is_hyper_sync: false,
-            progress_block: -1,
-            progress_block_time: None,
-        }
-    }
-
-    fn of_resumed(chain: &ResumedChain) -> Self {
-        Self {
-            id: chain.id,
-            checkpoint_id: chain.checkpoint_id,
-            ecosystem: chain.ecosystem.clone(),
-            start_block: chain.start_block,
-            end_block: chain.end_block,
-            max_reorg_depth: chain.max_reorg_depth,
-            buffer_block: -1,
-            source_block: chain.source_block,
-            first_event_block: chain.first_event_block,
-            ready_at: chain.ready_at,
-            events_processed: chain.events_processed,
-            is_hyper_sync: false,
-            progress_block: chain.progress_block,
-            progress_block_time: chain.progress_block_time,
-        }
-    }
-
-    fn values(&self, version: u64) -> Vec<Value> {
-        let optional =
-            |value: Option<i32>| value.map_or(Value::Null, |value| Value::Int(value.into()));
-        let millis =
-            |value: Option<f64>| value.map_or(Value::Null, |ms| Value::Int(ms.round() as i128));
-        vec![
-            Value::Int(self.id.into()),
-            Value::Int(self.checkpoint_id.into()),
-            Value::Int(version.into()),
-            Value::Text(self.ecosystem.clone()),
-            Value::Int(self.start_block.into()),
-            optional(self.end_block),
-            Value::Int(self.max_reorg_depth.into()),
-            Value::Int(self.buffer_block.into()),
-            Value::Int(self.source_block.into()),
-            optional(self.first_event_block),
-            millis(self.ready_at),
-            Value::Int(self.events_processed.max(0.0) as i128),
-            Value::Bool(self.is_hyper_sync),
-            Value::Int(self.progress_block.into()),
-            millis(self.progress_block_time.map(|seconds| seconds * 1000.0)),
-        ]
-    }
-
-    fn apply_progress(&mut self, progress: &Progress) {
-        self.progress_block = progress.progress_block;
-        self.progress_block_time = progress.progress_block_time;
-        self.events_processed = progress.events_processed;
-        self.source_block = progress.source_block;
-    }
-
-    /// A chain that caught up never un-catches up: a batch staged before the
-    /// stamp can carry metadata from before it.
-    fn apply_meta(&mut self, meta: &ChainMeta) {
-        self.buffer_block = meta.buffer_block;
-        self.first_event_block = meta.first_event_block;
-        self.ready_at = meta.ready_at.or(self.ready_at);
-        self.is_hyper_sync = meta.is_hyper_sync;
-    }
-}
+/// How far a resume or an initialize moves the chains' version past the
+/// highest it read. A process that died mid-commit can still have its chains
+/// insert land after the next one started — with a version a little above what
+/// that one read — and the rows with the higher version are the ones that
+/// stand.
+const VERSION_FENCE: u64 = 1 << 32;
 
 #[derive(Default)]
 struct Chains {
-    rows: BTreeMap<i64, ChainRow>,
+    /// Each chain's frontier as its row last landed. Everything else about a
+    /// chain is Postgres's.
+    frontier: Frontier,
     /// The version the last write stamped its rows with.
     version: u64,
 }
@@ -215,33 +116,7 @@ impl Storage {
     }
 
     fn frontier(&self) -> Frontier {
-        self.chains
-            .lock()
-            .unwrap()
-            .rows
-            .values()
-            .map(|row| (row.id, row.checkpoint_id))
-            .collect()
-    }
-
-    /// Code 81 is the database itself being gone, 60 one of its tables. No
-    /// schema of ours survives either, so both are answered with the way back
-    /// rather than with the statement that tripped over it.
-    fn reinitialize_if_gone(&self, err: anyhow::Error) -> anyhow::Error {
-        let reinitialize = "Please run 'envio start -r' to reinitialize the indexer (it'll also \
-                            drop Postgres database).";
-        match error_code(&format!("{err:#}")) {
-            Some(81) => anyhow!(
-                "ClickHouse storage database \"{}\" not found. {reinitialize}",
-                self.database()
-            ),
-            Some(60) => err.context(format!(
-                "ClickHouse storage database \"{}\" is missing a table the indexer needs. \
-                 {reinitialize}",
-                self.database()
-            )),
-            _ => err,
-        }
+        self.chains.lock().unwrap().frontier.clone()
     }
 
     async fn insert(&self, table: &str, query: &str, encoded: &EncodedRows) -> Result<()> {
@@ -300,29 +175,21 @@ impl Storage {
             .await
     }
 
-    /// Writes the rows of the chains `change` changes, made from the rows as
-    /// the last write left them: the commit point of whatever was written
-    /// before them. They go in one insert, since half of them would move some
-    /// chains' frontiers and not the others', and are only taken as the chains'
-    /// state once they landed. Writes are never concurrent: batches are
-    /// written one at a time, and a resume or an initialize before any.
-    async fn change_chains(
-        &self,
-        change: impl FnOnce(&mut BTreeMap<i64, ChainRow>) -> HashSet<i64>,
-    ) -> Result<()> {
+    /// Moves the frontier of every chain `moved` names, the commit point of
+    /// whatever was written below it. The rows go in one insert, since half of
+    /// them would move some chains' frontiers and not the others', and are only
+    /// taken as the frontier once they landed. Writes are never concurrent:
+    /// batches are written one at a time, and a resume or an initialize before
+    /// any.
+    async fn write_chains(&self, moved: Frontier) -> Result<()> {
         // Spent whether the insert lands or not: one that failed here can
         // still land later, and must not tie with the next.
-        let (mut rows, version) = {
+        let version = {
             let mut chains = self.chains.lock().unwrap();
             chains.version += 1;
-            (chains.rows.clone(), chains.version)
+            chains.version
         };
-        let changed = change(&mut rows);
-        let rows = rows
-            .into_values()
-            .filter(|row| changed.contains(&row.id))
-            .collect::<Vec<_>>();
-        if rows.is_empty() {
+        if moved.is_empty() {
             return Ok(());
         }
         let columns = ddl::chain_columns(&self.chain_id_type());
@@ -330,9 +197,15 @@ impl Storage {
             .iter()
             .map(|(_, ch_type)| ch_type.clone())
             .collect::<Vec<_>>();
-        let values = rows
+        let values = moved
             .iter()
-            .map(|row| row.values(version))
+            .map(|(chain_id, checkpoint_id)| {
+                vec![
+                    Value::Int((*chain_id).into()),
+                    Value::Int((*checkpoint_id).into()),
+                    Value::Int(version.into()),
+                ]
+            })
             .collect::<Vec<_>>();
         let encoded = encode_values(&types, &values)
             .context("Failed encoding rows for ClickHouse table `envio_chains`")?;
@@ -345,24 +218,8 @@ impl Storage {
             .insert_whole(CHAINS_TABLE, &query, &encoded)
             .await
             .with_context(|| format!("Failed inserting into ClickHouse table `{CHAINS_TABLE}`"))?;
-        let mut chains = self.chains.lock().unwrap();
-        for row in rows {
-            chains.rows.insert(row.id, row);
-        }
+        self.chains.lock().unwrap().frontier.extend(moved);
         Ok(())
-    }
-
-    async fn write_chains(&self, rows: Vec<ChainRow>) -> Result<()> {
-        self.change_chains(|current| {
-            rows.into_iter()
-                .map(|row| {
-                    let id = row.id;
-                    current.insert(id, row);
-                    id
-                })
-                .collect()
-        })
-        .await
     }
 
     fn checkpoint_values(checkpoints: &Checkpoints) -> Vec<Vec<Value>> {
@@ -487,6 +344,13 @@ impl Storage {
                 .collect::<Vec<_>>(),
         ))
         .await;
+        // Read before the reset empties it: a previous run's commit still in
+        // flight lands in the tables built here, and its rows must lose.
+        let previous_version = if self.has_table(CHAINS_TABLE).await? {
+            self.read_version().await?
+        } else {
+            0
+        };
         self.reset_database(topology).await?;
         self.client
             .statement(format!(
@@ -524,19 +388,18 @@ impl Storage {
         }))
         .await?;
 
-        *self.chains.lock().unwrap() = Chains::default();
-        self.write_chains(input.chains.iter().map(ChainRow::new).collect())
+        *self.chains.lock().unwrap() = Chains {
+            frontier: Frontier::new(),
+            version: previous_version + VERSION_FENCE,
+        };
+        self.write_chains(input.chains.iter().map(|chain| (chain.id, 0)).collect())
             .await?;
         // Last: the record is what says the storage exists, so it only does
         // once everything above it is in place.
         self.insert_values(
             INFO_TABLE,
             &ddl::info_columns(),
-            &[vec![
-                Value::Int(1),
-                Value::Text(input.envio_info.clone()),
-                Value::Text(input.instance.clone()),
-            ]],
+            &[vec![Value::Int(1), Value::Text(input.instance.clone())]],
         )
         .await
     }
@@ -756,6 +619,68 @@ impl Storage {
             .collect()
     }
 
+    /// Refuses a database missing a batch Postgres committed. Each frontier
+    /// Postgres holds was a checkpoint ClickHouse took before Postgres
+    /// committed, and none is ever pruned, or trimmed while it stands. One
+    /// missing was lost after ClickHouse acknowledged it, and resuming over it
+    /// would read the entities as they were before it for good.
+    async fn check_holds(&self, frontier: &Frontier) -> Result<()> {
+        let committed = frontier
+            .iter()
+            .filter(|(_, checkpoint_id)| **checkpoint_id > 0)
+            .map(|(chain_id, checkpoint_id)| (*chain_id, *checkpoint_id))
+            .collect::<Vec<_>>();
+        if committed.is_empty() {
+            return Ok(());
+        }
+        let answer = self
+            .client
+            .statement(format!(
+                "SELECT DISTINCT {chain}, {id} FROM {} WHERE ({chain}, {id}) IN ({}) FORMAT \
+                 TabSeparated",
+                self.table_ref(CHECKPOINTS_TABLE),
+                committed
+                    .iter()
+                    .map(|(chain_id, checkpoint_id)| format!("({chain_id}, {checkpoint_id})"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                chain = quoted(CHAIN_ID_COLUMN),
+                id = quoted(ID_COLUMN),
+            ))
+            .await?;
+        let held = answer
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                line.split_once('\t')
+                    .and_then(|(chain_id, checkpoint_id)| {
+                        Some((
+                            chain_id.trim().parse::<i64>().ok()?,
+                            checkpoint_id.trim().parse::<i64>().ok()?,
+                        ))
+                    })
+                    .with_context(|| format!("Unexpected checkpoint row {line:?}"))
+            })
+            .collect::<Result<HashSet<_>>>()?;
+        let missing = committed
+            .iter()
+            .filter(|chain| !held.contains(chain))
+            .map(|(chain_id, checkpoint_id)| {
+                format!("chain {chain_id} through checkpoint {checkpoint_id}")
+            })
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            bail!(
+                "ClickHouse database \"{}\" is missing batches Postgres committed: {}. It lost \
+                 them after taking them, or was restored from an older backup. Index from \
+                 scratch, or point ENVIO_CLICKHOUSE_DATABASE at the database that holds them.",
+                self.database(),
+                missing.join(", ")
+            );
+        }
+        Ok(())
+    }
+
     /// Takes the chains' state from what Postgres committed, frontier first
     /// so nothing above it is readable while the trims run. The rows are
     /// written past a fence, so a previous process's commit still in flight
@@ -771,22 +696,22 @@ impl Storage {
         .await;
         let version = self.read_version().await?;
         *self.chains.lock().unwrap() = Chains {
-            rows: BTreeMap::new(),
-            version: version + RESUME_FENCE,
+            frontier: Frontier::new(),
+            version: version + VERSION_FENCE,
         };
-        let rows = input
+        let frontier: Frontier = input
             .committed
             .iter()
-            .map(ChainRow::of_resumed)
-            .collect::<Vec<_>>();
+            .map(|chain| (chain.id, chain.checkpoint_id))
+            .collect();
         // No chain, no rows to hold to anything: Postgres writes every chain's
         // row in the transaction that creates its schema, so an empty list
         // means a config without chains.
-        if rows.is_empty() {
+        if frontier.is_empty() {
             return Ok(());
         }
-        let frontier: Frontier = rows.iter().map(|row| (row.id, row.checkpoint_id)).collect();
-        self.write_chains(rows).await?;
+        self.check_holds(&frontier).await?;
+        self.write_chains(frontier.clone()).await?;
         let tables = input
             .tables
             .iter()
@@ -798,7 +723,6 @@ impl Storage {
     pub async fn resume(&self, input: &Resume) -> Result<()> {
         self.resume_inner(input)
             .await
-            .map_err(|err| self.reinitialize_if_gone(err))
             .context("Failed to resume ClickHouse storage")
     }
 
@@ -808,8 +732,8 @@ impl Storage {
         conditions: Vec<Condition>,
     ) -> Result<ResultSet> {
         let table = table.clickhouse()?;
-        let query = select::load(self.database(), table, &conditions, &self.frontier())?;
-        let body = self.client.read(query).await?;
+        let read = select::load(self.database(), table, &conditions, &self.frontier())?;
+        let body = self.client.read_with(read).await?;
         let (types, reads) = table.reads();
         rows::lay_out(&row_binary::decode(&body, &types)?, reads)
     }
@@ -861,9 +785,7 @@ impl Storage {
     async fn write_inner(&self, batch: Batch, mut handoff: Handoff) -> Result<bool> {
         let Batch {
             rollback,
-            progress,
             entities,
-            chain_meta,
             frontier,
             checkpoints,
             ..
@@ -897,34 +819,9 @@ impl Storage {
         if !handoff.ready_to_commit().await {
             return Ok(false);
         }
-        self.change_chains(|chains| {
-            let mut changed = HashSet::new();
-            for update in rollback
-                .iter()
-                .flat_map(|rollback| &rollback.progress)
-                .chain(&progress)
-            {
-                if let Some(row) = chains.get_mut(&update.chain_id) {
-                    row.apply_progress(update);
-                    changed.insert(update.chain_id);
-                }
-            }
-            for meta in &chain_meta {
-                if let Some(row) = chains.get_mut(&meta.chain_id) {
-                    row.apply_meta(meta);
-                    changed.insert(meta.chain_id);
-                }
-            }
-            for (chain_id, checkpoint_id) in frontier.entries() {
-                if let Some(row) = chains.get_mut(&chain_id) {
-                    row.checkpoint_id = checkpoint_id;
-                    changed.insert(chain_id);
-                }
-            }
-            changed
-        })
-        .await
-        .map(|()| true)
+        self.write_chains(frontier.entries().collect())
+            .await
+            .map(|()| true)
     }
 
     pub async fn write_batch(
@@ -979,7 +876,7 @@ mod tests {
     use super::*;
     use crate::clickhouse::mock_server::MockClickHouse;
     use crate::clickhouse::table::test_support::{column, entity_input};
-    use crate::storage::types::{Addresses, Frontier};
+    use crate::storage::types::{Addresses, ChainConfig, Frontier, ResumedChain};
     use crate::storage::EntityWrite;
     use pretty_assertions::assert_eq;
 
@@ -1097,8 +994,14 @@ mod tests {
     /// every row they cover has landed.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_write_commits_with_its_chains_rows_last() {
-        let server =
-            MockClickHouse::answering_statements(Arc::new(|_: &str| (200, String::new()))).await;
+        let server = MockClickHouse::answering_statements(Arc::new(|statement: &str| {
+            if statement.contains("count() FROM system.tables") {
+                (200, "0".to_string())
+            } else {
+                (200, String::new())
+            }
+        }))
+        .await;
         let storage = storage_at(&server);
         let account = account(&storage);
         initialize(&storage, vec![account.clone()]).await;
@@ -1180,6 +1083,8 @@ mod tests {
                 )
             } else if statement.contains("max(`version`)") {
                 (200, "3".to_string())
+            } else if statement.contains("FROM `mock`.`envio_checkpoints`") {
+                (200, "1\t7".to_string())
             } else {
                 (200, String::new())
             }
@@ -1195,7 +1100,6 @@ mod tests {
                 tables: vec![account],
                 committed: vec![ResumedChain {
                     id: 1,
-                    ecosystem: "evm".to_string(),
                     start_block: 0,
                     end_block: None,
                     max_reorg_depth: 0,
