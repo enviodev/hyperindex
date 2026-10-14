@@ -1191,6 +1191,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       },
       registered: new Set(),
       blockNumber: event.block.number,
+      blockSeconds: secondsOf(event.block.number, event.block?.timestamp),
       position: callPosition(event),
       mappingExports: mapping,
     });
@@ -1221,9 +1222,14 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           return;
         }
         const call = make(event);
-        await (context as any).runSync(() =>
-          runInScope(callScope(event, context, "handler"), () => run(event, call)),
+        const scope = callScope(event, context, "handler");
+        await runSyncCounted(context, () =>
+          runInScope(scope, () => {
+            startRun(scope);
+            return run(event, call);
+          }),
         );
+        await runFileDataSources(scope, context);
       });
 
       if (creating.has(handlerName)) {
@@ -1233,7 +1239,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           await primeOnceHandlers(event.chainId, context);
           const call = make(event);
           const scope = callScope(event, context, "register");
-          const { pass, settle } = startRegisterPass(scope.position ?? 0);
+          const { pass, settle } = startRegisterPass(event.chainId, scope.position ?? 0);
           scope.pass = pass;
           try {
             await runRegisterRounds(scope, () => run(event, call));

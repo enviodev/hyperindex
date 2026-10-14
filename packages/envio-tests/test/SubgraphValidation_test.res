@@ -470,13 +470,13 @@ describe("subgraph translation: reporting", () => {
   it("points an unsupported feature at the subgraph release", t => {
     let message = translate(
       ~manifest=manifestWith(plainEventHandler)->String.replace(
-        "dataSources:",
-        "graft:\n  base: QmBase\n  block: 100\ndataSources:",
+        "kind: ethereum/contract",
+        "kind: substreams",
       ),
       ~schema=baseSchema,
     )
-    t.expect(message).toEqual(`Envio Subgraph doesn't support grafting yet.
-  Found in graft.
+    t.expect(message).toEqual(`Envio Subgraph doesn't support substreams data sources yet.
+  Found in data source "Token" → kind.
 First, make sure you're on the newest Envio Subgraph release — support may have landed:
   pnpm add -D envio@subgraph
 If you're up to date and need this feature, please open an issue (existing
@@ -503,10 +503,9 @@ issue so we can add it: https://github.com/enviodev/hyperindex/issues`)
 
   it("reports every finding in one run", t => {
     let manifest =
-      manifestWith(plainEventHandler)->String.replace(
-        "dataSources:",
-        "features:\n  - teleportation\ngraft:\n  base: QmBase\n  block: 100\ndataSources:",
-      )
+      manifestWith(plainEventHandler)
+      ->String.replace("dataSources:", "features:\n  - teleportation\ndataSources:")
+      ->String.replace("kind: ethereum/contract", "kind: substreams")
     let message = translate(
       ~manifest,
       ~schema=`
@@ -518,7 +517,7 @@ type Token @entity {
     )
     t.expect((
       message->String.includes(`doesn't know the feature "teleportation"`),
-      message->String.includes("doesn't support grafting"),
+      message->String.includes("doesn't support substreams data sources"),
       message->String.includes("doesn't know the type NotAType"),
     )).toEqual((true, true, true))
   })

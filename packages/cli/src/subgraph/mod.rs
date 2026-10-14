@@ -1190,11 +1190,13 @@ pub fn translate(
     // (spec/BLOCK_HASH.md). So a chain whose block handlers read the header
     // trails its head by the reorg depth, where envio itself assumes nothing
     // reorgs. `ENVIO_SUBGRAPH_BLOCK_LAG` overrides the depth; 0 turns it off.
+    // A `filter: call` handler is exempt: its block arrives whole with the call.
     let mut block_header_lag: BTreeMap<u64, u32> = BTreeMap::new();
     for source in manifest.all_sources() {
         let handlers: Vec<String> = source
             .block_handlers
             .iter()
+            .filter(|handler| handler.filter != manifest::BlockFilter::Call)
             .map(|handler| handler.handler.clone())
             .collect();
         if handlers.is_empty() || !usage::block_handlers_read_headers(mapping_sources, &handlers) {
