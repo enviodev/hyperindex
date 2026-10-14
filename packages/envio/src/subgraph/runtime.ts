@@ -50,6 +50,7 @@ import {
 } from "./assemblyscript.ts";
 import { makeHostEffects } from "./hosts.ts";
 import { advanceRollup } from "./rollup.ts";
+import { graftBaseNotice } from "./graft.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
 
@@ -534,6 +535,16 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   resetRegisterStore();
   announceWhereToQuery();
   if (config.graftNotice) warn(config.graftNotice);
+  if (config.graft && process.env.ENVIO_SUBGRAPH_GRAFT_CHECK !== "off") {
+    const ownStarts = config.dataSources.flatMap((source) =>
+      source.startBlock === undefined ? [] : [source.startBlock],
+    );
+    // Best effort and not waited on: an offline box or an unpinned base says nothing.
+    void graftBaseNotice(config.graft, ownStarts).then(
+      (notice) => notice && warn(notice),
+      () => undefined,
+    );
+  }
 
   // One effect for every contract call: envio already batches and dedupes
   // effect calls in preload, and the block number in the input is what keeps

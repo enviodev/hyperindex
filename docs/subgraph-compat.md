@@ -59,7 +59,8 @@ by name. Newer than 0.0.9 is a §7 error.
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
 | `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` with a non-empty context → §7 error (nowhere to keep it per created address) | ⚠️ |
 | `features: [...]` | a declaration, not a use — whatever it enables is refused where the manifest or schema uses it | — |
-| `callHandlers`, block `filter: call`, block handlers on a template, `graft`, composition (1.3.0) | — | ❌ §7 error |
+| `graft` | **ignored**: envio can't copy another deployment's data, so the subgraph indexes from its data sources' own `startBlock`s — a full re-index. Startup logs a warning saying so, and a louder one naming any data source that starts after the graft block (the base deployment may hold data from before it that a re-index cannot reproduce; lower that `startBlock` to the base's start). The result equals the grafted deployment only if the base's mappings produced the same data as these mappings do up to the graft block. graph-node's docs and source give no rule that can be applied offline (a graft is a store-level copy: `Graft::validate` only checks the base's head and health); the one record of where the base started is its manifest on IPFS, which startup reads best-effort (`ENVIO_SUBGRAPH_GRAFT_CHECK=off` skips it, following `graft.base` up its own grafts) and reports the exact blocks a re-index would miss | ⚠️ |
+| `callHandlers`, block `filter: call`, block handlers on a template, composition (1.3.0) | — | ❌ §7 error |
 
 ## 3. Schema → envio schema
 
@@ -114,8 +115,34 @@ the entities that implement it — the interface itself has no table. A field
 *typed* as an interface points at several tables at once: derived, it is only a
 query and is dropped; stored, it is an error.
 
-§7 error: **timeseries/aggregations** (`@entity(timeseries: true)`,
-`@aggregation`).
+**Timeseries and aggregations** (1.1.0), following graph-node's
+`docs/aggregations.md` and `store/postgres/src/relational/rollup.rs`:
+
+- `@entity(timeseries: true)` is an entity whose `id` (`Int8`, `block << 32 |
+  sequence`, increasing in insertion order) and `timestamp` (the block's time)
+  the runtime sets on every save, whatever the mapping wrote. Its `timestamp`
+  column is indexed.
+- Each `@aggregation(intervals: [...], source: "...")` becomes one entity per
+  interval, `<Aggregation>_<hour|day>` (graph-node's `stats_hour` tables), with
+  the declared fields: `id`, `timestamp` (start of the bucket), the dimensions
+  (fields without `@aggregate`, copied from the source row; a relation is
+  `<field>_id`) and the aggregates (`sum`, `count`, `min`, `max`, `first`,
+  `last`; `arg` may be an SQL expression; `cumulative: true` carries the
+  group's previous bucket forward). `id` is the largest source id in the group.
+- A bucket is rolled up when a block's time passes its end: the first bucket
+  between the previous block's time and this one, as `Layout::rollup` does.
+  Only completed buckets exist; the open bucket is the rows of the timeseries
+  since the last rolled-up end (graph-node's `current: include`).
+- Bookkeeping lives in one extra entity, `EnvioSubgraphRollup` (`id`, `payload`):
+  `clock` holds the last block time, `prev|<Aggregation>|<interval>|<dims>` the
+  latest cumulative values of a group. Both are ordinary entities, so reorg
+  rollback and restarts restore them with everything else.
+- A derived list of aggregation rows (`stats: [Stat!] @derivedFrom(field:
+  "pool")`) is not an envio field; it is recorded in the runtime config
+  (`aggregationDerivedFields`) for the query layer.
+- Limits: single-chain time (blocks of several chains interleave on one clock);
+  an expression `arg` is evaluated in JavaScript over exact decimals, not
+  Postgres, so a division can differ from `numeric` past its 16th digit.
 
 ## 4. Mappings (graph-ts) → envio runtime
 
@@ -481,10 +508,10 @@ refuse instead, so behavior never silently diverges:
 | `callHandlers` | translation (manifest) |
 | `blockHandlers` with `filter: call` | translation (manifest) |
 | `blockHandlers` on a template | translation (manifest) |
-| `graft` | translation (manifest) |
+| `graft` | accepted; startup warning, loud when a source starts after the graft block |
 | Subgraph composition (`kind: subgraph`, `entityHandlers`) | translation (manifest) |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
-| Timeseries & aggregations | translation (schema) |
+| Timeseries & aggregations | supported (§3); malformed declarations refused at translation (schema) |
 | `event.receipt.logs` | runtime, on access (receipt scalars keep working) |
 | Block-handler `ethereum.Block` fields other than `number`/`timestamp` | runtime, on access |
 
