@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
-import { info } from "../Logging.res.mjs";
+import { info, warn } from "../Logging.res.mjs";
 import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
 import { currentScope, runInScope, type RegisterPass, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
@@ -26,6 +26,7 @@ import {
   retagEach,
   installCallHook,
   installHosts,
+  installHandlerCreateHook,
   installRegisterHook,
   installRegisterMissHook,
   ethereum,
@@ -578,10 +579,20 @@ function announceWhereToQuery() {
   );
 }
 
+/**
+ * The template addresses register passes registered, by chain. A handler pass
+ * runs soon after its event's register pass, so the latest ones are enough.
+ */
+const registeredTemplates = new Set<string>();
+const REGISTERED_TEMPLATES_LIMIT = 100_000;
+const unregisteredCreates = new Set<string>();
+
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook(config.root);
   resetRpcClients();
   resetRegisterStore();
+  registeredTemplates.clear();
+  unregisteredCreates.clear();
   announceWhereToQuery();
 
   // One effect for every contract call: envio already batches and dedupes
@@ -646,7 +657,31 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installRegisterHook((templateName, address) => {
     const accessor = config.contractAccessors[templateName];
     if (accessor === undefined) throw unknown(`the template ${templateName}`, "a mapping handler");
-    currentScope().context.chain[accessor].add(address);
+    const scope = currentScope();
+    scope.context.chain[accessor].add(address);
+    const key = `${scope.dataSource.chainId}:${templateName}:${address.toLowerCase()}`;
+    registeredTemplates.delete(key);
+    registeredTemplates.add(key);
+    if (registeredTemplates.size > REGISTERED_TEMPLATES_LIMIT) {
+      registeredTemplates.delete(registeredTemplates.values().next().value!);
+    }
+  });
+
+  // Only the register pass registers an address, at fetch time. A create it
+  // didn't make — it threw on an entity no register pass saved, or there is
+  // none, as for a polling block handler — loses that template's events.
+  installHandlerCreateHook((templateName, address) => {
+    const scope = currentScope();
+    if (scope.context.isPreload) return;
+    const key = `${scope.dataSource.chainId}:${templateName}:${address.toLowerCase()}`;
+    if (registeredTemplates.has(key) || unregisteredCreates.has(key)) return;
+    unregisteredCreates.add(key);
+    warn(
+      `Envio Subgraph: data source "${scope.dataSource.name}" created the template "${templateName}" for ` +
+        `${address.toLowerCase()} at block ${scope.blockNumber} in its handler, but no register pass did, so the ` +
+        `events of that ${templateName} are not indexed. A register pass reads only what earlier register passes ` +
+        "saved. Please open an issue: https://github.com/enviodev/hyperindex/issues",
+    );
   });
 
   installCallHook((call) => {

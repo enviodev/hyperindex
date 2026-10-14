@@ -2121,9 +2121,15 @@ export const ethereum = strictNamespace("ethereum", ethereumImpl);
 // ---------------------------------------------------------------------------
 
 let registerHook: ((templateName: string, address: string) => void) | null = null;
+let handlerCreateHook: ((templateName: string, address: string) => void) | null = null;
 
 export function installRegisterHook(hook: typeof registerHook) {
   registerHook = hook;
+}
+
+/** Sees each create() a handler (not a register pass) makes. */
+export function installHandlerCreateHook(hook: typeof handlerCreateHook) {
+  handlerCreateHook = hook;
 }
 
 export class DataSourceTemplate {
@@ -2134,9 +2140,10 @@ export class DataSourceTemplate {
       throw new Error(`${name}.create() was called without an address parameter`);
     }
     const key = `${name}:${address.toLowerCase()}`;
+    if (mode !== "register") return handlerCreateHook?.(name, address);
     // Replays rerun the mapping from the top, so registration is deduped
     // rather than repeated.
-    if (mode !== "register" || registered.has(key)) return;
+    if (registered.has(key)) return;
     registered.add(key);
     registerHook?.(name, address);
   }
