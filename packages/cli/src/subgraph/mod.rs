@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 
+use crate::config_parsing::chain_helpers::get_max_reorg_depth_from_id;
 use crate::config_parsing::human_config::{
     evm::{
         AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, HumanConfig,
@@ -34,6 +35,9 @@ use schema::SchemaTranslation;
 /// The env var carrying an RPC endpoint. subgraph.yaml has no place for
 /// provider config — graph-node keeps it in its own config, not the project.
 pub const RPC_ENV_VAR: &str = "ENVIO_SUBGRAPH_RPC";
+/// envio's `maxReorgDepth` for a chain it has no figure for.
+const DEFAULT_MAX_REORG_DEPTH: u32 = 200;
+pub const BLOCK_LAG_ENV_VAR: &str = "ENVIO_SUBGRAPH_BLOCK_LAG";
 pub const API_TOKEN_ENV_VAR: &str = "ENVIO_API_TOKEN";
 
 /// The transaction fields graph-ts exposes on `event.receipt`. A mapping can
@@ -97,6 +101,9 @@ pub struct SubgraphRuntimeConfig {
     /// effects use them as a viem fallback transport; empty means the mapping's
     /// first contract call raises the missing-RPC error.
     pub rpc_urls: Vec<String>,
+    /// How far, per chain, a block handler that reads header fields trails the
+    /// head: the runtime refuses to serve a header from inside that distance.
+    pub block_header_lag: BTreeMap<u64, u32>,
 }
 
 #[derive(Debug)]
@@ -611,6 +618,40 @@ pub fn translate(
         ));
     }
 
+    // A block handler gets only the block number from envio; its header is
+    // fetched afterwards, outside the reorg guard that validates event blocks
+    // (spec/BLOCK_HASH.md). So a chain whose block handlers read the header
+    // trails its head by the reorg depth, where envio itself assumes nothing
+    // reorgs. `ENVIO_SUBGRAPH_BLOCK_LAG` overrides the depth; 0 turns it off.
+    let mut block_header_lag: BTreeMap<u64, u32> = BTreeMap::new();
+    for source in manifest.all_sources() {
+        let handlers: Vec<String> = source
+            .block_handlers
+            .iter()
+            .map(|handler| handler.handler.clone())
+            .collect();
+        if handlers.is_empty() || !usage::block_handlers_read_headers(mapping_sources, &handlers) {
+            continue;
+        }
+        let chain_ids: Vec<u64> = match source.chain_id {
+            Some(id) => vec![id],
+            None => chains.keys().cloned().collect(),
+        };
+        for id in chain_ids {
+            let lag = std::env::var(BLOCK_LAG_ENV_VAR)
+                .ok()
+                .and_then(|raw| raw.trim().parse::<u32>().ok())
+                .or_else(|| get_max_reorg_depth_from_id(id))
+                .unwrap_or(DEFAULT_MAX_REORG_DEPTH);
+            if lag > 0 {
+                block_header_lag.insert(id, lag);
+                if let Some(chain) = chains.get_mut(&id) {
+                    chain.block_lag = Some(chain.block_lag.unwrap_or(0).max(lag));
+                }
+            }
+        }
+    }
+
     let human_config = HumanConfig {
         base: BaseConfig {
             name: project_name.to_string(),
@@ -652,6 +693,7 @@ pub fn translate(
             contract_accessors,
             root: root.to_string(),
             rpc_urls,
+            block_header_lag,
         },
         human_config,
     })
@@ -952,6 +994,41 @@ type Gravatar @entity {
                 bounded.human_config.chains[0].end_block,
             ),
             (None, Some(6180000))
+        );
+    }
+
+    #[test]
+    fn a_block_handler_that_reads_the_header_holds_its_chain_back() {
+        let manifest = MANIFEST.replacen(
+            "      file: ./src/gravity.ts",
+            "      blockHandlers:\n        - handler: handleBlock\n      file: ./src/gravity.ts",
+            1,
+        );
+        let lag = |source: &str| {
+            let translation = translate(
+                &manifest,
+                SCHEMA,
+                "gravatar",
+                None,
+                ".",
+                &HashMap::new(),
+                &[source.to_string()],
+            )
+            .unwrap();
+            (
+                translation.human_config.chains[0].block_lag,
+                translation.runtime.block_header_lag.get(&1).copied(),
+            )
+        };
+        let depth = Some(DEFAULT_MAX_REORG_DEPTH);
+
+        assert_eq!(
+            lag("export function handleBlock(block: ethereum.Block): void { block.number; block.timestamp; }"),
+            (None, None)
+        );
+        assert_eq!(
+            lag("export function handleBlock(block: ethereum.Block): void { new Block(block.hash); }"),
+            (depth, depth)
         );
     }
 

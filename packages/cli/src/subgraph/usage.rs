@@ -263,6 +263,72 @@ pub fn scan(sources: &[String]) -> FieldUsage {
     FieldUsage { transaction, block }
 }
 
+/// The header fields of an `ethereum.Block` that a block handler cannot be
+/// handed for free: envio gives a block handler only the block number, so
+/// everything but `number` and `timestamp` has to be fetched afterwards.
+const FREE_BLOCK_PROPERTIES: &[&str] = &["number", "timestamp"];
+
+/// Whether any of the named block handlers reads a header field (`hash`,
+/// `parentHash`, `author`, ...) off its block, or hands the block to something
+/// the scan can't follow.
+///
+/// Only the handler's own body is read: a variable called `block` elsewhere in
+/// the file isn't the handler's. Textual and timid like `scan`: a block passed
+/// to a helper counts as a read.
+pub fn block_handlers_read_headers(sources: &[String], handlers: &[String]) -> bool {
+    handlers.iter().any(|handler| {
+        sources
+            .iter()
+            .any(|source| handler_reads_headers(source, handler))
+    })
+}
+
+fn handler_reads_headers(source: &str, handler: &str) -> bool {
+    let signature = regex::Regex::new(&format!(
+        r"function\s+{}\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)",
+        regex::escape(handler)
+    ))
+    .expect("valid signature pattern");
+    let Some(found) = signature.captures(source) else {
+        return false;
+    };
+    let param = found.get(1).expect("one group").as_str();
+    let after_param = found.get(0).expect("whole match").end();
+    // The body: from the first `{` after the signature to its closing brace.
+    let rest = &source[after_param..];
+    let Some(open) = rest.find('{') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut end = rest.len();
+    for (at, c) in rest[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = open + at;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = &rest[open..end];
+    let uses = regex::Regex::new(&format!(
+        r"(^|[^A-Za-z0-9_$.]){}\b(\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*))?",
+        regex::escape(param)
+    ))
+    .expect("valid use pattern");
+    let reads = uses
+        .captures_iter(body)
+        .any(|capture| match capture.get(3) {
+            Some(property) => !FREE_BLOCK_PROPERTIES.contains(&property.as_str()),
+            None => true,
+        });
+    reads
+}
+
 #[cfg(test)]
 mod gather_tests {
     use super::*;
@@ -421,5 +487,59 @@ mod tests {
             ]),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod block_handler_tests {
+    use super::*;
+
+    fn reads(source: &str) -> bool {
+        block_handlers_read_headers(&[source.to_string()], &["handleBlock".to_string()])
+    }
+
+    #[test]
+    fn number_and_timestamp_are_free() {
+        assert!(!reads(
+            "export function handleBlock(block: ethereum.Block): void { let t = block.timestamp; let n = block.number; }"
+        ));
+    }
+
+    #[test]
+    fn a_header_field_is_a_read() {
+        assert!(reads(
+            "export function handleBlock(block: ethereum.Block): void { let e = new Block(block.hash.toHex()); }"
+        ));
+        assert!(reads(
+            "export function handleBlock(b: ethereum.Block): void { x.parent = b.parentHash; }"
+        ));
+    }
+
+    #[test]
+    fn a_block_handed_to_a_helper_is_a_read() {
+        assert!(reads(
+            "export function handleBlock(block: ethereum.Block): void { index(block); }"
+        ));
+    }
+
+    #[test]
+    fn a_block_variable_elsewhere_is_not_the_handlers() {
+        assert!(!reads(
+            "export function handleBlock(block: ethereum.Block): void { let n = block.number; }\n\
+             export function other(event: Ev): void { let block = event.block; block.hash; }"
+        ));
+    }
+
+    #[test]
+    fn a_handler_in_another_file_is_still_found() {
+        let sources = vec![
+            "export const x = 1;".to_string(),
+            "export function handleBlock(block: ethereum.Block): void { block.author; }"
+                .to_string(),
+        ];
+        assert!(block_handlers_read_headers(
+            &sources,
+            &["handleBlock".to_string()]
+        ));
     }
 }
