@@ -108,7 +108,7 @@ export class ByteArray extends Uint8Array {
     return new ByteArray(toLittleEndian(BigInt(Math.trunc(value)), 4));
   }
   static fromBigInt(value: BigInt_): ByteArray {
-    return new ByteArray(toLittleEndian(value.valueOf() as bigint, byteWidth(value.valueOf() as bigint)));
+    return new ByteArray(toLittleEndian(value.valueOf() as bigint, value.byteLength));
   }
   static fromUint8Array(bytes: Uint8Array): ByteArray {
     return new ByteArray(bytes);
@@ -209,10 +209,12 @@ export class Bytes extends ByteArray {
 
 export class Address extends Bytes {
   static fromString(address: string): Address {
-    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    // graph-node's `string_to_h160` trims a leading `0x` and parses the rest,
+    // so the prefix is optional (Livepeer's constants are bare hex).
+    if (!/^(0x)?[0-9a-fA-F]{40}$/.test(address)) {
       throw new Error(`Address.fromString: ${address} is not a valid 20-byte hex address`);
     }
-    return new Address(ByteArray.fromHexString(address.toLowerCase()));
+    return new Address(ByteArray.fromHexString((address.startsWith("0x") ? address : "0x" + address).toLowerCase()));
   }
   static fromBytes(bytes: Bytes): Address {
     if (bytes.length !== 20) {
@@ -238,15 +240,26 @@ export class Address extends Bytes {
 
 class BigInt_ extends Uint8Array {
   readonly value: bigint;
+  /**
+   * How many bytes graph-ts holds this value in. A BigInt IS its bytes there,
+   * and the count depends on how it was made: `fromI32` keeps the i32's four,
+   * `fromU32` five (a sign byte follows the unsigned ones), `fromI64` eight,
+   * `fromU64` nine; whatever comes from an event or arithmetic is graph-node's
+   * minimal two's complement. Unset means minimal.
+   */
+  width?: number;
 
-  constructor(value: bigint) {
+  // `new BigInt(0)` is AssemblyScript's other spelling of zero: the class is a
+  // Uint8Array and the argument its byte length, so a mapping that passes a
+  // number gets that many zero bytes — zero, whatever the length.
+  constructor(value: bigint | number) {
     // The bytes are deliberately left empty. Arithmetic, comparison and every
     // `to*` run off `value`; materialising the two's-complement representation
     // on construction cost ~7% of indexing CPU, and nothing in a mapping reads
     // a BigInt as bytes — graph codegen never emits it, and the conversions
     // that would (`toHexString`, `toI32`) are overridden here.
     super(0);
-    this.value = value;
+    this.value = typeof value === "bigint" ? value : 0n;
   }
 
   // Inherited TypedArray operations (`map`, `slice`, `subarray`) would
@@ -260,16 +273,35 @@ class BigInt_ extends Uint8Array {
   // arrives is already a BigInt.
   static fromI32(value: number | bigint | BigInt_): BigInt_ {
     const raw = typeof value === "object" ? (value as BigInt_).valueOf() : value;
-    return new BigInt_(typeof raw === "bigint" ? raw : BigInt(Math.trunc(raw as number)));
+    if (typeof raw !== "bigint") {
+      const made = new BigInt_(BigInt(Math.trunc(raw as number)));
+      made.width = 4;
+      return made;
+    }
+    return BigInt_.withWidth(raw, 4);
   }
   static fromU32(value: number): BigInt_ {
-    return BigInt_.fromI32(value);
+    const made = new BigInt_(BigInt(Math.trunc(value)));
+    made.width = 5;
+    return made;
   }
   static fromI64(value: bigint | number): BigInt_ {
-    return new BigInt_(BigInt(value));
+    return BigInt_.withWidth(BigInt(value), 8);
   }
   static fromU64(value: bigint | number): BigInt_ {
-    return new BigInt_(BigInt(value));
+    return BigInt_.withWidth(BigInt(value), 9);
+  }
+  private static withWidth(value: bigint, width: number): BigInt_ {
+    const made = new BigInt_(value);
+    made.width = Math.max(width, byteWidth(value));
+    return made;
+  }
+  /** The byte count graph-ts reports (see `width`). */
+  get byteLength(): number {
+    return this.width ?? byteWidth(this.value);
+  }
+  get length(): number {
+    return this.byteLength;
   }
   static fromString(value: string): BigInt_ {
     return new BigInt_(BigInt(value));
@@ -278,13 +310,15 @@ class BigInt_ extends Uint8Array {
     return BigInt_.fromSignedBytes(bytes as Bytes);
   }
   static fromUnsignedBytes(bytes: ByteArray): BigInt_ {
-    return new BigInt_(fromLittleEndian(bytes, false));
+    const value = fromLittleEndian(bytes, false);
+    return BigInt_.withWidth(value, bytes.length + 1);
   }
   static fromSignedBytes(bytes: Bytes): BigInt_ {
-    return new BigInt_(fromLittleEndian(bytes, true));
+    const value = fromLittleEndian(bytes, true);
+    return BigInt_.withWidth(value, bytes.length);
   }
   static zero(): BigInt_ {
-    return new BigInt_(0n);
+    return BigInt_.fromI32(0);
   }
   static compare(a: BigInt_, b: BigInt_): number {
     return a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
@@ -528,19 +562,39 @@ export class TypedMapEntry<K, V> {
   ) {}
 }
 
+// The map's storage. graph-ts' `TypedMap.entries` is a plain field, and the
+// class graph codegen writes for an entity with a field called `entries`
+// overrides it with an accessor: AssemblyScript's own methods keep reading the
+// field, while a mapping's `rs.entries = []` reaches the accessor. A JavaScript
+// field would be overwritten by that assignment, wiping the entity's id.
+const MAP_ENTRIES = Symbol("envio.subgraph.typedMapEntries");
+
+function entriesOf<K, V>(map: TypedMap<K, V>): TypedMapEntry<K, V>[] {
+  return (map as any)[MAP_ENTRIES];
+}
+
 export class TypedMap<K, V> {
-  entries: TypedMapEntry<K, V>[] = [];
+  constructor() {
+    Object.defineProperty(this, MAP_ENTRIES, { value: [], writable: true });
+  }
+
+  get entries(): TypedMapEntry<K, V>[] {
+    return entriesOf(this);
+  }
+  set entries(value: TypedMapEntry<K, V>[]) {
+    (this as any)[MAP_ENTRIES] = value;
+  }
 
   set(key: K, value: V): void {
     const entry = this.getEntry(key);
     if (entry) {
       entry.value = value;
     } else {
-      this.entries.push(new TypedMapEntry(key, value));
+      entriesOf(this).push(new TypedMapEntry(key, value));
     }
   }
   getEntry(key: K): TypedMapEntry<K, V> | null {
-    const entries = this.entries;
+    const entries = entriesOf(this);
     for (let index = 0; index < entries.length; index++) {
       if (entries[index].key === key) return entries[index];
     }
@@ -851,7 +905,7 @@ export class Entity extends TypedMap<string, Value> {
   merge(sources: Entity[]): this {
     // graph-ts assigns each source in turn, so the last one wins a shared key.
     for (const source of sources) {
-      for (const entry of source.entries) {
+      for (const entry of entriesOf(source)) {
         this.set(entry.key, entry.value);
       }
     }
@@ -1021,7 +1075,7 @@ function toRow(entityType: string, entity: Entity): Record<string, unknown> {
   // name; envio's column for it is `<field>_id`.
   const { timestampFields, refFields, listFields } = entityLayout(schema, entityType);
   const row: Record<string, unknown> = {};
-  for (const entry of entity.entries) {
+  for (const entry of entriesOf(entity)) {
     const column = refFields.has(entry.key) ? `${entry.key}_id` : entry.key;
     // An id is a string column whatever the subgraph declared it as, and so is
     // a relation, which carries one. Every other `Bytes` field is a bytes
@@ -2182,6 +2236,21 @@ const ethereumImpl = {
 
 export const ethereum = strictNamespace("ethereum", ethereumImpl);
 
+/**
+ * `matchstick-as`' test helper, which also resolves to this module (a mapping
+ * file that holds test fixtures imports it beside its handlers — Forta's do).
+ * Same defaults as matchstick-as/assembly/defaults.
+ */
+export function newMockEvent(): EthereumEvent {
+  const address = Address.fromString("0xA16081F360e3847006dB660bae1c6d1b2e17eC2A");
+  const hash = Bytes.fromHexString("0xA16081F360e3847006dB660bae1c6d1b2e17eC2A");
+  const one = BigInt_.fromI32(1);
+  const ten = BigInt_.fromI32(10);
+  const block = new EthereumBlock(hash, hash, hash, address, hash, hash, hash, one, ten, ten, one, one, one, one, null);
+  const transaction = new EthereumTransaction(hash, one, address, address, one, one, one, hash, one);
+  return new EthereumEvent(address, one, one, "mock_log_type", block, transaction, [], null);
+}
+
 // ---------------------------------------------------------------------------
 // dataSource + templates
 // ---------------------------------------------------------------------------
@@ -2210,7 +2279,7 @@ export class DataSourceTemplate {
     // The created data source would have to carry the context to every event it
     // ever sees, and there is nowhere to keep it — `dataSource.context()` in the
     // template's handlers would quietly come back empty.
-    if (context.entries.length > 0) {
+    if (entriesOf(context).length > 0) {
       throw unsupported(
         `${name}.createWithContext() with a non-empty context`,
         "a mapping handler",

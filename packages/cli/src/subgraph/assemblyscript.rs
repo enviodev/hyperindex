@@ -312,6 +312,15 @@ impl<'a> Rewrite<'a> {
             AssignmentTarget::StaticMemberExpression(member) if is_pure(&member.object) => Some(
                 Expression::StaticMemberExpression(member.clone_in(self.ast.allocator())),
             ),
+            // `w[i] += x`, `w[(i + 9) & 15] ^= y`: reading the element again
+            // costs nothing when neither the object nor the index does anything.
+            AssignmentTarget::ComputedMemberExpression(member)
+                if is_pure(&member.object) && is_effect_free(&member.expression) =>
+            {
+                Some(Expression::ComputedMemberExpression(
+                    member.clone_in(self.ast.allocator()),
+                ))
+            }
             _ => None,
         }
     }
@@ -349,6 +358,43 @@ fn is_pure(expr: &Expression<'_>) -> bool {
     match expr {
         Expression::Identifier(_) | Expression::ThisExpression(_) => true,
         Expression::StaticMemberExpression(member) => is_pure(&member.object),
+        _ => false,
+    }
+}
+
+/// An expression whose evaluation changes nothing and can be evaluated twice:
+/// names, literals, reads, and arithmetic over them (including the operator
+/// helper calls this pass has already put in their place).
+fn is_effect_free(expr: &Expression<'_>) -> bool {
+    match expr {
+        Expression::Identifier(_)
+        | Expression::ThisExpression(_)
+        | Expression::NumericLiteral(_)
+        | Expression::BigIntLiteral(_)
+        | Expression::StringLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NullLiteral(_) => true,
+        Expression::StaticMemberExpression(member) => is_effect_free(&member.object),
+        Expression::ComputedMemberExpression(member) => {
+            is_effect_free(&member.object) && is_effect_free(&member.expression)
+        }
+        Expression::ParenthesizedExpression(paren) => is_effect_free(&paren.expression),
+        Expression::BinaryExpression(binary) => {
+            is_effect_free(&binary.left) && is_effect_free(&binary.right)
+        }
+        Expression::UnaryExpression(unary) => {
+            unary.operator != UnaryOperator::Delete && is_effect_free(&unary.argument)
+        }
+        Expression::TSAsExpression(cast) => is_effect_free(&cast.expression),
+        Expression::TSNonNullExpression(inner) => is_effect_free(&inner.expression),
+        Expression::CallExpression(call) => {
+            matches!(&call.callee, Expression::StaticMemberExpression(member)
+                if matches!(&member.object, Expression::Identifier(id) if id.name == OPERATORS_HELPER))
+                && call
+                    .arguments
+                    .iter()
+                    .all(|arg| arg.as_expression().is_some_and(is_effect_free))
+        }
         _ => false,
     }
 }
@@ -622,6 +668,23 @@ export const __envio_event_classes = { handleFarmed: Farmed };
             "src/mapping.ts:2:3: Envio Subgraph can't apply this compound assignment the way \
              AssemblyScript does: an indexed or computed target would be evaluated twice. \
              Compute into a local first."
+        );
+    }
+
+    // Kiln's sha256 expands its message schedule with `w[i] += w[(i + 9) & 15] + …`:
+    // an element target whose object and index are plain reads is read again.
+    #[test]
+    fn applies_a_compound_assignment_to_an_element_with_a_plain_index() {
+        assert_eq!(
+            js("export function f(w: StaticArray<u32>, i: i32): void {
+  w[i] += w[(i + 9) & 15];
+  w[(i + 1) & 15] ^= 3;
+}"),
+            "export function f(w, i) {
+\tw[i] = __envio_op.add(w[i], w[__envio_op.add(i, 9) & 15]);
+\tw[__envio_op.add(i, 1) & 15] ^= 3;
+}
+"
         );
     }
 
