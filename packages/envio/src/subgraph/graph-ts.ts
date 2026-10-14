@@ -106,7 +106,7 @@ export class ByteArray extends Uint8Array {
     return new ByteArray(toLittleEndian(BigInt(Math.trunc(value)), 4));
   }
   static fromBigInt(value: BigInt_): ByteArray {
-    return new ByteArray(toLittleEndian(value.valueOf() as bigint, byteWidth(value.valueOf() as bigint)));
+    return new ByteArray(toLittleEndian(value.valueOf() as bigint, value.byteLength));
   }
   static fromUint8Array(bytes: Uint8Array): ByteArray {
     return new ByteArray(bytes);
@@ -238,6 +238,14 @@ export class Address extends Bytes {
 
 class BigInt_ extends Uint8Array {
   readonly value: bigint;
+  /**
+   * How many bytes graph-ts holds this value in. A BigInt IS its bytes there,
+   * and the count depends on how it was made: `fromI32` keeps the i32's four,
+   * `fromU32` five (a sign byte follows the unsigned ones), `fromI64` eight,
+   * `fromU64` nine; whatever comes from an event or arithmetic is graph-node's
+   * minimal two's complement. Unset means minimal.
+   */
+  width?: number;
 
   // `new BigInt(0)` is AssemblyScript's other spelling of zero: the class is a
   // Uint8Array and the argument its byte length, so a mapping that passes a
@@ -263,16 +271,35 @@ class BigInt_ extends Uint8Array {
   // arrives is already a BigInt.
   static fromI32(value: number | bigint | BigInt_): BigInt_ {
     const raw = typeof value === "object" ? (value as BigInt_).valueOf() : value;
-    return new BigInt_(typeof raw === "bigint" ? raw : BigInt(Math.trunc(raw as number)));
+    if (typeof raw !== "bigint") {
+      const made = new BigInt_(BigInt(Math.trunc(raw as number)));
+      made.width = 4;
+      return made;
+    }
+    return BigInt_.withWidth(raw, 4);
   }
   static fromU32(value: number): BigInt_ {
-    return BigInt_.fromI32(value);
+    const made = new BigInt_(BigInt(Math.trunc(value)));
+    made.width = 5;
+    return made;
   }
   static fromI64(value: bigint | number): BigInt_ {
-    return new BigInt_(BigInt(value));
+    return BigInt_.withWidth(BigInt(value), 8);
   }
   static fromU64(value: bigint | number): BigInt_ {
-    return new BigInt_(BigInt(value));
+    return BigInt_.withWidth(BigInt(value), 9);
+  }
+  private static withWidth(value: bigint, width: number): BigInt_ {
+    const made = new BigInt_(value);
+    made.width = Math.max(width, byteWidth(value));
+    return made;
+  }
+  /** The byte count graph-ts reports (see `width`). */
+  get byteLength(): number {
+    return this.width ?? byteWidth(this.value);
+  }
+  get length(): number {
+    return this.byteLength;
   }
   static fromString(value: string): BigInt_ {
     return new BigInt_(BigInt(value));
@@ -281,13 +308,15 @@ class BigInt_ extends Uint8Array {
     return BigInt_.fromSignedBytes(bytes as Bytes);
   }
   static fromUnsignedBytes(bytes: ByteArray): BigInt_ {
-    return new BigInt_(fromLittleEndian(bytes, false));
+    const value = fromLittleEndian(bytes, false);
+    return BigInt_.withWidth(value, bytes.length + 1);
   }
   static fromSignedBytes(bytes: Bytes): BigInt_ {
-    return new BigInt_(fromLittleEndian(bytes, true));
+    const value = fromLittleEndian(bytes, true);
+    return BigInt_.withWidth(value, bytes.length);
   }
   static zero(): BigInt_ {
-    return new BigInt_(0n);
+    return BigInt_.fromI32(0);
   }
   static compare(a: BigInt_, b: BigInt_): number {
     return a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
