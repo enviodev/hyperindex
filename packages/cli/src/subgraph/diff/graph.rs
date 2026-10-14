@@ -80,7 +80,9 @@ impl GraphClient {
             url: url.to_string(),
             headers: header_map,
             permits: Arc::new(Semaphore::new(concurrency.max(1))),
-            max_retries: 5,
+            // With the backoff capped at 30s this waits out about a minute and a
+            // half, which shared-key public endpoints' rate windows need.
+            max_retries: 8,
             requests: AtomicU64::new(0),
         })
     }
