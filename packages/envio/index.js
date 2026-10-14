@@ -46,3 +46,5 @@ export const S = {
   assertOrThrow: Sury.assertOrThrow,
   parseOrThrow: Sury.parseOrThrow,
 };
+
+export { defineSidecar } from "./src/sidecar/contract.js";
