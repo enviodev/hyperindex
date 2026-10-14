@@ -480,20 +480,27 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
         };
         match fetch_batch(context, &fetch, first.clone()).await {
             Ok(rows) => break rows,
-            Err(err) => {
-                let message = format!("{err:#}");
+            Err(BatchError { ours, error }) => {
+                let message = format!("{error:#}");
                 let Some(at) = compared
                     .iter()
                     .position(|c| message.contains(&format!("`{}`", c.field.name)))
                 else {
-                    return Err(err);
+                    return Err(error);
                 };
                 let dropped = compared.remove(at).field.name.clone();
                 out.fields_compared.retain(|name| *name != dropped);
-                out.skipped_fields.push(Skipped {
+                let skipped = Skipped {
                     name: dropped,
                     reason: format!("unreadable: {message}"),
-                });
+                };
+                // A field ours can't serve breaks every query that selects it,
+                // which fails parity; one the reference can't is its own defect.
+                if ours {
+                    out.unservable_fields.push(skipped);
+                } else {
+                    out.skipped_fields.push(skipped);
+                }
             }
         }
     };
@@ -512,7 +519,7 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
     let pending: Vec<_> = batches
         .map(|ids| fetch_batch(context, &fetch, ids))
         .collect();
-    let mut fetched: Vec<Result<(Vec<Value>, Vec<Value>)>> = stream::iter(pending)
+    let mut fetched: Vec<Result<RowPair, BatchError>> = stream::iter(pending)
         .buffer_unordered(options.concurrency.max(1))
         .collect()
         .await;
@@ -521,7 +528,7 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
     let mut our_rows = BTreeMap::new();
     let mut their_rows = BTreeMap::new();
     for result in fetched {
-        let (ours, theirs) = result?;
+        let (ours, theirs) = result.map_err(|failed| failed.error)?;
         for (rows, into) in [(ours, &mut our_rows), (theirs, &mut their_rows)] {
             for row in rows {
                 if let Some(id) = normalize::id(entity.id, &row["id"]) {
@@ -586,11 +593,20 @@ struct Fetch<'a> {
 }
 
 /// One batch of sampled entities from both sides.
+/// One batch of sampled rows: ours, then the reference's.
+type RowPair = (Vec<Value>, Vec<Value>);
+
+/// A sampled-rows read that failed, and on which side.
+struct BatchError {
+    ours: bool,
+    error: anyhow::Error,
+}
+
 async fn fetch_batch(
     context: &Run<'_>,
     fetch: &Fetch<'_>,
     ids: Vec<Value>,
-) -> Result<(Vec<Value>, Vec<Value>)> {
+) -> Result<RowPair, BatchError> {
     let ours = async {
         match context.ours {
             Ours::Postgres(pg) => pg.rows(fetch.entity, fetch.plan, fetch.id_udt, &ids).await,
@@ -608,10 +624,15 @@ async fn fetch_batch(
         Some(context.block),
     );
     let (ours, theirs) = tokio::join!(ours, theirs);
-    Ok((
-        ours.context("Failed to read ours' sampled rows")?,
-        theirs.context("Failed to read the reference's sampled rows")?,
-    ))
+    let ours = ours.map_err(|error| BatchError {
+        ours: true,
+        error: error.context("Failed to read ours' sampled rows"),
+    })?;
+    let theirs = theirs.map_err(|error| BatchError {
+        ours: false,
+        error: error.context("Failed to read the reference's sampled rows"),
+    })?;
+    Ok((ours, theirs))
 }
 
 /// The first `size` ids by the hash of each id: the same ids on every run

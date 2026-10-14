@@ -359,6 +359,42 @@ async fn drops_a_field_the_reference_cannot_resolve() {
 }
 
 #[tokio::test]
+async fn fails_parity_on_a_field_ours_cannot_serve() {
+    let reference = graph_node(reference_data(), BLOCK).await;
+    let ours = graph_node_refusing(
+        reference_data(),
+        BLOCK,
+        Some((
+            "tokens(first: 1000, orderBy",
+            "Field `tokens` of type `text` must not have a selection",
+        )),
+    )
+    .await;
+    let dir = project();
+    let mut options = options(&reference.url, Some(&ours.url));
+    options.types = vec!["Account".to_string()];
+    let report = run(dir.path(), &options).await;
+    assert_eq!(
+        (
+            report.status,
+            report.exit_code,
+            report.entities[0].fields_compared.clone(),
+            report.entities[0]
+                .unservable_fields
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            Status::Mismatch,
+            1,
+            vec!["balance".to_string()],
+            vec!["tokens"]
+        )
+    );
+}
+
+#[tokio::test]
 async fn calls_a_capped_listing_incomplete_not_a_match() {
     let many: Vec<Value> = (0..1500)
         .map(|i| {

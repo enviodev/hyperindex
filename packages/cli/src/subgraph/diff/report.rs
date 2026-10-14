@@ -116,6 +116,9 @@ pub struct EntityReport {
     pub mismatched_fields: std::collections::BTreeMap<String, usize>,
     pub mismatch_examples: Vec<FieldMismatch>,
     pub skipped_fields: Vec<Skipped>,
+    /// Fields ours fails to serve: a mismatch, since any query selecting one
+    /// breaks.
+    pub unservable_fields: Vec<Skipped>,
     pub error: Option<String>,
 }
 
@@ -148,7 +151,10 @@ impl EntityReport {
     fn decide(&mut self, tolerance: &Tolerance, fields_over: bool) {
         self.status = Some(if self.error.is_some() {
             Status::Error
-        } else if self.sets_differ(tolerance) || (fields_over && self.field_mismatches > 0) {
+        } else if self.sets_differ(tolerance)
+            || (fields_over && self.field_mismatches > 0)
+            || !self.unservable_fields.is_empty()
+        {
             Status::Mismatch
         } else if !self.theirs_complete {
             Status::Incomplete
@@ -340,6 +346,12 @@ impl Report {
                         "  {}: only in the reference, e.g. {}",
                         entity.name,
                         entity.only_theirs_examples.join(", ")
+                    ));
+                }
+                for field in &entity.unservable_fields {
+                    lines.push(format!(
+                        "  {}.{}: ours can't serve it ({})",
+                        entity.name, field.name, field.reason
                     ));
                 }
                 for mismatch in &entity.mismatch_examples {
