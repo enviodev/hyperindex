@@ -1,0 +1,1 @@
+{"key":"1:Strategy:0x2222222222222222222222222222222222222222","entries":{"symbol":{"type":"String","data":"AVAX"},"decimals":{"type":"Int","data":"18"},"v4":{"type":"Bool","data":"true"},"cap":{"type":"BigInt","data":"5000"}}}

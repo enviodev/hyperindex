@@ -447,6 +447,29 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
             // with `as` rather than `changetype`: the same reinterpret, except
             // that a value already of the class (an upcast) keeps its own.
             Expression::TSAsExpression(cast) => {
+                // `x as i32` converts: a wider integer wraps, a null is 0, and a
+                // reference is its address, which JavaScript has no number for.
+                let integer = match &cast.type_annotation {
+                    TSType::TSTypeReference(reference) => match &reference.type_name {
+                        TSTypeName::IdentifierReference(ty) => match ty.name.as_str() {
+                            "i8" => Some("as_i8"),
+                            "u8" => Some("as_u8"),
+                            "i16" => Some("as_i16"),
+                            "u16" => Some("as_u16"),
+                            "i32" => Some("as_i32"),
+                            "u32" => Some("as_u32"),
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(method) = integer {
+                    let span = cast.span;
+                    let value = cast.expression.take_in(&self.ast);
+                    *expr = self.operator(span, method, [value]);
+                    return;
+                }
                 let class = match &cast.type_annotation {
                     TSType::TSUnionType(union) => union
                         .types
@@ -716,7 +739,7 @@ export function f(value: ethereum.Tuple, n: i64): void {
 export function f(value, n) {
 \tlet pair = __envio_retag(Pair, value, true);
 \tlet maybe = __envio_retag(Pair, value, true);
-\tlet wide = n;
+\tlet wide = __envio_op.as_i32(n);
 }
 "
         );

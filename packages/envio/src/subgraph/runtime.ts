@@ -27,6 +27,7 @@ import {
   type SubgraphSchema,
 } from "./scope.ts";
 import {
+  contextOf,
   Address,
   assemblyScriptPrimitives,
   BigInt as GraphBigInt,
@@ -286,6 +287,13 @@ function installResolveHook(root: string) {
     }
     Object.defineProperty(AsDate, AS_DATE, { value: true });
     globals.Date = AsDate;
+  }
+
+  // AssemblyScript's typed arrays are made over an existing buffer with
+  // `Uint8Array.wrap(buffer)`; JavaScript has the constructor for it.
+  for (const Array of [Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array]) {
+    (Array as any).wrap ??= (buffer: ArrayBuffer, byteOffset?: number, length?: number) =>
+      new Array(buffer, byteOffset, length);
   }
 
   // AssemblyScript's DataView reads and writes a 64-bit integer as `u64`/`i64`
@@ -1121,7 +1129,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           address: event.srcAddress,
           chainId: event.chainId,
           network: source.network ?? "",
-          context: source.context ?? {},
+          context: contextOf(event.chainId, source.name, event.srcAddress) ?? source.context ?? {},
         },
         registered: new Set(),
         blockNumber: event.block.number,
