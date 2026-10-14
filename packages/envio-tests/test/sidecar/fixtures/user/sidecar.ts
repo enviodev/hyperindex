@@ -42,6 +42,17 @@ export default createSidecar(contract, {
       // @ts-expect-error unknown entity
       await indexer.Pool.getAll();
       for await (const token of indexer.Token.iterate({}, { pageSize: 100 })) expectType<string>(token.symbol);
+      const narrow = await indexer.Swap.getWhere({ amount: { _gt: 0n } }, { fields: ["amount"], limit: 10 });
+      expectType<{ readonly id: string; readonly amount: bigint }>(narrow[0]!);
+      // @ts-expect-error usd was not selected
+      narrow[0]!.usd;
+      // @ts-expect-error not a field of Swap
+      await indexer.Swap.getAll({ fields: ["nope"] });
+      for await (const swap of indexer.Swap.iterate({}, { fields: ["usd"] })) expectType<number | undefined>(swap.usd);
+      for await (const swap of indexer.Swap.iterate({}, { fields: ["usd"] })) {
+        // @ts-expect-error amount was not selected
+        swap.amount;
+      }
       const meta = await indexer.meta();
       expectType<number>(meta[0]!.progressBlock);
       const raw = await indexer.query<{ Swap: Array<{ id: string }> }>("query { Swap { id } }");
@@ -58,6 +69,7 @@ export default createSidecar(contract, {
   jobs: {
     refreshPrices: {
       every: "5m",
+      runOnStart: true,
       run: async ({ emit, indexer }) => {
         const tokens = await indexer.Token.getAll({ limit: 100 });
         for (const token of tokens) await emit.pricesRefreshed({ token: "0xabc", usd: 1, at: Date.now() }, { chainId: 1 });
