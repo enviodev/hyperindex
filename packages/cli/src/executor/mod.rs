@@ -1,5 +1,8 @@
 use crate::{
-    clap_definitions::{ConfigSubcommand, JsonSchema, MetricsSubcommand, Script, SkillsSubcommand},
+    clap_definitions::{
+        ConfigSubcommand, JsonSchema, MetricsSubcommand, Script, SkillsSubcommand,
+        SubgraphSubcommand,
+    },
     cli_args::clap_definitions::{CommandLineArgs, CommandType, ProjectPaths},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
@@ -16,6 +19,7 @@ pub mod init;
 mod local;
 mod metrics;
 mod skills;
+mod subgraph_diff;
 mod tools;
 
 use anyhow::{Context, Result};
@@ -44,6 +48,11 @@ pub enum Command {
     },
     DropSchema {
         config: serde_json::Value,
+    },
+    /// A command that finished in Rust but whose exit code carries its
+    /// result, which a returned error can't express beyond "failed".
+    Exit {
+        code: i32,
     },
 }
 
@@ -79,10 +88,12 @@ fn project_flags(project_paths: &ProjectPaths) -> String {
 impl Command {
     fn with_project_flags(mut self, project_flags: String) -> Self {
         if !project_flags.is_empty() {
-            let (Command::Start { config, .. }
+            if let Command::Start { config, .. }
             | Command::Migrate { config, .. }
-            | Command::DropSchema { config }) = &mut self;
-            config["projectFlags"] = project_flags.into();
+            | Command::DropSchema { config } = &mut self
+            {
+                config["projectFlags"] = project_flags.into();
+            }
         }
         self
     }
@@ -135,6 +146,11 @@ async fn execute_command(
         CommandType::Config(ConfigSubcommand::View) => {
             config::run_view(&parsed_project_paths)?;
             Ok(None)
+        }
+
+        CommandType::Subgraph(SubgraphSubcommand::Diff(args)) => {
+            let code = subgraph_diff::run(args, &parsed_project_paths.project_root).await;
+            Ok(Some(Command::Exit { code }))
         }
 
         CommandType::Start(start_args) => {

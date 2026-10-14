@@ -1,0 +1,644 @@
+//! `envio subgraph diff`: prove a migration by comparing this indexer's data
+//! with the graph-node endpoint the subgraph ran on before, at one block.
+//!
+//! Ours keeps no history, so the block is whatever ours has reached, and the
+//! reference is pinned to it with `block: {number: N}`. Per entity type it
+//! compares the full id sets (every reference id is paged in by cursor) and a
+//! deterministic sample of entities field by field, in graph-node's encodings.
+
+pub mod graph;
+pub mod model;
+pub mod normalize;
+pub mod postgres;
+pub mod report;
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+use anyhow::{anyhow, bail, Context, Result};
+use futures_util::{stream, StreamExt};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+
+use graph::{Exposed, GraphClient};
+use model::{Entity, Field, FieldKind, Model};
+use postgres::{Column, PgConfig, PgSide};
+use report::{EntityReport, FieldMismatch, Report, Side, Skipped, Status, Tolerance};
+
+use crate::utils::project_env::ProjectEnv;
+
+const EXAMPLES: usize = 5;
+const MISMATCH_EXAMPLES: usize = 10;
+
+#[derive(Debug, Clone)]
+pub struct Options {
+    pub endpoint: String,
+    pub ours: Option<String>,
+    pub block: Option<u64>,
+    pub sample: usize,
+    pub types: Vec<String>,
+    pub tolerance_pct: f64,
+    pub max_field_mismatches: usize,
+    pub concurrency: usize,
+    pub max_entities: Option<usize>,
+    pub headers: Vec<String>,
+    pub allow_indexing_errors: bool,
+    pub timeout: Duration,
+    pub progress: bool,
+}
+
+enum Ours {
+    Postgres(PgSide),
+    Graph {
+        client: GraphClient,
+        exposed: Exposed,
+    },
+}
+
+struct Run<'a> {
+    options: &'a Options,
+    block: u64,
+    ours: &'a Ours,
+    reference: &'a GraphClient,
+    reference_exposed: &'a Exposed,
+}
+
+pub async fn run(project_root: &Path, options: &Options) -> Report {
+    let started = Instant::now();
+    let mut report = Report {
+        schema_version: report::SCHEMA_VERSION,
+        status: Status::Error,
+        exit_code: 2,
+        block: None,
+        ours: Side {
+            kind: if options.ours.is_some() {
+                "graph"
+            } else {
+                "postgres"
+            }
+            .to_string(),
+            source: options.ours.clone().unwrap_or_default(),
+            latest_block: None,
+            deployment: None,
+            has_indexing_errors: None,
+            requests: None,
+        },
+        reference: Side {
+            kind: "graph".to_string(),
+            source: options.endpoint.clone(),
+            latest_block: None,
+            deployment: None,
+            has_indexing_errors: None,
+            requests: None,
+        },
+        tolerance: Tolerance {
+            count_pct: options.tolerance_pct,
+            field_mismatches: options.max_field_mismatches,
+        },
+        sample_per_type: options.sample,
+        summary: Default::default(),
+        entities: vec![],
+        skipped_types: vec![],
+        errors: vec![],
+        warnings: vec![],
+        elapsed_secs: 0.0,
+    };
+    if let Err(err) = compare(project_root, options, &mut report).await {
+        report.errors.push(format!("{err:#}"));
+    }
+    report.elapsed_secs = (started.elapsed().as_secs_f64() * 10.0).round() / 10.0;
+    report.finish();
+    report
+}
+
+async fn compare(project_root: &Path, options: &Options, report: &mut Report) -> Result<()> {
+    let model = load_model(project_root)?;
+    report.skipped_types = model
+        .skipped
+        .iter()
+        .map(|(name, reason)| Skipped {
+            name: name.clone(),
+            reason: reason.clone(),
+        })
+        .collect();
+    let entities = select_types(&model, &options.types)?;
+
+    let reference = GraphClient::new(
+        &options.endpoint,
+        &options.headers,
+        options.concurrency,
+        options.timeout,
+    )?;
+
+    let (ours, ours_block) = match &options.ours {
+        Some(url) => {
+            let client = GraphClient::new(url, &[], options.concurrency, options.timeout)?;
+            let meta = client.meta().await.context("Failed to read ours' _meta")?;
+            report.ours.latest_block = Some(meta.block);
+            report.ours.deployment = meta.deployment.clone();
+            report.ours.has_indexing_errors = Some(meta.has_indexing_errors);
+            let exposed = exposed_or_guess(&client, "ours", &mut report.warnings).await;
+            (Ours::Graph { client, exposed }, meta.block)
+        }
+        None => {
+            let config = PgConfig::from_env(&ProjectEnv::new(project_root))?;
+            report.ours.source = config.describe();
+            let side = PgSide::connect(&config).await?;
+            let block = side.progress_block().await?;
+            report.ours.latest_block = Some(block);
+            (Ours::Postgres(side), block)
+        }
+    };
+
+    let meta = reference
+        .meta()
+        .await
+        .context("Failed to read the reference's _meta")?;
+    report.reference.latest_block = Some(meta.block);
+    report.reference.deployment = meta.deployment.clone();
+    report.reference.has_indexing_errors = Some(meta.has_indexing_errors);
+
+    let block = pin_block(options.block, ours_block, meta.block)?;
+    if meta.has_indexing_errors && !options.allow_indexing_errors {
+        bail!(
+            "The reference reports indexing errors (_meta.hasIndexingErrors), so its data stops \
+             at the block that failed. Pass --allow-indexing-errors to compare anyway."
+        );
+    }
+    report.block = Some(block);
+
+    let reference_exposed =
+        exposed_or_guess(&reference, "the reference", &mut report.warnings).await;
+    let context = Run {
+        options,
+        block,
+        ours: &ours,
+        reference: &reference,
+        reference_exposed: &reference_exposed,
+    };
+
+    // Built eagerly: a stream closure borrowing each entity trips the
+    // higher-ranked lifetime check on the napi future's `Send` bound.
+    let pending: Vec<_> = entities
+        .iter()
+        .enumerate()
+        .map(|(index, entity)| diff_one(&context, index, entity))
+        .collect();
+    let mut results: Vec<(usize, EntityReport)> = stream::iter(pending)
+        .buffer_unordered(options.concurrency.max(1))
+        .collect()
+        .await;
+    results.sort_by_key(|(index, _)| *index);
+    report.entities = results.into_iter().map(|(_, entity)| entity).collect();
+
+    if let Ours::Graph { client, .. } = &ours {
+        report.ours.requests = Some(client.requests());
+        if let Ok(after) = client.meta().await {
+            if after.block != ours_block {
+                report.warnings.push(format!(
+                    "Ours advanced from block {ours_block} to {} while the diff ran, so some \
+                     differences may be drift. Stop the indexer, or rerun.",
+                    after.block
+                ));
+            }
+        }
+    }
+    report.reference.requests = Some(reference.requests());
+    Ok(())
+}
+
+fn load_model(project_root: &Path) -> Result<Model> {
+    let manifest_path = project_root.join("subgraph.yaml");
+    let manifest = std::fs::read_to_string(&manifest_path).map_err(|_| {
+        anyhow!(
+            "No subgraph.yaml in {}. Run `envio subgraph diff` inside the subgraph project (or \
+             pass -d <dir>).",
+            project_root.display()
+        )
+    })?;
+    let schema_file = serde_yaml::from_str::<serde_yaml::Value>(&manifest)
+        .ok()
+        .and_then(|value| Some(value.get("schema")?.get("file")?.as_str()?.to_string()))
+        .unwrap_or_else(|| "./schema.graphql".to_string());
+    let schema_path = project_root.join(&schema_file);
+    let schema = std::fs::read_to_string(&schema_path)
+        .with_context(|| format!("Failed to read {}", schema_path.display()))?;
+    Model::from_schema(&schema)
+}
+
+fn select_types<'a>(model: &'a Model, types: &[String]) -> Result<Vec<&'a Entity>> {
+    if types.is_empty() {
+        return Ok(model.entities.iter().collect());
+    }
+    let unknown: Vec<&str> = types
+        .iter()
+        .filter(|name| !model.entities.iter().any(|e| &e.name == *name))
+        .map(String::as_str)
+        .collect();
+    if !unknown.is_empty() {
+        bail!(
+            "--type names no entity of this subgraph: {}. Its entities: {}.",
+            unknown.join(", "),
+            model
+                .entities
+                .iter()
+                .map(|e| e.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    Ok(model
+        .entities
+        .iter()
+        .filter(|entity| types.contains(&entity.name))
+        .collect())
+}
+
+/// The one block both sides can answer for: ours has no history, so it's the
+/// block ours has reached, and the reference has to have reached it too.
+pub fn pin_block(requested: Option<u64>, ours: u64, reference: u64) -> Result<u64> {
+    match requested {
+        Some(block) if block > ours => bail!(
+            "Ours has only reached block {ours}, so it can't answer for block {block}. Wait for \
+             it to get there, or omit --block."
+        ),
+        Some(block) if block < ours => bail!(
+            "Ours is at block {ours} and keeps no history, so it can only be compared at that \
+             block. Omit --block, or stop the indexer at block {block} and rerun."
+        ),
+        _ => {}
+    }
+    if reference < ours {
+        bail!(
+            "The reference has only indexed up to block {reference}, behind ours at {ours}, and \
+             graph-node can't answer for a block it hasn't reached. Rerun once it has, or \
+             compare an indexer stopped at or before block {reference}."
+        );
+    }
+    Ok(ours)
+}
+
+async fn exposed_or_guess(client: &GraphClient, who: &str, warnings: &mut Vec<String>) -> Exposed {
+    match client.exposed().await {
+        Ok(exposed) => exposed,
+        Err(err) => {
+            warnings.push(format!(
+                "Introspection failed on {who} ({err:#}); guessing collection names and \
+                 selecting every schema field."
+            ));
+            Exposed::default()
+        }
+    }
+}
+
+fn collection(exposed: &Exposed, entity: &str, who: &str) -> Result<String> {
+    if exposed.collections.is_empty() {
+        return Ok(graph::guess_collection(entity));
+    }
+    exposed
+        .collections
+        .get(entity)
+        .cloned()
+        .ok_or_else(|| anyhow!("{who} has no collection for {entity} — is it the same subgraph?"))
+}
+
+async fn diff_one(context: &Run<'_>, index: usize, entity: &Entity) -> (usize, EntityReport) {
+    let mut entity_report = EntityReport {
+        name: entity.name.clone(),
+        theirs_complete: true,
+        ..Default::default()
+    };
+    if let Err(err) = diff_entity(context, entity, &mut entity_report).await {
+        entity_report.error = Some(format!("{err:#}"));
+    }
+    if context.options.progress {
+        eprintln!("{}", progress_line(&entity_report));
+    }
+    (index, entity_report)
+}
+
+/// A field ours stores and the reference serves, with ours' column for it.
+struct Compared<'a> {
+    field: &'a Field,
+    column: Option<Column>,
+}
+
+async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport) -> Result<()> {
+    let options = context.options;
+    let their_collection = collection(context.reference_exposed, &entity.name, "The reference")?;
+    let their_fields = context.reference_exposed.fields.get(&entity.name);
+
+    let (our_columns, our_collection, our_fields) = match context.ours {
+        Ours::Postgres(pg) => {
+            let columns = pg.columns(&entity.name).await?;
+            if columns.is_empty() {
+                bail!("Ours has no table for {}", entity.name);
+            }
+            (Some(columns), None, None)
+        }
+        Ours::Graph { exposed, .. } => (
+            None,
+            Some(collection(exposed, &entity.name, "Ours")?),
+            exposed.fields.get(&entity.name),
+        ),
+    };
+
+    let mut compared = Vec::new();
+    for field in &entity.fields {
+        let skip = |reason: &str| Skipped {
+            name: field.name.clone(),
+            reason: reason.to_string(),
+        };
+        if their_fields.is_some_and(|fields| !fields.contains(&field.name)) {
+            out.skipped_fields
+                .push(skip("not in the reference's schema"));
+            continue;
+        }
+        if our_fields.is_some_and(|fields| !fields.contains(&field.name)) {
+            out.skipped_fields.push(skip("not in ours' schema"));
+            continue;
+        }
+        let column = match &our_columns {
+            Some(columns) => match columns.get(&postgres::column_for(field)) {
+                Some(column) => Some(column.clone()),
+                None => {
+                    out.skipped_fields.push(skip("not stored by envio"));
+                    continue;
+                }
+            },
+            None => None,
+        };
+        out.fields_compared.push(field.name.clone());
+        compared.push(Compared { field, column });
+    }
+    for derived in &entity.derived {
+        out.skipped_fields.push(Skipped {
+            name: derived.clone(),
+            reason: "derived (@derivedFrom), not stored".to_string(),
+        });
+    }
+
+    let ours_ids = async {
+        match context.ours {
+            Ours::Postgres(pg) => pg.ids(&entity.name).await,
+            Ours::Graph { client, .. } => Ok(client
+                .ids(our_collection.as_deref().unwrap_or_default(), None, None)
+                .await?
+                .ids),
+        }
+    };
+    let theirs_ids =
+        context
+            .reference
+            .ids(&their_collection, Some(context.block), options.max_entities);
+    let (ours_ids, theirs_ids) = tokio::join!(ours_ids, theirs_ids);
+    let canonical_ids = |ids: &[Value]| -> BTreeSet<String> {
+        ids.iter()
+            .filter_map(|id| normalize::id(entity.id, id))
+            .collect()
+    };
+    let ours_ids = canonical_ids(&ours_ids.context("Failed to list ours' ids")?);
+    let theirs = theirs_ids.context("Failed to list the reference's ids")?;
+    let theirs_ids = canonical_ids(&theirs.ids);
+
+    out.ours = Some(ours_ids.len() as u64);
+    out.theirs = Some(theirs_ids.len() as u64);
+    out.theirs_complete = theirs.complete;
+    // A capped reference count is a lower bound: it only bounds the gap when
+    // ours falls short of it.
+    out.delta_pct = (theirs.complete || ours_ids.len() < theirs_ids.len()).then(|| {
+        report::pct(
+            (ours_ids.len() as i64 - theirs_ids.len() as i64).unsigned_abs(),
+            theirs_ids.len() as u64,
+        )
+    });
+
+    let candidates: Vec<&String> = if theirs.complete {
+        let only_ours: Vec<&String> = ours_ids.difference(&theirs_ids).collect();
+        let only_theirs: Vec<&String> = theirs_ids.difference(&ours_ids).collect();
+        out.only_ours = Some(only_ours.len() as u64);
+        out.only_theirs = Some(only_theirs.len() as u64);
+        out.only_ours_examples = only_ours
+            .iter()
+            .take(EXAMPLES)
+            .map(|s| s.to_string())
+            .collect();
+        out.only_theirs_examples = only_theirs
+            .iter()
+            .take(EXAMPLES)
+            .map(|s| s.to_string())
+            .collect();
+        ours_ids.intersection(&theirs_ids).collect()
+    } else {
+        ours_ids.iter().collect()
+    };
+    let sample = sample(candidates, options.sample);
+    out.sampled = sample.len();
+    if sample.is_empty() || compared.is_empty() && theirs.complete {
+        return Ok(());
+    }
+
+    let id_udt = our_columns
+        .as_ref()
+        .and_then(|columns| columns.get("id"))
+        .map(|column| column.udt.clone())
+        .unwrap_or_else(|| "text".to_string());
+    // A nested list multiplies what one query asks graph-node for.
+    let batch = if entity
+        .fields
+        .iter()
+        .any(|f| f.list && matches!(f.kind, FieldKind::Entity { .. }))
+    {
+        20
+    } else {
+        100
+    };
+    let mut batches = sample.chunks(batch).map(|chunk| {
+        chunk
+            .iter()
+            .map(|id| Value::String(id.to_string()))
+            .collect::<Vec<_>>()
+    });
+    let first = batches.next().unwrap_or_default();
+
+    // The first batch settles which fields both sides can serve. graph-node
+    // fails a whole query over one field it can't resolve — a non-null
+    // relation to an entity it doesn't have — so that field is dropped and
+    // reported rather than losing the type.
+    let first_rows = loop {
+        let fields: Vec<&str> = compared.iter().map(|c| c.field.name.as_str()).collect();
+        let selection = graph::selection(entity, &fields);
+        let plan = plan_of(&compared);
+        let fetch = Fetch {
+            entity,
+            plan: &plan,
+            id_udt: &id_udt,
+            selection: &selection,
+            their_collection: &their_collection,
+            our_collection: our_collection.as_deref().unwrap_or_default(),
+        };
+        match fetch_batch(context, &fetch, first.clone()).await {
+            Ok(rows) => break rows,
+            Err(err) => {
+                let message = format!("{err:#}");
+                let Some(at) = compared
+                    .iter()
+                    .position(|c| message.contains(&format!("`{}`", c.field.name)))
+                else {
+                    return Err(err);
+                };
+                let dropped = compared.remove(at).field.name.clone();
+                out.fields_compared.retain(|name| *name != dropped);
+                out.skipped_fields.push(Skipped {
+                    name: dropped,
+                    reason: format!("unreadable: {message}"),
+                });
+            }
+        }
+    };
+
+    let fields: Vec<&str> = compared.iter().map(|c| c.field.name.as_str()).collect();
+    let selection = graph::selection(entity, &fields);
+    let plan = plan_of(&compared);
+    let fetch = Fetch {
+        entity,
+        plan: &plan,
+        id_udt: &id_udt,
+        selection: &selection,
+        their_collection: &their_collection,
+        our_collection: our_collection.as_deref().unwrap_or_default(),
+    };
+    let pending: Vec<_> = batches
+        .map(|ids| fetch_batch(context, &fetch, ids))
+        .collect();
+    let mut fetched: Vec<Result<(Vec<Value>, Vec<Value>)>> = stream::iter(pending)
+        .buffer_unordered(options.concurrency.max(1))
+        .collect()
+        .await;
+    fetched.push(Ok(first_rows));
+
+    let mut our_rows = BTreeMap::new();
+    let mut their_rows = BTreeMap::new();
+    for result in fetched {
+        let (ours, theirs) = result?;
+        for (rows, into) in [(ours, &mut our_rows), (theirs, &mut their_rows)] {
+            for row in rows {
+                if let Some(id) = normalize::id(entity.id, &row["id"]) {
+                    into.insert(id, row);
+                }
+            }
+        }
+    }
+
+    for id in &sample {
+        let (Some(ours), Some(theirs)) = (our_rows.get(*id), their_rows.get(*id)) else {
+            out.sample_missing += 1;
+            continue;
+        };
+        for compared in &compared {
+            let field = compared.field;
+            let mut our_value = normalize::canonical(&field.kind, field.list, &ours[&field.name]);
+            let their_value = normalize::canonical(&field.kind, field.list, &theirs[&field.name]);
+            // graph-node serves at most `first` entities of a stored list.
+            if let (FieldKind::Entity { .. }, Value::Array(ours), Value::Array(theirs)) =
+                (&field.kind, &mut our_value, &their_value)
+            {
+                if theirs.len() == graph::PAGE_SIZE {
+                    ours.truncate(graph::PAGE_SIZE);
+                }
+            }
+            if our_value != their_value {
+                out.field_mismatches += 1;
+                *out.mismatched_fields.entry(field.name.clone()).or_default() += 1;
+                if out.mismatch_examples.len() < MISMATCH_EXAMPLES {
+                    out.mismatch_examples.push(FieldMismatch {
+                        id: id.to_string(),
+                        field: field.name.clone(),
+                        ours: our_value,
+                        theirs: their_value,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn plan_of(compared: &[Compared<'_>]) -> Vec<(String, Column)> {
+    compared
+        .iter()
+        .filter_map(|c| {
+            c.column
+                .clone()
+                .map(|column| (c.field.name.clone(), column))
+        })
+        .collect()
+}
+
+struct Fetch<'a> {
+    entity: &'a Entity,
+    plan: &'a [(String, Column)],
+    id_udt: &'a str,
+    selection: &'a str,
+    their_collection: &'a str,
+    our_collection: &'a str,
+}
+
+/// One batch of sampled entities from both sides.
+async fn fetch_batch(
+    context: &Run<'_>,
+    fetch: &Fetch<'_>,
+    ids: Vec<Value>,
+) -> Result<(Vec<Value>, Vec<Value>)> {
+    let ours = async {
+        match context.ours {
+            Ours::Postgres(pg) => pg.rows(fetch.entity, fetch.plan, fetch.id_udt, &ids).await,
+            Ours::Graph { client, .. } => {
+                client
+                    .rows(fetch.our_collection, fetch.selection, &ids, None)
+                    .await
+            }
+        }
+    };
+    let theirs = context.reference.rows(
+        fetch.their_collection,
+        fetch.selection,
+        &ids,
+        Some(context.block),
+    );
+    let (ours, theirs) = tokio::join!(ours, theirs);
+    Ok((
+        ours.context("Failed to read ours' sampled rows")?,
+        theirs.context("Failed to read the reference's sampled rows")?,
+    ))
+}
+
+/// The first `size` ids by the hash of each id: the same ids on every run
+/// against the same data, spread across the id space rather than its start.
+pub fn sample(candidates: Vec<&String>, size: usize) -> Vec<&String> {
+    let mut keyed: Vec<([u8; 32], &String)> = candidates
+        .into_iter()
+        .map(|id| (Sha256::digest(id.as_bytes()).into(), id))
+        .collect();
+    keyed.sort();
+    keyed.into_iter().take(size).map(|(_, id)| id).collect()
+}
+
+fn progress_line(entity: &EntityReport) -> String {
+    match &entity.error {
+        Some(error) => format!("[diff] {}: {error}", entity.name),
+        None => format!(
+            "[diff] {}: ours {}, theirs {}{}, sampled {}, field mismatches {}",
+            entity.name,
+            entity.ours.unwrap_or_default(),
+            entity.theirs.unwrap_or_default(),
+            if entity.theirs_complete { "" } else { "+" },
+            entity.sampled,
+            entity.field_mismatches
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests;
