@@ -209,6 +209,13 @@ function installResolveHook(root: string) {
     globals.Date = AsDate;
   }
 
+  // AssemblyScript's typed arrays are made over an existing buffer with
+  // `Uint8Array.wrap(buffer)`; JavaScript has the constructor for it.
+  for (const Array of [Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array]) {
+    (Array as any).wrap ??= (buffer: ArrayBuffer, byteOffset?: number, length?: number) =>
+      new Array(buffer, byteOffset, length);
+  }
+
   // AssemblyScript's DataView reads and writes a 64-bit integer as `u64`/`i64`
   // under these names; JavaScript's only as a bigint, under `*Big*` ones.
   const view = DataView.prototype as any;
