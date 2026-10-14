@@ -346,9 +346,9 @@ impl JsonSchema for StorageConfig {
             "type": "object",
             "properties": {
                 "postgres": (backend(
-                    "Whether to use Postgres as a storage backend (default: true). Required \
-                     when ClickHouse is enabled. Accepts a boolean or an options object (the \
-                     object form implies the backend is enabled).",
+                    "Whether to use Postgres as a storage backend (default: true). Must be set \
+                     to `true` or `false` when ClickHouse is enabled. Accepts a boolean or an \
+                     options object (the object form implies the backend is enabled).",
                     "Whether entities without an @storage directive are stored in this backend \
                      (default: true when Postgres is the only enabled backend, false otherwise)."
                 )),

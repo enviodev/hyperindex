@@ -7,7 +7,7 @@ open Vitest
 // accepts whatever it is handed, so a wrong Decimal scale, enum number or
 // DateTime64 tick is stored silently and shows up nowhere but the stored value.
 // Going through a real run also covers what a unit test cannot: the table
-// registration the sink does at startup, the checkpoint ordering the view reads
+// registration the store does at startup, the checkpoint ordering the view reads
 // through, and the entity serializers.
 
 let scenario = Scenario.make(

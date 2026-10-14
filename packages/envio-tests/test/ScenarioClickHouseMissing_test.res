@@ -24,7 +24,7 @@ chains:
           - event: Transfer(address indexed from, address indexed to, uint256 value)
 `,
   // ClickHouse-only, so Postgres — which would reject the missing column with
-  // its own NOT NULL error — never sees the row and the refusal is the sink's.
+  // its own NOT NULL error — never sees the row and the refusal is ClickHouse's.
   ~schema=`
 type Plain {
   id: ID!

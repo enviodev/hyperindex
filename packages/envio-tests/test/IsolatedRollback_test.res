@@ -90,7 +90,7 @@ type Total @crossChain {
   ~configYaml=makeConfigYaml(~name="isolated-rollback-cross-chain"),
 )
 
-// The sink is append-only: an isolated rollback reaches it as the diff rows the
+// ClickHouse is append-only: an isolated rollback reaches it as the diff rows the
 // next batch carries, and its current-state view has to resolve to the same
 // thing Postgres holds.
 let clickHouseScenario = Scenario.make(
@@ -986,10 +986,10 @@ describe("Isolated multichain rollback", () => {
   // A resume trims each chain back to its own frontier. After an isolated
   // rollback the two frontiers differ: the rollback's diff moved chain 1337 to
   // an id of its own, while chain 100 kept indexing past it. A row of chain
-  // 1337's that reached the sink but never Postgres sits at an id chain 100 has
+  // 1337's that reached ClickHouse but never Postgres sits at an id chain 100 has
   // committed — and only chain 1337's copy goes.
   clickHouseScenario->Scenario.it(
-    "Trims the sink to each chain's own frontier on a resume after an isolated rollback",
+    "Trims ClickHouse to each chain's own frontier on a resume after an isolated rollback",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1038,7 +1038,7 @@ describe("Isolated multichain rollback", () => {
         )->Promise.thenResolve(String.trim)
       let committed = await queryHistory()
 
-      // A batch of chain 1337's that the sink took and Postgres never did, at
+      // A batch of chain 1337's that ClickHouse took and Postgres never did, at
       // an id chain 100 holds a committed row for.
       let torn = chain100Highest->BigInt.toString
       let _ = await TestClickHouse.query(
@@ -1060,7 +1060,7 @@ describe("Isolated multichain rollback", () => {
     },
   )
 
-  // The sink is append-only, so a rollback reaches it as a diff row stamped with
+  // ClickHouse is append-only, so a rollback reaches it as a diff row stamped with
   // the first checkpoint id after what the chain had committed — above the rows
   // it replaces, so it outranks them. Only the chain's own next batch lifts the
   // frontier past that id, though, and the view reads nothing above it: while a
@@ -1131,7 +1131,7 @@ describe("Isolated multichain rollback", () => {
   )
 
   clickHouseScenario->Scenario.it(
-    "Mirrors the isolated rollback into the ClickHouse sink",
+    "Mirrors the isolated rollback into ClickHouse",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {

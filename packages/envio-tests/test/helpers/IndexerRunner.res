@@ -10,8 +10,9 @@ type pg = {sql: Sql.t, pgSchema: string}
 
 let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
 
-// Which persistence a run is exercised against. Both are Postgres-backed; the
-// ClickHouse one adds the sink on top. CI runs the suite once per backend.
+// Which persistence a run is exercised against. Both keep Postgres as the store
+// of record; the ClickHouse one adds ClickHouse alongside it. CI runs the suite
+// once per backend.
 type backend = [#postgres | #clickhouse]
 
 @module("node:os") external tmpdir: unit => string = "tmpdir"

@@ -2,8 +2,8 @@ open Vitest
 
 // ClickHouse as the only storage: no Postgres anywhere, so every read a handler
 // makes, every resume and every rollback has to be answered from ClickHouse.
-// Each case restarts the indexer before it reads, so what a handler sees comes
-// from storage rather than from what the previous run still held in memory.
+// A case about what a handler reads restarts the indexer first, so what it sees
+// comes from storage rather than from what the previous run held in memory.
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -108,19 +108,14 @@ describe("ClickHouse as the only storage", () => {
       )
       await resumed.getBatchWritePromise()
 
-      t.expect(
-        seen.contents,
-        ~message="the handler read both accounts back from ClickHouse",
-      ).toEqual(
+      // What the handler read back, and its update landing on top of it.
+      t.expect((seen.contents, (await resumed.query("Account"))->byId)).toEqual((
         Some((
           Some({id: "a", owner: "alice", balance: 10n}),
           [{id: "b", owner: "bob", balance: 5n}],
         )),
-      )
-      t.expect(
-        (await resumed.query("Account"))->byId,
-        ~message="the handler's update landed on top of what it read",
-      ).toEqual([{id: "a", owner: "alice", balance: 11n}, {id: "b", owner: "bob", balance: 5n}])
+        [{id: "a", owner: "alice", balance: 11n}, {id: "b", owner: "bob", balance: 5n}],
+      ))
     },
   )
 
@@ -153,17 +148,14 @@ describe("ClickHouse as the only storage", () => {
       // still hold, so the block-200 writes are rolled back: `a` to what block 50
       // wrote, and `c`, which didn't exist then, away.
       await Scenario.reorgAbove(~indexer, ~source, ~head=300, ~validUpTo=100)
-
-      t.expect(
-        (await indexer.query("Account"))->byId,
-        ~message="the rollback restored the pre-fork state",
-      ).toEqual([{id: "a", owner: "alice", balance: 1n}])
-
+      let rolledBack = (await indexer.query("Account"))->byId
       let resumed = await indexer.restart()
-      t.expect(
-        (await resumed.query("Account"))->byId,
-        ~message="a restart after the rollback reads the same state back",
-      ).toEqual([{id: "a", owner: "alice", balance: 1n}])
+
+      // The pre-fork state, and the same state read back after a restart.
+      t.expect((rolledBack, (await resumed.query("Account"))->byId)).toEqual((
+        [{id: "a", owner: "alice", balance: 1n}],
+        [{id: "a", owner: "alice", balance: 1n}],
+      ))
     },
   )
 
@@ -284,7 +276,49 @@ let callLookup = (~block): MockSource.itemMock => {
   },
 }
 
+// An output its schema has to serialize before it is a document: a bigint is
+// no JSON value until it is its digits.
+let balance = Envio.createEffect(
+  {
+    name: "clickHouseOnlyBalance",
+    input: S.string,
+    output: S.bigint,
+    rateLimit: Disable,
+    cache: true,
+  },
+  async _ => 123n,
+)
+
 describe("ClickHouse as the only storage of the effect cache", () => {
+  scenario->Scenario.it(
+    "stores an output as its schema serializes it",
+    ~sources=[{chain: 1, methods}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(10)
+      await MockSource.waitItemsQuery(source)
+      source.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 5,
+            logIndex: 0,
+            handler: async args => {
+              let context = args.context->(Utils.magic: Internal.handlerContext => effectContext)
+              let _ = await context.effect(balance, "a")
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=10,
+      )
+      await indexer.getBatchWritePromise()
+
+      let stored = await TestClickHouse.query(
+        `SELECT output FROM \`${TestClickHouse.currentDatabase()}\`.\`envio_effect_clickHouseOnlyBalance\` FINAL FORMAT TabSeparated`,
+      )
+      t.expect(stored->String.trim).toBe(`"123"`)
+    },
+  )
+
   scenario->Scenario.it(
     "answers a cached effect after a restart",
     ~sources=[{chain: 1, methods}],

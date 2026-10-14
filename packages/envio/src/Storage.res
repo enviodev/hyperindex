@@ -12,7 +12,7 @@ let formatSeconds = seconds => (Math.round(seconds *. 100.) /. 100.)->Float.toSt
 // stalled-looking indexer is explainable from the logs alone.
 let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
-// The `storage` field on Postgres's logs, and its metric label.
+// The `storage` field on Postgres's logs.
 let postgresName = "postgres"
 
 let logIndexEvent = (~pgSchema, event: StorageClient.indexEvent) =>
@@ -347,12 +347,11 @@ let register = (
     postgres: registered.postgres->Option.map(({?kinds}): postgresTable => {
       staged: kinds->Option.map(kinds => PgWriting.columns(fields, ~kinds)),
     }),
+    // Named for where its rows go, which for an entity is its history table.
     clickhouse: registered.clickhouse->Option.map(
       ClickHouse.makeTable(
         ~handle=registered.handle,
         ~name=history->Option.getOr(table.tableName),
-        // Where an entity's rows go is its history table.
-
         _,
       ),
     ),
@@ -417,14 +416,14 @@ let registerEntity = (client, entityConfig: Internal.entityConfig) =>
   }
 )
 
-// An item schema compiled for one Postgres table's columns: rows in, one array
-// per column out. The values are validated by the type system on the way in,
-// and a value its column cannot take is refused by the server, which says why.
-let converters: Utils.WeakMap.t<
-  S.t<unknown>,
-  array<unknown> => array<array<unknown>>,
-> = Utils.WeakMap.make()
-let converterOf = (registered, ~staged, ~itemSchema) =>
+// An item schema compiled for one table's columns: rows in, one array per
+// column out. The values are validated by the type system on the way in, and a
+// value its column cannot take is refused by the server, which says why.
+type converters = Utils.WeakMap.t<S.t<unknown>, array<unknown> => array<array<unknown>>>
+let arenaConverters: converters = Utils.WeakMap.make()
+let cellConverters: converters = Utils.WeakMap.make()
+let converterOf = (registered, ~forArena, ~itemSchema) => {
+  let converters = forArena ? arenaConverters : cellConverters
   switch converters->Utils.WeakMap.get(itemSchema) {
   | Some(convert) => convert
   | None =>
@@ -432,12 +431,9 @@ let converterOf = (registered, ~staged, ~itemSchema) =>
       registered.fields->Array.filterMapWithIndex((field, index) =>
         field.fieldType === Table.Json ? Some((index, field)) : None
       )
-    let schema = switch staged {
-    // Booleans travel as 1/0 and bigints as their digits, which is what the
+    // Booleans travel as 1/0 and bigints as their digits, which is what an
     // arena's slots hold.
-    | Some(_) => registered.table->Table.toDbSchema(~schema=itemSchema)
-    | None => itemSchema
-    }
+    let schema = forArena ? registered.table->Table.toDbSchema(~schema=itemSchema) : itemSchema
     let convert = S.compile(
       S.unnest(schema)
       ->S.preprocess(_ => {
@@ -456,6 +452,7 @@ let converterOf = (registered, ~staged, ~itemSchema) =>
     converters->Utils.WeakMap.set(itemSchema, convert)->ignore
     convert
   }
+}
 
 // Staging refuses a non-finite float for a staged table. A table bound a cell
 // at a time has to refuse it too: the server would store it, and the field's
@@ -486,39 +483,48 @@ let converterOf = (registered, ~staged, ~itemSchema) =>
     )
 )
 
-// Lays rows out for Postgres. A staged batch is handed back by handle, and
-// recorded in `staged` so a write that fails before reaching the addon can free
-// it.
-let pgRowsOrThrow = (
+// Lays rows out for `store`, which for one of the indexer's own tables is the
+// one that keeps it. A staged batch is handed back by handle, and recorded in
+// `staged` so a write that fails before reaching the addon can free it.
+let rowsOrThrow = (
   client: Sql.t,
   registered,
+  ~store: StorageClient.store=registered.clickhouse->Option.isSome ? ClickHouse : Postgres,
   ~itemSchema,
   items: array<unknown>,
   ~staged: array<int>,
 ): StorageClient.rows => {
   let rows = items->Array.length
-  let pgStaged = switch registered.postgres {
-  | Some({staged}) => staged
-  | None => JsError.throwWithMessage(`Postgres keeps no table "${registered.table.tableName}"`)
-  }
   try {
-    let values = (registered->converterOf(~staged=pgStaged, ~itemSchema))(items)
-    switch pgStaged {
-    | Some(columns) =>
+    switch (store, registered) {
+    | (ClickHouse, {clickhouse: Some(table)}) =>
+      let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
+      let handle =
+        client
+        ->StorageClient.arena(~store=ClickHouse)
+        ->ClickHouse.stageColumnsOrThrow(table, ~fields=registered.fields, ~values, ~rows)
+      staged->Array.push(handle)
+      {staged: handle, rows}
+    | (Postgres, {postgres: Some({staged: Some(columns)})}) =>
+      let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
       let handle =
         client
         ->StorageClient.arena(~store=Postgres)
         ->PgWriting.stage(~table=registered.handle, ~columns, ~values, ~rows)
       staged->Array.push(handle)
       {staged: handle, rows}
-    | None =>
+    | (Postgres, {postgres: Some({staged: None})}) =>
+      let values = (registered->converterOf(~forArena=false, ~itemSchema))(items)
       values->refuseNonFinite(~fields=registered.fields)
       {
         cells: values->Utils.Array.flatten->Sql.params,
         rows,
       }
+    | (ClickHouse, _) | (Postgres, _) =>
+      JsError.throwWithMessage(`No store keeps "${registered.table.tableName}" for this write`)
     }
   } catch {
+  | Persistence.StorageError(_) as exn => throw(exn)
   | S.Raised(_) as exn =>
     throw(
       Persistence.StorageError({
@@ -535,26 +541,6 @@ let pgRowsOrThrow = (
     )
   }
 }
-
-// Rows of one of the indexer's own tables, laid out for whichever store keeps
-// it.
-let rowsOrThrow = (
-  client: Sql.t,
-  registered,
-  ~itemSchema,
-  items: array<unknown>,
-  ~staged: array<int>,
-): StorageClient.rows =>
-  switch registered.clickhouse {
-  | Some(table) =>
-    let handle =
-      client
-      ->StorageClient.arena(~store=ClickHouse)
-      ->ClickHouse.stageRowsOrThrow(table, ~fields=registered.fields, items)
-    staged->Array.push(handle)
-    {staged: handle, rows: items->Array.length}
-  | None => client->pgRowsOrThrow(registered, ~itemSchema, items, ~staged)
-  }
 
 // Ids as the text their column reads them from.
 let renderIds = (table: Table.table, ids: array<EntityId.t>) =>
@@ -1284,8 +1270,9 @@ let make = (
       let rowsOf = entities =>
         entities->Utils.Array.notEmpty
           ? Some(
-              client->pgRowsOrThrow(
+              client->rowsOrThrow(
                 table,
+                ~store=Postgres,
                 ~itemSchema=entityConfig->getRowSchema->S.toUnknown,
                 entities->(Utils.magic: array<Internal.entity> => array<unknown>),
                 ~staged,
@@ -1530,8 +1517,11 @@ let makeStorageFromEnv = (
   ~client=?,
 ) => {
   // Hasura serves what Postgres keeps, so without Postgres there is nothing
-  // for it to track.
+  // for it to track. Its settings are read here rather than once the schema
+  // exists: a missing one would then fail the initialize after it created the
+  // schema, and the resume that follows never tracks it.
   let isHasuraEnabled = isHasuraEnabled && config.storage.postgres
+  let hasura = isHasuraEnabled ? Some(Env.Hasura.connection()) : None
   make(
     ~client=switch client {
     | Some(client) => client
@@ -1541,28 +1531,20 @@ let makeStorageFromEnv = (
     ~cacheDir?,
     ~ecosystem=config.ecosystem.name,
     ~isolated=config.isolated,
-    ~onInitialize=?{
-      if isHasuraEnabled {
-        Some(
-          () => {
-            let {graphqlEndpoint, role, secret} = Env.Hasura.connection()
-            Hasura.trackDatabase(
-              ~endpoint=graphqlEndpoint,
-              ~auth={role, secret},
-              ~pgSchema,
-              ~userEntities=config->Config.getPgUserEntities,
-              ~responseLimit=Env.Hasura.responseLimit,
-              ~schema=Schema.make(config.userEntities->Array.map(e => e.table)),
-              ~aggregateEntities=Env.Hasura.aggregateEntities,
-            )->Promise.catch(err => {
-              Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
-            })
-          },
-        )
-      } else {
-        None
-      }
-    },
+    ~onInitialize=?hasura->Option.map(({graphqlEndpoint, role, secret}: Env.Hasura.connection) =>
+      () =>
+        Hasura.trackDatabase(
+          ~endpoint=graphqlEndpoint,
+          ~auth={role, secret},
+          ~pgSchema,
+          ~userEntities=config->Config.getPgUserEntities,
+          ~responseLimit=Env.Hasura.responseLimit,
+          ~schema=Schema.make(config.userEntities->Array.map(e => e.table)),
+          ~aggregateEntities=Env.Hasura.aggregateEntities,
+        )->Promise.catch(err => {
+          Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
+        })
+    ),
   )
 }
 

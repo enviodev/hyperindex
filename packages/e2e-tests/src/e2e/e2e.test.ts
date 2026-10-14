@@ -1,12 +1,12 @@
 /**
  * E2E Indexer Test
  *
- * Tests the full indexer flow with database and ClickHouse sink:
+ * Tests the full indexer flow with Postgres and ClickHouse:
  * 1. Ensure ClickHouse is running (CI service or local container)
- * 2. Start `envio dev` in background with ClickHouse sink enabled
+ * 2. Start `envio dev` in background with ClickHouse enabled
  * 3. Wait for "Indexed to the end block" in stdout
  * 4. Verify GraphQL queries return expected data
- * 5. Verify ClickHouse sink received the indexed data
+ * 5. Verify ClickHouse received the indexed data
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -62,7 +62,7 @@ if (!dockerAvailable && process.env.CI) {
   );
 }
 
-describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink", () => {
+describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
   let metricsWhileRunning: MetricsResult | null = null;
@@ -473,7 +473,7 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     expect(result.data?.__schema.queryType.name).toBe("query_root");
   });
 
-  it("should have Transfer data in ClickHouse sink view", async () => {
+  it("should have Transfer data in the ClickHouse view", async () => {
     const result = await queryClickHouse<
       ClickHouseResult<{
         id: string;
@@ -495,7 +495,7 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     });
   });
 
-  it("should have checkpoints in ClickHouse sink", async () => {
+  it("should have checkpoints in ClickHouse", async () => {
     const result = await queryClickHouse<
       ClickHouseResult<{
         id: string;
@@ -514,7 +514,7 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     expect(maxBlock).toBeGreaterThan(0);
   });
 
-  it("should have entity history in ClickHouse sink", async () => {
+  it("should have entity history in ClickHouse", async () => {
     const result = await queryClickHouse<
       ClickHouseResult<{
         id: string;

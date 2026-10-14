@@ -39,7 +39,7 @@ type sourceMock = {
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
-// The ClickHouse leg indexes the same scenario with the sink switched on. It's
+// The ClickHouse leg indexes the same scenario with ClickHouse switched on. It's
 // a config choice a user makes in YAML, so it's made there rather than by
 // patching the parsed config — that way the entities pick up their ClickHouse
 // storage flags through the same parse a user's would.

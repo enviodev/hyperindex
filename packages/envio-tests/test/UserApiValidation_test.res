@@ -775,7 +775,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "At least one storage backend must be enabled. Please set \`postgres: true\` in the \`storage\` config (or omit the \`storage\` section entirely to use the default).",
+      "At least one storage backend must be enabled. Please set \`postgres: true\` or \`clickhouse: true\` in the \`storage\` config (or omit the \`storage\` section entirely to use the default).",
     ),
     (
       "rejects end_block before start_block",

@@ -193,7 +193,7 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
                 Some(answer) => answer(&statement),
                 None => (
                     400,
-                    "the sink should not be querying the server".to_string(),
+                    "the store should not be querying the server".to_string(),
                 ),
             }
         };

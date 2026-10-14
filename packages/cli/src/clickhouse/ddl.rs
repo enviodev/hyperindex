@@ -265,8 +265,15 @@ pub fn create_history_table(
         ),
         None => String::new(),
     };
+    // A delete leaves every column but its key at the type's default, which the
+    // expression would read as long expired: kept, it outlives the sets it
+    // cancels rather than going first and bringing the entity back.
     let ttl = match &entity.ttl {
-        Some(expression) => format!("\nTTL {}", resolve_expression_columns(expression, &renamed)),
+        Some(expression) => format!(
+            "\nTTL {} WHERE {} = '{SET}'",
+            resolve_expression_columns(expression, &renamed),
+            quoted(CHANGE_COLUMN)
+        ),
         None => String::new(),
     };
 
@@ -727,7 +734,7 @@ mod tests {
              ENGINE = MergeTree()\n\
              PARTITION BY toYYYYMM(`created_at`)\n\
              ORDER BY (`created_at`, `envio_checkpoint_id`)\n\
-             TTL `created_at` + INTERVAL 1 MONTH"
+             TTL `created_at` + INTERVAL 1 MONTH WHERE `envio_change` = 'SET'"
         );
     }
 
@@ -792,7 +799,7 @@ mod tests {
              ENGINE = MergeTree()\n\
              PARTITION BY day\n\
              ORDER BY (`id`, `envio_checkpoint_id`)\n\
-             TTL `created_at` + INTERVAL 30 day"
+             TTL `created_at` + INTERVAL 30 day WHERE `envio_change` = 'SET'"
         );
     }
 

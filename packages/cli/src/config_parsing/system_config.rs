@@ -310,7 +310,7 @@ impl ChainIdMode {
     }
 
     /// Reads the mode back out of the form it is serialized in, which is how it
-    /// reaches the ClickHouse sink: through the generated config and the JS
+    /// reaches the storage: through the generated config and the JS
     /// runtime, both of which carry it as that string.
     pub fn parse(mode: &str) -> Result<Self> {
         serde_json::from_value(serde_json::Value::String(mode.to_string()))
@@ -380,8 +380,9 @@ impl Storage {
         };
         if !postgres_enabled && !clickhouse_enabled {
             return Err(anyhow!(
-                "At least one storage backend must be enabled. Please set `postgres: true` in the \
-                 `storage` config (or omit the `storage` section entirely to use the default)."
+                "At least one storage backend must be enabled. Please set `postgres: true` or \
+                 `clickhouse: true` in the `storage` config (or omit the `storage` section \
+                 entirely to use the default)."
             ));
         }
         Ok(Self {

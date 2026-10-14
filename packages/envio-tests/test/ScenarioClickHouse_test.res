@@ -1,7 +1,7 @@
 open Vitest
 
-// Guards the ClickHouse leg against being a silent no-op: the sink is attached
-// by config, so a scenario can run green on it while writing nothing at all.
+// Guards the ClickHouse leg against being a silent no-op: ClickHouse is switched
+// on by config, so a scenario can run green on it while writing nothing at all.
 // Reading entity state back through ClickHouse is otherwise out of scope — the
 // other scenarios assert through Postgres.
 
@@ -26,45 +26,43 @@ type Counter {
   count: BigInt!
 }
 `,
-  ~unsupported=[
-    {backend: #postgres, reason: "asserts against a ClickHouse server"},
-  ],
+  ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
 
 type counter = {id: string, count: bigint}
 type counterOps = {set: counter => unit}
 type counterContext = {@as("Counter") counter: counterOps}
 
-describe("Scenario ClickHouse sink", () => {
-  scenario->Scenario.it(
-    "mirrors an indexed entity into ClickHouse",
-    ~sources=[{chain: 1}],
-    async (~t, ~indexer, ~source) => {
-      let source = source(1)
-      source.resolveGetHeightOrThrow(10)
+describe("Scenario ClickHouse alongside Postgres", () => {
+  scenario->Scenario.it("mirrors an indexed entity into ClickHouse", ~sources=[{chain: 1}], async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let source = source(1)
+    source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
-              context.counter.set({id: "total", count: 42n})
-            },
+    source.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 5,
+          logIndex: 0,
+          handler: async args => {
+            let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
+            context.counter.set({id: "total", count: 42n})
           },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
-      await indexer.getBatchWritePromise()
+        },
+      ],
+      ~latestFetchedBlockNumber=10,
+    )
+    await indexer.getBatchWritePromise()
 
-      // The current-state view the sink builds over its history table, which is
-      // what mirrors the Postgres row.
-      let database = TestClickHouse.currentDatabase()
-      let rows = await TestClickHouse.query(
-        `SELECT id, count FROM \`${database}\`.\`Counter\` FORMAT JSONEachRow`,
-      )
-      t.expect(rows->String.trim).toEqual(`{"id":"total","count":"42"}`)
-    },
-  )
+    // The current-state view ClickHouse builds over its history table, which is
+    // what mirrors the Postgres row.
+    let database = TestClickHouse.currentDatabase()
+    let rows = await TestClickHouse.query(
+      `SELECT id, count FROM \`${database}\`.\`Counter\` FORMAT JSONEachRow`,
+    )
+    t.expect(rows->String.trim).toEqual(`{"id":"total","count":"42"}`)
+  })
 })

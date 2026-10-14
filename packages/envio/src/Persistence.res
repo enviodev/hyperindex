@@ -61,8 +61,8 @@ type rollback = {
   // The id each chain's diff rows are stamped with: the first after what that
   // chain has committed.
   diffFrontier: Frontier.t,
-  // The same ids as checkpoint rows, for a sink that resolves current state
-  // through them. Postgres writes the diff to the entity table and ignores these.
+  // The same ids as checkpoint rows, which ClickHouse resolves current state
+  // through. Postgres writes the diff to the entity table and ignores these.
   diffCheckpoints: array<InternalTable.Checkpoints.diffCheckpoint>,
   // How far back the deletes reach on each chain, travelling with the diff so
   // the write leaves an untouched sibling's rows alone.
@@ -121,7 +121,7 @@ type storage = {
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
   // Read before anything is resumed, so a config the stored one rules out is
-  // reported as such rather than as a sink tripping over tables it never
+  // reported as such rather than as a store tripping over tables it never
   // created.
   readStoredConfig: unit => promise<ResumePlan.stored>,
   // Brings an initialized storage a chain it doesn't have yet: its row, its
@@ -133,7 +133,7 @@ type storage = {
     ~contractMapping: ContractMapping.t,
   ) => promise<unit>,
   // `chainIds` is what this run drives. An isolated run resumes a subset of
-  // the stored chains, and the sink's resume trims past each resumed chain's
+  // the stored chains, and ClickHouse's resume trims past each resumed chain's
   // checkpoint, so chains a sibling process is still writing must stay out.
   resumeInitialState: (
     ~entities: array<Internal.entityConfig>,
@@ -219,8 +219,8 @@ type storage = {
     // Chain metadata stale since the last write, persisted in the same
     // transaction so it never races the batch write.
     ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
-    // Reports each underlying storage's write duration (e.g. postgres and a
-    // configured sink separately), accumulated into the write metrics.
+    // Reports each store's write duration (postgres and clickhouse
+    // separately), accumulated into the write metrics.
     ~onWrite: (~storage: string, ~timeSeconds: float) => unit,
   ) => promise<unit>,
   // Release any long-lived resources (e.g. the postgres connection pool) so

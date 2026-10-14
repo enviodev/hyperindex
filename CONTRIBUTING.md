@@ -129,14 +129,14 @@ Configuration layer:
 
 - `Config.res` – strongly typed runtime config. Parsed from the JSON the Rust CLI embeds in the `Command` payload (primed via `Config.prime` in `Bin.res`), or, when called outside the CLI (worker threads, test harnesses), lazy-loaded via the `getConfigJson` NAPI call.
 - Handler registrations (`indexer.onEvent(...)`) land in `HandlerRegister.res` at module load time and are merged into `Config.t` on the next `Config.load()` (see `buildContractEvents`).
-- Environment variables (`.env`) feed `Env.res`, consumed by `PgStorage` / `ClickHouse` for connection settings.
+- Environment variables (`.env`) feed `Env.res`, consumed by `Storage` / `ClickHouse` for connection settings.
 
 Persistence layer:
 
-- `PgStorage.res` – low-level Postgres adapter.
+- `Storage.res` – the storage over every configured store, backed by the Rust `Storage` class (`packages/cli/src/storage`, bound in `bindings/StorageClient.res`). Postgres and ClickHouse are its two stores.
 - `Hasura.res` – Hasura metadata integration.
 - `Persistence.res` – high-level persistence façade.
-- `IO.res` – commits batched entity changes using the persistence layer. (should be refactored to use `PgStorage.res` and `Persistence.res`)
+- `IO.res` – commits batched entity changes using the persistence layer. (should be refactored to use `Storage.res` and `Persistence.res`)
 
 Data sourcing (fetch side):
 

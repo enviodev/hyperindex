@@ -149,7 +149,7 @@
       "type": "object",
       "properties": {
         "postgres": {
-          "description": "Whether to use Postgres as a storage backend (default: true). Required when ClickHouse is enabled. Accepts a boolean or an options object (the object form implies the backend is enabled).",
+          "description": "Whether to use Postgres as a storage backend (default: true). Must be set to `true` or `false` when ClickHouse is enabled. Accepts a boolean or an options object (the object form implies the backend is enabled).",
           "anyOf": [
             {
               "type": [

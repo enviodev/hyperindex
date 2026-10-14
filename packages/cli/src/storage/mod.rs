@@ -340,23 +340,29 @@ impl Storage {
 
     /// Every store starts from nothing. Each one is checked before any is
     /// touched, so a refusal leaves them all as they were.
+    ///
+    /// The store of record first, here and wherever the stores change apart
+    /// from a batch: a follower that fails behind it is brought back to what
+    /// it committed by the next resume — or refuses it, missing a table. The
+    /// other way round, a store of record that fails keeps its old state, and
+    /// a follower emptied under it would resume as if it held that state too.
     pub async fn initialize(&self, input: Initialize) -> Result<()> {
         for backend in self.all() {
             backend.check_for_initialize().await?;
         }
-        // The follower first: the store of record's tables are what say the
-        // storage exists, so they go last.
-        if let Some(follower) = self.follower() {
-            follower.initialize(&input).await?;
+        self.primary().initialize(&input).await?;
+        match self.follower() {
+            Some(follower) => follower.initialize(&input).await,
+            None => Ok(()),
         }
-        self.primary().initialize(&input).await
     }
 
     pub async fn add_chain(&self, input: AddChain) -> Result<()> {
-        if let Some(follower) = self.follower() {
-            follower.add_chain(&input).await?;
+        self.primary().add_chain(&input).await?;
+        match self.follower() {
+            Some(follower) => follower.add_chain(&input).await,
+            None => Ok(()),
         }
-        self.primary().add_chain(&input).await
     }
 
     pub async fn read_stored_config(&self) -> Result<StoredConfigRead> {
@@ -415,14 +421,19 @@ impl Storage {
         chain_ids: &[i64],
         ready_at: f64,
     ) -> Result<()> {
-        if let Some(follower) = self.follower() {
-            follower
-                .finalize_backfill(Vec::new(), chain_ids, ready_at)
-                .await?;
-        }
+        // The follower is only ready once the indexes the store of record
+        // promised are built.
         self.primary()
             .finalize_backfill(indexes, chain_ids, ready_at)
-            .await
+            .await?;
+        match self.follower() {
+            Some(follower) => {
+                follower
+                    .finalize_backfill(Vec::new(), chain_ids, ready_at)
+                    .await
+            }
+            None => Ok(()),
+        }
     }
 
     pub async fn prune_checkpoints(&self, bounds: &Bounds) -> Result<()> {

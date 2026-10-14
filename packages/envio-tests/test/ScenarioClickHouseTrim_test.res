@@ -31,9 +31,7 @@ type Counter {
   count: BigInt!
 }
 `,
-  ~unsupported=[
-    {backend: #postgres, reason: "asserts against a ClickHouse server"},
-  ],
+  ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
 
 type counter = {id: string, count: bigint}
@@ -50,7 +48,7 @@ let setCounter = (~count) =>
 // rows this test planted.
 let orphanCheckpointId = "999999999"
 
-describe("ClickHouse sink resuming past its own rows", () => {
+describe("ClickHouse resuming past its own rows", () => {
   scenario->Scenario.it(
     "drops history and checkpoints written past the resumed checkpoint",
     ~sources=[{chain: 1}],

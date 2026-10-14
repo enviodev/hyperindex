@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 
-use super::client::{Connection, Tuning};
+use super::client::{Client, Connection, Tuning};
 use super::storage::{Settings, Storage};
 use super::table::test_support::{column, entity_input};
 use super::table::{ClickHouseTableInput, ClickHouseTableKind};
@@ -36,6 +36,16 @@ fn env(name: &str, default: &str) -> String {
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
+fn connection(database: &str) -> Connection {
+    Connection {
+        url: env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"),
+        username: env("ENVIO_CLICKHOUSE_USERNAME", "default"),
+        password: std::env::var("ENVIO_CLICKHOUSE_PASSWORD")
+            .unwrap_or_else(|_| "testing".to_string()),
+        database: database.to_string(),
+    }
+}
+
 struct Live {
     storage: Storage,
     database: String,
@@ -53,13 +63,7 @@ impl Live {
                 .as_millis()
         );
         let storage = Storage::new(
-            Connection {
-                url: env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"),
-                username: env("ENVIO_CLICKHOUSE_USERNAME", "default"),
-                password: std::env::var("ENVIO_CLICKHOUSE_PASSWORD")
-                    .unwrap_or_else(|_| "testing".to_string()),
-                database: database.clone(),
-            },
+            connection(&database),
             Tuning::default(),
             Arc::new(|_: &str| {}),
             Settings {
@@ -96,8 +100,8 @@ impl Live {
         self.storage.reset().await.unwrap();
     }
 
-    async fn count(&self, table: &str) -> String {
-        let answer = reqwest::Client::new()
+    async fn execute(&self, statement: String) -> String {
+        let response = reqwest::Client::new()
             .post(env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"))
             .basic_auth(
                 env("ENVIO_CLICKHOUSE_USERNAME", "default"),
@@ -106,14 +110,21 @@ impl Live {
                         .unwrap_or_else(|_| "testing".to_string()),
                 ),
             )
-            .body(format!("SELECT count() FROM `{}`.`{table}`", self.database))
+            .body(statement)
             .send()
             .await
-            .unwrap()
-            .text()
-            .await
             .unwrap();
-        answer.trim().to_string()
+        assert!(
+            response.status().is_success(),
+            "{}",
+            response.text().await.unwrap()
+        );
+        response.text().await.unwrap().trim().to_string()
+    }
+
+    async fn count(&self, table: &str) -> String {
+        self.execute(format!("SELECT count() FROM `{}`.`{table}`", self.database))
+            .await
     }
 }
 
@@ -307,6 +318,75 @@ fn sorted(mut rows: Vec<Vec<String>>) -> Vec<Vec<String>> {
 
 fn row(cells: &[&str]) -> Vec<String> {
     cells.iter().map(|cell| cell.to_string()).collect()
+}
+
+// A TTL reads the columns of every history row, and a delete leaves all but
+// its key at their defaults. Were the delete to expire before the set it
+// cancels, the entity would come back.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_ttl_never_expires_a_delete_before_the_set_it_cancels() {
+    let live = Live::new(true);
+    let mut input = entity_input(
+        "Account",
+        vec![
+            column("id", "String"),
+            column("owner", "String"),
+            column("balance", "BigInt"),
+        ],
+    );
+    input.ttl =
+        Some("if(owner = '', toDateTime('2000-01-01'), toDateTime('2100-01-01'))".to_string());
+    let account = live.table(input);
+    initialize(&live, vec![account.clone()], vec![chain(1)]).await;
+    write(
+        &live,
+        batch(
+            &account,
+            &[("a", Some(("alice", "1")), 1), ("a", None, 2)],
+            &[(1, 1, 10), (2, 1, 11)],
+            (1, 2),
+        ),
+    )
+    .await;
+    live.execute(format!(
+        "OPTIMIZE TABLE `{}`.`envio_history_Account` FINAL",
+        live.database
+    ))
+    .await;
+
+    let loaded = live
+        .storage
+        .load_where(&account, vec![eq("id", "a")])
+        .await
+        .unwrap();
+    live.drop_database().await;
+    assert_eq!(rows(&loaded), Vec::<Vec<String>>::new());
+}
+
+// A query that fails once its first rows are on the wire has already answered
+// with a success status. Taking what arrived would hand a reader a partial
+// result — or none — as if it were the whole of it.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_read_that_fails_partway_is_an_error() {
+    let client = Client::new(
+        connection("default"),
+        Tuning::default(),
+        Arc::new(|_: &str| {}),
+    )
+    .unwrap();
+    let read = client
+        .read(
+            "SELECT number, throwIf(number = 500000) FROM numbers(1000000) FORMAT RowBinary"
+                .to_string(),
+        )
+        .await;
+    assert!(
+        read.is_err(),
+        "read {:?} bytes",
+        read.map(|body| body.len())
+    );
 }
 
 #[tokio::test]

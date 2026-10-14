@@ -77,7 +77,7 @@ pub fn tables(sequence: Sequence) -> Vec<TableSpec> {
                 nullable("progress_block_time", FieldType::Date),
                 // The last checkpoint the chain committed. Kept here rather than
                 // read off the checkpoints: their rows are only kept while a
-                // rollback could reach them, but an append-only sink resolves
+                // rollback could reach them, but an append-only store resolves
                 // current state through every id ever handed out, so a resume
                 // has to continue the sequence where no row backs it.
                 column("checkpoint_id", FieldType::UInt64),

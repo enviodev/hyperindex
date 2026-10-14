@@ -154,7 +154,6 @@ type table = {
   columns: array<Staging.column>,
   // An entity's history cells, by the scope whose chain id they stamp.
   historyCells: dict<historyCells>,
-  mutable rowCells: option<array<unknown => unknown>>,
 }
 
 let makeTable = (~handle, ~name, {names, kinds, nullable}: StorageClient.clickHouseRegistered) => {
@@ -167,7 +166,6 @@ let makeTable = (~handle, ~name, {names, kinds, nullable}: StorageClient.clickHo
     replacer: Replacer(jsonSafe(~column=name)),
   }),
   historyCells: Dict.make(),
-  rowCells: None,
 }
 
 // A Json column holds the document's text. Staging writes a string as is, so a
@@ -178,6 +176,16 @@ let makeTable = (~handle, ~name, {names, kinds, nullable}: StorageClient.clickHo
   let documentText = (value: unknown) =>
     switch value->(Utils.magic: unknown => Nullable.t<JSON.t>) {
     | Value(document) => document->JSON.stringify->(Utils.magic: string => unknown)
+    | Null | Undefined => "null"->(Utils.magic: string => unknown)
+    }
+)
+
+// A nullable document's absence, which a document already rendered as its text
+// keeps as null, stored as JSON `null` too.
+%%private(
+  let documentOrNullText = (value: unknown) =>
+    switch value->(Utils.magic: unknown => Nullable.t<unknown>) {
+    | Value(_) => value
     | Null | Undefined => "null"->(Utils.magic: string => unknown)
     }
 )
@@ -347,36 +355,29 @@ let stageChangesOrThrow = (
     })
   })
 
-// Rows of one of the indexer's own tables, each column read from the item's
-// field of the same name. Their values are already what the columns hold, a
-// document aside.
-let stageRowsOrThrow = (arena, table, ~fields: array<Table.field>, items: array<unknown>) =>
-  arena->stageOrThrow(table, ~rows=items->Array.length, ~fill=stage => {
-    let cells = switch table.rowCells {
-    | Some(cells) => cells
-    | None =>
-      let cells = table.columns->Array.map(({name}) =>
-        switch fields->Array.find(field => field->Table.getClickHouseDbFieldName === name) {
-        | Some(field) =>
-          let serialize = field.fieldType === Json ? documentsText(field) : value => value
-          let fieldName = field->Table.getApiFieldName
-          item =>
-            serialize(item->(Utils.magic: unknown => dict<unknown>)->Dict.getUnsafe(fieldName))
-        | None =>
-          JsError.throwWithMessage(
-            `ClickHouse table "${table.name}" registered a column "${name}" its rows have no value for`,
-          )
-        }
-      )
-      table.rowCells = Some(cells)
-      cells
-    }
-    items->Array.forEachWithIndex((item, row) =>
-      cells->Array.forEachWithIndex(
-        (cell, column) => stage->Staging.writeValue(~column, ~row, cell(item)),
-      )
-    )
-  })
+// Rows of one of the indexer's own tables, a column of values per field in the
+// order the table was registered with, as the item schema serialized them —
+// documents already their text.
+let stageColumnsOrThrow = (
+  arena,
+  table,
+  ~fields: array<Table.field>,
+  ~values: array<array<unknown>>,
+  ~rows,
+) =>
+  arena->stageOrThrow(table, ~rows, ~fill=stage =>
+    values->Array.forEachWithIndex((column, index) => {
+      let isDocument = (fields->Array.getUnsafe(index)).fieldType === Json
+      for row in 0 to rows - 1 {
+        let value = column->Array.getUnsafe(row)
+        stage->Staging.writeValue(
+          ~column=index,
+          ~row,
+          isDocument ? value->documentOrNullText : value,
+        )
+      }
+    })
+  )
 
 // Every connection setting has to be there: an unset one would otherwise reach
 // the server as an empty value and fail there, for a reason naming neither.

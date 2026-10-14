@@ -154,40 +154,6 @@ describe("ClickHouse staging", () => {
   // whole: the growth swaps the buffer under the view that is mid-batch. The
   // text is deliberately not ASCII — a string is given room for one byte per
   // UTF-16 unit first, and only the short encode says it needs more.
-  // A Json column is read back by parsing it, and Staging writes a string as
-  // is, so a document that is a bare string has to arrive as its JSON text.
-  it("stages a Json document that is a string as its JSON text", t => {
-    let table = tableFor()
-    let (mock, arena) = MockArena.make(~columns=table.columns)
-    let _ = table->stage(
-      arena,
-      ~changes=[
-        Change.Set({
-          entityId: entityId("a"),
-          checkpointId: 1n,
-          entity: entity({
-            id: "a",
-            someInt: 1,
-            optFloat: None,
-            flag: true,
-            at: Date.fromTime(0.),
-            big: 1n,
-            tags: [],
-            optKind: None,
-            doc: JSON.String("hello"),
-            owner_id: "alice",
-            blob: emptyBytes,
-            optBlob: None,
-            chunks: [],
-          }),
-        }),
-      ],
-    )
-    t.expect(mock->MockArena.staged->Array.find(column => column.name === "doc")).toEqual(
-      Some({name: "doc", values: Texts([`"hello"`]), nulls: [0]}),
-    )
-  })
-
   it("keeps a value that outgrows the payload it was given", t => {
     let table = tableFor()
     let (mock, arena) = MockArena.make(~columns=table.columns)

@@ -181,6 +181,10 @@ pub struct Storage {
     client: Client,
     settings: Settings,
     chains: Mutex<Chains>,
+    /// Held across a chains write, from reading the rows it changes to taking
+    /// what landed: metadata is written on a throttle of its own, alongside
+    /// batches and finalization, and each rewrites whole rows.
+    chain_writes: tokio::sync::Mutex<()>,
 }
 
 /// A Replicated database engine only replicates data when its tables use the
@@ -201,6 +205,7 @@ impl Storage {
             client: Client::new(connection, tuning, warn)?,
             settings,
             chains: Mutex::new(Chains::default()),
+            chain_writes: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -339,32 +344,70 @@ impl Storage {
             .await
     }
 
-    /// Writes the chains' rows: the commit point of whatever was written before
-    /// them. The rows are only taken as the chains' state once they landed.
-    async fn write_chains(&self, rows: Vec<ChainRow>) -> Result<()> {
+    /// Writes the rows of the chains `change` changes, made from the rows as
+    /// the last write left them: the commit point of whatever was written
+    /// before them. They go in one insert, since half of them would move some
+    /// chains' frontiers and not the others', and are only taken as the chains'
+    /// state once they landed.
+    async fn change_chains(
+        &self,
+        change: impl FnOnce(&mut BTreeMap<i64, ChainRow>) -> HashSet<i64>,
+    ) -> Result<()> {
+        let _turn = self.chain_writes.lock().await;
+        let (mut rows, version) = {
+            let chains = self.chains.lock().unwrap();
+            (chains.rows.clone(), chains.version + 1)
+        };
+        let changed = change(&mut rows);
+        let rows = rows
+            .into_values()
+            .filter(|row| changed.contains(&row.id))
+            .collect::<Vec<_>>();
         if rows.is_empty() {
             return Ok(());
         }
-        let version = self.chains.lock().unwrap().version + 1;
+        let columns = ddl::chain_columns(&self.chain_id_type());
+        let types = columns
+            .iter()
+            .map(|(_, ch_type)| ch_type.clone())
+            .collect::<Vec<_>>();
         let values = rows
             .iter()
             .map(|row| row.values(version))
             .collect::<Vec<_>>();
-        self.insert_values(
+        let encoded = encode_values(&types, &values)
+            .context("Failed encoding rows for ClickHouse table `envio_chains`")?;
+        let query = ddl::insert_query(
+            self.database(),
             CHAINS_TABLE,
-            &ddl::chain_columns(&self.chain_id_type()),
-            &values,
-        )
-        .await?;
+            columns.iter().map(|(name, _)| name),
+        );
+        self.client
+            .insert_whole(CHAINS_TABLE, &query, &encoded)
+            .await
+            .with_context(|| format!("Failed inserting into ClickHouse table `{CHAINS_TABLE}`"))?;
         let mut chains = self.chains.lock().unwrap();
-        chains.version = chains.version.max(version);
+        chains.version = version;
         for row in rows {
             chains.rows.insert(row.id, row);
         }
         Ok(())
     }
 
-    /// Each chain's row as it stands, for a write to change before it lands.
+    async fn write_chains(&self, rows: Vec<ChainRow>) -> Result<()> {
+        self.change_chains(|current| {
+            rows.into_iter()
+                .map(|row| {
+                    let id = row.id;
+                    current.insert(id, row);
+                    id
+                })
+                .collect()
+        })
+        .await
+    }
+
+    /// Each chain's row as it stands.
     fn chain_rows(&self) -> BTreeMap<i64, ChainRow> {
         self.chains.lock().unwrap().rows.clone()
     }
@@ -460,19 +503,10 @@ impl Storage {
         })
     }
 
-    async fn initialize_inner(&self, input: &Initialize) -> Result<()> {
-        let topology = self.topology();
-        let database_engine = self.settings.database_engine.as_deref();
-        let has_replicated_engine = has_replicated_engine(database_engine);
-        if has_replicated_engine && !self.settings.replicated {
-            (self.client.warn)(
-                "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so \
-                 tables use the ReplicatedMergeTree engine.",
-            );
-        }
-        let database = quoted(self.database());
-
-        if let Some(engine_spec) = database_engine {
+    /// What initializing would have to destroy or could not change, refused
+    /// before anything is touched.
+    async fn check_for_initialize_inner(&self) -> Result<()> {
+        if let Some(engine_spec) = self.settings.database_engine.as_deref() {
             let expected = ddl::database_engine_name(engine_spec);
             match self.existing_database_engine().await?.as_deref() {
                 Some(engine) if engine != expected => bail!(
@@ -484,6 +518,41 @@ impl Storage {
                 _ => {}
             }
         }
+        let answer = self
+            .client
+            .statement(format!(
+                "SELECT name FROM system.tables WHERE database = {} FORMAT TabSeparated",
+                literal(self.database())
+            ))
+            .await?;
+        let names = answer
+            .lines()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .collect::<Vec<_>>();
+        if !names.is_empty() && !names.contains(&CHAINS_TABLE) {
+            bail!(
+                "Cannot initialize the indexer in ClickHouse database \"{}\" because it holds \
+                 tables that aren't the indexer's. Initializing would delete them.\n\nTo resolve \
+                 this:\n1. Set ENVIO_CLICKHOUSE_DATABASE to a database of the indexer's own\n2. Or \
+                 drop those tables yourself if you're certain they aren't needed.",
+                self.database()
+            );
+        }
+        Ok(())
+    }
+
+    async fn initialize_inner(&self, input: &Initialize) -> Result<()> {
+        let topology = self.topology();
+        let database_engine = self.settings.database_engine.as_deref();
+        let has_replicated_engine = has_replicated_engine(database_engine);
+        if has_replicated_engine && !self.settings.replicated {
+            (self.client.warn)(
+                "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so \
+                 tables use the ReplicatedMergeTree engine.",
+            );
+        }
+        let database = quoted(self.database());
 
         let tables = input
             .tables
@@ -1248,12 +1317,13 @@ impl Storage {
     }
 
     async fn update_chains(&self, update: impl Fn(&mut ChainRow) -> bool) -> Result<()> {
-        let changed = self
-            .chain_rows()
-            .into_values()
-            .filter_map(|mut row| update(&mut row).then_some(row))
-            .collect();
-        self.write_chains(changed).await
+        self.change_chains(|chains| {
+            chains
+                .values_mut()
+                .filter_map(|row| update(row).then_some(row.id))
+                .collect()
+        })
+        .await
     }
 
     async fn write_inner(&self, batch: Batch) -> Result<()> {
@@ -1356,36 +1426,32 @@ impl Storage {
 
             // Every row above has landed, so the chains' rows can make them
             // readable.
-            let mut chains = self.chain_rows();
-            let mut changed = HashSet::new();
-            for update in rollback
-                .iter()
-                .flat_map(|rollback| &rollback.progress)
-                .chain(&progress)
-            {
-                if let Some(row) = chains.get_mut(&update.chain_id) {
-                    row.apply_progress(update);
-                    changed.insert(update.chain_id);
+            self.change_chains(|chains| {
+                let mut changed = HashSet::new();
+                for update in rollback
+                    .iter()
+                    .flat_map(|rollback| &rollback.progress)
+                    .chain(&progress)
+                {
+                    if let Some(row) = chains.get_mut(&update.chain_id) {
+                        row.apply_progress(update);
+                        changed.insert(update.chain_id);
+                    }
                 }
-            }
-            for meta in &chain_meta {
-                if let Some(row) = chains.get_mut(&meta.chain_id) {
-                    row.apply_meta(meta);
-                    changed.insert(meta.chain_id);
+                for meta in &chain_meta {
+                    if let Some(row) = chains.get_mut(&meta.chain_id) {
+                        row.apply_meta(meta);
+                        changed.insert(meta.chain_id);
+                    }
                 }
-            }
-            for (chain_id, checkpoint_id) in frontier.entries() {
-                if let Some(row) = chains.get_mut(&chain_id) {
-                    row.checkpoint_id = checkpoint_id;
-                    changed.insert(chain_id);
+                for (chain_id, checkpoint_id) in frontier.entries() {
+                    if let Some(row) = chains.get_mut(&chain_id) {
+                        row.checkpoint_id = checkpoint_id;
+                        changed.insert(chain_id);
+                    }
                 }
-            }
-            self.write_chains(
-                chains
-                    .into_values()
-                    .filter(|row| changed.contains(&row.id))
-                    .collect(),
-            )
+                changed
+            })
             .await
         };
 
@@ -1427,7 +1493,7 @@ impl Backend for Storage {
     }
 
     fn check_for_initialize(&self) -> Op<'_, ()> {
-        Box::pin(async { Ok(()) })
+        Box::pin(self.check_for_initialize_inner())
     }
 
     fn initialize<'a>(&'a self, input: &'a Initialize) -> Op<'a, ()> {
@@ -1628,18 +1694,11 @@ mod tests {
             .collect()
     }
 
-    /// The chains' rows are what make a write readable, so they go only once
-    /// every row they cover has landed.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_write_commits_with_its_chains_rows_last() {
-        let server =
-            MockClickHouse::answering_statements(Arc::new(|_: &str| (200, String::new()))).await;
-        let storage = storage_at(&server, true);
-        let account = account(&storage);
+    async fn initialize(storage: &Storage, tables: Vec<Arc<crate::storage::Table>>) {
         storage
             .initialize(&Initialize {
                 sequence: Sequence::PerChain,
-                tables: vec![account.clone()],
+                tables,
                 partitions: Vec::new(),
                 enums: Vec::new(),
                 chains: vec![ChainConfig {
@@ -1655,6 +1714,80 @@ mod tests {
             })
             .await
             .unwrap();
+    }
+
+    /// Initializing empties the database, so one that holds tables but none of
+    /// the indexer's is refused rather than emptied.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn initializing_refuses_a_database_with_tables_of_someone_elses() {
+        let server = MockClickHouse::answering_statements(Arc::new(|statement: &str| {
+            if statement.contains("system.tables") {
+                (200, "orders\ncustomers".to_string())
+            } else {
+                (200, String::new())
+            }
+        }))
+        .await;
+        let storage = storage_at(&server, true);
+
+        let refused = storage.check_for_initialize().await.unwrap_err();
+
+        assert_eq!(
+            (
+                format!("{refused:#}").contains("holds tables that aren't the indexer's"),
+                server.inserts_seen()
+            ),
+            (true, 0)
+        );
+    }
+
+    /// Metadata is written on a throttle of its own, alongside the
+    /// finalization that marks a chain ready, and each rewrites the chain's
+    /// whole row. Started from the same row, the later would undo the
+    /// earlier's fields, and tie with its version, which leaves the server to
+    /// keep either.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn overlapping_chain_writes_build_on_each_other() {
+        let server =
+            MockClickHouse::answering_statements(Arc::new(|_: &str| (200, String::new()))).await;
+        let storage = storage_at(&server, true);
+        initialize(&storage, Vec::new()).await;
+
+        let meta = [ChainMeta {
+            chain_id: 1,
+            first_event_block: Some(5),
+            buffer_block: 10,
+            ready_at: None,
+            is_hyper_sync: true,
+        }];
+        let (ready, metadata) = tokio::join!(
+            storage.finalize_backfill(Vec::new(), &[1], 1_000.0),
+            storage.set_chain_meta(&meta)
+        );
+
+        let chains = storage.chains.lock().unwrap();
+        let row = &chains.rows[&1];
+        assert_eq!(
+            (
+                ready.is_ok(),
+                metadata.is_ok(),
+                chains.version,
+                row.ready_at,
+                row.buffer_block
+            ),
+            (true, true, 3, Some(1_000.0), 10)
+        );
+    }
+
+    /// The chains' rows are what make a write readable, so they go only once
+    /// every row they cover has landed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_write_commits_with_its_chains_rows_last() {
+        let server =
+            MockClickHouse::answering_statements(Arc::new(|_: &str| (200, String::new()))).await;
+        let storage = storage_at(&server, true);
+        let account = account(&storage);
+        initialize(&storage, vec![account.clone()]).await;
         let initialized = inserted_tables(&server).len();
 
         let mut arena = Arena::new(

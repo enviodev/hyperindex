@@ -2,7 +2,7 @@ open Vitest
 
 // RowBinary carries the raw integer, so a value the column cannot hold is not
 // rejected anywhere downstream — the server takes whatever bytes it is handed
-// and stores a different number. The sink has to refuse it instead, and the
+// and stores a different number. The store has to refuse it instead, and the
 // refusal has to reach the indexer as a storage error naming the table rather
 // than being written and forgotten.
 
@@ -26,7 +26,7 @@ chains:
           - event: Transfer(address indexed from, address indexed to, uint256 value)
 `,
   // ClickHouse-only, so Postgres — whose NUMERIC(20, 0) has the same bound —
-  // never sees the row and the refusal under test is the sink's alone.
+  // never sees the row and the refusal under test is ClickHouse's alone.
   // Decimal(20, 0) holds 20 digits; the handler writes 21.
   ~schema=`
 type Plain {

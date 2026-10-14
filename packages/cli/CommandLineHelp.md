@@ -310,14 +310,14 @@ Local Envio environment commands
 
 ###### **Subcommands:**
 
-* `up` — Start Docker containers (Postgres + Hasura) for local environment
+* `up` — Start Docker containers for the configured storage (Postgres + Hasura, ClickHouse, or both) for local environment
 * `down` — Stop and remove Docker containers for local environment
 
 
 
 ## `envio local docker up`
 
-Start Docker containers (Postgres + Hasura) for local environment
+Start Docker containers for the configured storage (Postgres + Hasura, ClickHouse, or both) for local environment
 
 **Usage:** `envio local docker up`
 

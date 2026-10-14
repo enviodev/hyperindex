@@ -154,10 +154,13 @@ impl Client {
     }
 
     async fn post(&self, query: String) -> Result<Bytes> {
+        // Held until the query has finished, so one that fails after its first
+        // rows would have been sent answers with an error status instead.
         let request = self
             .http
             .post(&self.url)
             .timeout(self.tuning.statement_timeout)
+            .query(&[("wait_end_of_query", "1")])
             .basic_auth(&self.username, Some(&self.password))
             .body(query);
         self.answer(request).await
@@ -167,14 +170,14 @@ impl Client {
         let response = request.send().await.context("ClickHouse request failed")?;
         self.check_served_by(&response)?;
         let status = response.status();
-        let body = response.bytes().await.unwrap_or_default();
         if !status.is_success() {
-            bail!(
-                "ClickHouse returned {status}: {}",
-                String::from_utf8_lossy(&body)
-            );
+            let text = response.text().await.unwrap_or_default();
+            bail!("ClickHouse returned {status}: {text}");
         }
-        Ok(body)
+        response
+            .bytes()
+            .await
+            .context("ClickHouse's answer broke off before its end")
     }
 
     /// ClickHouse names the node that answered in every response. The first
@@ -208,6 +211,27 @@ impl Client {
     /// Sends rows with `query`, retrying what a resend can fix — whole, or
     /// halved where the batch's size is what failed.
     pub async fn insert(&self, table: &str, query: &str, encoded: &EncodedRows) -> Result<()> {
+        self.insert_retrying(table, query, encoded, true).await
+    }
+
+    /// Sends rows that only mean anything all together, retrying them whole
+    /// whatever failed.
+    pub async fn insert_whole(
+        &self,
+        table: &str,
+        query: &str,
+        encoded: &EncodedRows,
+    ) -> Result<()> {
+        self.insert_retrying(table, query, encoded, false).await
+    }
+
+    async fn insert_retrying(
+        &self,
+        table: &str,
+        query: &str,
+        encoded: &EncodedRows,
+        may_halve: bool,
+    ) -> Result<()> {
         if encoded.rows() == 0 {
             return Ok(());
         }
@@ -244,7 +268,7 @@ impl Client {
                     ));
                     tokio::time::sleep(self.tuning.delay(retries)).await;
                     match failure.retry {
-                        Retry::Halved if rows > 1 => {
+                        Retry::Halved if may_halve && rows > 1 => {
                             let mid = start + rows / 2;
                             pending.push((mid, end, retries - 1));
                             pending.push((start, mid, retries - 1));
@@ -575,6 +599,36 @@ mod tests {
                 ],
                 3,
                 1
+            )
+        );
+    }
+
+    // The chains' rows are the commit: half of them landing would move some
+    // chains' frontiers and not the others'.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_insert_that_must_land_whole_is_retried_whole() {
+        let server = MockClickHouse::start(1).await;
+        let client = client_for(&server, 4);
+
+        client
+            .insert_whole(
+                "envio_chains",
+                "INSERT INTO `envio_chains` (`id`) FORMAT RowBinary",
+                &strings(&["a", "b", "c", "d"]),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            (
+                vec![vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string()
+                ]],
+                2
             )
         );
     }
