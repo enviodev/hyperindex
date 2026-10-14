@@ -57,30 +57,32 @@ indexer.onEvent({ contract: "Gravatar", event: "NewGravatar" }, async ({ event, 
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, TestHelpers } from "envio";
+import { createTestIndexer, defineSidecar, S, TestHelpers } from "envio";
 
 const [owner] = TestHelpers.Addresses.mockAddresses;
+
+const newGravatar = (displayName: string) => ({
+  chains: {
+    1: {
+      startBlock: 1,
+      endBlock: 100,
+      simulate: [
+        {
+          contract: "Gravatar" as const,
+          event: "NewGravatar" as const,
+          params: { id: 7n, owner, displayName, imageUrl: "" },
+          block: { number: 5 },
+          logIndex: 3,
+        },
+      ],
+    },
+  },
+});
 
 describe("context.sidecar through a test indexer", () => {
   it("records each call once, with a deterministic id and the input's JSON form", async (t) => {
     const indexer = createTestIndexer();
-    const result = await indexer.process({
-      chains: {
-        1: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [
-            {
-              contract: "Gravatar",
-              event: "NewGravatar",
-              params: { id: 7n, owner, displayName: "hi", imageUrl: "" },
-              block: { number: 5 },
-              logIndex: 3,
-            },
-          ],
-        },
-      },
-    });
+    const result = await indexer.process(newGravatar("hi"));
 
     t.expect(result.changes).toEqual([
       {
@@ -96,6 +98,31 @@ describe("context.sidecar through a test indexer", () => {
         },
         Probe: { sets: [{ id: "1:5:3r2:0", callIds: "1:5:3r2:1,1:5:3r2:2" }] },
       },
+    ]);
+  });
+
+  // A second contract in the same process (another fixture, another package of
+  // a monorepo) must not rebind context.sidecar away from the configured one.
+  it("keeps the configured contract when another one is defined in the process", async (t) => {
+    defineSidecar({ functions: { unrelated: { input: { text: S.string } } } });
+    const first = createTestIndexer();
+    const second = createTestIndexer();
+    const fns = async (indexer: typeof first, displayName: string) =>
+      (await indexer.process(newGravatar(displayName))).changes.map((change) =>
+        change.sidecar?.calls.map(({ fn, input }) => ({ fn, input })),
+      );
+
+    t.expect([await fns(first, "a"), await fns(second, "b")]).toEqual([
+      [[
+        { fn: "priceSwap", input: { owner, amount: "7" } },
+        { fn: "notify", input: { text: "a" } },
+        { fn: "notify", input: { text: "again a" } },
+      ]],
+      [[
+        { fn: "priceSwap", input: { owner, amount: "7" } },
+        { fn: "notify", input: { text: "b" } },
+        { fn: "notify", input: { text: "again b" } },
+      ]],
     ]);
   });
 });

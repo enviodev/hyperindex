@@ -378,7 +378,7 @@ let sidecarTraps: Utils.Proxy.traps<contextParams> = {
       %raw(`undefined`)
     } else {
       let fn = prop->(Utils.magic: unknown => string)
-      switch SidecarContract.current() {
+      switch SidecarContract.get() {
       | None =>
         JsError.throwWithMessage(
           `context.sidecar.${fn} has no sidecar to call: add \`sidecar: { contract, entry }\` to config.yaml.`,
@@ -389,6 +389,7 @@ let sidecarTraps: Utils.Proxy.traps<contextParams> = {
           (input => params->callSidecar(~fn, ~def, input))->(
             Utils.magic: (unknown => string) => unknown
           )
+
         | None =>
           JsError.throwWithMessage(
             `context.sidecar.${fn} is not a function of the sidecar contract. It has: ${functions

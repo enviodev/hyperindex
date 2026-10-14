@@ -35,6 +35,7 @@ external describeAsync: (string, unit => promise<unit>) => unit = "describe"
 // Emitted here rather than in envio so vite-node transforms the generated
 // module and its bare `envio` import resolves to the instance already loaded.
 let importModule: string => promise<unit> = %raw(`(path) => import(path)`)
+let importModuleExports: string => promise<unknown> = %raw(`(path) => import(path)`)
 
 // `file:line` of the `fromUserApi` call — the first stack frame outside this
 // helper — so a failing suite names the fixture that produced it.
@@ -111,8 +112,8 @@ let fromUserApi = (
   ~handlers=?,
   ~test=?,
   // Source of the module `sidecar.contract` names. Type-checked where the
-  // generated types import it from, and imported before the handlers, the way
-  // the indexer loads it on start.
+  // generated types import it from, then imported and bound with
+  // `SidecarContract.set`, since the path the config names is not on disk.
   ~sidecarContract=?,
   // Run the `handlers` module, so `indexer.onEvent` registers for real, and
   // expose what it registered as `parsed.registrations`. Without it a
@@ -235,9 +236,12 @@ let fromUserApi = (
     | Ok((contractFile, handlersFile, testFile)) =>
       let collected = ref(false)
       describeAsync(suiteName, async () => {
-        switch contractFile {
-        | Some(file) => await importModule(file)
-        | None => ()
+        switch (contractFile, sidecarContract) {
+        | (Some(file), Some({path})) =>
+          (await importModuleExports(file))
+          ->SidecarContract.fromModuleOrThrow(~path)
+          ->SidecarContract.set
+        | _ => ()
         }
         // Handlers must finish registering before the test module's bodies run.
         switch handlersFile {
