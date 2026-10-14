@@ -16,7 +16,9 @@ let run = async (state: IndexerState.t) => {
         // Best effort: calls still queued when the deadline passes are lost,
         // as delivery is at-most-once.
         switch state->IndexerState.sidecarSender {
-        | Some(sender) => await sender->SidecarSender.flush(~timeoutMs=5_000)
+        | Some(sender) =>
+          await sender->SidecarSender.flush(~timeoutMs=5_000)
+          sender->SidecarSender.stop
         | None => ()
         }
         Logging.info("Exiting with success")

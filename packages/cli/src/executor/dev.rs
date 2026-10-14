@@ -26,6 +26,10 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
     .await
     .context("Failed starting Docker containers")?;
 
+    if config.human_config.get_base_config().sidecar.is_some() {
+        docker_env::ensure_sidecar_role(&config.parsed_project_paths.project_root).await;
+    }
+
     if up_result.hasura_enabled {
         let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
 

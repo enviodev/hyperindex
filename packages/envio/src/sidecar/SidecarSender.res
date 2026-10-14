@@ -13,7 +13,15 @@ type stats = {
   sent: int,
   rollbacksSent: int,
   dropped: dict<int>,
+  // Whether the last answer says the sidecar can take calls. None until a
+  // delivery or a readiness probe has had one.
+  up: option<bool>,
+  // Unix seconds of the last POST the sidecar answered with a 2xx.
+  lastAckSeconds: option<float>,
+  queueMax: int,
 }
+
+type probeTimer
 
 type t = {
   url: string,
@@ -26,6 +34,8 @@ type t = {
   // built-in `sidecar.ack` and `sidecar.dropped` webhooks.
   mutable onAcked: array<SidecarCall.t> => unit,
   mutable onDropped: (array<SidecarCall.t>, ~reason: string) => unit,
+  // 0 turns the readiness probe off.
+  probeMs: int,
   queue: array<item>,
   // Taken off the queue for the POST under way, and resent as they are while
   // it keeps failing. Still counted against the bound.
@@ -37,6 +47,10 @@ type t = {
   mutable stopped: bool,
   mutable batchCount: int,
   mutable idleWaiters: array<unit => unit>,
+  mutable up: option<bool>,
+  mutable lastAckSeconds: option<float>,
+  mutable probeTimer: option<probeTimer>,
+  mutable probing: bool,
 }
 
 // What the runtime accepts in one POST is bounded by its 10 MB body limit, not
@@ -56,7 +70,30 @@ type fetchInit = {method: string, headers: dict<string>, body: string, signal: s
 @val external fetch: (string, fetchInit) => promise<response> = "fetch"
 @get external status: response => int = "status"
 @send external json: response => promise<JSON.t> = "json"
+@send external text: response => promise<string> = "text"
 @val @scope("AbortSignal") external timeoutSignal: int => signal = "timeout"
+type getInit = {method: string, signal: signal}
+@val external get: (string, getInit) => promise<response> = "fetch"
+
+// Unref'd like `sleep`: the probe never keeps the process alive.
+let startTimer: (
+  int,
+  unit => unit,
+) => probeTimer = %raw(`(ms, tick) => setInterval(tick, ms).unref()`)
+let stopTimer: probeTimer => unit = %raw(`timer => clearInterval(timer)`)
+
+let nowSeconds = () => Date.now() /. 1000.
+
+// Up is what the sidecar said last: a 2xx (or any 4xx other than 429, which
+// is an answer about the payload) means up, while what `post` would retry
+// (refused, timeout, 5xx, 429) means down from that first failed attempt.
+// While nothing is being delivered the readiness probe below answers instead.
+let setUp = (t, up) => {
+  if t.up != Some(up) {
+    Logging.debug({"msg": up ? "The sidecar is up" : "The sidecar is down", "url": t.url})
+  }
+  t.up = Some(up)
+}
 
 type outcome =
   | Delivered(JSON.t)
@@ -79,18 +116,81 @@ let post = async (t, ~path, ~body: JSON.t, ~timeoutMs) =>
   | response =>
     switch response->status {
     | code if code >= 200 && code < 300 =>
+      t->setUp(true)
+      t.lastAckSeconds = Some(nowSeconds())
       Delivered(
         switch await response->json {
         | body => body
         | exception _ => JSON.Null
         },
       )
-    | code if code >= 500 || code === 429 => Retry(`HTTP ${code->Int.toString}`)
-    | code => Refused(code)
+    | code if code >= 500 || code === 429 =>
+      t->setUp(false)
+      Retry(`HTTP ${code->Int.toString}`)
+    | code =>
+      t->setUp(true)
+      Refused(code)
     }
   | exception exn =>
+    t->setUp(false)
     Retry((exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"])
   }
+
+// The sidecar's readiness (wiki/09-reliability.md 2): 200 when it takes calls,
+// 503 `starting` or `closing` when it does not. Only asked while the sender is
+// idle, as a delivery under way already says the same thing more recently.
+let probe = async t =>
+  if !t.draining && !t.probing && !t.stopped {
+    t.probing = true
+    let up = switch await get(
+      t.url ++ "/readyz",
+      {method: "GET", signal: timeoutSignal(t.callsTimeoutMs)},
+    ) {
+    | response =>
+      // Read the body, so the connection goes back to the pool.
+      let _ = switch await response->text {
+      | _ => ()
+      | exception _ => ()
+      }
+      response->status >= 200 && response->status < 300
+    | exception _ => false
+    }
+    t.probing = false
+
+    // A delivery that started meanwhile has the fresher answer.
+    if !t.draining && !t.stopped {
+      t->setUp(up)
+    }
+  }
+
+let startProbe = t =>
+  if t.probeMs > 0 && t.probeTimer->Option.isNone {
+    let tick = () => t->probe->Promise.ignore
+    t.probeTimer = Some(startTimer(t.probeMs, tick))
+    tick()
+  }
+
+// The sidecar's own Prometheus text (its internal `GET /metrics`), or None
+// when it does not answer within `timeoutMs`, so the indexer's `/metrics` can
+// carry it (D-008). Never rejects.
+let fetchMetrics = async (~url, ~timeoutMs) => {
+  let read = async () => {
+    let response = await get(url ++ "/metrics", {method: "GET", signal: timeoutSignal(timeoutMs)})
+    (response->status, await response->text)
+  }
+  switch await read() {
+  | (200, body) => Some(body)
+  | (code, _) =>
+    Logging.trace({"msg": "The sidecar's /metrics did not answer 200", "status": code})
+    None
+  | exception exn =>
+    Logging.trace({
+      "msg": "The sidecar's /metrics did not answer",
+      "reason": (exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
+    })
+    None
+  }
+}
 
 let make = (
   ~url,
@@ -102,24 +202,36 @@ let make = (
   ~backoffCapMs=5_000,
   ~onAcked=_ => (),
   ~onDropped=(_, ~reason as _) => (),
+  // How often to check `/readyz` while idle; 0 (the default, for tests) never
+  // does. The indexer passes ENVIO_SIDECAR_PROBE_MS.
+  ~probeMs=0,
 ) => {
-  url,
-  queueMax,
-  callsTimeoutMs,
-  rollbackTimeoutMs,
-  backoffBaseMs,
-  backoffCapMs,
-  onAcked,
-  onDropped,
-  queue: [],
-  inFlight: [],
-  sent: 0,
-  rollbacksSent: 0,
-  dropped: Dict.make(),
-  draining: false,
-  stopped: false,
-  batchCount: 0,
-  idleWaiters: [],
+  let t = {
+    url,
+    queueMax,
+    callsTimeoutMs,
+    rollbackTimeoutMs,
+    backoffBaseMs,
+    backoffCapMs,
+    onAcked,
+    onDropped,
+    probeMs,
+    queue: [],
+    inFlight: [],
+    sent: 0,
+    rollbacksSent: 0,
+    dropped: Dict.make(),
+    draining: false,
+    stopped: false,
+    batchCount: 0,
+    idleWaiters: [],
+    up: None,
+    lastAckSeconds: None,
+    probeTimer: None,
+    probing: false,
+  }
+  t->startProbe
+  t
 }
 
 let queuedCalls = t =>
@@ -136,6 +248,9 @@ let stats = (t): stats => {
   sent: t.sent,
   rollbacksSent: t.rollbacksSent,
   dropped: t.dropped->Dict.copy,
+  up: t.up,
+  lastAckSeconds: t.lastAckSeconds,
+  queueMax: t.queueMax,
 }
 
 let drop = (t, calls: array<SidecarCall.t>, ~reason, ~detail=reason) =>
@@ -378,5 +493,7 @@ let flush = (t, ~timeoutMs) =>
 
 let stop = t => {
   t.stopped = true
+  t.probeTimer->Option.forEach(stopTimer)
+  t.probeTimer = None
   t->notifyIdle
 }

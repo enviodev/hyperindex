@@ -3348,6 +3348,52 @@ mod test {
         );
     }
 
+    // The sidecar caller is `context.sidecar` and entities are exposed under
+    // their capitalized name, so a schema entity named `sidecar` is
+    // `context.Sidecar` and both can exist side by side.
+    #[test]
+    fn envio_types_dts_keeps_an_entity_named_sidecar_apart_from_the_sidecar() {
+        let yaml = r#"
+name: sidecar-entity
+sidecar:
+  contract: src/sidecar/contract.ts
+  entry: src/sidecar/index.ts
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+        events:
+          - event: Transfer()
+"#;
+        let schema = r#"
+type sidecar {
+  id: ID!
+}
+"#;
+        let config =
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("an entity named sidecar should parse");
+        let dts = super::ProjectTemplate::from_config(&config)
+            .expect("project template")
+            .envio_types_dts;
+
+        assert_eq!(
+            (
+                dts.contains("  \"Sidecar\": {"),
+                dts.contains("export type Sidecar = Entities[\"Sidecar\"];"),
+                dts.contains("    sidecar: typeof import(\"../src/sidecar/contract\").default;"),
+                dts.contains("\"sidecar\": {"),
+            ),
+            (true, true, true, false),
+            "generated types:\n{dts}"
+        );
+    }
+
     #[test]
     fn envio_types_dts_generated_for_fuel() {
         let project_template = get_project_template_helper("fuel-config.yaml");
