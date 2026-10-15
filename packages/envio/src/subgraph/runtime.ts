@@ -56,6 +56,7 @@ import {
   commitRegisterWrites,
   resetRegisterStore,
   POSITION_BLOCK,
+  ROUND_SPAN,
   ethereumValueToJs,
 } from "./graph-ts.ts";
 import { encodeArg, decodeArg, makeCallEffect } from "./calls.ts";
@@ -740,6 +741,20 @@ const registeredTemplates = new Set<string>();
 const REGISTERED_TEMPLATES_LIMIT = 100_000;
 const unregisteredCreates = new Set<string>();
 
+/**
+ * The block and round each registered address was created in, by the same key.
+ * graph-node runs a data source's events of its creation block in a later round
+ * than the handler that created it, so a register pass for them must read what
+ * that handler's pass saved, whatever the log order. A round past the position
+ * span is clamped.
+ */
+const registrationRounds = new Map<string, { block: number; round: number }>();
+
+function roundOf(chainId: number, name: string, address: string, block: number): number {
+  const entry = registrationRounds.get(`${chainId}:${name}:${address.toLowerCase()}`);
+  return entry !== undefined && entry.block === block ? entry.round : 0;
+}
+
 type FileTemplate = {
   name: string;
   kind: "ipfs" | "arweave";
@@ -855,6 +870,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installCallSource(fetchCalls, config.rpcUrls ?? []);
   resetRegisterStore();
   registeredTemplates.clear();
+  registrationRounds.clear();
   unregisteredCreates.clear();
   announceWhereToQuery();
   if (config.graftNotice) warn(config.graftNotice);
@@ -951,8 +967,15 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     const key = `${scope.dataSource.chainId}:${templateName}:${address.toLowerCase()}`;
     registeredTemplates.delete(key);
     registeredTemplates.add(key);
+    if (!registrationRounds.has(key)) {
+      const { dataSource, blockNumber } = scope;
+      const round = roundOf(dataSource.chainId, dataSource.name, dataSource.address, blockNumber) + 1;
+      registrationRounds.set(key, { block: blockNumber, round });
+    }
     if (registeredTemplates.size > REGISTERED_TEMPLATES_LIMIT) {
-      registeredTemplates.delete(registeredTemplates.values().next().value!);
+      const oldest = registeredTemplates.values().next().value!;
+      registeredTemplates.delete(oldest);
+      registrationRounds.delete(oldest);
     }
   });
 
@@ -1195,7 +1218,10 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         registered: new Set(),
         blockNumber: event.block.number,
         blockSeconds: secondsOf(event.block.number, event.block.timestamp),
-        position: event.block.number * POSITION_BLOCK + event.logIndex,
+        position:
+          event.block.number * POSITION_BLOCK +
+          Math.min(roundOf(event.chainId, source.name, event.srcAddress, event.block.number), 15) * ROUND_SPAN +
+          event.logIndex,
         mappingExports: mapping,
       });
 

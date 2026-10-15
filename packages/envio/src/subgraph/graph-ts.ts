@@ -1357,8 +1357,13 @@ function registerRead(scope: Scope, entityType: string, id: string, sameBlock: b
   return null;
 }
 
-/** An event's place in its chain: block, then log index. */
-export const POSITION_BLOCK = 1_000_000;
+/**
+ * An event's place in its chain: block, then the round graph-node runs it in
+ * (the block's own triggers, then those of the data sources they created, and
+ * so on), then log index.
+ */
+export const ROUND_SPAN = 1_000_000;
+export const POSITION_BLOCK = 16 * ROUND_SPAN;
 
 /** Keeps a completed register round's writes for the passes after it. */
 export function commitRegisterWrites(scope: Scope): void {
