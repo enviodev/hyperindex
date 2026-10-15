@@ -92,7 +92,7 @@ pub enum ConfigSubcommand {
 #[derive(Debug, Subcommand)]
 pub enum SubgraphSubcommand {
     ///Prove a migration: compare this indexer's data with the subgraph's graph-node endpoint
-    ///(The Graph Studio, Goldsky, Ormi, ...) at one block, and print a parity report.
+    ///at one block, and print a parity report.
     ///
     ///Ours is the project's Postgres (the same ENVIO_PG_* settings the indexer uses), at the
     ///block the indexer has processed; the reference is queried at that block with
@@ -107,7 +107,7 @@ pub enum SubgraphSubcommand {
 #[derive(Debug, Args, Clone)]
 pub struct SubgraphDiffArgs {
     ///The reference graph-node GraphQL endpoint, e.g.
-    ///https://api.goldsky.com/api/public/<project>/subgraphs/<name>/<version>/gn
+    ///https://<host>/subgraphs/name/<name>
     pub endpoint: String,
 
     ///Compare a Graph endpoint of ours (e.g. envio-serve's) instead of the project's Postgres.

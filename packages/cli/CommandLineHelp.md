@@ -492,13 +492,13 @@ Tools for subgraph projects (a directory with subgraph.yaml)
 
 ###### **Subcommands:**
 
-* `diff` — Prove a migration: compare this indexer's data with the subgraph's graph-node endpoint (The Graph Studio, Goldsky, Ormi, ...) at one block, and print a parity report
+* `diff` — Prove a migration: compare this indexer's data with the subgraph's graph-node endpoint at one block, and print a parity report
 
 
 
 ## `envio subgraph diff`
 
-Prove a migration: compare this indexer's data with the subgraph's graph-node endpoint (The Graph Studio, Goldsky, Ormi, ...) at one block, and print a parity report.
+Prove a migration: compare this indexer's data with the subgraph's graph-node endpoint at one block, and print a parity report.
 
 Ours is the project's Postgres (the same ENVIO_PG_* settings the indexer uses), at the block the indexer has processed; the reference is queried at that block with `block: {number: N}`. Per entity type it compares the full id sets and a deterministic sample of entities field by field, in graph-node's encodings.
 
@@ -508,7 +508,7 @@ Exit code: 0 when everything matches within the tolerances, 1 on a mismatch, 2 w
 
 ###### **Arguments:**
 
-* `<ENDPOINT>` — The reference graph-node GraphQL endpoint, e.g. https://api.goldsky.com/api/public/<project>/subgraphs/<name>/<version>/gn
+* `<ENDPOINT>` — The reference graph-node GraphQL endpoint, e.g. https://<host>/subgraphs/name/<name>
 
 ###### **Options:**
 
