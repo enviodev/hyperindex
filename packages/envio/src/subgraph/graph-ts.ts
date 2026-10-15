@@ -294,6 +294,27 @@ export class Address extends Bytes {
 // Numbers
 // ---------------------------------------------------------------------------
 
+/**
+ * Below apiVersion 0.0.5 graph-node reads a null operand handed to a host
+ * function as an empty value, so `x.plus(null)` is `x`. From 0.0.5 it traps,
+ * which is a TypeError here.
+ */
+let legacyNullOperands = false;
+
+export function setLegacyNullOperands(on: boolean) {
+  legacyNullOperands = on;
+}
+
+function operandOf(other: BigInt_): bigint {
+  return legacyNullOperands && (other === null || other === undefined) ? 0n : other.value;
+}
+
+function decimalOperandOf(other: BigDecimal): GraphNodeDecimal.Decimal {
+  return legacyNullOperands && (other === null || other === undefined)
+    ? BigDecimal.zero().decimal
+    : other.decimal;
+}
+
 class BigInt_ extends Uint8Array {
   readonly value: bigint;
   /**
@@ -408,19 +429,19 @@ class BigInt_ extends Uint8Array {
   }
 
   plus(other: BigInt_): BigInt_ {
-    return new BigInt_(this.value + other.value);
+    return new BigInt_(this.value + operandOf(other));
   }
   minus(other: BigInt_): BigInt_ {
-    return new BigInt_(this.value - other.value);
+    return new BigInt_(this.value - operandOf(other));
   }
   times(other: BigInt_): BigInt_ {
-    return new BigInt_(this.value * other.value);
+    return new BigInt_(this.value * operandOf(other));
   }
   div(other: BigInt_): BigInt_ {
-    return new BigInt_(this.value / other.value);
+    return new BigInt_(this.value / operandOf(other));
   }
   mod(other: BigInt_): BigInt_ {
-    return new BigInt_(this.value % other.value);
+    return new BigInt_(this.value % operandOf(other));
   }
   pow(exponent: number): BigInt_ {
     return new BigInt_(this.value ** BigInt(exponent));
@@ -432,22 +453,22 @@ class BigInt_ extends Uint8Array {
     return new BigInt_(this.value < 0n ? -this.value : this.value);
   }
   equals(other: BigInt_): boolean {
-    return this.value === other.value;
+    return this.value === operandOf(other);
   }
   notEqual(other: BigInt_): boolean {
-    return this.value !== other.value;
+    return this.value !== operandOf(other);
   }
   lt(other: BigInt_): boolean {
-    return this.value < other.value;
+    return this.value < operandOf(other);
   }
   le(other: BigInt_): boolean {
-    return this.value <= other.value;
+    return this.value <= operandOf(other);
   }
   gt(other: BigInt_): boolean {
-    return this.value > other.value;
+    return this.value > operandOf(other);
   }
   ge(other: BigInt_): boolean {
-    return this.value >= other.value;
+    return this.value >= operandOf(other);
   }
   isZero(): boolean {
     return this.value === 0n;
@@ -557,34 +578,34 @@ export class BigDecimal {
     return BigInt_.fromString(this.value.integerValue(BigNumber.ROUND_DOWN).toFixed());
   }
   plus(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.add(this.decimal, other.decimal));
+    return new BigDecimal(GraphNodeDecimal.add(this.decimal, decimalOperandOf(other)));
   }
   minus(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.subtract(this.decimal, other.decimal));
+    return new BigDecimal(GraphNodeDecimal.subtract(this.decimal, decimalOperandOf(other)));
   }
   times(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.multiply(this.decimal, other.decimal));
+    return new BigDecimal(GraphNodeDecimal.multiply(this.decimal, decimalOperandOf(other)));
   }
   div(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.divide(this.decimal, other.decimal));
+    return new BigDecimal(GraphNodeDecimal.divide(this.decimal, decimalOperandOf(other)));
   }
   equals(other: BigDecimal): boolean {
-    return GraphNodeDecimal.compare(this.decimal, other.decimal) === 0;
+    return GraphNodeDecimal.compare(this.decimal, decimalOperandOf(other)) === 0;
   }
   notEqual(other: BigDecimal): boolean {
-    return GraphNodeDecimal.compare(this.decimal, other.decimal) !== 0;
+    return GraphNodeDecimal.compare(this.decimal, decimalOperandOf(other)) !== 0;
   }
   lt(other: BigDecimal): boolean {
-    return GraphNodeDecimal.compare(this.decimal, other.decimal) < 0;
+    return GraphNodeDecimal.compare(this.decimal, decimalOperandOf(other)) < 0;
   }
   le(other: BigDecimal): boolean {
-    return GraphNodeDecimal.compare(this.decimal, other.decimal) <= 0;
+    return GraphNodeDecimal.compare(this.decimal, decimalOperandOf(other)) <= 0;
   }
   gt(other: BigDecimal): boolean {
-    return GraphNodeDecimal.compare(this.decimal, other.decimal) > 0;
+    return GraphNodeDecimal.compare(this.decimal, decimalOperandOf(other)) > 0;
   }
   ge(other: BigDecimal): boolean {
-    return GraphNodeDecimal.compare(this.decimal, other.decimal) >= 0;
+    return GraphNodeDecimal.compare(this.decimal, decimalOperandOf(other)) >= 0;
   }
   // graph-ts negates by subtracting from zero, which normalizes like any other
   // operation.

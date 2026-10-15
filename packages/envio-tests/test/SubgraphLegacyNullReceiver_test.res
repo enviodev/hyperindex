@@ -70,7 +70,7 @@ function nothingDecimal(): BigDecimal | null {
 }
 
 export function handleNewOwner(event: any): void {
-  let premium = nothing().plus(BigInt.fromI32(90086));
+  let premium = nothing().plus(BigInt.fromI32(90086)).plus(nothing());
   let fee = nothingDecimal().plus(BigDecimal.fromString("1.5"));
   let definitions = new Array<Definition>(2);
   definitions.push(new Definition(Address.fromString("0x0000000000000000000000000000000000000002")));
