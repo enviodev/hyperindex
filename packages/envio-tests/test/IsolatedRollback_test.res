@@ -179,31 +179,31 @@ let driveBothChainsToBlock102 = async (
 
   // Chain 100 leads (the progress tie breaks by ascending chain id), so its
   // post-threshold query is the one holding the fetch budget.
-  await source100->MockSource.interceptGetItemsCalls([
+  await source100.expectItemsQueries([
     {
       fromBlock: 101,
-      resolve: {items: [item(~block=101, ~count=100n)], latestFetchedBlockNumber: 101},
+      reply: Respond({items: [item(~block=101, ~count=100n)], latestFetchedBlockNumber: 101}),
     },
   ])
-  await source1337->MockSource.interceptGetItemsCalls([
+  await source1337.expectItemsQueries([
     {
       fromBlock: 101,
-      resolve: {items: [item(~block=101, ~count=1337n)], latestFetchedBlockNumber: 101},
+      reply: Respond({items: [item(~block=101, ~count=1337n)], latestFetchedBlockNumber: 101}),
     },
   ])
   await indexer.getBatchWritePromise()
 
-  await source1337->MockSource.interceptGetItemsCalls([
+  await source1337.expectItemsQueries([
     {
       fromBlock: 102,
-      resolve: {items: [item(~block=102, ~count=13372n)], latestFetchedBlockNumber: 102},
+      reply: Respond({items: [item(~block=102, ~count=13372n)], latestFetchedBlockNumber: 102}),
     },
   ])
   await indexer.getBatchWritePromise()
-  await source100->MockSource.interceptGetItemsCalls([
+  await source100.expectItemsQueries([
     {
       fromBlock: 102,
-      resolve: {items: [item(~block=102, ~count=1002n)], latestFetchedBlockNumber: 102},
+      reply: Respond({items: [item(~block=102, ~count=1002n)], latestFetchedBlockNumber: 102}),
     },
   ])
   await indexer.getBatchWritePromise()
@@ -230,18 +230,15 @@ let reorgAt = async (
 ) => {
   sibling->Option.forEach(sibling => sibling.dropPendingCalls())
   let reorgsBefore = source.reorgCallCount()
-  let chunksAbove: array<MockSource.itemsQuerySpec> = chunksAbove ? [{p: "0"}] : []
-  await source->MockSource.interceptGetItemsCalls(
-    [
-      {
-        MockSource.where: MockSource.coveringBlock(atBlock + 1),
-        resolve: {
-          items: [],
-          prevRangeLastBlock: {blockNumber: atBlock, blockHash: `0x${atBlock->Int.toString}a`},
-        },
-      },
-      ...chunksAbove,
-    ],
+  let reorg: MockSource.expectedItemsQuery = {
+    coversBlock: atBlock + 1,
+    reply: Respond({
+      items: [],
+      prevRangeLastBlock: {blockNumber: atBlock, blockHash: `0x${atBlock->Int.toString}a`},
+    }),
+  }
+  await source.expectItemsQueries(
+    chunksAbove ? [reorg, {partitionId: "0", reply: LeavePending}] : [reorg],
   )
   // The depth search drops the source's orphaned-chain state before it reads
   // any hash, so this is the one point both shapes of the search pass through —

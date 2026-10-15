@@ -189,11 +189,55 @@ type itemMock = {
   transactionFields?: dict<unknown>,
 }
 
+type toBlock = Bounded(int) | Unbounded
+
 // What a test can tell one pending item query from another by.
+type pendingItemsQuery = {
+  partitionId: string,
+  fromBlock: int,
+  toBlock: toBlock,
+  retryCount: int,
+}
+
+// Non-enumerable on the query, so a whole-value `toEqual` snapshot of the
+// pending queries doesn't have to spell them out.
+@get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
+@get external includeAllBlocks: pendingItemsQuery => bool = "includeAllBlocks"
+
+type itemsResponse = {
+  items: array<itemMock>,
+  // Defaults to the query's toBlock, or its fromBlock when unbounded.
+  latestFetchedBlockNumber?: int,
+  latestFetchedBlockHash?: string,
+  knownHeight?: int,
+  prevRangeLastBlock?: ReorgDetection.blockData,
+  requestStats?: array<Source.requestStat>,
+}
+
+type reply = Respond(itemsResponse) | Fail(exn) | LeavePending
+
+type expectedItemsQuery = {
+  partitionId?: string,
+  fromBlock?: int,
+  toBlock?: toBlock,
+  retryCount?: int,
+  coversBlock?: int,
+  where?: pendingItemsQuery => bool,
+  reply: reply,
+}
+
+type pendingItemsQueryControl = {
+  respond: itemsResponse => unit,
+  fail: exn => unit,
+}
+@get external control: pendingItemsQuery => pendingItemsQueryControl = "__control"
+
+// Legacy shape, answered through `resolveGetItemsOrThrow`.
 type itemsQuery = {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": string}
 
 type getItemsOrThrowCall = {
   payload: itemsQuery,
+  query: pendingItemsQuery,
   // Whether the query asked for every block in its range, which the chain only
   // does once it is at the head.
   includeAllBlocks: bool,
@@ -206,26 +250,6 @@ type getItemsOrThrowCall = {
     ~requestStats: array<Source.requestStat>=?,
   ) => unit,
   reject: 'exn. 'exn => unit,
-}
-
-type itemsAnswer = {
-  items: array<itemMock>,
-  latestFetchedBlockNumber?: int,
-  latestFetchedBlockHash?: string,
-  knownHeight?: int,
-  prevRangeLastBlock?: ReorgDetection.blockData,
-  requestStats?: array<Source.requestStat>,
-}
-
-type itemsQuerySpec = {
-  fromBlock?: int,
-  toBlock?: option<int>,
-  retry?: int,
-  p?: string,
-  where?: itemsQuery => bool,
-  resolve?: itemsAnswer,
-  resolveFrom?: itemsQuery => itemsAnswer,
-  reject?: exn,
 }
 
 type t = {
@@ -269,7 +293,16 @@ type t = {
   // Empty-response every matching pending query. A statement about queries that
   // already exist, so unlike `resolveGetItemsOrThrow` it never waits for one.
   drainItemsQueries: (~filter: itemsQuery => bool=?, ~latestFetchedBlockNumber: int=?) => unit,
-  interceptGetItemsCalls: array<itemsQuerySpec> => promise<unit>,
+  // The item queries the source has taken and not yet replied to, in arrival
+  // order. A query leaves as soon as it is replied to.
+  pendingItemsQueries: array<pendingItemsQuery>,
+  // Waits until every entry matches a pending query, then replies to all of
+  // them in list order. An entry that replies needs exactly one matching query;
+  // `LeavePending` accounts for every remaining query it matches. A pending
+  // query no entry accounts for, and no earlier list left pending, fails it.
+  expectItemsQueries: array<expectedItemsQuery> => promise<unit>,
+  // Empty-responds every pending query. Never waits, and throws with none.
+  drainPendingItemsQueries: (~latestFetchedBlockNumber: int=?) => unit,
   getBlockHashesCalls: array<array<int>>,
   // Answers every block-hash lookup in flight, and throws when there is none.
   // Alone among the resolvers it never waits for its call: the rollback depth
@@ -321,28 +354,40 @@ let ambiguousItemsQueries = calls =>
 
 @val external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 
-let specMatches = (spec: itemsQuerySpec, call: getItemsOrThrowCall) => {
-  let query = call.payload
-  spec.fromBlock->Option.mapOr(true, fromBlock => fromBlock === query["fromBlock"]) &&
-  spec.toBlock->Option.mapOr(true, toBlock => toBlock == query["toBlock"]) &&
-  spec.retry->Option.mapOr(true, retry => retry === query["retry"]) &&
-  spec.p->Option.mapOr(true, p => p === query["p"]) &&
-  spec.where->Option.mapOr(true, where => where(query))
-}
+let queryCoversBlock = (query: pendingItemsQuery, blockNumber) =>
+  query.fromBlock <= blockNumber &&
+    switch query.toBlock {
+    | Bounded(toBlock) => blockNumber <= toBlock
+    | Unbounded => true
+    }
 
-// Every way to give each spec its own pending call, stopping at two: one is
-// the answer, two means the specs leave the choice to arrival order.
-let specAssignments = (specs: array<itemsQuerySpec>, calls: array<getItemsOrThrowCall>) => {
+let expectedMatches = (expected: expectedItemsQuery, query: pendingItemsQuery) =>
+  expected.partitionId->Option.mapOr(true, partitionId => partitionId === query.partitionId) &&
+  expected.fromBlock->Option.mapOr(true, fromBlock => fromBlock === query.fromBlock) &&
+  expected.toBlock->Option.mapOr(true, toBlock => toBlock == query.toBlock) &&
+  expected.retryCount->Option.mapOr(true, retryCount => retryCount === query.retryCount) &&
+  expected.coversBlock->Option.mapOr(true, blockNumber => query->queryCoversBlock(blockNumber)) &&
+  expected.where->Option.mapOr(true, where => where(query))
+
+let isReplying = (expected: expectedItemsQuery) =>
+  switch expected.reply {
+  | Respond(_) | Fail(_) => true
+  | LeavePending => false
+  }
+
+// Every way to give each replying entry its own pending query, stopping at two:
+// one is the answer, two means the list leaves the choice to arrival order.
+let replyAssignments = (expected: array<expectedItemsQuery>, queries: array<pendingItemsQuery>) => {
   let found = []
   let current = []
   let rec assign = index =>
     if found->Array.length < 2 {
-      switch specs->Array.get(index) {
+      switch expected->Array.get(index) {
       | None => found->Array.push(current->Array.copy)->ignore
-      | Some(spec) =>
-        calls->Array.forEach(call =>
-          if !(current->Array.includes(call)) && spec->specMatches(call) {
-            current->Array.push(call)->ignore
+      | Some(entry) =>
+        queries->Array.forEach(query =>
+          if !(current->Array.includes(query)) && entry->expectedMatches(query) {
+            current->Array.push(query)->ignore
             assign(index + 1)
             current->Array.pop->ignore
           }
@@ -355,136 +400,139 @@ let specAssignments = (specs: array<itemsQuerySpec>, calls: array<getItemsOrThro
 
 let describeToBlock = toBlock =>
   switch toBlock {
-  | Some(toBlock) => `Some(${toBlock->Int.toString})`
-  | None => "None"
+  | Bounded(toBlock) => `Bounded(${toBlock->Int.toString})`
+  | Unbounded => "Unbounded"
   }
 
-// Pasteable as a spec, so a failure's suggestion can go straight into the test.
-let describeCallAsSpec = (call: getItemsOrThrowCall, ~fields) => {
-  let query = call.payload
-  let field = name =>
-    switch name {
-    | "p" => `p: "${query["p"]}"`
-    | "fromBlock" => `fromBlock: ${query["fromBlock"]->Int.toString}`
-    | "toBlock" => `toBlock: ${query["toBlock"]->describeToBlock}`
-    | _ => `retry: ${query["retry"]->Int.toString}`
-    }
-  `{${fields->Array.map(field)->Array.join(", ")}}`
-}
+let queryFields = ["partitionId", "fromBlock", "toBlock", "retryCount"]
 
-let allQueryFields = ["p", "fromBlock", "toBlock", "retry"]
-
-let describeSpec = (spec: itemsQuerySpec) => {
-  let fields = Array.filterMap(
-    [
-      spec.p->Option.map(p => `p: "${p}"`),
-      spec.fromBlock->Option.map(fromBlock => `fromBlock: ${fromBlock->Int.toString}`),
-      spec.toBlock->Option.map(toBlock => `toBlock: ${toBlock->describeToBlock}`),
-      spec.retry->Option.map(retry => `retry: ${retry->Int.toString}`),
-      spec.where->Option.map(_ => "where: <fn>"),
-    ],
-    field => field,
-  )
-  `{${fields->Array.join(", ")}}`
-}
-
-let queryField = (call: getItemsOrThrowCall, name) =>
+let queryField = (query: pendingItemsQuery, name) =>
   switch name {
-  | "p" => call.payload["p"]
-  | "fromBlock" => call.payload["fromBlock"]->Int.toString
-  | "toBlock" => call.payload["toBlock"]->describeToBlock
-  | _ => call.payload["retry"]->Int.toString
+  | "partitionId" => `"${query.partitionId}"`
+  | "fromBlock" => query.fromBlock->Int.toString
+  | "toBlock" => query.toBlock->describeToBlock
+  | _ => query.retryCount->Int.toString
   }
 
-let ambiguousSpecsMessage = (specs: array<itemsQuerySpec>, ~answeringIndices, first, second) => {
-  let ambiguousPositions = answeringIndices->Array.reduceWithIndex([], (positions, _, position) => {
+// Pasteable as an entry, so a failure's suggestion can go straight into the test.
+let describeQuery = (query: pendingItemsQuery, ~fields=queryFields, ~reply=?) =>
+  `{${fields
+    ->Array.map(name => `${name}: ${query->queryField(name)}`)
+    ->Array.concat(
+      switch reply {
+      | Some(reply) => [`reply: ${reply}`]
+      | None => []
+      },
+    )
+    ->Array.join(", ")}}`
+
+let describeExpected = (expected: expectedItemsQuery) =>
+  `{${Array.filterMap(
+      [
+        expected.partitionId->Option.map(partitionId => `partitionId: "${partitionId}"`),
+        expected.fromBlock->Option.map(fromBlock => `fromBlock: ${fromBlock->Int.toString}`),
+        expected.toBlock->Option.map(toBlock => `toBlock: ${toBlock->describeToBlock}`),
+        expected.retryCount->Option.map(retryCount => `retryCount: ${retryCount->Int.toString}`),
+        expected.coversBlock->Option.map(blockNumber =>
+          `coversBlock: ${blockNumber->Int.toString}`
+        ),
+        expected.where->Option.map(_ => "where: <fn>"),
+        Some(
+          `reply: ${switch expected.reply {
+            | Respond(_) => "Respond(…)"
+            | Fail(_) => "Fail(…)"
+            | LeavePending => "LeavePending"
+            }}`,
+        ),
+      ],
+      field => field,
+    )->Array.join(", ")}}`
+
+let describeQueries = queries =>
+  switch queries {
+  | [] => "  none"
+  | queries => queries->Array.map(query => `  ${query->describeQuery}`)->Array.join("\n")
+  }
+
+let ambiguousRepliesMessage = (
+  expected: array<expectedItemsQuery>,
+  ~replyingIndices,
+  first,
+  second,
+) => {
+  let positions = replyingIndices->Array.reduceWithIndex([], (positions, _, position) => {
     if first->Array.getUnsafe(position) !== second->Array.getUnsafe(position) {
       positions->Array.push(position)->ignore
     }
     positions
   })
-  let ambiguousIndices =
-    ambiguousPositions->Array.map(position => answeringIndices->Array.getUnsafe(position))
-  let calls = []
-  ambiguousPositions->Array.forEach(position =>
-    [first->Array.getUnsafe(position), second->Array.getUnsafe(position)]->Array.forEach(call =>
-      if !(calls->Array.includes(call)) {
-        calls->Array.push(call)->ignore
+  let queries = []
+  positions->Array.forEach(position =>
+    [first->Array.getUnsafe(position), second->Array.getUnsafe(position)]->Array.forEach(query =>
+      if !(queries->Array.includes(query)) {
+        queries->Array.push(query)->ignore
       }
     )
   )
-  let distinguishing = allQueryFields->Array.find(name => {
-    let values = calls->Array.map(call => call->queryField(name))
+  let distinguishing = queryFields->Array.find(name => {
+    let values = queries->Array.map(query => query->queryField(name))
     values->Array.every(value => values->Array.indexOf(value) === values->Array.lastIndexOf(value))
   })
-  `interceptGetItemsCalls can pair ${ambiguousIndices
-    ->Array.map(index =>
-      `spec #${index->Int.toString} ${specs->Array.getUnsafe(index)->describeSpec}`
-    )
-    ->Array.join(", ")} with more than one pending call:\n` ++
-  calls
-  ->Array.map(call => `  ${call->describeCallAsSpec(~fields=allQueryFields)}`)
-  ->Array.join("\n") ++
+  `expectItemsQueries can reply to more than one pending query with ${positions
+    ->Array.map(position => {
+      let index = replyingIndices->Array.getUnsafe(position)
+      `entry #${index->Int.toString} ${expected->Array.getUnsafe(index)->describeExpected}`
+    })
+    ->Array.join(", ")}:\n` ++
+  queries->describeQueries ++
   switch distinguishing {
   | Some(name) =>
-    `\nGive each call its own spec, told apart by ${name}:\n` ++
-    calls->Array.map(call => `  ${call->describeCallAsSpec(~fields=[name])}`)->Array.join("\n")
+    `\nGive each query its own entry, told apart by ${name}:\n` ++
+    queries
+    ->Array.map(query => `  ${query->describeQuery(~fields=[name], ~reply="…")}`)
+    ->Array.join("\n")
   | None => "\nNo query field tells them apart; tell them apart with `where`, e.g. by addresses."
   }
 }
 
-let unclaimedCallsMessage = (unclaimed: array<getItemsOrThrowCall>) =>
-  "interceptGetItemsCalls matched every spec, but these pending calls are in no spec:\n" ++
-  unclaimed
-  ->Array.map(call => `  ${call->describeCallAsSpec(~fields=allQueryFields)}`)
-  ->Array.join("\n") ++
-  "\nAnswer them in this list, or list them without an answer to leave them in flight:\n" ++
-  unclaimed
-  ->Array.reduce([], (partitions, call) => {
-    if !(partitions->Array.includes(call.payload["p"])) {
-      partitions->Array.push(call.payload["p"])->ignore
+let unlistedQueriesMessage = (unlisted: array<pendingItemsQuery>) =>
+  "expectItemsQueries matched every entry, but these pending queries are in none:\n" ++
+  unlisted->describeQueries ++
+  "\nReply to them in this list, or keep them pending:\n" ++
+  unlisted
+  ->Array.reduce([], (partitionIds, query) => {
+    if !(partitionIds->Array.includes(query.partitionId)) {
+      partitionIds->Array.push(query.partitionId)->ignore
     }
-    partitions
+    partitionIds
   })
-  ->Array.map(p => `  {p: "${p}"}`)
+  ->Array.map(partitionId => `  {partitionId: "${partitionId}", reply: LeavePending}`)
   ->Array.join("\n")
 
 let timeoutMessage = (
-  specs: array<itemsQuerySpec>,
-  pending: array<getItemsOrThrowCall>,
-  ~answering: option<array<getItemsOrThrowCall>>,
-  ~isAnswering,
+  expected: array<expectedItemsQuery>,
+  pending: array<pendingItemsQuery>,
+  ~replied: option<array<pendingItemsQuery>>,
 ) =>
-  `interceptGetItemsCalls timed out. Specs:\n` ++
-  specs
-  ->Array.mapWithIndex((spec, index) => {
-    let matching = pending->Array.filter(call => spec->specMatches(call))
-    let reason = switch (matching, answering) {
-    | ([], _) => " (matches no pending call)"
-    | (_, None) if isAnswering(spec) => " (no call left for it once the other answered specs pick)"
-    | (_, Some(answering))
-      if !isAnswering(spec) &&
-      matching->Array.every(call =>
-        answering->Array.includes(call)
-      ) => " (every call it matches is taken by an answered spec)"
+  "expectItemsQueries timed out. Expected:\n" ++
+  expected
+  ->Array.mapWithIndex((entry, index) => {
+    let matching = pending->Array.filter(query => entry->expectedMatches(query))
+    let reason = switch (matching, replied) {
+    | ([], _) => " (matches no pending query)"
+    | (_, None) if entry->isReplying => " (no query left for it once the other replies pick)"
+    | (_, Some(replied))
+      if !isReplying(entry) &&
+      matching->Array.every(query =>
+        replied->Array.includes(query)
+      ) => " (every query it matches is taken by a reply)"
     | _ => ""
     }
-    `  #${index->Int.toString} ${spec->describeSpec}${reason}`
+    `  #${index->Int.toString} ${entry->describeExpected}${reason}`
   })
   ->Array.join("\n") ++
-  "\nPending calls:\n" ++
-  switch pending {
-  | [] => "  none"
-  | pending =>
-    pending
-    ->Array.map(call => `  ${call->describeCallAsSpec(~fields=allQueryFields)}`)
-    ->Array.join("\n")
-  }
-
-let answerCount = (spec: itemsQuerySpec) =>
-  [spec.resolve->Option.isSome, spec.resolveFrom->Option.isSome, spec.reject->Option.isSome]
-  ->Array.filter(given => given)
-  ->Array.length
+  "\nPending:\n" ++
+  pending->describeQueries
 
 let make = (
   methods: array<method>,
@@ -564,9 +612,10 @@ let make = (
   }> = []
   let deferredHeightAnswers: array<{"site": string, "height": int}> = []
 
-  // Calls a spec matched without answering. They stay pending, but a later
-  // list doesn't have to name them again to account for them.
-  let seenItemsCalls: array<getItemsOrThrowCall> = []
+  let pendingItemsQueries: array<pendingItemsQuery> = []
+  // Queries an earlier `expectItemsQueries` left pending. A later list doesn't
+  // have to name them again to account for them.
+  let keptPendingQueries: array<pendingItemsQuery> = []
   let arrivalListeners: array<unit => unit> = []
   let arrivalScheduled = ref(false)
   // A chain issues one query per partition in a single synchronous loop, so
@@ -594,39 +643,37 @@ let make = (
       })
       ->ignore
     })
-  // Only a spec with an answer needs a call of its own: which call takes an
-  // answer is the one thing arrival order must not decide. A spec without one
-  // hands nothing out, so it accounts for every remaining call it matches.
-  let rec awaitWave = async (specs, ~answeringIndices, ~deadline) => {
-    let answering = answeringIndices->Array.map(index => specs->Array.getUnsafe(index))
-    let checking = specs->Array.filter(spec => spec->answerCount === 0)
-    let wait = async (~answering) =>
+  // Only a reply needs a query of its own: which query takes a reply is the one
+  // thing arrival order must not decide. `LeavePending` hands nothing out, so
+  // it accounts for every remaining query it matches.
+  let rec awaitMatch = async (expected, ~replyingIndices, ~deadline) => {
+    let replying = replyingIndices->Array.map(index => expected->Array.getUnsafe(index))
+    let leavingPending = expected->Array.filter(entry => !isReplying(entry))
+    let wait = async (~replied) =>
       if await nextArrival(~deadline) {
-        await awaitWave(specs, ~answeringIndices, ~deadline)
+        await awaitMatch(expected, ~replyingIndices, ~deadline)
       } else {
-        JsError.throwWithMessage(
-          timeoutMessage(specs, getItemsOrThrowCalls, ~answering, ~isAnswering=spec =>
-            spec->answerCount === 1
-          ),
-        )
+        JsError.throwWithMessage(timeoutMessage(expected, pendingItemsQueries, ~replied))
       }
-    switch specAssignments(answering, getItemsOrThrowCalls) {
-    | [] => await wait(~answering=None)
+    switch replyAssignments(replying, pendingItemsQueries) {
+    | [] => await wait(~replied=None)
     | [assignment] =>
       let remaining =
-        getItemsOrThrowCalls->Array.filter(call => !(assignment->Array.includes(call)))
-      let checked =
-        checking->Array.map(spec => remaining->Array.filter(call => spec->specMatches(call)))
-      if checked->Array.some(Utils.Array.isEmpty) {
-        await wait(~answering=Some(assignment))
+        pendingItemsQueries->Array.filter(query => !(assignment->Array.includes(query)))
+      let leftPending =
+        leavingPending->Array.map(entry =>
+          remaining->Array.filter(query => entry->expectedMatches(query))
+        )
+      if leftPending->Array.some(Utils.Array.isEmpty) {
+        await wait(~replied=Some(assignment))
       } else {
-        (assignment, checked->Array.flat)
+        (assignment, leftPending->Array.flat)
       }
     | ambiguous =>
       JsError.throwWithMessage(
-        ambiguousSpecsMessage(
-          specs,
-          ~answeringIndices,
+        ambiguousRepliesMessage(
+          expected,
+          ~replyingIndices,
           ambiguous->Array.getUnsafe(0),
           ambiguous->Array.getUnsafe(1),
         ),
@@ -634,30 +681,125 @@ let make = (
     }
   }
 
-  // With the function we keep only the pending calls,
-  // and remove the resolved ones automatically.
-  let keepOnlyPendingCalls = (~array, ~fn) => {
-    Promise.make((resolve, reject) => {
-      let callRef = ref(%raw(`null`))
-      callRef :=
-        fn(
-          ~resolve=arg => {
-            resolve(arg)
-            let indexOf = array->Array.indexOf(callRef.contents)
-            if indexOf !== -1 {
-              array->Array.splice(~start=indexOf, ~remove=1, ~insert=[])->ignore
-            }
-          },
-          ~reject=arg => {
-            reject(arg)
-            let indexOf = array->Array.indexOf(callRef.contents)
-            if indexOf !== -1 {
-              array->Array.splice(~start=indexOf, ~remove=1, ~insert=[])->ignore
-            }
-          },
+  let makeItemsResponse = (
+    response: itemsResponse,
+    ~fromBlock,
+    ~toBlock,
+    ~knownHeight,
+  ): Source.blockRangeFetchResponse => {
+    let items = response.items
+    let latestFetchedBlockNumber =
+      response.latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
+
+    // The store takes 32-byte hashes, so widen the decimal marker.
+    let mockBlockHash = blockNumber => evmBlockHash(`0x${blockNumber->Int.toString}`)
+    let latestFetchedBlockHash = switch response.latestFetchedBlockHash {
+    | Some(latestFetchedBlockHash) => latestFetchedBlockHash
+    | None => mockBlockHash(latestFetchedBlockNumber)
+    }
+    let observedBlocks = [
+      (
+        {
+          blockNumber: latestFetchedBlockNumber,
+          blockHash: evmBlockHash(latestFetchedBlockHash),
+          blockTimestamp: latestFetchedBlockNumber,
+        }: BlockStore.inputBlock
+      ),
+    ]
+    let prevEntry = switch response.prevRangeLastBlock {
+    | Some(prevRangeLastBlock: ReorgDetection.blockData) =>
+      Some(
+        (
+          {
+            blockNumber: prevRangeLastBlock.blockNumber,
+            blockHash: evmBlockHash(prevRangeLastBlock.blockHash),
+          }: BlockStore.inputBlock
+        ),
+      )
+    | None =>
+      if fromBlock > 0 {
+        Some(
+          (
+            {
+              blockNumber: fromBlock - 1,
+              blockHash: mockBlockHash(fromBlock - 1),
+            }: BlockStore.inputBlock
+          ),
         )
-      array->Array.push(callRef.contents)->ignore
+      } else {
+        None
+      }
+    }
+    switch prevEntry {
+    | Some(prev) => observedBlocks->Array.unshift(prev)->ignore
+    | None => ()
+    }
+    // A real source returns the header of every block a matched item came
+    // from, so those blocks carry a hash and a timestamp too. Without them the
+    // store only ever learns the range's seam and end, and reorg detection
+    // never sees the blocks events landed on.
+    items->Array.forEach(item => {
+      if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
+        observedBlocks->Array.push({
+          blockNumber: item.blockNumber,
+          blockHash: mockBlockHash(item.blockNumber),
+          blockTimestamp: item.blockNumber,
+        })
+      }
     })
+    let responseBlockStore = BlockStore.make(~ecosystem=Evm)
+    observedBlocks->Array.forEach(block => {
+      let page = BlockStore.fromJs([block], ~ecosystem=Evm)
+      responseBlockStore->BlockStore.appendPage(page)
+    })
+    {
+      knownHeight: response.knownHeight->Option.getOr(knownHeight),
+      parsedQueueItems: items->Array.map(item => {
+        let onEventRegistration =
+          state.onEventRegistrationRef.contents->Option.getOrThrow(
+            ~message="MockSource on-event registration was not installed before resolving items",
+          )
+        let payload: Evm.payload = {
+          contractName: onEventRegistration.eventConfig.contractName,
+          eventName: onEventRegistration.eventConfig.name,
+          params: %raw(`{}`),
+          chainId,
+          srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+          logIndex: item.logIndex,
+          block: Dict.fromArray([
+            ("number", item.blockNumber->(Utils.magic: int => unknown)),
+            ("timestamp", item.blockNumber->(Utils.magic: int => unknown)),
+            ("hash", `0x${item.blockNumber->Int.toString}`->(Utils.magic: string => unknown)),
+          ])
+          ->Dict.assign(item.blockFields->Option.getOr(Dict.make()))
+          ->(Utils.magic: dict<unknown> => Internal.eventBlock),
+          transaction: ?(
+            item.transactionFields->Option.map(fields =>
+              fields->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+            )
+          ),
+        }
+        let _ = %raw(`Object.defineProperties(payload, {
+          __mockHandler: {value: item.handler},
+          __mockContractRegister: {value: item.contractRegister},
+        })`)
+        Internal.Event({
+          onEventRegistration,
+          chainId,
+          blockNumber: item.blockNumber,
+          logIndex: item.logIndex,
+          transactionIndex: 0,
+          payload: payload->Evm.fromPayload,
+        })
+      }),
+      transactionStore: None,
+      blockStore: responseBlockStore,
+      latestFetchedBlockNumber,
+      stats: {
+        totalTimeElapsed: 0.,
+      },
+      requestStats: response.requestStats->Option.getOr([]),
+    }
   }
 
   {
@@ -737,62 +879,49 @@ let make = (
       | calls => calls->Array.forEach(call => call.resolve([], ~latestFetchedBlockNumber?))
       }
     },
-    interceptGetItemsCalls: async specs => {
-      specs->Array.forEachWithIndex((spec, index) =>
-        if spec->answerCount > 1 {
-          JsError.throwWithMessage(
-            `interceptGetItemsCalls spec #${index->Int.toString} sets more than one of resolve, resolveFrom and reject`,
-          )
-        }
-      )
-      let answeringIndices = specs->Array.reduceWithIndex([], (indices, spec, index) => {
-        if spec->answerCount === 1 {
+    pendingItemsQueries,
+    expectItemsQueries: async expected => {
+      let replyingIndices = expected->Array.reduceWithIndex([], (indices, entry, index) => {
+        if entry->isReplying {
           indices->Array.push(index)->ignore
         }
         indices
       })
-      let (assignment, checked) = await awaitWave(
-        specs,
-        ~answeringIndices,
+      let (assignment, leftPending) = await awaitMatch(
+        expected,
+        ~replyingIndices,
         ~deadline=Date.now() +. 2000.,
       )
-      let unclaimed =
-        getItemsOrThrowCalls->Array.filter(call =>
-          !(assignment->Array.includes(call)) &&
-          !(checked->Array.includes(call)) &&
-          !(seenItemsCalls->Array.includes(call))
+      let unlisted =
+        pendingItemsQueries->Array.filter(query =>
+          !(assignment->Array.includes(query)) &&
+          !(leftPending->Array.includes(query)) &&
+          !(keptPendingQueries->Array.includes(query))
         )
-      if !(unclaimed->Utils.Array.isEmpty) {
-        JsError.throwWithMessage(unclaimedCallsMessage(unclaimed))
+      if !(unlisted->Utils.Array.isEmpty) {
+        JsError.throwWithMessage(unlistedQueriesMessage(unlisted))
       }
-      checked->Array.forEach(call =>
-        if !(seenItemsCalls->Array.includes(call)) {
-          seenItemsCalls->Array.push(call)->ignore
+      leftPending->Array.forEach(query =>
+        if !(keptPendingQueries->Array.includes(query)) {
+          keptPendingQueries->Array.push(query)->ignore
         }
       )
-      assignment->Array.forEachWithIndex((call, index) => {
-        let spec = specs->Array.getUnsafe(answeringIndices->Array.getUnsafe(index))
-        let reply = (answer: itemsAnswer) =>
-          call.resolve(
-            answer.items,
-            ~latestFetchedBlockNumber=?answer.latestFetchedBlockNumber,
-            ~latestFetchedBlockHash=?answer.latestFetchedBlockHash,
-            ~knownHeight=?answer.knownHeight,
-            ~prevRangeLastBlock=?answer.prevRangeLastBlock,
-            ~requestStats=?answer.requestStats,
-          )
-        switch (spec.resolve, spec.resolveFrom, spec.reject) {
-        | (Some(answer), _, _) => reply(answer)
-        | (_, Some(answerFrom), _) => reply(answerFrom(call.payload))
-        | (_, _, Some(exn)) => call.reject(exn)
-        | (None, None, None) => ()
+      assignment->Array.forEachWithIndex((query, position) =>
+        switch (expected->Array.getUnsafe(replyingIndices->Array.getUnsafe(position))).reply {
+        | Respond(response) => (query->control).respond(response)
+        | Fail(exn) => (query->control).fail(exn)
+        | LeavePending => ()
         }
-      })
-      let stillPending =
-        seenItemsCalls->Array.filter(call => getItemsOrThrowCalls->Array.includes(call))
-      seenItemsCalls->Utils.Array.clearInPlace
-      seenItemsCalls->Array.pushMany(stillPending)
+      )
     },
+    drainPendingItemsQueries: (~latestFetchedBlockNumber=?) =>
+      switch pendingItemsQueries->Array.copy {
+      | [] => JsError.throwWithMessage("drainPendingItemsQueries has no pending query to drain")
+      | queries =>
+        queries->Array.forEach(query =>
+          (query->control).respond({items: [], ?latestFetchedBlockNumber})
+        )
+      },
     getBlockHashesCalls,
     resolveGetBlockHashes: blockHashes => {
       let blockStore = BlockStore.fromJs(
@@ -824,7 +953,8 @@ let make = (
       },
     dropPendingCalls: () => {
       getItemsOrThrowCalls->Utils.Array.clearInPlace
-      seenItemsCalls->Utils.Array.clearInPlace
+      pendingItemsQueries->Utils.Array.clearInPlace
+      keptPendingQueries->Utils.Array.clearInPlace
       pendingHeightCallIndices()->Array.forEach(index =>
         getHeightOrThrowPending->Array.set(index, None)
       )
@@ -890,156 +1020,88 @@ let make = (
           ~retry,
           ~logger as _,
         ) => {
-          let promise = keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(
-            ~resolve,
-            ~reject,
-          ) => {
+          let promise = Promise.make((resolve, reject) => {
+            let query: pendingItemsQuery = {
+              partitionId,
+              fromBlock,
+              toBlock: switch toBlock {
+              | Some(toBlock) => Bounded(toBlock)
+              | None => Unbounded
+              },
+              retryCount: retry,
+            }
+            let settle = () => {
+              [pendingItemsQueries, keptPendingQueries]->Array.forEach(
+                queries =>
+                  switch queries->Array.indexOf(query) {
+                  | -1 => ()
+                  | index => queries->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
+                  },
+              )
+              switch getItemsOrThrowCalls->Array.findIndex(call => call.query === query) {
+              | -1 => ()
+              | index =>
+                getItemsOrThrowCalls->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
+              }
+            }
+            let queryControl = {
+              respond: response => {
+                settle()
+                resolve(makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight))
+              },
+              fail: exn => {
+                settle()
+                reject(exn)
+              },
+            }
+            let addresses = addressSet->AddressSet.addressesForTest
+            query
+            ->Utils.Object.definePropertyWithValue(
+              "addresses",
+              {enumerable: false, value: addresses},
+            )
+            ->Utils.Object.definePropertyWithValue(
+              "includeAllBlocks",
+              {enumerable: false, value: includeAllBlocks},
+            )
+            ->Utils.Object.definePropertyWithValue(
+              "__control",
+              {enumerable: false, value: queryControl},
+            )
+            ->ignore
+            pendingItemsQueries->Array.push(query)->ignore
+
             let payload = {
               "fromBlock": fromBlock,
               "toBlock": toBlock,
               "retry": retry,
               "p": partitionId,
             }
-            // Non-enumerable so it stays out of `toEqual` comparisons of the
-            // payload while remaining inspectable from a test.
-            payload->defineAddresses(addressSet->AddressSet.addressesForTest)
-            {
+            payload->defineAddresses(addresses)
+            getItemsOrThrowCalls
+            ->Array.push({
               payload,
+              query,
               includeAllBlocks,
               resolve: (
                 items,
                 ~latestFetchedBlockNumber=?,
                 ~latestFetchedBlockHash=?,
-                ~knownHeight=knownHeight,
+                ~knownHeight=?,
                 ~prevRangeLastBlock=?,
-                ~requestStats=[],
-              ) => {
-                let latestFetchedBlockNumber =
-                  latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
-
-                // The store takes 32-byte hashes, so widen the decimal marker.
-                let mockBlockHash = blockNumber => evmBlockHash(`0x${blockNumber->Int.toString}`)
-                let latestFetchedBlockHash = switch latestFetchedBlockHash {
-                | Some(latestFetchedBlockHash) => latestFetchedBlockHash
-                | None => mockBlockHash(latestFetchedBlockNumber)
-                }
-                let observedBlocks = [
-                  (
-                    {
-                      blockNumber: latestFetchedBlockNumber,
-                      blockHash: evmBlockHash(latestFetchedBlockHash),
-                      blockTimestamp: latestFetchedBlockNumber,
-                    }: BlockStore.inputBlock
-                  ),
-                ]
-                let prevEntry = switch prevRangeLastBlock {
-                | Some(prevRangeLastBlock: ReorgDetection.blockData) =>
-                  Some(
-                    (
-                      {
-                        blockNumber: prevRangeLastBlock.blockNumber,
-                        blockHash: evmBlockHash(prevRangeLastBlock.blockHash),
-                      }: BlockStore.inputBlock
-                    ),
-                  )
-                | None =>
-                  if fromBlock > 0 {
-                    Some(
-                      (
-                        {
-                          blockNumber: fromBlock - 1,
-                          blockHash: mockBlockHash(fromBlock - 1),
-                        }: BlockStore.inputBlock
-                      ),
-                    )
-                  } else {
-                    None
-                  }
-                }
-                switch prevEntry {
-                | Some(prev) => observedBlocks->Array.unshift(prev)->ignore
-                | None => ()
-                }
-                // A real source returns the header of every block a matched
-                // item came from, so those blocks carry a hash and a timestamp
-                // too. Without them the store only ever learns the range's seam
-                // and end, and reorg detection never sees the blocks events
-                // landed on.
-                items->Array.forEach(
-                  item => {
-                    if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
-                      observedBlocks->Array.push({
-                        blockNumber: item.blockNumber,
-                        blockHash: mockBlockHash(item.blockNumber),
-                        blockTimestamp: item.blockNumber,
-                      })
-                    }
-                  },
-                )
-                let responseBlockStore = BlockStore.make(~ecosystem=Evm)
-                observedBlocks->Array.forEach(
-                  block => {
-                    let page = BlockStore.fromJs([block], ~ecosystem=Evm)
-                    responseBlockStore->BlockStore.appendPage(page)
-                  },
-                )
-                resolve({
-                  Source.knownHeight,
-                  parsedQueueItems: items->Array.map(
-                    item => {
-                      let onEventRegistration =
-                        state.onEventRegistrationRef.contents->Option.getOrThrow(
-                          ~message="MockSource on-event registration was not installed before resolving items",
-                        )
-                      let payload: Evm.payload = {
-                        contractName: onEventRegistration.eventConfig.contractName,
-                        eventName: onEventRegistration.eventConfig.name,
-                        params: %raw(`{}`),
-                        chainId,
-                        srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-                        logIndex: item.logIndex,
-                        block: Dict.fromArray([
-                          ("number", item.blockNumber->(Utils.magic: int => unknown)),
-                          ("timestamp", item.blockNumber->(Utils.magic: int => unknown)),
-                          (
-                            "hash",
-                            `0x${item.blockNumber->Int.toString}`->(Utils.magic: string => unknown),
-                          ),
-                        ])
-                        ->Dict.assign(item.blockFields->Option.getOr(Dict.make()))
-                        ->(Utils.magic: dict<unknown> => Internal.eventBlock),
-                        transaction: ?(
-                          item.transactionFields->Option.map(
-                            fields =>
-                              fields->(Utils.magic: dict<unknown> => Internal.eventTransaction),
-                          )
-                        ),
-                      }
-                      let _ = %raw(`Object.defineProperties(payload, {
-                        __mockHandler: {value: item.handler},
-                        __mockContractRegister: {value: item.contractRegister},
-                      })`)
-                      Internal.Event({
-                        onEventRegistration,
-                        chainId,
-                        blockNumber: item.blockNumber,
-                        logIndex: item.logIndex,
-                        transactionIndex: 0,
-                        payload: payload->Evm.fromPayload,
-                      })
-                    },
-                  ),
-                  transactionStore: None,
-                  blockStore: responseBlockStore,
-                  latestFetchedBlockNumber,
-                  stats: {
-                    totalTimeElapsed: 0.,
-                  },
-                  requestStats,
-                })
-              },
-              reject: reject->Utils.magic,
-            }
+                ~requestStats=?,
+              ) =>
+                queryControl.respond({
+                  items,
+                  ?latestFetchedBlockNumber,
+                  ?latestFetchedBlockHash,
+                  ?knownHeight,
+                  ?prevRangeLastBlock,
+                  ?requestStats,
+                }),
+              reject: error => queryControl.fail(error->Obj.magic),
+            })
+            ->ignore
           })
           notifyArrival()
           switch getItemsOrThrowCalls->Array.at(-1) {
@@ -1110,5 +1172,3 @@ let waitItemsQuery = (sourceMock: t) =>
     ~arrived=() => sourceMock.getItemsOrThrowCalls->Array.length > 0,
     ~message="a getItemsOrThrow call",
   )
-
-let interceptGetItemsCalls = (mock: t, specs) => mock.interceptGetItemsCalls(specs)

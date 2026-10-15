@@ -374,8 +374,14 @@ let enterReorgThreshold = async (
   ~fromBlock=1,
 ) => {
   await resolveInitialHeight(~t, ~source, ~head)
-  await source->MockSource.interceptGetItemsCalls([
-    {fromBlock, toBlock: Some(preThresholdTo), retry: 0, p: "0", resolve: {items: []}},
+  await source.expectItemsQueries([
+    {
+      partitionId: "0",
+      fromBlock,
+      toBlock: Bounded(preThresholdTo),
+      retryCount: 0,
+      reply: Respond({items: []}),
+    },
   ])
   await indexer.getBatchWritePromise()
 }
