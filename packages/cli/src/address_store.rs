@@ -1146,6 +1146,16 @@ impl AddressSet {
             .map_or(0, |slice| slice.addresses.len() as i64)
     }
 
+    /// One contract's addresses in this set, lowercase, in set order — what a
+    /// source with no address-filtered log query of its own (call traces) asks
+    /// its backend for.
+    #[napi]
+    pub fn addresses_of(&self, contract_name: String) -> Vec<String> {
+        self.cache()
+            .slice(&contract_name)
+            .map_or_else(Vec::new, |slice| slice.addresses.clone())
+    }
+
     #[napi]
     pub fn contract_names(&self) -> Vec<String> {
         self.cache()
