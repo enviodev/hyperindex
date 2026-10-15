@@ -1212,7 +1212,7 @@ function fromValue(value: Value, isId = false): unknown {
     case ValueKind.ARRAY:
       return value.toArray().map((item) => fromValue(item, isId));
     case ValueKind.STRING:
-      return withoutNul(value.data as string);
+      return withoutNul(value.data);
     default:
       return value.data;
   }
@@ -1224,8 +1224,9 @@ function fromValue(value: Value, isId = false): unknown {
  * `FromAscObj<AscString> for String`), so a bytes32 symbol padded with NULs and
  * decoded as a string is stored without them. Postgres refuses 0x00 in text.
  */
-function withoutNul(text: string): string {
-  return text.includes("\u0000") ? text.replaceAll("\u0000", "") : text;
+function withoutNul<T>(text: T): T {
+  // A String field a mapping filled with null (graph-ts' `logType`) is not text.
+  return typeof text === "string" && text.includes("\u0000") ? (text.replaceAll("\u0000", "") as T) : text;
 }
 
 /** envio rows -> graph-ts `Value`s. */
