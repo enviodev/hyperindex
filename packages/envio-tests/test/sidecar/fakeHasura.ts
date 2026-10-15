@@ -129,11 +129,14 @@ const matches = (row: Row, where: unknown): boolean => {
   return Object.entries(where as Record<string, unknown>).every(([key, condition]) => {
     if (key === "_and") return (condition as unknown[]).every((inner) => matches(row, inner));
     if (key === "_or") return (condition as unknown[]).some((inner) => matches(row, inner));
+    if (key === "_not") return !matches(row, condition);
     return Object.entries(condition as Record<string, unknown>).every(([op, value]) => {
       const c = compare(row[key], value);
       switch (op) {
         case "_eq":
           return c === 0;
+        case "_neq":
+          return row[key] !== null && row[key] !== undefined && c !== 0;
         case "_gt":
           return c > 0;
         case "_gte":
@@ -144,6 +147,12 @@ const matches = (row: Row, where: unknown): boolean => {
           return c <= 0;
         case "_in":
           return (value as unknown[]).some((candidate) => compare(row[key], candidate) === 0);
+        case "_nin":
+          // SQL NOT IN: a null column matches neither IN nor NOT IN.
+          if (row[key] === null || row[key] === undefined) return false;
+          return !(value as unknown[]).some((candidate) => compare(row[key], candidate) === 0);
+        case "_is_null":
+          return (row[key] === null || row[key] === undefined) === value;
         default:
           throw new Error(`fake Hasura has no operator ${op}`);
       }

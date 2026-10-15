@@ -180,6 +180,34 @@ describe("indexer read client over GraphQL", () => {
     });
   });
 
+  it("getWhere passes _neq, _nin, _is_null, _or, _and and _not through as the _bool_exp, encoded", async () => {
+    const swaps = [
+      { id: "a", amount: "1", usd: "2.5", seenAt: null, chainId: 1 },
+      { id: "b", amount: "20", usd: null, seenAt: "today", chainId: 1 },
+      { id: "c", amount: "300", usd: "7", seenAt: "today", chainId: 2 },
+    ];
+    const graphql = await fakeGraphql(tableResponder({ Swap: swaps }));
+    cleanups.push(graphql.close);
+    const client = createIndexerClient<Entities>({ url: graphql.url, entities: [swapMeta, tokenMeta] });
+    const ids = (rows: readonly { id: string }[]) => rows.map((row) => row.id);
+    const nin = await client.Swap.getWhere({ amount: { _nin: [1n, 300n] } });
+    const or = await client.Swap.getWhere({ _or: [{ amount: { _gt: 100n } }, { usd: { _is_null: true } }] }, { orderBy: { id: "asc" } });
+    const nested = await client.Swap.getWhere({
+      _and: [{ chainId: { _neq: 2 } }, { _not: { seenAt: { _is_null: true } } }],
+    });
+    expect({
+      rows: { nin: ids(nin), or: ids(or), nested: ids(nested) },
+      where: graphql.requests.map((request) => (request.variables as { where?: unknown }).where),
+    }).toEqual({
+      rows: { nin: ["b"], or: ["b", "c"], nested: ["b"] },
+      where: [
+        { amount: { _nin: ["1", "300"] } },
+        { _or: [{ amount: { _gt: "100" } }, { usd: { _is_null: true } }] },
+        { _and: [{ chainId: { _neq: 2 } }, { _not: { seenAt: { _is_null: true } } }] },
+      ],
+    });
+  });
+
   it("meta reads chain freshness and query is the raw escape hatch", async () => {
     const graphql = await fakeGraphql((request) =>
       request.query.includes("_meta")

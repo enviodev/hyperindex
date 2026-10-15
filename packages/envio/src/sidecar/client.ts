@@ -5,15 +5,26 @@ type GlobalConfig = Global extends { config: infer C } ? C : {};
 type ConfigEntities<Config> = Config extends { entities: infer E extends Record<string, object> } ? E : {};
 type EntityId<E> = E extends { readonly id: infer Id } ? Id : string;
 
+/** Hasura comparison operators on one field. The filter is sent to GraphQL as the
+ * entity's `_bool_exp` (bigint, BigDecimal and Date values encoded as strings). */
 export type GetWhereOperator<T> = {
   readonly _eq?: T;
+  readonly _neq?: T;
   readonly _gt?: T;
   readonly _lt?: T;
   readonly _gte?: T;
   readonly _lte?: T;
   readonly _in?: readonly T[];
+  readonly _nin?: readonly T[];
+  readonly _is_null?: boolean;
 };
-export type GetWhereFilter<E> = { readonly [K in keyof E]?: GetWhereOperator<E[K]> };
+/** Fields combine with AND, like handler filters; `_or`, `_and` and `_not` nest
+ * filters the way Hasura's `_bool_exp` does. */
+export type GetWhereFilter<E> = { readonly [K in keyof E]?: GetWhereOperator<E[K]> } & {
+  readonly _or?: readonly GetWhereFilter<E>[];
+  readonly _and?: readonly GetWhereFilter<E>[];
+  readonly _not?: GetWhereFilter<E>;
+};
 export type OrderBy<E> = { readonly [K in keyof E]?: "asc" | "desc" };
 /** Entity fields to select; `id` is always selected. */
 export type FieldSelection<E> = readonly (keyof E & string)[];
