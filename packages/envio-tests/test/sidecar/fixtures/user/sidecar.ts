@@ -39,6 +39,16 @@ export default createSidecar(contract, {
       expectType<bigint>(whales[0]!.amount);
       // @ts-expect-error bigint field filtered with a string
       await indexer.Swap.getWhere({ amount: { _gt: "1" } });
+      const others = await indexer.Swap.getWhere({ id: { _nin: ["a", "b"] }, amount: { _neq: 0n }, usd: { _is_null: false } });
+      expectType<bigint>(others[0]!.amount);
+      await indexer.Swap.getWhere({ _or: [{ amount: { _gt: 1n } }, { _and: [{ usd: { _lt: 1 } }, { _not: { id: { _eq: "x" } } }] }] });
+      for await (const swap of indexer.Swap.iterate({ _not: { usd: { _is_null: true } } })) expectType<string>(swap.id);
+      // @ts-expect-error _nin takes an array
+      await indexer.Swap.getWhere({ id: { _nin: "x" } });
+      // @ts-expect-error _is_null takes a boolean
+      await indexer.Swap.getWhere({ usd: { _is_null: "yes" } });
+      // @ts-expect-error a field inside _or is still type checked
+      await indexer.Swap.getWhere({ _or: [{ amount: { _eq: "1" } }] });
       // @ts-expect-error unknown entity
       await indexer.Pool.getAll();
       for await (const token of indexer.Token.iterate({}, { pageSize: 100 })) expectType<string>(token.symbol);
