@@ -405,6 +405,7 @@ let logger = (cs: t) => cs.logger
 let blockStore = (cs: t) => cs.blockStore
 let transactionStore = (cs: t) => cs.transactionStore
 let shouldChecksum = (cs: t) => cs.shouldChecksum
+let fetchState = (cs: t) => cs.fetchState
 let entities = (cs: t) => cs.entities
 
 // Rollback discards every uncommitted change, so this chain's partition is

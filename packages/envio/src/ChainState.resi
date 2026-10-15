@@ -57,6 +57,8 @@ let logger: t => Pino.t
 let blockStore: t => BlockStore.t
 let transactionStore: t => TransactionStore.t
 let shouldChecksum: t => bool
+// The chain's fetch state, read-only: for the round a registration belongs to.
+let fetchState: t => FetchState.t
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
 let sourceManager: t => SourceManager.t

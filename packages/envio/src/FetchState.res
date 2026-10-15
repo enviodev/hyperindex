@@ -837,6 +837,11 @@ module OptimizedPartitions = {
   }
 }
 
+// Subgraph mode: where a dynamically registered address was registered and in
+// which round of its block (1 for a data source created by the block's own
+// triggers, 2 for one created by those, and so on).
+type creationBlock = {block: int, round: int}
+
 type t = {
   optimizedPartitions: OptimizedPartitions.t,
   startBlock: int,
@@ -869,7 +874,7 @@ type t = {
   // registered in, keyed by contract and lowercase address, until fetching
   // passes it. Its events in that block run after the rest of the block, as
   // graph-node runs a new data source's creation-block triggers.
-  creationBlocks: option<dict<int>>,
+  creationBlocks: option<dict<creationBlock>>,
 }
 
 // The latest block whose items are all in the buffer: the lowest partition
@@ -968,7 +973,7 @@ let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
 // else, ordered among themselves by the same transaction rule.
 let blockOrderRank = (item: Internal.item) =>
   if item->Internal.getItemRunsAfterBlock {
-    4
+    3 + item->Internal.getItemCreationRound->Option.getOr(1)
   } else if item->Internal.getItemKind !== 0 {
     3
   } else if item->Internal.getItemCallRank === Some(2) {
@@ -1035,8 +1040,14 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   } else if Internal.callOrderingActive.contents {
     compareWithCalls(a, b)
   } else {
-    let ka = a->Internal.getItemRunsAfterBlock ? 2 : a->Internal.getItemKind
-    let kb = b->Internal.getItemRunsAfterBlock ? 2 : b->Internal.getItemKind
+    let ka = switch a->Internal.getItemCreationRound {
+    | Some(round) => 1 + round
+    | None => a->Internal.getItemKind
+    }
+    let kb = switch b->Internal.getItemCreationRound {
+    | Some(round) => 1 + round
+    | None => b->Internal.getItemKind
+    }
     if ka !== kb {
       ka < kb ? -1 : 1
     } else {
@@ -1784,10 +1795,10 @@ let creationBlockKey = (~contractName, ~address: Address.t) =>
 // Marks the response's events that were logged in the block their address was
 // registered in, once the registrations fetching has already passed are
 // dropped: those can't receive another item.
-let markCreationBlockEvents = (creationBlocks: dict<int>, ~newItems, ~fetchedThrough) => {
+let markCreationBlockEvents = (creationBlocks: dict<creationBlock>, ~newItems, ~fetchedThrough) => {
   creationBlocks
   ->Dict.toArray
-  ->Array.forEach(((key, block)) =>
+  ->Array.forEach(((key, {block})) =>
     if block < fetchedThrough {
       creationBlocks->Utils.Dict.deleteInPlace(key)
     }
@@ -1799,12 +1810,32 @@ let markCreationBlockEvents = (creationBlocks: dict<int>, ~newItems, ~fetchedThr
         ~contractName=eventItem.onEventRegistration.eventConfig.contractName,
         ~address=eventItem.payload->Internal.getPayloadSrcAddress,
       )
-      if creationBlocks->Utils.Dict.dangerouslyGetNonOption(key) === Some(eventItem.blockNumber) {
-        item->Internal.markItemRunsAfterBlock(true)
+      switch creationBlocks->Utils.Dict.dangerouslyGetNonOption(key) {
+      | Some({block, round}) if block === eventItem.blockNumber =>
+        item->Internal.markItemCreationRound(round)
+      | _ => ()
       }
     }
   )
 }
+
+// The round a registration made by `item`'s handler belongs to: one past the
+// round `item` itself runs in, which is its address's registration round when
+// the event was logged in the block that address was registered in.
+let creationRoundOfRegistration = (fetchState: t, ~item: Internal.item) =>
+  switch fetchState.creationBlocks {
+  | None => 1
+  | Some(creationBlocks) =>
+    let eventItem = item->Internal.castUnsafeEventItem
+    let key = creationBlockKey(
+      ~contractName=eventItem.onEventRegistration.eventConfig.contractName,
+      ~address=eventItem.payload->Internal.getPayloadSrcAddress,
+    )
+    switch creationBlocks->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some({block, round}) if block === eventItem.blockNumber => round + 1
+    | _ => 1
+    }
+  }
 
 let registerDynamicContracts = (
   fetchState: t,
@@ -1847,7 +1878,7 @@ let registerDynamicContracts = (
       | Some(creationBlocks) =>
         creationBlocks->Dict.set(
           creationBlockKey(~contractName=registration.contractName, ~address=registration.address),
-          registration.registrationBlock,
+          {block: registration.registrationBlock, round: registration.creationRound->Option.getOr(1)},
         )
       | None => ()
       }
