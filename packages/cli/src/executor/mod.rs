@@ -107,6 +107,26 @@ async fn execute_command(
             Ok(None)
         }
 
+        CommandType::SubgraphCodegen(args) => {
+            let manifest = if parsed_project_paths.config.is_file() {
+                parsed_project_paths.config.clone()
+            } else {
+                parsed_project_paths.project_root.join("subgraph.yaml")
+            };
+            let output_dir = match args.output_dir {
+                Some(dir) => std::path::PathBuf::from(dir),
+                None => crate::subgraph::codegen::output_dir_for(
+                    &parsed_project_paths.project_root,
+                    &manifest,
+                )?,
+            };
+            let written = crate::subgraph::codegen::generate(&manifest, &output_dir)?;
+            for file in &written {
+                println!("{}", output_dir.join(file).display());
+            }
+            Ok(None)
+        }
+
         CommandType::Dev(dev_args) => Ok(Some(
             dev::run_dev(parsed_project_paths, dev_args.restart).await?,
         )),
