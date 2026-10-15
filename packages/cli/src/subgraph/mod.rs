@@ -2169,7 +2169,7 @@ type Gravatar @entity {
         );
     }
 
-    // Filecoin (314) is a Goldsky chain HyperSync doesn't serve: the one
+    // Filecoin (314) is a hosted-subgraph chain HyperSync doesn't serve: the one
     // ENVIO_SUBGRAPH_RPC the docs show says `fallback`, and on a chain with no
     // HyperSync that would leave it with no source.
     #[test]
