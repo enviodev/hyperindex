@@ -1,4 +1,5 @@
 import type { AggregationDef } from "./aggregations.ts";
+import type { RegisterSlot } from "./register-slots.ts";
 
 /** What a wrapper is doing when it runs the mapping. */
 export type Mode = "handler" | "register";
@@ -71,6 +72,10 @@ export type Scope = {
   pass?: RegisterPass;
   /** Entities this pass already waited on another pass for: it waits once. */
   waitedKeys?: Set<string>;
+  /** The register pass's slot (`register-slots.ts`), held while it runs. */
+  slot?: RegisterSlot;
+  /** The round's wait includes an earlier pass: the slot is given back for it. */
+  waitsOnPass?: boolean;
   /** The mapping module, so `ipfs.map` can reach the callback it names. */
   mappingExports: Record<string, any>;
   /** Set when the scope is a file data source's handler. */

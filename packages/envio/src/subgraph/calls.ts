@@ -108,6 +108,148 @@ function trackCall<T>(call: Promise<T>): Promise<T> {
   return call;
 }
 
+/**
+ * Functions whose answer a contract does not change once it has given one that
+ * isn't empty: token metadata, a pair's tokens, a registry's factory. A mapping
+ * asks them again at every block it handles (a token's `decimals()` on every
+ * swap of every pair that holds it, a factory's `getPair(a, b)` on every sync)
+ * and the effect cache keys a call by block, so each ask was an RPC request.
+ * Once one has been answered at block B with a value, any block from B on gets
+ * that value without a request. Only a non-empty answer counts: a zero address
+ * or an empty string is "not there yet" (`getPair` before the pair exists,
+ * `symbol()` before the token is deployed), and a revert is never shared.
+ * A proxy that changes its `name()` later is the one case this gets wrong;
+ * ENVIO_SUBGRAPH_EXACT_CALLS=1 asks every call at its own block instead.
+ */
+export const STABLE_FUNCTIONS = new Set([
+  "name",
+  "symbol",
+  "decimals",
+  "NAME",
+  "SYMBOL",
+  "DECIMALS",
+  "token0",
+  "token1",
+  "factory",
+  "getPair",
+  "comptroller",
+  "underlying",
+]);
+
+type Shared = { block: number; output: string };
+
+/** The call without its block: what stays true from the block it was first answered at. */
+function stableKey(input: CallInput): string | undefined {
+  if (process.env.ENVIO_SUBGRAPH_EXACT_CALLS === "1") return undefined;
+  if (!STABLE_FUNCTIONS.has(parseSignature(input.signature).name)) return undefined;
+  // An address argument is the same one whatever its checksum casing.
+  const args = input.args.map((arg) => (/^s:0x[0-9a-fA-F]*$/.test(String(arg)) ? String(arg).toLowerCase() : arg));
+  return JSON.stringify([input.chainId, input.address.toLowerCase(), input.signature, args]);
+}
+
+const sharedAnswers = new Map<string, Shared>();
+const sharedInFlight = new Map<string, { block: number; settled: Promise<void> }>();
+const SHARED_ANSWERS_LIMIT = 200_000;
+
+/** Reset between test indexers, which each bring their own chain. */
+export function resetSharedCalls() {
+  sharedAnswers.clear();
+  sharedInFlight.clear();
+}
+
+function remember(key: string, block: number, output: string) {
+  const answer = JSON.parse(output) as CallOutput;
+  // A zero address or an empty string is "not there yet"; a revert says nothing.
+  const empty = (answer.values ?? []).every((v) => typeof v === "string" && /^s:(0x0*)?$/i.test(v));
+  if (answer.reverted || !answer.values || empty) return;
+  const earlier = sharedAnswers.get(key);
+  if (earlier && earlier.block <= block) return;
+  if (sharedAnswers.size >= SHARED_ANSWERS_LIMIT) sharedAnswers.clear();
+  sharedAnswers.set(key, { block, output });
+}
+
+/**
+ * A stable function's answer from an earlier block, one still being asked for
+ * (waited on, then reused if it turns out to be a value), or `ask`.
+ */
+export async function shareAcrossBlocks(input: CallInput, ask: () => Promise<string>): Promise<string> {
+  const key = stableKey(input);
+  if (key === undefined) return ask();
+  const known = sharedAnswers.get(key);
+  if (known && known.block <= input.blockNumber) return known.output;
+
+  const running = sharedInFlight.get(key);
+  if (running && running.block <= input.blockNumber) {
+    await running.settled;
+    const after = sharedAnswers.get(key);
+    if (after && after.block <= input.blockNumber) return after.output;
+  }
+
+  const asked = ask();
+  const entry = { block: input.blockNumber, settled: asked.then(() => undefined, () => undefined) };
+  if (!sharedInFlight.has(key) || sharedInFlight.get(key)!.block > input.blockNumber) {
+    sharedInFlight.set(key, entry);
+  }
+  try {
+    const output = await asked;
+    remember(key, input.blockNumber, output);
+    return output;
+  } finally {
+    if (sharedInFlight.get(key) === entry) sharedInFlight.delete(key);
+  }
+}
+
+async function askNode(rpcUrls: string[], input: CallInput): Promise<string> {
+  const abi = abiItemFor(input.signature);
+  const { name } = parseSignature(input.signature);
+  const data = encodeFunctionData({
+    abi,
+    functionName: name,
+    args: input.args.map(decodeArg),
+  });
+
+  const result = await trackCall(
+    untilAnswered(
+      `${input.signature} on ${input.address} at block ${input.blockNumber}`,
+      async () => {
+        try {
+          return await rpcClient(rpcUrls).call({
+            to: input.address as `0x${string}`,
+            data,
+            blockNumber: BigInt(input.blockNumber),
+          });
+        } catch (error) {
+          if (isRevert(error)) return null;
+          throw error;
+        }
+      },
+      { deadline: false },
+    ),
+  );
+  if (result === null) {
+    return JSON.stringify({ reverted: true, values: null });
+  }
+
+  try {
+    const decoded = decodeFunctionResult({
+      abi,
+      functionName: name,
+      data: (result.data ?? "0x") as `0x${string}`,
+    });
+    // graph-ts returns one `ethereum.Value` per ABI output. A single
+    // tuple/struct is therefore `[tuple]`, not the flattened fields —
+    // generated bindings call `result[0].toTuple()`.
+    const outputs = (abi[0] as { outputs?: unknown[] }).outputs ?? [];
+    const values = outputs.length === 1 ? [decoded] : Array.isArray(decoded) ? decoded : [decoded];
+    return JSON.stringify({ reverted: false, values: values.map(encodeArg) });
+  } catch {
+    // Output the declared signature can't decode counts as a failed call,
+    // which is what lets a mapping retry through a different ABI — the
+    // bytes32-vs-string ERC20 name is the case every token subgraph hits.
+    return JSON.stringify({ reverted: true, values: null });
+  }
+}
+
 export function makeCallEffect(rpcUrls: string[], recall: (encoded: string) => string | undefined = () => undefined) {
   return createEffect(
     {
@@ -129,52 +271,7 @@ export function makeCallEffect(rpcUrls: string[], recall: (encoded: string) => s
       if (rpcUrls.length === 0) {
         throw new Error(missingRpcMessage(input.signature));
       }
-      const abi = abiItemFor(input.signature);
-      const { name } = parseSignature(input.signature);
-      const data = encodeFunctionData({
-        abi,
-        functionName: name,
-        args: input.args.map(decodeArg),
-      });
-
-      const result = await trackCall(untilAnswered(
-        `${input.signature} on ${input.address} at block ${input.blockNumber}`,
-        async () => {
-          try {
-            return await rpcClient(rpcUrls).call({
-              to: input.address as `0x${string}`,
-              data,
-              blockNumber: BigInt(input.blockNumber),
-            });
-          } catch (error) {
-            if (isRevert(error)) return null;
-            throw error;
-          }
-        },
-        { deadline: false },
-      ));
-      if (result === null) {
-        return JSON.stringify({ reverted: true, values: null });
-      }
-
-      try {
-        const decoded = decodeFunctionResult({
-          abi,
-          functionName: name,
-          data: (result.data ?? "0x") as `0x${string}`,
-        });
-        // graph-ts returns one `ethereum.Value` per ABI output. A single
-        // tuple/struct is therefore `[tuple]`, not the flattened fields —
-        // generated bindings call `result[0].toTuple()`.
-        const outputs = (abi[0] as { outputs?: unknown[] }).outputs ?? [];
-        const values = outputs.length === 1 ? [decoded] : Array.isArray(decoded) ? decoded : [decoded];
-        return JSON.stringify({ reverted: false, values: values.map(encodeArg) });
-      } catch {
-        // Output the declared signature can't decode counts as a failed call,
-        // which is what lets a mapping retry through a different ABI — the
-        // bytes32-vs-string ERC20 name is the case every token subgraph hits.
-        return JSON.stringify({ reverted: true, values: null });
-      }
+      return shareAcrossBlocks(input, () => askNode(rpcUrls, input));
     },
   );
 }

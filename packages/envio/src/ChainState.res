@@ -494,6 +494,18 @@ let resetPendingQueries = (cs: t) => {
   cs.pendingBudget = 0.
 }
 
+// A response that landed with more items than its query was priced at keeps the
+// excess reserved while it waits for its register passes: until then its items
+// are neither in the buffer nor in the query's estimate, and the pool would
+// admit the next queries on top of them. Released when the response is applied.
+let holdExtraBudget = (cs: t, ~items) => {
+  cs.pendingBudget = cs.pendingBudget +. items->Int.toFloat
+}
+
+let releaseExtraBudget = (cs: t, ~items) => {
+  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. items->Int.toFloat)
+}
+
 let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
 
 // Block span over which a batch fully replaces the chain density estimate;
