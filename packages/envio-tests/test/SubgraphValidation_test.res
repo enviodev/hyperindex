@@ -111,9 +111,9 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
-  // graph-node runs one per created instance; registered for the chain, it
-  // would run on every block whether or not any instance exists.
-  it("refuses a block handler on a template", t => {
+  // A filtered handler counts from its instance's creation block, which
+  // chain-wide filters don't know.
+  it("refuses a filtered block handler on a template", t => {
     let manifest =
       manifestWith(plainEventHandler) ++ `templates:
   - kind: ethereum/contract
@@ -129,11 +129,14 @@ describe("subgraph translation: unsupported features", () => {
       abis: []
       blockHandlers:
         - handler: handlePoolBlock
+          filter:
+            kind: polling
+            every: 5
       file: ./src/pool.ts
 `
     translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support block handlers on templates yet.",
+      ~headline="Envio Subgraph doesn't support filtered block handlers on templates yet.",
       ~location=`data source "Pool" → blockHandlers → "handlePoolBlock"`,
     )
   })

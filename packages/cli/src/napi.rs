@@ -109,9 +109,17 @@ pub fn from_user_api(
 /// Called by the subgraph runtime's load hook for every file it imports from
 /// the project.
 #[napi_derive::napi]
-pub fn subgraph_file_to_javascript(source: String, path: String) -> napi::Result<String> {
-    crate::subgraph::assemblyscript::to_javascript(&source, std::path::Path::new(&path))
-        .map_err(|e| napi::Error::from_reason(format!("{e:#}")))
+pub fn subgraph_file_to_javascript(
+    source: String,
+    path: String,
+    legacy_nulls: bool,
+) -> napi::Result<String> {
+    crate::subgraph::assemblyscript::to_javascript(
+        &source,
+        std::path::Path::new(&path),
+        legacy_nulls,
+    )
+    .map_err(|e| napi::Error::from_reason(format!("{e:#}")))
 }
 
 /// graph-ts' `crypto.keccak256`. ENS hashes a node on every event and again in

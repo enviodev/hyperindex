@@ -738,11 +738,13 @@ fn parse_data_source(
                     &name,
                     report,
                 ) {
-                    // graph-node runs one per created instance; envio's block
-                    // handlers know no instances, so it would run chain-wide.
-                    if is_template {
+                    // graph-node runs a handler on a template for each instance
+                    // from its creation block; the runtime does so for an
+                    // unfiltered one. A filtered one counts from the instance's
+                    // own block, which envio's chain-wide filters don't know.
+                    if is_template && handler.filter != BlockFilter::Every(1) {
                         report.unsupported(
-                            "block handlers on templates",
+                            "filtered block handlers on templates",
                             where_(&format!("blockHandlers → \"{}\"", handler.handler)),
                         );
                     }

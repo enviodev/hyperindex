@@ -6,6 +6,8 @@
  * are shared with that file.
  */
 
+import { BigDecimal, BigInt as GraphBigInt } from "./graph-ts.ts";
+
 export const OPERATORS_HELPER = "__envio_op";
 export const RETAG_HELPER = "__envio_retag";
 export const RETAG_EACH_HELPER = "__envio_retag_each";
@@ -120,12 +122,56 @@ const search =
   };
 
 /**
+ * What a graph-ts method on a null receiver computes below apiVersion 0.0.5,
+ * where the host reads the null pointer as an empty value: a zero. Which zero
+ * follows the argument (`null.plus(decimal)` is a decimal's), and a bytes
+ * receiver is empty.
+ */
+const nullReceiver: Record<string, (...args: any[]) => unknown> = {};
+const zeroFor = (other: unknown): any =>
+  other instanceof BigDecimal ? BigDecimal.zero() : GraphBigInt.zero();
+for (const method of [
+  "plus",
+  "minus",
+  "times",
+  "div",
+  "mod",
+  "pow",
+  "bitOr",
+  "bitAnd",
+  "leftShift",
+  "rightShift",
+  "abs",
+  "neg",
+  "toString",
+  "toI32",
+  "toBigDecimal",
+  "isZero",
+  "lt",
+  "le",
+  "gt",
+  "ge",
+]) {
+  nullReceiver[method] = (...args) => zeroFor(args[0])[method](...args);
+}
+nullReceiver.truncate = (...args) => BigDecimal.zero().truncate(args[0]);
+nullReceiver.toHex = nullReceiver.toHexString = () => "0x";
+nullReceiver.equals = (other) =>
+  other === null || other === undefined
+    ? true
+    : other instanceof Uint8Array && !(other instanceof GraphBigInt)
+      ? other.length === 0
+      : zeroFor(other).equals(other);
+nullReceiver.notEqual = (other) => !nullReceiver.equals(other);
+
+/**
  * graph-ts overloads the arithmetic and comparison operators on `BigInt`,
  * `BigDecimal` and `ByteArray`, and AssemblyScript calls the overload: a
  * JavaScript operator would coerce them, or compare their identity — so
  * `address == ZERO_ADDRESS` would always be false.
  */
 export const operators = {
+  recv: (receiver: any): any => receiver ?? nullReceiver,
   add: binary("plus", widened((a, b) => a + b)),
   sub: binary("minus", widened((a, b) => a - b)),
   mul: binary("times", widened((a, b) => a * b)),

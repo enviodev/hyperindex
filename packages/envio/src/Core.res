@@ -40,7 +40,7 @@ type bundledCodegenResult = {outputDir: string, files: array<string>}
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   fromSubgraph: (string, string, fromSubgraphOptions) => fromUserApiResult,
-  subgraphFileToJavascript: (string, string) => string,
+  subgraphFileToJavascript: (string, string, bool) => string,
   subgraphCreatingHandlers: (string, array<string>) => array<string>,
   subgraphKeccak256: Uint8Array.t => Uint8Array.t,
   subgraphBundledCodegen: (string, Null.t<string>) => bundledCodegenResult,
@@ -326,9 +326,9 @@ let fromSubgraph = (~name=?, ~env=?, ~files=?, ~root=?, ~manifest, ~schema) => {
   addon.fromSubgraph(manifest, schema, {?name, ?env, ?files, ?root})
 }
 
-let subgraphFileToJavascript = (~source, ~path) => {
+let subgraphFileToJavascript = (~source, ~path, ~legacyNulls) => {
   let addon = getAddon()
-  addon.subgraphFileToJavascript(source, path)
+  addon.subgraphFileToJavascript(source, path, legacyNulls)
 }
 
 let subgraphCreatingHandlers = (~mappingFile, ~handlers) => {
