@@ -129,6 +129,7 @@ type DataSource = {
   startBlock?: number;
   endBlock?: number;
   mappingFile: string;
+  apiVersion?: string;
   entities?: string[];
   eventHandlers: EventHandler[];
   callHandlers?: CallHandler[];
@@ -189,6 +190,12 @@ function isOutsideSource(url: string): boolean {
 }
 
 let hooksInstalled = false;
+/**
+ * Some mapping is below apiVersion 0.0.5, where graph-node reads through a null
+ * pointer instead of trapping. Files are compiled once for the whole project,
+ * so one old mapping makes every file tolerant.
+ */
+let legacyNulls = false;
 let projectRoot: string | null = null;
 /**
  * `node_modules` envio fetched for packages the mappings import and the
@@ -281,7 +288,7 @@ function installResolveHook(root: string) {
       projectModules.add(url);
       return {
         format: "module",
-        source: subgraphFileToJavascript(readFileSync(file, "utf8"), file),
+        source: subgraphFileToJavascript(readFileSync(file, "utf8"), file, legacyNulls),
         shortCircuit: true,
       };
     },
@@ -863,6 +870,10 @@ function makeFileRunner(
 }
 
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
+  legacyNulls = [...config.dataSources, ...config.templates].some((source) => {
+    const [major, minor, patch] = (source.apiVersion ?? "").split(".").map(Number);
+    return major === 0 && minor === 0 && patch < 5;
+  });
   installResolveHook(config.root);
   resetRpcClients();
   resetCallBackends();
