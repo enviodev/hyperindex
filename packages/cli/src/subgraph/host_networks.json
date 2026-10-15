@@ -2,431 +2,431 @@
  {
   "name": "thundercore-testnet",
   "chainId": 18,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "telos",
   "chainId": 40,
-  "source": "Ormi supported-chains table (network slug)"
+  "source": "host-list"
  },
  {
   "name": "telos-evm",
   "chainId": 40,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "telos-testnet",
   "chainId": 41,
-  "source": "Ormi supported-chains table (network slug)"
+  "source": "host-list"
  },
  {
   "name": "viction-testnet",
   "chainId": 89,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "thundercore",
   "chainId": 108,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "flare-testnet",
   "chainId": 114,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "redbelly",
   "chainId": 151,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "redbelly-testnet",
   "chainId": 153,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "manta-pacific-mainnet",
   "chainId": 169,
-  "source": "manifest in the Ormi/Goldsky repo corpus"
+  "source": "host-list"
  },
  {
   "name": "bttc",
   "chainId": 199,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "neura-testnet",
   "chainId": 267,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "orderly",
   "chainId": 291,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "hedera",
   "chainId": 295,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "hedera-testnet",
   "chainId": 296,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "filecoin",
   "chainId": 314,
-  "source": "manifest in the Ormi/Goldsky repo corpus"
+  "source": "host-list"
  },
  {
   "name": "shape",
   "chainId": 360,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "pulse",
   "chainId": 369,
-  "source": "Ormi/Goldsky slug for PulseChain"
+  "source": "host-list"
  },
  {
   "name": "cronos-zkevm",
   "chainId": 388,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "publicgoods",
   "chainId": 424,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "camp",
   "chainId": 484,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "flow-testnet",
   "chainId": 545,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "flow",
   "chainId": 747,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "hyperevm-testnet",
   "chainId": 998,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "conflux-espace",
   "chainId": 1030,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "andromeda",
   "chainId": 1088,
-  "source": "Ormi supported-chains table (network slug)"
+  "source": "host-list"
  },
  {
   "name": "data-testnet",
   "chainId": 1315,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "data",
   "chainId": 1514,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "story",
   "chainId": 1514,
-  "source": "manifest in the Ormi/Goldsky repo corpus"
+  "source": "host-list"
  },
  {
   "name": "pharos",
   "chainId": 1672,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "reya",
   "chainId": 1729,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "stable-testnet",
   "chainId": 2201,
-  "source": "Ormi supported-chains table (network slug)"
+  "source": "host-list"
  },
  {
   "name": "kava-testnet",
   "chainId": 2221,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "moca",
   "chainId": 2288,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "kite-ai",
   "chainId": 2366,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "kite-ai-testnet",
   "chainId": 2368,
-  "source": "manifest in the Ormi/Goldsky repo corpus"
+  "source": "host-list"
  },
  {
   "name": "rise",
   "chainId": 4153,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "lisk-testnet",
   "chainId": 4202,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "orderly-testnet",
   "chainId": 4460,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "worldchain-testnet",
   "chainId": 4801,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "mantle-sepolia",
   "chainId": 5003,
-  "source": "Ormi supported-chains table (network slug)"
+  "source": "host-list"
  },
  {
   "name": "citrea-testnet-tangerine",
   "chainId": 5115,
-  "source": "manifest in the Ormi/Goldsky repo corpus"
+  "source": "host-list"
  },
  {
   "name": "opbnb-testnet",
   "chainId": 5611,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "mantra-testnet",
   "chainId": 5887,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "mantra",
   "chainId": 5888,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "iota",
   "chainId": 8822,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "plasma-mainnet",
   "chainId": 9745,
-  "source": "manifest in the Ormi/Goldsky repo corpus"
+  "source": "host-list"
  },
  {
   "name": "plasma-testnet",
   "chainId": 9746,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "shape-testnet",
   "chainId": 11011,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "immutable-zkevm",
   "chainId": 13371,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "immutable-zkevm-testnet",
   "chainId": 13473,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "0g-testnet",
   "chainId": 16602,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "0g",
   "chainId": 16661,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "oasis-sapphire",
   "chainId": 23294,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "oasis-sapphire-testnet",
   "chainId": 23295,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "everclear",
   "chainId": 25327,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "fluent",
   "chainId": 25363,
-  "source": "manifest in the Ormi/Goldsky repo corpus"
+  "source": "host-list"
  },
  {
   "name": "horizen",
   "chainId": 26514,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "mezo-testnet",
   "chainId": 31611,
-  "source": "manifest in the Ormi/Goldsky repo corpus"
+  "source": "host-list"
  },
  {
   "name": "mezo",
   "chainId": 31612,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "zircuit-testnet",
   "chainId": 48898,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "superseed-testnet",
   "chainId": 53302,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "publicgoods-testnet",
   "chainId": 58008,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "metis-sepolia",
   "chainId": 59902,
-  "source": "Ormi supported-chains table (network slug)"
+  "source": "host-list"
  },
  {
   "name": "bob",
   "chainId": 60808,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "berachain-testnet",
   "chainId": 80069,
-  "source": "Ormi supported-chains table (network slug)"
+  "source": "host-list"
  },
  {
   "name": "plume-testnet",
   "chainId": 98867,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "taiko-testnet",
   "chainId": 167013,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "moca-testnet",
   "chainId": 222888,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "filecoin-testnet",
   "chainId": 314159,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "gensyn-testnet",
   "chainId": 685685,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "gensyn",
   "chainId": 685689,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "bob-testnet",
   "chainId": 808813,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "zklink-nova",
   "chainId": 810180,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "xrpl-evm",
   "chainId": 1440000,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "xrpl-evm-testnet",
   "chainId": 1449000,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "horizen-testnet",
   "chainId": 2651420,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "manta-pacific-sepolia",
   "chainId": 3441006,
-  "source": "manifest in the Ormi/Goldsky repo corpus"
+  "source": "host-list"
  },
  {
   "name": "manta-testnet",
   "chainId": 3441006,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "rise-testnet",
   "chainId": 11155931,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "reya-testnet",
   "chainId": 89346162,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "degen",
   "chainId": 666666666,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "skale-calypso-testnet",
   "chainId": 974399131,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "rari",
   "chainId": 1380012617,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "skale-calypso",
   "chainId": 1564830818,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  },
  {
   "name": "lumia-testnet",
   "chainId": 2030232745,
-  "source": "Goldsky supported-networks (slug, chain id)"
+  "source": "host-list"
  }
 ]
