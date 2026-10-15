@@ -462,8 +462,10 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
       )
       source.getBlockHashesCalls->Utils.Array.clearInPlace
     }
-    if source.getItemsOrThrowCalls->Array.length > 0 {
-      source.resolveGetItemsOrThrow(refetched.contents, ~latestFetchedBlockNumber=head)
+    if source.pendingItemsQueries->Array.length > 0 {
+      await source.expectItemsQueries([
+        {reply: Respond({items: refetched.contents, latestFetchedBlockNumber: head})},
+      ])
       refetched := []
     }
     await Utils.delay(0)
@@ -481,12 +483,15 @@ let reorgAbove = async (
   ~refetched=?,
 ) => {
   source.resolveGetHeightOrThrow(head + 1)
-  await MockSource.waitItemsQuery(source)
-  source.resolveGetItemsOrThrow(
-    [],
-    ~latestFetchedBlockNumber=head + 1,
-    ~prevRangeLastBlock={blockNumber: head, blockHash: `0x${head->Int.toString}a`},
-  )
+  await source.expectItemsQueries([
+    {
+      reply: Respond({
+        items: [],
+        latestFetchedBlockNumber: head + 1,
+        prevRangeLastBlock: {blockNumber: head, blockHash: `0x${head->Int.toString}a`},
+      }),
+    },
+  ])
   await driveRollback(~source, ~validUpTo, ~head=head + 1, ~refetched?)
   await indexer.waitUntilIdle()
 }
