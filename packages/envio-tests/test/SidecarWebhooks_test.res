@@ -372,6 +372,107 @@ describe("Sidecar webhooks into the indexer", () => {
     },
   )
 
+  // Found in T-065 (wallet demo): a wildcard handler looked an id up, missed,
+  // then a webhook wrote that id. Event handlers in later batches must see the
+  // row, not a cached miss from before the webhook.
+  Async.it("lets a later event handler get an entity a webhook wrote after a miss", async t => {
+    let seen = ref([])
+    let getPriced = (blockNumber): MockSource.itemMock => {
+      blockNumber,
+      logIndex: 0,
+      handler: async args => {
+        let context = args.context->(Utils.magic: Internal.handlerContext => {..})
+        let priced: option<priced> = await context["Priced"]["get"]("s1")
+        if !context["isPreload"] {
+          seen := seen.contents->Array.concat([(blockNumber, priced->Option.map(p => p.usd))])
+        }
+      },
+    }
+    let rows = ref([])
+    await scenario->Scenario.run(
+      ~sources,
+      ~reorgThresholdReadyTolerance=0,
+      ~webhookPort=0,
+      async (~indexer, ~source) => {
+        let source = source(1337)
+        await Scenario.enterReorgThreshold(~t, ~indexer, ~source)
+        source.resolveGetItemsOrThrow([getPriced(101)], ~latestFetchedBlockNumber=101)
+        await indexer.getBatchWritePromise()
+        let _ = await post(
+          indexer.webhookUrl(),
+          ~name="swapPriced",
+          ~body={"swapId": "s1", "usd": 42}->Utils.magic,
+        )
+        rows := (await indexer->rowsOnceWritten("Priced"))
+        await MockSource.waitItemsQuery(source)
+        source.resolveGetItemsOrThrow([getPriced(102)], ~latestFetchedBlockNumber=102)
+        await indexer.getBatchWritePromise()
+        await indexer.waitUntilIdle()
+      },
+    )
+
+    t.expect((rows.contents, seen.contents)).toEqual((
+      [{id: "s1", usd: 42, block: 101}],
+      [(101, None), (102, Some(42))],
+    ))
+  })
+
+  // Same, shaped like the wallet's wildcard handler: every item looks up 50
+  // absent ids next to the one the webhook writes, across many blocks.
+  Async.it("lets later handlers get a webhook-written entity among many misses", async t => {
+    let seen = ref([])
+    let counter = ref(0)
+    let manyGets = (blockNumber, ~logIndex): MockSource.itemMock => {
+      blockNumber,
+      logIndex,
+      handler: async args => {
+        let context = args.context->(Utils.magic: Internal.handlerContext => {..})
+        counter := counter.contents + 1
+        let ids = Array.fromInitializer(
+          ~length=50,
+          i => `miss-${blockNumber->Int.toString}-${logIndex->Int.toString}-${i->Int.toString}`,
+        )
+        let _ = await ids->Array.map(id => context["Priced"]["get"](id))->Promise.all
+        let priced: option<priced> = await context["Priced"]["get"]("s1")
+        if !context["isPreload"] {
+          seen := seen.contents->Array.concat([(blockNumber, priced->Option.map(p => p.usd))])
+        }
+      },
+    }
+    let items = (from, to) => {
+      let acc = []
+      for b in from to to {
+        for l in 0 to 19 {
+          acc->Array.push(manyGets(b, ~logIndex=l))
+        }
+      }
+      acc
+    }
+    await scenario->Scenario.run(
+      ~sources,
+      ~reorgThresholdReadyTolerance=0,
+      ~webhookPort=0,
+      async (~indexer, ~source) => {
+        let source = source(1337)
+        await Scenario.enterReorgThreshold(~t, ~indexer, ~source)
+        source.resolveGetItemsOrThrow(items(101, 105), ~latestFetchedBlockNumber=105)
+        await indexer.getBatchWritePromise()
+        let _ = await post(
+          indexer.webhookUrl(),
+          ~name="swapPriced",
+          ~body={"swapId": "s1", "usd": 42}->Utils.magic,
+        )
+        await MockSource.waitItemsQuery(source)
+        source.resolveGetItemsOrThrow(items(106, 300), ~latestFetchedBlockNumber=300)
+        await indexer.getBatchWritePromise()
+        await indexer.waitUntilIdle()
+      },
+    )
+    let after = seen.contents->Array.filter(((b, _)) => b > 105)
+    t.expect(after->Array.filter(((_, v)) => v === None)->Array.length).toBe(0)
+    t.expect(after->Array.length > 0).toBe(true)
+  })
+
   // v0: a webhook whose block is reorged away is undone with it, not replayed.
   Async.it("undoes a webhook's writes when its block is rolled back", async t => {
     let before = ref([])
