@@ -110,6 +110,22 @@ type SubgraphConfig = {
 
 const AS_DATE = Symbol.for("envio.subgraph.date");
 
+/**
+ * A mapping may import AssemblyScript from outside the manifest's directory:
+ * graph codegen writes `generated/` beside the package.json while the manifest,
+ * schema and mappings sit in `src/` (StakeWise). Any TypeScript that is neither
+ * a dependency nor envio's own is the project's.
+ */
+function isOutsideSource(url: string): boolean {
+  return (
+    url.startsWith("file:") &&
+    url.endsWith(".ts") &&
+    !url.endsWith(".d.ts") &&
+    !url.includes("/node_modules/") &&
+    !url.startsWith(ENVIO_PACKAGE_URL)
+  );
+}
+
 let hooksInstalled = false;
 let projectRoot: string | null = null;
 /** Every project file the load hook has compiled, so their exports can be read back. */
@@ -146,7 +162,7 @@ function installResolveHook(root: string) {
       // its `generated/` would load as CommonJS and reach the shim — a real ES
       // module — through `require()`, which Node refuses inside a cycle. They
       // are ES modules; saying so is what lets them import it.
-      if (projectRoot && resolved?.url?.startsWith(projectRoot)) {
+      if (projectRoot && resolved?.url && (resolved.url.startsWith(projectRoot) || isOutsideSource(resolved.url))) {
         return { ...resolved, format: "module" };
       }
       return resolved;
@@ -155,7 +171,8 @@ function installResolveHook(root: string) {
     // transpiler would refuse AssemblyScript it has no reason to accept, and
     // would strip `changetype`'s type argument before it could be read.
     load(url: string, context: any, nextLoad: any) {
-      const isProjectFile = projectRoot !== null && url.startsWith(projectRoot) && !url.includes("/node_modules/");
+      const isProjectFile =
+        projectRoot !== null && (url.startsWith(projectRoot) || isOutsideSource(url)) && !url.includes("/node_modules/");
       // A mapping library is AssemblyScript too — OpenZeppelin's
       // @amxx/graphprotocol-utils, @protofire/subgraph-toolkit — and Node
       // won't even strip types under node_modules. envio's own sources are
@@ -856,9 +873,12 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
         async ({ event, context }: any) => {
           if ((skipPreload && context.isPreload) || !owns(event) || !live(event)) return;
-          const graphEvent = makeEvent(event);
           await (context as any).runSync(() =>
-            runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
+            // A fresh event per run: the handler is replayed while it waits on
+            // calls, and one that edits its event (Seamless rewrites
+            // `event.parameters[2]` into the newer shape) must not meet its own
+            // edit on the next round.
+            runInScope(makeScope(event, context, "handler"), () => fn(makeEvent(event))),
           );
         },
       );
@@ -874,12 +894,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           async ({ event, context }: any) => {
             if (!owns(event) || !live(event)) return;
             await primeOnceHandlers(event.chainId, context);
-            const graphEvent = makeEvent(event);
             const scope = makeScope(event, context, "register");
             const { pass, settle } = startRegisterPass(event.chainId, scope.position ?? 0);
             scope.pass = pass;
             try {
-              await runRegisterRounds(scope, () => fn(graphEvent));
+              await runRegisterRounds(scope, () => fn(makeEvent(event)));
             } finally {
               settle();
             }
