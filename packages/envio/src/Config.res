@@ -1163,6 +1163,10 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => []
   }
 
+  if publicConfig["subgraph"]->Option.isSome {
+    Env.subgraphMode := true
+  }
+
   let config = {
     name: publicConfig["name"],
     description: publicConfig["description"],
