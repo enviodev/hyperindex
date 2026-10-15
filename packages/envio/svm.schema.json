@@ -272,6 +272,17 @@
             "null"
           ]
         },
+        "kind": {
+          "description": "`query` puts the field under the GraphQL query root, `mutation` under the mutation root (the handler writes through the sidecar's `emit`, so the indexer stays the only writer). (default: query)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolverKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "args": {
           "description": "Argument name to GraphQL type string, for example `limit: \"Int!\"`. Scalars or lists of scalars.",
           "type": [
@@ -304,6 +315,21 @@
       "required": [
         "output",
         "handler"
+      ]
+    },
+    "ResolverKind": {
+      "description": "Which root type a resolver's field joins.",
+      "oneOf": [
+        {
+          "description": "A field of the query root.",
+          "type": "string",
+          "const": "query"
+        },
+        {
+          "description": "A field of the mutation root.",
+          "type": "string",
+          "const": "mutation"
+        }
       ]
     },
     "EcosystemTag": {

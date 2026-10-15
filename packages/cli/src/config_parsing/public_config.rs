@@ -16,6 +16,10 @@ use std::collections::BTreeMap;
 struct PublicResolver<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<&'a str>,
+    // Only written for mutations, so a config without `kind:` publishes the
+    // same JSON as before the field existed.
+    #[serde(skip_serializing_if = "is_query")]
+    kind: human_config::ResolverKind,
     args: BTreeMap<&'a str, &'a str>,
     output: &'a str,
     handler: &'a str,
@@ -26,6 +30,7 @@ impl<'a> From<&'a human_config::ResolverConfig> for PublicResolver<'a> {
     fn from(resolver: &'a human_config::ResolverConfig) -> Self {
         PublicResolver {
             description: resolver.description.as_deref(),
+            kind: resolver.kind.unwrap_or_default(),
             args: resolver
                 .args
                 .iter()
@@ -39,6 +44,10 @@ impl<'a> From<&'a human_config::ResolverConfig> for PublicResolver<'a> {
                 .unwrap_or(super::resolvers::DEFAULT_TIMEOUT_MS),
         }
     }
+}
+
+fn is_query(kind: &human_config::ResolverKind) -> bool {
+    *kind == human_config::ResolverKind::Query
 }
 
 fn is_true(v: &bool) -> bool {

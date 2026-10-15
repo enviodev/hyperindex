@@ -1,7 +1,7 @@
 // User-shaped sidecar, type checked by Types.test.ts with the project template's
 // tsconfig. `@ts-expect-error` lines are the mistakes the types must catch.
 import { expectType } from "ts-expect";
-import { createSidecar, type SidecarCaller } from "envio/sidecar";
+import { createSidecar, type SidecarCaller, type SidecarSql } from "envio/sidecar";
 import contract from "./contract.js";
 
 declare module "envio" {
@@ -95,6 +95,21 @@ export default createSidecar(contract, {
       await app.emit.raw("paymentReceived", req.body, { chainId: 1 });
       res.sendStatus(204);
     });
+  },
+  resolvers: {
+    // A `kind: mutation` resolver: writes go through the contract's webhooks.
+    repriceSwap: async ({ args, emit, indexer, sql }) => {
+      const swapId = String(args.swapId);
+      const sent = await emit.swapPriced({ swapId, usd: Number(args.usd) }, { chainId: 1, idempotencyKey: swapId });
+      expectType<string>(sent.id);
+      // @ts-expect-error usd is a number
+      await emit.swapPriced({ swapId, usd: "1" });
+      // @ts-expect-error not a webhook in the contract
+      await emit.nope({});
+      expectType<string>((await indexer.Token.getAll({ limit: 1 }))[0]!.symbol);
+      expectType<SidecarSql>(sql);
+      return { accepted: true, id: sent.id };
+    },
   },
   onRollback: async ({ chainId, rollbackToBlock }) => {
     expectType<number>(chainId + rollbackToBlock);

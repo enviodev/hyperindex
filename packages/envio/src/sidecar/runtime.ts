@@ -77,7 +77,7 @@ export type SidecarRoutesApp<C extends SidecarContract> = express.Express & {
 
 export type RollbackNotice = { readonly chainId: number; readonly rollbackToBlock: number };
 
-export type SidecarResolverArgs = {
+export type SidecarResolverArgs<C extends SidecarContract = SidecarContract> = {
   /** The field's arguments, as the GraphQL layer passed them. */
   readonly args: Record<string, unknown>;
   readonly request: {
@@ -86,19 +86,28 @@ export type SidecarResolverArgs = {
     /** The client's whole GraphQL document. */
     readonly query: string;
   };
+  /** The contract's webhooks, as functions, jobs and routes get them. A
+   * `kind: mutation` resolver writes through here: the indexer stays the
+   * only writer of its entities. `await` it to answer only once the indexer
+   * has accepted the write. No call binding, so pass `chainId` and an
+   * `idempotencyKey` in the options when the webhook needs them. */
+  readonly emit: Emit<C>;
   readonly indexer: IndexerClient;
+  /** Read-only SQL on the indexer's database (dedicated deployments, envio dev). */
+  readonly sql: SidecarSql;
   readonly log: SidecarLogger;
 };
 
-/** Answers a `resolvers:` field declared with `handler: sidecar`. The return
- * value is the field's value; throw `ResolverError` for a GraphQL error. */
-export type SidecarResolver = (args: SidecarResolverArgs) => unknown;
+/** Answers a `resolvers:` field declared with `handler: sidecar`, under
+ * `query_root` or, with `kind: mutation`, `mutation_root`. The return value is
+ * the field's value; throw `ResolverError` for a GraphQL error. */
+export type SidecarResolver<C extends SidecarContract = SidecarContract> = (args: SidecarResolverArgs<C>) => unknown;
 
 export type SidecarImpl<C extends SidecarContract> = {
   readonly functions: { readonly [K in keyof C["functions"]]: SidecarFunctionImpl<C, K> };
   readonly jobs?: Record<string, SidecarJob<C>>;
   readonly routes?: (app: SidecarRoutesApp<C>) => void;
-  readonly resolvers?: Record<string, SidecarResolver>;
+  readonly resolvers?: Record<string, SidecarResolver<C>>;
   readonly onRollback?: (notice: RollbackNotice) => Promise<void> | void;
 };
 
@@ -758,6 +767,7 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
       const given = Buffer.from(presented);
       return expected.length === given.length && timingSafeEqual(expected, given);
     };
+    const resolverEmit = createEmit(contract, transport);
     pub.post(`${RESOLVER_PATH_PREFIX}:name`, async (req, res) => {
       if (!secretMatches(req.headers[RESOLVER_SECRET_HEADER])) {
         resolverError(res, 401, "unauthorized", "unauthorized");
@@ -783,7 +793,9 @@ export function createSidecar<C extends SidecarContract>(contract: C, impl: Side
             sessionVariables,
             query: typeof payload.request_query === "string" ? payload.request_query : "",
           },
+          emit: resolverEmit,
           indexer,
+          sql,
           log: resolverLog,
         });
         res.status(200).json(encodeValue(value) ?? null);

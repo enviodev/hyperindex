@@ -1,6 +1,7 @@
+import { createServer } from "node:http";
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
-import { defineSidecar } from "envio";
+import { defineSidecar, S } from "envio";
 import {
   applyResolverMetadata,
   buildResolverMetadata,
@@ -110,6 +111,23 @@ describe("buildResolverMetadata", () => {
     ]);
   });
 
+  it("puts a kind: mutation resolver under the mutation root, and defaults to query", () => {
+    const metadata = buildResolverMetadata(
+      {
+        sendTip: { kind: "mutation", args: { to: "[String!]!" }, output: "TipResult!", handler: "sidecar", timeoutMs: 5000 },
+        wallet: { kind: "query", args: {}, output: "String", handler: "sidecar", timeoutMs: 5000 },
+        topTraders: resolvers.topTraders,
+      },
+      { TipResult: { id: "String!", recipients: "[String!]!" } },
+      { sidecarUrl: "http://sc:9900" },
+    );
+    expect(metadata.actions.map((a) => [a.name, a.definition.type, a.definition.kind])).toEqual([
+      ["sendTip", "mutation", "synchronous"],
+      ["topTraders", "query", "synchronous"],
+      ["wallet", "query", "synchronous"],
+    ]);
+  });
+
   it("sends no secret header without a secret", () => {
     const metadata = buildResolverMetadata({ topTraders: resolvers.topTraders }, types, {
       sidecarUrl: "http://localhost:9900",
@@ -195,7 +213,10 @@ describe("applyResolverMetadata", () => {
   });
 });
 
-const contract = defineSidecar({ functions: {} });
+const contract = defineSidecar({
+  functions: {},
+  webhooks: { tipSent: { body: { from: S.string, amount: S.bigint } } },
+});
 const quiet = new Writable({ write: (_chunk, _enc, done) => done() });
 const running: RunningSidecar[] = [];
 afterEach(async () => {
@@ -204,13 +225,14 @@ afterEach(async () => {
 
 const start = async (
   impl: Omit<SidecarImpl<typeof contract>, "functions">,
-  options: { env?: NodeJS.ProcessEnv; resolvers?: readonly string[] } = {},
+  options: { env?: NodeJS.ProcessEnv; resolvers?: readonly string[]; indexerInternalUrl?: string } = {},
 ) => {
   const sidecar = createSidecar(contract, { functions: {}, ...impl });
   const handle = await sidecar.start({
     internalPort: 0,
     publicPort: 0,
     env: options.env ?? {},
+    ...(options.indexerInternalUrl === undefined ? {} : { indexerInternalUrl: options.indexerInternalUrl }),
     logDestination: quiet,
     ...(options.resolvers === undefined ? {} : { resolvers: options.resolvers }),
   });
@@ -293,6 +315,50 @@ describe("sidecar resolvers", () => {
       { status: 401, body: { message: "unauthorized", extensions: { code: "unauthorized" } } },
       { status: 200, body: [] },
     ]);
+  });
+
+  it("hands a resolver the contract's emit, which reaches the indexer's webhook listener", async () => {
+    const received: Array<{ url: string | undefined; key: unknown; chain: unknown; body: unknown }> = [];
+    const indexer = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        received.push({
+          url: request.url,
+          key: request.headers["idempotency-key"],
+          chain: request.headers["x-envio-chain-id"],
+          body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+        });
+        response.writeHead(202, { "content-type": "application/json" });
+        response.end(JSON.stringify({ id: "wh_1", chainId: 8453 }));
+      });
+    });
+    await new Promise<void>((resolve) => indexer.listen(0, "127.0.0.1", resolve));
+    const address = indexer.address();
+    if (address === null || typeof address === "string") throw new Error("no port");
+    try {
+      const base = await start(
+        {
+          resolvers: {
+            sendTip: async ({ args, emit }) => {
+              const sent = await emit.tipSent(
+                { from: String(args.from), amount: BigInt(String(args.amount)) },
+                { chainId: 8453, idempotencyKey: "tip-1" },
+              );
+              return { accepted: true, webhookId: sent.id };
+            },
+          },
+        },
+        { indexerInternalUrl: `http://127.0.0.1:${address.port}` },
+      );
+      expect({ reply: await call(base, "sendTip", { from: "0xa", amount: "5" }), received }).toEqual({
+        reply: { status: 200, body: { accepted: true, webhookId: "wh_1" } },
+        received: [{ url: "/webhooks/tipSent", key: "tip-1", chain: "8453", body: { from: "0xa", amount: "5" } }],
+      });
+    } finally {
+      indexer.closeAllConnections();
+      await new Promise<void>((resolve) => indexer.close(() => resolve()));
+    }
   });
 
   it("fails to start when config.yaml and createSidecar disagree on the resolvers", async () => {

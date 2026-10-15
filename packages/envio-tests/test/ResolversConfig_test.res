@@ -80,6 +80,59 @@ types:
     ))
   })
 
+  it("Parses kind: mutation, and leaves kind out for queries", t => {
+    let config = parse(`
+resolvers:
+  sendTip:
+    kind: mutation
+    args:
+      to: "[String!]!"
+    output: TipResult
+    handler: sidecar
+  wallet:
+    kind: query
+    output: String
+    handler: sidecar
+types:
+  TipResult:
+    id: "String!"
+    recipients: "[String!]!"
+`)
+    t.expect(config.resolvers).toEqual(
+      dict{
+        "sendTip": {
+          Config.kind: Mutation,
+          args: dict{"to": "[String!]!"},
+          output: "TipResult",
+          handler: "sidecar",
+          timeoutMs: 30000,
+        },
+        "wallet": {
+          Config.args: dict{},
+          output: "String",
+          handler: "sidecar",
+          timeoutMs: 30000,
+        },
+      },
+    )
+  })
+
+  it("Refuses an unknown kind", t =>
+    t->toThrowErrorEqual(
+      () =>
+        parse(`
+resolvers:
+  topTraders:
+    kind: subscription
+    output: Int
+    handler: sidecar
+`)->ignore,
+      deserializeError(
+        "unknown variant `subscription`, expected `query` or `mutation` at line 2 column 1",
+      ),
+    )
+  )
+
   it("Has no resolvers when the keys are absent", t => {
     let config = parse("")
     t.expect((config.resolvers, config.resolverTypes)).toEqual((dict{}, dict{}))
@@ -103,7 +156,7 @@ resolvers:
     cache: true
 `)->ignore,
       deserializeError(
-        "unknown field `cache`, expected one of `description`, `args`, `output`, `handler`, `timeoutMs` at line 2 column 1",
+        "unknown field `cache`, expected one of `description`, `kind`, `args`, `output`, `handler`, `timeoutMs` at line 2 column 1",
       ),
     )
   )
