@@ -54,7 +54,11 @@ export function handleProxyCreated(event: any): void {
   let nul = String.fromCharCode(0);
   entity.setString("name", "PO" + nul + "OL" + nul);
   entity.set("aliases", Value.fromStringArray(["A" + nul + "B", "C"]));
-  store.set("Proxy", event.params.proxyAddress.toHexString(), entity);
+  store.set("Proxy", event.params.proxyAddress.toHexString() + nul, entity);
+  // The id is stripped on the read too: the same entity is found without the NUL.
+  let again = store.get("Proxy", event.params.proxyAddress.toHexString())!;
+  again.setString("name", "POOL");
+  store.set("Proxy", event.params.proxyAddress.toHexString() + nul, again);
 }
 `,
     ),
