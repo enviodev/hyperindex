@@ -38,6 +38,7 @@ import {
   installCallHook,
   installHosts,
   installHandlerCreateHook,
+  setLegacyNullOperands,
   installRegisterHook,
   installRegisterMissHook,
   installFileTemplates,
@@ -874,6 +875,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     const [major, minor, patch] = (source.apiVersion ?? "").split(".").map(Number);
     return major === 0 && minor === 0 && patch < 5;
   });
+  setLegacyNullOperands(legacyNulls);
   installResolveHook(config.root);
   resetRpcClients();
   resetCallBackends();
