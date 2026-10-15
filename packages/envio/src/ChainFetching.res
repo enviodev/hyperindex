@@ -32,6 +32,7 @@ let runContractRegistersOrThrow = async (
       address: contractAddress,
       contractName,
       registrationBlock: eventItem.blockNumber,
+      creationRound: chainState->ChainState.fetchState->FetchState.creationRoundOfRegistration(~item),
     })
   }
 

@@ -7,6 +7,9 @@ type registration = {
   contractName: string,
   // -1 for a config address.
   registrationBlock: int,
+  // Subgraph mode: the round (see `Internal.getItemCreationRound`) the
+  // registering handler ran in, plus one. Not part of the addon's registration.
+  creationRound?: int,
 }
 
 type verdict =

@@ -764,11 +764,15 @@ external getItemOrderPath: item => Nullable.t<array<int>> = "orderPath"
 external getItemKind: item => int = "kind"
 // Set only in subgraph mode, on an event of an address registered in the very
 // block it was logged in: graph-node runs a new data source's creation-block
-// events after everything else in that block. Absent reads as false.
+// events after everything else in that block. The value is the round, as
+// graph-node counts them: 1 for a data source a block's own triggers created,
+// 2 for one that round-1 handlers created, and so on. Absent reads as false.
 @get
 external getItemRunsAfterBlock: item => bool = "runsAfterBlock"
+@get
+external getItemCreationRound: item => option<int> = "runsAfterBlock"
 @set
-external markItemRunsAfterBlock: (item, bool) => unit = "runsAfterBlock"
+external markItemCreationRound: (item, int) => unit = "runsAfterBlock"
 
 // Subgraph mode only. A call trigger travels through fetch and batching as an
 // event item (see `subgraph/calls-source.ts`), and graph-node orders it by its
