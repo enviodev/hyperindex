@@ -7,6 +7,7 @@
  * replay loop reruns the mapping once what it asked for has landed.
  */
 
+import { instancesAt, rememberInstance } from "./template-instances.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -38,6 +39,7 @@ import {
   installCallHook,
   installHosts,
   installHandlerCreateHook,
+  setLegacyNullOperands,
   installRegisterHook,
   installRegisterMissHook,
   installFileTemplates,
@@ -129,6 +131,7 @@ type DataSource = {
   startBlock?: number;
   endBlock?: number;
   mappingFile: string;
+  apiVersion?: string;
   entities?: string[];
   eventHandlers: EventHandler[];
   callHandlers?: CallHandler[];
@@ -189,6 +192,12 @@ function isOutsideSource(url: string): boolean {
 }
 
 let hooksInstalled = false;
+/**
+ * Some mapping is below apiVersion 0.0.5, where graph-node reads through a null
+ * pointer instead of trapping. Files are compiled once for the whole project,
+ * so one old mapping makes every file tolerant.
+ */
+let legacyNulls = false;
 let projectRoot: string | null = null;
 /**
  * `node_modules` envio fetched for packages the mappings import and the
@@ -281,7 +290,7 @@ function installResolveHook(root: string) {
       projectModules.add(url);
       return {
         format: "module",
-        source: subgraphFileToJavascript(readFileSync(file, "utf8"), file),
+        source: subgraphFileToJavascript(readFileSync(file, "utf8"), file, legacyNulls),
         shortCircuit: true,
       };
     },
@@ -738,6 +747,8 @@ function announceWhereToQuery() {
  * runs soon after its event's register pass, so the latest ones are enough.
  */
 const registeredTemplates = new Set<string>();
+/** Templates with a block handler: their instances' creation blocks are kept. */
+const blockTemplates = new Set<string>();
 const REGISTERED_TEMPLATES_LIMIT = 100_000;
 const unregisteredCreates = new Set<string>();
 
@@ -863,6 +874,11 @@ function makeFileRunner(
 }
 
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
+  legacyNulls = [...config.dataSources, ...config.templates].some((source) => {
+    const [major, minor, patch] = (source.apiVersion ?? "").split(".").map(Number);
+    return major === 0 && minor === 0 && patch < 5;
+  });
+  setLegacyNullOperands(legacyNulls);
   installResolveHook(config.root);
   resetRpcClients();
   resetCallBackends();
@@ -870,6 +886,10 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installCallSource(fetchCalls, config.rpcUrls ?? []);
   resetRegisterStore();
   registeredTemplates.clear();
+  blockTemplates.clear();
+  for (const template of config.templates) {
+    if (template.blockHandlers.length > 0) blockTemplates.add(template.name);
+  }
   registrationRounds.clear();
   unregisteredCreates.clear();
   announceWhereToQuery();
@@ -964,6 +984,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     if (accessor === undefined) throw unknown(`the template ${templateName}`, "a mapping handler");
     const scope = currentScope();
     scope.context.chain[accessor].add(address);
+    if (blockTemplates.has(templateName)) {
+      rememberInstance(scope.dataSource.chainId, templateName, address, scope.blockNumber);
+    }
     const key = `${scope.dataSource.chainId}:${templateName}:${address.toLowerCase()}`;
     registeredTemplates.delete(key);
     registeredTemplates.add(key);
@@ -1407,11 +1430,17 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         );
         onceHandlers.set(source.chainId, runs);
       }
+      // A template's instances all exist from the first static source on its
+      // chain, and the handler runs once per instance from its creation block.
+      const chainStarts = config.dataSources
+        .filter((other) => other.chainId === source.chainId)
+        .map((other) => other.startBlock ?? 0);
+      const first = source.isTemplate ? Math.min(...chainStarts, 0 + (chainStarts.length === 0 ? 0 : Number.MAX_SAFE_INTEGER)) : start;
       const blocks =
         handler.filter === "once"
           ? { _gte: start, _lte: start }
           : source.endBlock === undefined
-            ? { _gte: start, _every: handler.filter.every }
+            ? { _gte: first, _every: handler.filter.every }
             : { _gte: start, _lte: source.endBlock, _every: handler.filter.every };
       indexer.onBlock(
         {
@@ -1425,30 +1454,33 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             block.number,
             `data source "${source.name}" → "${handler.handler}"`,
           );
-          const scope: Scope = {
-            context,
-            event: block,
-            mode: "handler",
-            schema,
-            dataSource: {
-              name: source.name,
-              address: source.address ?? "",
-              chainId: source.chainId ?? 0,
-              network: source.network ?? "",
-              context: source.context ?? {},
-            },
-            registered: new Set(),
-            blockNumber: block.number,
-            blockSeconds: secondsOf(block.number, block.timestamp),
-            mappingExports: mapping,
-          };
-          await runSyncCounted(context, () =>
-            runInScope(scope, () => {
-              startRun(scope);
-              return fn(graphBlock);
-            }),
-          );
-          await runFileDataSources(scope, context);
+          const addresses = source.isTemplate ? instancesAt(block.chainId ?? source.chainId, source.name, block.number) : [source.address ?? ""];
+          for (const address of addresses) {
+            const scope: Scope = {
+              context,
+              event: block,
+              mode: "handler",
+              schema,
+              dataSource: {
+                name: source.name,
+                address,
+                chainId: source.chainId ?? 0,
+                network: source.network ?? "",
+                context: (source.isTemplate ? contextOf(source.chainId ?? 0, source.name, address) : undefined) ?? source.context ?? {},
+              },
+              registered: new Set(),
+              blockNumber: block.number,
+              blockSeconds: secondsOf(block.number, block.timestamp),
+              mappingExports: mapping,
+            };
+            await runSyncCounted(context, () =>
+              runInScope(scope, () => {
+                startRun(scope);
+                return fn(graphBlock);
+              }),
+            );
+            await runFileDataSources(scope, context);
+          }
         },
       );
     }

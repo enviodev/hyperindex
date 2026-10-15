@@ -20,6 +20,14 @@
 //!   declaration and the local after it — as AssemblyScript does, having no
 //!   closures to tell the two bindings apart.
 //! - Decorators are compiler hints (`@inline`), not runtime code.
+//! - Below apiVersion 0.0.5 graph-node does not null-check an AssemblyScript
+//!   pointer (`check_is_not_null` exists only in `asc_abi/v0_0_5.rs`), and asc
+//!   0.6 compiles `x!` and a field read without a check. A null `BigInt`,
+//!   `BigDecimal` or `Bytes` handed to a host function reads as an empty value,
+//!   so `null.plus(x)` is `x`; a field read through a null reference reads
+//!   whatever is at that offset in low memory, zero in practice. Such a mapping
+//!   gets `a?.b` for every property read and a null-tolerant receiver for the
+//!   graph-ts methods that go to the host.
 //!
 //! It fails loudly: a mapping that can't be rewritten can't be trusted to
 //! compute what it computes under `asc`.
@@ -35,7 +43,7 @@ use oxc::{
     diagnostics::OxcDiagnostic,
     parser::Parser,
     semantic::SemanticBuilder,
-    span::{SourceType, Span},
+    span::{GetSpan, SourceType, Span},
     syntax::{
         operator::{AssignmentOperator, BinaryOperator, UnaryOperator},
         scope::ScopeFlags,
@@ -186,7 +194,7 @@ fn blank_statement_decorators(source: &str) -> String {
 
 /// The JavaScript to run for one AssemblyScript file, with an inline source map
 /// back to the original so a mapping's stack trace names its own lines.
-pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
+pub fn to_javascript(source: &str, path: &Path, legacy_nulls: bool) -> Result<String> {
     let blanked = blank_statement_decorators(&class_expressions_for_type_names(source));
     let source = blanked.as_str();
     let allocator = Allocator::default();
@@ -201,6 +209,7 @@ pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
         ast: AstBuilder::new(&allocator),
         classes: value_bindings(&program),
         refused: None,
+        legacy_nulls,
     };
     rewrite.visit_program(&mut program);
     if let Some((span, message)) = rewrite.refused {
@@ -244,7 +253,41 @@ struct Rewrite<'a> {
     /// can be `changetype`'s target at runtime: `changetype<i32>` has no class.
     classes: HashSet<String>,
     refused: Option<(Span, &'static str)>,
+    /// The mapping is below apiVersion 0.0.5, where graph-node reads through a
+    /// null pointer instead of trapping.
+    legacy_nulls: bool,
 }
+
+/// graph-ts methods whose receiver goes to the host as a pointer, or whose
+/// result on an empty value is plain: below apiVersion 0.0.5 a null receiver
+/// is a zero (or empty) one. The runtime's `recv` decides which.
+const NULL_RECEIVER_METHODS: &[&str] = &[
+    "plus",
+    "minus",
+    "times",
+    "div",
+    "mod",
+    "pow",
+    "bitOr",
+    "bitAnd",
+    "leftShift",
+    "rightShift",
+    "abs",
+    "neg",
+    "truncate",
+    "toString",
+    "toHex",
+    "toHexString",
+    "toI32",
+    "toBigDecimal",
+    "isZero",
+    "equals",
+    "notEqual",
+    "lt",
+    "le",
+    "gt",
+    "ge",
+];
 
 /// The `OPERATORS_HELPER` method standing in for a binary operator.
 fn binary_helper(operator: BinaryOperator) -> Option<&'static str> {
@@ -303,6 +346,69 @@ fn assignment_helper(operator: AssignmentOperator) -> Option<&'static str> {
 }
 
 impl<'a> Rewrite<'a> {
+    /// Visits what a member-expression callee reads, not the callee itself.
+    fn visit_callee(&mut self, callee: &mut Expression<'a>) {
+        match callee {
+            Expression::StaticMemberExpression(member) => self.visit_expression(&mut member.object),
+            Expression::ComputedMemberExpression(member) => {
+                self.visit_expression(&mut member.object);
+                self.visit_expression(&mut member.expression);
+            }
+            other => self.visit_expression(other),
+        }
+    }
+
+    /// A property read becomes an optional one (`a.b.c` is `a?.b?.c`), as a
+    /// read through a null pointer yields nothing instead of trapping. A
+    /// callee, an assignment target and `this.x` keep their own form.
+    fn read_through_null(&self, expr: &mut Expression<'a>) {
+        fn reaches_through(object: &Expression<'_>) -> bool {
+            !matches!(object, Expression::ThisExpression(_) | Expression::Super(_))
+        }
+        fn mark(expr: &mut Expression<'_>) {
+            let object = match expr {
+                Expression::StaticMemberExpression(member) if reaches_through(&member.object) => {
+                    member.optional = true;
+                    &mut member.object
+                }
+                Expression::ComputedMemberExpression(member) if reaches_through(&member.object) => {
+                    member.optional = true;
+                    &mut member.object
+                }
+                _ => return,
+            };
+            mark(object);
+        }
+        let eligible = match expr {
+            Expression::StaticMemberExpression(member) => {
+                !member.optional && reaches_through(&member.object)
+            }
+            Expression::ComputedMemberExpression(member) => {
+                !member.optional && reaches_through(&member.object)
+            }
+            _ => false,
+        };
+        if !eligible {
+            return;
+        }
+        mark(expr);
+        let span = expr.span();
+        let taken = expr.take_in(&self.ast);
+        let element = match taken {
+            Expression::StaticMemberExpression(member) => {
+                ChainElement::StaticMemberExpression(member)
+            }
+            Expression::ComputedMemberExpression(member) => {
+                ChainElement::ComputedMemberExpression(member)
+            }
+            other => {
+                *expr = other;
+                return;
+            }
+        };
+        *expr = Expression::new_chain_expression(span, element, &self.ast);
+    }
+
     fn call<const N: usize>(
         &self,
         span: Span,
@@ -428,6 +534,9 @@ fn is_effect_free(expr: &Expression<'_>) -> bool {
 
 impl<'a> VisitMut<'a> for Rewrite<'a> {
     fn visit_expression(&mut self, expr: &mut Expression<'a>) {
+        if self.legacy_nulls {
+            self.read_through_null(expr);
+        }
         walk_mut::walk_expression(self, expr);
         match expr {
             Expression::BinaryExpression(binary) => {
@@ -516,6 +625,22 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 *expr = self.call(span, RETAG_HELPER, [ctor, value, keep]);
             }
             Expression::CallExpression(call) => {
+                if self.legacy_nulls {
+                    if let Expression::StaticMemberExpression(member) = &mut call.callee {
+                        if !member.optional
+                            && !matches!(
+                                member.object,
+                                Expression::Super(_) | Expression::ThisExpression(_)
+                            )
+                            && NULL_RECEIVER_METHODS.contains(&member.property.name.as_str())
+                        {
+                            let span = member.span;
+                            let object = member.object.take_in(&self.ast);
+                            member.object = self.operator(span, "recv", [object]);
+                            return;
+                        }
+                    }
+                }
                 if let Some(method) = search_helper(call) {
                     let span = call.span;
                     let Expression::StaticMemberExpression(member) = &mut call.callee else {
@@ -562,6 +687,40 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 *expr = self.call(span, RETAG_HELPER, [class, value]);
             }
             _ => {}
+        }
+    }
+
+    // A callee keeps its form, or the call loses its receiver: `(a?.b)()` is
+    // not `a.b()`. Its object is a read like any other.
+    fn visit_call_expression(&mut self, call: &mut CallExpression<'a>) {
+        if self.legacy_nulls {
+            self.visit_callee(&mut call.callee);
+            if let Some(type_arguments) = &mut call.type_arguments {
+                self.visit_ts_type_parameter_instantiation(type_arguments);
+            }
+            self.visit_arguments(&mut call.arguments);
+        } else {
+            walk_mut::walk_call_expression(self, call);
+        }
+    }
+
+    fn visit_new_expression(&mut self, new: &mut NewExpression<'a>) {
+        if self.legacy_nulls {
+            self.visit_callee(&mut new.callee);
+            if let Some(type_arguments) = &mut new.type_arguments {
+                self.visit_ts_type_parameter_instantiation(type_arguments);
+            }
+            self.visit_arguments(&mut new.arguments);
+        } else {
+            walk_mut::walk_new_expression(self, new);
+        }
+    }
+
+    fn visit_class_heritage(&mut self, heritage: &mut ClassHeritage<'a>) {
+        if self.legacy_nulls {
+            self.visit_callee(&mut heritage.expression);
+        } else {
+            walk_mut::walk_class_heritage(self, heritage);
         }
     }
 
@@ -677,15 +836,48 @@ mod tests {
     use super::*;
 
     fn js(source: &str) -> String {
-        let out = to_javascript(source, Path::new("src/mapping.ts")).expect("a readable mapping");
+        let out =
+            to_javascript(source, Path::new("src/mapping.ts"), false).expect("a readable mapping");
         out.split("//# sourceMappingURL=")
             .next()
             .unwrap()
             .to_string()
     }
 
+    fn legacy_js(source: &str) -> String {
+        let out =
+            to_javascript(source, Path::new("src/mapping.ts"), true).expect("a readable mapping");
+        out.split("//# sourceMappingURL=")
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn reads_through_null_below_api_version_0_0_5() {
+        let source = "export function f(defs: Def[], p: Position): void {
+  let a = defs[i].address.toHexString();
+  p.premium = p.premium.plus(x);
+  p.count = this.count;
+  let c = new ns.Thing(p.id);
+}";
+        let out = legacy_js(source);
+        assert_eq!(
+            [
+                out.contains("defs?.[i]?.address"),
+                out.contains("__envio_op.recv(defs?.[i]?.address).toHexString()"),
+                out.contains("__envio_op.recv(p?.premium).plus(x)"),
+                out.contains("= this.count"),
+                out.contains("new ns.Thing(p?.id)"),
+            ],
+            [true; 5],
+            "{out}"
+        );
+        assert!(!js(source).contains("?."), "gated off, nothing changes");
+    }
+
     fn refusal(source: &str) -> String {
-        to_javascript(source, Path::new("src/mapping.ts"))
+        to_javascript(source, Path::new("src/mapping.ts"), false)
             .expect_err("expected the mapping to be refused")
             .to_string()
     }
@@ -999,7 +1191,12 @@ export const TEN = 10;
 
     #[test]
     fn maps_the_output_back_to_the_mapping() {
-        let out = to_javascript("export const a = 1 / 2;", Path::new("src/mapping.ts")).unwrap();
+        let out = to_javascript(
+            "export const a = 1 / 2;",
+            Path::new("src/mapping.ts"),
+            false,
+        )
+        .unwrap();
         assert!(
             out.ends_with("\n")
                 && out
