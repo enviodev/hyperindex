@@ -82,10 +82,8 @@ struct HostNetwork {
     chain_id: u64,
 }
 
-/// Network slugs Goldsky and Ormi accept in `subgraph.yaml` that the Graph
-/// registry doesn't list, with the chain id each stands for. `source` in
-/// `host_networks.json` says where each came from: the repos that use them,
-/// Ormi's supported-chains table, or Goldsky's supported-networks list. Chain
+/// Network slugs other hosts accept in `subgraph.yaml` that the Graph
+/// registry doesn't list, with the chain id each stands for. Chain
 /// ids were cross-checked against chainlist and, where dRPC serves the chain,
 /// its `eth_chainId`.
 static HOST_NETWORKS: LazyLock<BTreeMap<String, u64>> = LazyLock::new(|| {
@@ -968,10 +966,10 @@ templates:
         assert_eq!(wrong, Vec::<(String, u64)>::new());
     }
 
-    // The slugs Goldsky and Ormi subgraph.yaml files use, with the chain ids the
+    // The slugs other hosts' subgraph.yaml files use, with the chain ids the
     // hosts' own docs and chainlist give (each also checked with eth_chainId).
     #[test]
-    fn resolves_the_network_slugs_goldsky_and_ormi_use() {
+    fn resolves_the_network_slugs_other_hosts_use() {
         let expected = [
             ("filecoin", 314),
             ("plasma-mainnet", 9745),
