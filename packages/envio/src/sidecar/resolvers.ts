@@ -1,6 +1,12 @@
+/** Where a resolver's field goes: `query_root` or `mutation_root`. */
+export type ResolverKind = "query" | "mutation";
+
 /** A `resolvers:` entry from config.yaml, as the CLI normalised it. */
 export type ResolverDef = {
   readonly description?: string;
+  /** `kind:` in config.yaml. Absent means `"query"` (the CLI only writes it
+   * for mutations, so configs without it keep their published shape). */
+  readonly kind?: ResolverKind;
   readonly args: Readonly<Record<string, string>>;
   readonly output: string;
   /** `"sidecar"`, or the URL of a webhook. */
@@ -32,7 +38,7 @@ export type HasuraAction = {
   readonly name: string;
   readonly comment?: string;
   readonly definition: {
-    readonly type: "query";
+    readonly type: ResolverKind;
     readonly kind: "synchronous";
     readonly handler: string;
     readonly arguments: ReadonlyArray<{ readonly name: string; readonly type: string }>;
@@ -99,7 +105,7 @@ export function buildResolverMetadata(
         name,
         ...(def.description === undefined ? {} : { comment: def.description }),
         definition: {
-          type: "query",
+          type: def.kind ?? "query",
           kind: "synchronous",
           handler: def.handler === "sidecar" ? `${base}${RESOLVER_PATH_PREFIX}${name}` : def.handler,
           arguments: args,

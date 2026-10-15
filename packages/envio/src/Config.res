@@ -108,9 +108,14 @@ type sidecar = {
   entry: string,
 }
 
+// Which GraphQL root a resolver's field joins.
+type resolverKind = | @as("query") Query | @as("mutation") Mutation
+
 // A `resolvers:` entry, validated by the CLI. Types are GraphQL type strings.
 type resolver = {
   description?: string,
+  // Absent means Query: the CLI only writes it for mutations.
+  kind?: resolverKind,
   args: dict<string>,
   output: string,
   // "sidecar", or the URL of a webhook.
@@ -619,6 +624,7 @@ let sidecarSchema = S.schema(s => {
 
 let resolverSchema: S.t<resolver> = S.object(s => {
   description: ?s.field("description", S.option(S.string)),
+  kind: ?s.field("kind", S.option(S.enum([Query, Mutation]))),
   args: s.field("args", S.dict(S.string)),
   output: s.field("output", S.string),
   handler: s.field("handler", S.string),

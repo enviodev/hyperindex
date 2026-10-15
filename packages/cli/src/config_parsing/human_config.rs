@@ -210,6 +210,13 @@ pub struct ResolverConfig {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
+        description = "`query` puts the field under the GraphQL query root, `mutation` under the \
+                       mutation root (the handler writes through the sidecar's `emit`, so the \
+                       indexer stays the only writer). (default: query)"
+    )]
+    pub kind: Option<ResolverKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
         description = "Argument name to GraphQL type string, for example `limit: \"Int!\"`. \
                        Scalars or lists of scalars."
     )]
@@ -227,6 +234,17 @@ pub struct ResolverConfig {
     #[serde(rename = "timeoutMs", skip_serializing_if = "Option::is_none")]
     #[schemars(description = "How long the GraphQL layer waits for the handler. (default: 30000)")]
     pub timeout_ms: Option<u64>,
+}
+
+/// Which root type a resolver's field joins.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ResolverKind {
+    /// A field of the query root.
+    #[default]
+    Query,
+    /// A field of the mutation root.
+    Mutation,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]

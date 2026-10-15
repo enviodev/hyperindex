@@ -18,8 +18,9 @@ pub const SCALARS: [&str; 7] = [
     "BigDecimal",
 ];
 
-const RESERVED_TYPES: [&str; 4] = [
+const RESERVED_TYPES: [&str; 5] = [
     "query_root",
+    "mutation_root",
     "subscription_root",
     "order_by",
     "cursor_ordering",

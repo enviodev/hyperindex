@@ -73,6 +73,7 @@ export {
   type BuildOptions,
   type HasuraAction,
   type ResolverDef,
+  type ResolverKind,
   type ResolverMetadata,
   type ResolverTypes,
 } from "./resolvers.js";
