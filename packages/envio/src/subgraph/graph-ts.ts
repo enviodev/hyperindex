@@ -1472,11 +1472,12 @@ const storeImpl = {
     return toEntity(entityType, entityContext(entityType).getInBlockSync(id));
   },
   set(entityType: string, id: string, data: Entity): void {
+    id = withoutNul(id);
     const scope = currentScope();
     const own = fileAccess(scope, entityType, id);
     if (scope.file) scope.file.written.add(`${entityType}\u0000${id}`);
     const row = toRow(entityType, data);
-    row.id = withoutNul(id);
+    row.id = id;
     // graph-node merges a save onto the stored entity (EntityCache::set is an
     // Update, merged by merge_remove_null_fields): a field this instance
     // doesn't set keeps its stored value, an explicit null clears it. ENS's
