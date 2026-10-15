@@ -1,9 +1,9 @@
-// `await Utils.delay(0)` in front of a mock resolve is a guess at how many await
-// hops the indexer needs before it asks the source. The guess is unwritable
-// without trial and error and breaks the day production code gains an await.
-// It is also unnecessary: a resolve with no matching call pending holds its
-// answer for the next matching call, so the test can answer a question before
-// it has been asked.
+// A test that waits for the indexer to ask the source by counting event-loop
+// ticks (`await Utils.delay(0)`) or polling the pending queries guesses at how
+// many await hops production code takes. The guess is unwritable without trial
+// and error and breaks the day production code gains an await. It is also
+// unnecessary: `expectItemsQueries` waits for the queries it names, and a height
+// answer with no call pending is held for the next one.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -16,11 +16,12 @@ const testRoot = fileURLToPath(new URL("../test", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 const delay = /^\s*(?:await\s+)?Utils\.delay\(0\)\s*$/;
-const resolveCall =
-  /^\s*(?:await\s+)?\S*\b(resolveGetItemsOrThrow|resolveGetHeightOrThrow|drainItemsQueries)\b/;
+const mockStep =
+  /^\s*(?:await\s+)?(?:let\s+\S+\s*=\s*)?\S*\b(expectItemsQueries|drainPendingItemsQueries|pendingItemsQueries|resolveGetHeightOrThrow)\b/;
+const pollStart = /\b(while\b|waitUntil\()/;
 
-// The scan has to reach the resolver past whatever sits between it and the
-// delay. A comment that hid a violation would make the lint quietly useless.
+// The scan has to reach the next statement past whatever sits between it and
+// the delay. A comment that hid a violation would make the lint quietly useless.
 const nextCodeLine = (lines: string[], start: number): string | null => {
   let inBlockComment = false;
   for (let index = start; index < lines.length; index++) {
@@ -61,14 +62,41 @@ const resFiles = (dir: string): string[] =>
     return entry.isFile() && entry.name.endsWith(".res") ? [path] : [];
   });
 
-const violations: { file: string; line: number; resolver: string }[] = [];
+type violation = { file: string; line: number; title: string; fix: string };
+
+const violations: violation[] = [];
 for (const path of resFiles(testRoot)) {
+  const file = relative(repoRoot, path);
   const lines = readFileSync(path, "utf8").split("\n");
   lines.forEach((line, index) => {
-    if (!delay.test(line)) return;
-    const match = nextCodeLine(lines, index + 1)?.match(resolveCall) ?? null;
-    if (match) {
-      violations.push({ file: relative(repoRoot, path), line: index + 1, resolver: match[1] });
+    const code = line.replace(/\/\/.*$/, "");
+    if (delay.test(code)) {
+      const step = nextCodeLine(lines, index + 1)?.match(mockStep)?.[1];
+      if (step) {
+        violations.push({
+          file,
+          line: index + 1,
+          title: `Utils.delay(0) before ${step}`,
+          fix:
+            step === "resolveGetHeightOrThrow"
+              ? "Delete the delay: a height answer with no call pending is held for the next call."
+              : "Delete the delay: `expectItemsQueries` waits for the queries it names.",
+        });
+      }
+    }
+    // A poll's condition sits on the same line or the one after it.
+    if (pollStart.test(code)) {
+      const condition = `${code} ${nextCodeLine(lines, index + 1) ?? ""}`;
+      if (/\bpendingItemsQueries\b/.test(condition)) {
+        violations.push({
+          file,
+          line: index + 1,
+          title: "Polling pendingItemsQueries",
+          fix:
+            "Replace the poll with `await mock.expectItemsQueries([...])` naming the queries " +
+            "(`reply: LeavePending` for ones answered later).",
+        });
+      }
     }
   });
 }
@@ -78,22 +106,15 @@ if (violations.length > 0) {
   // alone is prose under a step named for the tests, which a reader reaches only
   // after scrolling past the service-container dumps that follow a failed job.
   if (process.env.GITHUB_ACTIONS) {
-    for (const { file, line, resolver } of violations) {
-      console.log(
-        `::error file=${file},line=${line},title=Utils.delay(0) before a mock resolve::` +
-          `Delete this Utils.delay(0). The ${resolver} below holds its answer for the next ` +
-          `matching call, so it can answer before the call arrives.`,
-      );
+    for (const { file, line, title, fix } of violations) {
+      console.log(`::error file=${file},line=${line},title=${title}::${fix}`);
     }
   }
   console.error(
     [
-      "Utils.delay(0) waits for a mock call that the resolve below can answer in advance:",
+      "These tests guess at how long the indexer takes to ask the source:",
       "",
-      ...violations.map(({ file, line, resolver }) => `${file}:${line}: before ${resolver}`),
-      "",
-      "Delete the delay. With nothing pending the resolve holds its answer for the next",
-      "matching call; Scenario.run fails the test if no call ever claims it.",
+      ...violations.map(({ file, line, title, fix }) => `${file}:${line}: ${title}. ${fix}`),
     ].join("\n"),
   );
   process.exit(1);
