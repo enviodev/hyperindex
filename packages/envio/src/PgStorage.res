@@ -92,8 +92,29 @@ let getSchemaIndexes = (
     ->Array.forEach(derivedFromField => {
       let column =
         derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
+      // A list column holds every id in one value; a btree entry over it
+      // outgrows a page (Hats' `wearers`), so it gets GIN, as graph-node gives
+      // list attributes.
+      let isList =
+        derivedSchema
+        ->Utils.Dict.dangerouslyGetNonOption(derivedFromField.derivedFromEntity)
+        ->Option.flatMap(table => table->Table.getFieldByName(derivedFromField.derivedFromField))
+        ->Option.mapOr(false, field =>
+          switch field {
+          | Table.Field({isArray}) => isArray
+          | DerivedFrom(_) => false
+          }
+        )
       all
-      ->Array.push(IndexDefinition.single(~tableName=derivedFromField.derivedFromEntity, ~column))
+      ->Array.push(
+        isList
+          ? IndexDefinition.make(
+              ~tableName=derivedFromField.derivedFromEntity,
+              ~columns=[{name: column, direction: Table.Asc}],
+              ~method="gin",
+            )
+          : IndexDefinition.single(~tableName=derivedFromField.derivedFromEntity, ~column),
+      )
       ->ignore
     })
   )
