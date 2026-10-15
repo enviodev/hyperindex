@@ -1575,9 +1575,11 @@ impl SystemConfig {
         // itself reads no files, so they're loaded up front. Findings from this
         // parse are dropped — `parse_subgraph` reports them properly.
         let mut files = HashMap::new();
+        let mut mapping_files = Vec::new();
         let mut discard = crate::subgraph::errors::Report::new();
         if let Some(parsed) = crate::subgraph::manifest::parse(&manifest, &mut discard) {
             for source in parsed.all_sources() {
+                mapping_files.push(source.mapping_file.clone());
                 for abi_file in source.abis.values() {
                     if let Ok(body) = std::fs::read_to_string(root.join(abi_file)) {
                         // Manifests spell these with and without a leading
@@ -1589,7 +1591,7 @@ impl SystemConfig {
             }
         }
 
-        let mapping_sources = crate::subgraph::usage::gather(root);
+        let mapping_sources = crate::subgraph::usage::gather_with_mappings(root, &mapping_files);
 
         let root_str = root.to_str().unwrap_or(".").to_string();
         let mut config = Self::parse_subgraph(

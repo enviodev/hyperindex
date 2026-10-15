@@ -12,8 +12,16 @@
 
 import BigNumber from "bignumber.js";
 import * as GraphNodeDecimal from "./graph-node-decimal.ts";
-import { keccak256 as viemKeccak256, toHex, hexToBytes, decodeAbiParameters, parseAbiParameters } from "viem";
-import { currentScope } from "./scope.ts";
+import {
+  keccak256 as viemKeccak256,
+  toHex,
+  hexToBytes,
+  decodeAbiParameters,
+  encodeAbiParameters,
+  parseAbiParameters,
+  type AbiParameter,
+} from "viem";
+import { currentScope, type Scope } from "./scope.ts";
 import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-enums.ts";
 import { parseSignature, splitTypes } from "./abi-types.ts";
 import {
@@ -63,12 +71,28 @@ function byteWidth(value: bigint): number {
   return size;
 }
 
+/**
+ * graph-ts' `BigInt.toU32()`/`toU64()`: the minimal two's-complement
+ * little-endian bytes, zero-padded to the width — so -1 (the byte 0xff) is
+ * 255 — overflowing only when a byte past the width is set.
+ */
+function unsignedFromSignedBytes(value: bigint, size: number, target: string): bigint {
+  if (value >= 0n) return fitted(value, 0n, (1n << BigInt(size * 8)) - 1n, target);
+  const width = byteWidth(value);
+  if (width > size) {
+    throw new Error(`Envio Subgraph: ${value} does not fit in an ${target}.`);
+  }
+  return BigInt.asUintN(width * 8, value);
+}
+
 function fitted(value: bigint, min: bigint, max: bigint, target: string): bigint {
   if (value < min || value > max) {
     throw new Error(`Envio Subgraph: ${value} does not fit in an ${target}.`);
   }
   return value;
 }
+
+const utf8Decoder = new TextDecoder("utf-8");
 
 export class ByteArray extends Uint8Array {
   static fromHexString(hex: string): ByteArray {
@@ -105,8 +129,13 @@ export class ByteArray extends Uint8Array {
   toHexString(): string {
     return toHex(this as Uint8Array);
   }
+  /**
+   * graph-node's `bytes_to_string`: UTF-8, invalid sequences replaced, and the
+   * trailing NULs of a fixed-size buffer trimmed — a bytes32 symbol (MKR) reads
+   * as `MKR`, and Aave's `id.toString() == "POOL"` holds.
+   */
   toString(): string {
-    return this.toHexString();
+    return utf8Decoder.decode(this).replace(/\u0000+$/, "");
   }
   toBase58(): string {
     throw unsupported("ByteArray.toBase58", "a mapping handler");
@@ -277,7 +306,7 @@ class BigInt_ extends Uint8Array {
     return Number(fitted(this.value, -2147483648n, 2147483647n, "i32"));
   }
   toU32(): number {
-    return Number(fitted(this.value, 0n, 4294967295n, "u32"));
+    return Number(unsignedFromSignedBytes(this.value, 4, "u32"));
   }
   toI64(): bigint {
     return this.value;
@@ -335,7 +364,7 @@ class BigInt_ extends Uint8Array {
     return this.value >= -2147483648n && this.value <= 2147483647n;
   }
   toU64(): bigint {
-    return this.value;
+    return unsignedFromSignedBytes(this.value, 8, "u64");
   }
   sqrt(): BigInt_ {
     if (this.value < 0n) {
@@ -369,24 +398,54 @@ class BigInt_ extends Uint8Array {
 export { BigInt_ as BigInt };
 
 /**
+ * Carried by each BigNumber `value` handed to envio's store: the decimal it was
+ * made from, so an entity read back from memory isn't printed and parsed again.
+ */
+const DECIMAL = Symbol("envio.subgraph.decimal");
+
+/** Mappings parse the same few literals over and over: `"1"`, `"10"`, `"0"`. */
+const parsedDecimals = new Map<string, GraphNodeDecimal.Decimal>();
+
+function parseDecimal(text: string): GraphNodeDecimal.Decimal {
+  let decimal = parsedDecimals.get(text);
+  if (decimal === undefined) {
+    decimal = GraphNodeDecimal.parse(text);
+    if (parsedDecimals.size >= 1024) parsedDecimals.clear();
+    parsedDecimals.set(text, decimal);
+  }
+  return decimal;
+}
+
+/**
  * Every value is held as graph-node holds it: normalized to 34 significant
- * digits by `graph-node-decimal`, on construction and after every operation.
- * `value` is the same number for envio's store and comparisons.
+ * digits by `graph-node-decimal` after every operation, and once more as it
+ * would be crossing back into graph-node's host (`BigDecimal::new`), which is
+ * what a later operation, `toString` or the store sees. `value` is the same
+ * number for envio's store, made only when something asks for it.
  */
 export class BigDecimal {
   readonly decimal: GraphNodeDecimal.Decimal;
-  readonly value: BigNumber;
+  private _value: BigNumber | undefined;
 
   constructor(value: GraphNodeDecimal.Decimal | BigNumber | BigInt_ | string | number) {
     this.decimal =
       value instanceof BigInt_
         ? GraphNodeDecimal.fromInteger(value.value)
         : value instanceof BigNumber
-          ? GraphNodeDecimal.parse(value.toFixed())
+          ? ((value as BigNumber & { [DECIMAL]?: GraphNodeDecimal.Decimal })[DECIMAL] ??
+            GraphNodeDecimal.parse(value.toFixed()))
           : typeof value === "object"
             ? GraphNodeDecimal.normalize(value)
-            : GraphNodeDecimal.parse(String(value));
-    this.value = new BigNumber(GraphNodeDecimal.format(this.decimal));
+            : parseDecimal(String(value));
+  }
+
+  get value(): BigNumber {
+    if (this._value === undefined) {
+      const value = new BigNumber(GraphNodeDecimal.format(this.decimal));
+      (value as BigNumber & { [DECIMAL]?: GraphNodeDecimal.Decimal })[DECIMAL] = this.decimal;
+      this._value = value;
+    }
+    return this._value;
   }
 
   static fromString(value: string): BigDecimal {
@@ -396,7 +455,7 @@ export class BigDecimal {
     return new BigDecimal(0);
   }
   static compare(a: BigDecimal, b: BigDecimal): number {
-    return a.value.comparedTo(b.value);
+    return GraphNodeDecimal.compare(a.decimal, b.decimal);
   }
 
   toString(): string {
@@ -418,22 +477,22 @@ export class BigDecimal {
     return new BigDecimal(GraphNodeDecimal.divide(this.decimal, other.decimal));
   }
   equals(other: BigDecimal): boolean {
-    return this.value.isEqualTo(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) === 0;
   }
   notEqual(other: BigDecimal): boolean {
-    return !this.value.isEqualTo(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) !== 0;
   }
   lt(other: BigDecimal): boolean {
-    return this.value.isLessThan(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) < 0;
   }
   le(other: BigDecimal): boolean {
-    return this.value.isLessThanOrEqualTo(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) <= 0;
   }
   gt(other: BigDecimal): boolean {
-    return this.value.isGreaterThan(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) > 0;
   }
   ge(other: BigDecimal): boolean {
-    return this.value.isGreaterThanOrEqualTo(other.value);
+    return GraphNodeDecimal.compare(this.decimal, other.decimal) >= 0;
   }
   // graph-ts negates by subtracting from zero, which normalizes like any other
   // operation.
@@ -728,6 +787,7 @@ export class Value {
     return this.toMatrix().map((row) => row.map((value) => value.toI64()));
   }
   displayData(): string {
+    if (this.data instanceof ByteArray) return this.data.toHexString();
     return String(this.data);
   }
   displayKind(): string {
@@ -1057,29 +1117,136 @@ function entityContext(entityType: string) {
   return table;
 }
 
+/**
+ * What the register passes have written, at the position of the event that
+ * wrote it. Nothing is in envio's store at fetch time, so this is the register
+ * pass's only notion of state: a handler that loads an entity an earlier
+ * creating handler saved — Aave's `handleReserveInitialized` before
+ * `ATokenContract.create()`, Venus's `getOrCreateMarket` — sees it, as it
+ * would on graph-node, instead of null. A read only sees writes from strictly
+ * earlier events on its chain; anything evicted past the cap, or written by a
+ * handler that creates nothing (and so gets no register pass), reads null as
+ * before.
+ */
+const registerStore = new Map<string, { position: number; row: Record<string, unknown> | null }[]>();
+/** Least recently used entities go first: a factory's own entity stays hot. */
+const REGISTER_STORE_LIMIT = 50_000;
+const REGISTER_STORE_VERSIONS = 4;
+
+function registerStoreKey(chainId: number, entityType: string, id: string): string {
+  return `${chainId}\u0000${entityType}\u0000${id}`;
+}
+
+let registerMissHook: ((scope: Scope, key: string) => void) | null = null;
+
+/** Called on a register-store miss; may suspend the pass to wait on another. */
+export function installRegisterMissHook(hook: typeof registerMissHook) {
+  registerMissHook = hook;
+}
+
+function registerRead(scope: Scope, entityType: string, id: string, sameBlock: boolean, wait = true) {
+  const key = registerStoreKey(scope.dataSource.chainId, entityType, id);
+  if (scope.writes?.has(key)) return toEntity(entityType, scope.writes.get(key));
+  const position = scope.position ?? 0;
+  const versions = registerStore.get(key) ?? [];
+  if (versions.length > 0) {
+    registerStore.delete(key);
+    registerStore.set(key, versions);
+  }
+  for (let index = versions.length - 1; index >= 0; index--) {
+    const version = versions[index];
+    if (version.position >= position) continue;
+    if (sameBlock && Math.floor(version.position / POSITION_BLOCK) !== Math.floor(position / POSITION_BLOCK)) {
+      return null;
+    }
+    return toEntity(entityType, version.row);
+  }
+  if (wait) registerMissHook?.(scope, key);
+  return null;
+}
+
+/** An event's place in its chain: block, then log index. */
+export const POSITION_BLOCK = 1_000_000;
+
+/** Keeps a completed register round's writes for the passes after it. */
+export function commitRegisterWrites(scope: Scope): void {
+  const writes = scope.writes;
+  scope.writes = undefined;
+  if (!writes || writes.size === 0) return;
+  const position = scope.position ?? 0;
+  for (const [key, row] of writes) {
+    let versions = registerStore.get(key);
+    if (versions) {
+      registerStore.delete(key);
+    } else {
+      versions = [];
+      if (registerStore.size >= REGISTER_STORE_LIMIT) {
+        registerStore.delete(registerStore.keys().next().value!);
+      }
+    }
+    registerStore.set(key, versions);
+    const at = versions.findIndex((version) => version.position >= position);
+    if (at === -1) versions.push({ position, row });
+    else if (versions[at].position === position) versions[at] = { position, row };
+    else versions.splice(at, 0, { position, row });
+    if (versions.length > REGISTER_STORE_VERSIONS) versions.shift();
+  }
+}
+
+/** Between test indexers, whose chains restart at block zero. */
+export function resetRegisterStore(): void {
+  registerStore.clear();
+}
+
+/**
+ * A field a new entity never set is null in graph-node's store; envio's write
+ * needs it spelled out — a list column refuses a missing value.
+ */
+function withUnsetAsNull(scope: Scope, entityType: string, row: Record<string, unknown>) {
+  const refFields = new Set(scope.schema.entityRefFields[entityType] ?? []);
+  for (const [field, declared] of Object.entries(scope.schema.entityFieldTypes[entityType] ?? {})) {
+    if (declared.derivedFrom) continue;
+    const column = refFields.has(field) ? `${field}_id` : field;
+    if (!(column in row)) row[column] = null;
+  }
+  return row;
+}
+
+function registerWrite(scope: Scope, entityType: string, id: string, row: Record<string, unknown> | null) {
+  scope.writes ??= new Map();
+  scope.writes.set(registerStoreKey(scope.dataSource.chainId, entityType, id), row);
+}
+
 const storeImpl = {
   get(entityType: string, id: string): Entity | null {
-    const { mode } = currentScope();
-    // Nothing has been written at fetch time, so the register pass reads null
-    // rather than a value that would differ between the two passes.
-    if (mode === "register") return null;
+    const scope = currentScope();
+    if (scope.mode === "register") return registerRead(scope, entityType, id, false);
     return toEntity(entityType, entityContext(entityType).getSync(id));
   },
   get_in_block(entityType: string, id: string): Entity | null {
-    const { mode } = currentScope();
-    if (mode === "register") return null;
+    const scope = currentScope();
+    if (scope.mode === "register") return registerRead(scope, entityType, id, true);
     return toEntity(entityType, entityContext(entityType).getInBlockSync(id));
   },
   set(entityType: string, id: string, data: Entity): void {
-    const { mode } = currentScope();
-    if (mode === "register") return;
+    const scope = currentScope();
     const row = toRow(entityType, data);
     row.id = id;
-    entityContext(entityType).set(row);
+    // graph-node merges a save onto the stored entity (EntityCache::set is an
+    // Update, merged by merge_remove_null_fields): a field this instance
+    // doesn't set keeps its stored value, an explicit null clears it. ENS's
+    // handleAddrChanged saves a fresh `new Resolver(id)` and relies on it.
+    if (scope.mode === "register") {
+      const stored = registerRead(scope, entityType, id, false, false);
+      return registerWrite(scope, entityType, id, stored ? { ...toRow(entityType, stored), ...row } : row);
+    }
+    const table = entityContext(entityType);
+    const stored = table.getSync(id);
+    table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {
-    const { mode } = currentScope();
-    if (mode === "register") return;
+    const scope = currentScope();
+    if (scope.mode === "register") return registerWrite(scope, entityType, id, null);
     entityContext(entityType).deleteUnsafe(id);
   },
   /**
@@ -1095,6 +1262,15 @@ const storeImpl = {
       throw unknown(`the derived field ${entityType}.${field}`, "a mapping handler");
     }
     const target = declared.target;
+    // graph-node answers with every entity whose list holds the id; envio's
+    // lookups only match a column equal to a value, so the list would read as
+    // empty — refused rather than answered wrong.
+    if (schema.entityListFields[target]?.includes(declared.derivedFrom)) {
+      throw unsupported(
+        `loading ${entityType}.${field}, derived from the list field ${target}.${declared.derivedFrom}`,
+        "a mapping handler",
+      );
+    }
     const back = schema.entityRefFields[target]?.includes(declared.derivedFrom)
       ? `${declared.derivedFrom}_id`
       : declared.derivedFrom;
@@ -1387,6 +1563,45 @@ export function ethereumValueToJs(value: EthereumValue): unknown {
   }
 }
 
+function abiParameterOf(value: EthereumValue): AbiParameter {
+  switch (value.kind) {
+    case EthereumValueKind.ADDRESS:
+      return { type: "address" };
+    case EthereumValueKind.BOOL:
+      return { type: "bool" };
+    case EthereumValueKind.STRING:
+      return { type: "string" };
+    case EthereumValueKind.BYTES:
+      return { type: "bytes" };
+    case EthereumValueKind.FIXED_BYTES:
+      return { type: `bytes${(value.data as Bytes).length}` };
+    case EthereumValueKind.INT:
+      return { type: "int256" };
+    case EthereumValueKind.UINT:
+      return { type: "uint256" };
+    case EthereumValueKind.ARRAY:
+    case EthereumValueKind.FIXED_ARRAY: {
+      const items = value.data as EthereumValue[];
+      // An empty array encodes as its length alone, whatever it holds.
+      const element: AbiParameter = items.length > 0 ? abiParameterOf(items[0]) : { type: "uint256" };
+      const suffix = value.kind === EthereumValueKind.ARRAY ? "[]" : `[${items.length}]`;
+      return { ...element, type: `${element.type}${suffix}` } as AbiParameter;
+    }
+    case EthereumValueKind.TUPLE:
+      return { type: "tuple", components: (value.data as EthereumValue[]).map(abiParameterOf) };
+    default:
+      throw new Error(`ethereum.encode can't encode a value of kind ${value.kind}`);
+  }
+}
+
+/**
+ * A graph-ts chain object as the runtime fills it in: `shaped` sets each field
+ * off the decoded payload, so the constructor a mapping would call is skipped.
+ */
+function blank<T>(Class: abstract new (...args: any[]) => T): T {
+  return Reflect.construct(Class, []) as T;
+}
+
 class EthereumBlock {
   declare hash: Bytes;
   declare parentHash: Bytes;
@@ -1403,6 +1618,43 @@ class EthereumBlock {
   declare totalDifficulty: BigInt_;
   declare size: BigInt_ | null;
   declare baseFeePerGas: BigInt_ | null;
+
+  constructor(
+    hash: Bytes,
+    parentHash: Bytes,
+    unclesHash: Bytes,
+    author: Address,
+    stateRoot: Bytes,
+    transactionsRoot: Bytes,
+    receiptsRoot: Bytes,
+    number: BigInt_,
+    gasUsed: BigInt_,
+    gasLimit: BigInt_,
+    timestamp: BigInt_,
+    difficulty: BigInt_,
+    totalDifficulty: BigInt_,
+    size: BigInt_ | null,
+    baseFeePerGas: BigInt_ | null,
+  ) {
+    if (arguments.length === 0) return;
+    Object.assign(this, {
+      hash,
+      parentHash,
+      unclesHash,
+      author,
+      stateRoot,
+      transactionsRoot,
+      receiptsRoot,
+      number,
+      gasUsed,
+      gasLimit,
+      timestamp,
+      difficulty,
+      totalDifficulty,
+      size,
+      baseFeePerGas,
+    });
+  }
 }
 
 class EthereumTransaction {
@@ -1415,6 +1667,21 @@ class EthereumTransaction {
   declare gasPrice: BigInt_;
   declare input: Bytes;
   declare nonce: BigInt_;
+
+  constructor(
+    hash: Bytes,
+    index: BigInt_,
+    from: Address,
+    to: Address | null,
+    value: BigInt_,
+    gasLimit: BigInt_,
+    gasPrice: BigInt_,
+    input: Bytes,
+    nonce: BigInt_,
+  ) {
+    if (arguments.length === 0) return;
+    Object.assign(this, { hash, index, from, to, value, gasLimit, gasPrice, input, nonce });
+  }
 }
 
 class EthereumEventParam {
@@ -1458,6 +1725,35 @@ class EthereumTransactionReceipt {
   declare status: BigInt_;
   declare root: Bytes;
   declare logsBloom: Bytes;
+
+  constructor(
+    transactionHash: Bytes,
+    transactionIndex: BigInt_,
+    blockHash: Bytes,
+    blockNumber: BigInt_,
+    cumulativeGasUsed: BigInt_,
+    gasUsed: BigInt_,
+    contractAddress: Address,
+    logs: EthereumLog[],
+    status: BigInt_,
+    root: Bytes,
+    logsBloom: Bytes,
+  ) {
+    if (arguments.length === 0) return;
+    Object.assign(this, {
+      transactionHash,
+      transactionIndex,
+      blockHash,
+      blockNumber,
+      cumulativeGasUsed,
+      gasUsed,
+      contractAddress,
+      logs,
+      status,
+      root,
+      logsBloom,
+    });
+  }
 }
 
 class EthereumCall {
@@ -1576,6 +1872,27 @@ function memoised<V>(compile: (key: string) => V): (key: string) => V {
 const tupleComponents = (type: string) => splitTypes(type.slice(1, type.lastIndexOf(")")));
 
 /**
+ * envio's decoder hands a `bytesN` over as the whole 32-byte word it was
+ * encoded in, topic or body; graph-node keeps its first N bytes
+ * (runtime/wasm/src/to_from/external.rs).
+ */
+function fixedBytes(type: string): Converter<Bytes> {
+  const end = 2 + 2 * Number(type.slice("bytes".length));
+  return (raw) => Bytes.fromHexString((raw as string).slice(0, end));
+}
+
+/**
+ * The ABI type an event parameter's value arrives as. An indexed `string`,
+ * `bytes`, array or tuple is only its topic, the keccak hash, which graph-node
+ * hands over as a 32-byte `FixedBytes` and graph codegen reads as `bytes32`.
+ */
+function arrivesAs(input: EventInput): string {
+  const { type } = input;
+  const hashed = type === "string" || type === "bytes" || type.startsWith("(") || type.endsWith("]");
+  return input.indexed && hashed ? "bytes32" : type;
+}
+
+/**
  * A decoded ABI value as the `ethereum.Value` graph-node would hand the
  * mapping, typed by the ABI rather than by its JS shape: a `string` holding
  * `0x…` is still a string.
@@ -1588,15 +1905,20 @@ const ethereumConverter: (type: string) => Converter<EthereumValue> = memoised((
   }
   if (type.startsWith("(")) {
     const components = tupleComponents(type).map(ethereumConverter);
-    return (raw) =>
-      EthereumValue.fromTuple(components.map((component, index) => component((raw as unknown[])[index])));
+    return (raw) => {
+      // envio's decoder keys a tuple by its components' names when the ABI
+      // gives them, in ABI order; viem and unnamed ABIs give an array.
+      const values = Array.isArray(raw) ? raw : Object.values(raw as object);
+      return EthereumValue.fromTuple(components.map((component, index) => component(values[index])));
+    };
   }
   if (type === "address") return (raw) => EthereumValue.fromAddress(Address.fromString(raw as string));
   if (type === "bool") return (raw) => EthereumValue.fromBoolean(raw as boolean);
   if (type === "string") return (raw) => EthereumValue.fromString(raw as string);
   if (type === "bytes") return (raw) => EthereumValue.fromBytes(Bytes.fromHexString(raw as string));
   if (type.startsWith("bytes")) {
-    return (raw) => EthereumValue.fromFixedBytes(Bytes.fromHexString(raw as string));
+    const bytes = fixedBytes(type);
+    return (raw) => EthereumValue.fromFixedBytes(bytes(raw));
   }
   // viem decodes the narrow integer types to numbers.
   const fromInt = type.startsWith("uint") ? EthereumValue.fromUnsignedBigInt : EthereumValue.fromSignedBigInt;
@@ -1623,7 +1945,8 @@ function graphValue(type: string): Converter<unknown> {
   }
   if (type === "address") return (raw) => Address.fromString(raw as string);
   if (type === "bool" || type === "string") return (raw) => raw;
-  if (type.startsWith("bytes")) return (raw) => Bytes.fromHexString(raw as string);
+  if (type === "bytes") return (raw) => Bytes.fromHexString(raw as string);
+  if (type.startsWith("bytes")) return fixedBytes(type);
   if (SMALL_INT.test(type)) return (raw) => Number(raw);
   return (raw) => new BigInt_(raw as bigint);
 }
@@ -1637,50 +1960,110 @@ function graphValue(type: string): Converter<unknown> {
  * convert the block, the transaction and every parameter — and envio runs each
  * handler twice over the same payload, so anything eager is paid twice.
  */
+const FROM_ENVIO = Symbol("envio.subgraph.event");
+
+/** What a mapping-built event is, for anything that names where it came from. */
+const BUILT_EVENT: EventKind = { location: "an ethereum.Event the mapping built", inputs: [], hasReceipt: false };
+
+/** The event the runtime hands a handler, as the class the handler declares. */
+export function makeEvent(raw: unknown, kind: EventKind, EventClass: Function): EthereumEvent {
+  return Reflect.construct(EthereumEvent, [FROM_ENVIO, raw, kind], EventClass) as EthereumEvent;
+}
+
 class EthereumEvent {
+  private _raw: any = null;
+  private _kind: EventKind = BUILT_EVENT;
   private _address: Address | undefined;
   private _logIndex: BigInt_ | undefined;
+  private _transactionLogIndex: BigInt_ | undefined;
+  private _logType: string | null = null;
   private _block: EthereumBlock | undefined;
   private _transaction: EthereumTransaction | undefined;
-  private _receipt: EthereumTransactionReceipt | undefined;
+  private _receipt: EthereumTransactionReceipt | null | undefined;
   private _parameters: EthereumEventParam[] | undefined;
   private _params: Record<string, unknown> | undefined;
 
+  /**
+   * graph-ts' own, for a mapping that builds an event — Notional synthesizes
+   * one in a block handler. The runtime goes through `makeEvent` instead.
+   */
   constructor(
-    private readonly _raw: any,
-    private readonly _kind: EventKind,
-  ) {}
+    address: Address,
+    logIndex: BigInt_,
+    transactionLogIndex: BigInt_,
+    logType: string | null,
+    block: EthereumBlock,
+    transaction: EthereumTransaction,
+    parameters: EthereumEventParam[],
+    receipt: EthereumTransactionReceipt | null,
+  ) {
+    if ((address as unknown) === FROM_ENVIO) {
+      this._raw = logIndex;
+      this._kind = transactionLogIndex as unknown as EventKind;
+      return;
+    }
+    this._address = address;
+    this._logIndex = logIndex;
+    this._transactionLogIndex = transactionLogIndex;
+    this._logType = logType;
+    this._block = block;
+    this._transaction = transaction;
+    this._parameters = parameters ?? [];
+    this._receipt = receipt ?? null;
+  }
 
   get address(): Address {
     return (this._address ??= Address.fromString(this._raw.srcAddress));
   }
+  set address(value: Address) {
+    this._address = value;
+  }
   get logIndex(): BigInt_ {
     return (this._logIndex ??= BigInt_.fromI32(this._raw.logIndex));
   }
+  set logIndex(value: BigInt_) {
+    this._logIndex = value;
+  }
   get block(): EthereumBlock {
-    return (this._block ??= shaped(new EthereumBlock(), BLOCK_SHAPE, this._raw.block));
+    return (this._block ??= shaped(blank(EthereumBlock), BLOCK_SHAPE, this._raw.block));
+  }
+  set block(value: EthereumBlock) {
+    this._block = value;
   }
   get transaction(): EthereumTransaction {
-    return (this._transaction ??= shaped(new EthereumTransaction(), TRANSACTION_SHAPE, this._raw.transaction));
+    return (this._transaction ??= shaped(blank(EthereumTransaction), TRANSACTION_SHAPE, this._raw.transaction));
+  }
+  set transaction(value: EthereumTransaction) {
+    this._transaction = value;
   }
   get receipt(): EthereumTransactionReceipt | null {
+    if (this._receipt !== undefined) return this._receipt;
     if (!this._kind.hasReceipt) return null;
-    if (this._receipt) return this._receipt;
-    const receipt = shaped(new EthereumTransactionReceipt(), RECEIPT_SHAPE, this._raw.transaction);
+    const receipt = shaped(blank(EthereumTransactionReceipt), RECEIPT_SHAPE, this._raw.transaction);
     receipt.blockHash = this.block.hash;
     receipt.blockNumber = this.block.number;
     refusedGetter(receipt, "logs", "event.receipt.logs", this._kind.location);
     return (this._receipt = receipt);
   }
+  set receipt(value: EthereumTransactionReceipt | null) {
+    this._receipt = value;
+  }
   // graph-node reads it off the log, where no Ethereum client sets it.
   get logType(): string | null {
-    return null;
+    return this._logType;
+  }
+  set logType(value: string | null) {
+    this._logType = value;
   }
   get parameters(): EthereumEventParam[] {
     return (this._parameters ??= this._kind.inputs.map(
       (input) =>
-        new EthereumEventParam(input.name, ethereumConverter(input.type)(this._raw.params?.[input.key])),
+        new EthereumEventParam(input.name, ethereumConverter(arrivesAs(input))(this._raw.params?.[input.key])),
     ));
+  }
+  set parameters(value: EthereumEventParam[]) {
+    this._parameters = value;
+    this._params = undefined;
   }
   /**
    * By name, for a handler not typed with a generated class — a generated
@@ -1690,13 +2073,23 @@ class EthereumEvent {
   get params(): Record<string, unknown> {
     if (this._params) return this._params;
     const params: Record<string, unknown> = {};
+    if (this._raw === null) {
+      for (const parameter of this.parameters) params[parameter.name] = parameter.value;
+      return (this._params = params);
+    }
     this._kind.inputs.forEach((input, index) => {
-      params[input.name || `param${index}`] = graphConverter(input.type)(this._raw.params?.[input.key]);
+      params[input.name || `param${index}`] = graphConverter(arrivesAs(input))(this._raw.params?.[input.key]);
     });
     return (this._params = params);
   }
-  get transactionLogIndex(): never {
-    throw unsupported("event.transactionLogIndex", this._kind.location);
+  // graph-node answers the log's index in its block here (trigger.rs,
+  // `transaction_log_index`): Geth never set the per-transaction one, and
+  // subgraphs read it only to tell logs apart.
+  get transactionLogIndex(): BigInt_ {
+    return (this._transactionLogIndex ??= this.logIndex);
+  }
+  set transactionLogIndex(value: BigInt_) {
+    this._transactionLogIndex = value;
   }
 }
 
@@ -1732,8 +2125,16 @@ const ethereumImpl = {
       return null;
     }
   },
-  encode(_value: EthereumValue): Bytes | null {
-    throw unsupported("ethereum.encode", "a mapping handler");
+  // graph-node's `ethabi::encode(&[token])`, which is Solidity's `abi.encode`
+  // of the one value. A token carries no integer width and every integer
+  // takes a full word, so 256 bits encodes the same bytes.
+  encode(value: EthereumValue): Bytes | null {
+    try {
+      const parameters: readonly AbiParameter[] = [abiParameterOf(value)];
+      return Bytes.fromHexString(encodeAbiParameters(parameters, [ethereumValueToJs(value)] as readonly unknown[]));
+    } catch {
+      return null;
+    }
   },
   getBalance(address: Address): BigInt_ {
     return BigInt_.fromString(hostsOrThrow().getBalance(address.toHexString()));
@@ -1750,9 +2151,15 @@ export const ethereum = strictNamespace("ethereum", ethereumImpl);
 // ---------------------------------------------------------------------------
 
 let registerHook: ((templateName: string, address: string) => void) | null = null;
+let handlerCreateHook: ((templateName: string, address: string) => void) | null = null;
 
 export function installRegisterHook(hook: typeof registerHook) {
   registerHook = hook;
+}
+
+/** Sees each create() a handler (not a register pass) makes. */
+export function installHandlerCreateHook(hook: typeof handlerCreateHook) {
+  handlerCreateHook = hook;
 }
 
 export class DataSourceTemplate {
@@ -1763,9 +2170,10 @@ export class DataSourceTemplate {
       throw new Error(`${name}.create() was called without an address parameter`);
     }
     const key = `${name}:${address.toLowerCase()}`;
+    if (mode !== "register") return handlerCreateHook?.(name, address);
     // Replays rerun the mapping from the top, so registration is deduped
     // rather than repeated.
-    if (mode !== "register" || registered.has(key)) return;
+    if (registered.has(key)) return;
     registered.add(key);
     registerHook?.(name, address);
   }
@@ -1842,6 +2250,14 @@ function interpolate(message: string, args: string[]): string {
   return message.replace(/\{\}/g, () => args[index++] ?? "{}");
 }
 
+// The register pass runs the mapping against a store that reads null, so what
+// it would log describes a world that doesn't exist; the handler pass logs it
+// for real.
+function userLog(level: "debug" | "info" | "warn" | "error", message: string, args: string[]) {
+  const scope = currentScope();
+  if (scope.mode === "register") return;
+  scope.context.log?.[level](interpolate(message, args));
+}
 
 const logImpl = {
   Level: LogLevel,
@@ -1860,16 +2276,16 @@ const logImpl = {
     }
   },
   debug(message: string, args: string[] = []) {
-    currentScope().context.log?.debug(interpolate(message, args));
+    userLog("debug", message, args);
   },
   info(message: string, args: string[] = []) {
-    currentScope().context.log?.info(interpolate(message, args));
+    userLog("info", message, args);
   },
   warning(message: string, args: string[] = []) {
-    currentScope().context.log?.warn(interpolate(message, args));
+    userLog("warn", message, args);
   },
   error(message: string, args: string[] = []) {
-    currentScope().context.log?.error(interpolate(message, args));
+    userLog("error", message, args);
   },
   // graph-node halts the subgraph on critical.
   critical(message: string, args: string[] = []): never {
@@ -2050,7 +2466,7 @@ export const ens = strictNamespace("ens", ensImpl);
 
 /** graph-ts hands a block handler an `ethereum.Block`; only `number` is free. */
 export function makeBlockHandlerBlock(blockNumber: number, location: string): EthereumBlock {
-  const block = new EthereumBlock();
+  const block = blank(EthereumBlock);
   block.number = BigInt_.fromI32(blockNumber);
   Object.defineProperty(block, "timestamp", {
     enumerable: true,
@@ -2098,12 +2514,41 @@ export function changetype<T>(value: unknown): T {
 // `changetype<GeneratedTuple>(result[0].toTuple())` is a pointer reinterpret
 // in AssemblyScript; in JS the named getters live on the generated class.
 // The load hook rewrites that call to this helper so `.value` etc. resolve.
-export function retagChangetype(ctor: unknown, value: unknown): unknown {
+export function retagChangetype(ctor: unknown, value: unknown, keepInstances = false): unknown {
   if (value !== null && typeof value === "object" && typeof ctor === "function") {
+    if (keepInstances) {
+      // An `as` cast to a class the value already is, or extends, is an
+      // upcast: the value keeps the getters of its own class.
+      if (value instanceof (ctor as Function)) return value;
+      // Across to a sibling — GMX casts one EventLog1 to EventLog2 for a
+      // helper — AssemblyScript reads the same object through the other
+      // class and leaves the original as it was, so the original isn't
+      // retagged: the cast reads a copy.
+      const current = Object.getPrototypeOf(value)?.constructor;
+      if (typeof current === "function" && !((ctor as Function).prototype instanceof current)) {
+        return Object.defineProperties(
+          Object.create((ctor as Function).prototype),
+          Object.getOwnPropertyDescriptors(value),
+        );
+      }
+    }
     const proto = (ctor as Function).prototype;
     if (proto) Object.setPrototypeOf(value, proto);
   }
   return changetype(value);
+}
+
+/**
+ * `x.toTupleArray<Struct>()`: each element is a `Struct` in AssemblyScript, and
+ * graph codegen's getters live on that class. A matrix nests the arrays.
+ */
+export function retagEach(ctor: unknown, values: unknown): unknown {
+  if (!Array.isArray(values)) return values;
+  for (const value of values) {
+    if (value instanceof EthereumTuple) retagChangetype(ctor, value, true);
+    else if (Array.isArray(value)) retagEach(ctor, value);
+  }
+  return values;
 }
 
 /**
@@ -2185,7 +2630,7 @@ function asGraphBigInt(value: Uint8Array): BigInt_ {
 }
 
 const typeConversionImpl = {
-  bytesToString: (bytes: Uint8Array) => new TextDecoder().decode(bytes),
+  bytesToString: (bytes: Uint8Array) => new ByteArray(bytes).toString(),
   bytesToHex: (bytes: Uint8Array) => new ByteArray(bytes).toHexString(),
   // graph-ts types the argument as the byte array a BigInt is in
   // AssemblyScript. This one carries its value instead of laying those bytes

@@ -44,6 +44,7 @@ by name. Newer than 0.0.9 is a §7 error.
 | Feature | Mapping | Status |
 |---|---|---|
 | Data source (`address`, `abi`, `startBlock`, `endBlock`) | `contracts` + `chains[].contracts`, `start_block`/`end_block` | ✅ |
+| Data source without `source.address` (ENS's `Resolver`) | graph-node matches it against every contract's logs; an address-less contract whose handlers register as wildcard. A log matching both it and an addressed data source runs both | ✅ |
 | `network: mainnet` | `chains[].id` through a snapshot of The Graph's networks registry (ids and aliases; `scripts/sync-graph-networks.mjs`, drift reported in CI), then Envio's own chain names | ✅ |
 | Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper | ✅ |
 | `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — the receipt-only ones are HyperSync fields (§6b); `receipt.logs` → §7 error on access | ⚠️ |
@@ -120,15 +121,15 @@ query and is dropped; stored, it is an error.
 
 | API | Mapping |
 |---|---|
-| `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides. A relation is the related id under the field's own name in graph-ts and `<field>_id` in envio, renamed at the boundary |
+| `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides. A save merges onto the stored entity, as graph-node's does: a field the instance doesn't set keeps its stored value, an explicit null clears it. A relation is the related id under the field's own name in graph-ts and `<field>_id` in envio, renamed at the boundary |
 | Integer division | AssemblyScript divides two integers as integers and JavaScript doesn't, and the difference travels into ids and `Int` columns. Each `a / b` and `a /= b` in a project file is rewritten as it loads (§6a) to a helper that truncates only when both operands really are integers |
 | A handler the mapping doesn't export | skipped, as `graph build` does — it doesn't check either, and Aave's mainnet manifest names one its mappings renamed years ago |
 | A field the schema declares that nothing has set | graph-node's store returns every column, envio's returns what was written — the shim answers `null` rather than refusing, so a mapping's null check reads the same |
 | `Entity.load`, `store.get`, derived loaders | sync try-read; miss → suspend (§5) |
 | `getInBlock` | never suspends, and checkpoint-filtered: the in-memory table spans the whole batch, so a hit counts only if its change record's checkpoint falls in the current block — everything else (including entities written in an *earlier* block of the same batch) = `null` |
 | `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary. `BigDecimal` arithmetic reproduces graph-node's digit for digit: every value is normalized to 34 significant digits through the `bigdecimal` 0.1.2 rounding graph-node pins (positives half up, negatives truncated), so residues match; checked against vectors that crate computes |
-| `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` (log's index within its tx — envio has no per-tx log index) → §7 error on access |
-| `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it is asked again (below), so a flaky RPC never fabricates `reverted` data |
+| `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` = `logIndex`, as graph-node answers it (no Ethereum client sets the per-transaction index; `chain/ethereum/src/trigger.rs`) |
+| `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A call the register pass already made at the same block is answered from its memo. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it is asked again (below), so a flaky RPC never fabricates `reverted` data |
 | `ethereum.Value` | its own class, tagged with graph-ts' ABI `ValueKind` from the ABI type (event inputs, call outputs, `ethereum.decode`'s type string); accessors refuse another kind exactly as graph-ts' asserts do |
 | `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
@@ -140,19 +141,36 @@ query and is dropped; stored, it is an error.
 | `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup |
 | `dataSource.context()` | persisted in an internal entity table |
 | `ipfs.cat/map`, `arweave.*` | effect + gateway, `cache: true`, suspend; a 404 is the cached `null`, a failing gateway is asked again |
-| `ens.nameByHash` | effect against the public ENSRainbow API, `cache: true`; `null` when its table lacks the hash (its 404), as graph-node's does; a failing lookup is asked again rather than cached as a miss |
+| `ens.nameByHash` | effect against ENSRainbow (`ENVIO_SUBGRAPH_ENS_RAINBOW_URL`, default the public `api.ensrainbow.io/v1/heal/`), `cache: true`, at most 32 lookups in flight; `null` when its table lacks the hash (its "Label not found" 404), as graph-node's does; a failing lookup is asked again, up to 5 attempts. A service that stays down — or a 404 that isn't ENSRainbow's — answers `null` for 5 minutes, as graph-node without a rainbow table does, with one warning and without caching those nulls. `off` skips lookups |
 
 **Register pass.** `dataSource.create` must reach envio's `contractRegister`,
 which runs at fetch time — before any entities exist. For each
 template-creating event the shim registers a wrapper that reruns the same
 mapping in register mode: `create()` → `context.chain.<Name>.add(addr)`
-(deduped, so replays are idempotent); writes/logs → no-ops; **reads → `null`**
-(no entity state exists at fetch time — a `create()` conditioned on loaded
-state can mis-register; documented caveat, rare in practice); host ops
-(`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
+(deduped, so replays are idempotent); logs → no-ops; **writes go to the
+register pass's own store, and reads see what an earlier register pass wrote**
+(no envio entity state exists at fetch time). A read sees only writes from
+strictly earlier events on its chain, for the 50k most recently used
+entities (an evicted one reads `null` again); a `once` block handler runs in register mode too, at its
+block, before the first register pass of its chain (Venus saves its
+Comptroller there); an entity saved only by a handler that creates nothing —
+which gets no register pass — or by a polling block handler reads `null`, so a
+`create()` conditioned on such state can still mis-register. A mapping that throws in the
+pass (usually on a `null` it would never see on graph-node) keeps whatever it
+registered before the throw; the handler pass surfaces its real errors. Host
+ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
 suspend-and-replay, capped at 100 rounds; a host op that fails fails the
 batch rather than dropping the registration. Safe because graph-node already
 requires mappings to be deterministic.
+
+Only handlers whose code can reach `DataSourceTemplate.create` get the pass:
+the addon follows each handler through the mapping's module graph (top-level
+functions, classes and variables, relative imports and re-exports, into
+`generated/templates.ts`), and anything it can't see — a file that doesn't
+parse or resolve, another package, a namespace import of graph-ts — counts as
+a create. A pool's swap handler no longer replays its mapping and its contract
+calls at fetch time. Concurrent passes share one in-flight request per op.
+`ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` restores the pass for every handler.
 
 ## 5. Sync bridge: try-sync, suspend, replay
 
@@ -250,7 +268,13 @@ classes call `DataSource.create`. Consequences:
   generated `try_` binding does). It emits an inline source map, so stack
   traces name the mapping's own lines, and refuses — located — what it can't
   rewrite faithfully. The runtime injects the few AS builtin globals generated
-  code uses (`changetype` = identity, `assert`).
+  code uses (`changetype` = identity, `assert`), and covers what AS's standard
+  library spells differently: an i64 is a bigint, so `+ - * % /` with an
+  integer on the other side stay i64 arithmetic (`timestamp.toI64() * 1000`),
+  `Date` takes and sets an i64, and `DataView` has `setUint64`/`getUint64`.
+  `matchstick-as` (which re-exports graph-ts' `log`) resolves to the shim too.
+  A handler's event is built as the generated class it declares, wherever the
+  handler is written — the manifest's file may only re-export it.
 - **Type safety is byte-identical by construction.** Editor and `tsc` see
   the project's own `generated/` files and the *real* `@graphprotocol/graph-ts`
   package types (still in the project's dependencies) — exactly what a
@@ -258,7 +282,9 @@ classes call `DataSource.create`. Consequences:
   resolution only, never at type level.
 - **Codegen:** if the generated code is missing (usually gitignored), envio
   runs the `codegen` command of the project's own graph-cli
-  (`node_modules/@graphprotocol/graph-cli`) — output is then identical to the
+  (`node_modules/@graphprotocol/graph-cli`, found the way Node resolution
+  finds it — a workspace hoists it to the root; one from before oclif, 0.2x,
+  runs through its own bin) — output is then identical to the
   user's normal workflow by definition. It runs in-process on a worker thread
   whose heap is sized to three quarters of the machine, since codegen over a
   large ABI set outgrows Node's default heap. Two flags differ from a bare
@@ -332,6 +358,9 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 | HyperSync token | `ENVIO_API_TOKEN` (process env or `.env`, loaded in subgraph mode) | required for the default HyperSync source; missing → setup error at startup |
 | RPC for sync fallback + contract calls | `ENVIO_SUBGRAPH_RPC` | optional for sync (HyperSync is primary), required for contract calls — HyperRPC doesn't support `eth_call`. Required at startup when the manifest declares `eth_calls` (1.2.0); otherwise lazily, at the first call |
 | Host op request deadline | `ENVIO_SUBGRAPH_REQUEST_TIMEOUT_MS` | optional, default 30000: how long one attempt of a contract call, balance, block timestamp, IPFS/Arweave fetch or ENS lookup may take before it's given up on and asked again |
+| ENSRainbow heal endpoint for `ens.nameByHash` | `ENVIO_SUBGRAPH_ENS_RAINBOW_URL` | optional, default `https://api.ensrainbow.io/v1/heal/` (no hosted instance has stayed up; self-host ENSRainbow for healed names); `off` → every lookup is `null`, as on graph-node without a rainbow table |
+| Contract-call progress log interval | `ENVIO_SUBGRAPH_PROGRESS_LOG_MS` | optional, default 30000: while contract calls are outstanding, how often answered/waiting counts are logged (a batch is written only once its calls are all in) |
+| Register pass for every handler | `ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` | escape hatch: rerun every handler at fetch time, not only those whose code can reach `DataSourceTemplate.create` (§4) |
 | Host op retry backoff | `ENVIO_SUBGRAPH_RETRY_BACKOFF_MS` | optional, default 500: the first wait before asking again after a transient failure, doubling up to 30 s |
 
 - **`ENVIO_SUBGRAPH_RPC` value = envio's rpc config**, not just a URL:
@@ -435,7 +464,7 @@ refuse instead, so behavior never silently diverges:
      unknown error. Known lookups never reach the trap — zero overhead;
      unknown names fall through the chain and throw.
   3. **Plain throwing getters** for known-but-refused fields
-     (`receipt.logs`, `transactionLogIndex`, block fields beyond `number`) —
+     (`receipt.logs`, block fields beyond `number`) —
      enumerable names need no Proxy and throw the *unsupported* error,
      keeping the unsupported/unknown distinction crisp.
 
@@ -457,7 +486,6 @@ refuse instead, so behavior never silently diverges:
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
 | Timeseries & aggregations | translation (schema) |
 | `event.receipt.logs` | runtime, on access (receipt scalars keep working) |
-| `event.transactionLogIndex` | runtime, on access |
 | Block-handler `ethereum.Block` fields other than `number`/`timestamp` | runtime, on access |
 
 ## 8. Implementation plan

@@ -112,24 +112,33 @@ let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array
 // The project lives outside this repository, the way a user's does: inside
 // it, Node would resolve this package's own devDependencies from the mappings
 // and hide anything the runtime wrongly expects the project to install.
+//
+// `projectDir` puts the project in a subdirectory of a workspace, as a
+// monorepo package is; `mappings` are then written relative to the workspace.
 let fromSubgraph = (
   ~env=?,
   ~files=?,
   ~mappings=Dict.make(),
   ~test=?,
+  ~projectDir=?,
   ~manifest,
   ~schema,
 ): parsed => {
   let site = callSite()
-  let root = pathJoin([
+  let workspace = pathJoin([
     osTmpdir(),
     `envio-subgraph-${site->String.replaceRegExp(
         /[^a-zA-Z0-9]+/g,
         "-",
       )}-${randomUUID()->String.slice(~start=0, ~end=8)}`,
   ])
+  let root = switch projectDir {
+  | Some(dir) => pathJoin([workspace, dir])
+  | None => workspace
+  }
+  mkdirSync(root, {"recursive": true})
   mappings->Dict.forEachWithKey((source, relativePath) => {
-    let dest = pathJoin([root, relativePath])
+    let dest = pathJoin([workspace, relativePath])
     mkdirSync(pathDirname(dest), {"recursive": true})
     writeFileSync(dest, source)
   })

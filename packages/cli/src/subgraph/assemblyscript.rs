@@ -45,6 +45,7 @@ use oxc::{
 
 pub const OPERATORS_HELPER: &str = "__envio_op";
 pub const RETAG_HELPER: &str = "__envio_retag";
+pub const RETAG_EACH_HELPER: &str = "__envio_retag_each";
 pub const EVENT_CLASSES_EXPORT: &str = "__envio_event_classes";
 
 /// `export function handleTransfer(event: Transfer)` names, in a type, the
@@ -94,9 +95,100 @@ fn class_ref<'b>(
     }
 }
 
+/// AssemblyScript lets a class take a built-in type's name — OpenZeppelin's
+/// `@amxx/graphprotocol-utils` declares `export class string extends String {}`
+/// in a namespace — which TypeScript's grammar refuses. Such a declaration
+/// becomes a class expression bound to a constant of that name, which is
+/// legal, and reads the same from outside: `persistent.string`.
+fn class_expressions_for_type_names(source: &str) -> String {
+    let pattern = regex::Regex::new(
+        r"(?m)^([ \t]*)(export[ \t]+)?class[ \t]+(string|number|boolean|symbol|bigint|object|any|unknown|never|void)\b",
+    )
+    .expect("valid pattern");
+    pattern
+        .replace_all(source, "${1}${2}const ${3} = class")
+        .into_owned()
+}
+
+/// AssemblyScript takes a decorator on a top-level function or variable —
+/// Beefy writes `@inline` above its helpers — which TypeScript's grammar
+/// refuses. Those are blanked to spaces before parsing, so every offset the
+/// source map records stays where it was. A decorator on a class or a member
+/// parses as it is and is dropped with the rest.
+fn blank_statement_decorators(source: &str) -> String {
+    fn decorator_len(text: &str) -> Option<usize> {
+        let rest = text.strip_prefix('@')?;
+        let name = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$' || c == '.'))
+            .unwrap_or(rest.len());
+        if name == 0 {
+            return None;
+        }
+        let mut len = 1 + name;
+        if text[len..].starts_with('(') {
+            len += text[len..].find(')')? + 1;
+        }
+        Some(len)
+    }
+    fn declares_statement(text: &str) -> bool {
+        let mut text = text.trim_start();
+        for prefix in ["export ", "declare "] {
+            if let Some(rest) = text.strip_prefix(prefix) {
+                text = rest.trim_start();
+            }
+        }
+        ["function", "let ", "const ", "var ", "namespace ", "enum "]
+            .iter()
+            .any(|keyword| text.starts_with(keyword))
+    }
+
+    let mut out = source.to_string();
+    let lines: Vec<(usize, &str)> = source
+        .split_inclusive('\n')
+        .scan(0, |offset, line| {
+            let start = *offset;
+            *offset += line.len();
+            Some((start, line))
+        })
+        .collect();
+    for (index, (start, line)) in lines.iter().enumerate() {
+        let indent = line.len() - line.trim_start().len();
+        let mut at = indent;
+        let mut decorators = vec![];
+        while let Some(len) = decorator_len(&line[at..]) {
+            decorators.push((start + at, len));
+            at += len;
+            at += line[at..].len() - line[at..].trim_start_matches([' ', '\t']).len();
+        }
+        if decorators.is_empty() {
+            continue;
+        }
+        let tail = line[at..].trim();
+        let follows = if tail.is_empty() {
+            // The decorated statement starts on a later line, past any other
+            // decorators and comments.
+            lines[index + 1..]
+                .iter()
+                .map(|(_, next)| next.trim())
+                .find(|next| !next.is_empty() && !next.starts_with("//") && !next.starts_with('@'))
+                .is_some_and(declares_statement)
+        } else {
+            declares_statement(tail)
+        };
+        if follows {
+            for (offset, len) in decorators {
+                out.replace_range(offset..offset + len, &" ".repeat(len));
+            }
+        }
+    }
+    out
+}
+
 /// The JavaScript to run for one AssemblyScript file, with an inline source map
 /// back to the original so a mapping's stack trace names its own lines.
 pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
+    let blanked = blank_statement_decorators(&class_expressions_for_type_names(source));
+    let source = blanked.as_str();
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::ts()).parse();
     if parsed.panicked || parsed.diagnostics.has_errors() {
@@ -121,6 +213,7 @@ pub fn to_javascript(source: &str, path: &Path) -> Result<String> {
     }
 
     let scoping = SemanticBuilder::new()
+        .with_enum_eval(true)
         .build(&program)
         .semantic
         .into_scoping();
@@ -167,6 +260,31 @@ fn binary_helper(operator: BinaryOperator) -> Option<&'static str> {
         BinaryOperator::LessEqualThan => "le",
         BinaryOperator::GreaterThan => "gt",
         BinaryOperator::GreaterEqualThan => "ge",
+        _ => return None,
+    })
+}
+
+/// The `OPERATORS_HELPER` method standing in for `x.indexOf(v)` and its kin:
+/// AssemblyScript's array searches compare with `==`, so graph-ts' overload.
+fn search_helper(call: &CallExpression<'_>) -> Option<&'static str> {
+    let Expression::StaticMemberExpression(member) = &call.callee else {
+        return None;
+    };
+    if call.optional
+        || member.optional
+        || matches!(member.object, Expression::Super(_))
+        || !(1..=2).contains(&call.arguments.len())
+        || call
+            .arguments
+            .iter()
+            .any(|argument| matches!(argument, Argument::SpreadElement(_)))
+    {
+        return None;
+    }
+    Some(match member.property.name.as_str() {
+        "includes" => "includes",
+        "indexOf" => "indexOf",
+        "lastIndexOf" => "lastIndexOf",
         _ => return None,
     })
 }
@@ -221,6 +339,22 @@ impl<'a> Rewrite<'a> {
             ),
             _ => None,
         }
+    }
+
+    /// The element class `x.toTupleArray<Foo>()` names: graph codegen reads a
+    /// struct array that way, and the elements are `Foo`s in AssemblyScript.
+    fn element_retag_target(&self, call: &CallExpression<'a>) -> Option<(Span, String)> {
+        let Expression::StaticMemberExpression(member) = &call.callee else {
+            return None;
+        };
+        if !matches!(
+            member.property.name.as_str(),
+            "toTupleArray" | "toTupleMatrix"
+        ) {
+            return None;
+        }
+        let class = class_ref(call.type_arguments.as_ref()?.params.first()?, &self.classes)?;
+        Some((class.span, class.name.to_string()))
     }
 
     /// The class `changetype<Foo>` names, if it is one the runtime can reach.
@@ -286,7 +420,64 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 assign.right = self.operator(assign.span, method, [read, right]);
                 assign.operator = AssignmentOperator::Assign;
             }
+            // graph-cli before 0.2x's tuple getters, and old entity loads, cast
+            // with `as` rather than `changetype`: the same reinterpret, except
+            // that a value already of the class (an upcast) keeps its own.
+            Expression::TSAsExpression(cast) => {
+                let class = match &cast.type_annotation {
+                    TSType::TSUnionType(union) => union
+                        .types
+                        .iter()
+                        .find_map(|ty| class_ref(ty, &self.classes)),
+                    ty => class_ref(ty, &self.classes),
+                };
+                let Some(class) = class.map(|class| (class.span, class.name.to_string())) else {
+                    return;
+                };
+                let span = cast.span;
+                let value = cast.expression.take_in(&self.ast);
+                let ctor = Expression::new_identifier(
+                    class.0,
+                    Ident::from_str_in(&class.1, &self.ast),
+                    &self.ast,
+                );
+                let keep = Expression::new_boolean_literal(span, true, &self.ast);
+                *expr = self.call(span, RETAG_HELPER, [ctor, value, keep]);
+            }
             Expression::CallExpression(call) => {
+                if let Some(method) = search_helper(call) {
+                    let span = call.span;
+                    let Expression::StaticMemberExpression(member) = &mut call.callee else {
+                        return;
+                    };
+                    let mut args = vec![member.object.take_in(&self.ast)];
+                    args.extend(
+                        call.arguments
+                            .iter_mut()
+                            .map(|argument| argument.to_expression_mut().take_in(&self.ast)),
+                    );
+                    let object = Expression::new_identifier(span, OPERATORS_HELPER, &self.ast);
+                    let property = IdentifierName::new(span, method, &self.ast);
+                    let callee = Expression::new_static_member_expression(
+                        span, object, property, false, &self.ast,
+                    );
+                    let args =
+                        ArenaVec::from_iter_in(args.into_iter().map(Argument::from), &self.ast);
+                    *expr =
+                        Expression::new_call_expression(span, callee, None, args, false, &self.ast);
+                    return;
+                }
+                if let Some((class_span, class)) = self.element_retag_target(call) {
+                    let span = call.span;
+                    let value = expr.take_in(&self.ast);
+                    let class = Expression::new_identifier(
+                        class_span,
+                        Ident::from_str_in(&class, &self.ast),
+                        &self.ast,
+                    );
+                    *expr = self.call(span, RETAG_EACH_HELPER, [class, value]);
+                    return;
+                }
                 let Some((class_span, class)) = self.retag_target(call) else {
                     return;
                 };
@@ -453,6 +644,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn routes_array_searches_through_the_helper() {
+        assert_eq!(
+            js("export function has(resolver: Resolver, coinType: BigInt): bool {
+  let at = resolver.coinTypes!.indexOf(coinType, 1);
+  return resolver.coinTypes!.includes(coinType) || names().lastIndexOf(\"a\") > at || list.find(coinType);
+}"),
+            "export function has(resolver, coinType) {
+\tlet at = __envio_op.indexOf(resolver.coinTypes, coinType, 1);
+\treturn __envio_op.includes(resolver.coinTypes, coinType) || __envio_op.gt(__envio_op.lastIndexOf(names(), \"a\"), at) || list.find(coinType);
+}
+"
+        );
+    }
+
     // AssemblyScript accepts a name imported twice; a JavaScript module that
     // declares the binding twice doesn't load. The first import wins.
     #[test]
@@ -478,6 +684,73 @@ export const __envio_event_classes = { handleFarmed: Farmed };
             "src/mapping.ts:2:3: Envio Subgraph can't apply this compound assignment the way \
              AssemblyScript does: an indexed or computed target would be evaluated twice. \
              Compute into a local first."
+        );
+    }
+
+    #[test]
+    fn retags_an_as_cast_onto_a_class_it_can_reach() {
+        assert_eq!(
+            js("import { Pair } from \"../generated/schema\";
+export function f(value: ethereum.Tuple, n: i64): void {
+  let pair = value as Pair;
+  let maybe = value as Pair | null;
+  let wide = n as i32;
+}"),
+            "import { Pair } from \"../generated/schema\";
+export function f(value, n) {
+\tlet pair = __envio_retag(Pair, value, true);
+\tlet maybe = __envio_retag(Pair, value, true);
+\tlet wide = n;
+}
+"
+        );
+    }
+
+    #[test]
+    fn retags_the_elements_of_a_struct_array() {
+        assert_eq!(
+            js("import { Item } from \"../generated/Pool/Pool\";
+export function f(value: ethereum.Value): void {
+  let items = value.toTupleArray<Item>();
+  let plain = value.toTupleArray<ethereum.Tuple>();
+}"),
+            "import { Item } from \"../generated/Pool/Pool\";
+export function f(value) {
+\tlet items = __envio_retag_each(Item, value.toTupleArray());
+\tlet plain = value.toTupleArray();
+}
+"
+        );
+    }
+
+    #[test]
+    fn takes_a_class_named_after_a_built_in_type() {
+        assert_eq!(
+            js("export namespace persistent {
+  export class string extends String {}
+}
+export const read = persistent.string;"),
+            "export let persistent;
+(function(_persistent) {
+\tconst string = _persistent.string = class extends String {};
+})(persistent || (persistent = {}));
+export const read = persistent.string;
+"
+        );
+    }
+
+    #[test]
+    fn transforms_an_enum() {
+        assert_eq!(
+            js("export enum ChainId { MAINNET = 1, BASE = 8453 }
+export const base = ChainId.BASE;"),
+            "export let ChainId = /* @__PURE__ */ function(ChainId) {
+\tChainId[ChainId[\"MAINNET\"] = 1] = \"MAINNET\";
+\tChainId[ChainId[\"BASE\"] = 8453] = \"BASE\";
+\treturn ChainId;
+}({});
+export const base = ChainId.BASE;
+"
         );
     }
 
@@ -592,6 +865,24 @@ export class Token {
 \t\treturn amount;
 \t}
 }
+"
+        );
+    }
+
+    #[test]
+    fn drops_a_decorator_on_a_top_level_function() {
+        assert_eq!(
+            js("// @ts-ignore
+@inline
+function scaled(amount: i32): i32 {
+  return amount;
+}
+@inline export const TEN: i32 = 10;"),
+            "// @ts-ignore
+function scaled(amount) {
+\treturn amount;
+}
+export const TEN = 10;
 "
         );
     }

@@ -66,6 +66,14 @@ export function requestBlockTimestamp(chainId: number, blockNumber: number): Pro
  * every 100,000 is one tiny query per block.
  */
 const CLUSTER_GAP = 10_000;
+/**
+ * A range is paged one response at a time, so merging without bound turned a
+ * polling handler every 1,600 blocks into one scan over the whole batch —
+ * Notional's 3.2M blocks, 38 s per timestamp. Capped, the pieces run side by
+ * side.
+ */
+const MAX_CLUSTER_SPAN = 20_000;
+const MAX_QUERIES_IN_FLIGHT = 8;
 
 /** The requested blocks as `[from, to]` ranges, in order. */
 function clusters(blockNumbers: number[]): [number, number][] {
@@ -73,18 +81,34 @@ function clusters(blockNumbers: number[]): [number, number][] {
   const ranges: [number, number][] = [];
   for (const blockNumber of sorted) {
     const last = ranges[ranges.length - 1];
-    if (last && blockNumber - last[1] <= CLUSTER_GAP) last[1] = blockNumber;
-    else ranges.push([blockNumber, blockNumber]);
+    if (last && blockNumber - last[1] <= CLUSTER_GAP && blockNumber - last[0] < MAX_CLUSTER_SPAN) {
+      last[1] = blockNumber;
+    } else ranges.push([blockNumber, blockNumber]);
   }
   return ranges;
+}
+
+/** Runs `tasks` with at most `limit` of them at once, keeping their order. */
+async function bounded<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < tasks.length) {
+      const index = next++;
+      results[index] = await tasks[index]();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  return results;
 }
 
 async function answer(chainId: number, blocks: Map<number, Waiter[]>) {
   let timestamps = new Map<number, bigint>();
 
   try {
-    const fetched = await Promise.all(
-      clusters([...blocks.keys()]).map(([from, to]) => fromHyperSync(chainId, from, to)),
+    const fetched = await bounded(
+      clusters([...blocks.keys()]).map(([from, to]) => () => fromHyperSync(chainId, from, to)),
+      MAX_QUERIES_IN_FLIGHT,
     );
     timestamps = new Map(fetched.flatMap((cluster) => [...cluster]));
   } catch (error) {
@@ -189,8 +213,10 @@ async function fromRpc(blockNumber: number): Promise<bigint> {
     );
   }
   const client = rpcClient(rpcUrls);
-  const block = await untilAnswered(`block ${blockNumber} from RPC`, () =>
-    client.getBlock({ blockNumber: BigInt(blockNumber) }),
+  const block = await untilAnswered(
+    `block ${blockNumber} from RPC`,
+    () => client.getBlock({ blockNumber: BigInt(blockNumber) }),
+    { deadline: false },
   );
   return block.timestamp;
 }

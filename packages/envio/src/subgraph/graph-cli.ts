@@ -20,6 +20,7 @@ import { spawn } from "node:child_process";
 import { totalmem } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
+import { warn } from "../Logging.res.mjs";
 
 const WORKER = new URL("./graph-cli-worker.mjs", import.meta.url);
 
@@ -31,15 +32,53 @@ const HEAP_MB = Math.floor(
   (Math.min(totalmem(), process.constrainedMemory?.() || Infinity) / 2 ** 20) * 0.75,
 );
 
+/**
+ * Where Node would resolve graph-cli from the project: its own node_modules,
+ * then each parent's — a yarn or npm workspace hoists it to the root.
+ */
 function graphCliPackage(root: string): string | null {
-  const dir = path.resolve(root, "node_modules", "@graphprotocol", "graph-cli");
-  // pnpm links the package in; its own plugins resolve only from where it lives.
-  return existsSync(dir) ? realpathSync(dir) : null;
+  for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
+    const candidate = path.join(dir, "node_modules", "@graphprotocol", "graph-cli");
+    // pnpm links the package in; its own plugins resolve only from where it lives.
+    if (existsSync(path.join(candidate, "package.json"))) return realpathSync(candidate);
+    if (path.dirname(dir) === dir) return null;
+  }
 }
 
 type Outcome = "ok" | "failed" | "outOfMemory";
 
-function runGraphCli(packageDir: string, command: string, argv: string[]): Promise<Outcome> {
+/**
+ * graph-cli before oclif (0.2x) has no `dist/commands/` to run in-process, only
+ * its gluegun bin.
+ */
+function legacyBin(packageDir: string): string | null {
+  if (existsSync(path.join(packageDir, "dist", "commands"))) return null;
+  try {
+    const { bin } = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
+    const graph = typeof bin === "string" ? bin : bin?.graph;
+    return typeof graph === "string" ? path.join(packageDir, graph) : null;
+  } catch {
+    return null;
+  }
+}
+
+function runLegacyGraphCli(bin: string, root: string, command: string, argv: string[]): Promise<Outcome> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [`--max-old-space-size=${HEAP_MB}`, bin, command, ...argv], {
+      cwd: root,
+      stdio: "inherit",
+    });
+    child.on("error", (error) => {
+      console.error(error);
+      resolve("failed");
+    });
+    child.on("exit", (code) => resolve(code === 0 ? "ok" : "failed"));
+  });
+}
+
+function runGraphCli(packageDir: string, root: string, command: string, argv: string[]): Promise<Outcome> {
+  const bin = legacyBin(packageDir);
+  if (bin) return runLegacyGraphCli(bin, root, command, argv);
   return new Promise((resolve) => {
     let ok = false;
     const worker = new Worker(WORKER, {
@@ -66,12 +105,13 @@ function runGraphCli(packageDir: string, command: string, argv: string[]): Promi
 async function runOrThrow(
   graphCli: string,
   root: string,
+  manifestFile: string,
   command: string,
   outputDir: string,
   failure: string,
 ): Promise<void> {
-  const outcome = await runGraphCli(graphCli, command, [
-    path.resolve(root, "subgraph.yaml"),
+  const outcome = await runGraphCli(graphCli, root, command, [
+    path.resolve(root, manifestFile),
     "--output-dir",
     outputDir,
     "--skip-migrations",
@@ -93,16 +133,40 @@ const RELATIVE_IMPORT = /\bfrom\s*["'](\.\.?\/[^"']+)["']/g;
  * moves it, and the mappings are the only record of where. Every generated
  * tree has a `schema.ts`, and a template's a `templates.ts`.
  */
-export function generatedDir(root: string, mappingFiles: string[]): string {
-  for (const mappingFile of new Set(mappingFiles)) {
-    const file = path.resolve(root, mappingFile);
+/**
+ * The project files the manifest's mappings reach through relative imports,
+ * breadth first, each with the relative specifiers it imports: an entry file
+ * may only re-export handlers written elsewhere (Uniswap v4's do).
+ */
+function* scanImports(root: string, mappingFiles: string[]): Generator<{ file: string; specifiers: string[] }> {
+  const queue = [...new Set(mappingFiles)].map((mappingFile) => path.resolve(root, mappingFile));
+  const seen = new Set(queue);
+  for (let index = 0; index < queue.length && index < MAX_SCANNED_FILES; index++) {
+    const file = queue[index];
     let source: string;
     try {
       source = readFileSync(file, "utf8");
     } catch {
       continue;
     }
-    for (const [, specifier] of source.matchAll(RELATIVE_IMPORT)) {
+    const specifiers = [...source.matchAll(RELATIVE_IMPORT)].map(([, specifier]) => specifier);
+    yield { file, specifiers };
+    for (const specifier of specifiers) {
+      const target = path.resolve(path.dirname(file), specifier);
+      for (const candidate of [target, `${target}.ts`, path.join(target, "index.ts")]) {
+        if (!seen.has(candidate) && existsSync(candidate) && statSync(candidate).isFile()) {
+          seen.add(candidate);
+          queue.push(candidate);
+          break;
+        }
+      }
+    }
+  }
+}
+
+export function generatedDir(root: string, mappingFiles: string[]): string {
+  for (const { file, specifiers } of scanImports(root, mappingFiles)) {
+    for (const specifier of specifiers) {
       const base = path.basename(specifier).replace(/\.ts$/, "");
       if (base === "schema" || base === "templates") {
         return path.resolve(path.dirname(file), path.dirname(specifier));
@@ -112,13 +176,34 @@ export function generatedDir(root: string, mappingFiles: string[]): string {
   return path.join(root, "generated");
 }
 
+/**
+ * The generated files the mappings import that aren't there. A directory that
+ * exists isn't enough: Envio Cloud recreates generated/ empty before the build.
+ */
+export function missingGeneratedFiles(root: string, mappingFiles: string[], dir: string): string[] {
+  const missing = new Set<string>();
+  for (const { file, specifiers } of scanImports(root, mappingFiles)) {
+    for (const specifier of specifiers) {
+      const target = path.resolve(path.dirname(file), specifier);
+      if (!target.startsWith(dir + path.sep)) continue;
+      const candidates = [target, `${target}.ts`, path.join(target, "index.ts")];
+      if (!candidates.some((candidate) => existsSync(candidate) && statSync(candidate).isFile())) {
+        missing.add(path.relative(root, target));
+      }
+    }
+  }
+  return [...missing];
+}
+
+const MAX_SCANNED_FILES = 2_000;
+
 export function missingGeneratedCode(root: string, dir: string): Error {
   const relative = path.relative(root, dir);
   return new Error(
     `Envio Subgraph needs the project's generated code, but "${relative}/" is\n` +
-      "missing and @graphprotocol/graph-cli isn't installed.\n" +
-      "Install dependencies and try again:\n" +
-      "  pnpm install\n" +
+      "missing and @graphprotocol/graph-cli isn't installed in the project or any\n" +
+      "directory above it. Install the project's dependencies and try again:\n" +
+      "  npm install   (or yarn / pnpm install)\n" +
       "Or generate manually:\n" +
       `  pnpm exec graph codegen --output-dir ${relative}`,
   );
@@ -146,6 +231,15 @@ function codegenSteps(root: string): string[] | null {
   return steps.some((step) => GRAPH_CODEGEN.test(step)) ? steps : null;
 }
 
+/** The project's bins and its workspaces', nearest first, as a package manager puts them on PATH. */
+function binDirs(root: string): string[] {
+  const dirs: string[] = [];
+  for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
+    dirs.push(path.join(dir, "node_modules", ".bin"));
+    if (path.dirname(dir) === dir) return dirs;
+  }
+}
+
 /** A step as the package manager would run it: a shell, with the project's bins on PATH. */
 function runScriptStep(root: string, step: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -155,7 +249,7 @@ function runScriptStep(root: string, step: string): Promise<void> {
       stdio: "inherit",
       env: {
         ...process.env,
-        PATH: [path.join(root, "node_modules", ".bin"), process.env.PATH].join(path.delimiter),
+        PATH: [...binDirs(root), process.env.PATH].join(path.delimiter),
       },
     });
     child.on("error", reject);
@@ -177,9 +271,24 @@ function runScriptStep(root: string, step: string): Promise<void> {
  * codegen` itself runs in-process, sized and without migrations, wherever the
  * project's codegen script puts it among its steps.
  */
-export async function ensureGeneratedCode(root: string, dir: string): Promise<void> {
-  if (existsSync(dir)) return;
+export async function ensureGeneratedCode(
+  root: string,
+  dir: string,
+  manifestFile = "subgraph.yaml",
+  mappingFiles: string[] = [],
+): Promise<void> {
   const graphCli = graphCliPackage(root);
+  const complete = existsSync(dir) && missingGeneratedFiles(root, mappingFiles, dir).length === 0;
+  if (complete) {
+    if (!graphCli) {
+      warn(
+        `Envio Subgraph is running the generated code in "${path.relative(root, dir)}/" as it is: ` +
+          "@graphprotocol/graph-cli isn't installed, so it can't be rebuilt. If subgraph.yaml, the " +
+          "schema or an ABI changed since it was generated, install the project's dependencies.",
+      );
+    }
+    return;
+  }
   // Reported when a mapping fails to import it, naming that mapping.
   if (!graphCli) return;
 
@@ -191,6 +300,7 @@ export async function ensureGeneratedCode(root: string, dir: string): Promise<vo
     await runOrThrow(
       graphCli,
       root,
+      manifestFile,
       "codegen",
       dir,
       "Envio Subgraph ran `graph codegen` to build the generated code, but it\n" +
@@ -210,11 +320,11 @@ export async function ensureGeneratedCode(root: string, dir: string): Promise<vo
  * Only in dev, and only when something it reads has changed: it is an
  * AssemblyScript compile, not something to pay on every restart.
  */
-export async function typeCheckMappings(root: string): Promise<void> {
+export async function typeCheckMappings(root: string, manifestFile = "subgraph.yaml"): Promise<void> {
   const graphCli = graphCliPackage(root);
   if (!graphCli) return;
 
-  const inputs = ["subgraph.yaml", "schema.graphql", "src", "abis"]
+  const inputs = [manifestFile, "schema.graphql", "src", "abis"]
     .map((entry) => path.join(root, entry))
     .filter((entry) => existsSync(entry))
     .map((entry) => fingerprint(entry))
@@ -226,6 +336,7 @@ export async function typeCheckMappings(root: string): Promise<void> {
   await runOrThrow(
     graphCli,
     root,
+    manifestFile,
     "build",
     path.resolve(root, "build"),
     "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +

@@ -114,6 +114,13 @@ pub fn subgraph_file_to_javascript(source: String, path: String) -> napi::Result
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))
 }
 
+/// The handlers of the mapping at `mapping_file` whose code can reach
+/// `DataSourceTemplate.create` — the only ones the register pass reruns.
+#[napi_derive::napi]
+pub fn subgraph_creating_handlers(mapping_file: String, handlers: Vec<String>) -> Vec<String> {
+    crate::subgraph::creates::creating_handlers(std::path::Path::new(&mapping_file), &handlers)
+}
+
 /// Parses a subgraph project the same way `from_user_api` parses an envio one:
 /// subgraph.yaml and its schema in memory, ABI bodies supplied through `files`,
 /// no process environment. The returned config carries the translated manifest

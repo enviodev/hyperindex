@@ -18,6 +18,18 @@ export type SubgraphSchema = {
   entityAccessors: Record<string, string>;
 };
 
+/** One event's register pass while it runs. */
+export type RegisterPass = {
+  chainId: number;
+  position: number;
+  done: Promise<void>;
+  settled: boolean;
+  /** The register-store keys it missed, so later passes can wait on it. */
+  missed: string[];
+  /** A read missed while an earlier pass of its chain was still running. */
+  provisional: boolean;
+};
+
 export type Scope = {
   /** envio's handler or contractRegister context. */
   context: any;
@@ -44,6 +56,14 @@ export type Scope = {
   awaiting?: Promise<unknown>[];
   /** The block a contract call is evaluated against, as graph-node does. */
   blockNumber: number;
+  /** Where the event sits in its chain, for what the register pass may read. */
+  position?: number;
+  /** The register round's own writes, kept only once the round completes. */
+  writes?: Map<string, Record<string, unknown> | null>;
+  /** This register pass, as other passes of its batch wait on it. */
+  pass?: RegisterPass;
+  /** Entities this pass already waited on another pass for: it waits once. */
+  waitedKeys?: Set<string>;
   /** The mapping module, so `ipfs.map` can reach the callback it names. */
   mappingExports: Record<string, any>;
 };

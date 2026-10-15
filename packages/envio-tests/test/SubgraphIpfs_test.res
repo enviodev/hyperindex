@@ -94,7 +94,7 @@ describe("ipfs.cat", () => {
   it("asks a failing gateway again rather than answering null", async (t) => {
     const indexer = createTestIndexer();
     await indexer.process({ chains: { 1: { simulate: [published("QmFlaky")] } } });
-    t.expect(await indexer.Metadata.getAll()).toEqual([{ id: "QmFlaky", content: "0x68656c6c6f" }]);
+    t.expect(await indexer.Metadata.getAll()).toEqual([{ id: "QmFlaky", content: "hello" }]);
   });
 });
 `,
