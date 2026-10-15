@@ -1324,6 +1324,13 @@ const registerStore = new Map<string, { position: number; row: Record<string, un
 /** Least recently used entities go first: a factory's own entity stays hot. */
 const REGISTER_STORE_LIMIT = 50_000;
 const REGISTER_STORE_VERSIONS = 4;
+/**
+ * Writes of one block beyond these are dropped oldest first. The passes of a
+ * block's creation rounds read out of log order — a round-1 event logged before
+ * the deployer reads the deployer's write, below a few later writes of its own
+ * round — so the versions a block adds cannot evict the ones below it.
+ */
+const REGISTER_STORE_BLOCK_VERSIONS = 64;
 
 function registerStoreKey(chainId: number, entityType: string, id: string): string {
   return `${chainId}\u0000${entityType}\u0000${id}`;
@@ -1365,6 +1372,27 @@ function registerRead(scope: Scope, entityType: string, id: string, sameBlock: b
 export const ROUND_SPAN = 1_000_000;
 export const POSITION_BLOCK = 16 * ROUND_SPAN;
 
+/**
+ * Adds one write to an entity's versions, in position order. The newest few
+ * versions of earlier blocks stay, and a bounded run of the newest block's own.
+ */
+export function addRegisterVersion(
+  versions: { position: number; row: Record<string, unknown> | null }[],
+  version: { position: number; row: Record<string, unknown> | null },
+): void {
+  const at = versions.findIndex((other) => other.position >= version.position);
+  if (at === -1) versions.push(version);
+  else if (versions[at].position === version.position) versions[at] = version;
+  else versions.splice(at, 0, version);
+  const newest = Math.floor(versions[versions.length - 1].position / POSITION_BLOCK);
+  const blockStart = versions.findIndex((other) => Math.floor(other.position / POSITION_BLOCK) === newest);
+  const dropOlder = blockStart - REGISTER_STORE_VERSIONS;
+  if (dropOlder > 0) versions.splice(0, dropOlder);
+  const keptOlder = Math.min(blockStart, REGISTER_STORE_VERSIONS);
+  const dropBlock = versions.length - keptOlder - REGISTER_STORE_BLOCK_VERSIONS;
+  if (dropBlock > 0) versions.splice(keptOlder, dropBlock);
+}
+
 /** Keeps a completed register round's writes for the passes after it. */
 export function commitRegisterWrites(scope: Scope): void {
   const writes = scope.writes;
@@ -1382,11 +1410,7 @@ export function commitRegisterWrites(scope: Scope): void {
       }
     }
     registerStore.set(key, versions);
-    const at = versions.findIndex((version) => version.position >= position);
-    if (at === -1) versions.push({ position, row });
-    else if (versions[at].position === position) versions[at] = { position, row };
-    else versions.splice(at, 0, { position, row });
-    if (versions.length > REGISTER_STORE_VERSIONS) versions.shift();
+    addRegisterVersion(versions, { position, row });
   }
 }
 
