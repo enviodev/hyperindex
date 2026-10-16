@@ -3,10 +3,8 @@
 //! wrote. Each test works in a database of its own, and resumes to chains it
 //! makes up as Postgres would hand them over.
 //!
-//! Run with `cargo test --lib clickhouse::live -- --ignored`, against
-//! `ENVIO_CLICKHOUSE_HOST` (default `http://localhost:8123`), and the replicas
-//! `ENVIO_CLICKHOUSE_REPLICAS` names, which
-//! `.github/scripts/replicated-clickhouse.sh` starts.
+//! Run with `cargo test --lib clickhouse::live -- --ignored`, which starts its
+//! own servers.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -25,22 +23,15 @@ use crate::storage::types::{
     Addresses, Bounds, ChainConfig, Checkpoints, Frontier, Progress, ResumedChain, Sequence,
 };
 use crate::storage::{Batch, EntityWrite, Handoff, Initialize, Resume, Table, WriteError};
-
-fn env(name: &str, default: &str) -> String {
-    std::env::var(name)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| default.to_string())
-}
+use crate::test_servers;
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 pub(crate) fn connection(database: &str) -> Connection {
     Connection {
-        url: env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"),
-        username: env("ENVIO_CLICKHOUSE_USERNAME", "default"),
-        password: std::env::var("ENVIO_CLICKHOUSE_PASSWORD")
-            .unwrap_or_else(|_| "testing".to_string()),
+        url: test_servers::clickhouse().replicas[0].clone(),
+        username: "default".to_string(),
+        password: test_servers::PASSWORD.to_string(),
         database: database.to_string(),
     }
 }
@@ -1139,14 +1130,6 @@ async fn a_rollback_restores_the_target_at_its_diff_checkpoint() {
     );
 }
 
-/// The two replicas of one shard `ENVIO_CLICKHOUSE_REPLICAS` names, comma
-/// separated, on a cluster whose `{cluster}` macro is set.
-fn replicas() -> Option<(String, String)> {
-    let urls = std::env::var("ENVIO_CLICKHOUSE_REPLICAS").ok()?;
-    let mut urls = urls.split(',').map(|url| url.trim().to_string());
-    Some((urls.next()?, urls.next()?))
-}
-
 fn replica(url: &str, database: &str) -> Storage {
     Storage::new(
         Connection {
@@ -1168,11 +1151,9 @@ fn replica(url: &str, database: &str) -> Storage {
 /// before that replica has fetched them: the last committed batch is still
 /// missing there, and so is the one the crash left uncommitted.
 #[tokio::test]
-#[ignore = "needs a replicated ClickHouse cluster"]
+#[ignore = "needs a ClickHouse server"]
 async fn a_resume_on_a_lagging_replica_waits_for_what_the_others_took() {
-    let Some((first, second)) = replicas() else {
-        panic!("ENVIO_CLICKHOUSE_REPLICAS names no two replicas");
-    };
+    let [first, second] = test_servers::clickhouse().replicas.clone();
     let database = Live::new().database;
     let (writer, resumer) = (replica(&first, &database), replica(&second, &database));
     let (written, resumed) = (

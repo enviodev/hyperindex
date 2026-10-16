@@ -6,9 +6,9 @@
 //! JavaScript side are written against the text form, so anywhere the two
 //! disagree is a value they would misread.
 //!
-//! Ignored by a plain `cargo test`, which needs no database. CI runs them
-//! against the Postgres its `cargo-test` job starts; locally, run
-//! `cargo test --lib postgres::live -- --ignored --test-threads=1`.
+//! Ignored by a plain `cargo test`, which starts no server. Run with
+//! `cargo test --lib postgres::live -- --ignored --test-threads=1`, which
+//! starts its own.
 
 use super::client::{PgClient, PgConnectionOptions, SslSetting, MAX_PREPARED_STATEMENTS};
 use super::param::Param;
@@ -18,6 +18,7 @@ use futures_util::future;
 
 use crate::columnar::{Arena, ColumnKind, ColumnSpec};
 use crate::storage::CacheDump;
+use crate::test_servers;
 
 pub(crate) fn client() -> PgClient {
     client_with(2)
@@ -30,14 +31,11 @@ fn pinned_client() -> PgClient {
 
 fn client_with(max_connections: usize) -> PgClient {
     PgClient::connect(PgConnectionOptions {
-        host: std::env::var("ENVIO_PG_HOST").unwrap_or_else(|_| "localhost".to_string()),
-        port: std::env::var("ENVIO_PG_PORT")
-            .ok()
-            .and_then(|port| port.parse().ok())
-            .unwrap_or(5433),
-        user: std::env::var("ENVIO_PG_USER").unwrap_or_else(|_| "postgres".to_string()),
-        password: std::env::var("ENVIO_PG_PASSWORD").unwrap_or_else(|_| "testing".to_string()),
-        database: std::env::var("ENVIO_PG_DATABASE").unwrap_or_else(|_| "envio-dev".to_string()),
+        host: "127.0.0.1".to_string(),
+        port: test_servers::postgres().port,
+        user: "postgres".to_string(),
+        password: test_servers::PASSWORD.to_string(),
+        database: "postgres".to_string(),
         ssl: SslSetting::Disable,
         max_connections,
         application_name: Some("envio-live-test".to_string()),

@@ -1,6 +1,7 @@
 //! Postgres with ClickHouse following it, against real servers.
 //!
-//! Run with `cargo test --lib storage::live -- --ignored`.
+//! Run with `cargo test --lib storage::live -- --ignored`, which starts its own
+//! servers.
 
 use std::sync::Arc;
 

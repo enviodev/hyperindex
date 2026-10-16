@@ -37,6 +37,8 @@ mod storage;
 mod svm;
 mod svm_hypersync_source;
 mod template_dirs;
+#[cfg(test)]
+mod test_servers;
 mod text_position;
 mod transaction_store;
 mod ts_loader;

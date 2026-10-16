@@ -132,37 +132,6 @@ jobs:
     timeout-minutes: 15
     needs: authorize
 
-    # For the stores' live tests: what the Postgres client does when a
-    # connection dies, a statement fails mid-transaction or the server cancels
-    # one, which no indexer run can bring about, and every statement the
-    # ClickHouse store builds against a server that has to accept it.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: testing
-          POSTGRES_DB: envio-dev
-          POSTGRES_USER: postgres
-        options: >-
-          --health-cmd "pg_isready -U postgres -d envio-dev"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5433:5432
-
-      clickhouse:
-        image: clickhouse/clickhouse-server:26.2.15.4
-        env:
-          CLICKHOUSE_PASSWORD: testing
-        options: >-
-          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 8123:8123
-
     steps:
       - uses: actions/checkout@v6
         with:
@@ -185,25 +154,14 @@ jobs:
       - name: Cargo Test
         run: cargo test
 
+      # What the Postgres client does when a connection dies, a statement fails
+      # mid-transaction or the server cancels one, which no indexer run can
+      # bring about, and every statement the ClickHouse store builds against a
+      # server that has to accept it. The tests start the servers themselves.
       # Serially: some of these terminate a backend by pid, and a pid the
       # server has just freed is one it can hand to another test's connection.
-      - name: Live Postgres client tests
-        run: cargo test --lib postgres::live -- --ignored --test-threads=1
-
-      # A resume on a replica that hasn't fetched what another took needs two
-      # of them, run from the service's own binary.
-      - name: Start a replicated ClickHouse cluster
-        run: |
-          docker cp -L "${{ job.services.clickhouse.id }}:/usr/bin/clickhouse" "$RUNNER_TEMP/clickhouse"
-          .github/scripts/replicated-clickhouse.sh "$RUNNER_TEMP/clickhouse" "$RUNNER_TEMP/replicated-clickhouse"
-
-      - name: Live ClickHouse store tests
-        env:
-          ENVIO_CLICKHOUSE_REPLICAS: http://127.0.0.1:8124,http://127.0.0.1:8125
-        run: cargo test --lib clickhouse::live -- --ignored --test-threads=1
-
-      - name: Live tests of ClickHouse following Postgres
-        run: cargo test --lib storage::live -- --ignored --test-threads=1
+      - name: Live storage tests
+        run: cargo test --lib -- --ignored --test-threads=1 postgres::live clickhouse::live storage::live
 
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:
