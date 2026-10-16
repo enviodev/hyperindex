@@ -292,6 +292,25 @@ Pending:
     await indexer.getBatchWritePromise()
   })
 
+  scenario->Scenario.it("fails a query, and waits for the chain to retry it", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    mock.resolveGetHeightOrThrow(300)
+    await mock.expectItemsQueries([
+      {fromBlock: 1, reply: Fail(Source.SourceBehindHead({blockNumber: 50, requestStats: []}))},
+    ])
+    // The retry comes after a backoff; the wait covers it without knowing how long.
+    await mock.expectItemsQueries([{retryCount: 1, reply: LeavePending}])
+    t.expect(mock.pendingItemsQueries).toEqual([
+      {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 1},
+    ])
+    await mock.respondEmptyUpTo(300)
+    await indexer.getBatchWritePromise()
+  })
+
   scenario->Scenario.it(
     "fetches empty ranges up to a block, one realistic wave at a time",
     ~sources,
