@@ -83,9 +83,6 @@ let getItemLogger = {
   }
 }
 
-let getItemUserLogger = (item: Internal.item, ~ecosystem: t, ~logger): Envio.logger =>
-  getItemLogger(item, ~ecosystem, ~logger)->Logging.userLogger
-
 let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {
   switch ecosystem.name {
   | Svm => {slot: blockNumber, context}

@@ -170,10 +170,10 @@ let writeFailureLogs = (logger, ~pgSchema) => {
 // configs and every knob the yaml owns are decided by the caller.
 let run = async (
   ~config: Config.t,
-  ~resolveRegistrations: (
-    ~config: Config.t,
-    ~logger: Logging.t,
-  ) => promise<HandlerRegister.registrationsByChainId>,
+  ~resolveRegistrations: (~config: Config.t) => promise<HandlerRegister.registrationsByChainId>,
+  // One capture for the whole run, `restart` and siblings included, so a test
+  // reads the resumed indexer's lines after the ones that led to them.
+  ~logger=Logging.capture(),
   ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
@@ -202,10 +202,6 @@ let run = async (
   let clients = []
   let storages: array<Persistence.storage> = []
   let stops = []
-
-  // One capture for the whole run, `restart` and siblings included, so a test
-  // reads the resumed indexer's lines after the ones that led to them.
-  let logger = Logging.capture()
 
   // Unless the test handles indexer errors itself, the first one fails the run
   // with its own message. Exiting the process instead kills the vitest worker
@@ -276,7 +272,7 @@ let run = async (
     // Same order as `Main.start`: storage is initialized - which is where a
     // `start_block: latest` chain reads its head - before handler modules load,
     // so a registration-time `chain.startBlock` sees the resolved block.
-    let registrationsByChainId = await resolveRegistrations(~config, ~logger)
+    let registrationsByChainId = await resolveRegistrations(~config)
     // The client above is already in `clients`, so teardown still closes it;
     // only the loop must not start, since teardown may have passed `stops`.
     throwIfClosing()

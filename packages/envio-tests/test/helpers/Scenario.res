@@ -234,21 +234,15 @@ let run = async (
 
   // One registration for the whole run, so a restart reuses the handlers the
   // first pass imported rather than re-importing a module the loader has
-  // already cached. Made with the first pass's logger, the one registering
-  // logs to.
-  let registration = ref(None)
+  // already cached.
+  let logger = Logging.capture()
+  let registration = HandlerRegister.makeRegistration(~config, ~logger)
   let imported = ref(false)
 
   await IndexerRunner.run(
     ~config,
-    ~resolveRegistrations=(~config, ~logger) => {
-      let registration = switch registration.contents {
-      | Some(registration) => registration
-      | None =>
-        let made = HandlerRegister.makeRegistration(~config, ~logger)
-        registration := Some(made)
-        made
-      }
+    ~logger,
+    ~resolveRegistrations=(~config) =>
       registration->HandlerRegister.useRegistration(async () => {
         switch (scenario.handlers, imported.contents) {
         | (Some(source), false) =>
@@ -258,9 +252,8 @@ let run = async (
           )
         | _ => ()
         }
-        HandlerRegister.finishRegistration(~config, ~logger)
-      })
-    },
+        HandlerRegister.finishRegistration(~config)
+      }),
     ~reducedPollingInterval?,
     ~newBlockStallTimeoutRealtime?,
     ~targetBufferSize?,

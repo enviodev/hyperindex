@@ -220,7 +220,7 @@ let register = (~config, fn) => {
   HandlerRegister.resetOnEventRegistrations()
   HandlerRegister.startRegistration(~logger=Logging.capture(), ~config)
   fn()
-  HandlerRegister.finishRegistration(~logger=Logging.capture(), ~config)
+  HandlerRegister.finishRegistration(~config)
 }
 
 let setHandler = (~fields: option<Internal.evmFieldsSelection>=?, ~where=?, ()) =>
@@ -247,9 +247,7 @@ let setContractRegister = (~fields: option<Internal.evmFieldsSelection>=?, ~wher
 
 describe("EVM inline field selection", () => {
   it("carries each registration's own selection from the handler module", t => {
-    t.expect(
-      HandlerRegister.finishRegistration(~logger=Logging.capture(), ~config)->selections,
-    ).toEqual([
+    t.expect(HandlerRegister.finishRegistration(~config)->selections).toEqual([
       (["number", "parentHash"], ["to"]),
       (["hash", "miner", "number", "timestamp"], ["hash"]),
       (["number", "stateRoot"], ["gasUsed"]),
@@ -258,7 +256,7 @@ describe("EVM inline field selection", () => {
 
   it("passes each registration's own selection to the source query input", t => {
     let chainRegistrations: HandlerRegister.chainRegistrations =
-      HandlerRegister.finishRegistration(~logger=Logging.capture(), ~config)
+      HandlerRegister.finishRegistration(~config)
       ->Utils.Dict.dangerouslyGetNonOption("1")
       ->Option.getOrThrow
     let inputs =

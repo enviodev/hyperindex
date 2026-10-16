@@ -48,15 +48,15 @@ let runContractRegistersOrThrow = async (
 
     let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
 
+    let params: ContractRegisterContext.contractRegisterParams = {
+      item,
+      onRegister,
+      config,
+      logger: chainState->ChainState.logger,
+      isResolved: false,
+    }
     // Catch sync and async errors
     try {
-      let params: ContractRegisterContext.contractRegisterParams = {
-        item,
-        onRegister,
-        config,
-        logger: chainState->ChainState.logger,
-        isResolved: false,
-      }
       let result = contractRegister(ContractRegisterContext.getContractRegisterArgs(params))
 
       // Even though `contractRegister` always returns a promise,
@@ -72,11 +72,7 @@ let runContractRegistersOrThrow = async (
             params.isResolved = true
             exn->ErrorHandling.mkLogAndRaise(
               ~msg=errorMessage,
-              ~logger=Ecosystem.getItemLogger(
-                item,
-                ~ecosystem=config.ecosystem,
-                ~logger=chainState->ChainState.logger,
-              ),
+              ~logger=params->ContractRegisterContext.itemLogger,
             )
           }),
         )
@@ -87,11 +83,7 @@ let runContractRegistersOrThrow = async (
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~msg=errorMessage,
-        ~logger=Ecosystem.getItemLogger(
-          item,
-          ~ecosystem=config.ecosystem,
-          ~logger=chainState->ChainState.logger,
-        ),
+        ~logger=params->ContractRegisterContext.itemLogger,
       )
     }
   }

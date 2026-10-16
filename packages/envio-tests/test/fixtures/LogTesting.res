@@ -7,7 +7,7 @@ switch NodeJs.Process.process.env->Dict.get("ENVIO_TEST_LOGGING_FORMAT") {
 | Some(_) => ()
 }
 
-open Logging
+open! Logging
 
 let logger = Env.makeLogger()
 
@@ -17,21 +17,21 @@ let ecosystem = Evm.make()
 
 // Testing usage:
 logger->trace("By default - This trace message should only be seen in the log file.")
-logger->debug("By default - This debug message should only be seen in the log file.")
+logger->log(#debug, "By default - This debug message should only be seen in the log file.")
 
 exception SomethingWrong({myMessage: string})
 
 let logAtEveryLevel = (~shown) => {
   logger->info(`##Current log level: ${shown}`)
   logger->trace("This is an trace message. (printed at trace only)")
-  logger->debug("This is a debug message. (printed at debug and below)")
+  logger->log(#debug, "This is a debug message. (printed at debug and below)")
   logger->info("This is an info message.")
   logger->warn("This is a warning message.")
   logger->errorWithExn(
     "This is an error message.",
     SomethingWrong({myMessage: "example exception"}),
   )
-  logger->fatal("This is a fatal message.", ~params={"extra": "another"})
+  logger->log(#fatal, "This is a fatal message.", ~params={"extra": "another"})
 }
 
 logAtEveryLevel(~shown="info")
@@ -57,7 +57,7 @@ let item = Internal.Event({
   }->(Utils.magic: {..} => Internal.eventPayload),
 })
 
-let userLogger = Ecosystem.getItemUserLogger(item, ~ecosystem, ~logger)
+let userLogger = item->Ecosystem.getItemLogger(~ecosystem, ~logger)->userLogger
 
 let logUserLevels = (~shown, ~child) => {
   logger->info(`##Current log level: ${shown}`)
@@ -93,7 +93,8 @@ logger->setLevel(#error)
 logAtEveryLevel(~shown="error")
 
 // Logging also works with params of all shapes and sizes
-logger->fatal(
+logger->log(
+  #fatal,
   "A fatal message with nested params.",
   ~params={
     "this": "is",

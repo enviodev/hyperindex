@@ -47,7 +47,8 @@ type options = {
 @send external makeNative: (Core.loggerCtor, options) => native = "make"
 @send external nativeChild: (native, string) => native = "child"
 @send external nativeLog: (native, int, string, Null.t<string>) => unit = "log"
-@send external nativeSetLevel: (native, level) => unit = "setLevel"
+// Answers with the new minimum level.
+@send external nativeSetLevel: (native, level) => int = "setLevel"
 @send external nativeMinLevel: native => int = "minLevel"
 @send external nativeCaptured: native => array<dict<JSON.t>> = "captured"
 @send external nativeWriteCaptured: (native, string) => unit = "writeCaptured"
@@ -67,9 +68,9 @@ let make = (~strategy: logStrategyType, ~logFile, ~level, ~fileLevel) =>
 
 // Keeps every line in memory for a test to read back as JSON, instead of
 // writing it anywhere.
-let capture = (~level=#trace) =>
+let capture = () =>
   Core.getAddon().logger
-  ->makeNative({strategy: "capture", logFile: "", level, fileLevel: #silent})
+  ->makeNative({strategy: "capture", logFile: "", level: #trace, fileLevel: #silent})
   ->fromNative
 
 // Errors serialize to their name, message and stack (and whatever else they
@@ -101,15 +102,11 @@ let child = (logger: t, params: 'a) => {
 // Every line about one chain names it, so the run's lines can be told apart.
 let forChain = (logger: t, chainId: ChainId.t) => logger->child({"chainId": chainId})
 
-let setLevel = (logger: t, level: level) => {
-  logger.native->nativeSetLevel(level)
-  logger.threshold.minLevel = logger.native->nativeMinLevel
-}
-
-let isEnabled = (logger: t, level: level) => levelValue(level) >= logger.threshold.minLevel
+let setLevel = (logger: t, level: level) =>
+  logger.threshold.minLevel = logger.native->nativeSetLevel(level)
 
 let log = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
-  if logger->isEnabled(level) {
+  if levelValue(level) >= logger.threshold.minLevel {
     logger.native->nativeLog(
       levelValue(level),
       message,
@@ -121,11 +118,9 @@ let log = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
   }
 
 let trace = (logger, message, ~params=?) => logger->log(#trace, message, ~params?)
-let debug = (logger, message, ~params=?) => logger->log(#debug, message, ~params?)
 let info = (logger, message, ~params=?) => logger->log(#info, message, ~params?)
 let warn = (logger, message, ~params=?) => logger->log(#warn, message, ~params?)
 let error = (logger, message, ~params=?) => logger->log(#error, message, ~params?)
-let fatal = (logger, message, ~params=?) => logger->log(#fatal, message, ~params?)
 
 let errorWithExn = (logger, message, exn) =>
   logger->log(#error, message, ~params={"err": exn->Utils.prettifyExn})

@@ -181,8 +181,7 @@ let fromUserApi = (
     let collected = ref(false)
     describeAsync(`indexerHandlers(${site})`, async () => {
       await importModule(handlersFile)
-      registrationsRef :=
-        Some(HandlerRegister.finishRegistration(~logger=Logging.capture(), ~config))
+      registrationsRef := Some(HandlerRegister.finishRegistration(~config))
       collected := true
     })
     Vitest.it(`indexerHandlers(${site}) collected`, t =>

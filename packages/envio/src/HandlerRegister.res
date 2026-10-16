@@ -497,7 +497,7 @@ let getSimulateOnEventRegistrations = (
   }
 }
 
-let finishRegistration = (~config: Config.t, ~logger): registrationsByChainId => {
+let finishRegistration = (~config: Config.t): registrationsByChainId => {
   switch getActiveRegistration() {
   | Some(r) => {
       r.finished = true
@@ -609,7 +609,7 @@ let finishRegistration = (~config: Config.t, ~logger): registrationsByChainId =>
             `${contractName} (${eventNames->Utils.Set.toArray->Array.joinUnsafe(", ")})`
           )
           ->Array.joinUnsafe(", ")
-        logger->Logging.info(`Events without a handler, skipped for indexing: ${groups}`)
+        r.logger->Logging.info(`Events without a handler, skipped for indexing: ${groups}`)
       }
 
       registrationsByChainId

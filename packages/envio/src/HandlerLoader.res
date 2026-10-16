@@ -127,5 +127,5 @@ let registerAllHandlers = async (
   })
   ->Promise.all
 
-  HandlerRegister.finishRegistration(~config, ~logger)
+  HandlerRegister.finishRegistration(~config)
 }

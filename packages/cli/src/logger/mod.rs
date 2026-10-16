@@ -279,16 +279,17 @@ impl Logger {
         Ok(())
     }
 
-    /// Sets the level of every sink but a file, which keeps its own.
+    /// Sets the level of every sink but a file, which keeps its own, and
+    /// answers with the new `minLevel`.
     #[napi]
-    pub fn set_level(&self, level: String) -> napi::Result<()> {
+    pub fn set_level(&self, level: String) -> napi::Result<u32> {
         let level = parse_level(&level)?;
         for sink in self.sinks.iter() {
             if !matches!(sink.target, Target::File(_)) {
                 sink.level.store(level.value(), Ordering::Relaxed);
             }
         }
-        Ok(())
+        Ok(self.min_level())
     }
 
     /// The lowest level any sink writes, so a caller can skip a line no sink
@@ -357,11 +358,11 @@ mod tests {
                 Some(r#"{"chainId":2,"a":1}"#.into()),
             )
             .unwrap();
-        chain.set_level("trace".into()).unwrap();
+        let min_level = chain.set_level("trace".into()).unwrap();
         root.log_js(Level::TRACE.value(), "now shown".into(), None)
             .unwrap();
         assert_eq!(
-            (root.captured(), root.min_level()),
+            (root.captured(), min_level),
             (
                 vec![
                     json!({"level": "warn", "msg": "shown", "chainId": 2, "a": 1}),
