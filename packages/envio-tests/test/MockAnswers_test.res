@@ -327,6 +327,28 @@ Pending:
     await indexer.getBatchWritePromise()
   })
 
+  // One partition reaching the block doesn't carry a partition still behind it.
+  scenario->Scenario.it(
+    "fetches every partition up to the block, not just the first to reach it",
+    ~sources,
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([
+        {partitionId: "0", reply: Respond({items: []})},
+        {partitionId: "1", reply: Respond({items: [], latestFetchedBlockNumber: 50})},
+      ])
+      await indexer.getBatchWritePromise()
+      await mock.respondEmptyUpTo(300)
+      await indexer.getBatchWritePromise()
+      t.expect((await indexer.metric("envio_progress_block"), mock.pendingItemsQueries)).toEqual((
+        [{value: "300", labels: dict{"chainId": "1"}}],
+        [],
+      ))
+    },
+  )
+
   scenario->Scenario.it(
     "fetches empty ranges up to a block, one realistic wave at a time",
     ~sources,

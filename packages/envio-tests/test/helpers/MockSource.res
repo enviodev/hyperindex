@@ -277,8 +277,9 @@ type t = {
   expectItemsQueries: array<expectedItemsQuery> => promise<unit>,
   // Lets the chain fetch empty ranges up to `blockNumber`: waits for each wave of
   // queries and answers every one up to its own toBlock, never past
-  // `blockNumber`, until a reply reaches it. A query starting past it stays
-  // pending. For a test that just needs the chain somewhere.
+  // `blockNumber`, until every partition it answers gets there. A query starting
+  // past `blockNumber` fails it as unlisted, like any query no entry names. For
+  // a test that just needs the chain somewhere.
   respondEmptyUpTo: int => promise<unit>,
   // Empty-responds every pending query, up to its own toBlock unless
   // `~latestFetchedBlockNumber` says otherwise. Never waits, and throws with none.
@@ -643,6 +644,10 @@ let make = (
   // thing arrival order must not decide. `LeavePending` hands nothing out, so
   // it accounts for every remaining query it matches.
   let rec awaitMatch = async (expected, ~replyingIndices, ~deadline) => {
+    // A wave still landing would have its first query taken for all of it.
+    if settling.contents {
+      let _ = await nextArrival(~deadline)
+    }
     let replying = replyingIndices->Array.map(index => expected->Array.getUnsafe(index))
     let leavingPending = expected->Array.filter(entry => !isReplying(entry))
     let wait = async (~replied) =>
@@ -932,22 +937,24 @@ let make = (
         await expectItemsQueries([
           {where: query => query.fromBlock <= blockNumber, reply: LeavePending},
         ])
-        let reached =
+        // Every partition answered in this wave has to get there, not just one:
+        // a partition behind the others asks again from where it was left.
+        let allReached =
           pendingItemsQueries
           ->Array.copy
-          ->Array.reduce(false, (reached, query) =>
+          ->Array.reduce(true, (allReached, query) =>
             if query.fromBlock <= blockNumber {
               let latest = switch query.toBlock {
               | Bounded(toBlock) => Math.Int.min(toBlock, blockNumber)
               | Unbounded => blockNumber
               }
               (query->control).respond({items: [], latestFetchedBlockNumber: latest})
-              reached || latest === blockNumber
+              allReached && latest === blockNumber
             } else {
-              reached
+              allReached
             }
           )
-        if !reached {
+        if !allReached {
           await wave(~count=count + 1)
         }
       }

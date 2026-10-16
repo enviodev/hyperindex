@@ -1430,6 +1430,37 @@ describe("SourceManager.executeQuery", () => {
     addresses,
   }
 
+  // A test that starts expecting while a fan-out is still landing has to see
+  // the whole fan-out, not match whichever query happened to arrive first.
+  Async.it("Matches a fan-out only once it has fully arrived", async t => {
+    let mock = MockSource.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[mock.source])
+    let execute = partitionId =>
+      sourceManager
+      ->SourceManager.executeQuery(
+        ~query={...mockQuery(), partitionId},
+        ~isRealtime=false,
+        ~knownHeight=100,
+      )
+      ->ignore
+    execute("0")
+    let expectation = mock.expectItemsQueries([{reply: Respond({items: []})}])
+    execute("1")
+    let failure = switch await expectation {
+    | () => None
+    | exception JsExn(exn) => exn->JsExn.message
+    }
+    t.expect(failure).toEqual(
+      Some(`expectItemsQueries can reply to more than one pending query with entry #0 {reply: Respond(…)}:
+  {partitionId: "0", fromBlock: 0, toBlock: Unbounded, retryCount: 0}
+  {partitionId: "1", fromBlock: 0, toBlock: Unbounded, retryCount: 0}
+Give each query its own entry, told apart by partitionId:
+  {partitionId: "0", reply: …}
+  {partitionId: "1", reply: …}`),
+    )
+    mock.drainPendingItemsQueries()
+  })
+
   // Fake time only moves when the test moves it, and `expectItemsQueries` can't
   // wait out a backoff on a fake clock, so step the clock until the manager's
   // next attempt reaches the source.

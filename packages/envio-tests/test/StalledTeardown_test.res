@@ -78,7 +78,6 @@ Async.it("reports a failing body while a write it stalled is still pending", asy
   } catch {
   | JsExn(exn) => exn->JsExn.message
   }
-  gate.release()
   t.expect(
     failure->Option.flatMap(message => message->String.split("\n")->Array.get(0)),
     ~message="the body's own error leads the report, not a teardown timeout",

@@ -1211,8 +1211,13 @@ describe("E2E tests", () => {
   scenario->Scenario.it(
     "Partition queries adjust ranges depending on responses",
     ~sources=[{chain: 1337, methods}],
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sourceMock = source(1337)
+      let chunkSize = (query: MockSource.pendingItemsQuery) =>
+        switch query.toBlock {
+        | Bounded(toBlock) => toBlock - query.fromBlock + 1
+        | Unbounded => 0
+        }
 
       // Step 1: Resolve height (blockLag=200 by default, headBlock=19800)
       sourceMock.resolveGetHeightOrThrow(20_000)
@@ -1284,19 +1289,11 @@ describe("E2E tests", () => {
       )
       await indexer.getBatchWritePromise()
 
-      // Assert: full-size responses grew the chunk size beyond the initial 540.
-      let maxChunkSize = sourceMock.pendingItemsQueries->Array.reduce(
-        0,
-        (max, query) =>
-          switch query.toBlock {
-          | Bounded(toBlock) => Pervasives.max(max, toBlock - query.fromBlock + 1)
-          | Unbounded => max
-          },
-      )
-      t.expect(
-        maxChunkSize > 540,
-        ~message="Tail chunks should have grown beyond the initial 540",
-      ).toBe(true)
+      // Full-size responses grew the tail chunks beyond the initial 540.
+      await sourceMock.expectItemsQueries([
+        {where: query => chunkSize(query) > 540, reply: LeavePending},
+        {partitionId: "0", reply: LeavePending},
+      ])
 
       // Phase B — chunks shrink on partial response:
       // Resolve the first pending chunk (at queue front) at a small partial range
@@ -1317,17 +1314,10 @@ describe("E2E tests", () => {
       // After the partial response sourceRangeCapacity=100, so chunkRange drops to
       // min(100, 540)=100 and the regenerated chunks shrink to ceil(100*1.8)=180,
       // well below the grown 972-size tail.
-      let shrunkChunks = sourceMock.pendingItemsQueries->Array.filter(
-        query =>
-          switch query.toBlock {
-          | Bounded(toBlock) => toBlock - query.fromBlock + 1 === 180
-          | Unbounded => false
-          },
-      )
-      t.expect(
-        shrunkChunks->Array.length >= 1,
-        ~message="New chunks should have shrunk to the uniform size 180",
-      ).toBeTruthy()
+      await sourceMock.expectItemsQueries([
+        {where: query => chunkSize(query) === 180, reply: LeavePending},
+        {partitionId: "0", reply: LeavePending},
+      ])
     },
   )
 
