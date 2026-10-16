@@ -95,6 +95,9 @@ pub fn tables(sequence: Sequence) -> Vec<TableSpec> {
                     ..key("id", FieldType::Int32)
                 },
                 column("config", FieldType::String),
+                // Initialize writes one random id here and into the ClickHouse
+                // database it builds. A start refuses a ClickHouse holding a
+                // different id: it was built beside another Postgres.
                 column("instance", FieldType::String),
             ],
         ),
