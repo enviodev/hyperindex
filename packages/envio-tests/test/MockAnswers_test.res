@@ -148,8 +148,8 @@ Give each query its own entry, told apart by partitionId:
   {partitionId: "1", reply: …}`),
       )
       await mock.expectItemsQueries([
-        {partitionId: "0", reply: Respond({items: [], latestFetchedBlockNumber: 300})},
-        {partitionId: "1", reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+        {partitionId: "0", reply: Respond({items: []})},
+        {partitionId: "1", reply: Respond({items: []})},
       ])
       await indexer.getBatchWritePromise()
     },
@@ -163,11 +163,7 @@ Give each query its own entry, told apart by partitionId:
       let mock = source(1)
       mock.resolveGetHeightOrThrow(300)
       t.expect(
-        await failureOf(
-          mock.expectItemsQueries([
-            {partitionId: "1", reply: Respond({items: [], latestFetchedBlockNumber: 300})},
-          ]),
-        ),
+        await failureOf(mock.expectItemsQueries([{partitionId: "1", reply: Respond({items: []})}])),
       ).toEqual(
         Some(`expectItemsQueries matched every entry, but these pending queries are in none:
   {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}
@@ -176,16 +172,14 @@ Reply to them in this list, or keep them pending:
       )
 
       await mock.expectItemsQueries([
-        {partitionId: "1", reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+        {partitionId: "1", reply: Respond({items: []})},
         {partitionId: "0", reply: LeavePending},
       ])
       t.expect(
         mock.pendingItemsQueries,
         ~message="partition 0 was checked and left pending",
       ).toEqual([{partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}])
-      await mock.expectItemsQueries([
-        {partitionId: "0", reply: Respond({items: [], latestFetchedBlockNumber: 300})},
-      ])
+      await mock.expectItemsQueries([{partitionId: "0", reply: Respond({items: []})}])
       await indexer.getBatchWritePromise()
     },
   )
@@ -213,7 +207,7 @@ Reply to them in this list, or keep them pending:
 Reply to them in this list, or keep them pending:
   {partitionId: "1", reply: LeavePending}`),
       )
-      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=300)
+      await mock.respondEmptyUpTo(300)
       await indexer.getBatchWritePromise()
     },
   )
@@ -252,9 +246,47 @@ Pending:
 Pending:
   {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}`),
     )
-    mock.drainPendingItemsQueries(~latestFetchedBlockNumber=300)
+    await mock.respondEmptyUpTo(300)
     await indexer.getBatchWritePromise()
   })
+
+  // A real source never reports having fetched past the range it was asked for,
+  // so a reply that does describes a source that doesn't exist.
+  scenario->Scenario.it("refuses a reply past the query's toBlock", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    mock.resolveGetHeightOrThrow(300)
+    t.expect(
+      await failureOf(
+        mock.expectItemsQueries([
+          {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+        ]),
+      ),
+    ).toEqual(
+      Some(`expectItemsQueries can't reply latestFetchedBlockNumber 300 to {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}: a source never fetches past the toBlock it was asked for`),
+    )
+    mock.drainPendingItemsQueries()
+    await indexer.getBatchWritePromise()
+  })
+
+  scenario->Scenario.it(
+    "fetches empty ranges up to a block, one realistic wave at a time",
+    ~sources,
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await mock.respondEmptyUpTo(300)
+      await indexer.getBatchWritePromise()
+      t.expect((await indexer.metric("envio_progress_block"), mock.pendingItemsQueries)).toEqual((
+        [{value: "300", labels: dict{"chainId": "1"}}],
+        [],
+      ))
+    },
+  )
 
   scenario->Scenario.it(
     "builds a reply from the query it matched",
@@ -275,7 +307,7 @@ Pending:
         {partitionId: "1", fromBlock: 51, reply: LeavePending},
       ])
       t.expect(mock.pendingItemsQueries->Array.map(query => query.fromBlock)).toEqual([51, 51])
-      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=300)
+      await mock.respondEmptyUpTo(300)
       await indexer.getBatchWritePromise()
     },
   )
@@ -299,7 +331,7 @@ Pending:
 Pending:
   {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}`),
     )
-    mock.drainPendingItemsQueries(~latestFetchedBlockNumber=300)
+    await mock.respondEmptyUpTo(300)
     await indexer.getBatchWritePromise()
   })
 
@@ -317,9 +349,7 @@ Pending:
     mock.resolveGetHeightOrThrow(300)
     // Without the drop the stale query is still pending with the same payload,
     // and this reply can't tell which of the two it is for.
-    await mock.expectItemsQueries([
-      {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
-    ])
+    await mock.expectItemsQueries([{fromBlock: 1, reply: Respond({items: []})}])
     await restarted.getBatchWritePromise()
     t.expect(
       mock.pendingItemsQueries->Array.some(query => stale->Array.includes(query)),
@@ -396,7 +426,7 @@ describe("MockSource.expectBlockHashLookup", () => {
       ).toEqual(
         Some(`expectBlockHashLookup timed out waiting for a lookup of [200]. No lookup is pending.`),
       )
-      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=300)
+      await mock.respondEmptyUpTo(300)
       await indexer.getBatchWritePromise()
     },
   )

@@ -267,7 +267,13 @@ type t = {
   // `LeavePending` accounts for every remaining query it matches. A pending
   // query no entry accounts for, and no earlier list left pending, fails it.
   expectItemsQueries: array<expectedItemsQuery> => promise<unit>,
-  // Empty-responds every pending query. Never waits, and throws with none.
+  // Lets the chain fetch empty ranges up to `blockNumber`: waits for each wave of
+  // queries and answers every one up to its own toBlock, never past
+  // `blockNumber`, until a reply reaches it. A query starting past it stays
+  // pending. For a test that just needs the chain somewhere.
+  respondEmptyUpTo: int => promise<unit>,
+  // Empty-responds every pending query, up to its own toBlock unless
+  // `~latestFetchedBlockNumber` says otherwise. Never waits, and throws with none.
   drainPendingItemsQueries: (~latestFetchedBlockNumber: int=?) => unit,
   getBlockHashesCalls: array<array<int>>,
   // Answers every block-hash lookup in flight, and throws when there is none.
@@ -765,6 +771,57 @@ let make = (
     }
   }
 
+  let expectItemsQueries = async expected => {
+    let replyingIndices = expected->Array.reduceWithIndex([], (indices, entry, index) => {
+      if entry->isReplying {
+        indices->Array.push(index)->ignore
+      }
+      indices
+    })
+    let (assignment, leftPending) = await awaitMatch(
+      expected,
+      ~replyingIndices,
+      ~deadline=realNow() +. 2000.,
+    )
+    let unlisted =
+      pendingItemsQueries->Array.filter(query =>
+        !(assignment->Array.includes(query)) &&
+        !(leftPending->Array.includes(query)) &&
+        !(keptPendingQueries->Array.includes(query))
+      )
+    if !(unlisted->Utils.Array.isEmpty) {
+      JsError.throwWithMessage(unlistedQueriesMessage(unlisted))
+    }
+    leftPending->Array.forEach(query =>
+      if !(keptPendingQueries->Array.includes(query)) {
+        keptPendingQueries->Array.push(query)->ignore
+      }
+    )
+    let replies = assignment->Array.mapWithIndex((query, position) =>
+      switch (expected->Array.getUnsafe(replyingIndices->Array.getUnsafe(position))).reply {
+      | Respond(response) => (query, Ok(response))
+      | RespondWith(respond) => (query, Ok(respond(query)))
+      | Fail(exn) => (query, Error(exn))
+      | LeavePending => JsError.throwWithMessage("A LeavePending entry never takes a reply")
+      }
+    )
+    replies->Array.forEach(((query, reply)) =>
+      switch (reply, query.toBlock) {
+      | (Ok({latestFetchedBlockNumber}), Bounded(toBlock)) if latestFetchedBlockNumber > toBlock =>
+        JsError.throwWithMessage(
+          `expectItemsQueries can't reply latestFetchedBlockNumber ${latestFetchedBlockNumber->Int.toString} to ${query->describeQuery}: a source never fetches past the toBlock it was asked for`,
+        )
+      | _ => ()
+      }
+    )
+    replies->Array.forEach(((query, reply)) =>
+      switch reply {
+      | Ok(response) => (query->control).respond(response)
+      | Error(exn) => (query->control).fail(exn)
+      }
+    )
+  }
+
   {
     getHeightOrThrowCalls,
     resolveGetHeightOrThrow: height => {
@@ -799,45 +856,51 @@ let make = (
       ),
     reorgCallCount: () => reorgCalls.contents,
     pendingItemsQueries,
-    expectItemsQueries: async expected => {
-      let replyingIndices = expected->Array.reduceWithIndex([], (indices, entry, index) => {
-        if entry->isReplying {
-          indices->Array.push(index)->ignore
+    expectItemsQueries,
+    respondEmptyUpTo: async blockNumber => {
+      let rec wave = async (~count) => {
+        if count > 1000 {
+          JsError.throwWithMessage(
+            `respondEmptyUpTo(${blockNumber->Int.toString}) didn't get there in 1000 waves`,
+          )
         }
-        indices
-      })
-      let (assignment, leftPending) = await awaitMatch(
-        expected,
-        ~replyingIndices,
-        ~deadline=realNow() +. 2000.,
-      )
-      let unlisted =
-        pendingItemsQueries->Array.filter(query =>
-          !(assignment->Array.includes(query)) &&
-          !(leftPending->Array.includes(query)) &&
-          !(keptPendingQueries->Array.includes(query))
-        )
-      if !(unlisted->Utils.Array.isEmpty) {
-        JsError.throwWithMessage(unlistedQueriesMessage(unlisted))
+        await expectItemsQueries([
+          {where: query => query.fromBlock <= blockNumber, reply: LeavePending},
+        ])
+        let reached =
+          pendingItemsQueries
+          ->Array.copy
+          ->Array.reduce(false, (reached, query) =>
+            if query.fromBlock <= blockNumber {
+              let latest = switch query.toBlock {
+              | Bounded(toBlock) => Math.Int.min(toBlock, blockNumber)
+              | Unbounded => blockNumber
+              }
+              (query->control).respond({items: [], latestFetchedBlockNumber: latest})
+              reached || latest === blockNumber
+            } else {
+              reached
+            }
+          )
+        if !reached {
+          await wave(~count=count + 1)
+        }
       }
-      leftPending->Array.forEach(query =>
-        if !(keptPendingQueries->Array.includes(query)) {
-          keptPendingQueries->Array.push(query)->ignore
-        }
-      )
-      assignment->Array.forEachWithIndex((query, position) =>
-        switch (expected->Array.getUnsafe(replyingIndices->Array.getUnsafe(position))).reply {
-        | Respond(response) => (query->control).respond(response)
-        | RespondWith(respond) => (query->control).respond(respond(query))
-        | Fail(exn) => (query->control).fail(exn)
-        | LeavePending => ()
-        }
-      )
+      await wave(~count=0)
     },
     drainPendingItemsQueries: (~latestFetchedBlockNumber=?) =>
       switch pendingItemsQueries->Array.copy {
       | [] => JsError.throwWithMessage("drainPendingItemsQueries has no pending query to drain")
       | queries =>
+        queries->Array.forEach(query =>
+          switch (latestFetchedBlockNumber, query.toBlock) {
+          | (Some(latest), Bounded(toBlock)) if latest > toBlock =>
+            JsError.throwWithMessage(
+              `drainPendingItemsQueries can't reply latestFetchedBlockNumber ${latest->Int.toString} to ${query->describeQuery}: a source never fetches past the toBlock it was asked for. Drain without ~latestFetchedBlockNumber to answer each query up to its own toBlock.`,
+            )
+          | _ => ()
+          }
+        )
         queries->Array.forEach(query =>
           (query->control).respond({items: [], ?latestFetchedBlockNumber})
         )
