@@ -84,10 +84,12 @@ for (const path of resFiles(testRoot)) {
         });
       }
     }
-    // A poll's condition sits on the same line or the one after it.
+    // A poll's condition sits on the same line or the one after it. A loop that
+    // steps a faked clock is moving time, which `expectItemsQueries` can't do.
     if (pollStart.test(code)) {
       const condition = `${code} ${nextCodeLine(lines, index + 1) ?? ""}`;
-      if (/\bpendingItemsQueries\b/.test(condition)) {
+      const body = lines.slice(index, index + 8).join("\n");
+      if (/\bpendingItemsQueries\b/.test(condition) && !/\badvanceTimersByTime/.test(body)) {
         violations.push({
           file,
           line: index + 1,
