@@ -303,6 +303,23 @@ The list replies only once every entry matches, but the indexer may send a query
   )
 
   scenario->Scenario.it(
+    "matches a query by an address it covers, in any letter case",
+    ~sources,
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([
+        {address: "0X0000000000000000000000000000000000000002", reply: Respond({items: []})},
+        {partitionId: "0", reply: LeavePending},
+      ])
+      t.expect(mock.repliedItemsQueries->Array.map(query => query.partitionId)).toEqual(["1"])
+      await mock.respondEmptyUpTo(300)
+      await indexer.getBatchWritePromise()
+    },
+  )
+
+  scenario->Scenario.it(
     "says how far to reply when an unbounded query can't take an item",
     ~sources,
     async (~t, ~indexer, ~source) => {

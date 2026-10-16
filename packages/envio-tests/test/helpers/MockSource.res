@@ -224,6 +224,9 @@ type expectedItemsQuery = {
   toBlock?: toBlock,
   retryCount?: int,
   coversBlock?: int,
+  // An address the query fetches for, in any letter case: queries carry the
+  // lowercase spelling, so a checksummed one would otherwise never match.
+  address?: string,
   where?: pendingItemsQuery => bool,
   reply: reply,
 }
@@ -356,6 +359,13 @@ let expectedMatches = (expected: expectedItemsQuery, query: pendingItemsQuery) =
   expected.toBlock->Option.mapOr(true, toBlock => toBlock == query.toBlock) &&
   expected.retryCount->Option.mapOr(true, retryCount => retryCount === query.retryCount) &&
   expected.coversBlock->Option.mapOr(true, blockNumber => query->queryCoversBlock(blockNumber)) &&
+  expected.address->Option.mapOr(true, address =>
+    query
+    ->addresses
+    ->Array.some(queryAddress =>
+      queryAddress->Address.toString->String.toLowerCase === address->String.toLowerCase
+    )
+  ) &&
   expected.where->Option.mapOr(true, where => where(query))
 
 let isReplying = (expected: expectedItemsQuery) =>
@@ -425,6 +435,7 @@ let describeExpected = (expected: expectedItemsQuery) =>
         expected.coversBlock->Option.map(blockNumber =>
           `coversBlock: ${blockNumber->Int.toString}`
         ),
+        expected.address->Option.map(address => `address: "${address}"`),
         expected.where->Option.map(_ => "where: <fn>"),
         Some(
           `reply: ${switch expected.reply {
