@@ -335,10 +335,7 @@ describe("SourceManager source priority with Live sources", () => {
             ~knownHeight=100,
           )
         // The query goes to Live (recovered primary), not fallback
-        switch liveMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Expected one pending call to liveMock")
-        }
+        await liveMock.expectItemsQueries([{reply: Respond({items: []})}])
         let _ = await p
       }
 
@@ -1463,19 +1460,38 @@ describe("SourceManager.executeQuery", () => {
     addresses,
   }
 
+  // Fake time only moves when the test moves it, and `expectItemsQueries` can't
+  // wait out a backoff on a fake clock, so step the clock until the manager's
+  // next attempt reaches the source.
+  let advanceUntilQueried = async (mock: MockSource.t) => {
+    let steps = ref(0)
+    while mock.pendingItemsQueries->Utils.Array.isEmpty {
+      if steps.contents === 10_000 {
+        JsError.throwWithMessage("The source wasn't queried within 100s of fake time")
+      }
+      steps := steps.contents + 1
+      await Vi.advanceTimersByTimeAsync(10)
+    }
+  }
+
   Async.it("Successfully executes the query", async t => {
-    let {source, getItemsOrThrowCalls, resolveGetItemsOrThrow} = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
+    let sourceMock = MockSource.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
     let p =
       sourceManager->SourceManager.executeQuery(
         ~query=mockQuery(),
         ~isRealtime=false,
         ~knownHeight=100,
       )
-    t.expect(getItemsOrThrowCalls->Array.map(call => call.payload)).toEqual([
-      {"fromBlock": 0, "toBlock": None, "retry": 0, "p": "0"},
+    await sourceMock.expectItemsQueries([
+      {
+        partitionId: "0",
+        fromBlock: 0,
+        toBlock: Unbounded,
+        retryCount: 0,
+        reply: Respond({items: []}),
+      },
     ])
-    resolveGetItemsOrThrow([])
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
@@ -1490,20 +1506,19 @@ describe("SourceManager.executeQuery", () => {
       )
 
     t.expect(sourceMock.reorgCallCount()).toEqual(0)
-    switch sourceMock.getItemsOrThrowCalls {
-    | [call] =>
-      // The response contains block 9 twice with different hashes: once as the
-      // range's parent guard and once as the reported latest block.
-      call.resolve([], ~latestFetchedBlockNumber=9, ~latestFetchedBlockHash="0x0a")
-    | _ => JsError.throwWithMessage("Expected the first source call")
-    }
+    await sourceMock.expectItemsQueries([
+      {
+        fromBlock: 10,
+        retryCount: 0,
+        // The response contains block 9 twice with different hashes: once as the
+        // range's parent guard and once as the reported latest block.
+        reply: Respond({items: [], latestFetchedBlockNumber: 9, latestFetchedBlockHash: "0x0a"}),
+      },
+    ])
 
-    await Utils.delay(200)
+    await sourceMock.expectItemsQueries([{fromBlock: 10, retryCount: 1, reply: LeavePending}])
     t.expect(sourceMock.reorgCallCount()).toEqual(1)
-    switch sourceMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([])
-    | _ => JsError.throwWithMessage("Expected the retry after cache invalidation")
-    }
+    await sourceMock.expectItemsQueries([{retryCount: 1, reply: Respond({items: []})}])
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
@@ -1519,15 +1534,16 @@ describe("SourceManager.executeQuery", () => {
 
     // Every ecosystem's source raises this instead of building its own backoff,
     // so the retry cadence lives in one place.
-    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
-      Source.SourceBehindHead({blockNumber: 10, requestStats: []}),
-    )
-    await Utils.delay(200)
-
-    switch sourceMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([])
-    | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
-    }
+    await sourceMock.expectItemsQueries([
+      {
+        fromBlock: 10,
+        retryCount: 0,
+        reply: Fail(Source.SourceBehindHead({blockNumber: 10, requestStats: []})),
+      },
+    ])
+    await sourceMock.expectItemsQueries([
+      {fromBlock: 10, retryCount: 1, reply: Respond({items: []})},
+    ])
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
@@ -1551,29 +1567,19 @@ describe("SourceManager.executeQuery", () => {
 
       // The replica answering is only briefly behind its siblings, so a source
       // that is otherwise healthy must not be traded away within a few retries.
-      let syncRetries = []
-      let failedOverAt = ref(None)
-      let ticks = ref(0)
-      while failedOverAt.contents === None && ticks.contents < 3_000 {
-        switch (syncMock.getItemsOrThrowCalls, fallbackMock.getItemsOrThrowCalls) {
-        | ([call], []) =>
-          syncRetries->Array.push(call.payload["retry"])
-          call.reject(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
-        | ([], [call]) =>
-          failedOverAt := Some((call.payload["retry"], Date.now() -. startedAt))
-          call.resolve([])
-        | _ => ()
-        }
-        await Vi.advanceTimersByTimeAsync(10)
-        ticks := ticks.contents + 1
+      for retryCount in 0 to 12 {
+        await advanceUntilQueried(syncMock)
+        await syncMock.expectItemsQueries([
+          {retryCount, reply: Fail(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))},
+        ])
       }
+      await advanceUntilQueried(fallbackMock)
+      let failedOverAfter = Date.now() -. startedAt
+      await fallbackMock.expectItemsQueries([{retryCount: 13, reply: Respond({items: []})}])
       let _ = await p
       Vi.useRealTimers()
 
-      t.expect((syncRetries, failedOverAt.contents)).toEqual((
-        Array.fromInitializer(~length=13, i => i),
-        Some((13, 9550.)),
-      ))
+      t.expect(failedOverAfter).toEqual(9550.)
     },
   )
 
@@ -1591,20 +1597,17 @@ describe("SourceManager.executeQuery", () => {
         )
 
       let calledAt = []
-      let ticks = ref(0)
-      while calledAt->Array.length < 17 && ticks.contents < 5_000 {
-        switch sourceMock.getItemsOrThrowCalls {
-        | [call] =>
-          calledAt->Array.push(Date.now())
-          if calledAt->Array.length < 17 {
-            call.reject(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
-          } else {
-            call.resolve([])
-          }
-        | _ => ()
-        }
-        await Vi.advanceTimersByTimeAsync(10)
-        ticks := ticks.contents + 1
+      for retryCount in 0 to 16 {
+        await advanceUntilQueried(sourceMock)
+        calledAt->Array.push(Date.now())
+        await sourceMock.expectItemsQueries([
+          {
+            retryCount,
+            reply: retryCount < 16
+              ? Fail(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
+              : Respond({items: []}),
+          },
+        ])
       }
       let _ = await p
       Vi.useRealTimers()
@@ -1631,18 +1634,18 @@ describe("SourceManager.executeQuery", () => {
 
     // The native client reports the timings of the requests it made before
     // giving up, so a source failing under load still shows up in its metrics.
-    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
-      Source.SourceBehindHead({
-        blockNumber: 10,
-        requestStats: [{Source.method: "getLogs", seconds: 0.5}],
-      }),
-    )
-    await Utils.delay(200)
-
-    switch sourceMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([])
-    | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
-    }
+    await sourceMock.expectItemsQueries([
+      {
+        retryCount: 0,
+        reply: Fail(
+          Source.SourceBehindHead({
+            blockNumber: 10,
+            requestStats: [{Source.method: "getLogs", seconds: 0.5}],
+          }),
+        ),
+      },
+    ])
+    await sourceMock.expectItemsQueries([{retryCount: 1, reply: Respond({items: []})}])
     let _ = await p
 
     t.expect(
@@ -1663,19 +1666,29 @@ describe("SourceManager.executeQuery", () => {
       )
 
     let first = query(~fromBlock=10)
-    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).resolve(
-      [],
-      ~requestStats=[{Source.method: "getLogs", seconds: 0.5, responseBlocks: 3}],
-    )
+    await sourceMock.expectItemsQueries([
+      {
+        fromBlock: 10,
+        reply: Respond({
+          items: [],
+          requestStats: [{Source.method: "getLogs", seconds: 0.5, responseBlocks: 3}],
+        }),
+      },
+    ])
     let _ = await first
 
     // A range the source scanned and found nothing in: it still costs a
     // request, and under a per-block price it is the one that costs nothing.
     let second = query(~fromBlock=20)
-    (sourceMock.getItemsOrThrowCalls->Utils.Array.lastUnsafe).resolve(
-      [],
-      ~requestStats=[{Source.method: "getLogs", seconds: 0.25, responseBlocks: 0}],
-    )
+    await sourceMock.expectItemsQueries([
+      {
+        fromBlock: 20,
+        reply: Respond({
+          items: [],
+          requestStats: [{Source.method: "getLogs", seconds: 0.25, responseBlocks: 0}],
+        }),
+      },
+    ])
     let _ = await second
 
     t.expect(
@@ -1704,7 +1717,9 @@ describe("SourceManager.executeQuery", () => {
     let error = {
       "message": "Something went wrong",
     }
-    sourceMock.getItemsOrThrowCalls->Array.forEach(call => call.reject(error))
+    await sourceMock.expectItemsQueries([
+      {reply: Fail(error->(Utils.magic: {"message": string} => exn))},
+    ])
     try {
       let _ = await p
       JsError.throwWithMessage("Should not have resolved")
@@ -1714,6 +1729,9 @@ describe("SourceManager.executeQuery", () => {
   })
 
   Async.it("Immediately retries with the suggested toBlock", async t => {
+    // On a fake clock no backoff can elapse, so the retry being pending at all
+    // proves it didn't wait.
+    Vi.useFakeTimers()
     let sourceMock = MockSource.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
       ~isRealtime=false,
@@ -1730,37 +1748,33 @@ describe("SourceManager.executeQuery", () => {
         ~isRealtime=false,
         ~knownHeight=100,
       )
+    await sourceMock.expectItemsQueries([
+      {
+        partitionId: "0",
+        fromBlock: 0,
+        toBlock: Unbounded,
+        retryCount: 0,
+        reply: Fail(
+          Source.GetItemsError(
+            FailedGettingItems({
+              requestStats: [],
+              attemptedToBlock: 100,
+              retry: WithSuggestedToBlock({toBlock: 10}),
+            }),
+          ),
+        ),
+      },
+    ])
+    // Settles the microtasks without letting the fake clock move.
+    await Vi.advanceTimersByTimeAsync(0)
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Array.length,
-      ~message="Should call getItemsOrThrow",
-    ).toEqual(1)
-    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
-      Source.GetItemsError(
-        FailedGettingItems({
-          requestStats: [],
-          attemptedToBlock: 100,
-          retry: WithSuggestedToBlock({toBlock: 10}),
-        }),
-      ),
-    )
-    t.expect(
-      sourceMock.getItemsOrThrowCalls->Array.length,
-      ~message="No new calls before the microtask",
-    ).toEqual(0)
-    await Promise.resolve() // Wait for microtask, so the rejection is caught
-
-    switch sourceMock.getItemsOrThrowCalls {
-    | [call] => {
-        t.expect(
-          call.payload,
-          ~message=`Should reset retry count on WithSuggestedToBlock error`,
-        ).toEqual({"fromBlock": 0, "toBlock": Some(10), "retry": 0, "p": "0"})
-        call.resolve([])
-      }
-    | _ => JsError.throwWithMessage("Should have a new call after the microtask")
-    }
+      sourceMock.pendingItemsQueries,
+      ~message="Should reset retry count on WithSuggestedToBlock error",
+    ).toEqual([{partitionId: "0", fromBlock: 0, toBlock: Bounded(10), retryCount: 0}])
+    await sourceMock.expectItemsQueries([{retryCount: 0, reply: Respond({items: []})}])
 
     t.expect((await p).parsedQueueItems).toEqual([])
+    Vi.useRealTimers()
   })
 
   // A stall is reported by the level it is logged at, so pinning it means
@@ -1819,19 +1833,16 @@ describe("SourceManager.executeQuery", () => {
             ~knownHeight=100,
           )
         // Retries 0 to 12: the quiet window, then the first attempt past it.
-        let attempts = ref(0)
-        while attempts.contents < 14 {
-          switch sourceMock.getItemsOrThrowCalls {
-          | [call] =>
-            attempts := attempts.contents + 1
-            if attempts.contents < 14 {
-              call.reject(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
-            } else {
-              call.resolve([])
-            }
-          | _ => ()
-          }
-          await Vi.advanceTimersByTimeAsync(10)
+        for retryCount in 0 to 13 {
+          await advanceUntilQueried(sourceMock)
+          await sourceMock.expectItemsQueries([
+            {
+              retryCount,
+              reply: retryCount < 13
+                ? Fail(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
+                : Respond({items: []}),
+            },
+          ])
         }
         let _ = await p
       },
@@ -1885,15 +1896,12 @@ describe("SourceManager.executeQuery", () => {
           }),
         )
         // Every attempt up to and including the one that crosses the threshold.
-        for _retry in 0 to SourceManager.stallRetries {
-          switch sourceMock.getItemsOrThrowCalls {
-          | [call] => call.reject(withBackoff)
-          | _ => JsError.throwWithMessage("Should have one pending call to the source")
-          }
-          await Promise.resolve()
-          await Utils.delay(0)
+        for retryCount in 0 to SourceManager.stallRetries {
+          await sourceMock.expectItemsQueries([{retryCount, reply: Fail(withBackoff)}])
         }
-        (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).resolve([])
+        await sourceMock.expectItemsQueries([
+          {retryCount: SourceManager.stallRetries + 1, reply: Respond({items: []})},
+        ])
         let _ = await p
       },
     )
@@ -1917,33 +1925,38 @@ describe("SourceManager.executeQuery", () => {
 
       // The provider reports a cap it doesn't apply: what it suggests is the
       // range it just refused, so retrying that suggestion makes no progress.
-      (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
-        Source.GetItemsError(
-          FailedGettingItems({
-            requestStats: [],
-            attemptedToBlock: 100,
-            retry: WithSuggestedToBlock({toBlock: 100}),
-          }),
-        ),
-      )
-      await Promise.resolve() // Wait for microtask, so the rejection is caught
-      let retriedWithoutWaiting = sourceMock.getItemsOrThrowCalls->Array.length
+      await sourceMock.expectItemsQueries([
+        {
+          retryCount: 0,
+          reply: Fail(
+            Source.GetItemsError(
+              FailedGettingItems({
+                requestStats: [],
+                attemptedToBlock: 100,
+                retry: WithSuggestedToBlock({toBlock: 100}),
+              }),
+            ),
+          ),
+        },
+      ])
+      // Lets every microtask settle; the retry's backoff is longer than this.
+      await Utils.delay(0)
+      t.expect(
+        sourceMock.pendingItemsQueries,
+        ~message="Should not retry without waiting",
+      ).toEqual([])
 
-      await Utils.delay(200)
-      let afterTheWait = switch sourceMock.getItemsOrThrowCalls {
-      | [call] => {
-          call.resolve([])
-          Some(call.payload)
-        }
-      | _ => None
-      }
-
-      t.expect((retriedWithoutWaiting, afterTheWait)).toEqual((
-        0,
-        // The suggestion isn't applied, and the attempt counts towards the
-        // failover schedule instead of restarting it.
-        Some({"fromBlock": 0, "toBlock": None, "retry": 1, "p": "0"}),
-      ))
+      // The suggestion isn't applied, and the attempt counts towards the
+      // failover schedule instead of restarting it.
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 0,
+          toBlock: Unbounded,
+          retryCount: 1,
+          reply: Respond({items: []}),
+        },
+      ])
       t.expect((await p).parsedQueueItems).toEqual([])
     },
   )
@@ -1966,7 +1979,6 @@ describe("SourceManager.executeQuery", () => {
           ~knownHeight=100,
         )
 
-      let handledGetItemsOrThrowCalls = []
       let withBackoff = Source.GetItemsError(
         FailedGettingItems({
           requestStats: [],
@@ -1975,86 +1987,26 @@ describe("SourceManager.executeQuery", () => {
         }),
       )
 
-      // Retries 0, 1, 2 on sync (primary)
-      for _idx in 0 to 2 {
-        switch syncMock.getItemsOrThrowCalls {
-        | [call] => {
-            handledGetItemsOrThrowCalls->Array.push({
-              "fromBlock": call.payload["fromBlock"],
-              "toBlock": call.payload["toBlock"],
-              "retry": call.payload["retry"],
-              "source": "sync",
-            })
-            call.reject(withBackoff)
-          }
-        | _ => JsError.throwWithMessage("Should have one pending call to syncMock")
-        }
-        await Promise.resolve()
-        await Utils.delay(0)
+      // Starts on primary (sync), retries 3 times, switches to secondary
+      // (fallback). Retries 2 times on fallback, switches back to sync (oldest
+      // lastFailedAt).
+      let attempts: array<(MockSource.t, int)> = [
+        (syncMock, 0),
+        (syncMock, 1),
+        (syncMock, 2),
+        (fallbackMock, 3),
+        (fallbackMock, 4),
+      ]
+      for idx in 0 to attempts->Array.length - 1 {
+        let (mock, retryCount) = attempts->Array.getUnsafe(idx)
+        await mock.expectItemsQueries([
+          {fromBlock: 0, toBlock: Unbounded, retryCount, reply: Fail(withBackoff)},
+        ])
       }
-
-      // Retry 3 on fallback (sync failed, fallback is recovered secondary)
-      switch fallbackMock.getItemsOrThrowCalls {
-      | [call] => {
-          handledGetItemsOrThrowCalls->Array.push({
-            "fromBlock": call.payload["fromBlock"],
-            "toBlock": call.payload["toBlock"],
-            "retry": call.payload["retry"],
-            "source": "fallback",
-          })
-          call.reject(withBackoff)
-        }
-      | _ => JsError.throwWithMessage("Should have one pending call to fallbackMock")
-      }
-
-      await Promise.resolve()
-      await Utils.delay(0)
-
-      // Retry 4 on fallback (odd retry, no switch)
-      switch fallbackMock.getItemsOrThrowCalls {
-      | [call] => {
-          handledGetItemsOrThrowCalls->Array.push({
-            "fromBlock": call.payload["fromBlock"],
-            "toBlock": call.payload["toBlock"],
-            "retry": call.payload["retry"],
-            "source": "fallback",
-          })
-          call.reject(withBackoff)
-        }
-      | _ => JsError.throwWithMessage("Should have one pending call to fallbackMock")
-      }
-
-      await Promise.resolve()
-      await Utils.delay(0)
-
-      // Retry 5 on sync (fallback failed, sync has oldest lastFailedAt)
-      switch syncMock.getItemsOrThrowCalls {
-      | [call] => {
-          handledGetItemsOrThrowCalls->Array.push({
-            "fromBlock": call.payload["fromBlock"],
-            "toBlock": call.payload["toBlock"],
-            "retry": call.payload["retry"],
-            "source": "sync",
-          })
-          t.expect(
-            handledGetItemsOrThrowCalls,
-            ~message=`Starts on primary (sync), retries 3 times, switches to secondary (fallback).
-Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
-        `,
-          ).toEqual([
-            {"fromBlock": 0, "toBlock": None, "retry": 0, "source": "sync"},
-            {"fromBlock": 0, "toBlock": None, "retry": 1, "source": "sync"},
-            {"fromBlock": 0, "toBlock": None, "retry": 2, "source": "sync"},
-            {"fromBlock": 0, "toBlock": None, "retry": 3, "source": "fallback"},
-            {"fromBlock": 0, "toBlock": None, "retry": 4, "source": "fallback"},
-            {"fromBlock": 0, "toBlock": None, "retry": 5, "source": "sync"},
-          ])
-
-          call.resolve([])
-          t.expect((await p).parsedQueueItems).toEqual([])
-        }
-      | _ => JsError.throwWithMessage("Should have one pending call to syncMock")
-      }
+      await syncMock.expectItemsQueries([
+        {fromBlock: 0, toBlock: Unbounded, retryCount: 5, reply: Respond({items: []})},
+      ])
+      t.expect((await p).parsedQueueItems).toEqual([])
     },
   )
 
@@ -2099,10 +2051,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~knownHeight=100,
           )
         // Query goes to sync (recovered primary), not fallback
-        switch syncMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Expected one pending call to syncMock")
-        }
+        await syncMock.expectItemsQueries([{reply: Respond({items: []})}])
         let _ = await p
       }
 
@@ -2135,31 +2084,24 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~knownHeight=100,
           )
         // Fail sync twice (retries 0, 1 don't switch), then on retry 2 it switches
-        for idx in 0 to 2 {
-          switch syncMock.getItemsOrThrowCalls {
-          | [call] =>
-            call.reject(
-              Source.GetItemsError(
-                FailedGettingItems({
-                  requestStats: [],
-                  attemptedToBlock: 100,
-                  retry: WithBackoff({message: "test fail", backoffMillis: 0}),
-                }),
+        for retryCount in 0 to 2 {
+          await syncMock.expectItemsQueries([
+            {
+              retryCount,
+              reply: Fail(
+                Source.GetItemsError(
+                  FailedGettingItems({
+                    requestStats: [],
+                    attemptedToBlock: 100,
+                    retry: WithBackoff({message: "test fail", backoffMillis: 0}),
+                  }),
+                ),
               ),
-            )
-          | _ => JsError.throwWithMessage("Should have one pending call to syncMock")
-          }
-          await Promise.resolve()
-          if idx !== 2 {
-            await Utils.delay(0)
-          }
+            },
+          ])
         }
         // Now it should have switched to fallback
-        await Utils.delay(0)
-        switch fallbackMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Should have one pending call to fallbackMock")
-        }
+        await fallbackMock.expectItemsQueries([{retryCount: 3, reply: Respond({items: []})}])
         let _ = await p
         t.expect(
           sourceManager->SourceManager.getActiveSource,
@@ -2176,10 +2118,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~isRealtime=false,
             ~knownHeight=100,
           )
-        switch fallbackMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Expected one pending call to fallbackMock")
-        }
+        await fallbackMock.expectItemsQueries([{reply: Respond({items: []})}])
         let _ = await p
       }
 
@@ -2201,10 +2140,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~knownHeight=100,
           )
         // Query goes to sync (recovered primary)
-        switch syncMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Expected one pending call to syncMock")
-        }
+        await syncMock.expectItemsQueries([{reply: Respond({items: []})}])
         let _ = await p
       }
 
@@ -2232,10 +2168,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           ~isRealtime=false,
           ~knownHeight=100,
         )
-      switch syncMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ => JsError.throwWithMessage("Expected one pending call to syncMock")
-      }
+      await syncMock.expectItemsQueries([{reply: Respond({items: []})}])
       let _ = await p
     }
 
@@ -2264,10 +2197,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~isRealtime=true,
             ~knownHeight=100,
           )
-        switch liveMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Expected one pending call to liveMock")
-        }
+        await liveMock.expectItemsQueries([{reply: Respond({items: []})}])
         let _ = await p
       }
 
@@ -2319,10 +2249,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~knownHeight=100,
           )
         // Query goes to live (primary when isRealtime=true), not fallback
-        switch liveMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Expected one pending call to liveMock")
-        }
+        await liveMock.expectItemsQueries([{reply: Respond({items: []})}])
         let _ = await p
       }
 
@@ -2354,30 +2281,23 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~isRealtime=false,
             ~knownHeight=100,
           )
-        for idx in 0 to 2 {
-          switch syncMock.getItemsOrThrowCalls {
-          | [call] =>
-            call.reject(
-              Source.GetItemsError(
-                FailedGettingItems({
-                  requestStats: [],
-                  attemptedToBlock: 100,
-                  retry: WithBackoff({message: "test fail", backoffMillis: 0}),
-                }),
+        for retryCount in 0 to 2 {
+          await syncMock.expectItemsQueries([
+            {
+              retryCount,
+              reply: Fail(
+                Source.GetItemsError(
+                  FailedGettingItems({
+                    requestStats: [],
+                    attemptedToBlock: 100,
+                    retry: WithBackoff({message: "test fail", backoffMillis: 0}),
+                  }),
+                ),
               ),
-            )
-          | _ => JsError.throwWithMessage("Should have one pending call to syncMock")
-          }
-          await Promise.resolve()
-          if idx !== 2 {
-            await Utils.delay(0)
-          }
+            },
+          ])
         }
-        await Utils.delay(0)
-        switch fallbackMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Should have one pending call to fallbackMock")
-        }
+        await fallbackMock.expectItemsQueries([{retryCount: 3, reply: Respond({items: []})}])
         let _ = await p
         t.expect(
           sourceManager->SourceManager.getActiveSource,
@@ -2396,10 +2316,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~knownHeight=100,
           )
         // Recovery switches to sync before query
-        switch syncMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Expected one pending call to syncMock")
-        }
+        await syncMock.expectItemsQueries([{reply: Respond({items: []})}])
         let _ = await p
       }
 
@@ -2417,30 +2334,23 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~isRealtime=false,
             ~knownHeight=101,
           )
-        for idx in 0 to 2 {
-          switch syncMock.getItemsOrThrowCalls {
-          | [call] =>
-            call.reject(
-              Source.GetItemsError(
-                FailedGettingItems({
-                  requestStats: [],
-                  attemptedToBlock: 101,
-                  retry: WithBackoff({message: "test fail", backoffMillis: 0}),
-                }),
+        for retryCount in 0 to 2 {
+          await syncMock.expectItemsQueries([
+            {
+              retryCount,
+              reply: Fail(
+                Source.GetItemsError(
+                  FailedGettingItems({
+                    requestStats: [],
+                    attemptedToBlock: 101,
+                    retry: WithBackoff({message: "test fail", backoffMillis: 0}),
+                  }),
+                ),
               ),
-            )
-          | _ => JsError.throwWithMessage("Should have one pending call to syncMock")
-          }
-          await Promise.resolve()
-          if idx !== 2 {
-            await Utils.delay(0)
-          }
+            },
+          ])
         }
-        await Utils.delay(0)
-        switch fallbackMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Should have one pending call to fallbackMock")
-        }
+        await fallbackMock.expectItemsQueries([{retryCount: 3, reply: Respond({items: []})}])
         let _ = await p
         t.expect(
           sourceManager->SourceManager.getActiveSource,
@@ -2458,10 +2368,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~isRealtime=false,
             ~knownHeight=102,
           )
-        switch syncMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Expected one pending call to syncMock")
-        }
+        await syncMock.expectItemsQueries([{reply: Respond({items: []})}])
         let _ = await p
       }
 
@@ -2492,12 +2399,11 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           ~isRealtime=true,
           ~knownHeight=100,
         )
-      liveMock0.getItemsOrThrowCalls->Array.forEach(
-        call => call.reject(Source.GetItemsError(UnsupportedSelection({message: "test disable"}))),
-      )
+      await liveMock0.expectItemsQueries([
+        {reply: Fail(Source.GetItemsError(UnsupportedSelection({message: "test disable"})))},
+      ])
       // liveMock1 should be the next source (still Live, still Primary)
-      await Utils.delay(0)
-      liveMock1.getItemsOrThrowCalls->Array.forEach(call => call.resolve([]))
+      await liveMock1.expectItemsQueries([{reply: Respond({items: []})}])
       let _ = await p1
       t.expect(
         sourceManager->SourceManager.getActiveSource,
@@ -2511,13 +2417,12 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           ~isRealtime=true,
           ~knownHeight=100,
         )
-      liveMock1.getItemsOrThrowCalls->Array.forEach(
-        call => call.reject(Source.GetItemsError(UnsupportedSelection({message: "test disable"}))),
-      )
+      await liveMock1.expectItemsQueries([
+        {reply: Fail(Source.GetItemsError(UnsupportedSelection({message: "test disable"})))},
+      ])
       // With both Live sources disabled, hasRealtime should be false.
       // Sync becomes Primary and should get the query.
-      await Utils.delay(0)
-      syncMock.getItemsOrThrowCalls->Array.forEach(call => call.resolve([]))
+      await syncMock.expectItemsQueries([{reply: Respond({items: []})}])
       let _ = await p2
       t.expect(
         sourceManager->SourceManager.getActiveSource,
@@ -2564,10 +2469,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           ~isRealtime=false,
           ~knownHeight=100,
         )
-      switch syncMock1.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ => JsError.throwWithMessage("Expected query to go to syncMock1 (activeSource)")
-      }
+      await syncMock1.expectItemsQueries([{reply: Respond({items: []})}])
       let _ = await p
     }
 
@@ -2595,27 +2497,22 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         )
 
       // syncMock0 gets the query first (activeSource). Fail with ImpossibleForTheQuery.
-      switch syncMock0.getItemsOrThrowCalls {
-      | [call] =>
-        call.reject(
-          Source.GetItemsError(
-            FailedGettingItems({
-              requestStats: [],
-              attemptedToBlock: 100,
-              retry: ImpossibleForTheQuery({message: "test impossible"}),
-            }),
+      await syncMock0.expectItemsQueries([
+        {
+          reply: Fail(
+            Source.GetItemsError(
+              FailedGettingItems({
+                requestStats: [],
+                attemptedToBlock: 100,
+                retry: ImpossibleForTheQuery({message: "test impossible"}),
+              }),
+            ),
           ),
-        )
-      | _ => JsError.throwWithMessage("Expected one pending call to syncMock0")
-      }
-
-      await Promise.resolve()
+        },
+      ])
 
       // Should switch to syncMock1
-      switch syncMock1.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ => JsError.throwWithMessage("Expected one pending call to syncMock1")
-      }
+      await syncMock1.expectItemsQueries([{reply: Respond({items: []})}])
 
       let _ = await p
 
@@ -2633,24 +2530,20 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           ~isRealtime=false,
           ~knownHeight=100,
         )
-      switch syncMock1.getItemsOrThrowCalls {
-      | [call] =>
-        call.reject(
-          Source.GetItemsError(
-            FailedGettingItems({
-              requestStats: [],
-              attemptedToBlock: 100,
-              retry: ImpossibleForTheQuery({message: "test impossible on mock1"}),
-            }),
+      await syncMock1.expectItemsQueries([
+        {
+          reply: Fail(
+            Source.GetItemsError(
+              FailedGettingItems({
+                requestStats: [],
+                attemptedToBlock: 100,
+                retry: ImpossibleForTheQuery({message: "test impossible on mock1"}),
+              }),
+            ),
           ),
-        )
-      | _ => JsError.throwWithMessage("Expected one pending call to syncMock1")
-      }
-      await Promise.resolve()
-      switch syncMock0.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ => JsError.throwWithMessage("Expected syncMock0 to be usable (lastFailedAt not set)")
-      }
+        },
+      ])
+      await syncMock0.expectItemsQueries([{reply: Respond({items: []})}])
       let _ = await p2
       t.expect(
         sourceManager->SourceManager.getActiveSource,
@@ -2678,42 +2571,37 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         )
 
       // syncMock0 gets the query first. Fail with ImpossibleForTheQuery.
-      switch syncMock0.getItemsOrThrowCalls {
-      | [call] =>
-        call.reject(
-          Source.GetItemsError(
-            FailedGettingItems({
-              requestStats: [],
-              attemptedToBlock: 100,
-              retry: ImpossibleForTheQuery({message: "impossible on mock0"}),
-            }),
+      await syncMock0.expectItemsQueries([
+        {
+          reply: Fail(
+            Source.GetItemsError(
+              FailedGettingItems({
+                requestStats: [],
+                attemptedToBlock: 100,
+                retry: ImpossibleForTheQuery({message: "impossible on mock0"}),
+              }),
+            ),
           ),
-        )
-      | _ => JsError.throwWithMessage("Expected one pending call to syncMock0")
-      }
-      await Promise.resolve()
+        },
+      ])
 
       // syncMock1 gets the query next. Also fail with ImpossibleForTheQuery.
-      switch syncMock1.getItemsOrThrowCalls {
-      | [call] =>
-        call.reject(
-          Source.GetItemsError(
-            FailedGettingItems({
-              requestStats: [],
-              attemptedToBlock: 100,
-              retry: ImpossibleForTheQuery({message: "impossible on mock1"}),
-            }),
+      await syncMock1.expectItemsQueries([
+        {
+          reply: Fail(
+            Source.GetItemsError(
+              FailedGettingItems({
+                requestStats: [],
+                attemptedToBlock: 100,
+                retry: ImpossibleForTheQuery({message: "impossible on mock1"}),
+              }),
+            ),
           ),
-        )
-      | _ => JsError.throwWithMessage("Expected one pending call to syncMock1")
-      }
-      await Promise.resolve()
+        },
+      ])
 
       // syncMock2 gets the query. Both mock0 and mock1 are excluded.
-      switch syncMock2.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ => JsError.throwWithMessage("Expected one pending call to syncMock2")
-      }
+      await syncMock2.expectItemsQueries([{reply: Respond({items: []})}])
       let _ = await p
 
       t.expect(
@@ -2752,27 +2640,12 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           retry: WithBackoff({message: "test backoff", backoffMillis: 0}),
         }),
       )
-      for idx in 0 to 2 {
-        switch syncMock.getItemsOrThrowCalls {
-        | [call] => call.reject(withBackoff)
-        | _ =>
-          JsError.throwWithMessage(
-            `Expected one pending call to syncMock at retry ${idx->Int.toString}`,
-          )
-        }
-        await Promise.resolve()
-        if idx !== 2 {
-          await Utils.delay(0)
-        }
+      for retryCount in 0 to 2 {
+        await syncMock.expectItemsQueries([{retryCount, reply: Fail(withBackoff)}])
       }
       // After retry 2 (shouldSwitch=true), lastFailedAt is set on sync.
       // Next iteration picks fallback (working secondary) since sync is in recovery.
-      await Utils.delay(0)
-      switch fallbackMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ =>
-        JsError.throwWithMessage("Expected fallback to get the query after sync entered recovery")
-      }
+      await fallbackMock.expectItemsQueries([{retryCount: 3, reply: Respond({items: []})}])
       let _ = await p1
 
       t.expect(
@@ -2789,10 +2662,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             ~isRealtime=false,
             ~knownHeight=100,
           )
-        switch fallbackMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => JsError.throwWithMessage("Expected fallback to be used before recovery timeout")
-        }
+        await fallbackMock.expectItemsQueries([{reply: Respond({items: []})}])
         let _ = await p2
         t.expect(
           sourceManager->SourceManager.getActiveSource,
@@ -2809,10 +2679,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           ~isRealtime=false,
           ~knownHeight=100,
         )
-      switch syncMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ => JsError.throwWithMessage("Expected sync to recover after timeout")
-      }
+      await syncMock.expectItemsQueries([{reply: Respond({items: []})}])
       let _ = await p3
       t.expect(
         sourceManager->SourceManager.getActiveSource,
@@ -2838,43 +2705,37 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       )
 
     // Exclude syncMock0 via ImpossibleForTheQuery
-    switch syncMock0.getItemsOrThrowCalls {
-    | [call] =>
-      call.reject(
-        Source.GetItemsError(
-          FailedGettingItems({
-            requestStats: [],
-            attemptedToBlock: 100,
-            retry: ImpossibleForTheQuery({message: "impossible on mock0"}),
-          }),
+    await syncMock0.expectItemsQueries([
+      {
+        reply: Fail(
+          Source.GetItemsError(
+            FailedGettingItems({
+              requestStats: [],
+              attemptedToBlock: 100,
+              retry: ImpossibleForTheQuery({message: "impossible on mock0"}),
+            }),
+          ),
         ),
-      )
-    | _ => JsError.throwWithMessage("Expected one pending call to syncMock0")
-    }
-    await Promise.resolve()
+      },
+    ])
 
     // Exclude syncMock1 via ImpossibleForTheQuery
-    switch syncMock1.getItemsOrThrowCalls {
-    | [call] =>
-      call.reject(
-        Source.GetItemsError(
-          FailedGettingItems({
-            requestStats: [],
-            attemptedToBlock: 100,
-            retry: ImpossibleForTheQuery({message: "impossible on mock1"}),
-          }),
+    await syncMock1.expectItemsQueries([
+      {
+        reply: Fail(
+          Source.GetItemsError(
+            FailedGettingItems({
+              requestStats: [],
+              attemptedToBlock: 100,
+              retry: ImpossibleForTheQuery({message: "impossible on mock1"}),
+            }),
+          ),
         ),
-      )
-    | _ => JsError.throwWithMessage("Expected one pending call to syncMock1")
-    }
-    await Promise.resolve()
+      },
+    ])
 
     // All primaries excluded — should fall back to secondary (fallback)
-    switch fallbackMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([])
-    | _ =>
-      JsError.throwWithMessage("Expected fallback to get the query after all primaries excluded")
-    }
+    await fallbackMock.expectItemsQueries([{reply: Respond({items: []})}])
     let _ = await p
 
     t.expect(
@@ -2902,20 +2763,12 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     )
 
     // Fail 4 times (retries 0, 1, 2, 3) — covers both shouldSwitch=false and shouldSwitch=true
-    for idx in 0 to 3 {
-      switch syncMock.getItemsOrThrowCalls {
-      | [call] => call.reject(withBackoff)
-      | _ => JsError.throwWithMessage(`Expected one pending call at retry ${idx->Int.toString}`)
-      }
-      await Promise.resolve()
-      await Utils.delay(0)
+    for retryCount in 0 to 3 {
+      await syncMock.expectItemsQueries([{retryCount, reply: Fail(withBackoff)}])
     }
 
     // On retry 4, succeed
-    switch syncMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([])
-    | _ => JsError.throwWithMessage("Expected one pending call for final resolve")
-    }
+    await syncMock.expectItemsQueries([{retryCount: 4, reply: Respond({items: []})}])
     let _ = await p
 
     t.expect(
@@ -2942,24 +2795,20 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           ~isRealtime=false,
           ~knownHeight=100,
         )
-      switch syncMock0.getItemsOrThrowCalls {
-      | [call] =>
-        call.reject(
-          Source.GetItemsError(
-            FailedGettingItems({
-              requestStats: [],
-              attemptedToBlock: 100,
-              retry: ImpossibleForTheQuery({message: "impossible on mock0"}),
-            }),
+      await syncMock0.expectItemsQueries([
+        {
+          reply: Fail(
+            Source.GetItemsError(
+              FailedGettingItems({
+                requestStats: [],
+                attemptedToBlock: 100,
+                retry: ImpossibleForTheQuery({message: "impossible on mock0"}),
+              }),
+            ),
           ),
-        )
-      | _ => JsError.throwWithMessage("Expected one pending call to syncMock0")
-      }
-      await Promise.resolve()
-      switch syncMock1.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ => JsError.throwWithMessage("Expected syncMock1 to get the query")
-      }
+        },
+      ])
+      await syncMock1.expectItemsQueries([{reply: Respond({items: []})}])
       let _ = await p0
 
       t.expect(
@@ -2975,26 +2824,21 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           ~isRealtime=false,
           ~knownHeight=100,
         )
-      switch syncMock1.getItemsOrThrowCalls {
-      | [call] =>
-        call.reject(
-          Source.GetItemsError(
-            FailedGettingItems({
-              requestStats: [],
-              attemptedToBlock: 100,
-              retry: ImpossibleForTheQuery({message: "impossible on activeSource"}),
-            }),
+      await syncMock1.expectItemsQueries([
+        {
+          reply: Fail(
+            Source.GetItemsError(
+              FailedGettingItems({
+                requestStats: [],
+                attemptedToBlock: 100,
+                retry: ImpossibleForTheQuery({message: "impossible on activeSource"}),
+              }),
+            ),
           ),
-        )
-      | _ => JsError.throwWithMessage("Expected one pending call to syncMock1")
-      }
-      await Promise.resolve()
+        },
+      ])
 
-      switch syncMock0.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ =>
-        JsError.throwWithMessage("Expected syncMock0 to get the query after activeSource excluded")
-      }
+      await syncMock0.expectItemsQueries([{reply: Respond({items: []})}])
       let _ = await p
 
       t.expect(
@@ -3022,10 +2866,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         ~knownHeight=100,
       )
     // liveMock is primary in live mode, gets query first
-    switch liveMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([])
-    | _ => JsError.throwWithMessage("Expected liveMock to get the query in live mode")
-    }
+    await liveMock.expectItemsQueries([{reply: Respond({items: []})}])
     let _ = await p1
 
     // Now disable sync via a backfill query where sync is primary
@@ -3035,17 +2876,11 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         ~isRealtime=false,
         ~knownHeight=100,
       )
-    switch syncMock.getItemsOrThrowCalls {
-    | [call] =>
-      call.reject(Source.GetItemsError(UnsupportedSelection({message: "test disable sync"})))
-    | _ => JsError.throwWithMessage("Expected one pending call to syncMock")
-    }
-    await Utils.delay(0)
+    await syncMock.expectItemsQueries([
+      {reply: Fail(Source.GetItemsError(UnsupportedSelection({message: "test disable sync"})))},
+    ])
     // fallbackMock should get the query as secondary (Live has no role in backfill)
-    switch fallbackMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([])
-    | _ => JsError.throwWithMessage("Expected fallbackMock to get the query after sync disabled")
-    }
+    await fallbackMock.expectItemsQueries([{reply: Respond({items: []})}])
     let _ = await p2
 
     // In isRealtime=true mode again, liveMock should still be Primary (hasRealtime unaffected by sync disable)
@@ -3055,13 +2890,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         ~isRealtime=true,
         ~knownHeight=100,
       )
-    switch liveMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([])
-    | _ =>
-      JsError.throwWithMessage(
-        "Expected liveMock to be primary in live mode (hasRealtime still true)",
-      )
-    }
+    await liveMock.expectItemsQueries([{reply: Respond({items: []})}])
     let _ = await p3
 
     t.expect(
@@ -3090,15 +2919,10 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           ~isRealtime=true,
           ~knownHeight=100,
         )
-      switch liveMock.getItemsOrThrowCalls {
-      | [call] => call.reject(Source.GetItemsError(UnsupportedSelection({message: "test disable"})))
-      | _ => JsError.throwWithMessage("Expected one pending call to liveMock")
-      }
-      await Utils.delay(0)
-      switch syncMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ => JsError.throwWithMessage("Expected syncMock to get the query after live disabled")
-      }
+      await liveMock.expectItemsQueries([
+        {reply: Fail(Source.GetItemsError(UnsupportedSelection({message: "test disable"})))},
+      ])
+      await syncMock.expectItemsQueries([{reply: Respond({items: []})}])
       let _ = await p1
 
       let p =
@@ -3483,15 +3307,10 @@ describe("SourceManager height subscription", () => {
       ~isRealtime=true,
       ~knownHeight=100,
     )
-    switch mock.getItemsOrThrowCalls {
-    | [call] => call.reject(Source.GetItemsError(UnsupportedSelection({message: "test disable"})))
-    | _ => JsError.throwWithMessage("Expected one pending call to the primary source")
-    }
-    await Utils.delay(0)
-    switch fallbackMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([])
-    | _ => JsError.throwWithMessage("Expected the fallback to take the query over")
-    }
+    await mock.expectItemsQueries([
+      {reply: Fail(Source.GetItemsError(UnsupportedSelection({message: "test disable"})))},
+    ])
+    await fallbackMock.expectItemsQueries([{reply: Respond({items: []})}])
     let _ = await query
     await Utils.delay(0)
 
