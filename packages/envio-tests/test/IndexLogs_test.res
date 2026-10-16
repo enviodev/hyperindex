@@ -52,7 +52,13 @@ describe("Index logs", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
       // Index events cross from the addon's threads on a queue of their own;
@@ -72,7 +78,13 @@ describe("Index logs", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.waitUntilReady()
       let {sql, pgSchema} = indexer.pg
       let _ = await sql->Sql.queryForTests(`ALTER TABLE "${pgSchema}"."Token" DROP COLUMN "owner";`)

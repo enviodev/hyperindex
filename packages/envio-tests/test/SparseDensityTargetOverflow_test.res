@@ -47,37 +47,29 @@ describe("Sparse-density target overflow", () => {
     ],
     ~targetBufferSize=100_000,
     ~reducedPollingInterval=1,
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sourceMock = source(1337)
 
       sourceMock.resolveGetHeightOrThrow(30_000)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // One event over the whole 30k-block range: the batch seeds the chain
       // density at ~1/30000 events per block.
-      await MockSource.waitItemsQuery(sourceMock)
-      sourceMock.resolveGetItemsOrThrow(
-        [{blockNumber: 5, logIndex: 0}],
-        ~latestFetchedBlockNumber=30_000,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [{blockNumber: 5, logIndex: 0}],
+            latestFetchedBlockNumber: 30_000,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // A new block arrives. The chain is one block behind the head and must
       // query it — on the broken version the wrapped target block leaves every
       // partition out of range and the chain only ever waits.
-      let attempts = ref(0)
-      while sourceMock.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 2000 {
-        attempts := attempts.contents + 1
-        try sourceMock.resolveGetHeightOrThrow(30_001) catch {
-        | _ => ()
-        }
-        await Utils.delay(1)
-      }
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-        ~message="the chain should query the new head block despite its low event density",
-      ).toEqual([30_001])
+      sourceMock.setAutoHeight(30_001)
+      await sourceMock.expectItemsQueries([{fromBlock: 30_001, reply: LeavePending}])
     },
   )
 })

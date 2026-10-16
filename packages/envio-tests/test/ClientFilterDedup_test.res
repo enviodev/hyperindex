@@ -47,62 +47,56 @@ describe("Client-side address filtering item dedup", () => {
       let sourceMock = source(1337)
 
       sourceMock.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      // Snapshot the pre-switch queries so we can require a *newly appended*
-      // post-switch re-fetch below — the initial fetch also starts at/below block
-      // 10, so it must not satisfy the overlap assertion on its own.
-      let preSwitchCalls = sourceMock.getItemsOrThrowCalls->Utils.Array.copy
 
       // Fetch a Gravatar event at block 10 that registers 3 dynamic Gravatar
       // addresses. That pushes Gravatar past the threshold and collapses its
       // partitions into a single address-free partition mid-response.
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 10,
-            logIndex: 0,
-            handler: record(~blockNumber=10, ~logIndex=0),
-            contractRegister: async args => {
-              let context = args.context->(
-                Utils.magic: Internal.contractRegisterContext => registerContext
-              )
-              context.chain["Gravatar"].add(
-                "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow,
-              )
-              context.chain["Gravatar"].add(
-                "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow,
-              )
-              context.chain["Gravatar"].add(
-                "0x3333333333333333333333333333333333333333"->Address.Evm.fromStringOrThrow,
-              )
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 10,
+                logIndex: 0,
+                handler: record(~blockNumber=10, ~logIndex=0),
+                contractRegister: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)
+                  context.chain["Gravatar"].add(
+                    "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow,
+                  )
+                  context.chain["Gravatar"].add(
+                    "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow,
+                  )
+                  context.chain["Gravatar"].add(
+                    "0x3333333333333333333333333333333333333333"->Address.Evm.fromStringOrThrow,
+                  )
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
 
       // The switch dragged the collapsed partition's frontier back below block 10,
-      // so a *newly issued* query (not one of the pre-switch calls) re-queries a
-      // range covering block 10 — the overlap the dedup must absorb.
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.some(c =>
-          !(preSwitchCalls->Array.includes(c)) && c.payload["fromBlock"] <= 10
-        ),
-        ~message="a new query re-fetches over block 10 after the switch",
-      ).toBe(true)
-
-      // The address-free partition re-fetches from its (min) frontier and re-delivers
-      // the block-10 event; advance it to the head so the buffered block-10 event
-      // becomes processable. The re-delivered copy must be deduped.
-      sourceMock.resolveGetItemsOrThrow(
-        [{blockNumber: 10, logIndex: 0, handler: record(~blockNumber=10, ~logIndex=0)}],
-        ~latestFetchedBlockNumber=200,
-      )
+      // so a newly issued query re-queries a range covering block 10 — the
+      // overlap the dedup must absorb. It re-delivers the block-10 event;
+      // advance it to the head so the buffered block-10 event becomes
+      // processable. The re-delivered copy must be deduped.
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "1",
+          fromBlock: 1,
+          toBlock: Bounded(800),
+          reply: Respond({
+            items: [{blockNumber: 10, logIndex: 0, handler: record(~blockNumber=10, ~logIndex=0)}],
+            latestFetchedBlockNumber: 200,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(

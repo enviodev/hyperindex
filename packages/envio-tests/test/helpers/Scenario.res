@@ -174,6 +174,9 @@ let withInternalOverrides = (
   ),
 }
 
+@set external setErrorMessage: (JsExn.t, string) => unit = "message"
+type rescriptExn = {@as("RE_EXN_ID") id: string, mutable message?: string}
+
 let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
@@ -264,7 +267,25 @@ let run = async (
     ~captureLogs?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
-      await body(~indexer, ~source)
+      switch await body(~indexer, ~source) {
+      | () => ()
+      // A failure says what the mocks were left holding, so finding out what
+      // the indexer asked for doesn't take a probe of its own.
+      | exception exn if mocks->Array.length > 0 =>
+        let report = message =>
+          [message, ...mocks->Array.map(((_, mock)) => mock.describeState())]->Array.join("\n\n")
+        switch exn {
+        | JsExn(error) =>
+          error->setErrorMessage(report(error->JsExn.message->Option.getOr("")))
+          JsExn.throw(error)
+        | exn =>
+          // A ReScript exception is thrown as a plain object, so the report goes
+          // on it directly and it still matches as the same exception.
+          let raw = exn->(Utils.magic: exn => rescriptExn)
+          raw.message = Some(report(raw.id))
+          throw(exn)
+        }
+      }
       // Only after the body passed: a failing body has its own error to report,
       // and answers it never got to were never going to be claimed anyway.
       mocks->Array.forEach(((_, mock)) => mock.validateAnswersClaimed())
@@ -350,15 +371,9 @@ let it = (
   }
 }
 
-let resolveInitialHeight = async (~t: Vitest.testContext, ~source: MockSource.t, ~head) => {
-  await Utils.delay(0)
-  t.expect(
-    source.getHeightOrThrowCalls->Array.length,
-    ~message="should have called getHeightOrThrow to get initial height",
-  ).toEqual(1)
+let resolveInitialHeight = async (~source: MockSource.t, ~head) => {
+  await source.expectHeightCalls(1)
   source.resolveGetHeightOrThrow(head)
-  await Utils.delay(0)
-  await Utils.delay(0)
 }
 
 // Drives a chain through the reorg-threshold transition: the first query stops
@@ -366,20 +381,22 @@ let resolveInitialHeight = async (~t: Vitest.testContext, ~source: MockSource.t,
 // post-threshold range opens up. Several scenarios need to be past this point
 // before the behaviour they test is reachable.
 let enterReorgThreshold = async (
-  ~t: Vitest.testContext,
   ~indexer: IndexerRunner.t,
   ~source: MockSource.t,
   ~head=300,
   ~preThresholdTo=100,
   ~fromBlock=1,
 ) => {
-  await resolveInitialHeight(~t, ~source, ~head)
-
-  t.expect(
-    source.getItemsOrThrowCalls->Array.map(call => call.payload),
-    ~message="Should request items until reorg threshold",
-  ).toEqual([{"fromBlock": fromBlock, "toBlock": Some(preThresholdTo), "retry": 0, "p": "0"}])
-  source.resolveGetItemsOrThrow([])
+  await resolveInitialHeight(~source, ~head)
+  await source.expectItemsQueries([
+    {
+      partitionId: "0",
+      fromBlock,
+      toBlock: Bounded(preThresholdTo),
+      retryCount: 0,
+      reply: Respond({items: []}),
+    },
+  ])
   await indexer.getBatchWritePromise()
 }
 
@@ -459,8 +476,10 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
       )
       source.getBlockHashesCalls->Utils.Array.clearInPlace
     }
-    if source.getItemsOrThrowCalls->Array.length > 0 {
-      source.resolveGetItemsOrThrow(refetched.contents, ~latestFetchedBlockNumber=head)
+    if source.pendingItemsQueries->Array.length > 0 {
+      await source.expectItemsQueries([
+        {reply: Respond({items: refetched.contents, latestFetchedBlockNumber: head})},
+      ])
       refetched := []
     }
     await Utils.delay(0)
@@ -478,12 +497,15 @@ let reorgAbove = async (
   ~refetched=?,
 ) => {
   source.resolveGetHeightOrThrow(head + 1)
-  await MockSource.waitItemsQuery(source)
-  source.resolveGetItemsOrThrow(
-    [],
-    ~latestFetchedBlockNumber=head + 1,
-    ~prevRangeLastBlock={blockNumber: head, blockHash: `0x${head->Int.toString}a`},
-  )
+  await source.expectItemsQueries([
+    {
+      reply: Respond({
+        items: [],
+        latestFetchedBlockNumber: head + 1,
+        prevRangeLastBlock: {blockNumber: head, blockHash: `0x${head->Int.toString}a`},
+      }),
+    },
+  ])
   await driveRollback(~source, ~validUpTo, ~head=head + 1, ~refetched?)
   await indexer.waitUntilIdle()
 }

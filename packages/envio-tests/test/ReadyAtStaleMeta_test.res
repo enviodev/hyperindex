@@ -74,7 +74,13 @@ describe("A chain metadata snapshot from before the indexer was ready", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.waitUntilReady()
 
       t.expect((replay.contents.done, await readyAt(indexer))).toEqual((true, [true]))

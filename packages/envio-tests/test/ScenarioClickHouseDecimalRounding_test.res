@@ -42,21 +42,27 @@ describe("ClickHouse rounds a BigDecimal the way Postgres does", () => {
     let source = source(1)
     source.resolveGetHeightOrThrow(10)
 
-    source.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 5,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-            context.price.set({id: "up", amount: BigDecimal.fromStringUnsafe("1.005")})
-            context.price.set({id: "down", amount: BigDecimal.fromStringUnsafe("-1.005")})
-            context.price.set({id: "under", amount: BigDecimal.fromStringUnsafe("1.00499")})
-          },
-        },
-      ],
-      ~latestFetchedBlockNumber=10,
-    )
+    await source.expectItemsQueries([
+      {
+        fromBlock: 0,
+        toBlock: Unbounded,
+        reply: Respond({
+          items: [
+            {
+              blockNumber: 5,
+              logIndex: 0,
+              handler: async args => {
+                let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                context.price.set({id: "up", amount: BigDecimal.fromStringUnsafe("1.005")})
+                context.price.set({id: "down", amount: BigDecimal.fromStringUnsafe("-1.005")})
+                context.price.set({id: "under", amount: BigDecimal.fromStringUnsafe("1.00499")})
+              },
+            },
+          ],
+          latestFetchedBlockNumber: 10,
+        }),
+      },
+    ])
     await indexer.getBatchWritePromise()
 
     let inPostgres: array<price> = await indexer.query("Price")

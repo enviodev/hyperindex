@@ -73,32 +73,60 @@ describe("A rollback of an address registration", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [registering(~blockNumber=50, ~register=context => context.chain["Gravatar"].add(shared))],
-        ~latestFetchedBlockNumber=100,
-      )
+      await source.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({
+            items: [
+              registering(
+                ~blockNumber=50,
+                ~register=context => context.chain["Gravatar"].add(shared),
+              ),
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      source.drainItemsQueries(~latestFetchedBlockNumber=100)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [
-          registering(
-            ~blockNumber=200,
-            ~register=context => {
-              context.chain["NftFactory"].add(shared)
-              context.chain["NftFactory"].add(late)
-            },
-          ),
-        ],
-        // The partition the config's addresses are fetched in.
-        ~filter=query => query["p"] === "0",
-        ~latestFetchedBlockNumber=300,
-      )
+      await source.expectItemsQueries([
+        // The registered address catches up to the config's addresses.
+        {
+          partitionId: "2",
+          fromBlock: 50,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+        {
+          // The partition the config's addresses are fetched in.
+          partitionId: "0",
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              registering(
+                ~blockNumber=200,
+                ~register=context => {
+                  context.chain["NftFactory"].add(shared)
+                  context.chain["NftFactory"].add(late)
+                },
+              ),
+            ],
+            latestFetchedBlockNumber: 300,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      source.drainItemsQueries(~latestFetchedBlockNumber=300)
+      await source.expectItemsQueries([
+        {
+          partitionId: "2",
+          fromBlock: 101,
+          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
+        },
+        {
+          partitionId: "3",
+          fromBlock: 200,
+          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
+        },
+      ])
       await indexer.waitUntilIdle()
       let beforeReorg = await registered(indexer)
 
@@ -119,31 +147,53 @@ describe("An address registered again for the same contract", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [
-          registering(
-            ~blockNumber=50,
-            ~register=context => {
-              context.chain["Gravatar"].add(shared)
-              context.chain["Gravatar"].add(shared)
-            },
-          ),
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+      await source.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({
+            items: [
+              registering(
+                ~blockNumber=50,
+                ~register=context => {
+                  context.chain["Gravatar"].add(shared)
+                  context.chain["Gravatar"].add(shared)
+                },
+              ),
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      source.drainItemsQueries(~latestFetchedBlockNumber=100)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [registering(~blockNumber=200, ~register=context => context.chain["Gravatar"].add(shared))],
-        ~filter=query => query["p"] === "0",
-        ~latestFetchedBlockNumber=300,
-      )
+      await source.expectItemsQueries([
+        {
+          partitionId: "2",
+          fromBlock: 50,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+        {
+          partitionId: "0",
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              registering(
+                ~blockNumber=200,
+                ~register=context => context.chain["Gravatar"].add(shared),
+              ),
+            ],
+            latestFetchedBlockNumber: 300,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      source.drainItemsQueries(~latestFetchedBlockNumber=300)
+      await source.expectItemsQueries([
+        {
+          partitionId: "2",
+          fromBlock: 101,
+          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
+        },
+      ])
       await indexer.waitUntilIdle()
 
       t.expect(await registered(indexer)).toEqual([(shared, "Gravatar", 50)])

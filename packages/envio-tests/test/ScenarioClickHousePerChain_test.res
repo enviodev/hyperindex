@@ -46,9 +46,7 @@ type Counter {
   count: BigInt!
 }
 `,
-  ~unsupported=[
-    {backend: #postgres, reason: "asserts against a ClickHouse server"},
-  ],
+  ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
 
 type counter = {id: string, count: bigint}
@@ -75,10 +73,20 @@ describe("Scenario ClickHouse per-chain entity", () => {
       chain1.resolveGetHeightOrThrow(10)
       chain137.resolveGetHeightOrThrow(10)
 
-      await MockSource.waitItemsQuery(chain1)
-      chain1.resolveGetItemsOrThrow([setCounter(~count=42n)], ~latestFetchedBlockNumber=10)
-      await MockSource.waitItemsQuery(chain137)
-      chain137.resolveGetItemsOrThrow([setCounter(~count=7n)], ~latestFetchedBlockNumber=10)
+      await chain1.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({items: [setCounter(~count=42n)], latestFetchedBlockNumber: 10}),
+        },
+      ])
+      await chain137.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({items: [setCounter(~count=7n)], latestFetchedBlockNumber: 10}),
+        },
+      ])
       await indexer.waitUntilReady()
 
       let database = TestClickHouse.currentDatabase()
