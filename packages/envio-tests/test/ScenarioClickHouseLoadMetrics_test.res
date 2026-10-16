@@ -32,12 +32,7 @@ type Visit @storage(clickhouse: {}) {
   value: String!
 }
 `,
-  ~unsupported=[
-    {
-      backend: #postgres,
-      reason: "configures its own storage, so it runs the same on the ClickHouse leg",
-    },
-  ],
+  ~unsupported=Scenario.configuresOwnStorage,
 )
 
 type row = {id: string, value: string}

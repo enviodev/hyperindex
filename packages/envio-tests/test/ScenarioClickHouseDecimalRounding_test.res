@@ -31,12 +31,7 @@ type Price {
   amount: BigDecimal! @config(precision: 10, scale: 2)
 }
 `,
-  ~unsupported=[
-    {
-      backend: #postgres,
-      reason: "configures its own storage, so it runs the same on the ClickHouse leg",
-    },
-  ],
+  ~unsupported=Scenario.configuresOwnStorage,
 )
 
 type price = {id: string, amount: BigDecimal.t}

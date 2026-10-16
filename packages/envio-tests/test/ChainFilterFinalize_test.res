@@ -53,18 +53,11 @@ let indexedTables = async (~sql, ~pgSchema) =>
   ->Array.map(index => index.tableName)
   ->Array.toSorted(String.compare)
 
-let readyByChainId = async (~sql, ~pgSchema) => {
-  let rows: array<{
-    "id": ChainId.t,
-    "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.queryForTests(
-    `SELECT "id", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => (
-    row["id"]->ChainId.toString,
-    row["ready_at"]->Null.toOption->Option.isSome,
+let readyByChainId = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(chain => (
+    chain.id->ChainId.toString,
+    chain.readyAt->Option.isSome,
   ))
-}
 
 let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
   source.resolveGetHeightOrThrow(100)
@@ -85,7 +78,7 @@ describe("envio start --chain", () => {
       t.expect(
         (
           await indexedTables(~sql, ~pgSchema),
-          await readyByChainId(~sql, ~pgSchema),
+          await readyByChainId(first),
           await first.metric("envio_progress_ready"),
         ),
         ~message="Chain 1 indexes its own partition and reports itself ready. Chain 137 has never been started, and holds nothing back",
@@ -99,7 +92,7 @@ describe("envio start --chain", () => {
       await catchUp(~indexer=second, ~source=source(137))
 
       t.expect(
-        (await indexedTables(~sql, ~pgSchema), await readyByChainId(~sql, ~pgSchema)),
+        (await indexedTables(~sql, ~pgSchema), await readyByChainId(second)),
         ~message="Chain 137's process adds its own partition's index and stamps only its own row",
       ).toEqual((["A$1", "A$137"], [("1", true), ("137", true)]))
     },

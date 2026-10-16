@@ -245,12 +245,12 @@ jobs:
         env:
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
-  # The scenario suite is backend-agnostic, so it runs once per storage
-  # backend, one runner each. A scenario that can't run on a backend skips
-  # itself with a reason. The ClickHouse leg keeps every entity in ClickHouse
-  # alone, beside the Postgres that keeps the indexer's own state; a scenario
-  # whose config sets its own storage keeps it on both legs, which is why each
-  # has both servers.
+  # The scenario suite is backend-agnostic, so it runs once per storage leg,
+  # one runner each. A scenario that can't run on a leg skips itself with a
+  # reason. The clickhouse leg keeps every entity in ClickHouse alone, beside
+  # the Postgres that keeps the indexer's own state; the both leg keeps every
+  # entity in each. A scenario whose config sets its own storage keeps it on
+  # every leg, which is why each leg has both servers.
   envio-tests:
     runs-on: ubuntu-latest
     needs: build-envio-package

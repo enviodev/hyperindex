@@ -1,7 +1,6 @@
 open Vitest
 
-// Guards the ClickHouse leg against being a silent no-op: ClickHouse is switched
-// on by config, so a scenario can run green on it while writing nothing at all.
+// The current-state view is what readers outside the indexer query; every other scenario reads ClickHouse through the indexer's own load path.
 
 let scenario = Scenario.make(
   ~configYaml=`

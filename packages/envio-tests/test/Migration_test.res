@@ -78,6 +78,7 @@ storage:
     default: true
   clickhouse: true
 `
+let paired = deployment(~chains=[chain(1)], ~storage=clickHouseBesidePostgres)
 
 describe("Resuming a chain against the stored config", () => {
   Migration.it(
@@ -252,35 +253,38 @@ describe("Changing the chains of a deployment", () => {
   )
 })
 
+let refusalAfterLosing = async (~indexer: IndexerRunner.t, ~source: MockSource.t, lose) => {
+  source.resolveGetHeightOrThrow(100)
+  source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+  await indexer.waitUntilReady()
+  await indexer.waitUntilIdle()
+  await lose()
+  switch await indexer.restart() {
+  | _ => None
+  | exception JsExn(e) => e->JsExn.message
+  }
+}
+
 describe("Changing which stores keep the data", () => {
   Migration.it(
     "Refuses ClickHouse added beside a Postgres deployment",
     ~deployed=deployment(~chains=[chain(1)], ~storage=postgresAlone),
-    ~edited=deployment(~chains=[chain(1)], ~storage=clickHouseBesidePostgres),
+    ~edited=paired,
     ~expected=Refused(["storage.clickhouse"]),
   )
 
   // As when ENVIO_CLICKHOUSE_DATABASE names another database, or ClickHouse's
   // setup died before it finished.
-  deployment(
-    ~chains=[chain(1)],
-    ~storage=clickHouseBesidePostgres,
-  )->Scenario.it(
+  paired->Scenario.it(
     "Refuses a Postgres whose ClickHouse lost what it was indexed alongside",
     ~sources=[{chain: 1}],
     ~supervised=false,
     async (~t, ~indexer, ~source) => {
-      let source = source(1)
-      source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.waitUntilReady()
-      await indexer.waitUntilIdle()
-      await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
-
-      let refusal = switch await indexer.restart() {
-      | _ => None
-      | exception JsExn(e) => e->JsExn.message
-      }
+      let refusal = await refusalAfterLosing(
+        ~indexer,
+        ~source=source(1),
+        () => TestClickHouse.drop(~database=TestClickHouse.currentDatabase()),
+      )
 
       t.expect(refusal).toEqual(
         Some(`ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one indexed alongside this ENVIO_PG_SCHEMA, or setting it up didn't finish.
@@ -293,26 +297,19 @@ Pick one:
   )
 
   // As when ENVIO_PG_SCHEMA names another schema, or the schema was dropped.
-  deployment(
-    ~chains=[chain(1)],
-    ~storage=clickHouseBesidePostgres,
-  )->Scenario.it(
+  paired->Scenario.it(
     "Refuses a ClickHouse whose Postgres is gone",
     ~sources=[{chain: 1}],
     ~supervised=false,
     async (~t, ~indexer, ~source) => {
-      let source = source(1)
-      source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.waitUntilReady()
-      await indexer.waitUntilIdle()
-      let {sql, pgSchema} = indexer.pg
-      let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${pgSchema}" CASCADE;`)
-
-      let refusal = switch await indexer.restart() {
-      | _ => None
-      | exception JsExn(e) => e->JsExn.message
-      }
+      let refusal = await refusalAfterLosing(
+        ~indexer,
+        ~source=source(1),
+        async () => {
+          let {sql, pgSchema} = indexer.pg
+          let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${pgSchema}" CASCADE;`)
+        },
+      )
 
       t.expect(refusal).toEqual(
         Some(`ClickHouse holds indexed data that Postgres has none of: ENVIO_PG_SCHEMA names another schema than the one it was indexed alongside, or that schema was dropped.
@@ -325,6 +322,12 @@ Pick one:
     },
   )
 })
+
+let storageLines = switch IndexerRunner.selectedBackend {
+| #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\"
+| #clickhouse
+| #both => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
+}
 
 describe("What a refused restart tells the operator", () => {
   deployed->Scenario.it(
@@ -349,11 +352,6 @@ describe("What a refused restart tells the operator", () => {
       | exception JsExn(e) => e->JsExn.message
       }
 
-      let storageLines = switch IndexerRunner.selectedBackend {
-      | #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\"
-      | #clickhouse
-      | #both => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
-      }
       t.expect(
         (refusal, indexer.logs()->Array.slice(~start=logged)),
         ~message="The refusal is the whole of what the operator reads: it isn't also logged as a storage failure",
@@ -408,11 +406,6 @@ ${storageLines}
       | exception JsExn(e) => e->JsExn.message
       }
 
-      let storageLines = switch IndexerRunner.selectedBackend {
-      | #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\"
-      | #clickhouse
-      | #both => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
-      }
       t.expect(refusal).toEqual(
         Some(
           `The following config changes are incompatible with the existing indexer data:

@@ -68,8 +68,7 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     value: event.params.value,
   });
 
-  // Per-entity storage override: only ClickHouse receives this row, and the
-  // reads above found it there.
+  // Per-entity storage override: only ClickHouse receives this row.
   context.TransferChOnly.set({
     id,
     from: event.params.from,

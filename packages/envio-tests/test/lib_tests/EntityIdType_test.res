@@ -118,16 +118,7 @@ chains:
         events:
           - event: Transfer()
 `,
-  ~unsupported=[
-    {
-      backend: #clickhouse,
-      reason: "BigThing's unbounded BigInt id has no ClickHouse precision",
-    },
-    {
-      backend: #both,
-      reason: "BigThing's unbounded BigInt id has no ClickHouse precision",
-    },
-  ],
+  ~unsupported=Scenario.noClickHouse("BigThing's unbounded BigInt id has no ClickHouse precision"),
 )
 
 describe("Non-string entity id — end-to-end via the in-process indexer", () => {

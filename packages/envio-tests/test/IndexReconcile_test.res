@@ -97,13 +97,8 @@ let shape = async (indexer: IndexerRunner.t, statement) => {
   let _ = await sql->Sql.queryForTests(statement(pgSchema))
 }
 
-let readyAt = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
-  let rows: array<{
-    "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.queryForTests(`SELECT "ready_at" FROM "${pgSchema}"."envio_chains";`)
-  rows->Array.map(row => row["ready_at"]->Null.toOption->Option.isSome)
-}
+let readyAt = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(chain => chain.readyAt->Option.isSome)
 
 type a = {id: string, b_id: string}
 type aOps = {set: a => unit, getWhere: {"b_id": {"_eq": string}} => promise<array<a>>}

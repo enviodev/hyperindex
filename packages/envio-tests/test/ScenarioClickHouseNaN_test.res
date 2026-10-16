@@ -37,12 +37,7 @@ type Readings @storage(clickhouse: {}) {
   latest: Float!
 }
 `,
-  ~unsupported=[
-    {
-      backend: #postgres,
-      reason: "configures its own storage, so it runs the same on the ClickHouse leg",
-    },
-  ],
+  ~unsupported=Scenario.configuresOwnStorage,
 )
 
 type readings = {id: string, samples: array<float>, latest: float}

@@ -107,27 +107,14 @@ let indexNames = async (~sql, ~pgSchema) =>
 
 let aBIdIndexName = "A_b_id_556h9mdu8a"
 
-let readyAtRows = async (~sql, ~pgSchema) => {
-  let rows: array<{
-    "id": ChainId.t,
-    "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.queryForTests(
-    `SELECT "id", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows
-}
-
-let readyAtByChainId = async (~sql, ~pgSchema) =>
-  (await readyAtRows(~sql, ~pgSchema))->Array.map(row => (
-    row["id"],
-    row["ready_at"]->Null.toOption->Option.isSome,
-  ))
+let readyAtByChainId = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(chain => (chain.id, chain.readyAt->Option.isSome))
 
 // Timestamps rather than flags, for the chains that have to share one.
-let readyAtTimesByChainId = async (~sql, ~pgSchema) =>
-  (await readyAtRows(~sql, ~pgSchema))->Array.map(row => (
-    row["id"],
-    row["ready_at"]->Null.toOption->Option.map(Date.toISOString),
+let readyAtTimesByChainId = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(chain => (
+    chain.id,
+    chain.readyAt->Option.map(Date.toISOString),
   ))
 
 type a = {
@@ -163,7 +150,7 @@ describe("Deferred schema indexes", () => {
           (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
             entry => entry.name,
           ),
-          await readyAtByChainId(~sql, ~pgSchema),
+          await readyAtByChainId(indexer),
         ),
         ~message="A chain with nothing to do is caught up, and the indexes are owed on that",
       ).toEqual(([aBIdIndexName], [(ChainId.fromInt(1337), true)]))
@@ -188,7 +175,7 @@ describe("Deferred schema indexes", () => {
           (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
             entry => entry.name,
           ),
-          await readyAtByChainId(~sql, ~pgSchema),
+          await readyAtByChainId(indexer),
         ),
         ~message="Sitting at the head is what the indexes are owed on, not reaching the end block",
       ).toEqual(([aBIdIndexName], [(ChainId.fromInt(1337), true)]))
@@ -207,7 +194,7 @@ describe("Deferred schema indexes", () => {
       t.expect(
         (
           await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema),
-          await readyAtByChainId(~sql, ~pgSchema),
+          await readyAtByChainId(indexer),
           await indexer.metric("envio_progress_ready"),
         ),
         ~message="Backfill runs without the schema's read indexes, and nothing is ready",
@@ -226,7 +213,7 @@ describe("Deferred schema indexes", () => {
           (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
             entry => (entry.name, entry.isValid, entry.isPartial, entry.method),
           ),
-          await readyAtByChainId(~sql, ~pgSchema),
+          await readyAtByChainId(indexer),
           await indexer.metric("envio_progress_ready"),
         ),
         ~message="ready_at is only committed once every schema-defined index exists",
@@ -241,7 +228,7 @@ describe("Deferred schema indexes", () => {
       await restarted.waitUntilIdle()
 
       t.expect(
-        (await indexNames(~sql, ~pgSchema), await readyAtByChainId(~sql, ~pgSchema)),
+        (await indexNames(~sql, ~pgSchema), await readyAtByChainId(indexer)),
         ~message="A resume rediscovers the indexes from the catalog — none are dropped or recreated",
       ).toEqual((indexesBeforeRestart, [(ChainId.fromInt(1337), true)]))
     },
@@ -273,7 +260,7 @@ describe("Deferred schema indexes", () => {
       t.expect(
         (
           await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema),
-          await readyAtByChainId(~sql, ~pgSchema),
+          await readyAtByChainId(indexer),
           await indexer.metric("envio_progress_ready"),
         ),
         ~message="Caught up to the head, but the indexes aren't committed so nothing is ready",
@@ -290,7 +277,7 @@ describe("Deferred schema indexes", () => {
         (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(entry =>
           entry.name
         ),
-        await readyAtByChainId(~sql, ~pgSchema),
+        await readyAtByChainId(indexer),
       )).toEqual(([aBIdIndexName], [(ChainId.fromInt(1337), true)]))
     },
   )
@@ -377,7 +364,6 @@ describe("Deferred schema indexes", () => {
       let finalizeCalls = () => multichainFinalizeCalls.contents - before
       let chainA = source(100)
       let chainB = source(1337)
-      let {sql, pgSchema} = indexer.pg
 
       chainA.resolveGetHeightOrThrow(100)
       chainB.resolveGetHeightOrThrow(100)
@@ -389,7 +375,7 @@ describe("Deferred schema indexes", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (finalizeCalls(), await readyAtByChainId(~sql, ~pgSchema)),
+        (finalizeCalls(), await readyAtByChainId(indexer)),
         ~message="Chain A is at its head, but chain B is still backfilling",
       ).toEqual((0, [(ChainId.fromInt(100), false), (ChainId.fromInt(1337), false)]))
 
@@ -397,7 +383,7 @@ describe("Deferred schema indexes", () => {
       chainB.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
 
-      let readyAtTimes = await readyAtTimesByChainId(~sql, ~pgSchema)
+      let readyAtTimes = await readyAtTimesByChainId(indexer)
       let times = readyAtTimes->Array.map(((_, readyAt)) => readyAt)
       t.expect(
         (
@@ -538,7 +524,7 @@ describe("Automatic getWhere indexes", () => {
             await findIndexes(~sql, ~tableName="A", ~columns=[optionalColumn], ~pgSchema)
           )->Array.map(entry => (entry.name, entry.isValid)),
           await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema),
-          await readyAtByChainId(~sql, ~pgSchema),
+          await readyAtByChainId(indexer),
         ),
         ~message="The query builds its own index during backfill and still returns the right rows, while the schema's own indexes stay deferred",
       ).toEqual((
@@ -563,7 +549,7 @@ describe("Automatic getWhere indexes", () => {
           (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
             entry => entry.name,
           ),
-          await readyAtByChainId(~sql, ~pgSchema),
+          await readyAtByChainId(indexer),
         ),
         ~message="Reaching ready adds the schema indexes without disturbing the automatic one",
       ).toEqual((1, [aBIdIndexName], [(ChainId.fromInt(1337), true)]))

@@ -34,12 +34,7 @@ type Expiry @storage(clickhouse: {}) {
   at: Timestamp!
 }
 `,
-  ~unsupported=[
-    {
-      backend: #postgres,
-      reason: "configures its own storage, so it runs the same on the ClickHouse leg",
-    },
-  ],
+  ~unsupported=Scenario.configuresOwnStorage,
 )
 
 type expiry = {id: string, at: Date.t}

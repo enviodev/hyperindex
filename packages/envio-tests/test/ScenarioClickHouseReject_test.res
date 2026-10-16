@@ -45,12 +45,7 @@ type Note @storage(clickhouse: {}) {
   text: String!
 }
 `,
-  ~unsupported=[
-    {
-      backend: #postgres,
-      reason: "configures its own storage, so it runs the same on the ClickHouse leg",
-    },
-  ],
+  ~unsupported=Scenario.configuresOwnStorage,
 )
 
 type bounded = {id: string, amount: bigint}

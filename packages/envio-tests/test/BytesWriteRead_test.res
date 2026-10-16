@@ -42,10 +42,6 @@ type blobFilter = {tag?: Envio.whereOperator<Uint8Array.t>}
 type blobOps = {set: blob => unit, getWhere: blobFilter => promise<array<blob>>}
 type handlerContext = {@as("Blob") blob: blobOps}
 
-// What the store keeping the entity holds beyond its current state: Postgres a
-// history row per change, ClickHouse the bytes exactly as they were written.
-type stored = History(array<Change.t<blob>>) | ClickHouseRows(array<JSON.t>)
-
 let first = {
   id: "1",
   data: Uint8Array.fromArray([0, 1, 254, 255]),
@@ -107,21 +103,17 @@ describe("Bytes as Uint8Array", () => {
       )
       await indexer.getBatchWritePromise()
 
-      let postgresStored = switch IndexerRunner.selectedBackend {
-      | #postgres | #both => Some(History(await indexer.queryHistory("Blob")))
-      | #clickhouse => None
-      }
+      let postgresStored: option<array<Change.t<blob>>> = await Scenario.postgresHistory(
+        indexer,
+        "Blob",
+      )
       let clickHouseStored = switch IndexerRunner.selectedBackend {
       | #clickhouse | #both =>
         let database = TestClickHouse.currentDatabase()
         let rows = await TestClickHouse.query(
           `SELECT id, hex(data) AS data, hex(optData) AS optData, arrayMap(x -> hex(x), chunks) AS chunks, hex(tag) AS tag FROM \`${database}\`.\`Blob\` ORDER BY id FORMAT JSONEachRow`,
         )
-        Some(
-          ClickHouseRows(
-            rows->String.trim->String.split("\n")->Array.map(row => row->JSON.parseOrThrow),
-          ),
-        )
+        Some(rows->String.trim->String.split("\n")->Array.map(row => row->JSON.parseOrThrow))
       | #postgres => None
       }
 
@@ -134,25 +126,17 @@ describe("Bytes as Uint8Array", () => {
       )).toEqual((
         [first, second],
         dict{"eq": [first], "in": [second]},
-        switch IndexerRunner.selectedBackend {
-        | #postgres | #both =>
-          Some(
-            History([
-              Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
-              Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
-            ]),
-          )
-        | #clickhouse => None
-        },
+        Scenario.expectedPostgresHistory([
+          Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
+          Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
+        ]),
         switch IndexerRunner.selectedBackend {
         | #clickhouse | #both =>
           Some(
-            ClickHouseRows(
-              %raw(`[
-                { id: "1", data: "0001FEFF", optData: "5C782722", chunks: ["0102", "", "03"], tag: "AA" },
-                { id: "2", data: "", optData: null, chunks: [], tag: "BB" },
-              ]`),
-            ),
+            %raw(`[
+              { id: "1", data: "0001FEFF", optData: "5C782722", chunks: ["0102", "", "03"], tag: "AA" },
+              { id: "2", data: "", optData: null, chunks: [], tag: "BB" },
+            ]`),
           )
         | #postgres => None
         },

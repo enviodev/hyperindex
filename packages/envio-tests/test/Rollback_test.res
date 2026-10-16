@@ -120,6 +120,10 @@ let querySimpleEntities = (indexer: IndexerRunner.t) =>
     rows->Array.toSorted((a, b) => String.compare(a.id, b.id))
   )
 
+let simpleEntityHistory = (indexer: IndexerRunner.t): promise<
+  option<array<Change.t<simpleEntity>>>,
+> => Scenario.postgresHistory(indexer, "SimpleEntity")
+
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
     ~t,
@@ -225,11 +229,7 @@ describe("E2E rollback tests", () => {
       await Promise.all3((
         indexer.queryCheckpoints(),
         querySimpleEntities(indexer),
-        (
-          Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
-            option<array<Change.t<simpleEntity>>>,
-          >
-        ),
+        simpleEntityHistory(indexer),
       )),
       ~message="Should have two entities in the db",
     ).toEqual((
@@ -388,11 +388,7 @@ describe("E2E rollback tests", () => {
       await Promise.all3((
         indexer.queryCheckpoints(),
         querySimpleEntities(indexer),
-        (
-          Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
-            option<array<Change.t<simpleEntity>>>,
-          >
-        ),
+        simpleEntityHistory(indexer),
       )),
       ~message="Should correctly rollback entities",
     ).toEqual((
@@ -650,11 +646,7 @@ describe("E2E rollback tests", () => {
       t.expect(
         await Promise.all2((
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          (
-            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
-              option<array<Change.t<simpleEntity>>>,
-            >
-          ),
+          simpleEntityHistory(indexer),
         )),
         ~message="Should establish SET -> DELETE -> SET history before the rollback",
       ).toEqual((
@@ -1460,11 +1452,7 @@ describe("E2E rollback tests", () => {
         await Promise.all3((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          (
-            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
-              option<array<Change.t<simpleEntity>>>,
-            >
-          ),
+          simpleEntityHistory(indexer),
         )),
         ~message=`Should create history rows and checkpoints`,
       ).toEqual((
@@ -1733,11 +1721,7 @@ describe("E2E rollback tests", () => {
         await Promise.all3((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          (
-            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
-              option<array<Change.t<simpleEntity>>>,
-            >
-          ),
+          simpleEntityHistory(indexer),
         )),
       ).toEqual((
         [
@@ -1923,11 +1907,7 @@ describe("E2E rollback tests", () => {
         await Promise.all3((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          (
-            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
-              option<array<Change.t<simpleEntity>>>,
-            >
-          ),
+          simpleEntityHistory(indexer),
         )),
         ~message=`Should create history rows and checkpoints`,
       ).toEqual((
@@ -2143,11 +2123,7 @@ describe("E2E rollback tests", () => {
         await Promise.all3((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          (
-            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
-              option<array<Change.t<simpleEntity>>>,
-            >
-          ),
+          simpleEntityHistory(indexer),
         )),
       ).toEqual((
         [
@@ -3440,11 +3416,7 @@ describe("E2E rollback tests", () => {
             a,
             b,
           ) => String.compare(a.id, b.id)),
-          await (
-            Scenario.postgresHistory(indexer, "SimpleEntity"): promise<
-              option<array<Change.t<simpleEntity>>>,
-            >
-          ),
+          await simpleEntityHistory(indexer),
           await indexer.metric("envio_rollback_events"),
         ),
         ~message="Chain 100's in-flight entity change should be rolled back together with its progress and reapplied on refetch",

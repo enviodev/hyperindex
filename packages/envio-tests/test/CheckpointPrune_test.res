@@ -34,24 +34,6 @@ chains:
 
 let scenario = Scenario.make(~supervised=false, ~schema, ~configYaml)
 
-// Every entity kept in ClickHouse alone, so Postgres has no entity history to
-// prune the checkpoints beside.
-let clickHouseEntitiesScenario = Scenario.make(
-  ~supervised=false,
-  ~schema,
-  ~configYaml=configYaml ++ `
-storage:
-  clickhouse:
-    default: true
-`,
-  ~unsupported=[
-    {
-      backend: #postgres,
-      reason: "configures its own storage, so it runs the same on the ClickHouse leg",
-    },
-  ],
-)
-
 let setCounter = (~block, ~count): MockSource.itemMock => {
   blockNumber: block,
   logIndex: 0,
@@ -97,13 +79,6 @@ let sources: array<Scenario.sourceMock> = [
 describe("Checkpoint pruning", () => {
   scenario->Scenario.it(
     "Drops the checkpoints below the chain's safe one",
-    ~sources,
-    ~reorgThresholdReadyTolerance=0,
-    dropsTheUnreachableCheckpoints,
-  )
-
-  clickHouseEntitiesScenario->Scenario.it(
-    "Drops them with every entity kept in ClickHouse",
     ~sources,
     ~reorgThresholdReadyTolerance=0,
     dropsTheUnreachableCheckpoints,

@@ -32,6 +32,12 @@ let assertsPostgresIndexes = [
 let assertsPostgresPartitions = [
   {backend: #clickhouse, reason: "asserts the partitions Postgres keeps an entity in"},
 ]
+let configuresOwnStorage = [#postgres, #both]->Array.map((backend): unsupported => {
+  backend,
+  reason: "configures its own storage, so it runs the same on the ClickHouse leg",
+})
+let noClickHouse = (reason): array<unsupported> =>
+  [#clickhouse, #both]->Array.map(backend => {backend, reason})
 
 type t = {
   config: Config.t,

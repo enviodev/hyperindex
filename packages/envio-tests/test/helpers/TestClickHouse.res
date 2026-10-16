@@ -53,8 +53,6 @@ async (host, username, password, query) => {
 
 let query = statement => exec(~host=host(), ~username=username(), ~password=password(), statement)
 
-// `<prefix><createdAtMs>_<pid>_<counter>`, the shape TestPgSchema names schemas
-// by.
 let make = () => {
   counter := counter.contents + 1
   `${prefix}${Date.now()->Float.toString}_${pid->Int.toString}_${counter.contents->Int.toString}`
@@ -74,18 +72,19 @@ let drop = async (~database) => {
   let _ = await query(`DROP DATABASE IF EXISTS \`${database}\``)
 }
 
+let envNames = [
+  "ENVIO_CLICKHOUSE_HOST",
+  "ENVIO_CLICKHOUSE_USERNAME",
+  "ENVIO_CLICKHOUSE_PASSWORD",
+  "ENVIO_CLICKHOUSE_DATABASE",
+]
+
 // The env `use` sets, as it was before, for a run to put back once it is done:
 // a later run in the same worker that provides no database of its own must not
 // find this one's.
 let savedEnv = () => {
   let env = NodeJs.Process.process.env
-  let names = [
-    "ENVIO_CLICKHOUSE_HOST",
-    "ENVIO_CLICKHOUSE_USERNAME",
-    "ENVIO_CLICKHOUSE_PASSWORD",
-    "ENVIO_CLICKHOUSE_DATABASE",
-  ]
-  let saved = names->Array.map(name => (name, env->Dict.get(name)))
+  let saved = envNames->Array.map(name => (name, env->Dict.get(name)))
   () =>
     saved->Array.forEach(((name, value)) =>
       switch value {

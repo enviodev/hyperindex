@@ -17,8 +17,10 @@ describe("Test Persistence layer init", () => {
       Persistence.Unknown,
     )
 
-    t.expect(storageMock.holdingCalls, ~message=`Storage should not be initialized`).toEqual([])
-    t.expect(storageMock.initializeCalls, ~message=`Storage should not be initialized`).toEqual([])
+    t.expect(
+      (storageMock.holdingCalls, storageMock.initializeCalls),
+      ~message=`Storage should not be initialized`,
+    ).toEqual(([], []))
 
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
@@ -31,13 +33,9 @@ describe("Test Persistence layer init", () => {
       )
 
     t.expect(
-      storageMock.holdingCalls,
-      ~message=`Should check whether storage is initialized`,
-    ).toEqual([true])
-    t.expect(
-      storageMock.initializeCalls,
-      ~message=`Shouldn't call initialize before init check`,
-    ).toEqual([])
+      (storageMock.holdingCalls, storageMock.initializeCalls),
+      ~message=`Should check whether storage is initialized, without calling initialize before that check`,
+    ).toEqual(([true], []))
 
     storageMock.resolveHolding(Nothing)
     let _ = await Promise.resolve()

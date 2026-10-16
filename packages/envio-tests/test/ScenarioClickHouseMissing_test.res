@@ -37,12 +37,7 @@ type Counted @storage(clickhouse: {}) {
   label: String
 }
 `,
-  ~unsupported=[
-    {
-      backend: #postgres,
-      reason: "configures its own storage, so it runs the same on the ClickHouse leg",
-    },
-  ],
+  ~unsupported=Scenario.configuresOwnStorage,
 )
 
 // `amount` is optional here and required in the schema: leaving it out is what a
