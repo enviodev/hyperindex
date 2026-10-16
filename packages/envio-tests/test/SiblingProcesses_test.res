@@ -57,7 +57,13 @@ let writeItems = (~chainId): MockSource.itemMock => {
 
 let catchUp = async (sibling: IndexerRunner.t, ~source: MockSource.t, ~chainId) => {
   source.resolveGetHeightOrThrow(500)
-  source.resolveGetItemsOrThrow([writeItems(~chainId)], ~latestFetchedBlockNumber=500)
+  await source.expectItemsQueries([
+    {
+      fromBlock: 1,
+      toBlock: Bounded(300),
+      reply: Respond({items: [writeItems(~chainId)], latestFetchedBlockNumber: 500}),
+    },
+  ])
   await sibling.waitUntilReady()
 }
 

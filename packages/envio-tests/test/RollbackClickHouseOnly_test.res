@@ -99,29 +99,35 @@ describe("Rollback with a ClickHouse-only entity", () => {
       await Utils.delay(0)
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 101,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "1", value: "value-1"})
-              context.entityWithTimestamp.set({id: "ch-only", timestamp: Date.fromTime(101.)})
-            },
-          },
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "1", value: "value-2"})
-              context.entityWithTimestamp.set({id: "ch-only", timestamp: Date.fromTime(102.)})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=102,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 101,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 101,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "1", value: "value-1"})
+                  context.entityWithTimestamp.set({id: "ch-only", timestamp: Date.fromTime(101.)})
+                },
+              },
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "1", value: "value-2"})
+                  context.entityWithTimestamp.set({id: "ch-only", timestamp: Date.fromTime(102.)})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 102,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()->raiseOnIndexerError
 
       let missingHistoryRelationError = try {
@@ -142,11 +148,13 @@ describe("Rollback with a ClickHouse-only entity", () => {
       ).toEqual((true, [{id: "1", value: "value-2"}]))
 
       // Should trigger rollback
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=103,
-        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 103,
+          toBlock: Unbounded,
+          reply: Respond({items: [], prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"}}),
+        },
+      ])
       await Utils.delay(0)
       await Utils.delay(0)
 
@@ -165,11 +173,17 @@ describe("Rollback with a ClickHouse-only entity", () => {
 
       // Commit the rollback diff with an empty reprocessing batch. The write
       // prunes post-target history rows, exercising the same per-entity filter.
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=102,
-        ~latestFetchedBlockHash="0x102a",
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 101,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 102,
+            latestFetchedBlockHash: "0x102a",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()->raiseOnIndexerError
 
       t.expect(

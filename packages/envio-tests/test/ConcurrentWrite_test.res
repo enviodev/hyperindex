@@ -69,7 +69,7 @@ describe("Concurrent batch write and processing", () => {
           switch await storage.writeBatch(
             ~batch,
             ~rollback,
-                ~config,
+            ~config,
             ~allEntities,
             ~updatedEffectsCache,
             ~updatedEntities,
@@ -94,39 +94,49 @@ describe("Concurrent batch write and processing", () => {
       await Utils.delay(0)
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 101,
-            logIndex: 0,
-            handler: async args => {
-              (args->contextOf).simpleEntity.set({
-                id: "1",
-                value: "created",
-              })
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=101,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 101,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 101,
+                logIndex: 0,
+                handler: async args => {
+                  (args->contextOf).simpleEntity.set({
+                    id: "1",
+                    value: "created",
+                  })
+                },
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Delete the entity and stall the batch write so it stays in flight
       let resolveStall = ref(() => ())
       stallWriteBatch := Some(Promise.make((resolve, _reject) => resolveStall := (() => resolve())))
       let writeBatchCallsBeforeStall = writeBatchCalls.contents
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async args => {
-              (args->contextOf).simpleEntity.deleteUnsafe("1")
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=102,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 102,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async args => {
+                  (args->contextOf).simpleEntity.deleteUnsafe("1")
+                },
+              },
+            ],
+          }),
+        },
+      ])
       await Scenario.waitUntil(
         () => writeBatchCalls.contents != writeBatchCallsBeforeStall,
         ~message="the delete's batch write to start",
@@ -134,25 +144,30 @@ describe("Concurrent batch write and processing", () => {
 
       // Re-create the entity while the delete's write is still in flight
       let recreateProcessed = ref(false)
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 103,
-            logIndex: 0,
-            handler: async args => {
-              (args->contextOf).simpleEntity.set({
-                id: "1",
-                value: "recreated",
-              })
-              recreateProcessed := true
-            },
-          },
-        ],
-        // The chain has already chunked the rest of the range into queries; this
-        // answers the one that carries block 103.
-        ~filter=query => query["fromBlock"] === 103,
-        ~latestFetchedBlockNumber=103,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 103,
+          toBlock: Bounded(104),
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 103,
+                logIndex: 0,
+                handler: async args => {
+                  (args->contextOf).simpleEntity.set({
+                    id: "1",
+                    value: "recreated",
+                  })
+                  recreateProcessed := true
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+        // The chain has already chunked the rest of the range into queries.
+        {where: query => query.fromBlock > 103, reply: LeavePending},
+      ])
       await Scenario.waitUntil(
         () => recreateProcessed.contents,
         ~message="the recreate handler to run",

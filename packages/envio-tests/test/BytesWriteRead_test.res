@@ -65,42 +65,56 @@ describe("Bytes as Uint8Array", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.blob.set(first)
-              context.blob.set(second)
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=5,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  context.blob.set(first)
+                  context.blob.set(second)
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 5,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let queried = Dict.make()
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 6,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              queried->Dict.set("eq", await context.blob.getWhere({tag: {_eq: first.tag}}))
-              queried->Dict.set(
-                "in",
-                await context.blob.getWhere({
-                  tag: {_in: [second.tag, Uint8Array.fromArray([0xcc])]},
-                }),
-              )
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 6,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 6,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  queried->Dict.set("eq", await context.blob.getWhere({tag: {_eq: first.tag}}))
+                  queried->Dict.set(
+                    "in",
+                    await context.blob.getWhere({
+                      tag: {_in: [second.tag, Uint8Array.fromArray([0xcc])]},
+                    }),
+                  )
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect((

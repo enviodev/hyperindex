@@ -38,19 +38,25 @@ describe("Schema isolation between indexers in one process", () => {
       let sourceMock = source(1337)
       sourceMock.resolveGetHeightOrThrow(300)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 1,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.simpleEntity.set({id: "1", value})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 1,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  context.simpleEntity.set({id: "1", value})
+                },
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       rows := (await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>))

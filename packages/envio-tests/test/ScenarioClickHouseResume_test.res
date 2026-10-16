@@ -53,10 +53,14 @@ let feed = async (
   | Some(height) => source.resolveGetHeightOrThrow(height)
   | None => ()
   }
-  source.resolveGetItemsOrThrow(
-    [{blockNumber, logIndex: 0, handler: setCounter(~id, ~count)}],
-    ~latestFetchedBlockNumber=blockNumber + 5,
-  )
+  await source.expectItemsQueries([
+    {
+      reply: Respond({
+        items: [{blockNumber, logIndex: 0, handler: setCounter(~id, ~count)}],
+        latestFetchedBlockNumber: blockNumber + 5,
+      }),
+    },
+  ])
   await indexer.getBatchWritePromise()
 }
 

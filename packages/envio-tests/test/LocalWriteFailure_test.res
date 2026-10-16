@@ -47,18 +47,23 @@ describe("A batch whose write fails in JavaScript", () => {
       await Utils.delay(0)
       await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 1,
-            logIndex: 0,
-            // No column holds NaN, and the staging buffer is what says so.
-            handler: async args =>
-              (args->contextOf).tally.set({id: "1", count: Float.Constants.nan}),
-          },
-        ],
-        ~latestFetchedBlockNumber=1,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 1,
+                logIndex: 0,
+                // No column holds NaN, and the staging buffer is what says so.
+                handler: async args =>
+                  (args->contextOf).tally.set({id: "1", count: Float.Constants.nan}),
+              },
+            ],
+          }),
+        },
+      ])
       let failure = await refusal.awaitRefusalReason()
 
       let {sql, pgSchema} = indexer.pg

@@ -68,7 +68,9 @@ let readyByChainId = async (~sql, ~pgSchema) => {
 
 let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
   source.resolveGetHeightOrThrow(100)
-  source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+  await source.expectItemsQueries([
+    {fromBlock: 1, toBlock: Unbounded, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+  ])
   await indexer.waitUntilReady()
 }
 

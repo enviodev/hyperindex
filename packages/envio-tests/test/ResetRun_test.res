@@ -66,20 +66,29 @@ describe("A reset run", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
-      source.resolveGetItemsOrThrow(
-        [bump(~block=1, ~status="PENDING")],
-        ~latestFetchedBlockNumber=1,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [bump(~block=1, ~status="PENDING")]}),
+        },
+      ])
       await indexer.getBatchWritePromise()
       let before: array<counter> = await indexer.query("Counter")
 
       source.setAutoHeight(100)
       let reset = await indexer.restart(~reset=true, ())
       let afterReset: array<counter> = await reset.query("Counter")
-      source.resolveGetItemsOrThrow(
-        [bump(~block=1, ~status="ACTIVE"), bump(~block=2, ~status="ACTIVE")],
-        ~latestFetchedBlockNumber=2,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [bump(~block=1, ~status="ACTIVE"), bump(~block=2, ~status="ACTIVE")],
+            latestFetchedBlockNumber: 2,
+          }),
+        },
+      ])
       await reset.getBatchWritePromise()
 
       t.expect((before, afterReset, (await reset.query("Counter"): array<counter>))).toEqual((

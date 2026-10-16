@@ -97,7 +97,9 @@ describe("A reset", () => {
       await Utils.delay(0)
       await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
 
-      sourceMock.resolveGetItemsOrThrow([callEffects], ~latestFetchedBlockNumber=1)
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 1, toBlock: Unbounded, reply: Respond({items: [callEffects]})},
+      ])
       await indexer.getBatchWritePromise()
       let cached = await readCaches(indexer)
       let firstRunCalls = calls.contents
@@ -105,11 +107,9 @@ describe("A reset", () => {
       await indexer.dumpEffectCache()
       sourceMock.setAutoHeight(100)
       let restarted = await indexer.restart(~reset=true, ())
-      sourceMock.resolveGetItemsOrThrow(
-        [callEffects],
-        ~filter=MockSource.coveringBlock(1),
-        ~latestFetchedBlockNumber=1,
-      )
+      await sourceMock.expectItemsQueries([
+        {coversBlock: 1, reply: Respond({items: [callEffects], latestFetchedBlockNumber: 1})},
+      ])
       await restarted.getBatchWritePromise()
 
       t.expect((firstRunCalls, calls.contents, await readCaches(restarted))).toEqual((6, 6, cached))

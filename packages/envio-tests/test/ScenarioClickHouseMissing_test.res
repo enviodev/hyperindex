@@ -58,21 +58,28 @@ describe("ClickHouse refuses a required column the handler left unset", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              // `label` is nullable, so leaving it out is legitimate; `amount`
-              // is not, and is what the write has to catch.
-              context.counted.set({id: "unset"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  // `label` is nullable, so leaving it out is legitimate; `amount`
+                  // is not, and is what the write has to catch.
+                  context.counted.set({id: "unset"})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
 
       let failure = await refusal.awaitStorageError()
 
