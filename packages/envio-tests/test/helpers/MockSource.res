@@ -110,10 +110,6 @@ let makeMockSourceRegistration = (
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 }
 
-let defineAddresses: ({..}, array<Address.t>) => unit = %raw(`(payload, addresses) => {
-  Object.defineProperty(payload, "addresses", {value: addresses});
-}`)
-
 type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
 // `isWildcard` decides whether the chain's mock registration depends on
 // addresses, and so whether its partition is an address partition or a wildcard
@@ -166,11 +162,6 @@ let installMockSourceRegistrations = (
       sourceStates->Array.forEach(state => state.onEventRegistrationRef := Some(mockRegistration))
     }
   })
-
-module CallPayload = {
-  // The partition's addresses as the query carried them, in set order.
-  @get external addresses: {..} => array<Address.t> = "addresses"
-}
 
 type method = [
   | #getBlockHashes
@@ -237,26 +228,6 @@ type pendingItemsQueryControl = {
 }
 @get external control: pendingItemsQuery => pendingItemsQueryControl = "__control"
 
-// Legacy shape, answered through `resolveGetItemsOrThrow`.
-type itemsQuery = {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": string}
-
-type getItemsOrThrowCall = {
-  payload: itemsQuery,
-  query: pendingItemsQuery,
-  // Whether the query asked for every block in its range, which the chain only
-  // does once it is at the head.
-  includeAllBlocks: bool,
-  resolve: (
-    array<itemMock>,
-    ~latestFetchedBlockNumber: int=?,
-    ~latestFetchedBlockHash: string=?,
-    ~knownHeight: int=?,
-    ~prevRangeLastBlock: ReorgDetection.blockData=?,
-    ~requestStats: array<Source.requestStat>=?,
-  ) => unit,
-  reject: 'exn. 'exn => unit,
-}
-
 type t = {
   source: Source.t,
   // Use array of bool instead of array of unit,
@@ -277,27 +248,8 @@ type t = {
   // number of polls. A restarted indexer learns the head on its own this way,
   // before the test body gets a chance to resolve anything.
   setAutoHeight: int => unit,
-  getItemsOrThrowCalls: array<getItemsOrThrowCall>,
   // How many times the source was told to drop orphaned-chain state.
   reorgCallCount: unit => int,
-  // Answers exactly one query. With no query pending yet the answer waits for
-  // the next matching one, so a test never has to wait for the indexer to get
-  // around to asking. `~filter` is mandatory as soon as more than one pending
-  // query matches: item queries fan out one per fetch partition, and answering
-  // all of them because the test was written before the partition split is the
-  // bug this arity check exists to surface.
-  resolveGetItemsOrThrow: (
-    array<itemMock>,
-    ~filter: itemsQuery => bool=?,
-    ~latestFetchedBlockNumber: int=?,
-    ~latestFetchedBlockHash: string=?,
-    ~knownHeight: int=?,
-    ~prevRangeLastBlock: ReorgDetection.blockData=?,
-    ~requestStats: array<Source.requestStat>=?,
-  ) => unit,
-  // Empty-response every matching pending query. A statement about queries that
-  // already exist, so unlike `resolveGetItemsOrThrow` it never waits for one.
-  drainItemsQueries: (~filter: itemsQuery => bool=?, ~latestFetchedBlockNumber: int=?) => unit,
   // The item queries the source has taken and not yet replied to, in arrival
   // order. A query leaves as soon as it is replied to.
   pendingItemsQueries: array<pendingItemsQuery>,
@@ -314,8 +266,8 @@ type t = {
   // search issues several lookups over different block numbers, so an answer
   // registered in advance would land on whichever asked first.
   resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
-  // Throws if a `resolve*` that ran before its call arrived is still waiting for
-  // one, naming the call sites. Run at the end of a passing scenario.
+  // Throws if a height answer given before its call arrived is still waiting
+  // for one, naming the call sites. Run at the end of a passing scenario.
   validateAnswersClaimed: unit => unit,
   // Voids the queries the indexer has in flight. A restarted indexer re-issues
   // its own, and answering a stopped indexer's leftovers instead is a bug the
@@ -330,32 +282,6 @@ type t = {
   setHeightSubscriptionStatus: Source.heightSubscriptionStatus => unit,
   unsubscribeHeightSubscription: unit => unit,
 }
-
-// The chain chunks a range into one query per partition slice, so a test that
-// answers with items at a given block names the slice that covers it.
-let coveringBlock = blockNumber =>
-  (query: itemsQuery) =>
-    query["fromBlock"] <= blockNumber &&
-      switch query["toBlock"] {
-      | Some(toBlock) => blockNumber <= toBlock
-      | None => true
-      }
-
-let describeItemsQuery = (query: itemsQuery) =>
-  `{p: ${query["p"]}, fromBlock: ${query["fromBlock"]->Int.toString}, toBlock: ${switch query["toBlock"] {
-    | Some(toBlock) => toBlock->Int.toString
-    | None => "-"
-    }}}`
-
-let ambiguousItemsQueries = calls =>
-  `resolveGetItemsOrThrow matches ${calls
-    ->Array.length
-    ->Int.toString} pending queries, so which one it answers is a guess:\n` ++
-  calls
-  ->Array.map((call: getItemsOrThrowCall) => `  ${call.payload->describeItemsQuery}`)
-  ->Array.join(
-    "\n",
-  ) ++ "\nNarrow it with ~filter, or use drainItemsQueries to empty-response them all."
 
 @val external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 
@@ -598,7 +524,6 @@ let make = (
       }
       indices
     })
-  let getItemsOrThrowCalls = []
   let reorgCalls = ref(0)
   let getBlockHashesCalls = []
   let getBlockHashesResolveFns = []
@@ -619,13 +544,8 @@ let make = (
   let autoHeight = ref(autoHeight)
   let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
-  // Answers registered before their call arrived, consumed in order by the
-  // source methods below. `site` is only carried for the end-of-run report.
-  let deferredItemsAnswers: array<{
-    "site": string,
-    "match": getItemsOrThrowCall => bool,
-    "respond": getItemsOrThrowCall => unit,
-  }> = []
+  // Height answers registered before their call arrived, consumed in order by
+  // `getHeightOrThrow`. `site` is only carried for the end-of-run report.
   let deferredHeightAnswers: array<{"site": string, "height": int}> = []
 
   let pendingItemsQueries: array<pendingItemsQuery> = []
@@ -850,51 +770,7 @@ let make = (
       pendingHeightCallIndices()->Array.forEach(index =>
         index->settleHeightCall(pending => pending["reject"](exn->Obj.magic))
       ),
-    getItemsOrThrowCalls,
     reorgCallCount: () => reorgCalls.contents,
-    resolveGetItemsOrThrow: (
-      items,
-      ~filter=?,
-      ~latestFetchedBlockNumber=?,
-      ~latestFetchedBlockHash=?,
-      ~knownHeight=?,
-      ~prevRangeLastBlock=?,
-      ~requestStats=?,
-    ) => {
-      let respond = (call: getItemsOrThrowCall) =>
-        call.resolve(
-          items,
-          ~latestFetchedBlockNumber?,
-          ~latestFetchedBlockHash?,
-          ~knownHeight?,
-          ~prevRangeLastBlock?,
-          ~requestStats?,
-        )
-      let matches = (call: getItemsOrThrowCall) =>
-        switch filter {
-        | Some(filter) => filter(call.payload)
-        | None => true
-        }
-      switch getItemsOrThrowCalls->Array.filter(matches) {
-      | [] =>
-        deferredItemsAnswers
-        ->Array.push({"site": UserModule.callSite(), "match": matches, "respond": respond})
-        ->ignore
-      | [call] => respond(call)
-      | ambiguous => JsError.throwWithMessage(ambiguousItemsQueries(ambiguous))
-      }
-    },
-    drainItemsQueries: (~filter=?, ~latestFetchedBlockNumber=?) => {
-      let matches = (call: getItemsOrThrowCall) =>
-        switch filter {
-        | Some(filter) => filter(call.payload)
-        | None => true
-        }
-      switch getItemsOrThrowCalls->Array.filter(matches) {
-      | [] => JsError.throwWithMessage("drainItemsQueries has no pending query to drain")
-      | calls => calls->Array.forEach(call => call.resolve([], ~latestFetchedBlockNumber?))
-      }
-    },
     pendingItemsQueries,
     expectItemsQueries: async expected => {
       let replyingIndices = expected->Array.reduceWithIndex([], (indices, entry, index) => {
@@ -956,10 +832,9 @@ let make = (
       getBlockHashesResolveFns->Utils.Array.clearInPlace
     },
     validateAnswersClaimed: () =>
-      switch Array.flat([
-        deferredItemsAnswers->Array.map(answer => `resolveGetItemsOrThrow at ${answer["site"]}`),
-        deferredHeightAnswers->Array.map(answer => `resolveGetHeightOrThrow at ${answer["site"]}`),
-      ]) {
+      switch deferredHeightAnswers->Array.map(answer =>
+        `resolveGetHeightOrThrow at ${answer["site"]}`
+      ) {
       | [] => ()
       | unclaimed =>
         JsError.throwWithMessage(
@@ -969,7 +844,6 @@ let make = (
         )
       },
     dropPendingCalls: () => {
-      getItemsOrThrowCalls->Utils.Array.clearInPlace
       pendingItemsQueries->Utils.Array.clearInPlace
       keptPendingQueries->Utils.Array.clearInPlace
       pendingHeightCallIndices()->Array.forEach(index =>
@@ -1055,11 +929,6 @@ let make = (
                   | index => queries->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
                   },
               )
-              switch getItemsOrThrowCalls->Array.findIndex(call => call.query === query) {
-              | -1 => ()
-              | index =>
-                getItemsOrThrowCalls->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
-              }
             }
             let queryControl = {
               respond: response => {
@@ -1087,51 +956,8 @@ let make = (
             )
             ->ignore
             pendingItemsQueries->Array.push(query)->ignore
-
-            let payload = {
-              "fromBlock": fromBlock,
-              "toBlock": toBlock,
-              "retry": retry,
-              "p": partitionId,
-            }
-            payload->defineAddresses(addresses)
-            getItemsOrThrowCalls
-            ->Array.push({
-              payload,
-              query,
-              includeAllBlocks,
-              resolve: (
-                items,
-                ~latestFetchedBlockNumber=?,
-                ~latestFetchedBlockHash=?,
-                ~knownHeight=?,
-                ~prevRangeLastBlock=?,
-                ~requestStats=?,
-              ) =>
-                queryControl.respond({
-                  items,
-                  ?latestFetchedBlockNumber,
-                  ?latestFetchedBlockHash,
-                  ?knownHeight,
-                  ?prevRangeLastBlock,
-                  ?requestStats,
-                }),
-              reject: error => queryControl.fail(error->Obj.magic),
-            })
-            ->ignore
           })
           notifyArrival()
-          switch getItemsOrThrowCalls->Array.at(-1) {
-          | Some(call) =>
-            switch deferredItemsAnswers->Array.findIndex(answer => answer["match"](call)) {
-            | -1 => ()
-            | index =>
-              let answer = deferredItemsAnswers->Array.getUnsafe(index)
-              deferredItemsAnswers->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
-              answer["respond"](call)
-            }
-          | None => ()
-          }
           promise
         }),
         onReorg: () => reorgCalls := reorgCalls.contents + 1,
@@ -1179,13 +1005,4 @@ let waitHeightQuery = (sourceMock: t, ~since) =>
   waitForCall(
     ~arrived=() => sourceMock.getHeightOrThrowCalls->Array.length > since,
     ~message=`a getHeightOrThrow call beyond ${since->Int.toString}`,
-  )
-
-// Wait until the source has a pending getItemsOrThrow call. Queries are
-// serialized by the cross-chain budget waterfall, so a chain's query only
-// appears after the more-behind chains' responses release the budget.
-let waitItemsQuery = (sourceMock: t) =>
-  waitForCall(
-    ~arrived=() => sourceMock.getItemsOrThrowCalls->Array.length > 0,
-    ~message="a getItemsOrThrow call",
   )

@@ -357,8 +357,6 @@ let resolveInitialHeight = async (~t: Vitest.testContext, ~source: MockSource.t,
     ~message="should have called getHeightOrThrow to get initial height",
   ).toEqual(1)
   source.resolveGetHeightOrThrow(head)
-  await Utils.delay(0)
-  await Utils.delay(0)
 }
 
 // Drives a chain through the reorg-threshold transition: the first query stops
