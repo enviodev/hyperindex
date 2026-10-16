@@ -98,6 +98,7 @@ expression: json
   "entities": [
     {
       "name": "EmptyEntity",
+      "codeName": "EmptyEntity",
       "properties": [
         {
           "name": "id",
@@ -144,6 +145,7 @@ expression: json
     },
     {
       "name": "RelatedEntity",
+      "codeName": "RelatedEntity",
       "properties": [
         {
           "name": "id",

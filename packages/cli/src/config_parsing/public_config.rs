@@ -1,6 +1,8 @@
+use super::materialization;
 use super::{
     entity_parsing, field_types,
     human_config::{self, evm::For, svm::AccountSlot, ColumnNameFormat},
+    materialization::Materialization,
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
         EventKind, FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
@@ -61,6 +63,11 @@ pub(crate) struct PublicConfigJson<'a> {
     svm: Option<SvmConfig<'a>>,
     enums: BTreeMap<String, Vec<String>>,
     entities: Vec<EntityJson>,
+    // Write plans compiled from `tables`. Omitted when there are none, so every
+    // project predating the field keeps producing the same JSON — this config is
+    // persisted to `envio_info` and diffed on resume.
+    #[serde(skip_serializing_if = "<[Materialization]>::is_empty")]
+    materializations: &'a [Materialization],
 }
 
 #[derive(Serialize, Debug)]
@@ -100,6 +107,15 @@ impl From<&system_config::Storage> for StorageConfig {
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
     name: String,
+    // What handlers, generated types and the test-indexer accessor call it,
+    // while `name` stays the database and GraphQL spelling. Always emitted: the
+    // rule that derives it lives in the CLI, so the runtime never has to guess.
+    code_name: String,
+
+    // Who writes the rows. Absent when handlers do, which is every entity in
+    // schema.graphql.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    written: Option<&'static str>,
     // Emitted only when the entity's resolved scope differs from
     // `defaultCrossChain`, which the runtime falls back to. Repeating the
     // default would diff against every project that predates the field.
@@ -862,8 +878,14 @@ impl SystemConfig {
                     }
                 };
 
+                let access = cfg.entity_access(&entity.name);
                 Ok(EntityJson {
                     name: entity.name.clone(),
+                    code_name: access.code_name,
+                    written: match access.written {
+                        materialization::Written::Handlers => None,
+                        materialization::Written::Materialized => Some("materialized"),
+                    },
                     cross_chain: Some(entity.is_cross_chain(cfg.default_chain_scope)).filter(
                         |cross_chain| {
                             *cross_chain != cfg.default_chain_scope.is_cross_chain_by_default()
@@ -897,6 +919,7 @@ impl SystemConfig {
             svm,
             enums: enums_json,
             entities: entities_json,
+            materializations: &cfg.materializations,
         };
 
         Ok(serde_json::to_string_pretty(&config)? + "\n")

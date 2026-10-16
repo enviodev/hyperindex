@@ -38,6 +38,8 @@ enum EvmInitOption {
     ContractImportLocal,
     #[strum(serialize = "Template: ERC20")]
     TemplateErc20,
+    #[strum(serialize = "Template: No-code - tables defined in config.yaml, no handlers")]
+    TemplateNoCode,
     #[strum(serialize = "Template: Greeter")]
     TemplateGreeter,
     #[strum(serialize = "Feature: External Calls")]
@@ -55,6 +57,7 @@ impl EvmInitOption {
                 Self::ContractImportExplorer,
                 Self::ContractImportLocal,
                 Self::TemplateErc20,
+                Self::TemplateNoCode,
                 Self::TemplateGreeter,
                 Self::FeatureExternalCalls,
                 Self::FeatureFactory,
@@ -220,6 +223,7 @@ async fn prompt_evm_init_option(language: &Language) -> Result<Ecosystem> {
             .await?
         }
         EvmInitOption::TemplateErc20 => evm::InitFlow::Template(evm::Template::Erc20),
+        EvmInitOption::TemplateNoCode => evm::InitFlow::Template(evm::Template::NoCode),
         EvmInitOption::TemplateGreeter => evm::InitFlow::Template(evm::Template::Greeter),
         EvmInitOption::FeatureExternalCalls => {
             evm::InitFlow::Template(evm::Template::FeatureExternalCalls)

@@ -5,6 +5,11 @@
 export interface GraphQLClientOptions {
   endpoint?: string;
   adminSecret?: string;
+  /**
+   * Act as this Hasura role instead of admin. Permissions only constrain
+   * non-admin roles, so anything asserting a permission has to set this.
+   */
+  role?: string;
 }
 
 export interface PollOptions<T> {
@@ -29,10 +34,12 @@ export interface PollResult<T> {
 export class GraphQLClient {
   private endpoint: string;
   private adminSecret?: string;
+  private role?: string;
 
   constructor(options: GraphQLClientOptions = {}) {
     this.endpoint = options.endpoint ?? "http://localhost:8080/v1/graphql";
     this.adminSecret = options.adminSecret ?? "testing";
+    this.role = options.role;
   }
 
   /**
@@ -48,6 +55,10 @@ export class GraphQLClient {
 
     if (this.adminSecret) {
       headers["x-hasura-admin-secret"] = this.adminSecret;
+    }
+
+    if (this.role) {
+      headers["x-hasura-role"] = this.role;
     }
 
     const response = await fetch(this.endpoint, {
