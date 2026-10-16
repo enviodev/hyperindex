@@ -51,6 +51,7 @@ let chain = (
 let deployment = (~name="migration", ~chains, ~contracts=["Token"], ~schema=schema, ~storage="") =>
   Scenario.make(
     ~schema,
+    ~unsupported=storage === "" ? [] : Scenario.configuresOwnStorage,
     ~configYaml=`
 name: ${name}
 disable_default_cross_chain: true

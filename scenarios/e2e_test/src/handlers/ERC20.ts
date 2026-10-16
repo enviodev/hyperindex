@@ -36,8 +36,8 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
   });
 
   // TransferPgOnly and TransferChOnly are written alike, each to the one store
-  // its @storage names, so whichever store answers, a read has to find the
-  // same transfers in both — and nothing yet under this event's own id.
+  // its @storage names, so reads of the two have to agree — and find nothing
+  // yet under this event's own id.
   const [pgExisting, chExisting, pgSent, chSent] = await Promise.all([
     context.TransferPgOnly.get(id),
     context.TransferChOnly.get(id),

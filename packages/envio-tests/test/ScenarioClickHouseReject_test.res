@@ -28,7 +28,6 @@ chains:
   // `Bounded` is ClickHouse-only, so Postgres — whose NUMERIC(20, 0) has the
   // same bound — never sees the row and the refusal under test is
   // ClickHouse's alone. `PgBounded` is the same bound in Postgres alone.
-  // Decimal(20, 0) holds 20 digits; the handler writes 21.
   ~schema=`
 type PgBounded {
   id: ID!
@@ -58,6 +57,37 @@ type handlerContext = {
   @as("Note") note: noteOps,
 }
 
+// 21 digits, one more than a precision of 20 holds.
+let overflowing = 100000000000000000000n
+
+let writeBatch = async (~source: MockSource.t, set: handlerContext => unit) => {
+  source.resolveGetHeightOrThrow(10)
+  await source.expectItemsQueries([
+    {
+      fromBlock: 0,
+      toBlock: Unbounded,
+      reply: Respond({
+        items: [
+          {
+            blockNumber: 5,
+            logIndex: 0,
+            handler: async args =>
+              set(args.context->(Utils.magic: Internal.handlerContext => handlerContext)),
+          },
+        ],
+        latestFetchedBlockNumber: 10,
+      }),
+    },
+  ])
+}
+
+let readableCount = async table =>
+  (
+    await TestClickHouse.query(
+      `SELECT count() FROM \`${TestClickHouse.currentDatabase()}\`.\`${table}\` FORMAT TabSeparated`,
+    )
+  )->String.trim
+
 describe("ClickHouse refuses a value its column cannot hold", () => {
   // Swallowed so it doesn't take the test worker down, and kept so the test can
   // assert on what an operator would have been shown.
@@ -67,41 +97,17 @@ describe("ClickHouse refuses a value its column cannot hold", () => {
     ~sources=[{chain: 1}],
     ~onError=refusal.onError,
     async (~t, ~indexer as _, ~source) => {
-      let source = source(1)
-      source.resolveGetHeightOrThrow(10)
-
-      await source.expectItemsQueries([
-        {
-          fromBlock: 0,
-          toBlock: Unbounded,
-          reply: Respond({
-            items: [
-              {
-                blockNumber: 5,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.bounded.set({id: "over", amount: 100000000000000000000n})
-                },
-              },
-            ],
-            latestFetchedBlockNumber: 10,
-          }),
-        },
-      ])
-      let failure = await refusal.awaitStorageError()
-
-      let database = TestClickHouse.currentDatabase()
-      let stored = await TestClickHouse.query(
-        `SELECT count() FROM \`${database}\`.\`Bounded\` FORMAT TabSeparated`,
+      await writeBatch(
+        ~source=source(1),
+        context => context.bounded.set({id: "over", amount: overflowing}),
       )
+      let failure = await refusal.awaitStorageError()
 
       t.expect((
         failure->Option.map(((message, _)) => message),
         failure->Option.mapOr(false, ((_, reason)) => reason->String.includes("Bounded")),
         failure->Option.mapOr(false, ((_, reason)) => reason->String.includes("out of range")),
-        stored->String.trim,
+        await readableCount("Bounded"),
       )).toEqual((Some("Failed to write a batch to ClickHouse"), true, true, "0"))
     },
   )
@@ -114,30 +120,13 @@ describe("Both stores refuse their halves of one batch", () => {
     ~sources=[{chain: 1}],
     ~onError=refusal.onError,
     async (~t, ~indexer as _, ~source) => {
-      let source = source(1)
-      source.resolveGetHeightOrThrow(10)
-
-      await source.expectItemsQueries([
-        {
-          fromBlock: 0,
-          toBlock: Unbounded,
-          reply: Respond({
-            items: [
-              {
-                blockNumber: 5,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.pgBounded.set({id: "over", amount: 100000000000000000000n})
-                  context.bounded.set({id: "over", amount: 100000000000000000000n})
-                },
-              },
-            ],
-            latestFetchedBlockNumber: 10,
-          }),
+      await writeBatch(
+        ~source=source(1),
+        context => {
+          context.pgBounded.set({id: "over", amount: overflowing})
+          context.bounded.set({id: "over", amount: overflowing})
         },
-      ])
+      )
       let reason = await refusal.awaitRefusalReason()
 
       t.expect((
@@ -155,40 +144,18 @@ describe("A batch Postgres refuses", () => {
     ~sources=[{chain: 1}],
     ~onError=refusal.onError,
     async (~t, ~indexer as _, ~source) => {
-      let source = source(1)
-      source.resolveGetHeightOrThrow(10)
-
-      await source.expectItemsQueries([
-        {
-          fromBlock: 0,
-          toBlock: Unbounded,
-          reply: Respond({
-            items: [
-              {
-                blockNumber: 5,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.note.set({id: "landed", text: "only ClickHouse takes it"})
-                  context.pgBounded.set({id: "over", amount: 100000000000000000000n})
-                },
-              },
-            ],
-            latestFetchedBlockNumber: 10,
-          }),
+      await writeBatch(
+        ~source=source(1),
+        context => {
+          context.note.set({id: "landed", text: "only ClickHouse takes it"})
+          context.pgBounded.set({id: "over", amount: overflowing})
         },
-      ])
-      let reason = await refusal.awaitRefusalReason()
-
-      let database = TestClickHouse.currentDatabase()
-      let readable = await TestClickHouse.query(
-        `SELECT count() FROM \`${database}\`.\`Note\` FORMAT TabSeparated`,
       )
+      let reason = await refusal.awaitRefusalReason()
 
       t.expect((
         reason->Option.mapOr(false, reason => reason->String.includes("numeric field overflow")),
-        readable->String.trim,
+        await readableCount("Note"),
       )).toEqual((true, "0"))
     },
   )

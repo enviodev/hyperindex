@@ -105,6 +105,9 @@ type mockEvent = {block: mockEventBlock, logIndex: int}
 let asContext = (context: Internal.handlerContext) =>
   context->(Utils.magic: Internal.handlerContext => handlerContext)
 
+let setEntity = (~id, ~value): MockSource.mockSourceHandler =>
+  async args => (args.context->asContext).simpleEntity.set({id, value})
+
 let asRegisterContext = (context: Internal.contractRegisterContext) =>
   context->(Utils.magic: Internal.contractRegisterContext => registerContext)
 
@@ -830,10 +833,7 @@ describe("E2E rollback tests", () => {
               {
                 blockNumber: 50,
                 logIndex: 0,
-                handler: async args => {
-                  let context = args.context->asContext
-                  context.simpleEntity.set({id: "early", value: "before-threshold"})
-                },
+                handler: setEntity(~id="early", ~value="before-threshold"),
               },
             ],
           }),
@@ -849,10 +849,7 @@ describe("E2E rollback tests", () => {
               {
                 blockNumber: 101,
                 logIndex: 0,
-                handler: async args => {
-                  let context = args.context->asContext
-                  context.simpleEntity.set({id: "late", value: "inside-threshold"})
-                },
+                handler: setEntity(~id="late", ~value="inside-threshold"),
               },
             ],
             latestFetchedBlockNumber: 102,
@@ -883,7 +880,11 @@ describe("E2E rollback tests", () => {
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 101,
-          reply: Respond({items: [], latestFetchedBlockNumber: 102, latestFetchedBlockHash: "0x102a"}),
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 102,
+            latestFetchedBlockHash: "0x102a",
+          }),
         },
       ])
       await indexer.getBatchWritePromise()
@@ -939,7 +940,11 @@ describe("E2E rollback tests", () => {
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 101,
-          reply: Respond({items: [], latestFetchedBlockNumber: 104, latestFetchedBlockHash: "0x104b"}),
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 104,
+            latestFetchedBlockHash: "0x104b",
+          }),
         },
         {reply: LeavePending},
       ])
@@ -967,8 +972,6 @@ describe("E2E rollback tests", () => {
         Scenario.resolveInitialHeight(~source=sourceMock1337, ~head=300),
       ))
 
-      let setEntity = (~id, ~value): MockSource.mockSourceHandler =>
-        async args => (args.context->asContext).simpleEntity.set({id, value})
       let _ = await Promise.all2((
         sourceMock100.expectItemsQueries([
           {
@@ -991,7 +994,11 @@ describe("E2E rollback tests", () => {
             toBlock: Bounded(100),
             reply: Respond({
               items: [
-                {blockNumber: 99, logIndex: 0, handler: setEntity(~id="other-chain", ~value="early")},
+                {
+                  blockNumber: 99,
+                  logIndex: 0,
+                  handler: setEntity(~id="other-chain", ~value="early"),
+                },
               ],
             }),
           },
@@ -1006,7 +1013,11 @@ describe("E2E rollback tests", () => {
           fromBlock: 101,
           reply: Respond({
             items: [
-              {blockNumber: 101, logIndex: 0, handler: setEntity(~id="reorged-chain", ~value="late")},
+              {
+                blockNumber: 101,
+                logIndex: 0,
+                handler: setEntity(~id="reorged-chain", ~value="late"),
+              },
             ],
             latestFetchedBlockNumber: 102,
           }),
@@ -1036,7 +1047,11 @@ describe("E2E rollback tests", () => {
       await sourceMock100.expectItemsQueries([
         {
           coversBlock: 101,
-          reply: Respond({items: [], latestFetchedBlockNumber: 102, latestFetchedBlockHash: "0x102a"}),
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 102,
+            latestFetchedBlockHash: "0x102a",
+          }),
         },
       ])
       await indexer.getBatchWritePromise()
@@ -3694,10 +3709,7 @@ describe("E2E rollback tests", () => {
 
       t.expect(
         (
-          (await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>))->Array.toSorted((
-            a,
-            b,
-          ) => String.compare(a.id, b.id)),
+          await querySimpleEntities(indexer),
           await simpleEntityHistory(indexer),
           await indexer.metric("envio_rollback_events"),
         ),
