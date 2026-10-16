@@ -568,6 +568,10 @@ type Counter {
   id: ID!
   total: BigInt!
 }
+
+type Sender {
+  id: ID!
+}
 `,
   ~handlers=`
 import { indexer } from "envio";
@@ -576,14 +580,19 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
   const existing = await context.Counter.get("c");
   context.Counter.set({ id: "c", total: (existing?.total ?? 0n) + event.params.value });
 });
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Sender.set({ id: event.srcAddress });
+});
 `,
 )
 
 type counterTotal = {id: string, total: bigint}
+type sender = {id: string}
 
 describe("MockSource items naming an event", () => {
   handlersScenario->Scenario.it(
-    "run the handler the scenario registered for it, with the params given",
+    "run every handler the scenario registered for it, with the params and address given",
     ~sources,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
@@ -603,6 +612,7 @@ describe("MockSource items naming an event", () => {
                 event: "Token.Transfer",
                 blockNumber: 6,
                 logIndex: 0,
+                srcAddress: "0x0000000000000000000000000000000000000001",
                 params: dict{"value": 5n->(Utils.magic: bigint => unknown)},
               },
             ],
@@ -610,9 +620,18 @@ describe("MockSource items naming an event", () => {
         },
       ])
       await indexer.getBatchWritePromise()
-      t.expect(await (indexer.query("Counter"): promise<array<counterTotal>>)).toEqual([
-        {id: "c", total: 12n},
-      ])
+      t.expect((
+        await (indexer.query("Counter"): promise<array<counterTotal>>),
+        (await (indexer.query("Sender"): promise<array<sender>>))
+        ->Array.map(sender => sender.id)
+        ->Array.toSorted(String.compare),
+      )).toEqual((
+        [{id: "c", total: 12n}],
+        [
+          "0x0000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000001",
+        ],
+      ))
     },
   )
 
@@ -622,18 +641,21 @@ describe("MockSource items naming an event", () => {
     async (~t, ~indexer as _, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(300)
-      t.expect(
-        await failureOf(
-          mock.expectItemsQueries([
-            {
-              fromBlock: 1,
-              reply: Respond({items: [{event: "Token.Approval", blockNumber: 5, logIndex: 0}]}),
-            },
-          ]),
-        ),
-      ).toEqual(
-        Some(`An item names event "Token.Approval", but chain 1 has no handler registered for it. Registered: "Token.Transfer"`),
+      let failure = await failureOf(
+        mock.expectItemsQueries([
+          {
+            fromBlock: 1,
+            reply: Respond({items: [{event: "Token.Approval", blockNumber: 5, logIndex: 0}]}),
+          },
+        ]),
       )
+      t.expect(
+        (failure, mock.repliedItemsQueries),
+        ~message="a reply that can't be built answers nothing",
+      ).toEqual((
+        Some(`An item names event "Token.Approval", but chain 1 has no handler registered for it. Registered: "Token.Transfer"`),
+        [],
+      ))
     },
   )
 })

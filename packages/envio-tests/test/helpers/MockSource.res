@@ -189,6 +189,8 @@ type itemMock = {
   // instead of `handler` and `contractRegister`.
   event?: string,
   params?: dict<unknown>,
+  // The emitting contract's address handlers see. Defaults to the zero address.
+  srcAddress?: string,
   // Laid over the number, timestamp and hash every item's block carries.
   blockFields?: dict<unknown>,
   transactionFields?: dict<unknown>,
@@ -730,6 +732,45 @@ let make = (
     }
   }
 
+  let makeEventItem = (item: itemMock, onEventRegistration: Internal.onEventRegistration) => {
+    let payload: Evm.payload = {
+      contractName: onEventRegistration.eventConfig.contractName,
+      eventName: onEventRegistration.eventConfig.name,
+      params: item.params
+      ->Option.getOr(Dict.make())
+      ->(Utils.magic: dict<unknown> => Internal.eventParams),
+      chainId,
+      srcAddress: item.srcAddress
+      ->Option.getOr("0x0000000000000000000000000000000000000000")
+      ->Address.unsafeFromString,
+      logIndex: item.logIndex,
+      block: Dict.fromArray([
+        ("number", item.blockNumber->(Utils.magic: int => unknown)),
+        ("timestamp", item.blockNumber->(Utils.magic: int => unknown)),
+        ("hash", `0x${item.blockNumber->Int.toString}`->(Utils.magic: string => unknown)),
+      ])
+      ->Dict.assign(item.blockFields->Option.getOr(Dict.make()))
+      ->(Utils.magic: dict<unknown> => Internal.eventBlock),
+      transaction: ?(
+        item.transactionFields->Option.map(fields =>
+          fields->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+        )
+      ),
+    }
+    let _ = %raw(`Object.defineProperties(payload, {
+      __mockHandler: {value: item.handler},
+      __mockContractRegister: {value: item.contractRegister},
+    })`)
+    Internal.Event({
+      onEventRegistration,
+      chainId,
+      blockNumber: item.blockNumber,
+      logIndex: item.logIndex,
+      transactionIndex: 0,
+      payload: payload->Evm.fromPayload,
+    })
+  }
+
   let makeItemsResponse = (
     response: itemsResponse,
     ~fromBlock,
@@ -803,61 +844,32 @@ let make = (
     })
     {
       knownHeight: response.knownHeight->Option.getOr(knownHeight),
-      parsedQueueItems: items->Array.map(item => {
-        let onEventRegistration = switch item.event {
-        | None =>
-          state.onEventRegistrationRef.contents->Option.getOrThrow(
-            ~message="MockSource on-event registration was not installed before resolving items",
-          )
+      parsedQueueItems: items->Array.flatMap(item => {
+        let registrations = switch item.event {
+        | None => [
+            state.onEventRegistrationRef.contents->Option.getOrThrow(
+              ~message="MockSource on-event registration was not installed before resolving items",
+            ),
+          ]
         | Some(event) =>
           let name = (registration: Internal.onEventRegistration) =>
             `${registration.eventConfig.contractName}.${registration.eventConfig.name}`
-          switch state.chainRegistrationsRef.contents->Array.find(registration =>
+          // Like a real source, one item per handler registered for the event.
+          switch state.chainRegistrationsRef.contents->Array.filter(registration =>
             registration->name === event
           ) {
-          | Some(registration) => registration
-          | None =>
+          | [] =>
             JsError.throwWithMessage(
               `An item names event "${event}", but chain ${chainId->ChainId.toString} has no handler registered for it. Registered: ${state.chainRegistrationsRef.contents
                 ->Array.map(registration => `"${registration->name}"`)
+                ->Utils.Set.fromArray
+                ->Utils.Set.toArray
                 ->Array.join(", ")}`,
             )
+          | registrations => registrations
           }
         }
-        let payload: Evm.payload = {
-          contractName: onEventRegistration.eventConfig.contractName,
-          eventName: onEventRegistration.eventConfig.name,
-          params: item.params
-          ->Option.getOr(Dict.make())
-          ->(Utils.magic: dict<unknown> => Internal.eventParams),
-          chainId,
-          srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-          logIndex: item.logIndex,
-          block: Dict.fromArray([
-            ("number", item.blockNumber->(Utils.magic: int => unknown)),
-            ("timestamp", item.blockNumber->(Utils.magic: int => unknown)),
-            ("hash", `0x${item.blockNumber->Int.toString}`->(Utils.magic: string => unknown)),
-          ])
-          ->Dict.assign(item.blockFields->Option.getOr(Dict.make()))
-          ->(Utils.magic: dict<unknown> => Internal.eventBlock),
-          transaction: ?(
-            item.transactionFields->Option.map(fields =>
-              fields->(Utils.magic: dict<unknown> => Internal.eventTransaction)
-            )
-          ),
-        }
-        let _ = %raw(`Object.defineProperties(payload, {
-          __mockHandler: {value: item.handler},
-          __mockContractRegister: {value: item.contractRegister},
-        })`)
-        Internal.Event({
-          onEventRegistration,
-          chainId,
-          blockNumber: item.blockNumber,
-          logIndex: item.logIndex,
-          transactionIndex: 0,
-          payload: payload->Evm.fromPayload,
-        })
+        registrations->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
       }),
       transactionStore: None,
       blockStore: responseBlockStore,
@@ -939,11 +951,11 @@ let make = (
       }
     )
     replies->Array.forEach(((query, reply, _)) => {
-      repliedItemsQueries->Array.push(query)->ignore
       switch reply {
       | Ok(response) => (query->control).respond(response)
       | Error(exn) => (query->control).fail(exn)
       }
+      repliedItemsQueries->Array.push(query)->ignore
     })
   }
 
