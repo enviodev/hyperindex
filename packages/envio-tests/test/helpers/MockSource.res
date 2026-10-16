@@ -1180,10 +1180,9 @@ let waitForCall = async (~arrived, ~message) => {
   }
 }
 
-// Wait until the source takes a height call beyond the `since`th. A feed polls
-// and then sleeps out its interval, so a test that wants to answer the *next*
-// poll has to wait for it to be made: resolving while none is outstanding
-// settles nothing, silently, and leaves the height where it was.
+// Wait until the source takes a height call beyond the `since`th, for a test
+// that can't know how many polls a feed makes while it sleeps out its interval.
+// Where the count is known, `expectHeightCalls` checks it exactly.
 let waitHeightQuery = (sourceMock: t, ~since) =>
   waitForCall(
     ~arrived=() => sourceMock.getHeightOrThrowCalls->Array.length > since,
