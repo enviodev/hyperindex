@@ -7,7 +7,7 @@ use napi_derive::napi;
 use regex::{Captures, Regex};
 
 use super::ch_type::{ChType, FieldSpec};
-use super::{literal, quoted};
+use super::{literal, quoted, table_ref};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::storage::types::{
     CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN, DELETE, INFO_TABLE, SET,
@@ -15,11 +15,11 @@ use crate::storage::types::{
 
 pub const ID_COLUMN: &str = "id";
 pub const CHAIN_ID_COLUMN: &str = "chain_id";
-pub const BLOCK_NUMBER_COLUMN: &str = "block_number";
+const BLOCK_NUMBER_COLUMN: &str = "block_number";
 /// What a chains row is ordered by among the rows written for the same chain.
 /// The latest one written is the chain's state.
 pub const VERSION_COLUMN: &str = "version";
-pub const FRONTIER_COLUMN: &str = "checkpoint_id";
+const FRONTIER_COLUMN: &str = "checkpoint_id";
 
 #[derive(Debug, Clone)]
 pub struct ColumnSpec {
@@ -141,19 +141,15 @@ impl ColumnSpec {
 }
 
 impl EntitySpec {
-    /// The entity's own columns, typed.
-    pub fn entity_columns(&self, chain_id_mode: ChainIdMode) -> Result<Vec<(String, ChType)>> {
-        let context = format!("entity `{}`", self.name);
-        self.columns
-            .iter()
-            .map(|column| column.typed(chain_id_mode, &context))
-            .collect()
-    }
-
     /// What a history row carries: the entity's columns, then the checkpoint
     /// it was written at and whether it set or deleted the entity.
     pub fn history_columns(&self, chain_id_mode: ChainIdMode) -> Result<Vec<(String, ChType)>> {
-        let mut columns = self.entity_columns(chain_id_mode)?;
+        let context = format!("entity `{}`", self.name);
+        let mut columns = self
+            .columns
+            .iter()
+            .map(|column| column.typed(chain_id_mode, &context))
+            .collect::<Result<Vec<_>>>()?;
         columns.push((CHECKPOINT_ID_COLUMN.to_string(), ChType::UInt64));
         columns.push((CHANGE_COLUMN.to_string(), change_type()));
         Ok(columns)
@@ -212,10 +208,6 @@ fn definitions(columns: &[(String, ChType)]) -> String {
         .map(|(name, ch_type)| format!("{} {ch_type}", quoted(name)))
         .collect::<Vec<_>>()
         .join(",\n  ")
-}
-
-fn table_ref(database: &str, table: &str) -> String {
-    format!("{}.{}", quoted(database), quoted(table))
 }
 
 pub fn create_history_table(

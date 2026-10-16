@@ -14,12 +14,6 @@ pub struct Column<'a> {
     pub values: &'a columnar::Column,
 }
 
-impl Column<'_> {
-    fn is_null(&self, row: usize) -> bool {
-        self.values.is_null(row)
-    }
-}
-
 fn put_varint(out: &mut Vec<u8>, mut value: u64) {
     loop {
         let mut byte = (value & 0x7F) as u8;
@@ -32,22 +26,6 @@ fn put_varint(out: &mut Vec<u8>, mut value: u64) {
             break;
         }
     }
-}
-
-#[cfg(test)]
-pub fn read_varint(bytes: &[u8]) -> Result<(u64, usize)> {
-    let mut value = 0u64;
-    let mut shift = 0u32;
-    for (read, &byte) in bytes.iter().enumerate() {
-        value |= u64::from(byte & 0x7F)
-            .checked_shl(shift)
-            .context("varint is wider than 64 bits")?;
-        if byte & 0x80 == 0 {
-            return Ok((value, read + 1));
-        }
-        shift += 7;
-    }
-    bail!("varint runs past the end of the buffer")
 }
 
 fn put_bytes(out: &mut Vec<u8>, value: &[u8]) {
@@ -370,7 +348,7 @@ fn put_default(out: &mut Vec<u8>, ch_type: &ChType) -> Result<()> {
 fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
     let (ch_type, is_nullable) = match column.ch_type.as_ref() {
         ChType::Nullable(inner) => {
-            if column.is_null(row) {
+            if column.values.is_null(row) {
                 out.push(1);
                 return Ok(());
             }
@@ -379,7 +357,7 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         }
         other => (other, false),
     };
-    if !is_nullable && column.is_null(row) {
+    if !is_nullable && column.values.is_null(row) {
         return put_default(out, ch_type);
     }
 
@@ -499,7 +477,6 @@ fn encode_value(out: &mut Vec<u8>, ch_type: &ChType, value: &Value) -> Result<()
     Ok(())
 }
 
-/// Encodes rows of typed values, one per column type in `types`.
 pub fn encode_values(types: &[ChType], rows: &[Vec<Value>]) -> Result<EncodedRows> {
     let mut body = Vec::with_capacity(rows.len() * types.len() * 8);
     let mut row_offsets = Vec::with_capacity(rows.len());
@@ -523,7 +500,6 @@ pub fn encode_values(types: &[ChType], rows: &[Vec<Value>]) -> Result<EncodedRow
     })
 }
 
-/// Walks a RowBinary answer value by value.
 struct Reader<'a> {
     bytes: &'a [u8],
     at: usize,
@@ -696,17 +672,6 @@ pub fn decode(body: &[u8], columns: &[(ChType, ReadKind)]) -> Result<Vec<Cell<'s
     Ok(cells)
 }
 
-#[cfg(test)]
-pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
-    let mut body = Vec::with_capacity(rows * columns.len() * 12);
-    let mut row_offsets = Vec::with_capacity(rows);
-    encode_into(&mut body, &mut row_offsets, columns, rows)?;
-    Ok(EncodedRows {
-        body: body.into(),
-        row_offsets,
-    })
-}
-
 /// Appends the rows to what `body` already holds, so several stagings of one
 /// table go in one insert.
 pub fn encode_into(
@@ -766,8 +731,6 @@ mod tests {
         }
     }
 
-    /// Shadows [`super::encode`] so every case below reads as it did when
-    /// columns owned their values.
     fn encode(columns: &[TestColumn], rows: usize) -> Result<EncodedRows> {
         let borrowed: Vec<Column> = columns
             .iter()
@@ -777,7 +740,12 @@ mod tests {
                 values: &column.arena.columns()[0],
             })
             .collect();
-        super::encode(&borrowed, rows)
+        let (mut body, mut row_offsets) = (Vec::new(), Vec::new());
+        encode_into(&mut body, &mut row_offsets, &borrowed, rows)?;
+        Ok(EncodedRows {
+            body: body.into(),
+            row_offsets,
+        })
     }
 
     fn text_column(name: &str, ty: &str, values: &[&str]) -> TestColumn {
@@ -884,22 +852,12 @@ mod tests {
         for value in [0u64, 1, 127, 128, 300, u64::MAX] {
             put_varint(&mut out, value);
         }
+        let mut reader = Reader { bytes: &out, at: 0 };
         let mut decoded = Vec::new();
-        let mut offset = 0;
-        while offset < out.len() {
-            let (value, read) = read_varint(&out[offset..]).unwrap();
-            decoded.push(value);
-            offset += read;
+        while !reader.is_done() {
+            decoded.push(reader.varint().unwrap());
         }
         assert_eq!(decoded, vec![0, 1, 127, 128, 300, u64::MAX]);
-    }
-
-    #[test]
-    fn a_truncated_varint_is_an_error_not_a_panic() {
-        assert_eq!(
-            read_varint(&[0x80]).unwrap_err().to_string(),
-            "varint runs past the end of the buffer"
-        );
     }
 
     #[test]

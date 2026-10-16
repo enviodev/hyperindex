@@ -8,7 +8,7 @@
 
 use anyhow::{bail, Result};
 
-pub use crate::storage::types::{
+use crate::storage::types::{
     Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUMN as CHECKPOINT_COLUMN, DELETE, SET,
 };
 

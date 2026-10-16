@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 
-use super::types::{Addresses, ChainConfig, Frontier, Progress, Sequence};
+use super::types::{Frontier, Progress, Sequence};
 use super::{Batch, EffectCacheWrite, Holding, Initialize, Rows, Storage, Table};
 use crate::clickhouse;
 use crate::postgres;
@@ -17,24 +17,10 @@ struct Live {
     name: String,
 }
 
-/// An initialize of chain 1 with `tables`.
 fn initialize_with(tables: Vec<Arc<Table>>) -> Initialize {
     Initialize {
-        sequence: Sequence::SharedAcrossChains,
-        tables,
-        partitions: Vec::new(),
-        enums: Vec::new(),
-        chains: vec![ChainConfig {
-            id: 1,
-            ecosystem: "evm".to_string(),
-            start_block: 0,
-            end_block: None,
-            max_reorg_depth: 200,
-        }],
-        envio_info: "{\"config\":1}".to_string(),
         instance: super::new_instance(),
-        contract_names: Vec::new(),
-        addresses: Addresses::default(),
+        ..clickhouse::live_tests::initialize_input(tables)
     }
 }
 

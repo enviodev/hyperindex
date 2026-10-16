@@ -346,15 +346,15 @@ pub struct SystemConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StorageBackend {
     // Whether entities without an @storage directive are stored in the
-    // backend. A single enabled backend is implicitly the default; with
-    // multiple backends none is, unless opted in via `default: true`.
+    // backend. Postgres is, unless ClickHouse is made the default; ClickHouse
+    // only with `default: true`.
     pub entity_default: bool,
     pub column_name_format: human_config::ColumnNameFormat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Storage {
-    pub postgres: Option<StorageBackend>,
+    pub postgres: StorageBackend,
     pub clickhouse: Option<StorageBackend>,
 }
 
@@ -372,12 +372,11 @@ impl Storage {
                  `storage` config."
             ));
         }
-        let clickhouse_default = clickhouse_enabled
-            && clickhouse_config
-                .and_then(|c| c.entity_default())
-                .unwrap_or(false);
+        let clickhouse_default = clickhouse_config
+            .and_then(|c| c.entity_default())
+            .unwrap_or(false);
         Ok(Self {
-            postgres: Some(StorageBackend {
+            postgres: StorageBackend {
                 // Entities stay in Postgres unless ClickHouse is made their
                 // default: enabling it alone keeps only those that opt in.
                 entity_default: postgres_config
@@ -386,7 +385,7 @@ impl Storage {
                 column_name_format: postgres_config
                     .and_then(|c| c.column_name_format())
                     .unwrap_or(human_config::ColumnNameFormat::Original),
-            }),
+            },
             clickhouse: clickhouse_enabled.then(|| StorageBackend {
                 entity_default: clickhouse_default,
                 column_name_format: clickhouse_config
@@ -405,7 +404,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
     // Entities without @storage fall back to the backends marked `default`
     // in config.yaml. When no backend is a default, such entities would end
     // up with no storage at all.
-    let postgres_default = storage.postgres.is_some_and(|b| b.entity_default);
+    let postgres_default = storage.postgres.entity_default;
     let clickhouse_default = storage.clickhouse.is_some_and(|b| b.entity_default);
     if !postgres_default && !clickhouse_default {
         let missing: Vec<&str> = entities
@@ -435,17 +434,10 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
 
     let unsupported: Vec<(&str, &'static str)> = entities
         .iter()
-        .flat_map(|e| {
-            let mut out: Vec<(&str, &'static str)> = Vec::new();
-            if e.postgres == Some(true) && storage.postgres.is_none() {
-                out.push((e.name.as_str(), "postgres"));
-            }
-            if e.clickhouse.as_ref().is_some_and(|c| c.is_enabled()) && storage.clickhouse.is_none()
-            {
-                out.push((e.name.as_str(), "clickhouse"));
-            }
-            out
+        .filter(|e| {
+            e.clickhouse.as_ref().is_some_and(|c| c.is_enabled()) && storage.clickhouse.is_none()
         })
+        .map(|e| (e.name.as_str(), "clickhouse"))
         .collect();
     if unsupported.is_empty() {
         return Ok(());
@@ -471,7 +463,7 @@ fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
     if entity.has_storage_directive() {
         entity.postgres == Some(true)
     } else {
-        storage.postgres.is_some_and(|b| b.entity_default)
+        storage.postgres.entity_default
     }
 }
 
@@ -524,7 +516,7 @@ pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyh
 /// instead of failing on table creation.
 pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
     let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
-    for backend in [storage.postgres, storage.clickhouse].iter().flatten() {
+    for backend in std::iter::once(&storage.postgres).chain(&storage.clickhouse) {
         if !formats.contains(&backend.column_name_format) {
             formats.push(backend.column_name_format);
         }
@@ -533,7 +525,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     // The identifier length limit is Postgres-specific (ClickHouse has no
     // comparable limit), so only names that become Postgres columns are
     // checked against it.
-    let pg_format = storage.postgres.map(|b| b.column_name_format);
+    let pg_format = storage.postgres.column_name_format;
 
     let mut empty: Vec<String> = vec![];
     let mut reserved: Vec<String> = vec![];
@@ -566,7 +558,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
                             reserved.push(line);
                         }
                     }
-                    if Some(*format) == pg_format && column.len() > MAX_PG_IDENTIFIER_LENGTH {
+                    if *format == pg_format && column.len() > MAX_PG_IDENTIFIER_LENGTH {
                         let line = format!(
                             "  - `{}.{}` maps to the \"{column}\" column ({} characters).",
                             entity.name,
@@ -3299,12 +3291,11 @@ chains:
                 column_name_format,
             }))
         };
-        let backend = |entity_default: bool, column_name_format: ColumnNameFormat| {
-            Some(super::StorageBackend {
+        let backend =
+            |entity_default: bool, column_name_format: ColumnNameFormat| super::StorageBackend {
                 entity_default,
                 column_name_format,
-            })
-        };
+            };
 
         // Default (None) -> postgres only, postgres is the entity default
         assert_eq!(
@@ -3338,7 +3329,7 @@ chains:
             .unwrap(),
             super::Storage {
                 postgres: backend(true, ColumnNameFormat::Original),
-                clickhouse: backend(false, ColumnNameFormat::Original),
+                clickhouse: Some(backend(false, ColumnNameFormat::Original)),
             }
         );
         assert_eq!(
@@ -3349,7 +3340,7 @@ chains:
             .unwrap(),
             super::Storage {
                 postgres: backend(true, ColumnNameFormat::Original),
-                clickhouse: backend(false, ColumnNameFormat::Original),
+                clickhouse: Some(backend(false, ColumnNameFormat::Original)),
             }
         );
 
@@ -3363,7 +3354,7 @@ chains:
             .unwrap(),
             super::Storage {
                 postgres: backend(false, ColumnNameFormat::Original),
-                clickhouse: backend(true, ColumnNameFormat::Original),
+                clickhouse: Some(backend(true, ColumnNameFormat::Original)),
             }
         );
 
@@ -3376,7 +3367,7 @@ chains:
             .unwrap(),
             super::Storage {
                 postgres: backend(false, ColumnNameFormat::Original),
-                clickhouse: backend(true, ColumnNameFormat::Original),
+                clickhouse: Some(backend(true, ColumnNameFormat::Original)),
             }
         );
 
@@ -3389,7 +3380,7 @@ chains:
             .unwrap(),
             super::Storage {
                 postgres: backend(true, ColumnNameFormat::Original),
-                clickhouse: backend(true, ColumnNameFormat::Original),
+                clickhouse: Some(backend(true, ColumnNameFormat::Original)),
             }
         );
 
@@ -3442,7 +3433,7 @@ chains:
             .unwrap(),
             super::Storage {
                 postgres: backend(true, ColumnNameFormat::Original),
-                clickhouse: backend(false, ColumnNameFormat::SnakeCase),
+                clickhouse: Some(backend(false, ColumnNameFormat::SnakeCase)),
             }
         );
 
@@ -3455,7 +3446,7 @@ chains:
             .unwrap(),
             super::Storage {
                 postgres: backend(true, ColumnNameFormat::SnakeCase),
-                clickhouse: backend(false, ColumnNameFormat::Original),
+                clickhouse: Some(backend(false, ColumnNameFormat::Original)),
             }
         );
     }
@@ -3491,11 +3482,11 @@ chains:
             }
         }
 
-        fn backend(entity_default: bool) -> Option<super::super::StorageBackend> {
-            Some(super::super::StorageBackend {
+        fn backend(entity_default: bool) -> super::super::StorageBackend {
+            super::super::StorageBackend {
                 entity_default,
                 column_name_format: ColumnNameFormat::Original,
-            })
+            }
         }
 
         fn postgres_only() -> Storage {
@@ -3508,7 +3499,7 @@ chains:
         fn multi(postgres_default: bool, clickhouse_default: bool) -> Storage {
             Storage {
                 postgres: backend(postgres_default),
-                clickhouse: backend(clickhouse_default),
+                clickhouse: Some(backend(clickhouse_default)),
             }
         }
 
@@ -3714,10 +3705,10 @@ type SecretB @internal {
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
             Storage {
-                postgres: Some(super::super::StorageBackend {
+                postgres: super::super::StorageBackend {
                     entity_default: true,
                     column_name_format,
-                }),
+                },
                 clickhouse: None,
             }
         }
@@ -3753,10 +3744,10 @@ type Token {{
             // 62 characters as written, 64 once snake_case inserts separators
             assert_eq!(long_field.len(), 62);
             let pg_original_ch_snake = Storage {
-                postgres: Some(super::super::StorageBackend {
+                postgres: super::super::StorageBackend {
                     entity_default: true,
                     column_name_format: ColumnNameFormat::Original,
-                }),
+                },
                 clickhouse: Some(super::super::StorageBackend {
                     entity_default: false,
                     column_name_format: ColumnNameFormat::SnakeCase,
@@ -3800,17 +3791,17 @@ type Transfer {
             human_config::{BytesType, ColumnNameFormat},
         };
 
-        fn backend(entity_default: bool) -> Option<StorageBackend> {
-            Some(StorageBackend {
+        fn backend(entity_default: bool) -> StorageBackend {
+            StorageBackend {
                 entity_default,
                 column_name_format: ColumnNameFormat::Original,
-            })
+            }
         }
 
         fn multi(postgres_default: bool, clickhouse_default: bool) -> Storage {
             Storage {
                 postgres: backend(postgres_default),
-                clickhouse: backend(clickhouse_default),
+                clickhouse: Some(backend(clickhouse_default)),
             }
         }
 

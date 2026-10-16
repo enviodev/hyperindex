@@ -22,12 +22,9 @@ use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::{Condition, Operator, ValueKind};
 use crate::storage::rows::{ReadKind, ResultSet};
 use crate::storage::types::{
-    Addresses, Bounds, ChainConfig, Checkpoints, DiffCheckpoint, Frontier, Progress, ResumedChain,
-    Sequence,
+    Addresses, Bounds, ChainConfig, Checkpoints, Frontier, Progress, ResumedChain, Sequence,
 };
-use crate::storage::{
-    Batch, EntityStore, EntityWrite, Handoff, Initialize, Resume, RollbackWrite, Table, WriteError,
-};
+use crate::storage::{Batch, EntityWrite, Handoff, Initialize, Resume, Table, WriteError};
 
 fn env(name: &str, default: &str) -> String {
     std::env::var(name)
@@ -90,22 +87,11 @@ impl Live {
     }
 
     fn table(&self, input: ClickHouseTableInput) -> Arc<Table> {
-        Arc::new(Table {
-            name: input.name.clone(),
-            postgres: None,
-            clickhouse: Some(Arc::new(self.storage.register(input).unwrap())),
-        })
+        table_on(&self.storage, input)
     }
 
     fn account(&self) -> Arc<Table> {
-        self.table(entity_input(
-            "Account",
-            vec![
-                column("id", "String"),
-                column("owner", "String"),
-                column("balance", "BigInt"),
-            ],
-        ))
+        self.table(account_input())
     }
 
     async fn drop_database(&self) {
@@ -114,11 +100,7 @@ impl Live {
     }
 
     async fn execute(&self, statement: String) -> String {
-        execute_on(
-            &env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"),
-            statement,
-        )
-        .await
+        execute_on(&connection("").url, statement).await
     }
 
     async fn count(&self, table: &str) -> String {
@@ -146,25 +128,50 @@ impl Live {
     }
 }
 
+/// An `Account` of an id, an owner, and a balance kept as text.
+fn account_input() -> ClickHouseTableInput {
+    entity_input(
+        "Account",
+        vec![
+            column("id", "String"),
+            column("owner", "String"),
+            column("balance", "BigInt"),
+        ],
+    )
+}
+
+fn table_on(storage: &Storage, input: ClickHouseTableInput) -> Arc<Table> {
+    Arc::new(Table {
+        name: input.name.clone(),
+        postgres: None,
+        clickhouse: Some(Arc::new(storage.register(input).unwrap())),
+    })
+}
+
+/// An initialize of chain 1 with `tables`.
+pub(crate) fn initialize_input(tables: Vec<Arc<Table>>) -> Initialize {
+    Initialize {
+        sequence: Sequence::SharedAcrossChains,
+        tables,
+        partitions: Vec::new(),
+        enums: Vec::new(),
+        chains: vec![ChainConfig {
+            id: 1,
+            ecosystem: "evm".to_string(),
+            start_block: 0,
+            end_block: None,
+            max_reorg_depth: 200,
+        }],
+        envio_info: "{\"config\":1}".to_string(),
+        instance: "instance".to_string(),
+        contract_names: Vec::new(),
+        addresses: Addresses::default(),
+    }
+}
+
 async fn initialize(live: &Live, tables: Vec<Arc<Table>>) {
     live.storage
-        .initialize(&Initialize {
-            sequence: Sequence::SharedAcrossChains,
-            tables,
-            partitions: Vec::new(),
-            enums: Vec::new(),
-            chains: vec![ChainConfig {
-                id: 1,
-                ecosystem: "evm".to_string(),
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: 200,
-            }],
-            envio_info: "{\"config\":1}".to_string(),
-            instance: "instance".to_string(),
-            contract_names: Vec::new(),
-            addresses: Addresses::default(),
-        })
+        .initialize(&initialize_input(tables))
         .await
         .unwrap();
 }
@@ -293,20 +300,17 @@ fn batch(
     }
 }
 
-async fn execute_on(url: &str, statement: String) -> String {
-    let response = reqwest::Client::new()
+fn post(url: &str) -> reqwest::RequestBuilder {
+    let Connection {
+        username, password, ..
+    } = connection("");
+    reqwest::Client::new()
         .post(url)
-        .basic_auth(
-            env("ENVIO_CLICKHOUSE_USERNAME", "default"),
-            Some(
-                std::env::var("ENVIO_CLICKHOUSE_PASSWORD")
-                    .unwrap_or_else(|_| "testing".to_string()),
-            ),
-        )
-        .body(statement)
-        .send()
-        .await
-        .unwrap();
+        .basic_auth(username, Some(password))
+}
+
+async fn execute_on(url: &str, statement: String) -> String {
+    let response = post(url).body(statement).send().await.unwrap();
     assert!(
         response.status().is_success(),
         "{}",
@@ -387,14 +391,7 @@ fn row(cells: &[&str]) -> Vec<String> {
 #[ignore = "needs a ClickHouse server"]
 async fn a_ttl_never_expires_a_delete_before_the_set_it_cancels() {
     let live = Live::new();
-    let mut input = entity_input(
-        "Account",
-        vec![
-            column("id", "String"),
-            column("owner", "String"),
-            column("balance", "BigInt"),
-        ],
-    );
+    let mut input = account_input();
     input.ttl =
         Some("if(owner = '', toDateTime('2000-01-01'), toDateTime('2100-01-01'))".to_string());
     let account = live.table(input);
@@ -696,16 +693,8 @@ async fn an_insert_a_dead_process_left_running_lands_nothing_after_the_resume() 
 
 /// Sends `statement` under `query_id`, answering whether it succeeded.
 async fn send_as(query_id: String, statement: String) -> bool {
-    reqwest::Client::new()
-        .post(env("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"))
+    post(&connection("").url)
         .query(&[("query_id", query_id)])
-        .basic_auth(
-            env("ENVIO_CLICKHOUSE_USERNAME", "default"),
-            Some(
-                std::env::var("ENVIO_CLICKHOUSE_PASSWORD")
-                    .unwrap_or_else(|_| "testing".to_string()),
-            ),
-        )
         .body(statement)
         .send()
         .await
@@ -901,23 +890,7 @@ async fn initializing_takes_over_a_database_an_older_envio_built() {
     let account = live.account();
     let initialized = live
         .storage
-        .initialize(&Initialize {
-            sequence: Sequence::SharedAcrossChains,
-            tables: vec![account],
-            partitions: Vec::new(),
-            enums: Vec::new(),
-            chains: vec![ChainConfig {
-                id: 1,
-                ecosystem: "evm".to_string(),
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: 200,
-            }],
-            envio_info: "{\"config\":1}".to_string(),
-            instance: "instance".to_string(),
-            contract_names: Vec::new(),
-            addresses: Addresses::default(),
-        })
+        .initialize(&initialize_input(vec![account]))
         .await
         .map_err(|error| format!("{error:#}"));
     let frontier = live.frontier().await;
@@ -1115,23 +1088,15 @@ async fn a_rollback_restores_the_target_at_its_diff_checkpoint() {
         (1, 4),
     );
     rollback.progress.clear();
-    rollback.rollback = Some(RollbackWrite {
-        bounds: bounds(1),
-        tables: vec![account.clone()],
-        progress: vec![Progress {
-            chain_id: 1,
-            progress_block: 15,
-            progress_block_time: None,
-            events_processed: 1.0,
-            source_block: 1000,
-        }],
-        removed_addresses: Addresses::default(),
-        diff_checkpoints: vec![DiffCheckpoint {
-            chain_id: 1,
-            checkpoint_id: 4,
-            block_number: 15,
-        }],
-    });
+    // The diff checkpoint, as a rollback hands it to ClickHouse.
+    rollback.checkpoints = Checkpoints {
+        ids: vec![4],
+        chain_ids: vec![1],
+        block_numbers: vec![15],
+        block_hashes: vec![None],
+        events_processed: vec![0],
+        keeps_history: vec![false],
+    };
     write(&live, rollback).await;
     let rolled_back = (
         live.load(&account, eq("id", "a")).await,
@@ -1210,44 +1175,14 @@ async fn a_resume_on_a_lagging_replica_waits_for_what_the_others_took() {
     };
     let database = Live::new().database;
     let (writer, resumer) = (replica(&first, &database), replica(&second, &database));
-    let input = || {
-        entity_input(
-            "Account",
-            vec![
-                column("id", "String"),
-                column("owner", "String"),
-                column("balance", "BigInt"),
-            ],
-        )
-    };
-    let table = |storage: &Storage| {
-        Arc::new(Table {
-            name: "Account".to_string(),
-            postgres: None,
-            clickhouse: Some(Arc::new(storage.register(input()).unwrap())),
-        })
-    };
-    let (written, resumed) = (table(&writer), table(&resumer));
+    let (written, resumed) = (
+        table_on(&writer, account_input()),
+        table_on(&resumer, account_input()),
+    );
     let history = format!("`{database}`.`envio_history_Account`");
 
     writer
-        .initialize(&Initialize {
-            sequence: Sequence::SharedAcrossChains,
-            tables: vec![written.clone()],
-            partitions: Vec::new(),
-            enums: Vec::new(),
-            chains: vec![ChainConfig {
-                id: 1,
-                ecosystem: "evm".to_string(),
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: 200,
-            }],
-            envio_info: "{\"config\":1}".to_string(),
-            instance: "instance".to_string(),
-            contract_names: Vec::new(),
-            addresses: Addresses::default(),
-        })
+        .initialize(&initialize_input(vec![written.clone()]))
         .await
         .unwrap();
     write_on(

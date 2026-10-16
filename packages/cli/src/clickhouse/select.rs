@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 
 use super::ch_type::ChType;
 use super::table::{Column, Table};
-use super::{literal, quoted};
+use super::{literal, quoted, table_ref};
 use crate::entity_filter::{Condition, Operator, ValueKind};
 use crate::storage::types::{Bounds, Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, SET};
 
@@ -35,21 +35,16 @@ pub struct External {
     pub rows: Vec<u8>,
 }
 
-/// The column of every [`External`].
 pub const EXTERNAL_STRUCTURE: &str = "value String";
-
-/// The highest id any chain has committed, which is how far a cross-chain
-/// entity's rows are readable: they only exist under one shared sequence.
-fn frontier_max(frontier: &Frontier) -> i64 {
-    frontier.values().copied().max().unwrap_or(0)
-}
 
 /// The committed id a row compares against: its own chain's for a table with a
 /// chain column, the whole run's otherwise. A chain the frontier doesn't name
 /// has committed nothing.
-pub fn frontier_of(chain_column: Option<&str>, frontier: &Frontier) -> String {
+fn frontier_of(chain_column: Option<&str>, frontier: &Frontier) -> String {
     match chain_column {
-        None => frontier_max(frontier).to_string(),
+        // A cross-chain entity's rows only exist under one shared sequence, so
+        // the highest id any chain committed is how far they are readable.
+        None => frontier.values().max().copied().unwrap_or(0).to_string(),
         Some(_) if frontier.is_empty() => "0".to_string(),
         Some(column) => {
             let column = quoted(column);
@@ -70,20 +65,9 @@ pub fn above(
     chain_column: Option<&str>,
     checkpoint_column: &str,
 ) -> Result<String> {
-    bounded(bounds, chain_column, checkpoint_column, ">")
-}
-
-fn bounded(
-    bounds: &Bounds,
-    chain_column: Option<&str>,
-    checkpoint_column: &str,
-    comparison: &str,
-) -> Result<String> {
     let checkpoint = quoted(checkpoint_column);
     match bounds.sequence {
-        Sequence::SharedAcrossChains => {
-            Ok(format!("{checkpoint} {comparison} {}", bounds.shared_id()))
-        }
+        Sequence::SharedAcrossChains => Ok(format!("{checkpoint} > {}", bounds.shared_id())),
         Sequence::PerChain => {
             let Some(chain_column) = chain_column else {
                 bail!(
@@ -100,9 +84,7 @@ fn bounded(
                 bounds
                     .by_chain()
                     .map(|(chain_id, checkpoint_id)| {
-                        format!(
-                            "({chain} = {chain_id} AND {checkpoint} {comparison} {checkpoint_id})"
-                        )
+                        format!("({chain} = {chain_id} AND {checkpoint} > {checkpoint_id})")
                     })
                     .collect::<Vec<_>>()
                     .join(" OR ")
@@ -329,7 +311,7 @@ pub fn condition(
     let column = table.column(&condition.column).with_context(|| {
         format!(
             "\"{}\" has no column \"{}\" to filter by",
-            table.name, condition.column
+            table.entity.name, condition.column
         )
     })?;
     let compared = compared(column, condition.kind);
@@ -403,7 +385,6 @@ fn key_tuple(key: &[String]) -> String {
     }
 }
 
-/// The table's columns under the names its rows are read by.
 fn as_row_names(table: &Table) -> String {
     table
         .columns
@@ -411,10 +392,6 @@ fn as_row_names(table: &Table) -> String {
         .map(|column| format!("{} AS {}", quoted(&column.name), quoted(&column.row_name)))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn history(database: &str, table: &Table) -> String {
-    format!("{}.{}", quoted(database), quoted(&table.physical))
 }
 
 /// The rows of `table` matching every condition, as of the frontier.
@@ -474,7 +451,7 @@ fn load_sql(
         quoted(CHECKPOINT_ID_COLUMN),
         frontier_of(entity.chain_id_column.as_deref(), frontier)
     );
-    let source = history(database, table);
+    let source = table_ref(database, &entity.history_table);
     let mut narrowing = on_key.clone();
     narrowing.push(committed.clone());
     if !on_values.is_empty() {
@@ -533,7 +510,7 @@ fn changed(database: &str, table: &Table, above: &str) -> String {
         "{} IN (SELECT {} FROM {} WHERE {above})",
         key_tuple(&key),
         joined(&key),
-        history(database, table)
+        table_ref(database, &table.entity.history_table)
     )
 }
 
@@ -562,7 +539,7 @@ pub fn rollback_removed(database: &str, table: &Table, bounds: &Bounds) -> Resul
     Ok(format!(
         "SELECT {as_row_names} FROM {} WHERE {} GROUP BY {} HAVING countIf(NOT ({above})) = 0 \
          FORMAT RowBinary",
-        history(database, table),
+        table_ref(database, &entity.history_table),
         changed(database, table, &above),
         joined(&key)
     ))
@@ -588,7 +565,7 @@ pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Resu
         "SELECT {}, {change} FROM (SELECT {columns}, {change} FROM {} WHERE {} AND NOT ({above}) \
          ORDER BY {}, {} DESC LIMIT 1 BY {}) FORMAT RowBinary",
         as_row_names(table),
-        history(database, table),
+        table_ref(database, &entity.history_table),
         changed(database, table, &above),
         joined(&key),
         quoted(CHECKPOINT_ID_COLUMN),

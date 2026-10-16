@@ -1,10 +1,3 @@
-//! The storage as JavaScript sees it: one class over every configured store.
-//!
-//! Rows cross in arenas both ways. A write stages its rows into memory the
-//! addon lends (`beginStage` to `commitStage`); a read lands its rows in a
-//! Rust-owned arena that `lendResult` hands over and `releaseResult` takes
-//! back. The rules are the ones at the top of `columnar`.
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -16,8 +9,8 @@ use napi_derive::napi;
 
 use super::rows::ResultSet;
 use super::types::{
-    Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress,
-    Sequence,
+    Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier,
+    Progress, Sequence,
 };
 use super::{
     AddChain, Batch, CacheDump, CacheFile, EffectCacheWrite, EntityWrite, Enum, HistoryWrite,
@@ -80,7 +73,6 @@ impl TryFrom<PgColumnInput> for ColumnSpec {
 
 #[napi(object)]
 pub struct PgTableInput {
-    pub table_name: String,
     /// In the order the table declares them.
     pub columns: Vec<PgColumnInput>,
     /// The columns a batch's rows carry, in the order they are laid out.
@@ -221,38 +213,16 @@ pub struct StorageOptions {
     pub clickhouse: Option<ClickHouseOptions>,
 }
 
-/// Which rows a bounded operation reaches: the chains and the checkpoint each
-/// is held to.
 #[napi(object)]
 pub struct BoundsInput {
-    /// `SharedAcrossChains` or `PerChain`.
-    pub sequence: String,
-    pub chain_ids: Vec<f64>,
+    pub sequence: Sequence,
+    pub chain_ids: Vec<i64>,
     pub checkpoint_ids: Vec<String>,
 }
 
 #[napi(object)]
-pub struct ProgressInput {
-    pub chain_id: f64,
-    pub progress_block: i32,
-    pub progress_block_time: Option<f64>,
-    pub events_processed: f64,
-    pub source_block: i32,
-}
-
-#[napi(object)]
-pub struct ChainMetaInput {
-    pub chain_id: f64,
-    pub first_event_block: Option<i32>,
-    pub buffer_block: i32,
-    /// Unix milliseconds.
-    pub ready_at: Option<f64>,
-    pub is_hyper_sync: bool,
-}
-
-#[napi(object)]
 pub struct AddressesInput {
-    pub chain_ids: Vec<f64>,
+    pub chain_ids: Vec<i64>,
     pub addresses: Vec<Buffer>,
     pub contract_ids: Vec<i32>,
     /// Left out for a key.
@@ -260,34 +230,19 @@ pub struct AddressesInput {
 }
 
 #[napi(object)]
-pub struct ChainConfigInput {
-    pub id: f64,
-    pub ecosystem: String,
-    pub start_block: i32,
-    pub end_block: Option<i32>,
-    pub max_reorg_depth: i32,
-}
-
-#[napi(object)]
 pub struct PartitionInput {
     pub table: u32,
-    pub chain_id: f64,
+    pub chain_id: i64,
     pub name: String,
-}
-
-#[napi(object)]
-pub struct EnumInput {
-    pub name: String,
-    pub variants: Vec<String>,
 }
 
 #[napi(object)]
 pub struct InitializeInput {
-    pub sequence: String,
+    pub sequence: Sequence,
     pub tables: Vec<u32>,
     pub partitions: Vec<PartitionInput>,
-    pub enums: Vec<EnumInput>,
-    pub chains: Vec<ChainConfigInput>,
+    pub enums: Vec<Enum>,
+    pub chains: Vec<ChainConfig>,
     pub envio_info: String,
     pub contract_names: Vec<String>,
     pub addresses: AddressesInput,
@@ -295,40 +250,31 @@ pub struct InitializeInput {
 
 #[napi(object)]
 pub struct AddChainInput {
-    pub chain: ChainConfigInput,
+    pub chain: ChainConfig,
     pub partitions: Vec<PartitionInput>,
     pub addresses: AddressesInput,
 }
 
 #[napi(object)]
 pub struct ResumeInput {
-    pub sequence: String,
+    pub sequence: Sequence,
     /// Every entity table.
     pub tables: Vec<u32>,
     /// The chains this run drives.
-    pub chain_ids: Vec<f64>,
-}
-
-#[napi(object)]
-pub struct StoredChainOutput {
-    pub id: f64,
-    pub ecosystem: String,
-    pub start_block: i32,
-    pub end_block: Option<i32>,
-    pub max_reorg_depth: i32,
+    pub chain_ids: Vec<i64>,
 }
 
 #[napi(object)]
 pub struct StoredConfigOutput {
     pub envio_info: Option<String>,
     pub contract_names: Option<Vec<String>>,
-    pub chains: Vec<StoredChainOutput>,
+    pub chains: Vec<ChainConfig>,
     pub config_addresses: QueryResult,
 }
 
 #[napi(object)]
 pub struct ResumedChainOutput {
-    pub id: f64,
+    pub id: i64,
     pub start_block: i32,
     pub end_block: Option<i32>,
     pub max_reorg_depth: i32,
@@ -346,7 +292,7 @@ pub struct ResumedChainOutput {
 #[napi(object)]
 pub struct ReorgCheckpointOutput {
     pub id: String,
-    pub chain_id: f64,
+    pub chain_id: i64,
     pub block_number: i32,
     pub block_hash: String,
 }
@@ -360,7 +306,7 @@ pub struct ResumedOutput {
 
 #[napi(object)]
 pub struct ProgressDiffOutput {
-    pub chain_id: f64,
+    pub chain_id: i64,
     pub events_processed: String,
     pub progress_block: i32,
 }
@@ -372,20 +318,8 @@ pub struct RollbackDataOutput {
 }
 
 #[napi(object)]
-pub struct CacheTableOutput {
-    pub table_name: String,
-    pub rows: i32,
-}
-
-#[napi(object)]
 pub struct CacheUploadInput {
     pub table: u32,
-    pub path: String,
-}
-
-#[napi(object)]
-pub struct CacheDumpInput {
-    pub table_name: String,
     pub path: String,
 }
 
@@ -417,7 +351,7 @@ pub struct PgEntityWriteInput {
 #[napi(object)]
 pub struct EntityWriteInput {
     pub table: u32,
-    pub chain_id: Option<f64>,
+    pub chain_id: Option<i64>,
     pub postgres: Option<PgEntityWriteInput>,
     /// Every change as a history row, staged.
     pub clickhouse: Option<u32>,
@@ -425,7 +359,7 @@ pub struct EntityWriteInput {
 
 #[napi(object)]
 pub struct DiffCheckpointInput {
-    pub chain_id: f64,
+    pub chain_id: i64,
     pub checkpoint_id: String,
     pub block_number: i32,
 }
@@ -434,7 +368,7 @@ pub struct DiffCheckpointInput {
 pub struct RollbackWriteInput {
     pub bounds: BoundsInput,
     pub tables: Vec<u32>,
-    pub progress: Vec<ProgressInput>,
+    pub progress: Vec<Progress>,
     pub removed_addresses: AddressesInput,
     pub diff_checkpoints: Vec<DiffCheckpointInput>,
 }
@@ -442,7 +376,7 @@ pub struct RollbackWriteInput {
 #[napi(object)]
 pub struct CheckpointsInput {
     pub ids: Vec<String>,
-    pub chain_ids: Vec<f64>,
+    pub chain_ids: Vec<i64>,
     pub block_numbers: Vec<i32>,
     pub block_hashes: Vec<Option<String>>,
     pub events_processed: Vec<f64>,
@@ -451,7 +385,7 @@ pub struct CheckpointsInput {
 
 #[napi(object)]
 pub struct FrontierInput {
-    pub chain_ids: Vec<f64>,
+    pub chain_ids: Vec<i64>,
     pub checkpoint_ids: Vec<String>,
 }
 
@@ -471,10 +405,10 @@ pub struct EffectCacheWriteInput {
 #[napi(object)]
 pub struct BatchInput {
     pub rollback: Option<RollbackWriteInput>,
-    pub progress: Vec<ProgressInput>,
+    pub progress: Vec<Progress>,
     pub raw_events: Option<TableWriteInput>,
     pub entities: Vec<EntityWriteInput>,
-    pub chain_meta: Vec<ChainMetaInput>,
+    pub chain_meta: Vec<ChainMeta>,
     pub addresses: AddressesInput,
     pub frontier: FrontierInput,
     pub checkpoints: CheckpointsInput,
@@ -487,25 +421,6 @@ pub struct WriteTiming {
     pub seconds: f64,
 }
 
-/// What a staged batch is for: which store's table it fills.
-#[derive(Clone)]
-enum Target {
-    Postgres(Arc<postgres::storage::Table>),
-    ClickHouse(Arc<clickhouse::table::Table>),
-}
-
-impl Target {
-    fn column_names(&self) -> Vec<String> {
-        match self {
-            Target::Postgres(table) => table.write_column_names(),
-            Target::ClickHouse(table) => {
-                table.staged.iter().map(|(name, _)| name.clone()).collect()
-            }
-        }
-    }
-}
-
-/// The indexer's storage over every store it is configured with.
 #[napi(js_name = "Storage")]
 pub struct JsStorage {
     inner: super::Storage,
@@ -513,8 +428,9 @@ pub struct JsStorage {
     /// Result sets handed out but not yet read and released. An entry lives
     /// only between the call that returned it and `releaseResult`.
     results: Mutex<HashMap<u32, Arena>>,
-    /// Batches lent to JavaScript to fill, and then waiting to be written.
-    staged: columnar::js::Stages<Target>,
+    /// Batches lent to JavaScript to fill, and then waiting to be written,
+    /// each with the names its columns are sealed under.
+    staged: columnar::js::Stages<Vec<String>>,
     next_handle: AtomicU32,
 }
 
@@ -615,7 +531,7 @@ impl JsStorage {
             Some(table) => Some(Arc::new(
                 self.inner
                     .postgres
-                    .register(pg_registration(table).map_err(to_napi)?)
+                    .register(pg_registration(input.name.clone(), table).map_err(to_napi)?)
                     .map_err(to_napi)?,
             )),
             None => None,
@@ -629,7 +545,7 @@ impl JsStorage {
             postgres,
             clickhouse,
         };
-        let home = self.inner.home(&table).map_err(to_napi)?.store();
+        let home = self.inner.home(&table).map_err(to_napi)?;
         let mut tables = self.tables.write().unwrap();
         let registered = RegisteredTable {
             handle: tables.len() as u32,
@@ -670,25 +586,25 @@ impl JsStorage {
         rows: u32,
     ) -> napi::Result<Object<'env>> {
         let table = self.table(table)?;
-        let (target, kinds): (Target, Vec<ColumnKind>) = match store {
+        let (names, kinds): (Vec<String>, Vec<ColumnKind>) = match store {
             Store::Postgres => {
-                let table = table.postgres().map_err(to_napi)?.clone();
+                let table = table.postgres().map_err(to_napi)?;
                 let kinds = table.kinds.clone().ok_or_else(|| {
                     napi::Error::from_reason(format!(
                         "\"{}\" has an array column, so its rows are bound a cell at a time",
                         table.name()
                     ))
                 })?;
-                (Target::Postgres(table), kinds)
+                (table.write_column_names(), kinds)
             }
             Store::ClickHouse => {
-                let table = table.clickhouse().map_err(to_napi)?.clone();
-                let kinds = table.staged_kinds();
-                (Target::ClickHouse(table), kinds)
+                let table = table.clickhouse().map_err(to_napi)?;
+                let names = table.staged.iter().map(|(name, _)| name.clone()).collect();
+                (names, table.staged_kinds())
             }
         };
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        self.staged.begin(env, handle, rows, &kinds, target)
+        self.staged.begin(env, handle, rows, &kinds, names)
     }
 
     #[napi]
@@ -705,8 +621,7 @@ impl JsStorage {
 
     #[napi]
     pub fn commit_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
-        self.staged
-            .commit(handle, buffers, |target| target.column_names())
+        self.staged.commit(handle, buffers, Vec::clone)
     }
 
     /// Gives up on a batch. Whatever sent the caller here is the error worth
@@ -809,18 +724,11 @@ impl JsStorage {
     #[napi]
     pub async fn initialize(&self, input: InitializeInput) -> napi::Result<()> {
         let input = Initialize {
-            sequence: Sequence::parse(&input.sequence).map_err(to_napi)?,
+            sequence: input.sequence,
             tables: self.tables_of(&input.tables)?,
             partitions: self.partitions(input.partitions)?,
-            enums: input
-                .enums
-                .into_iter()
-                .map(|enum_type| Enum {
-                    name: enum_type.name,
-                    variants: enum_type.variants,
-                })
-                .collect(),
-            chains: input.chains.into_iter().map(chain_config).collect(),
+            enums: input.enums,
+            chains: input.chains,
             envio_info: input.envio_info,
             instance: super::new_instance(),
             contract_names: input.contract_names,
@@ -832,7 +740,7 @@ impl JsStorage {
     #[napi]
     pub async fn add_chain(&self, input: AddChainInput) -> napi::Result<()> {
         let input = AddChain {
-            chain: chain_config(input.chain),
+            chain: input.chain,
             partitions: self.partitions(input.partitions)?,
             addresses: addresses(input.addresses)?,
         };
@@ -850,30 +758,17 @@ impl JsStorage {
         Ok(StoredConfigOutput {
             envio_info: read.config.envio_info,
             contract_names: read.config.contract_names,
-            chains: read
-                .config
-                .chains
-                .into_iter()
-                .map(|chain| StoredChainOutput {
-                    id: chain.id as f64,
-                    ecosystem: chain.ecosystem,
-                    start_block: chain.start_block,
-                    end_block: chain.end_block,
-                    max_reorg_depth: chain.max_reorg_depth,
-                })
-                .collect(),
+            chains: read.config.chains,
             config_addresses: self.hold(read.config_addresses),
         })
     }
 
     #[napi]
     pub async fn resume(&self, input: ResumeInput) -> napi::Result<ResumedOutput> {
-        let sequence = Sequence::parse(&input.sequence).map_err(to_napi)?;
         let tables = self.tables_of(&input.tables)?;
-        let chain_ids = input.chain_ids.into_iter().map(chain_id).collect();
         let resumed = self
             .inner
-            .resume(sequence, tables, chain_ids)
+            .resume(input.sequence, tables, input.chain_ids)
             .await
             .map_err(to_napi)?;
         Ok(ResumedOutput {
@@ -881,7 +776,7 @@ impl JsStorage {
                 .chains
                 .into_iter()
                 .map(|chain| ResumedChainOutput {
-                    id: chain.id as f64,
+                    id: chain.id,
                     start_block: chain.start_block,
                     end_block: chain.end_block,
                     max_reorg_depth: chain.max_reorg_depth,
@@ -900,7 +795,7 @@ impl JsStorage {
                 .into_iter()
                 .map(|checkpoint| ReorgCheckpointOutput {
                     id: checkpoint.id.to_string(),
-                    chain_id: checkpoint.chain_id as f64,
+                    chain_id: checkpoint.chain_id,
                     block_number: checkpoint.block_number,
                     block_hash: checkpoint.block_hash,
                 })
@@ -909,8 +804,7 @@ impl JsStorage {
     }
 
     #[napi]
-    pub async fn set_chain_meta(&self, chains: Vec<ChainMetaInput>) -> napi::Result<()> {
-        let chains = chains.into_iter().map(chain_meta).collect::<Vec<_>>();
+    pub async fn set_chain_meta(&self, chains: Vec<ChainMeta>) -> napi::Result<()> {
         self.inner
             .postgres
             .set_chain_meta(&chains)
@@ -923,11 +817,10 @@ impl JsStorage {
     pub async fn finalize_backfill(
         &self,
         definitions: Vec<PgIndexInput>,
-        chain_ids: Vec<f64>,
+        chain_ids: Vec<i64>,
         ready_at: f64,
     ) -> napi::Result<()> {
         let definitions = definitions_of(definitions)?;
-        let chain_ids = chain_ids.into_iter().map(chain_id).collect::<Vec<_>>();
         self.inner
             .postgres
             .finalize_backfill(definitions, &chain_ids, ready_at)
@@ -1015,14 +908,13 @@ impl JsStorage {
     #[napi]
     pub async fn rollback_target_checkpoint(
         &self,
-        chain_id: f64,
+        chain_id: i64,
         block_number: i32,
-        sequence: String,
+        sequence: Sequence,
     ) -> napi::Result<Option<String>> {
-        let sequence = Sequence::parse(&sequence).map_err(to_napi)?;
         Ok(self
             .inner
-            .rollback_target_checkpoint(self::chain_id(chain_id), block_number, sequence)
+            .rollback_target_checkpoint(chain_id, block_number, sequence)
             .await
             .map_err(to_napi)?
             .map(|id| id.to_string()))
@@ -1042,7 +934,7 @@ impl JsStorage {
             .map_err(to_napi)?
             .into_iter()
             .map(|diff| ProgressDiffOutput {
-                chain_id: diff.chain_id as f64,
+                chain_id: diff.chain_id,
                 events_processed: diff.events_processed.to_string(),
                 progress_block: diff.progress_block,
             })
@@ -1069,19 +961,12 @@ impl JsStorage {
     }
 
     #[napi]
-    pub async fn effect_cache_tables(&self) -> napi::Result<Vec<CacheTableOutput>> {
-        Ok(self
-            .inner
+    pub async fn effect_cache_tables(&self) -> napi::Result<Vec<CacheTable>> {
+        self.inner
             .postgres
             .effect_cache_tables()
             .await
-            .map_err(to_napi)?
-            .into_iter()
-            .map(|table| CacheTableOutput {
-                table_name: table.table_name,
-                rows: table.rows,
-            })
-            .collect())
+            .map_err(to_napi)
     }
 
     #[napi]
@@ -1103,14 +988,7 @@ impl JsStorage {
     }
 
     #[napi]
-    pub async fn dump_effect_cache(&self, files: Vec<CacheDumpInput>) -> napi::Result<()> {
-        let files = files
-            .into_iter()
-            .map(|file| CacheDump {
-                table_name: file.table_name,
-                path: file.path,
-            })
-            .collect::<Vec<_>>();
+    pub async fn dump_effect_cache(&self, files: Vec<CacheDump>) -> napi::Result<()> {
         self.inner
             .postgres
             .dump_effect_cache(&files)
@@ -1156,10 +1034,10 @@ fn definitions_of(definitions: Vec<PgIndexInput>) -> napi::Result<Vec<IndexDefin
         .map_err(to_napi)
 }
 
-fn pg_registration(table: PgTableInput) -> anyhow::Result<TableRegistration> {
+fn pg_registration(name: String, table: PgTableInput) -> anyhow::Result<TableRegistration> {
     Ok(TableRegistration {
         spec: TableSpec {
-            table_name: table.table_name,
+            table_name: name,
             columns: table
                 .columns
                 .into_iter()
@@ -1212,16 +1090,13 @@ impl JsStorage {
             .map(|partition| {
                 Ok(Partition {
                     table: self.table(partition.table)?,
-                    chain_id: chain_id(partition.chain_id),
+                    chain_id: partition.chain_id,
                     name: partition.name,
                 })
             })
             .collect()
     }
 
-    /// Takes every batch a write names out of the registry before anything
-    /// can fail, so a write refused here frees them rather than leaving them
-    /// for a `discardStaged` nobody makes.
     fn rows(&self, rows: RowsInput, problems: &mut Vec<napi::Error>) -> Option<Rows> {
         match (rows.staged, rows.cells) {
             (Some(handle), _) => self.arena(handle, problems).map(Rows::Staged),
@@ -1248,6 +1123,9 @@ impl JsStorage {
         }
     }
 
+    /// Takes every batch a write names out of the registry before anything
+    /// can fail, so a write refused here frees them rather than leaving them
+    /// for a `discardStaged` nobody makes.
     fn to_batch(&self, batch: BatchInput) -> napi::Result<Batch> {
         let mut problems = Vec::new();
         let table = |handle: u32, problems: &mut Vec<napi::Error>| {
@@ -1302,7 +1180,7 @@ impl JsStorage {
                     .and_then(|handle| self.arena(handle, &mut problems));
                 Some(EntityWrite {
                     table: table(write.table, &mut problems)?,
-                    chain_id: write.chain_id.map(chain_id),
+                    chain_id: write.chain_id,
                     postgres,
                     clickhouse,
                 })
@@ -1326,14 +1204,14 @@ impl JsStorage {
                 Ok(RollbackWrite {
                     bounds: to_bounds(rollback.bounds)?,
                     tables: self.tables_of(&rollback.tables)?,
-                    progress: rollback.progress.into_iter().map(progress).collect(),
+                    progress: rollback.progress,
                     removed_addresses: addresses(rollback.removed_addresses)?,
                     diff_checkpoints: rollback
                         .diff_checkpoints
                         .into_iter()
                         .map(|diff| {
                             Ok(DiffCheckpoint {
-                                chain_id: chain_id(diff.chain_id),
+                                chain_id: diff.chain_id,
                                 checkpoint_id: checkpoint_id(&diff.checkpoint_id)?,
                                 block_number: diff.block_number,
                             })
@@ -1365,33 +1243,18 @@ impl JsStorage {
         )?;
         Ok(Batch {
             rollback: rollback.transpose()?,
-            progress: batch.progress.into_iter().map(progress).collect(),
+            progress: batch.progress,
             raw_events,
             entities,
-            chain_meta: batch.chain_meta.into_iter().map(chain_meta).collect(),
+            chain_meta: batch.chain_meta,
             addresses: addresses(batch.addresses)?,
             frontier: Frontier {
-                chain_ids: batch.frontier.chain_ids.into_iter().map(chain_id).collect(),
-                checkpoint_ids: batch
-                    .frontier
-                    .checkpoint_ids
-                    .iter()
-                    .map(|id| checkpoint_id(id))
-                    .collect::<napi::Result<_>>()?,
+                chain_ids: batch.frontier.chain_ids,
+                checkpoint_ids: checkpoint_ids(&batch.frontier.checkpoint_ids)?,
             },
             checkpoints: Checkpoints {
-                ids: batch
-                    .checkpoints
-                    .ids
-                    .iter()
-                    .map(|id| checkpoint_id(id))
-                    .collect::<napi::Result<_>>()?,
-                chain_ids: batch
-                    .checkpoints
-                    .chain_ids
-                    .into_iter()
-                    .map(chain_id)
-                    .collect(),
+                ids: checkpoint_ids(&batch.checkpoints.ids)?,
+                chain_ids: batch.checkpoints.chain_ids,
                 block_numbers: batch.checkpoints.block_numbers,
                 block_hashes: batch.checkpoints.block_hashes,
                 events_processed: batch
@@ -1410,18 +1273,13 @@ impl JsStorage {
 /// Rows cross as one list per column, which every store reads by index
 /// together: lists of different lengths are refused here rather than read past.
 fn same_length(rows: &str, lengths: &[usize]) -> napi::Result<()> {
-    match lengths.windows(2).all(|pair| pair[0] == pair[1]) {
-        true => Ok(()),
-        false => Err(napi::Error::from_reason(format!(
+    if lengths.windows(2).all(|pair| pair[0] == pair[1]) {
+        Ok(())
+    } else {
+        Err(napi::Error::from_reason(format!(
             "Internal error: the {rows} columns have different lengths, {lengths:?}"
-        ))),
+        )))
     }
-}
-
-/// Chain ids reach here as JavaScript numbers, every one of them a safe
-/// integer.
-fn chain_id(id: f64) -> i64 {
-    id as i64
 }
 
 fn checkpoint_id(id: &str) -> napi::Result<i64> {
@@ -1429,34 +1287,8 @@ fn checkpoint_id(id: &str) -> napi::Result<i64> {
         .map_err(|_| napi::Error::from_reason(format!("`{id}` is not a checkpoint id")))
 }
 
-fn chain_config(chain: ChainConfigInput) -> ChainConfig {
-    ChainConfig {
-        id: chain_id(chain.id),
-        ecosystem: chain.ecosystem,
-        start_block: chain.start_block,
-        end_block: chain.end_block,
-        max_reorg_depth: chain.max_reorg_depth,
-    }
-}
-
-fn progress(progress: ProgressInput) -> Progress {
-    Progress {
-        chain_id: chain_id(progress.chain_id),
-        progress_block: progress.progress_block,
-        progress_block_time: progress.progress_block_time,
-        events_processed: progress.events_processed,
-        source_block: progress.source_block,
-    }
-}
-
-fn chain_meta(meta: ChainMetaInput) -> ChainMeta {
-    ChainMeta {
-        chain_id: chain_id(meta.chain_id),
-        first_event_block: meta.first_event_block,
-        buffer_block: meta.buffer_block,
-        ready_at: meta.ready_at,
-        is_hyper_sync: meta.is_hyper_sync,
-    }
+fn checkpoint_ids(ids: &[String]) -> napi::Result<Vec<i64>> {
+    ids.iter().map(|id| checkpoint_id(id)).collect()
 }
 
 fn addresses(addresses: AddressesInput) -> napi::Result<Addresses> {
@@ -1465,11 +1297,10 @@ fn addresses(addresses: AddressesInput) -> napi::Result<Addresses> {
         addresses.addresses.len(),
         addresses.contract_ids.len(),
     ];
-    // A key leaves them out.
     lengths.extend(addresses.registration_blocks.as_ref().map(Vec::len));
     same_length("address", &lengths)?;
     Ok(Addresses {
-        chain_ids: addresses.chain_ids.into_iter().map(chain_id).collect(),
+        chain_ids: addresses.chain_ids,
         addresses: addresses
             .addresses
             .into_iter()
@@ -1486,13 +1317,9 @@ fn to_bounds(bounds: BoundsInput) -> napi::Result<Bounds> {
         &[bounds.chain_ids.len(), bounds.checkpoint_ids.len()],
     )?;
     Ok(Bounds {
-        sequence: Sequence::parse(&bounds.sequence).map_err(to_napi)?,
-        chain_ids: bounds.chain_ids.into_iter().map(chain_id).collect(),
-        checkpoint_ids: bounds
-            .checkpoint_ids
-            .iter()
-            .map(|id| checkpoint_id(id))
-            .collect::<napi::Result<_>>()?,
+        sequence: bounds.sequence,
+        chain_ids: bounds.chain_ids,
+        checkpoint_ids: checkpoint_ids(&bounds.checkpoint_ids)?,
     })
 }
 

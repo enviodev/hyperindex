@@ -1,10 +1,10 @@
 //! The tables the indexer keeps for itself, and every statement against them.
 
 use super::ddl::{ColumnSpec, TableSpec};
-use super::history::{bounds, Sequence};
+use super::history::bounds;
 use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
-pub use crate::storage::types::{
-    ChainConfig, ADDRESSES_TABLE as ADDRESSES, CHAINS_TABLE as CHAINS,
+use crate::storage::types::{
+    ChainConfig, Sequence, ADDRESSES_TABLE as ADDRESSES, CHAINS_TABLE as CHAINS,
     CHECKPOINTS_TABLE as CHECKPOINTS, CONFIG_REGISTRATION_BLOCK, CONTRACTS_TABLE as CONTRACTS,
     INFO_TABLE as INFO,
 };
@@ -398,12 +398,13 @@ pub fn rollback_target_checkpoint(pg_schema: &str) -> String {
     )
 }
 
-/// The chain's first checkpoint under a counter per chain, given as `$1`;
-/// every chain's under a shared one, which takes no parameter.
-pub fn lowest_checkpoint(pg_schema: &str, sequence: Sequence) -> String {
-    let chain = match sequence {
-        Sequence::PerChain => "\nWHERE \"chain_id\" = $1",
-        Sequence::SharedAcrossChains => "",
+/// The chain's first checkpoint when one is given as `$1`; every chain's
+/// otherwise.
+pub fn lowest_checkpoint(pg_schema: &str, per_chain: bool) -> String {
+    let chain = if per_chain {
+        "\nWHERE \"chain_id\" = $1"
+    } else {
+        ""
     };
     format!(
         "SELECT \"id\"::int8 FROM \"{pg_schema}\".\"{CHECKPOINTS}\"{chain}\nORDER BY \"id\"\nLIMIT 1;"

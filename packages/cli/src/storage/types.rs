@@ -1,7 +1,3 @@
-//! What a storage reads and writes, independent of which database holds it.
-
-use anyhow::{bail, Result};
-
 /// The names both stores give the indexer's own tables and the columns an
 /// entity's history adds to its fields. Tests and tools on the JavaScript side
 /// read them by these names too.
@@ -18,20 +14,11 @@ pub const CHECKPOINTS_TABLE: &str = "envio_checkpoints";
 /// How checkpoint ids are handed out. Under one shared counter a row's id is
 /// comparable with any other chain's, so a bound is a single id; with a counter
 /// per chain ids are only comparable within a chain, and every bound names one.
+#[napi_derive::napi(string_enum)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Sequence {
     SharedAcrossChains,
     PerChain,
-}
-
-impl Sequence {
-    pub fn parse(value: &str) -> Result<Self> {
-        match value {
-            "SharedAcrossChains" => Ok(Sequence::SharedAcrossChains),
-            "PerChain" => Ok(Sequence::PerChain),
-            other => bail!("`{other}` is not a checkpoint sequence"),
-        }
-    }
 }
 
 /// Which rows a bounded operation reaches: the chains and the checkpoint each
@@ -59,6 +46,7 @@ impl Bounds {
 }
 
 /// What a chain starts out as.
+#[napi_derive::napi(object)]
 #[derive(Clone, Debug)]
 pub struct ChainConfig {
     pub id: i64,
@@ -68,6 +56,7 @@ pub struct ChainConfig {
     pub max_reorg_depth: i32,
 }
 
+#[napi_derive::napi(object)]
 #[derive(Clone, Debug)]
 pub struct Progress {
     pub chain_id: i64,
@@ -78,6 +67,7 @@ pub struct Progress {
     pub source_block: i32,
 }
 
+#[napi_derive::napi(object)]
 #[derive(Clone, Debug)]
 pub struct ChainMeta {
     pub chain_id: i64,
@@ -117,27 +107,25 @@ impl Checkpoints {
 
     /// The ones anchoring history, in the same order.
     pub fn keeping_history(&self) -> Checkpoints {
-        let indexes = (0..self.len())
-            .filter(|&index| self.keeps_history[index])
-            .collect::<Vec<_>>();
+        let keeps = &self.keeps_history;
         Checkpoints {
-            ids: indexes.iter().map(|&index| self.ids[index]).collect(),
-            chain_ids: indexes.iter().map(|&index| self.chain_ids[index]).collect(),
-            block_numbers: indexes
-                .iter()
-                .map(|&index| self.block_numbers[index])
-                .collect(),
-            block_hashes: indexes
-                .iter()
-                .map(|&index| self.block_hashes[index].clone())
-                .collect(),
-            events_processed: indexes
-                .iter()
-                .map(|&index| self.events_processed[index])
-                .collect(),
-            keeps_history: vec![true; indexes.len()],
+            ids: kept(&self.ids, keeps),
+            chain_ids: kept(&self.chain_ids, keeps),
+            block_numbers: kept(&self.block_numbers, keeps),
+            block_hashes: kept(&self.block_hashes, keeps),
+            events_processed: kept(&self.events_processed, keeps),
+            keeps_history: kept(keeps, keeps),
         }
     }
+}
+
+fn kept<T: Clone>(values: &[T], keeps: &[bool]) -> Vec<T> {
+    values
+        .iter()
+        .zip(keeps)
+        .filter(|(_, keep)| **keep)
+        .map(|(value, _)| value.clone())
+        .collect()
 }
 
 /// Where a write leaves each chain's checkpoint sequence.
@@ -166,19 +154,11 @@ pub struct DiffCheckpoint {
     pub block_number: i32,
 }
 
-pub struct StoredChain {
-    pub id: i64,
-    pub ecosystem: String,
-    pub start_block: i32,
-    pub end_block: Option<i32>,
-    pub max_reorg_depth: i32,
-}
-
 pub struct StoredConfig {
     /// None for a schema an older envio wrote, without the record.
     pub envio_info: Option<String>,
     pub contract_names: Option<Vec<String>>,
-    pub chains: Vec<StoredChain>,
+    pub chains: Vec<ChainConfig>,
 }
 
 #[derive(Clone, Debug)]
@@ -211,6 +191,7 @@ pub struct ProgressDiff {
     pub progress_block: i32,
 }
 
+#[napi_derive::napi(object)]
 pub struct CacheTable {
     pub table_name: String,
     pub rows: i32,

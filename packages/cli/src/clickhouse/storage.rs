@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, bail, Context, Result};
-use futures_util::future::{try_join_all, BoxFuture};
+use futures_util::future::try_join_all;
 
 use super::ch_type::{ChType, FieldSpec};
 use super::client::{error_code, Client, Connection, Tuning, Warn};
@@ -17,18 +17,16 @@ use super::ddl::{self, Topology, CHAIN_ID_COLUMN, ID_COLUMN};
 use super::row_binary::{self, encode_values, EncodedRows, Value};
 use super::select::{self, Frontier};
 use super::table::{ClickHouseTableInput, Table};
-use super::{literal, quoted};
+use super::{literal, quoted, table_ref};
 use crate::columnar::Arena;
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
 use crate::storage::rows::{self, Cell, ColumnRead, ReadKind, ResultSet};
 use crate::storage::types::{
-    Bounds, Checkpoints, DiffCheckpoint, Sequence, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE,
+    Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE,
     CHECKPOINT_ID_COLUMN, INFO_TABLE,
 };
-use crate::storage::{
-    Batch, EntityStore, Failure, Handoff, Initialize, Op, Resume, Store, WriteError,
-};
+use crate::storage::{Batch, Failure, Handoff, Initialize, Resume, WriteError};
 
 pub struct Settings {
     pub chain_id_mode: ChainIdMode,
@@ -95,10 +93,6 @@ impl Storage {
         &self.client.database
     }
 
-    fn table_ref(&self, table: &str) -> String {
-        format!("{}.{}", quoted(self.database()), quoted(table))
-    }
-
     fn chain_id_type(&self) -> ChType {
         FieldSpec {
             field_type: "ChainId".to_string(),
@@ -117,8 +111,6 @@ impl Storage {
         let replicated = self.settings.replicated || has_replicated_engine;
         Topology {
             replicated,
-            // DDL a Replicated database engine propagates itself must not carry
-            // ON CLUSTER on top of it.
             ddl_on_cluster: replicated && !has_replicated_engine,
         }
     }
@@ -184,10 +176,10 @@ impl Storage {
         .with_context(|| {
             format!(
                 "Failed encoding rows for ClickHouse table `{}`",
-                table.physical
+                table.entity.history_table
             )
         })?;
-        self.insert(&table.physical, &table.insert_query, &encoded)
+        self.insert(&table.entity.history_table, &table.insert_query, &encoded)
             .await
     }
 
@@ -252,17 +244,6 @@ impl Storage {
                 ]
             })
             .collect()
-    }
-
-    /// The checkpoint a rollback stamps the rows restoring its chain with.
-    fn diff_checkpoint_values(diff: &DiffCheckpoint) -> Vec<Value> {
-        vec![
-            Value::Int(diff.chain_id.into()),
-            Value::Int(diff.checkpoint_id.into()),
-            Value::Int(diff.block_number.into()),
-            Value::Null,
-            Value::Int(0),
-        ]
     }
 
     async fn existing_database_engine(&self) -> Result<Option<String>> {
@@ -366,11 +347,23 @@ impl Storage {
         // table a reset dropped has nothing to read.
         let previous_version = match self.read_version().await {
             Ok(version) => version,
-            Err(error) if matches!(error_code(&format!("{error:#}")), Some(16 | 47 | 60 | 81)) => 0,
+            Err(error)
+                if matches!(
+                    error_code(&format!("{error:#}")),
+                    Some(
+                        16 // NO_SUCH_COLUMN_IN_TABLE
+                        | 47 // UNKNOWN_IDENTIFIER
+                        | 60 // UNKNOWN_TABLE
+                        | 81 // UNKNOWN_DATABASE
+                    )
+                ) =>
+            {
+                0
+            }
             Err(error) => return Err(error),
         }
         .max(unix_micros());
-        self.reset_database(topology).await?;
+        self.reset_database().await?;
         self.client
             .statement(format!(
                 "CREATE DATABASE IF NOT EXISTS {database}{}{}",
@@ -464,7 +457,7 @@ impl Storage {
             .client
             .statement(format!(
                 "SELECT count() > 0 FROM {} FORMAT TabSeparated",
-                self.table_ref(CHECKPOINTS_TABLE)
+                table_ref(self.database(), CHECKPOINTS_TABLE)
             ))
             .await?;
         Ok(answer.trim() == "1")
@@ -480,7 +473,7 @@ impl Storage {
             .client
             .read(format!(
                 "SELECT `instance` FROM {} ORDER BY `id` LIMIT 1 FORMAT RowBinary",
-                self.table_ref(INFO_TABLE)
+                table_ref(self.database(), INFO_TABLE)
             ))
             .await?;
         match row_binary::decode(&body, &[(ChType::String, ReadKind::Text)])?.as_slice() {
@@ -525,27 +518,22 @@ impl Storage {
 
     /// Emptied rather than dropped, so a database the operator provisioned
     /// keeps its engine and grants — except where emptying is not an option.
-    async fn reset_database(&self, topology: Topology) -> Result<()> {
+    async fn reset_database(&self) -> Result<()> {
         let database = quoted(self.database());
-        if has_replicated_engine(self.settings.database_engine.as_deref()) {
+        let statement = if has_replicated_engine(self.settings.database_engine.as_deref()) {
             // TRUNCATE DATABASE is unsupported on Replicated databases, so a
             // reset has to DROP and recreate instead. ON CLUSTER removes the
             // database from every node — the engine's own log can't replicate
             // the drop of the database it lives in — and SYNC waits for the drop
             // to finish before anything is created again.
-            self.client
-                .statement(format!(
-                    "DROP DATABASE IF EXISTS {database} ON CLUSTER '{{cluster}}' SYNC"
-                ))
-                .await?;
+            format!("DROP DATABASE IF EXISTS {database} ON CLUSTER '{{cluster}}' SYNC")
         } else {
-            self.client
-                .statement(format!(
-                    "TRUNCATE DATABASE IF EXISTS {database}{}",
-                    ddl::on_cluster_clause(topology.ddl_on_cluster)
-                ))
-                .await?;
-        }
+            format!(
+                "TRUNCATE DATABASE IF EXISTS {database}{}",
+                self.topology().on_cluster()
+            )
+        };
+        self.client.statement(statement).await?;
         Ok(())
     }
 
@@ -558,7 +546,7 @@ impl Storage {
                 // aggregate_functions_null_for_empty.
                 "SELECT ifNull(max({}), 0) FROM {} FORMAT TabSeparated",
                 quoted(ddl::VERSION_COLUMN),
-                self.table_ref(CHAINS_TABLE)
+                table_ref(self.database(), CHAINS_TABLE)
             ))
             .await?;
         answer
@@ -577,9 +565,6 @@ impl Storage {
         frontier: &Frontier,
         tables: &[Arc<Table>],
     ) -> Result<()> {
-        if frontier.is_empty() {
-            return Ok(());
-        }
         let bounds = Bounds {
             sequence,
             chain_ids: frontier.keys().copied().collect(),
@@ -598,7 +583,7 @@ impl Storage {
             .iter()
             .map(|table| {
                 Ok((
-                    table.physical.clone(),
+                    table.entity.history_table.clone(),
                     select::above(
                         &bounds,
                         table.entity.chain_id_column.as_deref(),
@@ -725,7 +710,7 @@ impl Storage {
             .client
             .statement(format!(
                 "SELECT {id} FROM {}{filter} ORDER BY {id} DESC LIMIT 1 FORMAT TabSeparated",
-                self.table_ref(CHECKPOINTS_TABLE),
+                table_ref(self.database(), CHECKPOINTS_TABLE),
             ))
             .await?;
         match answer.trim() {
@@ -746,12 +731,12 @@ impl Storage {
     async fn sync_replica(&self, tables: &[Arc<Table>]) -> Result<()> {
         let names = tables
             .iter()
-            .map(|table| table.physical.as_str())
+            .map(|table| table.entity.history_table.as_str())
             .chain([CHECKPOINTS_TABLE]);
         try_join_all(names.map(|name| {
             self.client.statement(format!(
                 "SYSTEM SYNC REPLICA {} LIGHTWEIGHT",
-                self.table_ref(name)
+                table_ref(self.database(), name)
             ))
         }))
         .await
@@ -763,14 +748,13 @@ impl Storage {
         Ok(())
     }
 
-    /// Which of the chains' committed checkpoints the table doesn't hold.
     async fn missing_checkpoints(&self, committed: &[(i64, i64)]) -> Result<Vec<(i64, i64)>> {
         let answer = self
             .client
             .statement(format!(
                 "SELECT DISTINCT {chain}, {id} FROM {} WHERE ({chain}, {id}) IN ({}) FORMAT \
                  TabSeparated",
-                self.table_ref(CHECKPOINTS_TABLE),
+                table_ref(self.database(), CHECKPOINTS_TABLE),
                 committed
                     .iter()
                     .map(|(chain_id, checkpoint_id)| format!("({chain_id}, {checkpoint_id})"))
@@ -849,7 +833,7 @@ impl Storage {
             .context("Failed to resume ClickHouse storage")
     }
 
-    async fn load_where_inner(
+    pub async fn load_where(
         &self,
         table: &crate::storage::Table,
         conditions: Vec<Condition>,
@@ -861,7 +845,8 @@ impl Storage {
         rows::lay_out(&row_binary::decode(&body, &types)?, reads)
     }
 
-    async fn rollback_data_inner(
+    /// The keys a rollback removes, and the rows it restores the rest from.
+    pub async fn rollback_data(
         &self,
         table: &crate::storage::Table,
         bounds: &Bounds,
@@ -882,7 +867,7 @@ impl Storage {
                     .columns
                     .iter()
                     .find(|column| &column.name == name)
-                    .ok_or_else(|| anyhow!("\"{}\" has no column `{name}`", table.name))
+                    .ok_or_else(|| anyhow!("\"{}\" has no column `{name}`", table.entity.name))
             })
             .collect::<Result<Vec<_>>>()?;
         let removed = rows::lay_out(
@@ -907,28 +892,12 @@ impl Storage {
     /// left above the frontier, unread and trimmed by the next resume.
     async fn write_inner(&self, batch: Batch, mut handoff: Handoff) -> Result<bool> {
         let Batch {
-            rollback,
             entities,
             frontier,
             checkpoints,
             ..
         } = batch;
 
-        let checkpoint_columns = ddl::checkpoint_columns(&self.chain_id_type());
-        let mut checkpoint_rows = Self::checkpoint_values(&checkpoints);
-        if let Some(rollback) = &rollback {
-            checkpoint_rows.extend(
-                rollback
-                    .diff_checkpoints
-                    .iter()
-                    .map(Self::diff_checkpoint_values),
-            );
-        }
-        let mut rows: Vec<BoxFuture<'_, Result<()>>> = vec![Box::pin(self.insert_values(
-            CHECKPOINTS_TABLE,
-            &checkpoint_columns,
-            &checkpoint_rows,
-        ))];
         // A per-chain entity stages each chain's rows apart, and each insert
         // is a part the server has to merge.
         let mut staged: Vec<(Arc<Table>, Vec<Arena>)> = Vec::new();
@@ -937,17 +906,23 @@ impl Storage {
                 let table = write.table.clickhouse()?.clone();
                 match staged
                     .iter_mut()
-                    .find(|(staged, _)| staged.physical == table.physical)
+                    .find(|(staged, _)| staged.entity.history_table == table.entity.history_table)
                 {
                     Some((_, arenas)) => arenas.push(arena),
                     None => staged.push((table, vec![arena])),
                 }
             }
         }
-        for (table, arenas) in staged {
-            rows.push(Box::pin(self.insert_staged(table, arenas)));
-        }
-        try_join_all(rows).await?;
+        let checkpoint_columns = ddl::checkpoint_columns(&self.chain_id_type());
+        let checkpoint_rows = Self::checkpoint_values(&checkpoints);
+        futures_util::try_join!(
+            self.insert_values(CHECKPOINTS_TABLE, &checkpoint_columns, &checkpoint_rows),
+            try_join_all(
+                staged
+                    .into_iter()
+                    .map(|(table, arenas)| self.insert_staged(table, arenas))
+            ),
+        )?;
 
         // Every row above has landed, so the chains' rows can make them
         // readable once the handoff says to.
@@ -978,31 +953,9 @@ impl Storage {
     pub async fn reset(&self) -> Result<()> {
         self.check_for_initialize().await?;
         self.stop_inserts_left_running(None).await;
-        self.reset_database(self.topology()).await?;
+        self.reset_database().await?;
         *self.chains.lock().unwrap() = Chains::default();
         Ok(())
-    }
-}
-
-impl EntityStore for Storage {
-    fn store(&self) -> Store {
-        Store::ClickHouse
-    }
-
-    fn load_where<'a>(
-        &'a self,
-        table: &'a crate::storage::Table,
-        conditions: Vec<Condition>,
-    ) -> Op<'a, ResultSet> {
-        Box::pin(self.load_where_inner(table, conditions))
-    }
-
-    fn rollback_data<'a>(
-        &'a self,
-        table: &'a crate::storage::Table,
-        bounds: &'a Bounds,
-    ) -> Op<'a, (ResultSet, ResultSet)> {
-        Box::pin(self.rollback_data_inner(table, bounds))
     }
 }
 

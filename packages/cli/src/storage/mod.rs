@@ -1,15 +1,3 @@
-//! The indexer's storage.
-//!
-//! Postgres keeps the indexer's own state — chains, checkpoints, addresses,
-//! the config record, effect caches, raw events — and the entities configured
-//! for it. ClickHouse, when configured, keeps the entities configured for it,
-//! and makes a batch readable only once Postgres has committed it. Handlers
-//! read an entity from the store that keeps it: Postgres, where both do.
-//!
-//! JavaScript reaches all of it through the one class in [`js`], which does
-//! only what needs the isolate: laying entity values into staged arenas and
-//! reading result arenas back into objects.
-
 pub mod rows;
 pub mod types;
 
@@ -25,7 +13,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use futures_util::future::BoxFuture;
 use tokio::io::AsyncWriteExt;
 
 use crate::clickhouse;
@@ -38,8 +25,6 @@ use types::{
     Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress,
     ResumedChain, Sequence,
 };
-
-pub type Op<'a, T> = BoxFuture<'a, Result<T>>;
 
 /// A table as the indexer registered it, and what each store made of it. An
 /// entity lives in the stores its schema names; the indexer's own tables only
@@ -61,6 +46,10 @@ impl Table {
         self.clickhouse
             .as_ref()
             .ok_or_else(|| anyhow!("\"{}\" is not stored in ClickHouse", self.name))
+    }
+
+    fn kept_nowhere(&self) -> anyhow::Error {
+        anyhow!("\"{}\" is kept in no configured store", self.name)
     }
 }
 
@@ -122,7 +111,6 @@ pub struct EffectCacheWrite {
     pub rows: Rows,
 }
 
-#[derive(Clone)]
 pub struct RollbackWrite {
     pub bounds: Bounds,
     /// Every entity table a rollback reaches.
@@ -172,7 +160,6 @@ pub enum Holding {
     Outdated,
 }
 
-/// A failed write, and what it was doing.
 #[derive(Debug)]
 pub struct Failure {
     pub context: String,
@@ -241,6 +228,7 @@ pub struct Partition {
     pub name: String,
 }
 
+#[napi_derive::napi(object)]
 pub struct Enum {
     pub name: String,
     pub variants: Vec<String>,
@@ -310,6 +298,7 @@ pub struct CacheFile {
     pub path: String,
 }
 
+#[napi_derive::napi(object)]
 pub struct CacheDump {
     pub table_name: String,
     pub path: String,
@@ -358,19 +347,6 @@ impl CacheDump {
     }
 }
 
-/// What each store does for the entities it keeps.
-pub trait EntityStore: Send + Sync {
-    fn store(&self) -> Store;
-    fn load_where<'a>(&'a self, table: &'a Table, conditions: Vec<Condition>) -> Op<'a, ResultSet>;
-    /// The keys a rollback removes, and the rows it restores the rest from.
-    fn rollback_data<'a>(
-        &'a self,
-        table: &'a Table,
-        bounds: &'a Bounds,
-    ) -> Op<'a, (ResultSet, ResultSet)>;
-}
-
-/// Postgres, and the ClickHouse beside it if one is configured.
 pub struct Storage {
     pub postgres: Arc<postgres::storage::Storage>,
     pub clickhouse: Option<Arc<clickhouse::storage::Storage>>,
@@ -379,11 +355,11 @@ pub struct Storage {
 impl Storage {
     /// The store an entity is read from: Postgres where it keeps one,
     /// ClickHouse otherwise.
-    pub fn home(&self, table: &Table) -> Result<&dyn EntityStore> {
-        match (&table.postgres, &self.clickhouse, &table.clickhouse) {
-            (Some(_), _, _) => Ok(self.postgres.as_ref()),
-            (None, Some(clickhouse), Some(_)) => Ok(clickhouse.as_ref()),
-            _ => Err(anyhow!("\"{}\" is kept in no configured store", table.name)),
+    pub fn home(&self, table: &Table) -> Result<Store> {
+        match (&table.postgres, &table.clickhouse) {
+            (Some(_), _) => Ok(Store::Postgres),
+            (None, Some(_)) => Ok(Store::ClickHouse),
+            (None, None) => Err(table.kept_nowhere()),
         }
     }
 
@@ -427,12 +403,12 @@ impl Storage {
     /// a ClickHouse built for a Postgres that then failed is left unpaired,
     /// which the next start sets up again.
     pub async fn initialize(&self, input: Initialize) -> Result<()> {
-        self.postgres.check_schema_for_initialize().await?;
+        let is_empty_schema = self.postgres.check_schema_for_initialize().await?;
         if let Some(clickhouse) = &self.clickhouse {
             clickhouse.check_for_initialize().await?;
             clickhouse.build(&input).await?;
         }
-        self.postgres.initialize(&input).await?;
+        self.postgres.initialize(&input, is_empty_schema).await?;
         match &self.clickhouse {
             Some(clickhouse) => clickhouse.seal(&input).await,
             None => Ok(()),
@@ -460,11 +436,11 @@ impl Storage {
         let (None, Some(clickhouse)) = (target, &self.clickhouse) else {
             return Ok(target);
         };
-        let kept_from = self.postgres.lowest_checkpoint(chain_id, sequence).await?;
         let chain_id = match sequence {
             Sequence::PerChain => Some(chain_id),
             Sequence::SharedAcrossChains => None,
         };
+        let kept_from = self.postgres.lowest_checkpoint(chain_id).await?;
         clickhouse.last_checkpoint_below(chain_id, kept_from).await
     }
 
@@ -495,15 +471,24 @@ impl Storage {
     }
 
     pub async fn load_where(&self, table: &Table, conditions: Vec<Condition>) -> Result<ResultSet> {
-        self.home(table)?.load_where(table, conditions).await
+        match (&table.postgres, &self.clickhouse) {
+            (Some(postgres), _) => self.postgres.load_where(postgres.name(), conditions).await,
+            (None, Some(clickhouse)) => clickhouse.load_where(table, conditions).await,
+            (None, None) => Err(table.kept_nowhere()),
+        }
     }
 
+    /// The keys a rollback removes, and the rows it restores the rest from.
     pub async fn rollback_data(
         &self,
         table: &Table,
         bounds: &Bounds,
     ) -> Result<(ResultSet, ResultSet)> {
-        self.home(table)?.rollback_data(table, bounds).await
+        match (&table.postgres, &self.clickhouse) {
+            (Some(postgres), _) => self.postgres.rollback_data(postgres, bounds).await,
+            (None, Some(clickhouse)) => clickhouse.rollback_data(table, bounds).await,
+            (None, None) => Err(table.kept_nowhere()),
+        }
     }
 
     /// ClickHouse first, and it refuses a database it may not empty before
@@ -537,10 +522,6 @@ impl Storage {
             };
         };
         let (postgres_batch, clickhouse_batch) = split(batch);
-        // Postgres commits once ClickHouse's rows have landed, and ClickHouse
-        // makes them readable once Postgres has committed: neither holds a
-        // batch the other refused, and nothing reads one before Postgres has
-        // it.
         let (landed, clickhouse_landed) = tokio::sync::oneshot::channel();
         let (committed, postgres_committed) = tokio::sync::oneshot::channel();
         let (postgres_gate, postgres_waited) = waited_on(clickhouse_landed);
@@ -669,11 +650,22 @@ fn split(batch: Batch) -> (Batch, Batch) {
             });
         }
     }
+    let mut clickhouse_checkpoints = checkpoints.clone();
+    for diff in rollback
+        .iter()
+        .flat_map(|rollback| &rollback.diff_checkpoints)
+    {
+        clickhouse_checkpoints.ids.push(diff.checkpoint_id);
+        clickhouse_checkpoints.chain_ids.push(diff.chain_id);
+        clickhouse_checkpoints.block_numbers.push(diff.block_number);
+        clickhouse_checkpoints.block_hashes.push(None);
+        clickhouse_checkpoints.events_processed.push(0);
+        clickhouse_checkpoints.keeps_history.push(false);
+    }
     let clickhouse = Batch {
-        rollback: rollback.clone(),
         entities: clickhouse_entities,
         frontier: frontier.clone(),
-        checkpoints: checkpoints.clone(),
+        checkpoints: clickhouse_checkpoints,
         ..Batch::default()
     };
     let postgres = Batch {
@@ -694,6 +686,50 @@ fn split(batch: Batch) -> (Batch, Batch) {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn a_rollback_reaches_clickhouse_as_the_checkpoints_of_its_diff() {
+        let (_, clickhouse) = split(Batch {
+            rollback: Some(RollbackWrite {
+                bounds: Bounds {
+                    sequence: Sequence::PerChain,
+                    chain_ids: vec![1],
+                    checkpoint_ids: vec![1],
+                },
+                tables: Vec::new(),
+                progress: Vec::new(),
+                removed_addresses: Addresses::default(),
+                diff_checkpoints: vec![DiffCheckpoint {
+                    chain_id: 1,
+                    checkpoint_id: 4,
+                    block_number: 15,
+                }],
+            }),
+            checkpoints: Checkpoints {
+                ids: vec![5],
+                chain_ids: vec![1],
+                block_numbers: vec![16],
+                block_hashes: vec![Some("0x10".to_string())],
+                events_processed: vec![2],
+                keeps_history: vec![true],
+            },
+            ..Batch::default()
+        });
+        assert_eq!(
+            (clickhouse.rollback.is_none(), clickhouse.checkpoints),
+            (
+                true,
+                Checkpoints {
+                    ids: vec![5, 4],
+                    chain_ids: vec![1, 1],
+                    block_numbers: vec![16, 15],
+                    block_hashes: vec![Some("0x10".to_string()), None],
+                    events_processed: vec![2, 0],
+                    keeps_history: vec![true, false],
+                }
+            )
+        );
+    }
 
     #[tokio::test]
     async fn a_dump_that_fails_part_way_leaves_the_file_it_would_replace() {

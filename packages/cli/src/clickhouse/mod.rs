@@ -18,10 +18,15 @@ pub(crate) fn quoted(name: &str) -> String {
     format!("`{}`", name.replace('\\', "\\\\").replace('`', "``"))
 }
 
+pub(crate) fn table_ref(database: &str, table: &str) -> String {
+    format!("{}.{}", quoted(database), quoted(table))
+}
+
 /// Single-quotes a string literal. ClickHouse reads C-style escapes inside one,
 /// so a backslash has to be doubled as well as a quote — left alone, `a\tb`
-/// would be stored as `a`, a tab, `b`.
-/// Without its NUL bytes, as the text it is compared with was stored.
+/// would be stored as `a`, a tab, `b`. NUL bytes are dropped because
+/// `row_binary::put_string` drops them on write, so a filter value matches
+/// the stored text.
 pub(crate) fn literal(value: &str) -> String {
     format!(
         "'{}'",

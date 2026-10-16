@@ -88,9 +88,9 @@ fn non_default_format(backend: Option<system_config::StorageBackend>) -> Option<
 impl From<&system_config::Storage> for StorageConfig {
     fn from(s: &system_config::Storage) -> Self {
         Self {
-            postgres: s.postgres.is_some(),
+            postgres: true,
             clickhouse: s.clickhouse.is_some(),
-            postgres_column_name_format: non_default_format(s.postgres),
+            postgres_column_name_format: non_default_format(Some(s.postgres)),
             clickhouse_column_name_format: non_default_format(s.clickhouse),
         }
     }
@@ -789,7 +789,7 @@ impl SystemConfig {
                             };
                         PropertyJson {
                             name: f.field_name.clone(),
-                            postgres_db_name: db_name_for(cfg.storage.postgres),
+                            postgres_db_name: db_name_for(Some(cfg.storage.postgres)),
                             clickhouse_db_name: db_name_for(cfg.storage.clickhouse),
                             field_type,
                             is_nullable: f.is_nullable,
@@ -840,14 +840,11 @@ impl SystemConfig {
                         clickhouse: entity.clickhouse.as_ref().map(Into::into),
                     })
                 } else {
-                    let postgres_default = cfg.storage.postgres.is_some_and(|b| b.entity_default);
+                    let postgres_default = cfg.storage.postgres.entity_default;
                     let clickhouse_default =
                         cfg.storage.clickhouse.is_some_and(|b| b.entity_default);
                     if (postgres_default, clickhouse_default)
-                        == (
-                            cfg.storage.postgres.is_some(),
-                            cfg.storage.clickhouse.is_some(),
-                        )
+                        == (true, cfg.storage.clickhouse.is_some())
                     {
                         None
                     } else {
@@ -906,7 +903,7 @@ impl SystemConfig {
         let view = ConfigView {
             version: system_config::VERSION,
             storage: ViewStorageConfig {
-                postgres: self.storage.postgres.is_some(),
+                postgres: true,
                 clickhouse: self.storage.clickhouse.is_some(),
             },
         };

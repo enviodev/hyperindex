@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use tokio::net::{TcpListener, TcpStream};
 
+use super::ch_type::ChType;
 use crate::mock_http;
+use crate::storage::rows::{Cell, ReadKind};
 
 pub type StatementFn = dyn Fn(&str) -> (u16, String) + Send + Sync;
 
@@ -15,7 +17,6 @@ struct State {
     /// Reads still to be answered by closing the connection, as a stale pooled
     /// connection the server already let go of is.
     drop_next_reads: usize,
-    /// Reads still to be answered with the rejection.
     reject_next_reads: usize,
     /// Inserts still to be accepted and then failed. The body is recorded as
     /// landed — the server took the rows — but the client is told it did not.
@@ -157,21 +158,14 @@ impl MockClickHouse {
         self.accepted()
             .iter()
             .map(|body| {
-                let mut rows = Vec::new();
-                let mut i = 0usize;
-                while i < body.len() {
-                    let (len, read) = super::row_binary::read_varint(&body[i..])
-                        .expect("accepted body is not a String column");
-                    i += read;
-                    let end = i + len as usize;
-                    let bytes = body
-                        .get(i..end)
-                        .expect("accepted body ends mid-string")
-                        .to_vec();
-                    rows.push(String::from_utf8(bytes).unwrap());
-                    i = end;
-                }
-                rows
+                super::row_binary::decode(body, &[(ChType::String, ReadKind::Text)])
+                    .expect("accepted body is not a String column")
+                    .into_iter()
+                    .map(|cell| match cell {
+                        Cell::Str(text) => text.into_owned(),
+                        other => panic!("a String column read back as {other:?}"),
+                    })
+                    .collect()
             })
             .collect()
     }

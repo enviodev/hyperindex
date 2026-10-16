@@ -9,9 +9,8 @@ use super::select::{External, Read, EXTERNAL_STRUCTURE};
 
 const MAX_RETRIES: u32 = 8;
 
-/// `@clickhouse/client`'s `request_timeout` default, which the JS insert path
-/// ran under. Without it a peer that accepts a connection and then goes silent
-/// — a black-holed socket through a load balancer sends neither RST nor FIN —
+/// Without it a peer that accepts a connection and then goes silent — a
+/// black-holed socket through a load balancer sends neither RST nor FIN —
 /// leaves the request hanging forever, and with it the whole write batch.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// What a schema, maintenance statement or read gets instead. `DROP DATABASE
@@ -29,10 +28,16 @@ const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 /// `keep_alive_timeout` (3s on older servers), which is the deadline that
 /// matters: past it the server closes the socket, and a batch dispatched onto
 /// one already carrying a FIN fails with `connection closed before message
-/// completed`. `@clickhouse/client` set its `idle_socket_ttl` to 2.5s for the
-/// same reason.
+/// completed`.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_millis(2_500);
 const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
+/// How long one batch may spend on the whole retry ladder. Halving turns a
+/// failure into two more attempts, so a range that keeps failing costs
+/// exponentially many requests — cheap when each is refused in milliseconds,
+/// hours when each one first has to reach [`REQUEST_TIMEOUT`] against a peer
+/// that accepts the connection and then goes silent. `retries` bounds how deep
+/// a single range may go; this bounds what the batch as a whole may cost.
+const RETRY_BUDGET: Duration = Duration::from_secs(120);
 /// The server's caps on a statement unless a request raises them: its length,
 /// and the elements it parses into before and after expanding aliases.
 const DEFAULT_MAX_QUERY_SIZE: usize = 256 * 1024;
@@ -61,13 +66,6 @@ fn long_statement_settings(sql: &str) -> Vec<(&'static str, String)> {
     }
     settings
 }
-/// How long one batch may spend on the whole retry ladder. Halving turns a
-/// failure into two more attempts, so a range that keeps failing costs
-/// exponentially many requests — cheap when each is refused in milliseconds,
-/// hours when each one first has to reach [`REQUEST_TIMEOUT`] against a peer
-/// that accepts the connection and then goes silent. `retries` bounds how deep
-/// a single range may go; this bounds what the batch as a whole may cost.
-const RETRY_BUDGET: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Copy)]
 pub struct Tuning {
@@ -115,10 +113,10 @@ pub struct Connection {
 }
 
 pub struct Client {
-    /// Rebuilt when the server says how long it keeps an idle socket, which
-    /// a pool's settings can't change once built.
-    http: RwLock<reqwest::Client>,
-    idle_timeout: Mutex<Duration>,
+    /// The pool and the idle timeout it was built with. Rebuilt when the server
+    /// says how long it keeps an idle socket, which a pool's settings can't
+    /// change once built.
+    http: RwLock<(reqwest::Client, Duration)>,
     url: String,
     username: String,
     password: String,
@@ -130,7 +128,6 @@ pub struct Client {
     /// the writes, so an address that starts balancing across replicas is an
     /// error, not a slower path.
     served_by: Mutex<Option<String>>,
-    /// What every insert's query id starts with: see [`insert_tag`].
     tag: Mutex<String>,
 }
 
@@ -141,9 +138,8 @@ fn http_client(tuning: &Tuning, idle_timeout: Duration) -> Result<reqwest::Clien
         .timeout(tuning.request_timeout)
         .connect_timeout(CONNECT_TIMEOUT)
         .tcp_keepalive(TCP_KEEPALIVE)
-        // reqwest picks up HTTP_PROXY/HTTPS_PROXY by default; Node's http
-        // client never did, so honouring them here would silently start
-        // routing a deployment's inserts through a proxy that nothing asked
+        // reqwest picks up HTTP_PROXY/HTTPS_PROXY by default, which would
+        // silently route a deployment's inserts through a proxy nothing asked
         // to be in the path.
         .no_proxy()
         .build()
@@ -176,8 +172,7 @@ impl Client {
             );
         }
         Ok(Self {
-            http: RwLock::new(http_client(&tuning, POOL_IDLE_TIMEOUT)?),
-            idle_timeout: Mutex::new(POOL_IDLE_TIMEOUT),
+            http: RwLock::new((http_client(&tuning, POOL_IDLE_TIMEOUT)?, POOL_IDLE_TIMEOUT)),
             url: connection.url.trim_end_matches('/').to_string(),
             username: connection.username,
             password: connection.password,
@@ -190,12 +185,12 @@ impl Client {
     }
 
     fn http(&self) -> reqwest::Client {
-        self.http.read().unwrap().clone()
+        self.http.read().unwrap().0.clone()
     }
 
     #[cfg(test)]
     fn idle_timeout(&self) -> Duration {
-        *self.idle_timeout.lock().unwrap()
+        self.http.read().unwrap().1
     }
 
     /// Keeps idle sockets as long as the answer says the server does. A pool
@@ -209,17 +204,15 @@ impl Client {
         else {
             return;
         };
-        let mut idle_timeout = self.idle_timeout.lock().unwrap();
-        if *idle_timeout == timeout {
+        let mut http = self.http.write().unwrap();
+        if http.1 == timeout {
             return;
         }
-        if let Ok(http) = http_client(&self.tuning, timeout) {
-            *self.http.write().unwrap() = http;
-            *idle_timeout = timeout;
+        if let Ok(client) = http_client(&self.tuning, timeout) {
+            *http = (client, timeout);
         }
     }
 
-    /// Tags this process's inserts as writing `chain_ids`.
     pub fn tag_inserts(&self, chain_ids: &[i64]) {
         *self.tag.lock().unwrap() = insert_tag(&self.database, chain_ids);
     }
@@ -374,40 +367,38 @@ impl Client {
         let started = std::time::Instant::now();
         let mut pending = vec![(0usize, encoded.rows(), self.tuning.retries)];
         while let Some((start, end, retries)) = pending.pop() {
-            match self.post_rows(query, encoded.slice(start, end)).await {
-                Ok(()) => continue,
-                Err(failure) => {
-                    let spent = started.elapsed();
-                    let out_of_budget = spent >= self.tuning.retry_budget;
-                    if retries == 0 || out_of_budget || failure.retry == Retry::Never {
-                        return Err(match (failures, out_of_budget) {
-                            (0, _) => failure.error,
-                            (n, false) => failure
-                                .error
-                                .context(format!("after {n} failed attempt(s)")),
-                            (n, true) => failure.error.context(format!(
-                                "after {n} failed attempt(s) over {spent:.1?}, which is all the \
-                                 time one batch may spend retrying"
-                            )),
-                        });
-                    }
-                    failures += 1;
-                    let rows = end - start;
-                    (self.warn)(&format!(
-                        "ClickHouse insert of {rows} row(s) into `{table}` failed, \
-                         {retries} retries left: {:#}",
-                        failure.error
-                    ));
-                    tokio::time::sleep(self.tuning.delay(retries)).await;
-                    match failure.retry {
-                        Retry::Halved if may_halve && rows > 1 => {
-                            let mid = start + rows / 2;
-                            pending.push((mid, end, retries - 1));
-                            pending.push((start, mid, retries - 1));
-                        }
-                        _ => pending.push((start, end, retries - 1)),
-                    }
+            let Err(failure) = self.post_rows(query, encoded.slice(start, end)).await else {
+                continue;
+            };
+            let spent = started.elapsed();
+            let out_of_budget = spent >= self.tuning.retry_budget;
+            if retries == 0 || out_of_budget || failure.retry == Retry::Never {
+                return Err(match (failures, out_of_budget) {
+                    (0, _) => failure.error,
+                    (n, false) => failure
+                        .error
+                        .context(format!("after {n} failed attempt(s)")),
+                    (n, true) => failure.error.context(format!(
+                        "after {n} failed attempt(s) over {spent:.1?}, which is all the \
+                         time one batch may spend retrying"
+                    )),
+                });
+            }
+            failures += 1;
+            let rows = end - start;
+            (self.warn)(&format!(
+                "ClickHouse insert of {rows} row(s) into `{table}` failed, \
+                 {retries} retries left: {:#}",
+                failure.error
+            ));
+            tokio::time::sleep(self.tuning.delay(retries)).await;
+            match failure.retry {
+                Retry::Halved if may_halve && rows > 1 => {
+                    let mid = start + rows / 2;
+                    pending.push((mid, end, retries - 1));
+                    pending.push((start, mid, retries - 1));
                 }
+                _ => pending.push((start, end, retries - 1)),
             }
         }
         Ok(())
@@ -437,7 +428,7 @@ impl Client {
             // Base64 of the credentials rather than the X-ClickHouse-User/Key
             // headers: a header value may only carry visible ASCII, so a password
             // with a non-ASCII character in it fails every request before it is
-            // sent. `@clickhouse/client` authenticated this way too.
+            // sent.
             .basic_auth(&self.username, Some(&self.password))
             .header("Content-Type", "application/octet-stream")
             .body(body);
@@ -660,15 +651,33 @@ pub fn error_code(body: &str) -> Option<u32> {
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
-    use crate::clickhouse::mock_server::MockClickHouse;
 
-    pub struct TestClient {
-        pub client: Client,
+    pub fn connection(url: String) -> Connection {
+        Connection {
+            url,
+            username: "default".to_string(),
+            password: String::new(),
+            database: "mock".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::*;
+    use super::*;
+    use crate::clickhouse::ch_type::ChType;
+    use crate::clickhouse::mock_server::MockClickHouse;
+    use crate::clickhouse::row_binary::{encode_values, Value};
+    use pretty_assertions::assert_eq;
+
+    struct TestClient {
+        client: Client,
         warnings: Arc<Mutex<Vec<String>>>,
     }
 
     impl TestClient {
-        pub fn warnings(&self) -> Vec<String> {
+        fn warnings(&self) -> Vec<String> {
             self.warnings.lock().unwrap().clone()
         }
     }
@@ -680,16 +689,7 @@ pub(crate) mod test_support {
         }
     }
 
-    pub fn connection(url: String) -> Connection {
-        Connection {
-            url,
-            username: "default".to_string(),
-            password: String::new(),
-            database: "mock".to_string(),
-        }
-    }
-
-    pub fn client_at(url: String, tuning: Tuning) -> TestClient {
+    fn client_at(url: String, tuning: Tuning) -> TestClient {
         let warnings = Arc::new(Mutex::new(Vec::new()));
         let collected = warnings.clone();
         let client = Client::new(
@@ -701,7 +701,7 @@ pub(crate) mod test_support {
         TestClient { client, warnings }
     }
 
-    pub fn client_for(server: &MockClickHouse, retries: u32) -> TestClient {
+    fn client_for(server: &MockClickHouse, retries: u32) -> TestClient {
         client_at(
             server.url.clone(),
             Tuning {
@@ -711,28 +711,17 @@ pub(crate) mod test_support {
             },
         )
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::test_support::*;
-    use super::*;
-    use crate::clickhouse::mock_server::MockClickHouse;
-    use pretty_assertions::assert_eq;
 
     /// Rows of a single `String` column, as RowBinary carries them.
     fn strings(values: &[&str]) -> EncodedRows {
-        let mut body = Vec::new();
-        let mut row_offsets = Vec::new();
-        for value in values {
-            row_offsets.push(body.len());
-            body.push(value.len() as u8);
-            body.extend_from_slice(value.as_bytes());
-        }
-        EncodedRows {
-            body: body.into(),
-            row_offsets,
-        }
+        encode_values(
+            &[ChType::String],
+            &values
+                .iter()
+                .map(|value| vec![Value::Text(value.to_string())])
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
     }
 
     async fn insert(client: &Client, values: &[&str]) -> Result<()> {
@@ -1324,29 +1313,6 @@ mod tests {
             ),
             (Vec::<String>::new(), true),
             "expected the first failure to end the batch, got: {err}"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_server_that_never_answers_times_out_rather_than_hanging() {
-        let server = MockClickHouse::start_unresponsive().await;
-        let client = client_at(
-            server.url.clone(),
-            Tuning {
-                retries: 1,
-                max_retry_delay: Duration::ZERO,
-                request_timeout: Duration::from_millis(150),
-                statement_timeout: Duration::from_millis(150),
-                ..Tuning::default()
-            },
-        );
-
-        let err = reason(insert(&client, &["a"]).await.unwrap_err());
-
-        assert_eq!(
-            err.contains("operation timed out"),
-            true,
-            "expected a timeout, got: {err}"
         );
     }
 

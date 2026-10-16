@@ -1,10 +1,5 @@
 //! The indexer's Postgres storage: every statement it runs, and the
 //! transactions they run in.
-//!
-//! JavaScript keeps what only it can do — reading entity values out of its own
-//! objects into staged arenas, and decoding rows back into them — and hands
-//! each storage operation over in one call. Everything between, from the SQL to
-//! which failure in a batch is the one worth reporting, happens here.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -19,9 +14,7 @@ use crate::columnar::ColumnKind;
 use super::client::{PgClient, Transaction};
 use super::ddl::{create_partition_query, create_table_query, ColumnSpec, TableSpec};
 use super::error::sql_state;
-use super::history::{
-    History, Sequence, CHANGE_COLUMN, CHANGE_TYPE, CHECKPOINT_COLUMN, DELETE, SET,
-};
+use super::history::{History, CHANGE_TYPE};
 use super::index_definition::IndexDefinition;
 use super::index_row;
 use super::indexes::{IndexEvent, Indexes, Report};
@@ -35,13 +28,13 @@ use super::write;
 use crate::entity_filter::Condition;
 use crate::storage::rows::ResultSet;
 use crate::storage::types::{
-    Addresses, Bounds, CacheTable, ChainMeta, Checkpoints, Frontier, Progress, ProgressDiff,
-    ReorgCheckpoint, ResumedChain, StoredChain, StoredConfig,
+    Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, Frontier, Progress,
+    ProgressDiff, ReorgCheckpoint, ResumedChain, Sequence, StoredConfig, CHAINS_TABLE,
+    CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, DELETE, SET,
 };
 use crate::storage::{
-    self as composite, AddChain, Batch, CacheDump, CacheFile, EntityStore, EntityWrite, Failure,
-    Handoff, Initialize, Op, PgEntityWrite, Resumed, RollbackWrite, Rows, Store, StoredConfigRead,
-    WriteError,
+    self as composite, AddChain, Batch, CacheDump, CacheFile, EntityWrite, Failure, Handoff,
+    Initialize, PgEntityWrite, Resumed, RollbackWrite, Rows, StoredConfigRead, WriteError,
 };
 
 pub struct Settings {
@@ -175,7 +168,7 @@ impl Entity {
             ..column.clone()
         };
         let checkpoint = ColumnSpec {
-            name: CHECKPOINT_COLUMN.to_string(),
+            name: CHECKPOINT_ID_COLUMN.to_string(),
             field_type: FieldType::UInt64,
             is_array: false,
             is_nullable: false,
@@ -270,10 +263,6 @@ fn address_params(addresses: &Addresses, with_registration_blocks: bool) -> Vec<
 /// One statement of a batch, pending, and what it reports if it fails.
 type Statement<'a> = Pin<Box<dyn Future<Output = std::result::Result<(), Failure>> + Send + 'a>>;
 
-fn pg_table(table: &composite::Table) -> Result<Arc<Table>> {
-    table.postgres().cloned()
-}
-
 pub struct Storage {
     pub client: PgClient,
     settings: Settings,
@@ -341,10 +330,10 @@ impl Storage {
         )
     }
 
-    fn create_partition(&self, partition: &composite::Partition) -> Result<String> {
-        Ok(create_partition_query(
+    fn create_partition(&self, partition: &composite::Partition) -> Option<String> {
+        Some(create_partition_query(
             self.schema(),
-            partition.table.postgres()?.name(),
+            partition.table.postgres.as_ref()?.name(),
             &partition.name,
             partition.chain_id,
         ))
@@ -359,7 +348,7 @@ impl Storage {
                  (table_name = 'event_sync_state' OR table_name = $2);",
                 &[
                     Param::Text(self.schema().to_string()),
-                    Param::Text(internal::CHAINS.to_string()),
+                    Param::Text(CHAINS_TABLE.to_string()),
                 ],
             )
             .await?;
@@ -383,7 +372,7 @@ impl Storage {
         if !names.is_empty()
             && !names
                 .iter()
-                .any(|name| name == internal::CHAINS || name == "event_sync_state")
+                .any(|name| name == CHAINS_TABLE || name == "event_sync_state")
         {
             bail!(
                 "Cannot run Envio migrations on PostgreSQL schema \"{schema}\" because it contains \
@@ -406,13 +395,12 @@ impl Storage {
     /// Only tables, keys, views and chain rows. The schema's read indexes make
     /// backfill writes far dearer, so they come later, from
     /// `finalizeBackfill`.
-    pub async fn initialize(&self, input: &Initialize) -> Result<()> {
-        let is_empty_schema = self.check_schema_for_initialize().await?;
+    pub async fn initialize(&self, input: &Initialize, is_empty_schema: bool) -> Result<()> {
         let schema = self.schema();
         let tables = input
             .tables
             .iter()
-            .filter_map(|table| table.postgres.clone())
+            .filter_map(|table| table.postgres.as_deref())
             .collect::<Vec<_>>();
         let mut ddl = Vec::new();
         // A hosted database already has a `public` schema it won't let us
@@ -451,11 +439,12 @@ impl Storage {
         for table in &tables {
             ddl.push(self.create_table(&table.spec)?);
         }
-        for partition in &input.partitions {
-            if partition.table.postgres.is_some() {
-                ddl.push(self.create_partition(partition)?);
-            }
-        }
+        ddl.extend(
+            input
+                .partitions
+                .iter()
+                .filter_map(|partition| self.create_partition(partition)),
+        );
         // History stays unpartitioned: it is only ever read by checkpoint,
         // never by chain, so partitioning it would route every write and prune
         // nothing.
@@ -519,16 +508,14 @@ impl Storage {
     /// Brings a chain the schema doesn't have yet: its partitions, its config
     /// addresses and its row. Only one process ever adds a given chain.
     pub async fn add_chain(&self, input: &AddChain) -> Result<()> {
-        let partitions = input
-            .partitions
-            .iter()
-            .filter(|partition| partition.table.postgres.is_some())
-            .map(|partition| self.create_partition(partition))
-            .collect::<Result<Vec<_>>>()?;
         let transaction = self.client.begin().await?;
         let outcome = async {
-            for partition in &partitions {
-                transaction.batch(partition).await?;
+            for partition in input
+                .partitions
+                .iter()
+                .filter_map(|partition| self.create_partition(partition))
+            {
+                transaction.batch(&partition).await?;
             }
             self.insert_addresses(&transaction, &input.addresses)
                 .await?;
@@ -602,7 +589,7 @@ impl Storage {
                 chains: chains
                     .iter()
                     .map(|row| {
-                        Ok(StoredChain {
+                        Ok(ChainConfig {
                             id: cell(row, 0)?,
                             ecosystem: cell(row, 1)?,
                             start_block: cell(row, 2)?,
@@ -763,21 +750,15 @@ impl Storage {
         rows.first().map(|row| cell(row, 0)).transpose()
     }
 
-    /// The lowest checkpoint kept, which is the chain's own under a counter per
-    /// chain.
-    pub async fn lowest_checkpoint(
-        &self,
-        chain_id: i64,
-        sequence: Sequence,
-    ) -> Result<Option<i64>> {
-        let params = match sequence {
-            Sequence::PerChain => vec![Param::Text(chain_id.to_string())],
-            Sequence::SharedAcrossChains => vec![],
-        };
+    pub async fn lowest_checkpoint(&self, chain_id: Option<i64>) -> Result<Option<i64>> {
+        let params = chain_id
+            .map(|chain_id| Param::Text(chain_id.to_string()))
+            .into_iter()
+            .collect::<Vec<_>>();
         let (rows, _) = self
             .client
             .query(
-                &internal::lowest_checkpoint(self.schema(), sequence),
+                &internal::lowest_checkpoint(self.schema(), chain_id.is_some()),
                 &params,
             )
             .await?;
@@ -983,7 +964,9 @@ impl Storage {
         };
         let caches = async {
             let writes = effect_caches.iter().map(|write| async move {
-                let table = pg_table(&write.table)
+                let table = write
+                    .table
+                    .postgres()
                     .map_err(|error| Failure::new(insert_context(&write.table.name), error))?;
                 if write.create {
                     let create = self
@@ -994,7 +977,7 @@ impl Storage {
                         .await
                         .map_err(|error| Failure::new(insert_context(table.name()), error))?;
                 }
-                self.insert(None, &table, &write.rows).await
+                self.insert(None, table, &write.rows).await
             });
             settle(join_all(writes).await)
         };
@@ -1096,20 +1079,24 @@ impl Storage {
             ));
         }
         if let Some(write) = raw_events {
-            let table = pg_table(&write.table)
+            let table = write
+                .table
+                .postgres()
                 .map_err(|error| Failure::new(insert_context(&write.table.name), error))?;
-            statements.push(Box::pin(async move {
-                self.insert(Some(transaction), &table, &write.rows).await
-            }));
+            statements.push(Box::pin(self.insert(Some(transaction), table, &write.rows)));
         }
         for write in entities {
             if let Some(rows) = &write.postgres {
-                let table = pg_table(&write.table)
+                let table = write
+                    .table
+                    .postgres()
                     .map_err(|error| Failure::new(insert_context(&write.table.name), error))?;
-                statements.push(Box::pin(async move {
-                    self.write_entity(transaction, &table, write.chain_id, rows)
-                        .await
-                }));
+                statements.push(Box::pin(self.write_entity(
+                    transaction,
+                    table,
+                    write.chain_id,
+                    rows,
+                )));
             }
         }
         let meta_sql = internal::set_meta(schema);
@@ -1398,31 +1385,6 @@ impl Storage {
             Some(error) => Err(error),
             None => Ok(()),
         }
-    }
-}
-
-impl EntityStore for Storage {
-    fn store(&self) -> Store {
-        Store::Postgres
-    }
-
-    fn load_where<'a>(
-        &'a self,
-        table: &'a composite::Table,
-        conditions: Vec<Condition>,
-    ) -> Op<'a, ResultSet> {
-        Box::pin(async move {
-            let table = table.postgres()?;
-            Storage::load_where(self, table.name(), conditions).await
-        })
-    }
-
-    fn rollback_data<'a>(
-        &'a self,
-        table: &'a composite::Table,
-        bounds: &'a Bounds,
-    ) -> Op<'a, (ResultSet, ResultSet)> {
-        Box::pin(async move { Storage::rollback_data(self, table.postgres()?, bounds).await })
     }
 }
 

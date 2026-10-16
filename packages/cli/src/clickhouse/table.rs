@@ -51,9 +51,6 @@ pub struct Column {
 
 /// An entity as ClickHouse keeps it: every change a row of its history table.
 pub struct Table {
-    pub name: String,
-    /// The history table.
-    pub physical: String,
     pub columns: Vec<Column>,
     /// What a staged batch carries, in order: the entity's columns, then the
     /// checkpoint and the change.
@@ -120,8 +117,8 @@ impl Table {
             bail!("{context} was registered with no columns");
         }
         let entity = EntitySpec {
-            name: input.name.clone(),
-            history_table: input.history_table.clone(),
+            name: input.name,
+            history_table: input.history_table,
             columns: specs,
             chain_id_column: input.chain_id_column,
             partition_by: input.partition_by,
@@ -132,12 +129,10 @@ impl Table {
         let staged = entity.history_columns(chain_id_mode)?;
         let insert_query = ddl::insert_query(
             database,
-            &input.history_table,
+            &entity.history_table,
             staged.iter().map(|(name, _)| name),
         );
         Ok(Self {
-            name: input.name,
-            physical: input.history_table,
             columns,
             staged,
             insert_query,
@@ -145,14 +140,12 @@ impl Table {
         })
     }
 
-    /// The column rows read as `row_name`.
     pub fn column(&self, row_name: &str) -> Option<&Column> {
         self.columns
             .iter()
             .find(|column| column.row_name == row_name)
     }
 
-    /// The slot each staged column travels in.
     pub fn staged_kinds(&self) -> Vec<ColumnKind> {
         self.staged
             .iter()
@@ -297,7 +290,7 @@ mod tests {
         let table = account();
         assert_eq!(
             (
-                table.physical.as_str(),
+                table.entity.history_table.as_str(),
                 table
                     .staged
                     .iter()

@@ -23,7 +23,6 @@ pub enum Cell<'a> {
 }
 
 impl Cell<'_> {
-    /// The same value owning what it borrowed.
     #[cfg(test)]
     pub fn into_owned(self) -> Cell<'static> {
         match self {
