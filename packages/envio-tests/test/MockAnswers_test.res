@@ -294,9 +294,21 @@ The list replies only once every entry matches, but the indexer may send a query
         {partitionId: "0", reply: LeavePending},
       ])
       await mock.expectItemsQueries([{partitionId: "0", reply: Respond({items: []})}])
-      t.expect(mock.repliedItemsQueries).toEqual([
-        {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0},
-      ])
+      let replied = mock.repliedItemsQueries->Array.copy
+      let _ = await failureOf(
+        mock.expectItemsQueries([
+          {
+            partitionId: "0",
+            fromBlock: 101,
+            reply: Respond({items: [{blockNumber: 50, logIndex: 0}]}),
+          },
+          {partitionId: "1", reply: LeavePending},
+        ]),
+      )
+      t.expect(
+        (replied, mock.repliedItemsQueries),
+        ~message="a call that replied to nothing leaves nothing behind from the one before",
+      ).toEqual(([{partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}], []))
       await mock.respondEmptyUpTo(300)
       await indexer.getBatchWritePromise()
     },
@@ -327,15 +339,21 @@ The list replies only once every entry matches, but the indexer may send a query
       mock.resolveGetHeightOrThrow(300)
       await mock.expectItemsQueries([{fromBlock: 1, reply: Respond({items: []})}])
       await indexer.getBatchWritePromise()
-      t.expect(
+      let refusalFor = async blockNumber =>
         await failureOf(
           mock.expectItemsQueries([
-            {fromBlock: 101, reply: Respond({items: [{blockNumber: 150, logIndex: 0}]})},
+            {fromBlock: 101, reply: Respond({items: [{blockNumber, logIndex: 0}]})},
           ]),
-        ),
-      ).toEqual(
+        )
+      let pastFromBlock = await refusalFor(150)
+      let beforeFromBlock = await refusalFor(100)
+      t.expect(
+        (pastFromBlock, beforeFromBlock),
+        ~message="only an item past the reply's end is fixed by fetching further",
+      ).toEqual((
         Some(`expectItemsQueries can't reply an item at block 150 to {partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (101). The query is unbounded, so a reply without latestFetchedBlockNumber stops at its fromBlock. To fetch up to the height the indexer knew, reply latestFetchedBlockNumber: 300`),
-      )
+        Some(`expectItemsQueries can't reply an item at block 100 to {partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (101)`),
+      ))
       await mock.expectItemsQueries([
         {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
       ])

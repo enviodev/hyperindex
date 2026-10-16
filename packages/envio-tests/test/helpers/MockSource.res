@@ -834,6 +834,7 @@ let make = (
   }
 
   let expectItemsQueries = async expected => {
+    repliedItemsQueries->Utils.Array.clearInPlace
     let replyingIndices = expected->Array.reduceWithIndex([], (indices, entry, index) => {
       if entry->isReplying {
         indices->Array.push(index)->ignore
@@ -887,7 +888,7 @@ let make = (
         ) {
         | Some(item) =>
           let hint = switch (query.toBlock, response.latestFetchedBlockNumber) {
-          | (Unbounded, None) =>
+          | (Unbounded, None) if item.blockNumber > latest =>
             `. The query is unbounded, so a reply without latestFetchedBlockNumber stops at its fromBlock. To fetch up to the height the indexer knew, reply latestFetchedBlockNumber: ${query
               ->knownHeightAtQuery
               ->Int.toString}`
@@ -901,7 +902,6 @@ let make = (
       | _ => ()
       }
     )
-    repliedItemsQueries->Utils.Array.clearInPlace
     replies->Array.forEach(((query, reply, _)) => {
       repliedItemsQueries->Array.push(query)->ignore
       switch reply {
