@@ -175,6 +175,7 @@ let withInternalOverrides = (
 }
 
 @set external setErrorMessage: (JsExn.t, string) => unit = "message"
+type rescriptExn = {@as("RE_EXN_ID") id: string, mutable message?: string}
 
 let run = async (
   scenario: t,
@@ -270,14 +271,20 @@ let run = async (
       | () => ()
       // A failure says what the mocks were left holding, so finding out what
       // the indexer asked for doesn't take a probe of its own.
-      | exception JsExn(error) if mocks->Array.length > 0 =>
-        error->setErrorMessage(
-          [
-            error->JsExn.message->Option.getOr(""),
-            ...mocks->Array.map(((_, mock)) => mock.describeState()),
-          ]->Array.join("\n\n"),
-        )
-        JsExn.throw(error)
+      | exception exn if mocks->Array.length > 0 =>
+        let report = message =>
+          [message, ...mocks->Array.map(((_, mock)) => mock.describeState())]->Array.join("\n\n")
+        switch exn {
+        | JsExn(error) =>
+          error->setErrorMessage(report(error->JsExn.message->Option.getOr("")))
+          JsExn.throw(error)
+        | exn =>
+          // A ReScript exception is thrown as a plain object, so the report goes
+          // on it directly and it still matches as the same exception.
+          let raw = exn->(Utils.magic: exn => rescriptExn)
+          raw.message = Some(report(raw.id))
+          throw(exn)
+        }
       }
       // Only after the body passed: a failing body has its own error to report,
       // and answers it never got to were never going to be claimed anyway.

@@ -69,4 +69,29 @@ Mock source for chain 1 at the failure:
       ),
     )
   })
+
+  Async.it("says what each mock source had pending after a ReScript exception", async t => {
+    let rejection = await rejectionOf(
+      scenario->Scenario.run(
+        ~sources=[{chain: 1}],
+        async (~indexer as _, ~source) => {
+          let mock = source(1)
+          mock.resolveGetHeightOrThrow(300)
+          await mock.expectItemsQueries([{reply: LeavePending}])
+          throw(Not_found)
+        },
+      ),
+    )
+    t.expect(rejection->Option.map(rejection => rejection.message)).toEqual(
+      Some(
+        Nullable.make(`Not_found
+
+Mock source for chain 1 at the failure:
+  pending item queries:
+    {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}
+  pending block-hash lookups: none
+  height calls taken: 1`),
+      ),
+    )
+  })
 })
