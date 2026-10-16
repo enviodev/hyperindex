@@ -213,19 +213,11 @@ describe("Sibling-chain rollback with an in-flight query", () => {
         reply: Respond({items: [], latestFetchedBlockNumber: 301}),
       },
     ])
-    // The rollback target usually comes from the recorded safe checkpoints;
-    // serve getBlockHashes only if the depth search asks for it.
-    let attempts = ref(0)
-    while sibling.getBlockHashesCalls->Array.length === 0 && attempts.contents < 100 {
-      attempts := attempts.contents + 1
-      await Utils.delay(0)
-    }
-    if sibling.getBlockHashesCalls->Array.length > 0 {
-      sibling.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-        {blockNumber: 200, blockHash: "0x200", blockTimestamp: 200},
-      ])
-    }
+    // The depth search asks about block 200, which the source still agrees with.
+    await sibling.expectBlockHashLookup({
+      blockNumbers: [200],
+      reply: [{blockNumber: 200, blockHash: "0x200", blockTimestamp: 200}],
+    })
     await indexer.getRollbackReadyPromise()
 
     let progressAfterRollback = await victimProgress(indexer)

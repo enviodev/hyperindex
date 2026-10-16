@@ -320,19 +320,16 @@ describe("E2E rollback tests", () => {
         }),
       },
     ])
-    await Utils.delay(0)
-    await Utils.delay(0)
 
-    t.expect(
-      sourceMock.getBlockHashesCalls,
-      ~message="Should have called getBlockHashes to find rollback depth",
-    ).toEqual([[100, 101]])
-    sourceMock.resolveGetBlockHashes([
-      // The block 100 is untouched so we can rollback to it; 101 came back on a
-      // different hash, so it belongs to the reorg.
-      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-      {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
-    ])
+    await sourceMock.expectBlockHashLookup({
+      blockNumbers: [100, 101],
+      reply: [
+        // The block 100 is untouched so we can rollback to it; 101 came back on a
+        // different hash, so it belongs to the reorg.
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
+      ],
+    })
 
     await indexer.getRollbackReadyPromise()
 
@@ -668,18 +665,16 @@ describe("E2E rollback tests", () => {
         // The chunks above, voided by the rollback.
         {partitionId: "0", reply: LeavePending},
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should query the scanned blocks below the reorg",
-      ).toEqual([[100, 101, 102]])
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-        {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
-      ])
+      // The rollback queries the scanned blocks below the reorg.
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101, 102],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+          {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
+        ],
+      })
 
       switch await Promise.race([
         indexer.getRollbackReadyPromise()->Promise.thenResolve(_ => Ok()),
@@ -757,17 +752,12 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // The rollback starts finding its depth even though the batch hasn't finished.
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="a reorg detected mid-batch should start finding the rollback depth",
-      ).toEqual([[100]])
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100],
+        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
+      })
 
       // Releasing the handler lets the batch finish; its progress is applied and the
       // parked rollback then executes and re-requests from the rolled-back block.
@@ -876,17 +866,14 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100]])
-      sourceMock.resolveGetBlockHashes([
-        // The block 100 is untouched so we can rollback to it
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100],
+        reply: [
+          // The block 100 is untouched so we can rollback to it
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        ],
+      })
 
       await indexer.getRollbackReadyPromise()
       // The fetch state is rolled back and items re-requested.
@@ -1114,19 +1101,16 @@ describe("E2E rollback tests", () => {
         // The DC partition's chunks above, voided by the rollback.
         {partitionId: "1", reply: LeavePending},
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 101, 102]])
-      sourceMock.resolveGetBlockHashes([
-        // The block 102 is untouched so we can rollback to it
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-        {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101, 102],
+        reply: [
+          // The block 102 is untouched so we can rollback to it
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+          {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
+        ],
+      })
 
       await sourceMock.expectItemsQueries([
         {
@@ -1481,18 +1465,15 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      t.expect(
-        sourceMock1337.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 103]])
-      sourceMock1337.resolveGetBlockHashes([
-        // The block 103 is untouched so we can rollback to it
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
-      ])
+      await sourceMock1337.expectBlockHashLookup({
+        blockNumbers: [100, 103],
+        reply: [
+          // The block 103 is untouched so we can rollback to it
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
+        ],
+      })
 
       // Clean up pending calls from before rollback
       sourceMock100.drainPendingItemsQueries()
@@ -1994,18 +1975,15 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      t.expect(
-        sourceMock1337.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 103]])
-      sourceMock1337.resolveGetBlockHashes([
-        // The block 103 is untouched so we can rollback to it
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
-      ])
+      await sourceMock1337.expectBlockHashLookup({
+        blockNumbers: [100, 103],
+        reply: [
+          // The block 103 is untouched so we can rollback to it
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
+        ],
+      })
 
       // Clean up pending calls from before rollback
       sourceMock100.drainPendingItemsQueries()
@@ -2230,12 +2208,13 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ],
+      })
       await indexer.getRollbackReadyPromise()
 
       // Second reorg before any batch is written: the store has already
@@ -2249,11 +2228,10 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100],
+        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
+      })
       await indexer.getRollbackReadyPromise()
 
       await sourceMock.expectItemsQueries([{coversBlock: 101, reply: Respond({items: []})}])
@@ -2323,19 +2301,15 @@ describe("E2E rollback tests", () => {
         // The chunks above, voided by the rollback.
         {partitionId: "0", reply: LeavePending},
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes for first reorg",
-      ).toEqual([[100, 101]])
 
       // Rollback to block 100 - blocks 101-103 are reorged
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ],
+      })
 
       await indexer.getRollbackReadyPromise()
 
@@ -2359,17 +2333,11 @@ describe("E2E rollback tests", () => {
         },
       ])
 
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes for second reorg",
-      ).toEqual([[100, 101], [100]])
       // Rollback to block 100 - blocks 101-103 are reorged
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100],
+        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
+      })
       await indexer.getRollbackReadyPromise()
 
       // Check metrics after processing - should have 2 events
@@ -2513,16 +2481,17 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // getBlockHashes called with [100, 102]: both are stored in the
       // threshold below 103. Block 100 still matches and 102 came back on
       // the new fork → rollback target = 100.
-      sourceMock1337.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
-      ])
+      await sourceMock1337.expectBlockHashLookup({
+        blockNumbers: [100, 102],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
+        ],
+      })
 
       // Clean up pending calls from before rollback
       sourceMock100.drainPendingItemsQueries()
@@ -2748,13 +2717,14 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      sourceMock1337.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
-      ])
+      await sourceMock1337.expectBlockHashLookup({
+        blockNumbers: [100, 102],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
+        ],
+      })
 
       await indexer.getRollbackReadyPromise()
 
@@ -2912,23 +2882,19 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 101, 103, 104, 106, 112]])
 
       // Rollback to block 112
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
-        {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
-        {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
-        {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101, 103, 104, 106, 112],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
+          {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
+          {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
+          {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
+        ],
+      })
 
       // Clean up pending calls from before rollback
       sourceMock.drainPendingItemsQueries()
@@ -3030,25 +2996,21 @@ describe("E2E rollback tests", () => {
         },
         {partitionId: "0", reply: LeavePending},
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // Stored checkpoints below reorgBlockNumber(118): [100, 103, 106, 112, 115]
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 101, 103, 104, 106, 112, 115]])
-
       // All searched blocks are valid, so the reorg is shallow (only block 118).
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
-        {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
-        {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
-        {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
-        {blockNumber: 115, blockHash: "0x0115", blockTimestamp: 100},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101, 103, 104, 106, 112, 115],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
+          {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
+          {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
+          {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
+          {blockNumber: 115, blockHash: "0x0115", blockTimestamp: 100},
+        ],
+      })
 
       // Clean up pending calls from before rollback
       sourceMock.drainPendingItemsQueries()
@@ -3148,16 +3110,11 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      t.expect(
-        sourceMock1.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100]])
-      sourceMock1.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-      ])
+      await sourceMock1.expectBlockHashLookup({
+        blockNumbers: [100],
+        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
+      })
 
       await indexer.getRollbackReadyPromise()
 
@@ -3393,17 +3350,14 @@ describe("E2E rollback tests", () => {
         // The chunks above, drained once the rollback starts.
         {partitionId: "0", reply: LeavePending},
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      t.expect(
-        sourceMock1337.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 103]])
-      sourceMock1337.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
-      ])
+      await sourceMock1337.expectBlockHashLookup({
+        blockNumbers: [100, 103],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
+        ],
+      })
 
       // Let the rollback proceed to the flush of the stalled write, then
       // release it. If the rollback read the progress diff before flushing,

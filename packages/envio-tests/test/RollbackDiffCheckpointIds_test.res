@@ -186,20 +186,14 @@ describe("Rollback diff checkpoint ids", () => {
         () => source1337.reorgCallCount() > reorgsBefore,
         ~message="the reorg to be detected and the rollback's depth search to start",
       )
-      await Scenario.waitUntil(
-        () => source1337.getBlockHashesCalls->Array.length > 0,
-        ~message="the rollback's depth search to re-fetch the scanned block hashes",
-      )
-      source1337.resolveGetBlockHashes(
-        [(100, "0x100"), (101, "0x101")]->Array.map(((
-          blockNumber,
-          blockHash,
-        )): BlockStore.inputBlock => {
-          blockNumber,
-          blockHash,
-          blockTimestamp: blockNumber,
-        }),
-      )
+      // The rollback's depth search re-fetches the scanned block hashes.
+      await source1337.expectBlockHashLookup({
+        blockNumbers: [100, 101],
+        reply: [
+          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
+        ],
+      })
       await indexer.getRollbackReadyPromise()
 
       // The diff only reaches storage with the next batch, so chain 1337

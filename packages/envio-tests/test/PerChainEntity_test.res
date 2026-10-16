@@ -227,12 +227,13 @@ describe("Chain-scoped rollback", () => {
         {partitionId: "0", reply: LeavePending},
       ])
 
-      await Utils.delay(0)
-      await Utils.delay(0)
-      source1.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-      ])
+      await source1.expectBlockHashLookup({
+        blockNumbers: [100, 101],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ],
+      })
       await indexer.getRollbackReadyPromise()
 
       // The rollback diff is written with the next batch, so drive chain 1 once
@@ -430,12 +431,13 @@ describe("Per-chain history and removal", () => {
         },
         {partitionId: "0", reply: LeavePending},
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
-      source1.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-      ])
+      await source1.expectBlockHashLookup({
+        blockNumbers: [100, 101],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ],
+      })
       await indexer.getRollbackReadyPromise()
       await source1.expectItemsQueries([
         {

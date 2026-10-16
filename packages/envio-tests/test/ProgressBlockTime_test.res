@@ -89,8 +89,8 @@ let metricValue = async (indexer: IndexerRunner.t, name) =>
 // Progress block and its timestamp, sampled while a reorg resolves and
 // deduplicated. Taken through the rollback rather than after it: the re-fetch
 // restores progress within a few ticks, and the rolled-back state in between is
-// what has to stay consistent. `validUpTo` is the last block the source still
-// agrees with, which the depth search asks about one range at a time.
+// what has to stay consistent. `lookup` is answered as soon as the rollback asks
+// for it, while sampling goes on.
 //
 // `answerRefetch` covers the re-fetch queries the rollback schedules. A test
 // that needs the rolled-back state to stay put leaves them pending instead:
@@ -98,26 +98,15 @@ let metricValue = async (indexer: IndexerRunner.t, name) =>
 let traceThroughRollback = async (
   ~indexer: IndexerRunner.t,
   ~mock: MockSource.t,
-  ~validUpTo,
+  ~lookup=?,
   ~answerRefetch=false,
 ) => {
+  let lookupAnswered = switch lookup {
+  | Some(lookup) => mock.expectBlockHashLookup(lookup)
+  | None => Promise.resolve()
+  }
   let trace = []
   for _ in 0 to 300 {
-    if mock.getBlockHashesCalls->Array.length > 0 {
-      let requested = mock.getBlockHashesCalls->Array.copy
-      mock.resolveGetBlockHashes(
-        requested
-        ->Array.flat
-        ->Array.map((blockNumber): BlockStore.inputBlock => {
-          blockNumber,
-          blockHash: blockNumber <= validUpTo
-            ? `0x${blockNumber->Int.toString}`
-            : `0x${blockNumber->Int.toString}a`,
-          blockTimestamp: blockNumber,
-        }),
-      )
-      mock.getBlockHashesCalls->Utils.Array.clearInPlace
-    }
     if answerRefetch && mock.pendingItemsQueries->Array.length > 0 {
       mock.drainPendingItemsQueries(~latestFetchedBlockNumber=301)
     }
@@ -130,6 +119,7 @@ let traceThroughRollback = async (
     }
     await Utils.delay(0)
   }
+  await lookupAnswered
   trace
 }
 
@@ -256,7 +246,16 @@ describe("Progress block time", () => {
         },
       ])
 
-      let trace = await traceThroughRollback(~indexer, ~mock, ~validUpTo=300)
+      // Block 100 is the only stored block below the reorged 300, and the
+      // source still agrees with it.
+      let trace = await traceThroughRollback(
+        ~indexer,
+        ~mock,
+        ~lookup={
+          blockNumbers: [100],
+          reply: [{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}],
+        },
+      )
 
       t.expect(
         trace,
@@ -298,8 +297,12 @@ describe("Progress block time", () => {
         },
       ])
 
-      let trace = await traceThroughRollback(~indexer, ~mock, ~validUpTo=299, ~answerRefetch=true)
+      let trace = await traceThroughRollback(~indexer, ~mock, ~answerRefetch=true)
 
+      t.expect(
+        mock.getBlockHashesCalls,
+        ~message="no stored block in the reorg threshold lies below block 300, so there's nothing to look up",
+      ).toEqual([])
       t.expect(
         trace,
         ~message="block 300 is orphaned, so its timestamp can't stand for the block progress lands on",

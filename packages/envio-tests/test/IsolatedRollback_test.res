@@ -253,12 +253,10 @@ let reorgAt = async (
   // and falls straight back to the threshold's lower edge, so an empty
   // `scanned` waits for no call.
   if scanned->Array.length > 0 {
-    await Scenario.waitUntil(
-      () => source.getBlockHashesCalls->Array.length > 0,
-      ~message="the rollback's depth search to re-fetch the scanned block hashes",
-    )
-    source.resolveGetBlockHashes(
-      scanned->Array.map(((blockNumber, fate)): BlockStore.inputBlock => {
+    // The rollback's depth search re-fetches the scanned block hashes.
+    await source.expectBlockHashLookup({
+      blockNumbers: scanned->Array.map(((blockNumber, _)) => blockNumber),
+      reply: scanned->Array.map(((blockNumber, fate)): BlockStore.inputBlock => {
         blockNumber,
         blockHash: switch fate {
         | #valid => `0x${blockNumber->Int.toString}`
@@ -266,7 +264,7 @@ let reorgAt = async (
         },
         blockTimestamp: blockNumber,
       }),
-    )
+    })
   }
   await indexer.getRollbackReadyPromise()
 }
@@ -862,7 +860,7 @@ describe("Isolated multichain rollback", () => {
         ~source=source1337,
         ~sibling=source100,
         ~atBlock=150,
-        ~scanned=[(100, #valid), (150, #orphaned)],
+        ~scanned=[(100, #valid)],
         ~chunksAbove=false,
       )
 
@@ -922,7 +920,7 @@ describe("Isolated multichain rollback", () => {
         ~source=source1337,
         ~sibling=source100,
         ~atBlock=150,
-        ~scanned=[(100, #valid), (150, #orphaned)],
+        ~scanned=[(100, #valid)],
         ~chunksAbove=false,
       )
 
