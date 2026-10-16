@@ -189,6 +189,24 @@ impl SelectionBuilder {
         address_set: &AddressSet,
         client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
     ) -> Result<BuiltSelection> {
+        self.build_address_free(
+            registration_indexes,
+            address_set,
+            client_filtered,
+            &Default::default(),
+        )
+    }
+
+    /// `build`, except the contracts in `address_free` are queried without
+    /// their address filter. Unlike a client-filtered contract they keep their
+    /// addresses in the partition's set, so routing still gates the logs on it.
+    pub(crate) fn build_address_free(
+        &self,
+        registration_indexes: &[i64],
+        address_set: &AddressSet,
+        client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
+        address_free: &crate::client_filtered_contracts::ClientFilteredContracts,
+    ) -> Result<BuiltSelection> {
         // Buckets: address-free selections pool together; address-bound ones
         // group per contract so one contract's query can't fetch a sibling's
         // logs (routing never re-applies the sibling's filter). Wildcard
@@ -266,7 +284,11 @@ impl SelectionBuilder {
             };
             if let Some(selections) = by_contract.get(contract_name) {
                 push_selections(
-                    &slice.addresses,
+                    if address_free.applies(contract_name) {
+                        &[]
+                    } else {
+                        &slice.addresses
+                    },
                     selections
                         .iter()
                         .map(|ts| ts.materialize(&slice.topics))

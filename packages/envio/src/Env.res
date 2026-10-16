@@ -22,6 +22,17 @@ let clientFilterAddressThreshold =
     ~fallback=maxAddrInPartition * maxChainConcurrency / 2,
   )
 
+// An RPC query spanning at most `rpcAddressFreeMaxBlockRange` blocks drops the
+// address filter of every contract its partition holds at least
+// `rpcAddressFreeMinAddresses` addresses of, and filters the logs against the
+// partition's addresses client-side. At the head each poll would otherwise
+// upload the same address list to read a block or two, while the logs of the
+// event signatures alone over so few blocks cost less than the list.
+let rpcAddressFreeMaxBlockRange =
+  envSafe->EnvSafe.get("ENVIO_RPC_ADDRESS_FREE_MAX_BLOCK_RANGE", S.int, ~fallback=10)
+let rpcAddressFreeMinAddresses =
+  envSafe->EnvSafe.get("ENVIO_RPC_ADDRESS_FREE_MIN_ADDRESSES", S.int, ~fallback=1_000)
+
 // Target number of in-memory objects (uncommitted entity/effect changes plus
 // unwritten batch items) the store holds before processing waits for the write
 // cycle to catch up.

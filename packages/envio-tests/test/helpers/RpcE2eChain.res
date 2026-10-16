@@ -6,6 +6,15 @@
 let contractAddress = "0x1111111111111111111111111111111111111111"
 let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
+// `contractAddress` followed by distinct made-up ones, for configs that need a
+// contract to hold many addresses.
+let trackedAddresses = count =>
+  [contractAddress]->Array.concat(
+    Array.fromInitializer(~length=count - 1, i =>
+      "0x" ++ (i + 1)->Int.toString(~radix=16)->String.padStart(40, "0")
+    ),
+  )
+
 let sender = Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(2)
 let recipient = Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(1)
 
@@ -21,8 +30,9 @@ let blockHash = blockNumber => blockNumber->hex->dropPrefix->padded
 let transactionHash = blockNumber => ("a" ++ blockNumber->Int.toString(~radix=16))->padded
 
 // A transfer of `value` at `logIndex` in `blockNumber`. `sighash` names a
-// different event on the same contract; it defaults to Transfer.
-type transfer = {blockNumber: int, value: int, logIndex: int, sighash?: string}
+// different event on the same contract; it defaults to Transfer. `emitter`
+// defaults to `contractAddress`.
+type transfer = {blockNumber: int, value: int, logIndex: int, sighash?: string, emitter?: string}
 
 // `extraFields` is spliced in as raw JSON, so a chain can serve a field beyond
 // the four the reorg check needs. Blocks carry those four and nothing else by
@@ -34,9 +44,9 @@ let blockJson = (blockNumber, ~extraFields="") =>
         ->blockHash}"${extraFields}}`,
   )
 
-let logJson = ({blockNumber, value, logIndex, ?sighash}) =>
+let logJson = ({blockNumber, value, logIndex, ?sighash, ?emitter}) =>
   JSON.parseOrThrow(
-    `{"address":"${contractAddress}","topics":["${sighash->Option.getOr(
+    `{"address":"${emitter->Option.getOr(contractAddress)}","topics":["${sighash->Option.getOr(
         transferSighash,
       )}","${sender->addressTopic}","${recipient->addressTopic}"],"data":"${value
       ->hex
@@ -72,9 +82,26 @@ let resultFor = (~transfers, ~height, ~blockFields=_ => "", ~receiptFor=?, ~meth
     let filter = arg(0)->JSON.Decode.object->Option.getOrThrow
     let fromBlock = filter->Dict.getUnsafe("fromBlock")->hexParam
     let toBlock = filter->Dict.getUnsafe("toBlock")->hexParam
+    let addresses =
+      filter
+      ->Dict.get("address")
+      ->Option.map(json =>
+        json
+        ->JSON.Decode.array
+        ->Option.getOrThrow
+        ->Array.map(address => address->JSON.Decode.string->Option.getOrThrow->String.toLowerCase)
+      )
     JSON.Array(
       transfers
-      ->Array.filter(({blockNumber}) => blockNumber >= fromBlock && blockNumber <= toBlock)
+      ->Array.filter(({blockNumber, ?emitter}) =>
+        blockNumber >= fromBlock &&
+        blockNumber <= toBlock &&
+        switch addresses {
+        | Some(addresses) =>
+          addresses->Array.includes(emitter->Option.getOr(contractAddress)->String.toLowerCase)
+        | None => true
+        }
+      )
       ->Array.map(logJson),
     )
   | _ => JsError.throwWithMessage(`Unexpected RPC method ${method}`)
@@ -106,7 +133,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
 
 // `blockJson` above serves only the fields the reorg check needs, so any
 // `fieldSelection` naming a block field is a field the provider will not return.
-let configYaml = (~name, ~url, ~extraRpc="", ~fieldSelection="") =>
+let configYaml = (~name, ~url, ~extraRpc="", ~fieldSelection="", ~addresses=[contractAddress]) =>
   `
 name: ${name}
 rollback_on_reorg: false${fieldSelection}
@@ -118,7 +145,7 @@ chains:
       for: sync${extraRpc}
     contracts:
       - name: Token
-        address: "${contractAddress}"
+        address: [${addresses->Array.map(address => `"${address}"`)->Array.join(", ")}]
         events:
           - event: Transfer(address indexed from, address indexed to, uint256 value)
 `
@@ -164,6 +191,31 @@ let callSummary = (mock: MockRpcServer.t) =>
   })
   ->Array.toSorted(String.compare)
 
+// Each eth_getLogs as its range and how many addresses its filter named, in the
+// order they were asked for. Zero means the query carried no address filter.
+let logFilters = (mock: MockRpcServer.t) =>
+  mock.requests->Array.filterMap(body => {
+    let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
+    switch request->Dict.getUnsafe("method")->JSON.Decode.string {
+    | Some("eth_getLogs") =>
+      let filter =
+        request
+        ->Dict.getUnsafe("params")
+        ->JSON.Decode.array
+        ->Option.getOrThrow
+        ->Array.getUnsafe(0)
+        ->JSON.Decode.object
+        ->Option.getOrThrow
+      let field = name => filter->Dict.getUnsafe(name)->JSON.Decode.string->Option.getOrThrow
+      let addressCount =
+        filter
+        ->Dict.get("address")
+        ->Option.mapOr(0, json => json->JSON.Decode.array->Option.getOrThrow->Array.length)
+      Some(`${field("fromBlock")}-${field("toBlock")} addresses=${addressCount->Int.toString}`)
+    | _ => None
+    }
+  })
+
 // The eth_getLogs ranges in the order they were asked for. Pages are sequential,
 // so unlike the concurrent block reads their order is meaningful: it shows how a
 // failed page narrows the ones that follow it.
@@ -180,8 +232,7 @@ let logRanges = (mock: MockRpcServer.t) =>
         ->Array.getUnsafe(0)
         ->JSON.Decode.object
         ->Option.getOrThrow
-      let field = name =>
-        filter->Dict.getUnsafe(name)->JSON.Decode.string->Option.getOrThrow
+      let field = name => filter->Dict.getUnsafe(name)->JSON.Decode.string->Option.getOrThrow
       Some(`${field("fromBlock")}-${field("toBlock")}`)
     | _ => None
     }

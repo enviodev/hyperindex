@@ -132,6 +132,9 @@ pub struct NextPageParams {
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
     pub client_filtered_contracts: Option<Vec<String>>,
+    /// Contracts to query without their address filter even though the
+    /// partition's set holds their addresses, which routing still gates on.
+    pub address_free_contracts: Option<Vec<String>>,
     /// How many times this query has already been retried, which sets how long
     /// a transient miss waits before the next attempt.
     pub retry: i64,
@@ -186,6 +189,10 @@ pub struct NextPageResult {
 /// for a provider erroring outright.
 const TRANSIENT_BACKOFF_STEP_MILLIS: i64 = 500;
 const TRANSIENT_BACKOFF_MIN_MILLIS: i64 = 100;
+
+/// The default partition size, so a re-read sends no query bigger than the
+/// ones the provider already serves for a partition.
+const TIGHT_FILTER_ADDRESSES_PER_QUERY: usize = 5_000;
 
 fn transient_backoff_millis(retry: i64) -> i64 {
     retry
@@ -501,12 +508,21 @@ impl EvmRpcClient {
             .suggested_interval(&params.partition_id, &self.sync_config);
         let to_block = (from_block + suggested_interval - 1).min(to_block_ceiling);
 
+        let client_filtered_names = params.client_filtered_contracts.unwrap_or_default();
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
-            params.client_filtered_contracts.unwrap_or_default(),
+            client_filtered_names.clone(),
         );
+        let address_free_names = params.address_free_contracts.unwrap_or_default();
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, address_set, &client_filtered)
+            .build_address_free(
+                &params.registration_indexes,
+                address_set,
+                &client_filtered,
+                &crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
+                    address_free_names.clone(),
+                ),
+            )
             .map_err(map_err)?;
         let set_cache = address_set.cache().clone();
         let selection_decoder = Arc::new(
@@ -529,7 +545,32 @@ impl EvmRpcClient {
             known_blocks,
             known_transactions,
         };
-        let outcome = self.read_page(&query).await;
+        let mut outcome = self.read_page(&query).await;
+
+        // A query without address filters can match more logs than the
+        // provider returns at once: a spam airdrop packs a single block with
+        // them, and a single block can't be narrowed. Rather than shrinking or
+        // waiting, read the page again with every address in the filter. A
+        // client-filtered range wider than one block is left to shrink first,
+        // since its addresses can take many queries per block.
+        let wants_tight_filters = matches!(outcome, Err(PageError::Logs(_)))
+            && (!address_free_names.is_empty()
+                || (!client_filtered_names.is_empty() && to_block == from_block));
+        if wants_tight_filters {
+            let selections = self
+                .tight_selections(
+                    &params.registration_indexes,
+                    address_set,
+                    &client_filtered_names,
+                )
+                .map_err(map_err)?;
+            outcome = self
+                .read_page(&PageQuery {
+                    selections: &selections,
+                    ..query
+                })
+                .await;
+        }
         let request_stats = self.inner.take_stats();
 
         // Only a page that was read has stores; every other outcome returns
@@ -696,6 +737,42 @@ impl EvmRpcClient {
         )
         .await?;
         Ok((items, page))
+    }
+
+    /// The page's selections with every address in their filter: the
+    /// partition's own, and the store's addresses of each client-filtered
+    /// contract, which take one query per chunk.
+    fn tight_selections(
+        &self,
+        registration_indexes: &[i64],
+        address_set: &AddressSet,
+        client_filtered_names: &[String],
+    ) -> anyhow::Result<Vec<BuiltLogSelection>> {
+        let unfiltered = crate::client_filtered_contracts::ClientFilteredContracts::default();
+        let chunks =
+            address_set.store_chunks(client_filtered_names, TIGHT_FILTER_ADDRESSES_PER_QUERY);
+        if chunks.is_empty() {
+            return Ok(self
+                .selection_builder
+                .build(registration_indexes, address_set, &unfiltered)?
+                .log_selections);
+        }
+        // Every chunk's build repeats the selections that don't depend on the
+        // chunk, so only the first of each is kept.
+        let mut selections: Vec<BuiltLogSelection> = Vec::new();
+        for chunk in chunks {
+            let built = self.selection_builder.build(
+                registration_indexes,
+                &address_set.merge(&chunk),
+                &unfiltered,
+            )?;
+            for selection in built.log_selections {
+                if !selections.contains(&selection) {
+                    selections.push(selection);
+                }
+            }
+        }
+        Ok(selections)
     }
 
     /// Builds the retry decision for a page that could not be read, updating

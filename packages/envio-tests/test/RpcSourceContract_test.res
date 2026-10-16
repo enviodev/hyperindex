@@ -880,4 +880,55 @@ describe("RPC source public contract", () => {
       page.events->Array.map(event => (event.contractName, event.srcAddress, event.logIndex)),
     ).toEqual([("ContractA", addressAString, 2), ("ContractB", addressBString, 3)])
   })
+
+  // A contract past the client-filter threshold is fetched with no address
+  // filter at all. A spam block can hold more of its event's logs than the
+  // provider returns for one query, and a single block can't be narrowed, so
+  // the block is read again with the contract's registered addresses instead.
+  Async.it("re-reads a refused block of a client-filtered contract by its addresses", async t => {
+    let page = await MockRpcServer.withScenario(
+      ~name="client-filtered spam block",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~label="address-free logs",
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"]]}]`,
+          ),
+          ~reply=RpcError({code: -32005, message: "query returned more than 10000 results"}),
+        ),
+        ...successfulCalls(~logs=[log(~logIndex="0x2")]),
+      ],
+      async mock => {
+        let registration = makeRegistration()
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        switch await RpcSourcePins.capture(
+          () =>
+            source.getItemsOrThrow(
+              ~includeAllBlocks=false,
+              ~fromBlock=100,
+              ~toBlock=Some(100),
+              ~addressSet=addressStore->AddressStore.emptySet,
+              ~knownHeight=100,
+              ~partitionId="pin-partition",
+              ~selection=FetchState.makeSelection(
+                ~dependsOnAddresses=false,
+                ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+                ~clientFilteredContracts=[registration.eventConfig.contractName],
+              ),
+              ~itemsTarget=Some(5_000),
+              ~retry=0,
+              ~logger=Logging.createChild(~params={"test": "RPC client-filtered fallback"}),
+            ),
+        ) {
+        | Ok(page) => page
+        | Error(_) => JsError.throwWithMessage("Expected the refused block to be re-read")
+        }
+      },
+    )
+
+    t.expect(
+      page.events->Array.map(event => (event.blockNumber, event.logIndex, event.srcAddress)),
+    ).toEqual([(100, 2, normalizedContractAddress)])
+  })
 })

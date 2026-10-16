@@ -1321,6 +1321,21 @@ impl AddressSet {
     pub fn store(&self) -> &Arc<RwLock<StoreInner>> {
         &self.store
     }
+
+    /// Every live address the store holds for the named contracts, whatever
+    /// partition holds them, cut into sets of at most `chunk_len`.
+    pub fn store_chunks(&self, contract_names: &[String], chunk_len: usize) -> Vec<AddressSet> {
+        let store = self.store.read().unwrap();
+        let kept: std::collections::HashSet<u32> = contract_names
+            .iter()
+            .filter_map(|name| store.contract_idx(name))
+            .collect();
+        let ids = store.sorted_live_ids(0, |entry| kept.contains(&entry.contract_idx));
+        drop(store);
+        ids.chunks(chunk_len)
+            .map(|chunk| AddressSet::new(self.store.clone(), chunk.to_vec()))
+            .collect()
+    }
 }
 
 #[cfg(test)]

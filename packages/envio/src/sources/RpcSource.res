@@ -81,6 +81,19 @@ let make = (
       )
     }
 
+    let addressFreeContracts = if toBlock - fromBlock < Env.rpcAddressFreeMaxBlockRange {
+      switch addressSet
+      ->AddressSet.contractNames
+      ->Array.filter(contractName =>
+        addressSet->AddressSet.countFor(contractName) >= Env.rpcAddressFreeMinAddresses
+      ) {
+      | [] => None
+      | contractNames => Some(contractNames)
+      }
+    } else {
+      None
+    }
+
     let pageFetchTimeRef = Performance.now()
     let (result, pageBlockStore, pageTransactionStore) = await rpcClient.getNextPage(
       {
@@ -89,6 +102,7 @@ let make = (
         partitionId,
         registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         clientFilteredContracts: selection.clientFilteredContracts,
+        ?addressFreeContracts,
         retry,
       },
       addressSet,

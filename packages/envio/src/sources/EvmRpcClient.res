@@ -16,6 +16,7 @@ type nextPageParams = {
   partitionId: string,
   registrationIndexes: array<int>,
   clientFilteredContracts: option<array<string>>,
+  addressFreeContracts?: array<string>,
   retry: int,
 }
 
