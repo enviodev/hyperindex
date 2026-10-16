@@ -118,8 +118,8 @@ let traceThroughRollback = async (
       )
       mock.getBlockHashesCalls->Utils.Array.clearInPlace
     }
-    if answerRefetch && mock.getItemsOrThrowCalls->Array.length > 0 {
-      mock.drainItemsQueries(~latestFetchedBlockNumber=301)
+    if answerRefetch && mock.pendingItemsQueries->Array.length > 0 {
+      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=301)
     }
     let sample = `${await metricValue(indexer, "envio_progress_block")}|${await metricValue(
         indexer,
@@ -139,8 +139,13 @@ describe("Progress block time", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
-      mock.resolveGetItemsOrThrow([{blockNumber: 250, logIndex: 0}], ~latestFetchedBlockNumber=300)
       mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({items: [{blockNumber: 250, logIndex: 0}], latestFetchedBlockNumber: 300}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -157,29 +162,27 @@ describe("Progress block time", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
-      // Resolving a query drops it from the pending list, so each one's flag is
+      // Replying to a query drops it from the pending list, so each one's flag is
       // read while it is still in flight.
-      let asked = []
-      let recordPending = () =>
-        mock.getItemsOrThrowCalls->Array.forEach(call =>
-          asked->Array.push(call.includeAllBlocks)->ignore
-        )
+      let pendingFlags = () => mock.pendingItemsQueries->Array.map(MockSource.includeAllBlocks)
 
       mock.resolveGetHeightOrThrow(300)
-      await MockSource.waitItemsQuery(mock)
-      recordPending()
-      mock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
+      let backfill = pendingFlags()
+      await mock.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilReady()
 
       mock.resolveGetHeightOrThrow(301)
-      await MockSource.waitItemsQuery(mock)
-      recordPending()
+      await mock.expectItemsQueries([{fromBlock: 301, reply: LeavePending}])
+      let head = pendingFlags()
 
       t.expect(
-        asked,
+        [backfill, head],
         ~message="the backfill query asks only for the blocks its logs came from",
-      ).toEqual([false, true])
+      ).toEqual([[false], [true]])
     },
   )
 
@@ -188,8 +191,10 @@ describe("Progress block time", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
-      mock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
 
       let restarted = await indexer.restart()
@@ -209,15 +214,20 @@ describe("Progress block time", () => {
     ~maxAddrInPartition=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
-      let partition = p => (query: MockSource.itemsQuery) => query["p"] === p
 
       mock.resolveGetHeightOrThrow(300)
-      await Scenario.waitUntil(
-        () => mock.getItemsOrThrowCalls->Array.length === 2,
-        ~message="both partitions query",
-      )
-      mock.resolveGetItemsOrThrow([], ~filter=partition("0"), ~latestFetchedBlockNumber=100)
-      mock.resolveGetItemsOrThrow([], ~filter=partition("1"), ~latestFetchedBlockNumber=100)
+      await mock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+        {
+          partitionId: "1",
+          fromBlock: 1,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -227,16 +237,24 @@ describe("Progress block time", () => {
 
       // Only partition 0 reaches the head, so the store learns block 300 while
       // the progress frontier - the minimum across partitions - stays at 100.
-      mock.resolveGetItemsOrThrow([], ~filter=partition("0"), ~latestFetchedBlockNumber=300)
-
       // Partition 1 reports a different hash for block 300, so the reorg is
       // above the progress block and the rollback leaves progress at 100.
-      mock.resolveGetItemsOrThrow(
-        [],
-        ~filter=partition("1"),
-        ~latestFetchedBlockNumber=300,
-        ~latestFetchedBlockHash="0x300a",
-      )
+      await mock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 101,
+          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
+        },
+        {
+          partitionId: "1",
+          fromBlock: 101,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 300,
+            latestFetchedBlockHash: "0x300a",
+          }),
+        },
+      ])
 
       let trace = await traceThroughRollback(~indexer, ~mock, ~validUpTo=300)
 
@@ -256,11 +274,13 @@ describe("Progress block time", () => {
       // Head 300 with maxReorgDepth 200: the pre-threshold query stops at block
       // 100, the next one reaches the head.
       mock.resolveGetHeightOrThrow(300)
-      await MockSource.waitItemsQuery(mock)
-      mock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await mock.expectItemsQueries([
+        {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
+      ])
       await indexer.getBatchWritePromise()
-      await MockSource.waitItemsQuery(mock)
-      mock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await mock.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -271,12 +291,12 @@ describe("Progress block time", () => {
       // Block 300 comes back with a different hash, so it and everything above
       // the last valid block are orphaned.
       mock.resolveGetHeightOrThrow(301)
-      await MockSource.waitItemsQuery(mock)
-      mock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=301,
-        ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300a"},
-      )
+      await mock.expectItemsQueries([
+        {
+          fromBlock: 301,
+          reply: Respond({items: [], prevRangeLastBlock: {blockNumber: 300, blockHash: "0x300a"}}),
+        },
+      ])
 
       let trace = await traceThroughRollback(~indexer, ~mock, ~validUpTo=299, ~answerRefetch=true)
 
