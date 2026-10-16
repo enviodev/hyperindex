@@ -354,6 +354,16 @@ let ambiguousItemsQueries = calls =>
 
 @val external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 
+// Taken at module load, before a test can fake the clock: a deadline on faked
+// timers never fires, and a mismatched expectation would hang the suite instead
+// of failing with what it was waiting for.
+let realSetTimeout: (
+  unit => unit,
+  int,
+) => timeoutId = %raw(`globalThis.setTimeout.bind(globalThis)`)
+let realClearTimeout: timeoutId => unit = %raw(`globalThis.clearTimeout.bind(globalThis)`)
+let realNow: unit => float = %raw(`Date.now.bind(Date)`)
+
 let queryCoversBlock = (query: pendingItemsQuery, blockNumber) =>
   query.fromBlock <= blockNumber &&
     switch query.toBlock {
@@ -632,13 +642,13 @@ let make = (
     }
   let nextArrival = (~deadline) =>
     Promise.make((resolve, _reject) => {
-      let timer = setTimeout(
+      let timer = realSetTimeout(
         () => resolve(false),
-        Math.max(0., deadline -. Date.now())->Float.toInt,
+        Math.max(0., deadline -. realNow())->Float.toInt,
       )
       arrivalListeners
       ->Array.push(() => {
-        clearTimeout(timer)
+        realClearTimeout(timer)
         resolve(true)
       })
       ->ignore
@@ -890,7 +900,7 @@ let make = (
       let (assignment, leftPending) = await awaitMatch(
         expected,
         ~replyingIndices,
-        ~deadline=Date.now() +. 2000.,
+        ~deadline=realNow() +. 2000.,
       )
       let unlisted =
         pendingItemsQueries->Array.filter(query =>

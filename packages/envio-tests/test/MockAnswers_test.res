@@ -198,6 +198,29 @@ Pending:
     await indexer.getBatchWritePromise()
   })
 
+  // A test that fakes the clock still gets the timeout message instead of a
+  // suite-level hang, so the deadline can't run on the faked setTimeout.
+  scenario->Scenario.it("times out on the real clock while timers are faked", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    mock.resolveGetHeightOrThrow(300)
+    await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
+    Vi.useFakeTimers()
+    let failure = await failureOf(mock.expectItemsQueries([{fromBlock: 2, reply: LeavePending}]))
+    Vi.useRealTimers()
+    t.expect(failure).toEqual(
+      Some(`expectItemsQueries timed out. Expected:
+  #0 {fromBlock: 2, reply: LeavePending} (matches no pending query)
+Pending:
+  {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}`),
+    )
+    mock.drainPendingItemsQueries(~latestFetchedBlockNumber=300)
+    await indexer.getBatchWritePromise()
+  })
+
   scenario->Scenario.it("voids the stopped indexer's pending query on restart", ~sources, async (
     ~t,
     ~indexer,
