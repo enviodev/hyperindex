@@ -54,40 +54,50 @@ describe("Storage load metrics with ClickHouse alongside Postgres", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(10)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "1", value: "pg"})
-              context.visit.set({id: "1", value: "ch"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "1", value: "pg"})
+                  context.visit.set({id: "1", value: "ch"})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let resumed = await indexer.restart()
       source.resolveGetHeightOrThrow(20)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 15,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              let _ = await context.simpleEntity.get("1")
-              let _ = await context.visit.get("1")
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=20,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 11,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 15,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  let _ = await context.simpleEntity.get("1")
+                  let _ = await context.visit.get("1")
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 20,
+          }),
+        },
+      ])
       await resumed.getBatchWritePromise()
 
       t.expect(await resumed.metric("envio_storage_load_total")).toEqual([

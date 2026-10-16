@@ -39,19 +39,25 @@ describe("Scenario ClickHouse", () => {
     let source = source(1)
     source.resolveGetHeightOrThrow(10)
 
-    source.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 5,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
-            context.counter.set({id: "total", count: 42n})
-          },
-        },
-      ],
-      ~latestFetchedBlockNumber=10,
-    )
+    await source.expectItemsQueries([
+      {
+        fromBlock: 0,
+        toBlock: Unbounded,
+        reply: Respond({
+          items: [
+            {
+              blockNumber: 5,
+              logIndex: 0,
+              handler: async args => {
+                let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
+                context.counter.set({id: "total", count: 42n})
+              },
+            },
+          ],
+          latestFetchedBlockNumber: 10,
+        }),
+      },
+    ])
     await indexer.getBatchWritePromise()
 
     // The current-state view ClickHouse builds over its history table.

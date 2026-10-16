@@ -170,31 +170,45 @@ let counterHistory = (indexer: IndexerRunner.t): promise<array<Change.t<counter>
 // 1337 writing block 102 first — so chain 100's block-102 checkpoint carries a
 // higher id than the chain-1337 rows a reorg on 1337 has to delete.
 let driveBothChainsToBlock102 = async (
-  ~t,
   ~indexer: IndexerRunner.t,
   ~source100: MockSource.t,
   ~source1337: MockSource.t,
   ~item: (~block: int, ~count: bigint) => MockSource.itemMock,
 ) => {
-  await Utils.delay(0)
   let _ = await Promise.all2((
-    Scenario.enterReorgThreshold(~t, ~indexer, ~source=source100),
-    Scenario.enterReorgThreshold(~t, ~indexer, ~source=source1337),
+    Scenario.enterReorgThreshold(~indexer, ~source=source100),
+    Scenario.enterReorgThreshold(~indexer, ~source=source1337),
   ))
 
   // Chain 100 leads (the progress tie breaks by ascending chain id), so its
   // post-threshold query is the one holding the fetch budget.
-  source100.resolveGetItemsOrThrow([item(~block=101, ~count=100n)], ~latestFetchedBlockNumber=101)
-  await MockSource.waitItemsQuery(source1337)
-  source1337.resolveGetItemsOrThrow([item(~block=101, ~count=1337n)], ~latestFetchedBlockNumber=101)
+  await source100.expectItemsQueries([
+    {
+      fromBlock: 101,
+      reply: Respond({items: [item(~block=101, ~count=100n)], latestFetchedBlockNumber: 101}),
+    },
+  ])
+  await source1337.expectItemsQueries([
+    {
+      fromBlock: 101,
+      reply: Respond({items: [item(~block=101, ~count=1337n)], latestFetchedBlockNumber: 101}),
+    },
+  ])
   await indexer.getBatchWritePromise()
 
-  source1337.resolveGetItemsOrThrow(
-    [item(~block=102, ~count=13372n)],
-    ~latestFetchedBlockNumber=102,
-  )
+  await source1337.expectItemsQueries([
+    {
+      fromBlock: 102,
+      reply: Respond({items: [item(~block=102, ~count=13372n)], latestFetchedBlockNumber: 102}),
+    },
+  ])
   await indexer.getBatchWritePromise()
-  source100.resolveGetItemsOrThrow([item(~block=102, ~count=1002n)], ~latestFetchedBlockNumber=102)
+  await source100.expectItemsQueries([
+    {
+      fromBlock: 102,
+      reply: Respond({items: [item(~block=102, ~count=1002n)], latestFetchedBlockNumber: 102}),
+    },
+  ])
   await indexer.getBatchWritePromise()
 }
 
@@ -214,13 +228,20 @@ let reorgAt = async (
   ~sibling: option<MockSource.t>=?,
   ~atBlock,
   ~scanned: array<(int, [#valid | #orphaned])>=[],
+  // The chunks above the reorged one, still in flight when the rollback voids them.
+  ~chunksAbove=true,
 ) => {
   sibling->Option.forEach(sibling => sibling.dropPendingCalls())
   let reorgsBefore = source.reorgCallCount()
-  source.resolveGetItemsOrThrow(
-    [],
-    ~filter=MockSource.coveringBlock(atBlock + 1),
-    ~prevRangeLastBlock={blockNumber: atBlock, blockHash: `0x${atBlock->Int.toString}a`},
+  let reorg: MockSource.expectedItemsQuery = {
+    coversBlock: atBlock + 1,
+    reply: Respond({
+      items: [],
+      prevRangeLastBlock: {blockNumber: atBlock, blockHash: `0x${atBlock->Int.toString}a`},
+    }),
+  }
+  await source.expectItemsQueries(
+    chunksAbove ? [reorg, {partitionId: "0", reply: LeavePending}] : [reorg],
   )
   // The depth search drops the source's orphaned-chain state before it reads
   // any hash, so this is the one point both shapes of the search pass through —
@@ -235,12 +256,10 @@ let reorgAt = async (
   // and falls straight back to the threshold's lower edge, so an empty
   // `scanned` waits for no call.
   if scanned->Array.length > 0 {
-    await Scenario.waitUntil(
-      () => source.getBlockHashesCalls->Array.length > 0,
-      ~message="the rollback's depth search to re-fetch the scanned block hashes",
-    )
-    source.resolveGetBlockHashes(
-      scanned->Array.map(((blockNumber, fate)): BlockStore.inputBlock => {
+    // The rollback's depth search re-fetches the scanned block hashes.
+    await source.expectBlockHashLookup({
+      blockNumbers: scanned->Array.map(((blockNumber, _)) => blockNumber),
+      reply: scanned->Array.map(((blockNumber, fate)): BlockStore.inputBlock => {
         blockNumber,
         blockHash: switch fate {
         | #valid => `0x${blockNumber->Int.toString}`
@@ -248,7 +267,7 @@ let reorgAt = async (
         },
         blockTimestamp: blockNumber,
       }),
-    )
+    })
   }
   await indexer.getRollbackReadyPromise()
 }
@@ -259,12 +278,23 @@ let reorgAtBlock102 = (~indexer, ~source, ~sibling) =>
 // The rollback diff only reaches the database with the next batch, so the reorg
 // chain re-delivers block 102 to flush it.
 let reindexBlock102 = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~count) => {
-  source.resolveGetItemsOrThrow(
-    [setCounter(~block=102, ~count)],
-    ~filter=MockSource.coveringBlock(102),
-    ~latestFetchedBlockNumber=102,
-  )
+  await source.expectItemsQueries([
+    {
+      coversBlock: 102,
+      reply: Respond({items: [setCounter(~block=102, ~count)], latestFetchedBlockNumber: 102}),
+    },
+  ])
   await indexer.getBatchWritePromise()
+}
+
+// A chain fans the range it re-fetches out into chunks, issued over several
+// ticks, lowest first. Where it picks back up is the lowest block it asks for.
+let firstBlockAskedFor = async (source: MockSource.t) => {
+  await source.expectItemsQueries([{partitionId: "0", reply: LeavePending}])
+  source.pendingItemsQueries
+  ->Array.map(query => query.fromBlock)
+  ->Array.toSorted(Int.compare)
+  ->Array.get(0)
 }
 
 // Chain 1337's only event sits far above the pre-threshold boundary, with chain
@@ -273,32 +303,41 @@ let reindexBlock102 = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~
 // block a reorg deeper than that event takes it back to, so the rollback finds
 // no checkpoint to target and falls back to the fork block itself.
 let driveToDistantChain1337 = async (
-  ~t,
   ~indexer: IndexerRunner.t,
   ~source100: MockSource.t,
   ~source1337: MockSource.t,
 ) => {
-  await Utils.delay(0)
   let _ = await Promise.all2((
-    Scenario.enterReorgThreshold(~t, ~indexer, ~source=source100),
-    Scenario.enterReorgThreshold(~t, ~indexer, ~source=source1337),
+    Scenario.enterReorgThreshold(~indexer, ~source=source100),
+    Scenario.enterReorgThreshold(~indexer, ~source=source1337),
   ))
 
-  source100.resolveGetItemsOrThrow(
-    [setCounter(~block=101, ~count=100n)],
-    ~latestFetchedBlockNumber=101,
-  )
-  await MockSource.waitItemsQuery(source1337)
-  source1337.resolveGetItemsOrThrow(
-    [setCounter(~block=150, ~count=1337n)],
-    ~latestFetchedBlockNumber=150,
-  )
+  await source100.expectItemsQueries([
+    {
+      fromBlock: 101,
+      reply: Respond({items: [setCounter(~block=101, ~count=100n)], latestFetchedBlockNumber: 101}),
+    },
+  ])
+  await source1337.expectItemsQueries([
+    {
+      fromBlock: 101,
+      reply: Respond({
+        items: [setCounter(~block=150, ~count=1337n)],
+        latestFetchedBlockNumber: 150,
+      }),
+    },
+  ])
   await indexer.getBatchWritePromise()
 
-  source100.resolveGetItemsOrThrow(
-    [setCounter(~block=102, ~count=1002n)],
-    ~latestFetchedBlockNumber=151,
-  )
+  await source100.expectItemsQueries([
+    {
+      fromBlock: 102,
+      reply: Respond({
+        items: [setCounter(~block=102, ~count=1002n)],
+        latestFetchedBlockNumber: 151,
+      }),
+    },
+  ])
   await indexer.getBatchWritePromise()
 }
 
@@ -331,7 +370,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
@@ -356,7 +395,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
 
       let checkpoints = await indexer.queryCheckpoints()
       let byChain = chain =>
@@ -383,23 +422,31 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
 
       source100.setAutoHeight(300)
       source1337.setAutoHeight(300)
       let restarted = await indexer.restart()
 
-      source1337.resolveGetItemsOrThrow(
-        [setCounter(~block=103, ~count=13373n)],
-        ~filter=MockSource.coveringBlock(103),
-        ~latestFetchedBlockNumber=103,
-      )
+      await source1337.expectItemsQueries([
+        {
+          coversBlock: 103,
+          reply: Respond({
+            items: [setCounter(~block=103, ~count=13373n)],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
       await restarted.getBatchWritePromise()
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=103, ~count=1003n)],
-        ~filter=MockSource.coveringBlock(103),
-        ~latestFetchedBlockNumber=103,
-      )
+      await source100.expectItemsQueries([
+        {
+          coversBlock: 103,
+          reply: Respond({
+            items: [setCounter(~block=103, ~count=1003n)],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
       await restarted.getBatchWritePromise()
 
       let checkpoints = await restarted.queryCheckpoints()
@@ -428,7 +475,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
 
       t.expect(
         await Promise.all4((
@@ -463,10 +510,7 @@ describe("Isolated multichain rollback", () => {
           // The lowest block chain 100 is asked for once it re-issues the
           // queries the rollback dropped: it kept block 102, so it never goes
           // back below 103.
-          source100.getItemsOrThrowCalls
-          ->Array.map(call => call.payload["fromBlock"])
-          ->Array.toSorted(Int.compare)
-          ->Array.get(0),
+          await firstBlockAskedFor(source100),
         ),
         ~message="Only chain 1337 lost progress",
       ).toEqual((progress(~chain100="102", ~chain1337="101"), Some(103)))
@@ -509,13 +553,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(
-        ~t,
-        ~indexer,
-        ~source100,
-        ~source1337,
-        ~item=setCounterAndTotal,
-      )
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounterAndTotal)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 
       // Chain 100 has to give back block 102 as well: its own write to `Total`
@@ -523,22 +561,30 @@ describe("Isolated multichain rollback", () => {
       t.expect(
         (
           await progressByChain(indexer),
-          source100.getItemsOrThrowCalls->Array.some(call => call.payload["fromBlock"] === 102),
+          source100.pendingItemsQueries->Array.some(query => query.fromBlock === 102),
         ),
         ~message="Both chains lost block 102",
       ).toEqual((progress(~chain100="101", ~chain1337="101"), true))
 
-      source100.resolveGetItemsOrThrow(
-        [setCounterAndTotal(~block=102, ~count=1002n)],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
+      await source100.expectItemsQueries([
+        {
+          coversBlock: 102,
+          reply: Respond({
+            items: [setCounterAndTotal(~block=102, ~count=1002n)],
+            latestFetchedBlockNumber: 102,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      source1337.resolveGetItemsOrThrow(
-        [setCounterAndTotal(~block=102, ~count=999n)],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
+      await source1337.expectItemsQueries([
+        {
+          coversBlock: 102,
+          reply: Respond({
+            items: [setCounterAndTotal(~block=102, ~count=999n)],
+            latestFetchedBlockNumber: 102,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -572,7 +618,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
@@ -617,7 +663,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
 
       // No batch progresses in between, so the first diff is still unwritten
       // when the second reorg computes its own.
@@ -632,18 +678,8 @@ describe("Isolated multichain rollback", () => {
         progress(~chain100="1", ~chain1337="1"),
       ))
 
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=102, ~count=1003n)],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
-      await indexer.getBatchWritePromise()
-      source1337.resolveGetItemsOrThrow(
-        [setCounter(~block=102, ~count=999n)],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
-      await indexer.getBatchWritePromise()
+      await reindexBlock102(~indexer, ~source=source100, ~count=1003n)
+      await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
       t.expect(
         await Promise.all3((
@@ -683,29 +719,25 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 
       // Only chain 100 progresses, so its batch is what carries the diff.
-      source100.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(103),
-        ~latestFetchedBlockNumber=104,
-      )
+      await source100.expectItemsQueries([
+        {coversBlock: 103, reply: Respond({items: [], latestFetchedBlockNumber: 104})},
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
 
       source100.setAutoHeight(300)
       source1337.setAutoHeight(300)
       let restarted = await indexer.restart()
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       t.expect(
         (
           await Promise.all2((counters(restarted), progressByChain(restarted))),
-          source1337.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-          source100.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+          await firstBlockAskedFor(source1337),
+          await firstBlockAskedFor(source100),
         ),
         ~message="Chain 1337 resumes at the block the rollback took it back to",
       ).toEqual((
@@ -713,8 +745,8 @@ describe("Isolated multichain rollback", () => {
           [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 1337n, chainId: 1337}],
           progress(~chain100="104", ~chain1337="101"),
         ),
-        [102],
-        [105],
+        Some(102),
+        Some(105),
       ))
     },
   )
@@ -729,39 +761,28 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(
-        ~t,
-        ~indexer,
-        ~source100,
-        ~source1337,
-        ~item=setCounterAndTotal,
-      )
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounterAndTotal)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 
       // The global rollback took chain 100 back to 101 as well; it re-fetches
       // past that before chain 1337 gets anywhere, and carries the diff.
-      source100.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=104,
-      )
+      await source100.expectItemsQueries([
+        {coversBlock: 102, reply: Respond({items: [], latestFetchedBlockNumber: 104})},
+      ])
       await indexer.getBatchWritePromise()
 
       source100.setAutoHeight(300)
       source1337.setAutoHeight(300)
       let restarted = await indexer.restart()
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       t.expect(
         (
           await progressByChain(restarted),
-          source1337.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-          source100.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+          await firstBlockAskedFor(source1337),
+          await firstBlockAskedFor(source100),
         ),
         ~message="Chain 100 resumes from what its batch reached, chain 1337 from where the rollback left it",
-      ).toEqual((progress(~chain100="104", ~chain1337="101"), [102], [105]))
+      ).toEqual((progress(~chain100="104", ~chain1337="101"), Some(102), Some(105)))
     },
   )
   // The superseding rollback recomputes progress from the checkpoints, and a
@@ -777,7 +798,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
 
       // Chain 100's rollback lands first and is still unwritten when chain
       // 1337's supersedes it, which recomputes chain 100 back onto the 101 the
@@ -788,28 +809,14 @@ describe("Isolated multichain rollback", () => {
       // Only chain 1337 re-indexes, so its batch is what carries the merged
       // diff — including chain 100's progress row, which this rollback had no
       // move of its own to report.
-      source1337.resolveGetItemsOrThrow(
-        [setCounter(~block=102, ~count=999n)],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
-      await indexer.getBatchWritePromise()
+      await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
       source100.setAutoHeight(300)
       source1337.setAutoHeight(300)
       let restarted = await indexer.restart()
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       t.expect(
-        (
-          await progressByChain(restarted),
-          source100.getItemsOrThrowCalls
-          ->Array.map(call => call.payload["fromBlock"])
-          ->Array.toSorted(Int.compare)
-          ->Array.get(0),
-        ),
+        (await progressByChain(restarted), await firstBlockAskedFor(source100)),
         ~message="Chain 100 resumes at the block the first, superseded rollback took it back to",
       ).toEqual((progress(~chain100="101", ~chain1337="102"), Some(102)))
     },
@@ -834,7 +841,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveToDistantChain1337(~t, ~indexer, ~source100, ~source1337)
+      await driveToDistantChain1337(~indexer, ~source100, ~source1337)
 
       // Chain 1337 forks below block 150, its only checkpoint: nothing of its
       // own is at or under the fork, so the rollback has no checkpoint to target
@@ -845,7 +852,8 @@ describe("Isolated multichain rollback", () => {
         ~source=source1337,
         ~sibling=source100,
         ~atBlock=150,
-        ~scanned=[(100, #valid), (150, #orphaned)],
+        ~scanned=[(100, #valid)],
+        ~chunksAbove=false,
       )
 
       t.expect(
@@ -857,7 +865,13 @@ describe("Isolated multichain rollback", () => {
       // is no longer the reorg chain, so its progress is recomputed from the
       // block-150 checkpoint still in the database — 49 blocks above where the
       // superseded rollback left it.
-      await reorgAt(~indexer, ~source=source100, ~sibling=source1337, ~atBlock=100)
+      await reorgAt(
+        ~indexer,
+        ~source=source100,
+        ~sibling=source1337,
+        ~atBlock=100,
+        ~chunksAbove=false,
+      )
 
       t.expect(
         (await progressByChain(indexer), await eventsByChain(indexer)),
@@ -868,10 +882,7 @@ describe("Isolated multichain rollback", () => {
       ))
 
       t.expect(
-        source1337.getItemsOrThrowCalls
-        ->Array.map(call => call.payload["fromBlock"])
-        ->Array.toSorted(Int.compare)
-        ->Array.get(0),
+        await firstBlockAskedFor(source1337),
         ~message="Chain 1337 re-fetches from just above the fork, not from its lost checkpoint",
       ).toEqual(Some(101))
     },
@@ -891,7 +902,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveToDistantChain1337(~t, ~indexer, ~source100, ~source1337)
+      await driveToDistantChain1337(~indexer, ~source100, ~source1337)
 
       // Chain 1337 forks at block 100, where full history has kept its
       // checkpoint — so the rollback has one to target, and the recompute from
@@ -901,17 +912,12 @@ describe("Isolated multichain rollback", () => {
         ~source=source1337,
         ~sibling=source100,
         ~atBlock=150,
-        ~scanned=[(100, #valid), (150, #orphaned)],
+        ~scanned=[(100, #valid)],
+        ~chunksAbove=false,
       )
 
       t.expect(
-        (
-          await progressByChain(indexer),
-          source1337.getItemsOrThrowCalls
-          ->Array.map(call => call.payload["fromBlock"])
-          ->Array.toSorted(Int.compare)
-          ->Array.get(0),
-        ),
+        (await progressByChain(indexer), await firstBlockAskedFor(source1337)),
         ~message="Chain 1337 sits at the fork block and re-fetches every block above it",
       ).toEqual((progress(~chain100="151", ~chain1337="100"), Some(101)))
     },
@@ -925,22 +931,19 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
       source100.setAutoHeight(300)
       source1337.setAutoHeight(300)
       let restarted = await indexer.restart()
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       t.expect(
         (
           await Promise.all2((counters(restarted), progressByChain(restarted))),
-          source100.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-          source1337.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+          await firstBlockAskedFor(source100),
+          await firstBlockAskedFor(source1337),
         ),
         ~message="Both chains resume from block 103 with their rows intact",
       ).toEqual((
@@ -948,8 +951,8 @@ describe("Isolated multichain rollback", () => {
           [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
           progress(~chain100="102", ~chain1337="102"),
         ),
-        [103],
-        [103],
+        Some(103),
+        Some(103),
       ))
     },
   )
@@ -962,7 +965,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
@@ -1005,22 +1008,26 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 
       // Only chain 100 progresses, so its batch is what commits the rollback,
       // and it carries on past the id the diff gave chain 1337.
-      source100.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(103),
-        ~latestFetchedBlockNumber=104,
-      )
+      await source100.expectItemsQueries([
+        {coversBlock: 103, reply: Respond({items: [], latestFetchedBlockNumber: 104})},
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=105, ~count=1005n)],
-        ~filter=MockSource.coveringBlock(105),
-        ~latestFetchedBlockNumber=105,
-      )
+      await source100.expectItemsQueries([
+        {
+          coversBlock: 105,
+          reply: Respond({
+            items: [setCounter(~block=105, ~count=1005n)],
+            latestFetchedBlockNumber: 105,
+          }),
+        },
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
@@ -1083,15 +1090,20 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
 
       // One block further on chain 1337, so the reorg chain is the one holding
       // the highest checkpoint when its own rows are orphaned.
-      source1337.resolveGetItemsOrThrow(
-        [setCounter(~block=103, ~count=13373n)],
-        ~filter=MockSource.coveringBlock(103),
-        ~latestFetchedBlockNumber=103,
-      )
+      await source1337.expectItemsQueries([
+        {
+          coversBlock: 103,
+          reply: Respond({
+            items: [setCounter(~block=103, ~count=13373n)],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
 
       await reorgAt(
@@ -1104,11 +1116,10 @@ describe("Isolated multichain rollback", () => {
 
       // Only chain 100 progresses, so its batch is what commits the diff — and
       // its own ids never reach the one the diff carries.
-      source100.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(103),
-        ~latestFetchedBlockNumber=104,
-      )
+      await source100.expectItemsQueries([
+        {coversBlock: 103, reply: Respond({items: [], latestFetchedBlockNumber: 104})},
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
@@ -1147,7 +1158,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
       await indexer.waitUntilIdle()
@@ -1173,17 +1184,26 @@ describe("Isolated multichain rollback", () => {
     async (~t, ~indexer, ~source) => {
       let source100 = source(100)
 
-      await Utils.delay(0)
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=source100)
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=101, ~count=100n)],
-        ~latestFetchedBlockNumber=101,
-      )
+      await Scenario.enterReorgThreshold(~indexer, ~source=source100)
+      await source100.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [setCounter(~block=101, ~count=100n)],
+            latestFetchedBlockNumber: 101,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=102, ~count=1002n)],
-        ~latestFetchedBlockNumber=102,
-      )
+      await source100.expectItemsQueries([
+        {
+          fromBlock: 102,
+          reply: Respond({
+            items: [setCounter(~block=102, ~count=1002n)],
+            latestFetchedBlockNumber: 102,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       await reorgAt(

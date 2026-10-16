@@ -51,7 +51,13 @@ describe("A migration beside a run that is indexing", () => {
   ) => {
     let source = source(1)
     source.resolveGetHeightOrThrow(20)
-    source.resolveGetItemsOrThrow([setCounter(~block=5, ~count=1n)], ~latestFetchedBlockNumber=10)
+    await source.expectItemsQueries([
+      {
+        fromBlock: 0,
+        toBlock: Unbounded,
+        reply: Respond({items: [setCounter(~block=5, ~count=1n)], latestFetchedBlockNumber: 10}),
+      },
+    ])
     await indexer.getBatchWritePromise()
 
     let config = scenario.config
@@ -66,7 +72,13 @@ describe("A migration beside a run that is indexing", () => {
     )
     await storage.close()
 
-    source.resolveGetItemsOrThrow([setCounter(~block=15, ~count=2n)], ~latestFetchedBlockNumber=20)
+    await source.expectItemsQueries([
+      {
+        fromBlock: 11,
+        toBlock: Unbounded,
+        reply: Respond({items: [setCounter(~block=15, ~count=2n)], latestFetchedBlockNumber: 20}),
+      },
+    ])
     await indexer.getBatchWritePromise()
 
     let database = TestClickHouse.currentDatabase()

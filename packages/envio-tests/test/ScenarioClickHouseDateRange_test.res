@@ -59,19 +59,26 @@ describe("ClickHouse refuses a date DateTime64 cannot represent", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.expiry.set({id: "never", at: Date.fromString("9999-12-31T00:00:00.000Z")})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  context.expiry.set({id: "never", at: Date.fromString("9999-12-31T00:00:00.000Z")})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
 
       let failure = await refusal.awaitStorageError()
 

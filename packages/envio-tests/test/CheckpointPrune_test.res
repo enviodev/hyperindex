@@ -50,20 +50,27 @@ let dropsTheUnreachableCheckpoints = async (
   ~source: (int, ~index: int=?) => MockSource.t,
 ) => {
   let source = source(100)
-  await Scenario.resolveInitialHeight(~t, ~source, ~head=120)
-  source.resolveGetItemsOrThrow(
-    [setCounter(~block=111, ~count=1n), setCounter(~block=112, ~count=2n)],
-    ~latestFetchedBlockNumber=112,
-  )
+  await Scenario.resolveInitialHeight(~source, ~head=120)
+  await source.expectItemsQueries([
+    {
+      fromBlock: 110,
+      toBlock: Unbounded,
+      reply: Respond({
+        items: [setCounter(~block=111, ~count=1n), setCounter(~block=112, ~count=2n)],
+        latestFetchedBlockNumber: 112,
+      }),
+    },
+  ])
   await indexer.IndexerRunner.getBatchWritePromise()
   // Block 115 is now safe: 111 and 112 fall out of reach, 112 staying as the
   // anchor of what is above it.
   source.setAutoHeight(130)
-  source.resolveGetItemsOrThrow(
-    [setCounter(~block=120, ~count=3n)],
-    ~filter=MockSource.coveringBlock(113),
-    ~latestFetchedBlockNumber=130,
-  )
+  await source.expectItemsQueries([
+    {
+      coversBlock: 113,
+      reply: Respond({items: [setCounter(~block=120, ~count=3n)], latestFetchedBlockNumber: 130}),
+    },
+  ])
   await indexer.getBatchWritePromise()
   await indexer.waitUntilIdle()
 

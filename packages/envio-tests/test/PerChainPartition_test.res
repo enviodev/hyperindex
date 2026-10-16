@@ -129,8 +129,19 @@ describe("Per-chain entity partitions against Postgres", () => {
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
 
-      source1.resolveGetItemsOrThrow([bump(1n)], ~latestFetchedBlockNumber=300)
-      source137.resolveGetItemsOrThrow([bump(10n)], ~latestFetchedBlockNumber=300)
+      await source1.expectItemsQueries([
+        {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: [bump(1n)]})},
+      ])
+      await source137.expectItemsQueries([
+        {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: [bump(10n)]})},
+      ])
+      await indexer.getBatchWritePromise()
+      await source1.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
+      await source137.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
       // The schema's read indexes are deferred past backfill, so the catalog
       // only holds them once every chain has reported ready.

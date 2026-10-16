@@ -50,15 +50,18 @@ let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #g
 // and the next one reaches the head.
 let enterThresholdAndIndex = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
   source.resolveGetHeightOrThrow(300)
-  await Utils.delay(0)
-  await Utils.delay(0)
 
-  await MockSource.waitItemsQuery(source)
-  source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+  await source.expectItemsQueries([
+    {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
+  ])
   await indexer.getBatchWritePromise()
 
-  await MockSource.waitItemsQuery(source)
-  source.resolveGetItemsOrThrow([setCounter(~block=200, ~count=1n)], ~latestFetchedBlockNumber=300)
+  await source.expectItemsQueries([
+    {
+      fromBlock: 101,
+      reply: Respond({items: [setCounter(~block=200, ~count=1n)], latestFetchedBlockNumber: 300}),
+    },
+  ])
   await indexer.getBatchWritePromise()
 }
 
@@ -78,12 +81,16 @@ describe("Scenario rollback and history", () => {
       // Block 300 comes back with a different hash, so everything after the
       // last valid block is rolled back — including the block-200 write.
       source.resolveGetHeightOrThrow(301)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=301,
-        ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300a"},
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 301,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 301,
+            prevRangeLastBlock: {blockNumber: 300, blockHash: "0x300a"},
+          }),
+        },
+      ])
 
       // The depth search asks which blocks still hold. Only those up to 100 do,
       // so the rollback target is the checkpoint at block 100 and the block-200
@@ -123,25 +130,29 @@ describe("Scenario rollback and history", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // Written below the reorg threshold, so it survives the rollback and is
       // what the reverted entity has to be restored to. The removal case above
       // never reaches the restore path, and a BigInt column is where the two
       // storages disagree about how a restored row is encoded.
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [setCounter(~block=50, ~count=1n)],
-        ~latestFetchedBlockNumber=100,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({items: [setCounter(~block=50, ~count=1n)]}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [setCounter(~block=200, ~count=2n)],
-        ~latestFetchedBlockNumber=300,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [setCounter(~block=200, ~count=2n)],
+            latestFetchedBlockNumber: 300,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -150,12 +161,16 @@ describe("Scenario rollback and history", () => {
       ).toEqual([{id: "total", count: 2n}])
 
       source.resolveGetHeightOrThrow(301)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=301,
-        ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300a"},
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 301,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 301,
+            prevRangeLastBlock: {blockNumber: 300, blockHash: "0x300a"},
+          }),
+        },
+      ])
       await Scenario.driveRollback(~source, ~validUpTo=100)
       await indexer.waitUntilIdle()
 

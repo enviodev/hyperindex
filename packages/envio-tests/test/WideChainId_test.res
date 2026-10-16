@@ -55,13 +55,19 @@ describe("A chain id past int32", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(chainId->(Utils.magic: float => int))
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow([setTally(~block=50, ~count=1)], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({items: [setTally(~block=50, ~count=1)], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow([setTally(~block=200, ~count=2)], ~latestFetchedBlockNumber=300)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({items: [setTally(~block=200, ~count=2)], latestFetchedBlockNumber: 300}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       await Scenario.reorgAbove(~indexer, ~source, ~head=300, ~validUpTo=100)

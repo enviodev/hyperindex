@@ -104,9 +104,10 @@ describe("Two entities whose names truncate alike", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
-      source.resolveGetItemsOrThrow([setBoth], ~latestFetchedBlockNumber=1)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, toBlock: Unbounded, reply: Respond({items: [setBoth]})},
+      ])
       await indexer.getBatchWritePromise()
 
       let {sql, pgSchema} = indexer.pg

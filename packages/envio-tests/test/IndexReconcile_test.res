@@ -84,10 +84,16 @@ let describeIndex = (index: PgCatalog.index) => (
   index.isPartial,
 )
 
+let fetchToHead: MockSource.expectedItemsQuery = {
+  partitionId: "0",
+  fromBlock: 1,
+  reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+}
+
 let restartToReady = async (indexer: IndexerRunner.t, ~source: MockSource.t) => {
   source.setAutoHeight(100)
   let restarted = await indexer.restart()
-  source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+  await source.expectItemsQueries([fetchToHead])
   await restarted.waitUntilReady()
   restarted
 }
@@ -176,7 +182,7 @@ describe("Indexes on a database that already holds some", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([fetchToHead])
       await indexer.waitUntilReady()
       let built = await indexer->indexesOn(~tableName=longName)
 
@@ -213,24 +219,32 @@ describe("Indexes on a database that already holds some", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 10,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              let _ = await context.a.getWhere({"b_id": {"_eq": "b"}})
-              context.a.set({id: "1", b_id: "b"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 10,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  let _ = await context.a.getWhere({"b_id": {"_eq": "b"}})
+                  context.a.set({id: "1", b_id: "b"})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
       let beforeReady = await indexer->indexesOn(~tableName="A")
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 11, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       // The name is the same either way, so the logs are what tell a reuse from
@@ -267,7 +281,7 @@ describe("Indexes on a database that already holds some", () => {
       )
       source.setAutoHeight(100)
       let restarted = await indexer.restart()
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([fetchToHead])
       await Scenario.waitUntil(
         () => failure.contents->Option.isSome,
         ~message="the second index build to fail",

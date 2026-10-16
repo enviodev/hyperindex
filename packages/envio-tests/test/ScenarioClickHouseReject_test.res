@@ -70,19 +70,26 @@ describe("ClickHouse refuses a value its column cannot hold", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.bounded.set({id: "over", amount: 100000000000000000000n})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  context.bounded.set({id: "over", amount: 100000000000000000000n})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       let failure = await refusal.awaitStorageError()
 
       let database = TestClickHouse.currentDatabase()
@@ -110,20 +117,27 @@ describe("Both stores refuse their halves of one batch", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.pgBounded.set({id: "over", amount: 100000000000000000000n})
-              context.bounded.set({id: "over", amount: 100000000000000000000n})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  context.pgBounded.set({id: "over", amount: 100000000000000000000n})
+                  context.bounded.set({id: "over", amount: 100000000000000000000n})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       let reason = await refusal.awaitRefusalReason()
 
       t.expect((
@@ -144,20 +158,27 @@ describe("A batch Postgres refuses", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.note.set({id: "landed", text: "only ClickHouse takes it"})
-              context.pgBounded.set({id: "over", amount: 100000000000000000000n})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  context.note.set({id: "landed", text: "only ClickHouse takes it"})
+                  context.pgBounded.set({id: "over", amount: 100000000000000000000n})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       let reason = await refusal.awaitRefusalReason()
 
       let database = TestClickHouse.currentDatabase()

@@ -149,7 +149,9 @@ describe("Resuming a backfill that never finalized", () => {
       let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -189,15 +191,15 @@ describe("Resuming a backfill that never finalized", () => {
       let heightCallsWhenReady = source.getHeightOrThrowCalls->Array.length
       await MockSource.waitHeightQuery(source, ~since=heightCallsWhenReady)
       source.resolveGetHeightOrThrow(200)
-      await MockSource.waitItemsQuery(source)
+      await source.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
 
       t.expect(
         (
-          source.getItemsOrThrowCalls->Array.length,
+          source.pendingItemsQueries,
           source.getHeightOrThrowCalls->Array.length > heightCallsWhenReady,
         ),
         ~message="Finalizing on resume re-parks the fetch waiter on the realtime source",
-      ).toEqual((1, true))
+      ).toEqual(([{partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}], true))
     },
   )
 
@@ -218,7 +220,9 @@ describe("Resuming a backfill that never finalized", () => {
       let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilReady()
 
@@ -259,7 +263,9 @@ describe("Resuming a backfill that never finalized", () => {
       let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -269,7 +275,7 @@ describe("Resuming a backfill that never finalized", () => {
 
       let restarted = await indexer.restart()
       source.resolveGetHeightOrThrow(101)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
+      await source.expectItemsQueries([{fromBlock: 101, reply: Respond({items: []})}])
       await restarted.waitUntilReady()
       await restarted.waitUntilIdle()
 
@@ -303,7 +309,9 @@ describe("Resuming a backfill that never finalized", () => {
       let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -354,8 +362,12 @@ describe("Resuming a backfill that never finalized", () => {
 
       source1337.resolveGetHeightOrThrow(100)
       source1.resolveGetHeightOrThrow(55)
-      source1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      source1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=55)
+      await source1337.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
+      await source1.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 55})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -412,7 +424,9 @@ describe("Resuming a backfill that never finalized", () => {
       let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -458,7 +472,9 @@ describe("Resuming a backfill that never finalized", () => {
       let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilReady()
 
@@ -512,7 +528,9 @@ describe("Resuming a backfill that never finalized", () => {
       let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilReady()
 
@@ -575,7 +593,9 @@ describe("Resuming a backfill that never finalized", () => {
       let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -590,38 +610,37 @@ describe("Resuming a backfill that never finalized", () => {
 
       // The resumed run sees head 150 and queries 101-150 while finalize is still
       // parked on the gate.
-      let attempts = ref(0)
-      while source.getItemsOrThrowCalls->Utils.Array.isEmpty && attempts.contents < 200 {
-        attempts := attempts.contents + 1
-        await Utils.delay(5)
-      }
+      await source.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
+      await Scenario.waitUntil(
+        () => gate.entered.contents === 1,
+        ~message="the resumed run's finalize to reach the gate",
+      )
       t.expect(
-        (finalizeCalls.contents, source.getItemsOrThrowCalls->Array.length),
+        (finalizeCalls.contents, source.pendingItemsQueries),
         ~message="A catch-up query is in flight while finalization is still open",
-      ).toEqual((2, 1))
+      ).toEqual((2, [{partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}]))
 
       // Hold the query itself: the handoff replaces it with one carrying an
       // identical payload, and only this one's response is the discarded one.
-      let discarded = source.getItemsOrThrowCalls->Array.getUnsafe(0)
+      let discarded = source.pendingItemsQueries->Array.getUnsafe(0)
 
       gate.release()
       await restarted.waitUntilReady()
 
       // Issued under the old epoch, so the response is dropped before
-      // handleQueryResult can retire it.
-      discarded.resolve([], ~latestFetchedBlockNumber=150)
-      let attempts = ref(0)
-      while source.getItemsOrThrowCalls->Utils.Array.isEmpty && attempts.contents < 200 {
-        attempts := attempts.contents + 1
-        await Utils.delay(5)
-      }
-
-      // Blocks 101-150 are still owed; a partition left holding the discarded
-      // query would never ask for them again.
+      // handleQueryResult can retire it. Blocks 101-150 are still owed; a
+      // partition left holding the discarded query would never ask for them again.
+      await source.expectItemsQueries([
+        {
+          where: query => query === discarded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 150}),
+        },
+        {where: query => query !== discarded, fromBlock: 101, reply: LeavePending},
+      ])
       t.expect(
-        source.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+        source.pendingItemsQueries,
         ~message="A discarded response must not leave the partition holding a pending query",
-      ).toEqual([101])
+      ).toEqual([{partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}])
     },
   )
 
@@ -643,8 +662,12 @@ describe("Resuming a backfill that never finalized", () => {
 
       source1337.resolveGetHeightOrThrow(100)
       source1.resolveGetHeightOrThrow(55)
-      source1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      source1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=55)
+      await source1337.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
+      await source1.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 55})},
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilReady()
 

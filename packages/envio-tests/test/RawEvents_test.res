@@ -65,16 +65,22 @@ describe("Raw events", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [event(~block=50, ~logIndex=0), event(~block=50, ~logIndex=3)],
-        ~latestFetchedBlockNumber=100,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [event(~block=50, ~logIndex=0), event(~block=50, ~logIndex=3)],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow([event(~block=200, ~logIndex=1)], ~latestFetchedBlockNumber=300)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({items: [event(~block=200, ~logIndex=1)], latestFetchedBlockNumber: 300}),
+        },
+      ])
       await indexer.getBatchWritePromise()
       let beforeReorg = await read(indexer)
 
@@ -106,27 +112,32 @@ describe("Raw events", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(300)
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 3,
-            handler: async _ => (),
-            blockFields: dict{
-              "timestamp": 9999->(Utils.magic: int => unknown),
-              "hash": "0xblockhash"->(Utils.magic: string => unknown),
-              "gasUsed": 99n->(Utils.magic: bigint => unknown),
-              "miner": "0xminer"->(Utils.magic: string => unknown),
-            },
-            transactionFields: dict{
-              "hash": "0xtxhash"->(Utils.magic: string => unknown),
-              "transactionIndex": 7->(Utils.magic: int => unknown),
-              "value": 5n->(Utils.magic: bigint => unknown),
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 3,
+                handler: async _ => (),
+                blockFields: dict{
+                  "timestamp": 9999->(Utils.magic: int => unknown),
+                  "hash": "0xblockhash"->(Utils.magic: string => unknown),
+                  "gasUsed": 99n->(Utils.magic: bigint => unknown),
+                  "miner": "0xminer"->(Utils.magic: string => unknown),
+                },
+                transactionFields: dict{
+                  "hash": "0xtxhash"->(Utils.magic: string => unknown),
+                  "transactionIndex": 7->(Utils.magic: int => unknown),
+                  "value": 5n->(Utils.magic: bigint => unknown),
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let {sql, pgSchema} = indexer.pg

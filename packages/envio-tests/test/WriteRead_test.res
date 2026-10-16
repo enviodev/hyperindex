@@ -224,15 +224,17 @@ let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
 // Head 300 against maxReorgDepth 200: one query opens at block 1, and its
 // response is what every case below rides in on.
-let reachFirstQuery = async (~t: Vitest.testContext, ~source: MockSource.t) => {
-  await Utils.delay(0)
-  t.expect(
-    source.getHeightOrThrowCalls->Array.length,
-    ~message="should have called getHeightOrThrow to get initial height",
-  ).toEqual(1)
+let reachFirstQuery = async (~source: MockSource.t) => {
+  // The initial height comes from a single getHeightOrThrow call.
+  await source.expectHeightCalls(1)
   source.resolveGetHeightOrThrow(300)
-  await Utils.delay(0)
-  await Utils.delay(0)
+}
+
+let firstQuery = (items): MockSource.expectedItemsQuery => {
+  partitionId: "0",
+  fromBlock: 1,
+  toBlock: Bounded(100),
+  reply: Respond({items: items}),
 }
 
 describe("Write/read tests", () => {
@@ -242,7 +244,7 @@ describe("Write/read tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await reachFirstQuery(~t, ~source)
+      await reachFirstQuery(~source)
 
       let entityWithAllTypes = {
         id: "1",
@@ -294,21 +296,23 @@ describe("Write/read tests", () => {
         optTimestamp: Some(mockDate(~day=2)),
       }
 
-      source.resolveGetItemsOrThrow([
-        {
-          blockNumber: 50,
-          logIndex: 1,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => writeContext)
-            context.entityWithAllTypes.set(entityWithAllTypes)
-            context.entityWithAllNonArrayTypes.set(entityWithAllNonArrayTypes)
+      await source.expectItemsQueries([
+        firstQuery([
+          {
+            blockNumber: 50,
+            logIndex: 1,
+            handler: async args => {
+              let context = args.context->(Utils.magic: Internal.handlerContext => writeContext)
+              context.entityWithAllTypes.set(entityWithAllTypes)
+              context.entityWithAllNonArrayTypes.set(entityWithAllNonArrayTypes)
 
-            // Entity names at the length limit: their history tables have to be
-            // truncated to something Postgres accepts, and still be writable.
-            context.longNameOne.set({id: "1"})
-            context.longNameTwo.set({id: "2"})
+              // Entity names at the length limit: their history tables have to be
+              // truncated to something Postgres accepts, and still be writable.
+              context.longNameOne.set({id: "1"})
+              context.longNameTwo.set({id: "2"})
+            },
           },
-        },
+        ]),
       ])
       await indexer.getBatchWritePromise()
 
@@ -387,34 +391,43 @@ describe("Write/read tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await reachFirstQuery(~t, ~source)
+      await reachFirstQuery(~source)
 
-      source.resolveGetItemsOrThrow([
-        {
-          blockNumber: 50,
-          logIndex: 1,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => simpleContext)
-            context.simpleEntity.set({id: "untouched", value: "batch1"})
-            context.simpleEntity.set({id: "updated", value: "batch1"})
+      await source.expectItemsQueries([
+        firstQuery([
+          {
+            blockNumber: 50,
+            logIndex: 1,
+            handler: async args => {
+              let context = args.context->(Utils.magic: Internal.handlerContext => simpleContext)
+              context.simpleEntity.set({id: "untouched", value: "batch1"})
+              context.simpleEntity.set({id: "updated", value: "batch1"})
+            },
           },
-        },
+        ]),
       ])
       await indexer.getBatchWritePromise()
 
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow([
+      await source.expectItemsQueries([
         {
-          blockNumber: 51,
-          logIndex: 1,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => simpleContext)
-            // "untouched" is carried over from the previous batch and read from
-            // the in-memory store without hitting the db.
-            let untouched = await context.simpleEntity.get("untouched")
-            t.expect(untouched).toEqual(Some({id: "untouched", value: "batch1"}))
-            context.simpleEntity.set({id: "updated", value: "batch2"})
-          },
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 101,
+                logIndex: 1,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => simpleContext)
+                  // "untouched" is carried over from the previous batch and read from
+                  // the in-memory store without hitting the db.
+                  let untouched = await context.simpleEntity.get("untouched")
+                  t.expect(untouched).toEqual(Some({id: "untouched", value: "batch1"}))
+                  context.simpleEntity.set({id: "updated", value: "batch2"})
+                },
+              },
+            ],
+          }),
         },
       ])
       await indexer.getBatchWritePromise()
@@ -496,7 +509,7 @@ describe("Write/read tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await reachFirstQuery(~t, ~source)
+      await reachFirstQuery(~source)
 
       let results = Dict.make()
       let record = (name, tokens: array<token>) => results->Dict.set(name, tokens->Array.length)
@@ -504,69 +517,74 @@ describe("Write/read tests", () => {
       let testUserId = "test-user-1"
       let testCollectionId = "test-collection-1"
 
-      source.resolveGetItemsOrThrow([
-        {
-          blockNumber: 50,
-          logIndex: 1,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => tokenContext)
+      await source.expectItemsQueries([
+        firstQuery([
+          {
+            blockNumber: 50,
+            logIndex: 1,
+            handler: async args => {
+              let context = args.context->(Utils.magic: Internal.handlerContext => tokenContext)
 
-            context.user.set({
-              id: testUserId,
-              address: "0x1234567890123456789012345678901234567890"->Utils.magic,
-              updatesCountOnUserForTesting: 0,
-              accountType: "USER",
-            })
+              context.user.set({
+                id: testUserId,
+                address: "0x1234567890123456789012345678901234567890"->Utils.magic,
+                updatesCountOnUserForTesting: 0,
+                accountType: "USER",
+              })
 
-            context.nftCollection.set({
-              id: testCollectionId,
-              contractAddress: "0xabcdef0123456789abcdef0123456789abcdef01"->Utils.magic,
-              name: "Test Collection",
-              symbol: "TEST",
-              maxSupply: BigInt.fromInt(100),
-              currentSupply: 1,
-            })
+              context.nftCollection.set({
+                id: testCollectionId,
+                contractAddress: "0xabcdef0123456789abcdef0123456789abcdef01"->Utils.magic,
+                name: "Test Collection",
+                symbol: "TEST",
+                maxSupply: BigInt.fromInt(100),
+                currentSupply: 1,
+              })
 
-            context.token.set({
-              id: "token-1",
-              tokenId: BigInt.fromInt(50),
-              collection_id: testCollectionId,
-              owner_id: testUserId,
-            })
-            context.token.set({
-              id: "token-2",
-              tokenId: BigInt.fromInt(60),
-              collection_id: testCollectionId,
-              owner_id: testUserId,
-            })
+              context.token.set({
+                id: "token-1",
+                tokenId: BigInt.fromInt(50),
+                collection_id: testCollectionId,
+                owner_id: testUserId,
+              })
+              context.token.set({
+                id: "token-2",
+                tokenId: BigInt.fromInt(60),
+                collection_id: testCollectionId,
+                owner_id: testUserId,
+              })
 
-            record("eqOwner", await context.token.getWhere({owner: {_eq: testUserId}}))
-            record("eqTokenId", await context.token.getWhere({tokenId: {_eq: BigInt.fromInt(50)}}))
-            record("gt50", await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(50)}}))
-            record("gt49", await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
-            record("lt50", await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
-            record("lt51", await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
-            record("gte50", await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(50)}}))
-            record("gte51", await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(51)}}))
-            record("lte50", await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(50)}}))
-            record("lte49", await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(49)}}))
-            record(
-              "inOwner",
-              await context.token.getWhere({owner: {_in: [testUserId, "non-existent-user"]}}),
-            )
-            record(
-              "inTokenId",
-              await context.token.getWhere({
-                tokenId: {_in: [BigInt.fromInt(50), BigInt.fromInt(60)]},
-              }),
-            )
-            record(
-              "inTokenIdNoMatch",
-              await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(999)]}}),
-            )
-            record("inTokenIdEmpty", await context.token.getWhere({tokenId: {_in: []}}))
+              record("eqOwner", await context.token.getWhere({owner: {_eq: testUserId}}))
+              record(
+                "eqTokenId",
+                await context.token.getWhere({tokenId: {_eq: BigInt.fromInt(50)}}),
+              )
+              record("gt50", await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(50)}}))
+              record("gt49", await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
+              record("lt50", await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
+              record("lt51", await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
+              record("gte50", await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(50)}}))
+              record("gte51", await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(51)}}))
+              record("lte50", await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(50)}}))
+              record("lte49", await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(49)}}))
+              record(
+                "inOwner",
+                await context.token.getWhere({owner: {_in: [testUserId, "non-existent-user"]}}),
+              )
+              record(
+                "inTokenId",
+                await context.token.getWhere({
+                  tokenId: {_in: [BigInt.fromInt(50), BigInt.fromInt(60)]},
+                }),
+              )
+              record(
+                "inTokenIdNoMatch",
+                await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(999)]}}),
+              )
+              record("inTokenIdEmpty", await context.token.getWhere({tokenId: {_in: []}}))
+            },
           },
-        },
+        ]),
       ])
       await indexer.getBatchWritePromise()
 
@@ -594,17 +612,23 @@ describe("Write/read tests", () => {
 
       // Deleting a token has to drop it from the index the getWhere above built.
       let afterDelete = ref(-1)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow([
+      await source.expectItemsQueries([
         {
-          blockNumber: 51,
-          logIndex: 1,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => tokenContext)
-            context.token.deleteUnsafe("token-1")
-            let remaining = await context.token.getWhere({owner: {_eq: testUserId}})
-            afterDelete := remaining->Array.length
-          },
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 101,
+                logIndex: 1,
+                handler: async args => {
+                  let context = args.context->(Utils.magic: Internal.handlerContext => tokenContext)
+                  context.token.deleteUnsafe("token-1")
+                  let remaining = await context.token.getWhere({owner: {_eq: testUserId}})
+                  afterDelete := remaining->Array.length
+                },
+              },
+            ],
+          }),
         },
       ])
       await indexer.getBatchWritePromise()
@@ -621,24 +645,26 @@ describe("Write/read tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await reachFirstQuery(~t, ~source)
+      await reachFirstQuery(~source)
 
       let error = ref("")
 
-      source.resolveGetItemsOrThrow([
-        {
-          blockNumber: 50,
-          logIndex: 1,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => tokenContext)
-            error := try {
-                let _ = await context.token.getWhere(%raw(`{tokenId: undefined}`))
-                "Expected getWhere to throw"
-              } catch {
-              | JsExn(e) => e->JsExn.message->Option.getOr("(no message)")
-              }
+      await source.expectItemsQueries([
+        firstQuery([
+          {
+            blockNumber: 50,
+            logIndex: 1,
+            handler: async args => {
+              let context = args.context->(Utils.magic: Internal.handlerContext => tokenContext)
+              error := try {
+                  let _ = await context.token.getWhere(%raw(`{tokenId: undefined}`))
+                  "Expected getWhere to throw"
+                } catch {
+                | JsExn(e) => e->JsExn.message->Option.getOr("(no message)")
+                }
+            },
           },
-        },
+        ]),
       ])
       await indexer.getBatchWritePromise()
 

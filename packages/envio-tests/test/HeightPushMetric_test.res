@@ -47,15 +47,17 @@ describe("Height subscription push metrics", () => {
       // Backfill to head so the indexer flips to realtime — the height
       // subscription is only created there.
       sourceMock.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      await MockSource.waitItemsQuery(sourceMock)
-      sourceMock.resolveGetItemsOrThrow(
-        [{blockNumber: 50, logIndex: 0}],
-        ~latestFetchedBlockNumber=100,
-        ~knownHeight=100,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [{blockNumber: 50, logIndex: 0}],
+            latestFetchedBlockNumber: 100,
+            knownHeight: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // The realtime wait polls once more; a same-height response is what makes
@@ -96,7 +98,7 @@ describe("Height subscription push metrics", () => {
 
       // The stream finds a new block.
       sourceMock.triggerHeightSubscription(101)
-      await MockSource.waitItemsQuery(sourceMock)
+      await sourceMock.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
 
       t.expect(
         await heightPushSamples(),

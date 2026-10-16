@@ -130,25 +130,32 @@ describe("Non-string entity id — end-to-end via the in-process indexer", () =>
 
       source.resolveGetHeightOrThrow(300)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.chain.set({id: 137})
-              // Deleted below by its numeric id, exercising delete-by-id with an
-              // integer column instead of text.
-              context.chain.set({id: 10})
-              context.bigThing.set({"id": 999n})
-              context.vault.set({id: "v1", chainId: 137, bigId: 999n})
-              context.chain.deleteUnsafe(10)
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=300,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  context.chain.set({id: 137})
+                  // Deleted below by its numeric id, exercising delete-by-id with an
+                  // integer column instead of text.
+                  context.chain.set({id: 10})
+                  context.bigThing.set({"id": 999n})
+                  context.vault.set({id: "v1", chainId: 137, bigId: 999n})
+                  context.chain.deleteUnsafe(10)
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 300,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let chains: array<chainEntity> = await indexer.query("Chain")

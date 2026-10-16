@@ -73,16 +73,24 @@ describe("context.chain inside a handler", () => {
 
       // Both chains stop short of their head, so neither is ready and the
       // handlers see a backfilling indexer.
-      await MockSource.waitItemsQuery(chain1)
-      chain1.resolveGetItemsOrThrow(
-        [recordChain(~block=10, ~label="backfill-1")],
-        ~latestFetchedBlockNumber=100,
-      )
-      await MockSource.waitItemsQuery(chain137)
-      chain137.resolveGetItemsOrThrow(
-        [recordChain(~block=20, ~label="backfill-137")],
-        ~latestFetchedBlockNumber=100,
-      )
+      await chain1.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [recordChain(~block=10, ~label="backfill-1")],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
+      await chain137.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [recordChain(~block=20, ~label="backfill-137")],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -95,20 +103,26 @@ describe("context.chain inside a handler", () => {
 
       // Both chains reach their head, so the indexer is realtime for whatever
       // it processes next.
-      await MockSource.waitItemsQuery(chain1)
-      chain1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await MockSource.waitItemsQuery(chain137)
-      chain137.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await chain1.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
+      await chain137.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.waitUntilReady()
 
       // A chain at its head only fetches again once the head moves.
       chain1.resolveGetHeightOrThrow(301)
-      await MockSource.waitItemsQuery(chain1)
-      chain1.resolveGetItemsOrThrow(
-        [recordChain(~block=301, ~label="realtime-1")],
-        ~latestFetchedBlockNumber=301,
-        ~knownHeight=301,
-      )
+      await chain1.expectItemsQueries([
+        {
+          fromBlock: 301,
+          reply: Respond({
+            items: [recordChain(~block=301, ~label="realtime-1")],
+            latestFetchedBlockNumber: 301,
+            knownHeight: 301,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(

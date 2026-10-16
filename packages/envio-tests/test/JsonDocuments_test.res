@@ -50,21 +50,28 @@ describe("Json documents of every shape", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              every->Array.forEachWithIndex((one, index) =>
-                context.doc.set({id: index->Int.toString, one, many: every})
-              )
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  every->Array.forEachWithIndex((one, index) =>
+                    context.doc.set({id: index->Int.toString, one, many: every})
+                  )
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       let written = ref(false)
       indexer.getBatchWritePromise()->Promise.thenResolve(() => written := true)->ignore
       await Scenario.waitUntil(

@@ -255,7 +255,7 @@ describe("Changing the chains of a deployment", () => {
 
 let refusalAfterLosing = async (~indexer: IndexerRunner.t, ~source: MockSource.t, lose) => {
   source.resolveGetHeightOrThrow(100)
-  source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+  await source.respondEmptyUpTo(100)
   await indexer.waitUntilReady()
   await indexer.waitUntilIdle()
   await lose()
@@ -338,7 +338,13 @@ describe("What a refused restart tells the operator", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
       let config =
@@ -391,7 +397,13 @@ ${storageLines}
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
       let config = {

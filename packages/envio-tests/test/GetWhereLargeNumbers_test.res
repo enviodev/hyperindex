@@ -55,60 +55,68 @@ describe("getWhere on a large or scaled number", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              [
-                ("max", maxUint256),
-                ("half", twoTo255),
-                ("minus", -1n),
-                ("zero", 0n),
-                ("hundred", 100n),
-              ]->Array.forEach(((id, value)) => context.amount.set({id, value}))
-              context.price.set({id: "price", value: BigDecimal.fromStringUnsafe("1.55")})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=5,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  [
+                    ("max", maxUint256),
+                    ("half", twoTo255),
+                    ("minus", -1n),
+                    ("zero", 0n),
+                    ("hundred", 100n),
+                  ]->Array.forEach(((id, value)) => context.amount.set({id, value}))
+                  context.price.set({id: "price", value: BigDecimal.fromStringUnsafe("1.55")})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 5,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let restarted = await indexer.restart()
       let found = ref(None)
       source.resolveGetHeightOrThrow(10)
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 6,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              let amounts = async filter =>
-                (await context.amount.getWhere({value: filter}))
-                ->Array.map(row => row.id)
-                ->Array.toSorted(String.compare)
-              let prices = async filter =>
-                (await context.price.getWhere({value: filter}))->Array.map(row => row.id)
-              found :=
-                Some((
-                  await amounts({_gt: 0n}),
-                  await amounts({_lt: 100n}),
-                  await amounts({_eq: maxUint256}),
-                  await amounts({_gte: twoTo255}),
-                  await amounts({_in: [maxUint256, -1n]}),
-                  await prices({_eq: BigDecimal.fromStringUnsafe("1.555")}),
-                  await prices({_lt: BigDecimal.fromStringUnsafe("1.551")}),
-                  await prices({_gte: BigDecimal.fromStringUnsafe("1.551")}),
-                ))
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      let readFilters: MockSource.itemMock = {
+        blockNumber: 6,
+        logIndex: 0,
+        handler: async args => {
+          let context = args.context->asContext
+          let amounts = async filter =>
+            (await context.amount.getWhere({value: filter}))
+            ->Array.map(row => row.id)
+            ->Array.toSorted(String.compare)
+          let prices = async filter =>
+            (await context.price.getWhere({value: filter}))->Array.map(row => row.id)
+          found :=
+            Some((
+              await amounts({_gt: 0n}),
+              await amounts({_lt: 100n}),
+              await amounts({_eq: maxUint256}),
+              await amounts({_gte: twoTo255}),
+              await amounts({_in: [maxUint256, -1n]}),
+              await prices({_eq: BigDecimal.fromStringUnsafe("1.555")}),
+              await prices({_lt: BigDecimal.fromStringUnsafe("1.551")}),
+              await prices({_gte: BigDecimal.fromStringUnsafe("1.551")}),
+            ))
+        },
+      }
+      await source.expectItemsQueries([
+        {
+          fromBlock: 6,
+          toBlock: Unbounded,
+          reply: Respond({items: [readFilters], latestFetchedBlockNumber: 10}),
+        },
+      ])
       await restarted.getBatchWritePromise()
 
       t.expect(found.contents).toEqual(

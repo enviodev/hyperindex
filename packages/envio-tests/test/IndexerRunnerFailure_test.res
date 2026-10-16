@@ -32,17 +32,23 @@ describe("An indexer failing under a test that passes no onError", () => {
       async (~indexer as _, ~source) => {
         let source = source(1337)
         source.resolveGetHeightOrThrow(100)
-        source.resolveGetItemsOrThrow(
-          [
-            {
-              blockNumber: 50,
-              logIndex: 0,
-              handler: async _ => JsError.throwWithMessage("handler blew up"),
-            },
-          ],
-          ~latestFetchedBlockNumber=100,
-          ~knownHeight=100,
-        )
+        await source.expectItemsQueries([
+          {
+            fromBlock: 1,
+            toBlock: Unbounded,
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 50,
+                  logIndex: 0,
+                  handler: async _ => JsError.throwWithMessage("handler blew up"),
+                },
+              ],
+              latestFetchedBlockNumber: 100,
+              knownHeight: 100,
+            }),
+          },
+        ])
         await Promise.make((_, _) => ())
       },
     ) {
@@ -67,17 +73,23 @@ describe("An indexer failing under a test that passes no onError", () => {
       async (~indexer, ~source) => {
         let source = source(1337)
         source.resolveGetHeightOrThrow(100)
-        source.resolveGetItemsOrThrow(
-          [
-            {
-              blockNumber: 50,
-              logIndex: 0,
-              handler: async _ => JsError.throwWithMessage("handler blew up"),
-            },
-          ],
-          ~latestFetchedBlockNumber=100,
-          ~knownHeight=100,
-        )
+        await source.expectItemsQueries([
+          {
+            fromBlock: 1,
+            toBlock: Unbounded,
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 50,
+                  logIndex: 0,
+                  handler: async _ => JsError.throwWithMessage("handler blew up"),
+                },
+              ],
+              latestFetchedBlockNumber: 100,
+              knownHeight: 100,
+            }),
+          },
+        ])
         await bodyResumed
         let outcome = switch await indexer.restart() {
         | _ => None

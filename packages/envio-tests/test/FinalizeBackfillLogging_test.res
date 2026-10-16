@@ -82,19 +82,25 @@ describe("A supervised worker released at the head", () => {
     ~holdRealtime=true,
     ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      let catchUpToSafeBlock = (~source: MockSource.t) => {
+      let catchUpToSafeBlock = async (~source: MockSource.t) => {
         source.resolveGetHeightOrThrow(300)
-        source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+        await source.expectItemsQueries([
+          {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+        ])
       }
-      catchUpToSafeBlock(~source=source(1))
-      catchUpToSafeBlock(~source=source(137))
+      await catchUpToSafeBlock(~source=source(1))
+      await catchUpToSafeBlock(~source=source(137))
       await indexer.waitUntilIdle()
 
       indexer.releaseRealtime()
       await indexer.waitUntilIdle()
 
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await source(1).expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.waitUntilReady()
 
       t.expect(
@@ -114,8 +120,12 @@ describe("A supervised worker resumed at the head", () => {
     ~holdRealtime=true,
     ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilIdle()
 
       let resumed = await indexer.restart()
@@ -146,8 +156,12 @@ describe("A chain resumed already ready", () => {
     ~sources=[{chain: 1, autoHeight: 100}, {chain: 137, autoHeight: 100}],
     ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       // New blocks on both chains, so the resumed run indexes at the head
@@ -155,8 +169,12 @@ describe("A chain resumed already ready", () => {
       source(1).setAutoHeight(110)
       source(137).setAutoHeight(110)
       let resumed = await indexer.restart()
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
+      await source(1).expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 110})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 110})},
+      ])
       await resumed.getBatchWritePromise()
 
       t.expect(
@@ -197,7 +215,9 @@ describe("A chain resumed already at its end block", () => {
     ~captureLogs=true,
     ~onExit=() => (),
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       let resumed = await indexer.restart()
@@ -233,10 +253,16 @@ describe("A process whose chains finish at different times", () => {
     ~sources=[{chain: 1, autoHeight: 100}, {chain: 137, autoHeight: 100}],
     ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=50)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 50})},
+      ])
       await indexer.getBatchWritePromise()
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(137).expectItemsQueries([
+        {fromBlock: 51, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       t.expect(indexer.logs()->finishLines).toStrictEqual([
@@ -257,8 +283,12 @@ describe("A process whose chains finish at different times", () => {
     ~sources=[{chain: 1, autoHeight: 100}, {chain: 137, autoHeight: 100}],
     ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       t.expect(indexer.logs()->finishLines).toStrictEqual([
@@ -298,7 +328,9 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}`,
     ~holdRealtime=true,
     ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilIdle()
       indexer.releaseRealtime()
       await indexer.waitUntilReady()
@@ -319,11 +351,15 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}`,
     ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       source(1).resolveGetHeightOrThrow(300)
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilIdle()
       indexer.releaseRealtime()
       await indexer.waitUntilIdle()
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await source(1).expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.waitUntilReady()
 
       t.expect(indexer.logs()->reportedFinishAndPause).toStrictEqual([
@@ -341,7 +377,9 @@ describe("A process driving one chain", () => {
     ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       source(1).resolveGetHeightOrThrow(100)
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       t.expect(indexer.logs()->Array.filter(({msg}) => msg === indexesMessage)).toStrictEqual([

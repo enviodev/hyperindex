@@ -67,14 +67,21 @@ describe("An indexed String field given a value too large to index", () => {
     ~onError=refusal.onError,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       source.setAutoHeight(110)
-      source.resolveGetItemsOrThrow(
-        [{blockNumber: 105, logIndex: 0, handler: setLongName}],
-        ~latestFetchedBlockNumber=110,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [{blockNumber: 105, logIndex: 0, handler: setLongName}],
+            latestFetchedBlockNumber: 110,
+          }),
+        },
+      ])
 
       t.expect(await refusal.awaitStorageError()).toEqual(
         Some((
@@ -95,10 +102,15 @@ describe("An indexed String field given a value too large to index", () => {
     ~sources=[{chain: 1337, autoHeight: 100}],
     ~onError=errHandler => failure := Some(errHandler),
     async (~t, ~indexer as _, ~source) => {
-      source(1337).resolveGetItemsOrThrow(
-        [{blockNumber: 50, logIndex: 0, handler: setLongName}],
-        ~latestFetchedBlockNumber=100,
-      )
+      await source(1337).expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [{blockNumber: 50, logIndex: 0, handler: setLongName}],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await Scenario.waitUntil(
         () => failure.contents->Option.isSome,
         ~message="the index build to fail",

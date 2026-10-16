@@ -133,22 +133,22 @@ describe("E2E tests", () => {
   startBlock100Scenario->Scenario.it(
     "Currectly starts indexing from a non-zero start block",
     ~sources=[{chain: 1337, methods}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getHeightOrThrowCalls->Array.length,
-        ~message="should have called getHeightOrThrow to get initial height",
-      ).toEqual(1)
+      // The initial height comes from a single getHeightOrThrow call.
+      await sourceMock.expectHeightCalls(1)
       sourceMock.resolveGetHeightOrThrow(400)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(call => call.payload),
-        ~message="Should request items from start block to reorg threshold",
-      ).toEqual([{"fromBlock": 100, "toBlock": Some(200), "retry": 0, "p": "0"}])
+      // Items from start block to reorg threshold.
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 100,
+          toBlock: Bounded(200),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+      ])
     },
   )
 
@@ -167,7 +167,7 @@ describe("E2E tests", () => {
       {value: "0", labels: Dict.make()},
     ])
 
-    await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+    await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
     t.expect(await indexer.metric("envio_reorg_threshold")).toEqual([
       {value: "1", labels: Dict.make()},
@@ -176,7 +176,9 @@ describe("E2E tests", () => {
       {value: "0", labels: Dict.make()},
     ])
 
-    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+    await sourceMock.expectItemsQueries([
+      {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+    ])
     await indexer.getBatchWritePromise()
 
     t.expect(
@@ -192,18 +194,18 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       // Enter reorg threshold for both chains
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       // Only the most-behind chain (100 — the progress tie breaks by ascending
       // chain id) gets the follow-up query; chain 1337 sits the round out until
       // the leader's reservation releases. Advance chain 100 to head first.
-      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await sourceMock100.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
 
       // No chain is marked ready until every chain catches up
@@ -220,7 +222,9 @@ describe("E2E tests", () => {
       ).toEqual([{value: "0", labels: Dict.make()}])
 
       // Now advance chain 1337 to head
-      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await sourceMock1337.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
 
       // Both chains should now be ready
@@ -245,54 +249,61 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       sourceMock.resolveGetHeightOrThrow(300)
-      sourceMock.resolveGetItemsOrThrow([
+      await sourceMock.expectItemsQueries([
         {
-          blockNumber: 10,
-          logIndex: 0,
-          contractRegister: async args => {
-            let context = args.context->asRegisterContext
-            let _ = setTimeout(
-              () => {
-                try {
-                  context.chain.gravatar.add(
-                    "0x1234567890123456789012345678901234567890"->Address.Evm.fromStringOrThrow,
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 10,
+                logIndex: 0,
+                contractRegister: async args => {
+                  let context = args.context->asRegisterContext
+                  let _ = setTimeout(
+                    () => {
+                      try {
+                        context.chain.gravatar.add(
+                          "0x1234567890123456789012345678901234567890"->Address.Evm.fromStringOrThrow,
+                        )
+                      } catch {
+                      | exn => contextAfterResolveErrors->Array.push(exn->Utils.prettifyExn)
+                      }
+                    },
+                    0,
                   )
-                } catch {
-                | exn => contextAfterResolveErrors->Array.push(exn->Utils.prettifyExn)
-                }
+                },
+                handler: async args => {
+                  let context = args.context->asContext
+                  let _ = setTimeout(
+                    () => {
+                      try {
+                        context.simpleEntity.set({
+                          id: "1",
+                          value: "value-1",
+                        })
+                      } catch {
+                      | exn => contextAfterResolveErrors->Array.push(exn->Utils.prettifyExn)
+                      }
+                    },
+                    1,
+                  )
+                },
               },
-              0,
-            )
-          },
-          handler: async args => {
-            let context = args.context->asContext
-            let _ = setTimeout(
-              () => {
-                try {
+              {
+                blockNumber: 11,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
                   context.simpleEntity.set({
                     id: "1",
-                    value: "value-1",
+                    value: "value-2",
                   })
-                } catch {
-                | exn => contextAfterResolveErrors->Array.push(exn->Utils.prettifyExn)
-                }
+                  // Wait to see what will happen when timeout finishes during the batch
+                  await Utils.delay(1)
+                },
               },
-              1,
-            )
-          },
-        },
-        {
-          blockNumber: 11,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->asContext
-            context.simpleEntity.set({
-              id: "1",
-              value: "value-2",
-            })
-            // Wait to see what will happen when timeout finishes during the batch
-            await Utils.delay(1)
-          },
+            ],
+          }),
         },
       ])
       await indexer.getBatchWritePromise()
@@ -352,25 +363,30 @@ describe("E2E tests", () => {
     ).toEqual([])
 
     sourceMock.resolveGetHeightOrThrow(300)
-    sourceMock.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 100,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->asContext
-            t.expect(await context.effect(testEffect, "test")).toEqual("test-output")
-            t.expect(
-              await Promise.all2((
-                context.effect(testEffectWithCache, "test"),
-                context.effect(testEffectWithCache, "test-2"),
-              )),
-            ).toEqual(("test-output", "test-2-output"))
-          },
-        },
-      ],
-      ~latestFetchedBlockNumber=100,
-    )
+    await sourceMock.expectItemsQueries([
+      {
+        fromBlock: 1,
+        reply: Respond({
+          items: [
+            {
+              blockNumber: 100,
+              logIndex: 0,
+              handler: async args => {
+                let context = args.context->asContext
+                t.expect(await context.effect(testEffect, "test")).toEqual("test-output")
+                t.expect(
+                  await Promise.all2((
+                    context.effect(testEffectWithCache, "test"),
+                    context.effect(testEffectWithCache, "test-2"),
+                  )),
+                ).toEqual(("test-output", "test-2-output"))
+              },
+            },
+          ],
+          latestFetchedBlockNumber: 100,
+        }),
+      },
+    ])
     await indexer.getBatchWritePromise()
 
     t.expect(
@@ -448,24 +464,29 @@ describe("E2E tests", () => {
     )
 
     sourceMock.resolveGetHeightOrThrow(300)
-    sourceMock.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 101,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->asContext
-            t.expect(
-              await Promise.all2((
-                context.effect(testEffectWithCacheV2, "test"),
-                context.effect(testEffectWithCacheV2, "test-2"),
-              )),
-            ).toEqual(("test-output-v2", "test-2-output"))
-          },
-        },
-      ],
-      ~latestFetchedBlockNumber=101,
-    )
+    await sourceMock.expectItemsQueries([
+      {
+        fromBlock: 101,
+        reply: Respond({
+          items: [
+            {
+              blockNumber: 101,
+              logIndex: 0,
+              handler: async args => {
+                let context = args.context->asContext
+                t.expect(
+                  await Promise.all2((
+                    context.effect(testEffectWithCacheV2, "test"),
+                    context.effect(testEffectWithCacheV2, "test-2"),
+                  )),
+                ).toEqual(("test-output-v2", "test-2-output"))
+              },
+            },
+          ],
+          latestFetchedBlockNumber: 101,
+        }),
+      },
+    ])
     await restarted.getBatchWritePromise()
 
     t.expect(
@@ -534,7 +555,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let serializeMillis = 200.
       let slowEffect = Envio.createEffect(
@@ -560,18 +580,23 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 100,
-            logIndex: 0,
-            handler: async args => {
-              let _ = await (args.context->asContext).effect(slowEffect, "test")
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let _ = await (args.context->asContext).effect(slowEffect, "test")
+                },
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Postgres keeps the effect cache, whether or not ClickHouse writes too.
@@ -596,7 +621,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let probeEffect = Envio.createEffect(
         {
@@ -612,27 +636,30 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       let effectResult = ref(None)
       let effectError = ref(None)
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 100,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              switch await context.effect(probeEffect, "test") {
-              | output => effectResult := Some(output)
-              | exception exn => effectError := Some(exn)
-              }
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  switch await context.effect(probeEffect, "test") {
+                  | output => effectResult := Some(output)
+                  | exception exn => effectError := Some(exn)
+                  }
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -647,7 +674,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let chainScopedEffect = Envio.createEffect(
         {
@@ -682,8 +708,6 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       let msgOf = exn =>
         switch exn {
@@ -694,30 +718,35 @@ describe("E2E tests", () => {
       let chainId = ref(None)
       let crossChainAccessError = ref("")
       let nestedError = ref("")
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 100,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              chainId := Some(await context.effect(chainScopedEffect, "a"))
-              crossChainAccessError :=
-                switch await context.effect(crossChainEffect, "b") {
-                | _ => ""
-                | exception exn => msgOf(exn)
-                }
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  chainId := Some(await context.effect(chainScopedEffect, "a"))
+                  crossChainAccessError :=
+                    switch await context.effect(crossChainEffect, "b") {
+                    | _ => ""
+                    | exception exn => msgOf(exn)
+                    }
 
-              nestedError :=
-                switch await context.effect(crossChainParent, "c") {
-                | _ => ""
-                | exception exn => msgOf(exn)
-                }
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+                  nestedError :=
+                    switch await context.effect(crossChainParent, "c") {
+                    | _ => ""
+                    | exception exn => msgOf(exn)
+                    }
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect((chainId.contents, crossChainAccessError.contents, nestedError.contents)).toEqual((
@@ -749,58 +778,45 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMockPrimary = source(1337)
       let sourceMockFallback = source(1337, ~index=1)
-      await Utils.delay(0)
-
       // Resolve initial height request from primary source
-      t.expect(
-        sourceMockPrimary.getHeightOrThrowCalls->Array.length,
-        ~message="should have called getHeightOrThrow on primary source",
-      ).toEqual(1)
+      await sourceMockPrimary.expectHeightCalls(1)
       sourceMockPrimary.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      // Primary source should now attempt to fetch items
-      switch sourceMockPrimary.getItemsOrThrowCalls {
-      | [call] =>
-        // Simulate missing params error from HyperSync (converted to InvalidData by the source)
-        call.reject(
-          Source.GetItemsError(
-            FailedGettingItems({
-              requestStats: [],
-              attemptedToBlock: 100,
-              retry: ImpossibleForTheQuery({
-                message: "Source returned invalid data with missing required fields: log.address",
+      await sourceMockPrimary.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          // Simulate missing params error from HyperSync (converted to InvalidData by the source)
+          reply: Fail(
+            Source.GetItemsError(
+              FailedGettingItems({
+                requestStats: [],
+                attemptedToBlock: 100,
+                retry: ImpossibleForTheQuery({
+                  message: "Source returned invalid data with missing required fields: log.address",
+                }),
               }),
-            }),
+            ),
           ),
-        )
-      | _ => JsError.throwWithMessage("should have called getItemsOrThrow on primary source")
-      }
-
-      await Utils.delay(0)
-      await Utils.delay(0)
+        },
+      ])
 
       // The fallback source should now be called immediately
-      switch sourceMockFallback.getItemsOrThrowCalls {
-      | [call] =>
-        // Resolve the fallback source successfully
-        call.resolve([], ~latestFetchedBlockNumber=100)
-      | _ =>
-        JsError.throwWithMessage(
-          "fallback source should be called after primary fails with invalid data",
-        )
-      }
+      await sourceMockFallback.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
 
       await indexer.getBatchWritePromise()
 
+      await sourceMockFallback.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
       t.expect(
-        (
-          sourceMockPrimary.getItemsOrThrowCalls->Array.length,
-          sourceMockFallback.getItemsOrThrowCalls->Array.length,
-        ),
+        sourceMockPrimary.pendingItemsQueries,
         ~message="Should keep using fallback source for the next query after ImpossibleForTheQuery",
-      ).toEqual((0, 1))
+      ).toEqual([])
     },
   )
 
@@ -809,7 +825,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let queueMetricDuringExecution = ref(None)
       let activeMetricDuringExecution = ref(None)
@@ -829,46 +844,51 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 100,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              // Call effect 6 times - should span 3 windows (2+2+2)
-              let resultsPromise = Promise.all([
-                context.effect(testEffectMultiWindow, "1"),
-                context.effect(testEffectMultiWindow, "2"),
-                context.effect(testEffectMultiWindow, "3"),
-                context.effect(testEffectMultiWindow, "4"),
-                context.effect(testEffectMultiWindow, "5"),
-                context.effect(testEffectMultiWindow, "6"),
-              ])
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  // Call effect 6 times - should span 3 windows (2+2+2)
+                  let resultsPromise = Promise.all([
+                    context.effect(testEffectMultiWindow, "1"),
+                    context.effect(testEffectMultiWindow, "2"),
+                    context.effect(testEffectMultiWindow, "3"),
+                    context.effect(testEffectMultiWindow, "4"),
+                    context.effect(testEffectMultiWindow, "5"),
+                    context.effect(testEffectMultiWindow, "6"),
+                  ])
 
-              // Check metrics while effects are executing
-              await Utils.delay(3)
-              let (queueMetric, activeMetric) = await Promise.all2((
-                indexer.metric("envio_effect_queue"),
-                indexer.metric("envio_effect_active_calls"),
-              ))
-              queueMetricDuringExecution := Some(queueMetric)
-              activeMetricDuringExecution := Some(activeMetric)
+                  // Check metrics while effects are executing
+                  await Utils.delay(3)
+                  let (queueMetric, activeMetric) = await Promise.all2((
+                    indexer.metric("envio_effect_queue"),
+                    indexer.metric("envio_effect_active_calls"),
+                  ))
+                  queueMetricDuringExecution := Some(queueMetric)
+                  activeMetricDuringExecution := Some(activeMetric)
 
-              let results = await resultsPromise
-              t.expect(results).toEqual([
-                "1-output",
-                "2-output",
-                "3-output",
-                "4-output",
-                "5-output",
-                "6-output",
-              ])
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+                  let results = await resultsPromise
+                  t.expect(results).toEqual([
+                    "1-output",
+                    "2-output",
+                    "3-output",
+                    "4-output",
+                    "5-output",
+                    "6-output",
+                  ])
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
 
       await indexer.getBatchWritePromise()
 
@@ -922,7 +942,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let executionOrder = []
       let queueMetricDuringExecution = ref(None)
@@ -947,39 +966,44 @@ describe("E2E tests", () => {
       sourceMock.resolveGetHeightOrThrow(300)
 
       // Single batch with 4 calls that will be rate limited
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 100,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              let resultsPromise = Promise.all([
-                context.effect(testEffectNested, "call-1"),
-                context.effect(testEffectNested, "call-2"),
-                context.effect(testEffectNested, "call-3"),
-                context.effect(testEffectNested, "call-4"),
-              ])
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  let resultsPromise = Promise.all([
+                    context.effect(testEffectNested, "call-1"),
+                    context.effect(testEffectNested, "call-2"),
+                    context.effect(testEffectNested, "call-3"),
+                    context.effect(testEffectNested, "call-4"),
+                  ])
 
-              // Check metrics while effects are executing (shortly after trigger)
-              await Utils.delay(3)
-              let (queueMetric1, activeMetric1) = await Promise.all2((
-                indexer.metric("envio_effect_queue"),
-                indexer.metric("envio_effect_active_calls"),
-              ))
-              queueMetricDuringExecution := Some(queueMetric1)
-              activeMetricDuringExecution := Some(activeMetric1)
+                  // Check metrics while effects are executing (shortly after trigger)
+                  await Utils.delay(3)
+                  let (queueMetric1, activeMetric1) = await Promise.all2((
+                    indexer.metric("envio_effect_queue"),
+                    indexer.metric("envio_effect_active_calls"),
+                  ))
+                  queueMetricDuringExecution := Some(queueMetric1)
+                  activeMetricDuringExecution := Some(activeMetric1)
 
-              // Check again after first window should complete
-              await Utils.delay(14)
-              queueMetricAfterFirstWindow := Some(await indexer.metric("envio_effect_queue"))
+                  // Check again after first window should complete
+                  await Utils.delay(14)
+                  queueMetricAfterFirstWindow := Some(await indexer.metric("envio_effect_queue"))
 
-              let _ = await resultsPromise
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+                  let _ = await resultsPromise
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
 
       await indexer.getBatchWritePromise()
 
@@ -1046,7 +1070,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let callCount = ref(0)
       let testEffectWithCacheControl = Envio.createEffect(
@@ -1067,33 +1090,38 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 100,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              // Call 1: Disable cache persistence for this specific call
-              t.expect(await context.effect(testEffectWithCacheControl, "test1")).toEqual(
-                "test1-output",
-              )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  // Call 1: Disable cache persistence for this specific call
+                  t.expect(await context.effect(testEffectWithCacheControl, "test1")).toEqual(
+                    "test1-output",
+                  )
 
-              // Call 2: Same input as call 1, uses in-memory cache from call 1
-              // Shouldn't do anything, since memoization
-              t.expect(await context.effect(testEffectWithCacheControl, "test1")).toEqual(
-                "test1-output",
-              )
+                  // Call 2: Same input as call 1, uses in-memory cache from call 1
+                  // Shouldn't do anything, since memoization
+                  t.expect(await context.effect(testEffectWithCacheControl, "test1")).toEqual(
+                    "test1-output",
+                  )
 
-              // Call 3: Different input with default cache behavior (should cache in memory and DB)
-              t.expect(await context.effect(testEffectWithCacheControl, "test2")).toEqual(
-                "test2-output",
-              )
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+                  // Call 3: Different input with default cache behavior (should cache in memory and DB)
+                  t.expect(await context.effect(testEffectWithCacheControl, "test2")).toEqual(
+                    "test2-output",
+                  )
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -1113,7 +1141,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let throwingEffect = Envio.createEffect(
         {
@@ -1132,35 +1159,40 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 100,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              let p1 = context.effect(throwingEffect, "should-fail")
-              let p2 = context.effect(throwingEffect, "shouldn't-fail")
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  let p1 = context.effect(throwingEffect, "should-fail")
+                  let p2 = context.effect(throwingEffect, "shouldn't-fail")
 
-              // Verify p1 throws with correct error message
-              try {
-                let _ = await p1
-                JsError.throwWithMessage("p1 should have thrown an error")
-              } catch {
-              | exn =>
-                t.expect(
-                  (exn->Utils.prettifyExn->Utils.magic)["message"],
-                  ~message="p1 should throw with correct error message",
-                ).toEqual("Effect intentionally failed")
-              }
+                  // Verify p1 throws with correct error message
+                  try {
+                    let _ = await p1
+                    JsError.throwWithMessage("p1 should have thrown an error")
+                  } catch {
+                  | exn =>
+                    t.expect(
+                      (exn->Utils.prettifyExn->Utils.magic)["message"],
+                      ~message="p1 should throw with correct error message",
+                    ).toEqual("Effect intentionally failed")
+                  }
 
-              // p2 should succeed (bug: currently fails when p1 throws)
-              t.expect(await p2, ~message="p2 should succeed").toEqual("shouldn't-fail-output")
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+                  // p2 should succeed (bug: currently fails when p1 throws)
+                  t.expect(await p2, ~message="p2 should succeed").toEqual("shouldn't-fail-output")
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Verify that only p2's successful result was cached
@@ -1180,195 +1212,172 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let syncSource = source(1337)
       let liveSource = source(1337, ~index=1)
-      await Utils.delay(0)
 
       // During initial height fetch (knownHeight === 0),
       // only the Sync source should be queried, not the Live source.
       // This is important to allow HyperSync's smart block detection to work.
-      t.expect(
-        syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should be called for initial height",
-      ).toEqual(1)
-      t.expect(
-        liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should NOT be called during initial height fetch",
-      ).toEqual(0)
+      await syncSource.expectHeightCalls(1)
+      await liveSource.expectHeightCalls(0)
 
       // Resolve the initial height and let the indexer start syncing
       syncSource.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      // Sync source fetches items (enters reorg threshold at block 100)
-      t.expect(
-        syncSource.getItemsOrThrowCalls->Array.length,
-        ~message="Sync source should fetch items",
-      ).toEqual(1)
-
+      // Sync source fetches items (enters reorg threshold at block 100).
       // Resolve first batch (0-100) and continue until we reach the head
-      syncSource.resolveGetItemsOrThrow([])
+      await syncSource.expectItemsQueries([
+        {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
+      ])
       await indexer.getBatchWritePromise()
 
       // After entering reorg threshold, continue fetching until we reach head (300)
       // The indexer will fetch in batches, we need to resolve each one
-      syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200)
+      await syncSource.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 200})},
+      ])
       await indexer.getBatchWritePromise()
 
-      syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await syncSource.expectItemsQueries([
+        {fromBlock: 201, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
 
       // On catch-up the chain flips to realtime (Live=Primary). The backfill
       // waiter had already parked on the Sync source, so it polls Sync once more
       // before the realtime transition bumps the epoch and a fresh Live-source
-      // waiter supersedes it. Wait for the Live source to be polled.
-      let waitLiveHeightCalls = async n =>
-        while liveSource.getHeightOrThrowCalls->Array.length < n {
-          await Utils.delay(0)
-        }
-      await waitLiveHeightCalls(1)
-      t.expect(
-        liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should participate in the first waitForNewBlock (realtime)",
-      ).toEqual(1)
-      t.expect(
-        syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync polled once more at the realtime transition, then superseded by Live",
-      ).toEqual(2)
+      // waiter supersedes it. Live participates in the first waitForNewBlock.
+      await liveSource.expectHeightCalls(1)
+      await syncSource.expectHeightCalls(2)
 
       // Resolve the first waitForNewBlock via the Live (Primary) source
       liveSource.resolveGetHeightOrThrow(301)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // Resolve the items query for the new block
+      await liveSource.expectItemsQueries([
+        {fromBlock: 301, reply: Respond({items: [], latestFetchedBlockNumber: 301})},
+      ])
       t.expect(
-        syncSource.getItemsOrThrowCalls->Array.length,
+        syncSource.pendingItemsQueries,
         ~message="We are in live mode, so we query items from the live source.",
-      ).toEqual(0)
-      liveSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
+      ).toEqual([])
       await indexer.getBatchWritePromise()
 
       // Second waitForNewBlock: Live=Primary races again, Sync=Secondary (stays
       // at its post-transition count of 2, the superseded backfill poll).
-      await waitLiveHeightCalls(2)
-      t.expect(
-        syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should not be polled again (Secondary, not racing)",
-      ).toEqual(2)
-      t.expect(
-        liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should keep racing in realtime mode",
-      ).toEqual(2)
+      await liveSource.expectHeightCalls(2)
+      await syncSource.expectHeightCalls(2)
     },
   )
 
   scenario->Scenario.it(
     "Partition queries adjust ranges depending on responses",
     ~sources=[{chain: 1337, methods}],
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sourceMock = source(1337)
+      let chunkSize = (query: MockSource.pendingItemsQuery) =>
+        switch query.toBlock {
+        | Bounded(toBlock) => toBlock - query.fromBlock + 1
+        | Unbounded => 0
+        }
 
       // Step 1: Resolve height (blockLag=200 by default, headBlock=19800)
       sourceMock.resolveGetHeightOrThrow(20_000)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // Step 2: Query 1 — resolve at block 500 (range=501)
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
-        ~message="Step 2 should have initial query",
-      ).toEqual([{"fromBlock": 1, "toBlock": Some(19800), "retry": 0, "p": "0"}])
-      sourceMock.resolveGetItemsOrThrow(
-        [{blockNumber: 100, logIndex: 0}],
-        ~latestFetchedBlockNumber=500,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          toBlock: Bounded(19800),
+          retryCount: 0,
+          reply: Respond({items: [{blockNumber: 100, logIndex: 0}], latestFetchedBlockNumber: 500}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Step 3: Query 2 — resolve at block 800 (range=300)
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
-        ~message="Step 3 should have follow-up query",
-      ).toEqual([{"fromBlock": 501, "toBlock": Some(19800), "retry": 0, "p": "0"}])
-      sourceMock.resolveGetItemsOrThrow(
-        [{blockNumber: 600, logIndex: 0}],
-        ~latestFetchedBlockNumber=800,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 501,
+          toBlock: Bounded(19800),
+          retryCount: 0,
+          reply: Respond({items: [{blockNumber: 600, logIndex: 0}], latestFetchedBlockNumber: 800}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Chunking activates: chunkRange=min(300,500)=300, chunkSize=ceil(300*1.8)=540.
       // Uniform chunks are tiled from the range start (no probes).
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=3),
-        ~message="Should tile uniform 540-size chunks from the range start",
-      ).toEqual([
-        {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
-        {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
-        {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
-      ])
-
       // Phase A — chunks grow:
       // Resolve the first three chunks at their full 540 boundaries. Full-size
       // responses update the heuristic (540 >= chunkRange 300), climbing chunkRange
       // to 540 so the next tail chunks grow to ceil(540*1.8)=972.
-      let calls = sourceMock.getItemsOrThrowCalls
-      if calls->Array.length < 3 {
-        JsError.throwWithMessage("Expected at least 3 chunks")
-      }
-      let chunk1 = calls->Array.getUnsafe(0)
-      let chunk2 = calls->Array.getUnsafe(1)
-      let chunk3 = calls->Array.getUnsafe(2)
-      chunk1.resolve([{blockNumber: 900, logIndex: 0}], ~latestFetchedBlockNumber=1340)
-      chunk2.resolve([{blockNumber: 1400, logIndex: 0}], ~latestFetchedBlockNumber=1880)
-      chunk3.resolve([{blockNumber: 1900, logIndex: 0}], ~latestFetchedBlockNumber=2420)
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 801,
+          toBlock: Bounded(1340),
+          retryCount: 0,
+          reply: Respond({items: [{blockNumber: 900, logIndex: 0}]}),
+        },
+        {
+          partitionId: "0",
+          fromBlock: 1341,
+          toBlock: Bounded(1880),
+          retryCount: 0,
+          reply: Respond({items: [{blockNumber: 1400, logIndex: 0}]}),
+        },
+        {
+          partitionId: "0",
+          fromBlock: 1881,
+          toBlock: Bounded(2420),
+          retryCount: 0,
+          reply: Respond({items: [{blockNumber: 1900, logIndex: 0}]}),
+        },
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
       // Drain the in-flight 540-chunk backlog so the partition regenerates its
       // tail at the grown chunkRange (540). New tail chunks reach ceil(540*1.8)=972.
-      sourceMock.getItemsOrThrowCalls
-      ->Array.copy
-      ->Array.forEach(
-        c =>
-          c.resolve(
-            [{blockNumber: c.payload["fromBlock"], logIndex: 0}],
-            ~latestFetchedBlockNumber=c.payload["toBlock"]->Option.getOr(c.payload["fromBlock"]),
-          ),
+      await sourceMock.expectItemsQueries(
+        sourceMock.pendingItemsQueries->Array.map(
+          (query): MockSource.expectedItemsQuery => {
+            fromBlock: query.fromBlock,
+            reply: Respond({items: [{blockNumber: query.fromBlock, logIndex: 0}]}),
+          },
+        ),
       )
       await indexer.getBatchWritePromise()
 
-      // Assert: full-size responses grew the chunk size beyond the initial 540.
-      let maxChunkSize = sourceMock.getItemsOrThrowCalls->Array.reduce(
-        0,
-        (max, c) =>
-          switch c.payload["toBlock"] {
-          | Some(tb) => Pervasives.max(max, tb - c.payload["fromBlock"] + 1)
-          | None => max
-          },
-      )
-      t.expect(
-        maxChunkSize > 540,
-        ~message="Tail chunks should have grown beyond the initial 540",
-      ).toBe(true)
+      // Full-size responses grew the tail chunks beyond the initial 540.
+      await sourceMock.expectItemsQueries([
+        {where: query => chunkSize(query) > 540, reply: LeavePending},
+        {partitionId: "0", reply: LeavePending},
+      ])
 
       // Phase B — chunks shrink on partial response:
       // Resolve the first pending chunk (at queue front) at a small partial range
       // (100 blocks) so the partition advances and the heuristic shrinks.
-      let firstPending = sourceMock.getItemsOrThrowCalls->Array.get(0)->Option.getOrThrow
-      firstPending.resolve(
-        [{blockNumber: firstPending.payload["fromBlock"], logIndex: 0}],
-        ~latestFetchedBlockNumber=firstPending.payload["fromBlock"] + 99,
-      )
+      let firstPending = sourceMock.pendingItemsQueries->Array.get(0)->Option.getOrThrow
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: firstPending.fromBlock,
+          reply: Respond({
+            items: [{blockNumber: firstPending.fromBlock, logIndex: 0}],
+            latestFetchedBlockNumber: firstPending.fromBlock + 99,
+          }),
+        },
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
 
       // After the partial response sourceRangeCapacity=100, so chunkRange drops to
       // min(100, 540)=100 and the regenerated chunks shrink to ceil(100*1.8)=180,
       // well below the grown 972-size tail.
-      let shrunkChunks =
-        sourceMock.getItemsOrThrowCalls->Array.filter(
-          c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(180),
-        )
-      t.expect(
-        shrunkChunks->Array.length >= 1,
-        ~message="New chunks should have shrunk to the uniform size 180",
-      ).toBeTruthy()
+      await sourceMock.expectItemsQueries([
+        {where: query => chunkSize(query) === 180, reply: LeavePending},
+        {partitionId: "0", reply: LeavePending},
+      ])
     },
   )
 
@@ -1380,55 +1389,65 @@ describe("E2E tests", () => {
 
       // Setup: same preamble — get to 4 chunked queries
       sourceMock.resolveGetHeightOrThrow(10_000)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
-        ~message="Should have initial query",
-      ).toEqual([{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}])
-      sourceMock.resolveGetItemsOrThrow(
-        [{blockNumber: 100, logIndex: 0}],
-        ~latestFetchedBlockNumber=500,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          toBlock: Bounded(9800),
+          retryCount: 0,
+          reply: Respond({items: [{blockNumber: 100, logIndex: 0}], latestFetchedBlockNumber: 500}),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
-        ~message="Should have follow-up query",
-      ).toEqual([{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}])
-      sourceMock.resolveGetItemsOrThrow(
-        [{blockNumber: 600, logIndex: 0}],
-        ~latestFetchedBlockNumber=800,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 501,
+          toBlock: Bounded(9800),
+          retryCount: 0,
+          reply: Respond({items: [{blockNumber: 600, logIndex: 0}], latestFetchedBlockNumber: 800}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Chunking activates: chunkRange=300, chunkSize=540. Uniform chunks tiled
       // from the range start.
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=3),
-        ~message="Should tile uniform 540-size chunks from the range start",
-      ).toEqual([
-        {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
-        {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
-        {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
-      ])
-      let calls = sourceMock.getItemsOrThrowCalls
-      if calls->Array.length < 3 {
-        JsError.throwWithMessage("Expected at least 3 chunks")
-      }
-      let chunk1 = calls->Array.getUnsafe(0)
-      let chunk3 = calls->Array.getUnsafe(2)
-
       // Step 1: Resolve the later chunk3 (1881-2420) FIRST (out of order) with item
       // at block 2000
-      chunk3.resolve([
+      await sourceMock.expectItemsQueries([
         {
-          blockNumber: 2000,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->asContext
-            context.simpleEntity.set({id: "item-2000", value: "from-chunk3"})
-          },
+          partitionId: "0",
+          fromBlock: 801,
+          toBlock: Bounded(1340),
+          retryCount: 0,
+          reply: LeavePending,
         },
+        {
+          partitionId: "0",
+          fromBlock: 1341,
+          toBlock: Bounded(1880),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 1881,
+          toBlock: Bounded(2420),
+          retryCount: 0,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 2000,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "item-2000", value: "from-chunk3"})
+                },
+              },
+            ],
+          }),
+        },
+        {partitionId: "0", reply: LeavePending},
       ])
       // Wait for chunk3's response to be processed
       await Utils.delay(0)
@@ -1443,23 +1462,28 @@ describe("E2E tests", () => {
 
       // Step 2: Resolve chunk1 with item at block 850. Buffer advances to 1340,
       // but chunk2 is still pending so the item at 2000 stays blocked.
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=1),
-        ~message="After chunk3 resolved, chunk1 should remain pending",
-      ).toEqual([{"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"}])
-      chunk1.resolve(
-        [
-          {
-            blockNumber: 850,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "item-850", value: "from-chunk1"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=1340,
-      )
+      // After chunk3 resolved, chunk1 should remain pending
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 801,
+          toBlock: Bounded(1340),
+          retryCount: 0,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 850,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "item-850", value: "from-chunk1"})
+                },
+              },
+            ],
+          }),
+        },
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
 
       // Only item-850 should be in DB — chunk2 hasn't completed,
@@ -1470,16 +1494,18 @@ describe("E2E tests", () => {
       ).toEqual([{id: "item-850", value: "from-chunk1"}])
 
       // Step 3: chunk2 (1341-1880) bridging chunk1 and chunk3 should still be pending.
-      let bridgingQuery =
-        sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["fromBlock"] === 1341)
-      t.expect(
-        bridgingQuery->Option.map(c => c.payload),
-        ~message="Should still have the bridging chunk2 query",
-      ).toEqual(Some({"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"}))
-
       // Step 4: Resolve chunk2 — now the range is contiguous through chunk3,
       // bufferBlockNumber advances to 2420 and the item at 2000 becomes ready.
-      (bridgingQuery->Option.getOrThrow).resolve([], ~latestFetchedBlockNumber=1880)
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 1341,
+          toBlock: Bounded(1880),
+          retryCount: 0,
+          reply: Respond({items: []}),
+        },
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
 
       // Both items should now be in DB
@@ -1500,98 +1526,91 @@ describe("E2E tests", () => {
       // Queries described by the block they start at rather than by partition
       // id: the ids follow the contract set, the ranges follow the behaviour
       // under test.
-      let pending = () =>
-        sourceMock.getItemsOrThrowCalls
-        ->Array.map(c => (c.payload["p"], c.payload["fromBlock"]))
-        ->Array.toSorted(((_, a), (_, b)) => Int.compare(a, b))
       let partitionAt = fromBlock =>
-        pending()
-        ->Array.find(((_, from)) => from === fromBlock)
-        ->Option.map(((p, _)) => p)
-      let callAt = fromBlock =>
-        sourceMock.getItemsOrThrowCalls
-        ->Array.find(c => c.payload["fromBlock"] === fromBlock)
-        ->Option.getOrThrow
+        sourceMock.pendingItemsQueries
+        ->Array.find(query => query.fromBlock === fromBlock)
+        ->Option.map(query => query.partitionId)
+      let holdsBothDynamicContracts = query => query->MockSource.addresses->Array.length === 2
 
       sourceMock.resolveGetHeightOrThrow(100_000)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      t.expect(
-        pending(),
-        ~message="one partition for the config addresses, querying to the reorg threshold",
-      ).toEqual([("0", 1)])
-
+      // One partition for the config addresses, querying to the reorg threshold.
       // Register DC1 at block 5000 and DC2 at block 25100. The 20100-block gap
       // exceeds tooFarBlockRange (20000), so they cannot share a partition. The
       // events at blocks 3000-3099 give the chain a density signal; without one
       // it is cold and its target block is capped, which would gate the far
       // partitions this choreography relies on fetching in parallel.
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          ...Array.fromInitializer(
-            ~length=100,
-            (i): MockSource.itemMock => {blockNumber: 3000 + i, logIndex: 0},
-          ),
-          {
-            blockNumber: 5000,
-            logIndex: 0,
-            contractRegister: async args => {
-              let context = args.context->asRegisterContext
-              context.chain.gravatar.add(
-                "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow,
-              )
-            },
-          },
-          {
-            blockNumber: 25100,
-            logIndex: 0,
-            contractRegister: async args => {
-              let context = args.context->asRegisterContext
-              context.chain.gravatar.add(
-                "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow,
-              )
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=25100,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              ...Array.fromInitializer(
+                ~length=100,
+                (i): MockSource.itemMock => {blockNumber: 3000 + i, logIndex: 0},
+              ),
+              {
+                blockNumber: 5000,
+                logIndex: 0,
+                contractRegister: async args => {
+                  let context = args.context->asRegisterContext
+                  context.chain.gravatar.add(
+                    "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow,
+                  )
+                },
+              },
+              {
+                blockNumber: 25100,
+                logIndex: 0,
+                contractRegister: async args => {
+                  let context = args.context->asRegisterContext
+                  context.chain.gravatar.add(
+                    "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow,
+                  )
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 25100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 5000, reply: LeavePending},
+        {fromBlock: 25100, reply: LeavePending},
+        {fromBlock: 25101, reply: LeavePending},
+      ])
       let dc1Partition = partitionAt(5000)
       let dc2Partition = partitionAt(25100)
       t.expect(
-        (
-          pending()->Array.map(((_, from)) => from),
-          dc1Partition != dc2Partition,
-          dc1Partition->Option.isSome && dc2Partition->Option.isSome,
-        ),
+        (dc1Partition != dc2Partition, dc1Partition->Option.isSome && dc2Partition->Option.isSome),
         ~message="each dynamic contract fetches from its own registration block, in its own partition",
-      ).toEqual(([5000, 25100, 25101], true, true))
+      ).toEqual((true, true))
 
-      // Advance DC2 a little. Its partition stays separate while DC1 is still
-      // more than tooFarBlockRange behind it.
-      callAt(25100).resolve([{blockNumber: 25200, logIndex: 0}], ~latestFetchedBlockNumber=25600)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      // DC2 catches up to the config partition's frontier, which is all it may
+      // fetch. Its partition stays separate while DC1 is still more than
+      // tooFarBlockRange behind it.
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 25100, toBlock: Bounded(25100), reply: Respond({items: []})},
+      ])
 
       // DC1 catches up to block 12500. DC2's merge block is now within
       // tooFarBlockRange of it, so the two dynamic-contract partitions merge
       // into one that carries both addresses.
-      callAt(5000).resolve([], ~latestFetchedBlockNumber=12500)
-      await Scenario.waitUntil(
-        () =>
-          sourceMock.getItemsOrThrowCalls->Array.some(
-            c => c.payload->MockSource.CallPayload.addresses->Array.length === 2,
-          ),
-        ~message="a partition holding both dynamic-contract addresses",
-      )
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 5000, reply: Respond({items: [], latestFetchedBlockNumber: 12500})},
+      ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 12501, reply: LeavePending},
+        {where: holdsBothDynamicContracts, reply: LeavePending},
+      ])
 
       let merged =
-        sourceMock.getItemsOrThrowCalls
-        ->Array.filter(c => c.payload->MockSource.CallPayload.addresses->Array.length === 2)
-        ->Array.map(c => c.payload["p"])
+        sourceMock.pendingItemsQueries
+        ->Array.filter(holdsBothDynamicContracts)
+        ->Array.map(query => query.partitionId)
         ->Utils.Set.fromArray
         ->Utils.Set.toArray
       t.expect(
@@ -1611,10 +1630,8 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       // Chain 1337 catches up first
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337)
 
       // System should NOT be in reorg threshold yet (chain 100 still backfilling)
       t.expect(
@@ -1623,7 +1640,7 @@ describe("E2E tests", () => {
       ).toEqual([{value: "0", labels: Dict.make()}])
 
       // Now chain 100 catches up
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100)
 
       // System should now be in reorg threshold
       t.expect(
@@ -1634,9 +1651,13 @@ describe("E2E tests", () => {
       // Chains are at block 100, need to advance to 300 after threshold entry.
       // Only the most-behind chain (100 — the progress tie breaks by ascending
       // chain id) holds a query; 1337 queries once the leader's budget releases.
-      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await sourceMock100.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
-      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await sourceMock1337.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -1652,14 +1673,15 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
 
       // Without reorg, chains don't use blockLag so they fetch from startBlock to knownHeight
       // Chain 1337 catches up first
-      t.expect(sourceMock1337.getHeightOrThrowCalls->Array.length).toEqual(1)
+      await sourceMock1337.expectHeightCalls(1)
       sourceMock1337.resolveGetHeightOrThrow(300)
 
-      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await sourceMock1337.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
 
       // No chain is marked ready until every chain catches up
@@ -1676,10 +1698,12 @@ describe("E2E tests", () => {
       ).toEqual([{value: "0", labels: Dict.make()}])
 
       // Chain 100 catches up
-      t.expect(sourceMock100.getHeightOrThrowCalls->Array.length).toEqual(1)
+      await sourceMock100.expectHeightCalls(1)
       sourceMock100.resolveGetHeightOrThrow(300)
 
-      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await sourceMock100.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.getBatchWritePromise()
 
       // Both chains should now be ready
@@ -1717,15 +1741,25 @@ describe("E2E tests", () => {
       leaderSource.resolveGetHeightOrThrow(100)
       followerSource.resolveGetHeightOrThrow(100)
 
-      leaderSource.resolveGetItemsOrThrow(
-        [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
-        ~latestFetchedBlockNumber=100,
-      )
+      await leaderSource.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      followerSource.resolveGetItemsOrThrow(
-        [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
-        ~latestFetchedBlockNumber=100,
-      )
+      await followerSource.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -1741,43 +1775,39 @@ describe("E2E tests", () => {
       // follower advances only a little past its own head.
       leaderSource.resolveGetHeightOrThrow(1_000_000)
       followerSource.resolveGetHeightOrThrow(105)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // Drive the leader's backfill for several ticks, keeping it far behind (so
       // it stays the budget-draining leader). Each response re-runs the
       // cross-chain dispatch, so the follower is re-evaluated every tick.
       for _ in 0 to 4 {
-        await MockSource.waitItemsQuery(leaderSource)
-        let call = leaderSource.getItemsOrThrowCalls->Array.getUnsafe(0)
-        let fromBlock = call.payload["fromBlock"]
-        call.resolve(
-          [{blockNumber: fromBlock + 20, logIndex: 0}, {blockNumber: fromBlock + 60, logIndex: 0}],
-          ~latestFetchedBlockNumber=fromBlock + 99,
-        )
+        await leaderSource.expectItemsQueries([{partitionId: "0", reply: LeavePending}])
+        let fromBlock = (leaderSource.pendingItemsQueries->Array.getUnsafe(0)).fromBlock
+        await leaderSource.expectItemsQueries([
+          {
+            fromBlock,
+            reply: Respond({
+              items: [
+                {blockNumber: fromBlock + 20, logIndex: 0},
+                {blockNumber: fromBlock + 60, logIndex: 0},
+              ],
+              latestFetchedBlockNumber: fromBlock + 99,
+            }),
+          },
+        ])
         await indexer.getBatchWritePromise()
       }
 
       // The follower is below its own head (frontier 100 < head 105). The
       // indexer is realtime, so the cross-chain alignment clamp is dropped:
       // instead of being starved behind the backfilling leader, the follower
-      // fetches its small range to head...
-      await MockSource.waitItemsQuery(followerSource)
-      let followerCall = followerSource.getItemsOrThrowCalls->Array.getUnsafe(0)
-      t.expect(
-        followerCall.payload["fromBlock"],
-        ~message="follower fetches its own range to head instead of waiting behind the leader",
-      ).toEqual(101)
-      followerCall.resolve([], ~latestFetchedBlockNumber=105)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      // fetches its small range to head instead of waiting behind the leader...
+      await followerSource.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 105})},
+      ])
 
       // ...and once at head it goes back to polling for new blocks rather
-      // than going silent.
-      t.expect(
-        followerSource.getHeightOrThrowCalls->Array.length > followerPollsBefore,
-        ~message="follower keeps polling getHeightOrThrow while the leader backfills a large range",
-      ).toBe(true)
+      // than going silent, while the leader backfills a large range.
+      await followerSource.expectHeightCalls(followerPollsBefore + 1)
     },
   )
 })
