@@ -221,24 +221,20 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
     },
   )
 
-  deployed->Scenario.it(
-    "Asks for a set-up database before any --chain process starts",
-    ~sources=[{chain: 1}],
-    async (~t, ~indexer, ~source) => {
-      await catchUp(~indexer, ~source=source(1), ~items=[])
-      await indexer.stop()
-      await indexer.dropStorage()
+  Async.it("Asks for a set-up database before any --chain process starts", async t => {
+    let outcome = switch await deployed->Scenario.run(
+      ~sources=[{chain: 1}],
+      ~chains=[ChainId.fromInt(1)],
+      async (~indexer as _, ~source as _) => (),
+    ) {
+    | () => Migration.Failed("the start to be refused, but it went ahead")
+    | exception JsExn(e) => Migration.outcomeOfRefusal(e->JsExn.message->Option.getOr(""))
+    }
 
-      let outcome = switch await indexer.restart(~chains=[ChainId.fromInt(1)], ()) {
-      | restarted => Migration.Resumed(await Migration.storedChainIds(restarted))
-      | exception JsExn(e) => Migration.outcomeOfRefusal(e->JsExn.message->Option.getOr(""))
-      }
-
-      t.expect(outcome).toEqual(
-        Failed(
-          "`envio start --chain` needs a database that is already set up. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
-        ),
-      )
-    },
-  )
+    t.expect(outcome).toEqual(
+      Failed(
+        "`envio start --chain` needs a database that is already set up. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+      ),
+    )
+  })
 })

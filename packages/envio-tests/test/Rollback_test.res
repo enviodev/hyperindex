@@ -1004,9 +1004,7 @@ describe("E2E rollback tests", () => {
           },
         ]),
       ))
-      while (await indexer.queryChains())->Array.some(chain => chain.progressBlock < 100) {
-        await Utils.delay(1)
-      }
+      await indexer.waitUntilIdle()
 
       await sourceMock100.expectItemsQueries([
         {

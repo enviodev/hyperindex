@@ -233,6 +233,7 @@ let run = async (
   ~mapStorage=?,
   ~captureLogs=?,
   ~provideClickHouse=?,
+  ~chains=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
@@ -307,6 +308,7 @@ let run = async (
     ~mapStorage?,
     ~captureLogs?,
     ~provideClickHouse?,
+    ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
       switch await body(~indexer, ~source) {
