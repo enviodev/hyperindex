@@ -165,9 +165,13 @@ describe("A supervised worker at its end block", () => {
       await indexer.waitUntilIdle()
 
       t.expect(
-        (exited.contents, await readyAtByChainId(~sql, ~pgSchema)),
+        (
+          await indexer.metric("envio_progress_block"),
+          exited.contents,
+          await readyAtByChainId(~sql, ~pgSchema),
+        ),
         ~message="Its chain is done, but it still owes the schema the indexes it deferred",
-      ).toEqual((false, [("1", None)]))
+      ).toEqual(([{value: "100", labels: dict{"chainId": "1"}}], false, [("1", None)]))
 
       indexer.releaseRealtime()
       await indexer.waitUntilReady()
