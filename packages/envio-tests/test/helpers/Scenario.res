@@ -20,11 +20,15 @@ let postgresHistory = (indexer: IndexerRunner.t, name): promise<option<array<Cha
   | #postgres | #both => indexer.queryHistory(name)->Promise.thenResolve(history => Some(history))
   | #clickhouse => Promise.resolve(None)
   }
-let expectedPostgresHistory = (history: array<Change.t<'entity>>) =>
+// What Postgres holds for the scenario's entities on this leg: `expected`
+// where it keeps them, `absent` where they live in ClickHouse alone.
+let expectedInPostgres = (expected, ~absent) =>
   switch IndexerRunner.selectedBackend {
-  | #postgres | #both => Some(history)
-  | #clickhouse => None
+  | #postgres | #both => expected
+  | #clickhouse => absent
   }
+let expectedPostgresHistory = (history: array<Change.t<'entity>>) =>
+  Some(history)->expectedInPostgres(~absent=None)
 
 let assertsPostgresIndexes = [
   {backend: #clickhouse, reason: "asserts the indexes Postgres builds on an entity"},

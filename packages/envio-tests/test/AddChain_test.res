@@ -145,11 +145,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       ).toEqual((
         [{id: "total", count: 1n, chainId: 1}, {id: "total", count: 10n, chainId: 137}],
         [("1", 100), ("137", 100)],
-        // An entity kept in ClickHouse alone has no Postgres table to partition.
-        switch IndexerRunner.selectedBackend {
-        | #postgres | #both => ["Counter$1", "Counter$137"]
-        | #clickhouse => []
-        },
+        ["Counter$1", "Counter$137"]->Scenario.expectedInPostgres(~absent=[]),
         [("1", "Token"), ("137", "Token")],
         [
           (
@@ -231,12 +227,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[])
       await indexer.stop()
-      let {sql, pgSchema} = indexer.pg
-      let _ = await sql->Sql.queryForTests(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
-      switch IndexerRunner.selectedBackend {
-      | #clickhouse | #both => await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
-      | #postgres => ()
-      }
+      await indexer.dropStorage()
 
       let outcome = switch await indexer.restart(~chains=[ChainId.fromInt(1)], ()) {
       | restarted => Migration.Resumed(await Migration.storedChainIds(restarted))

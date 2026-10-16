@@ -78,6 +78,9 @@ type rec t = {
   ) => promise<array<{"id": string, "output": JSON.t}>>,
   metric: string => promise<array<metric>>,
   pg: pg,
+  // Everything the run stored, in every store, as if the deployment had lost
+  // its databases. Stop the indexer first.
+  dropStorage: unit => promise<unit>,
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.
   stop: unit => promise<unit>,
@@ -654,6 +657,13 @@ let run = async (
         queryEntityHistory(config->entityConfigByName(name))->(
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         ),
+      dropStorage: async () => {
+        await sql->TestPgSchema.drop(~pgSchema)
+        switch clickHouseDatabase {
+        | Some(database) if usedClickHouse.contents => await TestClickHouse.drop(~database)
+        | _ => ()
+        }
+      },
       queryCheckpoints: () =>
         sql
         ->Sql.queryForTests(

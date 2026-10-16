@@ -103,12 +103,8 @@ describe("Two processes indexing one schema", () => {
         rowsPerSibling * 2,
         // Each sibling stamped its own chain and left the other's alone.
         [(1, Some(1), true), (137, Some(137), true)],
-        // Each built the owner index on its own chain's partition only. An
-        // entity kept in ClickHouse alone has no Postgres table to index.
-        switch IndexerRunner.selectedBackend {
-        | #postgres | #both => [("Item$1", true), ("Item$137", true)]
-        | #clickhouse => []
-        },
+        // Each built the owner index on its own chain's partition only.
+        [("Item$1", true), ("Item$137", true)]->Scenario.expectedInPostgres(~absent=[]),
       ))
     },
   )
