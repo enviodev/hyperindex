@@ -23,6 +23,7 @@ use super::history::{
     History, Sequence, CHANGE_COLUMN, CHANGE_TYPE, CHECKPOINT_COLUMN, DELETE, SET,
 };
 use super::index_definition::IndexDefinition;
+use super::index_row;
 use super::indexes::{IndexEvent, Indexes, Report};
 use super::insert::{self, Constant};
 use super::internal::{self, ChainConfig};
@@ -1440,7 +1441,46 @@ impl Storage {
                 .map_err(fail)?
             }
         };
-        self.run_all(transaction, statements).await.map_err(fail)
+        self.run_all(transaction, statements)
+            .await
+            .map_err(|error| {
+                if sql_state(&error) == Some(index_row::PROGRAM_LIMIT_EXCEEDED) {
+                    let oversized = self.oversized_value(table, rows);
+                    Failure::new(index_row::explain_insert(table.name(), oversized), error)
+                } else {
+                    fail(error)
+                }
+            })
+    }
+
+    /// The first indexed value in the batch over the btree limit. Only staged
+    /// rows are searched: a table with a list column writes its rows as cells,
+    /// and is explained without naming the value.
+    fn oversized_value(&self, table: &Table, rows: &Rows) -> Option<index_row::Oversized> {
+        let Rows::Staged(arena) = rows else {
+            return None;
+        };
+        let indexed = self.indexes.btree_columns(table.name());
+        let columns = table.write.columns.iter().zip(arena.columns());
+        let id = table.write.columns.iter().position(|c| c.name == "id")?;
+        (0..arena.rows()).find_map(|row| {
+            columns.clone().find_map(|(spec, column)| {
+                // A fixed-width or null cell has no bytes to count.
+                let value = column.bytes_at(row);
+                (value.len() > index_row::BTREE_MAX_ITEM_BYTES && indexed.contains(&spec.name))
+                    .then(|| index_row::Oversized {
+                        column: spec.name.clone(),
+                        id: String::from_utf8_lossy(arena.columns()[id].bytes_at(row)).into_owned(),
+                        value: match column.kind() {
+                            ColumnKind::Bytes => value
+                                .iter()
+                                .fold("0x".to_string(), |hex, byte| hex + &format!("{byte:02x}")),
+                            _ => String::from_utf8_lossy(value).into_owned(),
+                        },
+                        bytes: value.len(),
+                    })
+            })
+        })
     }
 
     /// A set's history row: the same values the entity's insert takes, plus
