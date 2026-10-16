@@ -130,9 +130,10 @@ describe("Progress block time", () => {
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([{fromBlock: 1, reply: Respond({items: []})}])
       await mock.expectItemsQueries([
         {
-          fromBlock: 1,
+          fromBlock: 101,
           reply: Respond({items: [{blockNumber: 250, logIndex: 0}], latestFetchedBlockNumber: 300}),
         },
       ])
@@ -159,9 +160,7 @@ describe("Progress block time", () => {
       mock.resolveGetHeightOrThrow(300)
       await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
       let backfill = pendingFlags()
-      await mock.expectItemsQueries([
-        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
-      ])
+      await mock.respondEmptyUpTo(300)
       await indexer.getBatchWritePromise()
       await indexer.waitUntilReady()
 
@@ -182,9 +181,7 @@ describe("Progress block time", () => {
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(300)
-      await mock.expectItemsQueries([
-        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
-      ])
+      await mock.respondEmptyUpTo(300)
       await indexer.getBatchWritePromise()
 
       let restarted = await indexer.restart()

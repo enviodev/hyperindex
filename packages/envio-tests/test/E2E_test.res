@@ -1579,16 +1579,11 @@ describe("E2E tests", () => {
         ~message="each dynamic contract fetches from its own registration block, in its own partition",
       ).toEqual((true, true))
 
-      // Advance DC2 a little. Its partition stays separate while DC1 is still
-      // more than tooFarBlockRange behind it.
+      // DC2 catches up to the config partition's frontier, which is all it may
+      // fetch. Its partition stays separate while DC1 is still more than
+      // tooFarBlockRange behind it.
       await sourceMock.expectItemsQueries([
-        {
-          fromBlock: 25100,
-          reply: Respond({
-            items: [{blockNumber: 25200, logIndex: 0}],
-            latestFetchedBlockNumber: 25600,
-          }),
-        },
+        {fromBlock: 25100, toBlock: Bounded(25100), reply: Respond({items: []})},
       ])
 
       // DC1 catches up to block 12500. DC2's merge block is now within

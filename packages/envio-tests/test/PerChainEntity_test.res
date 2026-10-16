@@ -133,14 +133,11 @@ describe("Per-chain entities against Postgres", () => {
       source137.resolveGetHeightOrThrow(300)
 
       let _ = await Promise.all2((
-        source1.expectItemsQueries([
-          {fromBlock: 1, reply: Respond({items: [bump(1n)], latestFetchedBlockNumber: 300})},
-        ]),
-        source137.expectItemsQueries([
-          {fromBlock: 1, reply: Respond({items: [bump(10n)], latestFetchedBlockNumber: 300})},
-        ]),
+        source1.expectItemsQueries([{fromBlock: 1, reply: Respond({items: [bump(1n)]})}]),
+        source137.expectItemsQueries([{fromBlock: 1, reply: Respond({items: [bump(10n)]})}]),
       ))
       await indexer.getBatchWritePromise()
+      let _ = await Promise.all2((source1.respondEmptyUpTo(300), source137.respondEmptyUpTo(300)))
       await indexer.waitUntilIdle()
 
       let counters: array<counter> = await indexer.query("Counter")
@@ -280,10 +277,7 @@ describe("Chain-scoped reads and deletes", () => {
       await source137.expectItemsQueries([
         {
           fromBlock: 1,
-          reply: Respond({
-            items: [setEntities(~block=5, ~counter=137n)],
-            latestFetchedBlockNumber: 300,
-          }),
+          reply: Respond({items: [setEntities(~block=5, ~counter=137n)]}),
         },
       ])
       await indexer.getBatchWritePromise()
@@ -320,7 +314,7 @@ describe("Chain-scoped reads and deletes", () => {
           reply: Respond({
             items: [
               {
-                blockNumber: 7,
+                blockNumber: 107,
                 logIndex: 0,
                 handler: async args => {
                   let context = args.context->asContext
@@ -334,6 +328,7 @@ describe("Chain-scoped reads and deletes", () => {
         },
       ])
       await indexer.getBatchWritePromise()
+      await source137.respondEmptyUpTo(300)
       await indexer.waitUntilIdle()
 
       let remaining: array<counter> = await indexer.query("Counter")
@@ -492,10 +487,7 @@ describe("Per-chain entities with renamed columns", () => {
       await source137.expectItemsQueries([
         {
           fromBlock: 1,
-          reply: Respond({
-            items: [setEntities(~block=5, ~counter=137n)],
-            latestFetchedBlockNumber: 300,
-          }),
+          reply: Respond({items: [setEntities(~block=5, ~counter=137n)]}),
         },
       ])
       await indexer.getBatchWritePromise()
@@ -516,11 +508,11 @@ describe("Per-chain entities with renamed columns", () => {
                 },
               },
             ],
-            latestFetchedBlockNumber: 300,
           }),
         },
       ])
       await indexer.getBatchWritePromise()
+      let _ = await Promise.all2((source1.respondEmptyUpTo(300), source137.respondEmptyUpTo(300)))
       await indexer.waitUntilIdle()
 
       // Rows are keyed by the API field name whatever the column is called.
@@ -578,17 +570,15 @@ describe("Effect scope under the disabled default", () => {
       await source137.expectItemsQueries([
         {
           fromBlock: 1,
-          reply: Respond({items: [callEffect(~block=5)], latestFetchedBlockNumber: 300}),
+          reply: Respond({items: [callEffect(~block=5)]}),
         },
       ])
       await indexer.getBatchWritePromise()
       await source1.expectItemsQueries([
-        {
-          fromBlock: 1,
-          reply: Respond({items: [callEffect(~block=6)], latestFetchedBlockNumber: 300}),
-        },
+        {fromBlock: 1, reply: Respond({items: [callEffect(~block=6)]})},
       ])
       await indexer.getBatchWritePromise()
+      let _ = await Promise.all2((source1.respondEmptyUpTo(300), source137.respondEmptyUpTo(300)))
       await indexer.waitUntilIdle()
 
       let cache1 = await indexer.queryEffectCache(unscoped, ~scope=Chain(1->ChainId.fromInt))
