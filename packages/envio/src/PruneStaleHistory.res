@@ -136,8 +136,14 @@ let pruneEntity = async (
     // Pruning is cleanup; a failure must not fail the write loop.
     state
     ->IndexerState.logger
-    ->Logging.child({"entityName": entityConfig.name, "safeCheckpoints": safeCheckpoints})
-    ->Logging.errorWithExn(`Failed to prune stale entity history`, exn)
+    ->Logging.error(
+      `Failed to prune stale entity history`,
+      ~params={
+        "entityName": entityConfig.name,
+        "safeCheckpoints": safeCheckpoints,
+        "err": exn->Utils.prettifyExn,
+      },
+    )
   }
 }
 
@@ -152,8 +158,10 @@ let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpoints) => {
   | exception exn =>
     state
     ->IndexerState.logger
-    ->Logging.child({"safeCheckpoints": safeCheckpoints})
-    ->Logging.errorWithExn(`Failed to prune stale checkpoints`, exn)
+    ->Logging.error(
+      `Failed to prune stale checkpoints`,
+      ~params={"safeCheckpoints": safeCheckpoints, "err": exn->Utils.prettifyExn},
+    )
   }
 }
 

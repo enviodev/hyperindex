@@ -15,7 +15,7 @@ use std::{
     fs::File,
     io::{self, IsTerminal, Read, Write},
     os::fd::{AsRawFd, FromRawFd},
-    sync::{mpsc, Arc, Mutex},
+    sync::{mpsc, Arc, Mutex, OnceLock},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -223,6 +223,9 @@ fn print_log(
 /// Sends a line meant for stdout above the display when there is one and stdout
 /// is the terminal it draws on. Returns whether it did.
 pub fn print_above_stdout(line: &str) -> bool {
+    // Asked once: stdout is the same descriptor for the life of the process,
+    // and every log line would otherwise pay a syscall to ask again.
+    static STDOUT_IS_TERMINAL: OnceLock<bool> = OnceLock::new();
     let display = DISPLAY
         .lock()
         .map(|display| display.clone())
@@ -230,7 +233,7 @@ pub fn print_above_stdout(line: &str) -> bool {
     print_log(
         line.as_bytes(),
         display.as_ref(),
-        io::stdout().is_terminal(),
+        *STDOUT_IS_TERMINAL.get_or_init(|| io::stdout().is_terminal()),
     )
 }
 

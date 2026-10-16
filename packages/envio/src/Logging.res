@@ -45,8 +45,7 @@ type options = {
   fileLevel: level,
 }
 @send external makeNative: (Core.loggerCtor, options) => native = "make"
-@send external nativeChild: (native, string) => native = "child"
-@send external nativeLog: (native, int, string, Null.t<string>) => unit = "log"
+@send external nativeLog: (native, int, string, Null.t<string>, Null.t<string>) => unit = "log"
 // Answers with the new minimum level.
 @send external nativeSetLevel: (native, level) => int = "setLevel"
 @send external nativeMinLevel: native => int = "minLevel"
@@ -57,9 +56,27 @@ type options = {
 // no sink takes is dropped before its params are serialized.
 type threshold = {mutable minLevel: int}
 
-type t = {native: native, threshold: threshold}
+// A logger per query and per event is made whether or not it ever writes, so a
+// child is only a record of its fields. They are serialized, joined to its
+// parent's and kept the first time a line passes the level, and Rust merges
+// them into each line it writes.
+type rec t = {
+  native: native,
+  threshold: threshold,
+  parent: option<t>,
+  fields: unknown,
+  mutable resolved: bool,
+  mutable bindings: Null.t<string>,
+}
 
-let fromNative = native => {native, threshold: {minLevel: native->nativeMinLevel}}
+let fromNative = native => {
+  native,
+  threshold: {minLevel: native->nativeMinLevel},
+  parent: None,
+  fields: %raw(`undefined`),
+  resolved: true,
+  bindings: Null.Null,
+}
 
 let make = (~strategy: logStrategyType, ~logFile, ~level, ~fileLevel) =>
   Core.getAddon().logger
@@ -74,8 +91,9 @@ let capture = () =>
   ->fromNative
 
 // Errors serialize to their name, message and stack (and whatever else they
-// carry), which `JSON.stringify` alone would drop as `{}`. Params come from
-// anywhere, so a value JSON can't hold says so rather than losing the line.
+// carry), which `JSON.stringify` alone would drop as `{}`. The replacer that
+// does it runs on every key, so params of plain values skip it. Params come
+// from anywhere, so a value JSON can't hold says so rather than losing the line.
 let serialize: 'a => string = %raw(`function (value) {
   function replacer(_key, value) {
     if (typeof value === "bigint") return value.toString();
@@ -88,15 +106,50 @@ let serialize: 'a => string = %raw(`function (value) {
     return value;
   }
   try {
-    return JSON.stringify(value, replacer);
+    for (var key in value) {
+      var field = value[key];
+      if (typeof field === "bigint" || (typeof field === "object" && field !== null)) {
+        return JSON.stringify(value, replacer);
+      }
+    }
+    return JSON.stringify(value);
   } catch (error) {
     return JSON.stringify({unserializable: String(error)});
   }
 }`)
 
-let child = (logger: t, params: 'a) => {
-  native: logger.native->nativeChild(params->serialize),
+// Two JSON objects as one; a key in both is sent twice, and Rust keeps the
+// later value.
+let joinObjects = (parent: string, own: string) =>
+  switch (parent, own) {
+  | ("{}", _) => own
+  | (_, "{}") => parent
+  | _ =>
+    parent->String.slice(~start=0, ~end=parent->String.length - 1) ++
+    "," ++
+    own->String.slice(~start=1)
+  }
+
+let rec bindingsOf = (logger: t) => {
+  if !logger.resolved {
+    let own = logger.fields->serialize
+    let own = own->String.startsWith("{") ? own : `{"params":${own}}`
+    logger.bindings = switch logger.parent->Option.map(bindingsOf) {
+    | Some(Null.Value(parent)) => Null.Value(joinObjects(parent, own))
+    | Some(Null.Null) | None => Null.Value(own)
+    }
+    logger.resolved = true
+  }
+  logger.bindings
+}
+
+let child = (logger: t, fields: 'a) => {
+  native: logger.native,
   threshold: logger.threshold,
+  parent: Some(logger),
+  fields: fields->(Utils.magic: 'a => unknown),
+  resolved: false,
+  bindings: Null.Null,
 }
 
 // Every line about one chain names it, so the run's lines can be told apart.
@@ -110,6 +163,7 @@ let log = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
     logger.native->nativeLog(
       levelValue(level),
       message,
+      logger->bindingsOf,
       switch params {
       | Some(params) => Null.Value(params->serialize)
       | None => Null.Null

@@ -33,4 +33,4 @@
 {"log.level":"fatal","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","extra":"another","message":"This is a fatal message."}
 {"log.level":"error","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","err":{"RE_EXN_ID":"LogTesting.SomethingWrong","myMessage":"example exception"},"message":"This is an error message."}
 {"log.level":"fatal","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","extra":"another","message":"This is a fatal message."}
-{"log.level":"fatal","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","this":"is","a":"fatal","message":"A fatal message with nested params.","with":{"nested":"objects","and":{"arrays":["of","things"]},"additionally":{"numbers":0.5654}}}
+{"log.level":"fatal","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","this":"is","a":"fatal","with":{"nested":"objects","and":{"arrays":["of","things"]},"additionally":{"numbers":0.5654}},"message":"A fatal message with nested params."}

@@ -1208,14 +1208,13 @@ let addClientFilteredContract = (
 ) => {
   clientFilteredContracts->Utils.Set.add(contractName)->ignore
   if shouldLog {
-    logger
-    ->Logging.child({
-      "contractName": contractName,
-      "addressCount": addressCount,
-      "threshold": threshold,
-    })
-    ->Logging.trace(
+    logger->Logging.trace(
       "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
+      ~params={
+        "contractName": contractName,
+        "addressCount": addressCount,
+        "threshold": threshold,
+      },
     )
   }
 }
@@ -1482,12 +1481,13 @@ let collapseClientFilteredContracts = (
 }
 
 let warnAddressRegistration = (~logger, ~contractAddress: Address.t, ~params, message) =>
-  logger
-  ->Logging.child({
-    "contractAddress": contractAddress->Address.toString,
-    "details": params,
-  })
-  ->Logging.warn(message)
+  logger->Logging.warn(
+    message,
+    ~params={
+      "contractAddress": contractAddress->Address.toString,
+      "details": params,
+    },
+  )
 
 // A rejected registration is simply absent from every partition, so without a
 // warning the user sees a contract that never indexes and nothing saying why.

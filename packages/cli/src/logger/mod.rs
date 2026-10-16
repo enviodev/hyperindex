@@ -1,11 +1,12 @@
+mod fields;
 mod format;
 mod level;
 
-use chrono::Utc;
+use fields::Fields;
 use format::Record;
 pub use level::Level;
 use napi_derive::napi;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, IsTerminal, Write},
@@ -16,7 +17,7 @@ use std::{
         Arc, Mutex, OnceLock,
     },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 enum Format {
@@ -50,27 +51,26 @@ impl Sink {
         level.value() >= self.level.load(Ordering::Relaxed)
     }
 
-    fn write(&self, record: &Record) {
+    fn write(&self, record: &Record, line: &mut Vec<u8>) {
         if let Target::Memory(lines) = &self.target {
             if let Ok(mut lines) = lines.lock() {
                 lines.push(format::captured(record));
             }
             return;
         }
-        let line = match self.format {
-            // A blank line between records, as `pino-pretty` through
-            // `console.log` printed them, keeps multi-line params apart.
-            Format::Pretty { colorize } => format::pretty(record, colorize) + "\n",
-            Format::Json => format::json(record) + "\n",
-            Format::Ecs => format::ecs(record) + "\n",
+        line.clear();
+        match self.format {
+            Format::Pretty { colorize } => format::pretty(record, colorize, line),
+            Format::Json => format::json(record, line),
+            Format::Ecs => format::ecs(record, line),
         };
         // A failed write has nowhere to be reported but the log itself.
         let _ = match &self.target {
-            Target::Stdout => write_stdout(&line),
+            Target::Stdout => write_stdout(line),
             Target::File(file) => file
                 .lock()
                 .map_err(|_| io::Error::other("log file lock poisoned"))
-                .and_then(|mut file| file.write_all(line.as_bytes())),
+                .and_then(|mut file| file.write_all(line)),
             Target::Memory(_) => Ok(()),
         };
     }
@@ -79,8 +79,8 @@ impl Sink {
 /// Stdout through a descriptor of the logger's own: Node may switch the
 /// terminal or pipe to non-blocking mode, and a line that would block waits
 /// instead of being dropped with `EAGAIN`.
-fn write_stdout(line: &str) -> io::Result<()> {
-    if crate::tui::print_above_stdout(line.trim_end_matches('\n')) {
+fn write_stdout(line: &[u8]) -> io::Result<()> {
+    if crate::tui::print_above_stdout(String::from_utf8_lossy(line).trim_end_matches('\n')) {
         return Ok(());
     }
     static STDOUT: OnceLock<Option<File>> = OnceLock::new();
@@ -91,9 +91,9 @@ fn write_stdout(line: &str) -> io::Result<()> {
         (fd >= 0).then(|| unsafe { File::from_raw_fd(fd) })
     });
     let Some(mut stdout) = stdout.as_ref() else {
-        return io::stdout().write_all(line.as_bytes());
+        return io::stdout().write_all(line);
     };
-    let mut rest = line.as_bytes();
+    let mut rest = line;
     while !rest.is_empty() {
         match stdout.write(rest) {
             Ok(written) => rest = &rest[written..],
@@ -183,72 +183,50 @@ fn sinks_for(options: &LoggerOptions) -> napi::Result<Vec<Sink>> {
     })
 }
 
-/// A logger and the fields it adds to every line. Children share their
-/// parent's sinks, so a level set on any of them applies to all.
+fn fields_or_error(json: &str) -> napi::Result<Fields> {
+    fields::parse(json)
+        .map_err(|error| napi::Error::from_reason(format!("Log fields aren't JSON: {error}")))
+}
+
+/// Where a run's lines go. Holds no fields of its own: a caller's bound fields
+/// arrive with each line, so a logger scoped to a chain or a query is a value
+/// on the caller's side that costs nothing until it writes.
 #[napi]
-#[derive(Clone)]
 pub struct Logger {
     sinks: Arc<Vec<Sink>>,
-    bindings: Arc<Map<String, Value>>,
 }
 
 impl Logger {
-    pub fn log(&self, level: Level, msg: &str, params: Option<Map<String, Value>>) {
+    /// `bindings` are the caller's bound fields and `params` the line's own,
+    /// which replace a bound field of the same name.
+    pub fn log(&self, level: Level, msg: &str, bindings: &Fields, params: &Fields) {
         if !self.sinks.iter().any(|sink| sink.accepts(level)) {
             return;
         }
-        let fields = match params {
-            Some(params) if !params.is_empty() => {
-                let mut fields = (*self.bindings).clone();
-                fields.extend(params);
-                std::borrow::Cow::Owned(fields)
-            }
-            _ => std::borrow::Cow::Borrowed(&*self.bindings),
-        };
+        let merged = fields::merge(&[bindings, params]);
         let record = Record {
             level,
-            time: Utc::now(),
+            millis: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_millis() as i64),
             msg,
-            fields: &fields,
+            fields: &merged,
         };
+        let mut line = Vec::with_capacity(256);
         for sink in self.sinks.iter().filter(|sink| sink.accepts(level)) {
-            sink.write(&record);
+            sink.write(&record, &mut line);
         }
-    }
-
-    pub fn with_bindings(&self, bindings: Map<String, Value>) -> Logger {
-        let mut merged = (*self.bindings).clone();
-        merged.extend(bindings);
-        Logger {
-            sinks: self.sinks.clone(),
-            bindings: Arc::new(merged),
-        }
-    }
-
-    fn memory(&self) -> impl Iterator<Item = &Mutex<Vec<Value>>> {
-        self.sinks.iter().filter_map(|sink| match &sink.target {
-            Target::Memory(lines) => Some(lines),
-            _ => None,
-        })
     }
 
     fn captured_lines(&self) -> Vec<Value> {
-        self.memory()
+        self.sinks
+            .iter()
+            .filter_map(|sink| match &sink.target {
+                Target::Memory(lines) => Some(lines),
+                _ => None,
+            })
             .flat_map(|lines| lines.lock().map(|lines| lines.clone()).unwrap_or_default())
             .collect()
-    }
-}
-
-/// JSON a caller handed over as an object; anything else is kept under
-/// `params`, so a line never loses what it was given.
-fn parse_object(json: &str) -> napi::Result<Map<String, Value>> {
-    match serde_json::from_str(json) {
-        Ok(Value::Object(map)) => Ok(map),
-        Ok(Value::Null) => Ok(Map::new()),
-        Ok(other) => Ok(Map::from_iter([("params".to_string(), other)])),
-        Err(error) => Err(napi::Error::from_reason(format!(
-            "Log params aren't JSON: {error}"
-        ))),
     }
 }
 
@@ -258,24 +236,24 @@ impl Logger {
     pub fn make(options: LoggerOptions) -> napi::Result<Logger> {
         Ok(Logger {
             sinks: Arc::new(sinks_for(&options)?),
-            bindings: Arc::new(Map::new()),
         })
     }
 
-    /// A logger adding `bindings`, a JSON object, to every line.
-    #[napi]
-    pub fn child(&self, bindings: String) -> napi::Result<Logger> {
-        Ok(self.with_bindings(parse_object(&bindings)?))
-    }
-
     /// `level` is the numeric one, which the caller already compared against
-    /// `minLevel` before serializing `params`.
+    /// `minLevel` before serializing anything. `bindings` and `params` are JSON
+    /// objects; a key repeated in `bindings` takes its last value.
     #[napi(js_name = "log")]
-    pub fn log_js(&self, level: u32, msg: String, params: Option<String>) -> napi::Result<()> {
+    pub fn log_js(
+        &self,
+        level: u32,
+        msg: String,
+        bindings: Option<String>,
+        params: Option<String>,
+    ) -> napi::Result<()> {
         let level = Level::from_value(level)
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown log level: {level}")))?;
-        let params = params.as_deref().map(parse_object).transpose()?;
-        self.log(level, &msg, params);
+        let parse = |json: Option<String>| json.as_deref().map_or(Ok(Vec::new()), fields_or_error);
+        self.log(level, &msg, &parse(bindings)?, &parse(params)?);
         Ok(())
     }
 
@@ -341,31 +319,29 @@ mod tests {
     }
 
     #[test]
-    fn child_lines_carry_bindings_and_share_the_level() {
-        let root = capture("info");
-        let chain = root.child(r#"{"chainId":1}"#.into()).unwrap();
-        chain
-            .log_js(
-                Level::TRACE.value(),
-                "hidden".into(),
-                Some(r#"{"a":1}"#.into()),
-            )
+    fn lines_merge_bindings_and_params_and_follow_the_level() {
+        let logger = capture("info");
+        let chain = Some(r#"{"chainId":1,"source":"a","source":"b"}"#.to_string());
+        logger
+            .log_js(Level::TRACE.value(), "hidden".into(), chain.clone(), None)
             .unwrap();
-        chain
+        logger
             .log_js(
                 Level::WARN.value(),
                 "shown".into(),
+                chain,
                 Some(r#"{"chainId":2,"a":1}"#.into()),
             )
             .unwrap();
-        let min_level = chain.set_level("trace".into()).unwrap();
-        root.log_js(Level::TRACE.value(), "now shown".into(), None)
+        let min_level = logger.set_level("trace".into()).unwrap();
+        logger
+            .log_js(Level::TRACE.value(), "now shown".into(), None, None)
             .unwrap();
         assert_eq!(
-            (root.captured(), min_level),
+            (logger.captured(), min_level),
             (
                 vec![
-                    json!({"level": "warn", "msg": "shown", "chainId": 2, "a": 1}),
+                    json!({"level": "warn", "msg": "shown", "chainId": 2, "source": "b", "a": 1}),
                     json!({"level": "trace", "msg": "now shown"}),
                 ],
                 Level::TRACE.value()
@@ -385,8 +361,13 @@ mod tests {
         })
         .unwrap();
         logger.set_level("silent".into()).unwrap();
-        logger.log(Level::TRACE, "skipped", None);
-        logger.log(Level::DEBUG, "kept", None);
+        logger.log(Level::TRACE, "skipped", &Vec::new(), &Vec::new());
+        logger.log(
+            Level::DEBUG,
+            "kept",
+            &fields::parse(r#"{"chainId":1}"#).unwrap(),
+            &Vec::new(),
+        );
         let lines: Vec<Value> = fs::read_to_string(&path)
             .unwrap()
             .lines()
@@ -396,7 +377,10 @@ mod tests {
                 value
             })
             .collect();
-        assert_eq!(lines, vec![json!({"level": 20, "msg": "kept"})]);
+        assert_eq!(
+            lines,
+            vec![json!({"level": 20, "chainId": 1, "msg": "kept"})]
+        );
     }
 
     #[test]
@@ -404,11 +388,12 @@ mod tests {
         let dir = tempdir::TempDir::new("envio-logger").unwrap();
         let path = dir.path().join("logs/run.jsonl");
         let logger = capture("trace");
-        logger.log(Level::INFO, "one", None);
+        logger.log(Level::INFO, "one", &Vec::new(), &Vec::new());
         logger.log(
             Level::ERROR,
             "two",
-            Some(Map::from_iter([("x".into(), json!(1))])),
+            &Vec::new(),
+            &fields::parse(r#"{"x":1}"#).unwrap(),
         );
         logger
             .write_captured(path.to_string_lossy().into())

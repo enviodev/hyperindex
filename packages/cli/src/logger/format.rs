@@ -1,53 +1,97 @@
 use super::level::Level;
-use chrono::{DateTime, Local, SecondsFormat, Utc};
-use serde_json::{Map, Value};
+use chrono::{DateTime, Local, SecondsFormat};
+use serde_json::{value::RawValue, Map, Value};
+use std::io::Write;
 
 /// One logged line, before it is rendered for a sink.
 pub struct Record<'a> {
     pub level: Level,
-    pub time: DateTime<Utc>,
+    pub millis: i64,
     pub msg: &'a str,
-    /// The logger's bindings followed by the call's own params; a param
-    /// replaces a binding of the same name.
-    pub fields: &'a Map<String, Value>,
+    /// Bound fields then the call's own params, already merged.
+    pub fields: &'a [(&'a str, &'a RawValue)],
 }
 
+fn push_str(out: &mut Vec<u8>, value: &str) {
+    // Serializing a string into a Vec can't fail.
+    let _ = serde_json::to_writer(&mut *out, value);
+}
+
+fn parse(raw: &RawValue) -> Value {
+    serde_json::from_str(raw.get()).unwrap_or(Value::Null)
+}
+
+/// The fields a format writes, minus any named like a key the format writes
+/// itself: the line's own level, time and message win over a param's.
+fn fields_except<'a>(
+    record: &'a Record,
+    reserved: &'a [&str],
+) -> impl Iterator<Item = &'a (&'a str, &'a RawValue)> {
+    record
+        .fields
+        .iter()
+        .filter(move |(key, _)| !reserved.contains(key))
+}
+
+const JSON_KEYS: [&str; 3] = ["level", "time", "msg"];
+const ECS_KEYS: [&str; 4] = ["log.level", "@timestamp", "ecs.version", "message"];
+const CAPTURED_KEYS: [&str; 2] = ["level", "msg"];
+
 /// What pino writes: the line a log shipper or `jq` reads.
-pub fn json(record: &Record) -> String {
-    let mut line = Map::with_capacity(record.fields.len() + 3);
-    line.insert("level".into(), record.level.value().into());
-    line.insert("time".into(), record.time.timestamp_millis().into());
-    extend(&mut line, record.fields);
-    line.insert("msg".into(), record.msg.into());
-    Value::Object(line).to_string()
+pub fn json(record: &Record, out: &mut Vec<u8>) {
+    let _ = write!(
+        out,
+        "{{\"level\":{},\"time\":{}",
+        record.level.value(),
+        record.millis
+    );
+    for (key, value) in fields_except(record, &JSON_KEYS) {
+        out.push(b',');
+        push_str(out, key);
+        out.push(b':');
+        out.extend_from_slice(value.get().as_bytes());
+    }
+    out.extend_from_slice(b",\"msg\":");
+    push_str(out, record.msg);
+    out.extend_from_slice(b"}\n");
 }
 
 /// Elastic Common Schema, as `@elastic/ecs-pino-format` wrote it.
-pub fn ecs(record: &Record) -> String {
-    let mut line = Map::with_capacity(record.fields.len() + 4);
-    line.insert("log.level".into(), record.level.name().into());
-    line.insert(
-        "@timestamp".into(),
-        record
-            .time
-            .to_rfc3339_opts(SecondsFormat::Millis, true)
-            .into(),
+pub fn ecs(record: &Record, out: &mut Vec<u8>) {
+    let timestamp = DateTime::from_timestamp_millis(record.millis)
+        .unwrap_or_default()
+        .to_rfc3339_opts(SecondsFormat::Millis, true);
+    let _ = write!(
+        out,
+        "{{\"log.level\":\"{}\",\"@timestamp\":\"{timestamp}\",\"ecs.version\":\"1.6.0\"",
+        record.level.name()
     );
-    line.insert("ecs.version".into(), "1.6.0".into());
-    for (key, value) in record.fields {
-        match error_fields(key, value) {
-            Some(error) => line.insert("error".into(), error),
-            None => line.insert(key.clone(), value.clone()),
-        };
+    for (key, value) in fields_except(record, &ECS_KEYS) {
+        out.push(b',');
+        match (*key == "err")
+            .then(|| error_fields(&parse(value)))
+            .flatten()
+        {
+            Some(error) => {
+                out.extend_from_slice(b"\"error\":");
+                let _ = serde_json::to_writer(&mut *out, &error);
+            }
+            None => {
+                push_str(out, key);
+                out.push(b':');
+                out.extend_from_slice(value.get().as_bytes());
+            }
+        }
     }
-    line.insert("message".into(), record.msg.into());
-    Value::Object(line).to_string()
+    out.extend_from_slice(b",\"message\":");
+    push_str(out, record.msg);
+    out.extend_from_slice(b"}\n");
 }
 
-/// An error as ECS names its parts, for an `err` field that is a serialized
-/// error rather than some other value thrown.
-fn error_fields(key: &str, value: &Value) -> Option<Value> {
-    let error = value.as_object().filter(|_| key == "err")?;
+/// An error as ECS names its parts, for an `err` that is a serialized error
+/// rather than some other value thrown.
+fn error_fields(value: &Value) -> Option<Value> {
+    let error = value.as_object()?;
     let stack = error.get("stack")?;
     let mut fields = Map::new();
     if let Some(kind) = error.get("type") {
@@ -66,14 +110,10 @@ pub fn captured(record: &Record) -> Value {
     let mut line = Map::with_capacity(record.fields.len() + 2);
     line.insert("level".into(), record.level.name().into());
     line.insert("msg".into(), record.msg.into());
-    extend(&mut line, record.fields);
-    Value::Object(line)
-}
-
-fn extend(line: &mut Map<String, Value>, fields: &Map<String, Value>) {
-    for (key, value) in fields {
-        line.insert(key.clone(), value.clone());
+    for (key, value) in fields_except(record, &CAPTURED_KEYS) {
+        line.insert(key.to_string(), parse(value));
     }
+    Value::Object(line)
 }
 
 const RESET_FG: &str = "\x1b[39m";
@@ -102,7 +142,9 @@ fn level_color(level: Level) -> (&'static str, &'static str) {
 }
 
 /// For a person at a terminal, laid out the way `pino-pretty` laid it out.
-pub fn pretty(record: &Record, colorize: bool) -> String {
+/// Ends with a blank line, as `pino-pretty` through `console.log` printed it,
+/// which keeps multi-line params apart.
+pub fn pretty(record: &Record, colorize: bool, out: &mut Vec<u8>) {
     let paint = |color: &str, reset: &str, text: &str| {
         if colorize {
             format!("{color}{text}{reset}")
@@ -111,38 +153,36 @@ pub fn pretty(record: &Record, colorize: bool) -> String {
         }
     };
     let (color, reset) = level_color(record.level);
-    let time = record
-        .time
+    let time = DateTime::from_timestamp_millis(record.millis)
+        .unwrap_or_default()
         .with_timezone(&Local)
-        .format("%H:%M:%S%.3f")
-        .to_string();
-    let mut out = format!(
+        .format("%H:%M:%S%.3f");
+    let _ = write!(
+        out,
         "[{time}] {}:",
         paint(color, reset, &record.level.name().to_uppercase())
     );
     if !record.msg.is_empty() {
-        out.push(' ');
-        out.push_str(&paint(CYAN, RESET_FG, record.msg));
+        out.push(b' ');
+        out.extend_from_slice(paint(CYAN, RESET_FG, record.msg).as_bytes());
     }
-    out.push('\n');
+    out.push(b'\n');
     for (key, value) in record.fields {
-        let is_error = key == "err" || key == "error";
-        out.push_str("    ");
-        out.push_str(&if is_error {
-            key.clone()
+        let is_error = *key == "err" || *key == "error";
+        let label = if is_error {
+            key.to_string()
         } else {
             paint(MAGENTA, RESET_FG, key)
-        });
-        out.push_str(": ");
-        let rendered = if is_error {
-            pretty_error(value)
-        } else {
-            pretty_json(value)
         };
-        out.push_str(&indent_continuation(&rendered, "    "));
-        out.push('\n');
+        let value = parse(value);
+        let rendered = if is_error {
+            pretty_error(&value)
+        } else {
+            pretty_json(&value)
+        };
+        let _ = writeln!(out, "    {label}: {}", rendered.replace('\n', "\n    "));
     }
-    out
+    out.push(b'\n');
 }
 
 fn pretty_json(value: &Value) -> String {
@@ -177,99 +217,117 @@ fn pretty_error(value: &Value) -> String {
     out
 }
 
-fn indent_continuation(text: &str, indent: &str) -> String {
-    text.replace('\n', &format!("\n{indent}"))
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::fields::{merge, parse as parse_fields, Fields};
     use super::*;
-    use serde_json::json;
 
-    fn fields(value: Value) -> Map<String, Value> {
-        value.as_object().unwrap().clone()
+    const AT_EPOCH: i64 = 1_700_000_000_123;
+
+    fn render(
+        level: Level,
+        msg: &str,
+        fields: &Fields,
+        format: fn(&Record, &mut Vec<u8>),
+    ) -> String {
+        let merged = merge(&[fields]);
+        let mut out = Vec::new();
+        format(
+            &Record {
+                level,
+                millis: AT_EPOCH,
+                msg,
+                fields: &merged,
+            },
+            &mut out,
+        );
+        String::from_utf8(out).unwrap()
     }
 
-    fn at_epoch() -> DateTime<Utc> {
-        DateTime::from_timestamp_millis(1_700_000_000_123).unwrap()
+    fn fields(json: &str) -> Fields {
+        parse_fields(json).unwrap()
     }
 
     #[test]
     fn json_line_puts_level_and_time_first_and_msg_last() {
-        let fields = fields(json!({"chainId": 1, "block": 5}));
-        let record = Record {
-            level: Level::INFO,
-            time: at_epoch(),
-            msg: "hello",
-            fields: &fields,
-        };
         assert_eq!(
-            json(&record),
-            r#"{"level":30,"time":1700000000123,"chainId":1,"block":5,"msg":"hello"}"#
+            render(Level::INFO, "hello \"you\"", &fields(r#"{"chainId":1,"block":5}"#), json),
+            "{\"level\":30,\"time\":1700000000123,\"chainId\":1,\"block\":5,\"msg\":\"hello \\\"you\\\"\"}\n"
         );
     }
 
     #[test]
     fn ecs_line_names_an_error_the_ecs_way() {
-        let fields = fields(json!({
-            "chainId": 1,
-            "err": {"type": "Error", "message": "boom", "stack": "Error: boom\n    at x"}
-        }));
+        assert_eq!(
+            render(
+                Level::ERROR,
+                "failed",
+                &fields(r#"{"chainId":1,"err":{"type":"Error","message":"boom","stack":"Error: boom\n    at x"}}"#),
+                ecs
+            ),
+            "{\"log.level\":\"error\",\"@timestamp\":\"2023-11-14T22:13:20.123Z\",\"ecs.version\":\"1.6.0\",\"chainId\":1,\"error\":{\"type\":\"Error\",\"message\":\"boom\",\"stack_trace\":\"Error: boom\\n    at x\"},\"message\":\"failed\"}\n"
+        );
+    }
+
+    #[test]
+    fn a_field_named_like_a_lines_own_key_gives_way_to_it() {
+        let params = fields(r#"{"level":"x","time":"x","msg":"x","message":"x","n":1}"#);
+        let merged = merge(&[&params]);
         let record = Record {
-            level: Level::ERROR,
-            time: at_epoch(),
-            msg: "failed",
-            fields: &fields,
+            level: Level::INFO,
+            millis: AT_EPOCH,
+            msg: "hi",
+            fields: &merged,
         };
         assert_eq!(
-            ecs(&record),
-            r#"{"log.level":"error","@timestamp":"2023-11-14T22:13:20.123Z","ecs.version":"1.6.0","chainId":1,"error":{"type":"Error","message":"boom","stack_trace":"Error: boom\n    at x"},"message":"failed"}"#
+            (
+                render(Level::INFO, "hi", &params, json),
+                render(Level::INFO, "hi", &params, ecs),
+                captured(&record)
+            ),
+            (
+                "{\"level\":30,\"time\":1700000000123,\"message\":\"x\",\"n\":1,\"msg\":\"hi\"}\n"
+                    .to_string(),
+                "{\"log.level\":\"info\",\"@timestamp\":\"2023-11-14T22:13:20.123Z\",\"ecs.version\":\"1.6.0\",\"level\":\"x\",\"time\":\"x\",\"msg\":\"x\",\"n\":1,\"message\":\"hi\"}\n"
+                    .to_string(),
+                serde_json::json!({"level": "info", "msg": "hi", "time": "x", "message": "x", "n": 1})
+            )
         );
     }
 
     #[test]
     fn ecs_line_keeps_a_thrown_value_that_isnt_an_error() {
-        let fields = fields(json!({"err": {"RE_EXN_ID": "Foo"}}));
-        let record = Record {
-            level: Level::ERROR,
-            time: at_epoch(),
-            msg: "failed",
-            fields: &fields,
-        };
         assert_eq!(
-            ecs(&record),
-            r#"{"log.level":"error","@timestamp":"2023-11-14T22:13:20.123Z","ecs.version":"1.6.0","err":{"RE_EXN_ID":"Foo"},"message":"failed"}"#
+            render(Level::ERROR, "failed", &fields(r#"{"err":{"RE_EXN_ID":"Foo"}}"#), ecs),
+            "{\"log.level\":\"error\",\"@timestamp\":\"2023-11-14T22:13:20.123Z\",\"ecs.version\":\"1.6.0\",\"err\":{\"RE_EXN_ID\":\"Foo\"},\"message\":\"failed\"}\n"
         );
     }
 
     #[test]
     fn captured_line_has_no_timestamp() {
-        let fields = fields(json!({"chainId": 1}));
-        let record = Record {
-            level: Level::UWARN,
-            time: at_epoch(),
-            msg: "careful",
-            fields: &fields,
-        };
+        let fields = fields(r#"{"chainId":1}"#);
+        let merged = merge(&[&fields]);
         assert_eq!(
-            captured(&record),
-            json!({"level": "uwarn", "msg": "careful", "chainId": 1})
+            captured(&Record {
+                level: Level::UWARN,
+                millis: AT_EPOCH,
+                msg: "careful",
+                fields: &merged,
+            }),
+            serde_json::json!({"level": "uwarn", "msg": "careful", "chainId": 1})
         );
     }
 
     #[test]
     fn pretty_lays_out_params_and_errors_below_the_message() {
-        let fields = fields(json!({
-            "data": {"blockHash": "0x1"},
-            "err": {"type": "Error", "message": "boom", "stack": "Error: boom\n    at x"}
-        }));
-        let record = Record {
-            level: Level::WARN,
-            time: at_epoch(),
-            msg: "careful",
-            fields: &fields,
-        };
-        let rendered = pretty(&record, false);
+        let rendered = render(
+            Level::WARN,
+            "careful",
+            &fields(
+                r#"{"data":{"blockHash":"0x1"},"err":{"type":"Error","message":"boom","stack":"Error: boom\n    at x"}}"#,
+            ),
+            |record, out| pretty(record, false, out),
+        );
         let (_, after_time) = rendered.split_once("] ").unwrap();
         assert_eq!(
             after_time,
@@ -284,24 +342,23 @@ mod tests {
           Error: boom
               at x
     }
+
 "
         );
     }
 
     #[test]
     fn pretty_colors_level_message_and_keys() {
-        let fields = fields(json!({"chainId": 1}));
-        let record = Record {
-            level: Level::UINFO,
-            time: at_epoch(),
-            msg: "hi",
-            fields: &fields,
-        };
-        let rendered = pretty(&record, true);
+        let rendered = render(
+            Level::UINFO,
+            "hi",
+            &fields(r#"{"chainId":1}"#),
+            |record, out| pretty(record, true, out),
+        );
         let (_, after_time) = rendered.split_once("] ").unwrap();
         assert_eq!(
             after_time,
-            "\x1b[42mUINFO\x1b[49m: \x1b[36mhi\x1b[39m\n    \x1b[35mchainId\x1b[39m: 1\n"
+            "\x1b[42mUINFO\x1b[49m: \x1b[36mhi\x1b[39m\n    \x1b[35mchainId\x1b[39m: 1\n\n"
         );
     }
 }

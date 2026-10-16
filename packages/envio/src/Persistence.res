@@ -359,9 +359,10 @@ let init = {
               ),
             )
           | AddChain(chainConfig) =>
-            logger
-            ->Logging.forChain(chainConfig.id)
-            ->Logging.info(`Adding the chain to the existing indexer storage...`)
+            logger->Logging.info(
+              `Adding the chain to the existing indexer storage...`,
+              ~params={"chainId": chainConfig.id},
+            )
             // The same resolution `initialize` runs, and for the same reason:
             // this is the one time the chain's row is written.
             let chainConfig =
