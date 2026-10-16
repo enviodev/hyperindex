@@ -251,7 +251,9 @@ type t = {
   // How many times the source was told to drop orphaned-chain state.
   reorgCallCount: unit => int,
   // The item queries the source has taken and not yet replied to, in arrival
-  // order. A query leaves as soon as it is replied to.
+  // order. A query leaves as soon as it is replied to. A rollback doesn't cancel
+  // the ones already in flight: they stay next to the re-queries it issues, so
+  // pin `fromBlock` to tell a re-query from the query it superseded.
   pendingItemsQueries: array<pendingItemsQuery>,
   // Waits until every entry matches a pending query, then replies to all of
   // them in list order. An entry that replies needs exactly one matching query;
