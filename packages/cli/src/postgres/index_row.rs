@@ -46,12 +46,12 @@ pub fn explain_insert(table_name: &str, oversized: Option<Oversized>) -> String 
             value,
             bytes,
         }) => format!(
-            "Failed to insert items into table \"{table_name}\": field \"{column}\" of entity \"{}\" is {bytes} bytes, {limit}. {INDEXED_BY} {FIX} Value: \"{}\"",
+            "Failed to write {table_name} with id \"{}\": field \"{column}\" is {bytes} bytes, {limit}. {INDEXED_BY} {FIX} Value: \"{}\"",
             shortened(&id, MAX_ID_CHARS),
             shortened(&value, MAX_VALUE_CHARS),
         ),
         None => format!(
-            "Failed to insert items into table \"{table_name}\": a field value is {limit}. {INDEXED_BY} {FIX}"
+            "Failed to write {table_name} entities: a field value is {limit}. {INDEXED_BY} {FIX}"
         ),
     }
 }
@@ -86,7 +86,7 @@ mod tests {
                 }),
             ),
             format!(
-                "Failed to insert items into table \"A\": field \"id\" of entity \"{}…\" is 6000 bytes, over the 2704 bytes a PostgreSQL index can hold. {INDEXED_BY} {FIX} Value: \"{}…\"",
+                "Failed to write A with id \"{}…\": field \"id\" is 6000 bytes, over the 2704 bytes a PostgreSQL index can hold. {INDEXED_BY} {FIX} Value: \"{}…\"",
                 "é".repeat(MAX_ID_CHARS),
                 "é".repeat(MAX_VALUE_CHARS),
             )
