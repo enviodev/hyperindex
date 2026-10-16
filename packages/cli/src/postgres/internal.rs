@@ -4,13 +4,18 @@ use super::ddl::{ColumnSpec, TableSpec};
 use super::history::bounds;
 use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
 use crate::storage::types::{
-    ChainConfig, Sequence, ADDRESSES_TABLE as ADDRESSES, CHAINS_TABLE as CHAINS,
-    CHECKPOINTS_TABLE as CHECKPOINTS, CONFIG_REGISTRATION_BLOCK, CONTRACTS_TABLE as CONTRACTS,
+    ChainConfig, Sequence, CHAINS_TABLE as CHAINS, CHECKPOINTS_TABLE as CHECKPOINTS,
     INFO_TABLE as INFO,
 };
 
+pub const CONTRACTS: &str = "envio_contracts";
+pub const ADDRESSES: &str = "envio_addresses";
 pub const META_VIEW: &str = "_meta";
 pub const CHAIN_METADATA_VIEW: &str = "chain_metadata";
+
+/// The registration block a config-declared address is stored with, which
+/// tells it apart from one a handler registered.
+pub const CONFIG_REGISTRATION_BLOCK: i32 = -1;
 
 fn column(name: &str, field_type: FieldType) -> ColumnSpec {
     ColumnSpec {

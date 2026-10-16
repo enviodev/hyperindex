@@ -7,7 +7,7 @@
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -16,14 +16,12 @@ const CLICKHOUSE_VERSION: &str = "26.2.15.4";
 
 pub(crate) struct Postgres {
     pub port: u16,
-    _processes: Vec<Child>,
 }
 
 /// Two replicas of one shard, sharing a Keeper. A test that doesn't replicate
 /// uses the first alone.
 pub(crate) struct ClickHouse {
     pub replicas: [String; 2],
-    _processes: Vec<Child>,
 }
 
 pub(crate) fn postgres() -> &'static Postgres {
@@ -44,7 +42,7 @@ fn start_postgres() -> Postgres {
     // directory and the server to the `postgres` user.
     let root_user = is_root();
     let command = |program: &str| {
-        let mut command = if root_user {
+        if root_user {
             let mut command = Command::new("runuser");
             command
                 .args(["-u", "postgres", "--"])
@@ -52,9 +50,7 @@ fn start_postgres() -> Postgres {
             command
         } else {
             Command::new(bin.join(program))
-        };
-        command.stdin(Stdio::null());
-        command
+        }
     };
     if root_user {
         succeed(Command::new("chown").arg("postgres").arg(&root));
@@ -71,7 +67,7 @@ fn start_postgres() -> Postgres {
 
     let port = free_port();
     let log = root.join("server.log");
-    let server = spawn_logged(
+    spawn_logged(
         command("postgres")
             .arg("-D")
             .arg(&data)
@@ -89,7 +85,9 @@ fn start_postgres() -> Postgres {
             ]),
         &log,
     );
-    let watcher = stop_with_this_process(
+    // The postmaster's pid from its own file: under `runuser` the child
+    // spawned is `runuser`, not the server.
+    stop_with_this_process(
         &format!("kill -QUIT $(head -1 '{}/postmaster.pid')", data.display()),
         &root,
     );
@@ -99,10 +97,7 @@ fn start_postgres() -> Postgres {
             .status()
             .is_ok_and(|status| status.success())
     });
-    Postgres {
-        port,
-        _processes: vec![server, watcher],
-    }
+    Postgres { port }
 }
 
 fn postgres_bin() -> PathBuf {
@@ -157,7 +152,7 @@ fn start_clickhouse() -> ClickHouse {
         })
         .collect::<String>();
 
-    let mut children = Vec::new();
+    let mut pids = Vec::new();
     for (index, (name, http, tcp, interserver)) in replicas.iter().enumerate() {
         let dir = root.join(name);
         for sub in [
@@ -210,25 +205,20 @@ fn start_clickhouse() -> ClickHouse {
         );
         let config_path = format!("{dir}/config.xml");
         fs::write(&config_path, config).unwrap();
-        children.push(spawn_logged(
+        pids.push(spawn_logged(
             Command::new(&binary)
                 .arg("server")
                 .arg(format!("--config-file={config_path}")),
             Path::new(&format!("{dir}/stdout.log")),
         ));
     }
-    let pids = children
-        .iter()
-        .map(|child| child.id().to_string())
-        .collect::<Vec<_>>()
-        .join(" ");
-    children.push(stop_with_this_process(&format!("kill -9 {pids}"), &root));
+    stop_with_this_process(&format!("kill -9 {}", pids.join(" ")), &root);
 
     let urls = replicas.map(|(_, http, _, _)| format!("http://127.0.0.1:{http}"));
-    for url in &urls {
+    for ((name, ..), url) in replicas.iter().zip(&urls) {
         // Answering isn't enough: replicated DDL also needs Keeper to have
         // elected itself, which it does a moment after the servers come up.
-        wait_for("ClickHouse", &root.join("a/error.log"), || {
+        wait_for("ClickHouse", &root.join(name).join("error.log"), || {
             Command::new("curl")
                 .args(["-sf", "-u", &format!("default:{PASSWORD}"), url])
                 .args([
@@ -240,10 +230,7 @@ fn start_clickhouse() -> ClickHouse {
                 .is_ok_and(|status| status.success())
         });
     }
-    ClickHouse {
-        replicas: urls,
-        _processes: children,
-    }
+    ClickHouse { replicas: urls }
 }
 
 fn clickhouse_binary() -> PathBuf {
@@ -310,7 +297,8 @@ fn succeed(command: &mut Command) {
     );
 }
 
-fn spawn_logged(command: &mut Command, log: &Path) -> Child {
+/// Starts a server and answers its pid.
+fn spawn_logged(command: &mut Command, log: &Path) -> String {
     let log = fs::File::create(log).unwrap();
     command
         .stdin(Stdio::null())
@@ -318,11 +306,15 @@ fn spawn_logged(command: &mut Command, log: &Path) -> Child {
         .stderr(log)
         .spawn()
         .unwrap_or_else(|error| panic!("{command:?} didn't start: {error}"))
+        .id()
+        .to_string()
 }
 
-/// The statics holding the servers are never dropped, so a watcher outside
-/// this process stops them once it is gone, however it ends.
-fn stop_with_this_process(stop: &str, root: &Path) -> Child {
+/// The servers outlive any test, so a watcher outside this process stops them
+/// once it is gone, however it ends. It is never waited on: it has to outlive
+/// this process.
+#[allow(clippy::zombie_processes)]
+fn stop_with_this_process(stop: &str, root: &Path) {
     Command::new("sh")
         .arg("-c")
         .arg(format!(
@@ -334,7 +326,7 @@ fn stop_with_this_process(stop: &str, root: &Path) -> Child {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .unwrap()
+        .unwrap();
 }
 
 fn wait_for(server: &str, log: &Path, ready: impl Fn() -> bool) {

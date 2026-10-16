@@ -230,9 +230,8 @@ impl Entity {
     }
 }
 
-/// Under one shared sequence every chain is held to the lowest of the ids,
-/// bound as `$1`; per chain, the chains and their ids are the two arrays the
-/// joined relation unnests.
+/// Under one shared sequence the single id is bound as `$1`; per chain, the
+/// chains and their ids are the two arrays the joined relation unnests.
 fn bound_params(bounds: &Bounds) -> Vec<Param> {
     match bounds.sequence {
         Sequence::SharedAcrossChains => vec![Param::Text(bounds.shared_id().to_string())],
@@ -262,6 +261,22 @@ fn address_params(addresses: &Addresses, with_registration_blocks: bool) -> Vec<
 
 /// One statement of a batch, pending, and what it reports if it fails.
 type Statement<'a> = Pin<Box<dyn Future<Output = std::result::Result<(), Failure>> + Send + 'a>>;
+
+fn execute<'a>(
+    transaction: &'a Transaction,
+    context: impl Into<String>,
+    sql: String,
+    params: Vec<Param>,
+) -> Statement<'a> {
+    let context = context.into();
+    Box::pin(async move {
+        transaction
+            .execute(&sql, &params)
+            .await
+            .map(|_| ())
+            .map_err(|error| Failure::new(context, error))
+    })
+}
 
 pub struct Storage {
     pub client: PgClient,
@@ -664,7 +679,7 @@ impl Storage {
 
     /// One transaction for every chain: they caught up together, and a crash
     /// part way through would leave some stamped and some not.
-    pub async fn set_ready_at(&self, chain_ids: &[i64], ready_at: f64) -> Result<()> {
+    async fn set_ready_at(&self, chain_ids: &[i64], ready_at: f64) -> Result<()> {
         let sql = internal::set_ready_at(self.schema());
         let transaction = self.client.begin().await?;
         let outcome = async {
@@ -964,18 +979,11 @@ impl Storage {
         };
         let caches = async {
             let writes = effect_caches.iter().map(|write| async move {
-                let table = write
-                    .table
-                    .postgres()
-                    .map_err(|error| Failure::new(insert_context(&write.table.name), error))?;
+                let table = postgres_table(&write.table)?;
                 if write.create {
-                    let create = self
-                        .create_table(&table.spec)
-                        .map_err(|error| Failure::new(insert_context(table.name()), error))?;
-                    self.client
-                        .batch(&create)
-                        .await
-                        .map_err(|error| Failure::new(insert_context(table.name()), error))?;
+                    let fail = |error| Failure::new(insert_context(table.name()), error);
+                    let create = self.create_table(&table.spec).map_err(fail)?;
+                    self.client.batch(&create).await.map_err(fail)?;
                 }
                 self.insert(None, table, &write.rows).await
             });
@@ -1003,24 +1011,27 @@ impl Storage {
                 .entity()
                 .and_then(|entity| entity.history.rollback(schema, rollback.bounds.sequence))
                 .map_err(|error| Failure::new("Failed rolling back the history", error))?;
-            statements.push((
+            statements.push(execute(
+                transaction,
                 format!("Failed rolling back the history of \"{}\"", table.name()),
                 sql,
                 params.clone(),
             ));
         }
-        statements.push((
-            "Failed rolling back the checkpoints".to_string(),
+        statements.push(execute(
+            transaction,
+            "Failed rolling back the checkpoints",
             internal::rollback_checkpoints(schema, rollback.bounds.sequence)
                 .map_err(|error| Failure::new("Failed rolling back the checkpoints", error))?,
-            params.clone(),
+            params,
         ));
         // Before the batch's own progress write, so a chain the batch also
         // progressed keeps the batch's later value.
         let progress_sql = internal::set_progress(schema);
         for progress in &rollback.progress {
-            statements.push((
-                "Failed rolling back the chains' progress".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed rolling back the chains' progress",
                 progress_sql.clone(),
                 progress_params(progress),
             ));
@@ -1028,21 +1039,14 @@ impl Storage {
         // Before the batch's own inserts, so an address registered again lands
         // after its old row is gone.
         if !rollback.removed_addresses.chain_ids.is_empty() {
-            statements.push((
-                "Failed rolling back the registered addresses".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed rolling back the registered addresses",
                 internal::delete_addresses(schema, self.settings.chain_id_mode),
                 address_params(&rollback.removed_addresses, false),
             ));
         }
-        settle(
-            join_all(statements.iter().map(|(context, sql, params)| async move {
-                transaction
-                    .execute(sql, params)
-                    .await
-                    .map_err(|error| Failure::new(context.clone(), error))
-            }))
-            .await,
-        )
+        settle(join_all(statements).await)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1060,37 +1064,23 @@ impl Storage {
         let schema = self.schema();
         let chain_id_mode = self.settings.chain_id_mode;
         let mut statements: Vec<Statement<'_>> = Vec::new();
-        let run = |context: String, sql: String, params: Vec<Param>| {
-            Box::pin(async move {
-                transaction
-                    .execute(&sql, &params)
-                    .await
-                    .map(|_| ())
-                    .map_err(|error| Failure::new(context, error))
-            }) as Statement<'_>
-        };
 
         let progress_sql = internal::set_progress(schema);
         for progress in progress {
-            statements.push(run(
-                "Failed writing the chains' progress".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed writing the chains' progress",
                 progress_sql.clone(),
                 progress_params(progress),
             ));
         }
         if let Some(write) = raw_events {
-            let table = write
-                .table
-                .postgres()
-                .map_err(|error| Failure::new(insert_context(&write.table.name), error))?;
+            let table = postgres_table(&write.table)?;
             statements.push(Box::pin(self.insert(Some(transaction), table, &write.rows)));
         }
         for write in entities {
             if let Some(rows) = &write.postgres {
-                let table = write
-                    .table
-                    .postgres()
-                    .map_err(|error| Failure::new(insert_context(&write.table.name), error))?;
+                let table = postgres_table(&write.table)?;
                 statements.push(Box::pin(self.write_entity(
                     transaction,
                     table,
@@ -1101,22 +1091,25 @@ impl Storage {
         }
         let meta_sql = internal::set_meta(schema);
         for meta in chain_meta {
-            statements.push(run(
-                "Failed writing the chains' metadata".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed writing the chains' metadata",
                 meta_sql.clone(),
                 meta_params(meta),
             ));
         }
         if !addresses.chain_ids.is_empty() {
-            statements.push(run(
-                "Failed writing the registered addresses".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed writing the registered addresses",
                 internal::insert_addresses(schema, chain_id_mode),
                 address_params(addresses, true),
             ));
         }
         if !frontier.chain_ids.is_empty() {
-            statements.push(run(
-                "Failed writing the chains' checkpoint".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed writing the chains' checkpoint",
                 internal::set_frontier(schema, chain_id_mode),
                 vec![
                     array_literal(frontier.chain_ids.iter().map(|id| Some(id.to_string()))),
@@ -1133,8 +1126,9 @@ impl Storage {
         // history a chain keeps.
         let checkpoints = checkpoints.keeping_history();
         if !checkpoints.ids.is_empty() {
-            statements.push(run(
-                "Failed writing the checkpoints".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed writing the checkpoints",
                 internal::insert_checkpoints(schema, chain_id_mode),
                 vec![
                     array_literal(checkpoints.ids.iter().map(|id| Some(id.to_string()))),
@@ -1194,16 +1188,14 @@ impl Storage {
                 if let Some(chain_id) = chain_id {
                     params.push(Param::Text(chain_id.to_string()));
                 }
-                let sql = entity
-                    .history
-                    .insert_delete_rows(schema, chain_id.is_some());
-                statements.push(Box::pin(async move {
-                    transaction
-                        .execute(&sql, &params)
-                        .await
-                        .map(|_| ())
-                        .map_err(|error| Failure::new(history_context(), error))
-                }));
+                statements.push(execute(
+                    transaction,
+                    history_context(),
+                    entity
+                        .history
+                        .insert_delete_rows(schema, chain_id.is_some()),
+                    params,
+                ));
             }
             if let Some((rows, checkpoint_ids)) = &history.sets {
                 statements.push(Box::pin(self.insert_history(
@@ -1219,20 +1211,12 @@ impl Storage {
             statements.push(Box::pin(self.insert(Some(transaction), table, rows)));
         }
         if !write.deletes.is_empty() {
-            let sql = entity.history.delete_entities(schema, chain_id);
-            let params = vec![array_literal(write.deletes.iter().map(Some))];
-            statements.push(Box::pin(async move {
-                transaction
-                    .execute(&sql, &params)
-                    .await
-                    .map(|_| ())
-                    .map_err(|error| {
-                        Failure::new(
-                            format!("Failed deleting \"{}\" from storage by ids", table.name()),
-                            error,
-                        )
-                    })
-            }));
+            statements.push(execute(
+                transaction,
+                format!("Failed deleting \"{}\" from storage by ids", table.name()),
+                entity.history.delete_entities(schema, chain_id),
+                vec![array_literal(write.deletes.iter().map(Some))],
+            ));
         }
         settle(join_all(statements).await)
     }
@@ -1317,13 +1301,6 @@ impl Storage {
         checkpoint_ids: &[String],
     ) -> std::result::Result<(), Failure> {
         let fail = |error| Failure::new(insert_context(&entity.history.history_table), error);
-        if checkpoint_ids.len() != rows.len() {
-            return Err(fail(anyhow!(
-                "{} history rows came with {} checkpoints",
-                rows.len(),
-                checkpoint_ids.len()
-            )));
-        }
         let statements = match rows {
             Rows::Staged(arena) => {
                 let mut params = write::unnest_params(arena).map_err(fail)?;
@@ -1403,6 +1380,12 @@ pub(super) fn cell<'a, T: tokio_postgres::types::FromSql<'a>>(
 
 fn insert_context(table_name: &str) -> String {
     format!("Failed to insert items into table \"{table_name}\"")
+}
+
+fn postgres_table(table: &composite::Table) -> std::result::Result<&Arc<Table>, Failure> {
+    table
+        .postgres()
+        .map_err(|error| Failure::new(insert_context(&table.name), error))
 }
 
 /// Whether a statement's text recurs. One that does is kept prepared on its

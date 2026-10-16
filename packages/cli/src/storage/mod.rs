@@ -1,6 +1,8 @@
 pub mod rows;
 pub mod types;
 
+// The addon registers these; a test build has no registration and would see
+// every export as dead.
 #[cfg_attr(test, allow(dead_code))]
 mod js;
 #[cfg(test)]

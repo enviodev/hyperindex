@@ -7,8 +7,6 @@ pub const SET: &str = "SET";
 pub const DELETE: &str = "DELETE";
 pub const CHAINS_TABLE: &str = "envio_chains";
 pub const INFO_TABLE: &str = "envio_info";
-pub const CONTRACTS_TABLE: &str = "envio_contracts";
-pub const ADDRESSES_TABLE: &str = "envio_addresses";
 pub const CHECKPOINTS_TABLE: &str = "envio_checkpoints";
 
 /// How checkpoint ids are handed out. Under one shared counter a row's id is
@@ -196,10 +194,6 @@ pub struct CacheTable {
     pub table_name: String,
     pub rows: i32,
 }
-
-/// The registration block a config-declared address is stored with, which
-/// tells it apart from one a handler registered.
-pub const CONFIG_REGISTRATION_BLOCK: i32 = -1;
 
 #[cfg(test)]
 mod tests {

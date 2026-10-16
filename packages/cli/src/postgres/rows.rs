@@ -16,8 +16,7 @@ use tokio_postgres::types::{FromSql, Kind, Type};
 use tokio_postgres::Row;
 
 use super::client::Column;
-use crate::storage::rows::{lay_out, ColumnRead, ResultSet};
-pub use crate::storage::rows::{Cell, ReadKind};
+use crate::storage::rows::{lay_out, Cell, ColumnRead, ReadKind, ResultSet};
 
 /// Days between 2000-01-01, which Postgres counts from, and the Unix epoch.
 const POSTGRES_EPOCH_DAYS: i64 = 10957;
@@ -233,7 +232,7 @@ impl<'a> FromSql<'a> for Cell<'a> {
 
 /// What a scalar of this type becomes. `int8` and `numeric` are text: a float
 /// would lose digits the schemas on the other side keep.
-pub fn read_kind(ty: &Type) -> ReadKind {
+fn read_kind(ty: &Type) -> ReadKind {
     match ty.oid() {
         BOOL => ReadKind::Bool,
         BYTEA => ReadKind::Bytes,

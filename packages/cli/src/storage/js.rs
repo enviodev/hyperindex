@@ -557,7 +557,7 @@ impl JsStorage {
                     .map(|kinds| kinds.iter().map(|&kind| kind as u8).collect()),
             }),
             clickhouse: table.clickhouse.as_ref().map(|table| ClickHouseRegistered {
-                names: table.staged.iter().map(|(name, _)| name.clone()).collect(),
+                names: staged_names(table),
                 kinds: table
                     .staged_kinds()
                     .into_iter()
@@ -599,8 +599,7 @@ impl JsStorage {
             }
             Store::ClickHouse => {
                 let table = table.clickhouse().map_err(to_napi)?;
-                let names = table.staged.iter().map(|(name, _)| name.clone()).collect();
-                (names, table.staged_kinds())
+                (staged_names(table), table.staged_kinds())
             }
         };
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
@@ -1024,6 +1023,10 @@ impl JsStorage {
     pub async fn close(&self) {
         self.inner.close();
     }
+}
+
+fn staged_names(table: &clickhouse::table::Table) -> Vec<String> {
+    table.staged.iter().map(|(name, _)| name.clone()).collect()
 }
 
 fn definitions_of(definitions: Vec<PgIndexInput>) -> napi::Result<Vec<IndexDefinition>> {

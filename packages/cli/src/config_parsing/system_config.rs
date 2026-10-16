@@ -432,23 +432,23 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         }
     }
 
-    let unsupported: Vec<(&str, &'static str)> = entities
+    if storage.clickhouse.is_some() {
+        return Ok(());
+    }
+    let unsupported: Vec<String> = entities
         .iter()
-        .filter(|e| {
-            e.clickhouse.as_ref().is_some_and(|c| c.is_enabled()) && storage.clickhouse.is_none()
+        .filter(|e| e.clickhouse.as_ref().is_some_and(|c| c.is_enabled()))
+        .map(|e| {
+            format!(
+                "  - `{}` uses `clickhouse`, but `clickhouse` is not enabled.",
+                e.name
+            )
         })
-        .map(|e| (e.name.as_str(), "clickhouse"))
         .collect();
     if unsupported.is_empty() {
         return Ok(());
     }
-    let listed = unsupported
-        .iter()
-        .map(|(name, backend)| {
-            format!("  - `{name}` uses `{backend}`, but `{backend}` is not enabled.")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let listed = unsupported.join("\n");
     Err(anyhow!(
         "Schema validation failed:\n\nEntities using storages not enabled in \
          config.yaml:\n{listed}\n\nFixes:\n  - Remove the unsupported storage from @storage on \

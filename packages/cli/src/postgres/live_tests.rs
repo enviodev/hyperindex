@@ -12,11 +12,10 @@
 
 use super::client::{PgClient, PgConnectionOptions, SslSetting, MAX_PREPARED_STATEMENTS};
 use super::param::Param;
-use super::rows::Cell;
-use super::rows::ReadKind;
 use futures_util::future;
 
 use crate::columnar::{Arena, ColumnKind, ColumnSpec};
+use crate::storage::rows::{Cell, ReadKind};
 use crate::storage::CacheDump;
 use crate::test_servers;
 

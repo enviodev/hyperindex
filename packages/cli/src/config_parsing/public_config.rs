@@ -78,8 +78,8 @@ struct StorageConfig {
     clickhouse_column_name_format: Option<ColumnNameFormat>,
 }
 
-fn non_default_format(backend: Option<system_config::StorageBackend>) -> Option<ColumnNameFormat> {
-    match backend?.column_name_format {
+fn non_default_format(backend: system_config::StorageBackend) -> Option<ColumnNameFormat> {
+    match backend.column_name_format {
         ColumnNameFormat::Original => None,
         format => Some(format),
     }
@@ -90,8 +90,8 @@ impl From<&system_config::Storage> for StorageConfig {
         Self {
             postgres: true,
             clickhouse: s.clickhouse.is_some(),
-            postgres_column_name_format: non_default_format(Some(s.postgres)),
-            clickhouse_column_name_format: non_default_format(s.clickhouse),
+            postgres_column_name_format: non_default_format(s.postgres),
+            clickhouse_column_name_format: s.clickhouse.and_then(non_default_format),
         }
     }
 }
@@ -773,24 +773,23 @@ impl SystemConfig {
                                     ("enum".into(), Some(name.clone()), None, None, None)
                                 }
                             };
-                        let db_name_for =
-                            |backend: Option<system_config::StorageBackend>| match backend
-                                .map(|b| b.column_name_format)
-                            {
-                                None | Some(ColumnNameFormat::Original) => None,
-                                Some(ColumnNameFormat::SnakeCase) => {
-                                    let db_name = f.db_column_name(ColumnNameFormat::SnakeCase);
-                                    if db_name == f.db_column_name(ColumnNameFormat::Original) {
-                                        None
-                                    } else {
-                                        Some(db_name)
-                                    }
+                        let db_name_for = |backend: system_config::StorageBackend| match backend
+                            .column_name_format
+                        {
+                            ColumnNameFormat::Original => None,
+                            ColumnNameFormat::SnakeCase => {
+                                let db_name = f.db_column_name(ColumnNameFormat::SnakeCase);
+                                if db_name == f.db_column_name(ColumnNameFormat::Original) {
+                                    None
+                                } else {
+                                    Some(db_name)
                                 }
-                            };
+                            }
+                        };
                         PropertyJson {
                             name: f.field_name.clone(),
-                            postgres_db_name: db_name_for(Some(cfg.storage.postgres)),
-                            clickhouse_db_name: db_name_for(cfg.storage.clickhouse),
+                            postgres_db_name: db_name_for(cfg.storage.postgres),
+                            clickhouse_db_name: cfg.storage.clickhouse.and_then(db_name_for),
                             field_type,
                             is_nullable: f.is_nullable,
                             is_array: f.is_array,
