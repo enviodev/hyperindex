@@ -198,6 +198,30 @@ Pending:
     await indexer.getBatchWritePromise()
   })
 
+  scenario->Scenario.it(
+    "builds a reply from the query it matched",
+    ~sources,
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      let halfway = MockSource.RespondWith(
+        query => {items: [], latestFetchedBlockNumber: query.fromBlock + 49},
+      )
+      await mock.expectItemsQueries([
+        {partitionId: "0", reply: halfway},
+        {partitionId: "1", reply: halfway},
+      ])
+      await mock.expectItemsQueries([
+        {partitionId: "0", fromBlock: 51, reply: LeavePending},
+        {partitionId: "1", fromBlock: 51, reply: LeavePending},
+      ])
+      t.expect(mock.pendingItemsQueries->Array.map(query => query.fromBlock)).toEqual([51, 51])
+      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=300)
+      await indexer.getBatchWritePromise()
+    },
+  )
+
   // A test that fakes the clock still gets the timeout message instead of a
   // suite-level hang, so the deadline can't run on the faked setTimeout.
   scenario->Scenario.it("times out on the real clock while timers are faked", ~sources, async (

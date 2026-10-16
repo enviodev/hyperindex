@@ -214,7 +214,12 @@ type itemsResponse = {
   requestStats?: array<Source.requestStat>,
 }
 
-type reply = Respond(itemsResponse) | Fail(exn) | LeavePending
+type reply =
+  | Respond(itemsResponse)
+  // For a response that depends on the query it matched, e.g. items at its fromBlock.
+  | RespondWith(pendingItemsQuery => itemsResponse)
+  | Fail(exn)
+  | LeavePending
 
 type expectedItemsQuery = {
   partitionId?: string,
@@ -381,7 +386,7 @@ let expectedMatches = (expected: expectedItemsQuery, query: pendingItemsQuery) =
 
 let isReplying = (expected: expectedItemsQuery) =>
   switch expected.reply {
-  | Respond(_) | Fail(_) => true
+  | Respond(_) | RespondWith(_) | Fail(_) => true
   | LeavePending => false
   }
 
@@ -450,6 +455,7 @@ let describeExpected = (expected: expectedItemsQuery) =>
         Some(
           `reply: ${switch expected.reply {
             | Respond(_) => "Respond(…)"
+            | RespondWith(_) => "RespondWith(…)"
             | Fail(_) => "Fail(…)"
             | LeavePending => "LeavePending"
             }}`,
@@ -919,6 +925,7 @@ let make = (
       assignment->Array.forEachWithIndex((query, position) =>
         switch (expected->Array.getUnsafe(replyingIndices->Array.getUnsafe(position))).reply {
         | Respond(response) => (query->control).respond(response)
+        | RespondWith(respond) => (query->control).respond(respond(query))
         | Fail(exn) => (query->control).fail(exn)
         | LeavePending => ()
         }
