@@ -22,7 +22,6 @@ let kindOf = (fieldType: Table.fieldType): valueKind =>
     Number
   }
 
-@val @scope("JSON") external stringify: unknown => string = "stringify"
 %%private(let isDate: unknown => bool = %raw(`(value) => value instanceof Date`))
 @send external toISOString: unknown => string = "toISOString"
 

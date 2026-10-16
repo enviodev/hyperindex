@@ -95,7 +95,7 @@ type clickHouseRegistered = {
   nullable: array<bool>,
 }
 
-type store = | @as("Postgres") Postgres | @as("ClickHouse") ClickHouse
+type store = Postgres | ClickHouse
 
 // What each store made of a table: present for the stores that keep it.
 type registeredTable = {
@@ -107,7 +107,7 @@ type registeredTable = {
 }
 
 type bounds = {
-  sequence: string,
+  sequence: CheckpointSequence.t,
   chainIds: array<ChainId.t>,
   checkpointIds: array<string>,
 }
@@ -151,7 +151,7 @@ type partition = {table: int, chainId: ChainId.t, name: string}
 type enum = {name: string, variants: array<string>}
 
 type initialize = {
-  sequence: string,
+  sequence: CheckpointSequence.t,
   tables: array<int>,
   partitions: array<partition>,
   enums: array<enum>,
@@ -168,7 +168,7 @@ type addChain = {
 }
 
 type resume = {
-  sequence: string,
+  sequence: CheckpointSequence.t,
   // Every entity table.
   tables: array<int>,
   // The chains this run drives, which are the only ones trimmed.
@@ -436,8 +436,12 @@ external ensureQueryIndexes: (t, int, string, array<string>) => Null.t<promise<u
 @send external pruneHistory: (t, int, bounds) => promise<unit> = "pruneHistory"
 
 @send
-external rollbackTargetCheckpoint: (t, ChainId.t, int, string) => promise<Nullable.t<string>> =
-  "rollbackTargetCheckpoint"
+external rollbackTargetCheckpoint: (
+  t,
+  ChainId.t,
+  int,
+  CheckpointSequence.t,
+) => promise<Nullable.t<string>> = "rollbackTargetCheckpoint"
 
 @send
 external rollbackProgressDiff: (t, bounds) => promise<array<progressDiff>> = "rollbackProgressDiff"

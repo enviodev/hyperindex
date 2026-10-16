@@ -311,8 +311,7 @@ let register = (
     postgres: ?(
       postgres
         ? Some({
-            Core.tableName: table.tableName,
-            columns: table->Table.getFields->Array.map(pgColumnInput),
+            Core.columns: table->Table.getFields->Array.map(pgColumnInput),
             writeColumns: fields->Array.map(Table.getPgDbFieldName),
             partitionByColumn: ?(chainIdField->Option.map(Table.getPgDbFieldName)),
             appendOnly,
@@ -516,7 +515,6 @@ let rowsOrThrow = (
       | None => JsError.throwWithMessage(`Postgres doesn't keep "${registered.table.tableName}"`)
       }
     } catch {
-    | Persistence.StorageError(_) as exn => throw(exn)
     | S.Raised(_) as exn =>
       throw(
         Persistence.StorageError({
@@ -541,17 +539,11 @@ let renderIds = (table: Table.table, ids: array<EntityId.t>) =>
   ->(Utils.magic: JSON.t => array<unknown>)
   ->Array.map(Sql.render)
 
-let sequenceName = (sequence: CheckpointSequence.t) =>
-  switch sequence {
-  | SharedAcrossChains => "SharedAcrossChains"
-  | PerChain => "PerChain"
-  }
-
 let bounds = (
   {sequence, byChain}: CheckpointSequence.checkpointBoundsByChain,
 ): StorageClient.bounds => {
   let (chainIds, checkpointIds) = byChain->Frontier.unnestParams
-  {sequence: sequence->sequenceName, chainIds, checkpointIds}
+  {sequence, chainIds, checkpointIds}
 }
 
 let progress = (chain: InternalTable.Chains.progressedChain): StorageClient.progress => {
@@ -792,7 +784,7 @@ let make = (
       )
 
     await client->StorageClient.initialize({
-      sequence: CheckpointSequence.fromEntities(entities)->sequenceName,
+      sequence: CheckpointSequence.fromEntities(entities),
       tables: [rawEventsTable().handle]->Array.concat(
         entities->Array.map(entityConfig => (entityConfig->entityTable).handle),
       ),
@@ -1026,7 +1018,7 @@ let make = (
     let (cache, resumed) = await Promise.all2((
       restoreEffectCache(~withUpload=false),
       client->StorageClient.resume({
-        sequence: CheckpointSequence.fromEntities(entities)->sequenceName,
+        sequence: CheckpointSequence.fromEntities(entities),
         tables: entities->Array.map(entityConfig => (entityConfig->entityTable).handle),
         chainIds,
       }),
@@ -1102,7 +1094,7 @@ let make = (
       await client->StorageClient.rollbackTargetCheckpoint(
         reorgChainId,
         lastKnownValidBlockNumber,
-        sequence->sequenceName,
+        sequence,
       )
     )
     ->Nullable.toOption
@@ -1170,16 +1162,16 @@ let make = (
   ): StorageClient.entityWrite => {
     let table = entityConfig->entityTable
 
-    let scopeChainId = switch scope {
-    | Internal.CrossChain => None
-    | Chain(chainId) => Some(chainId)
+    let chainIdStamp = switch (entityConfig.table->Table.getChainIdField, scope) {
+    | (Some(field), Internal.Chain(chainId)) => Some((field, chainId))
+    | _ => None
     }
 
     let postgresWrite = (): StorageClient.postgresEntityWrite => {
       // Every row in this group belongs to the group's scope, so the chain id
       // is stamped once here instead of being looked up per row downstream.
-      let stamped = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
-      | (Some(field), Some(chainId)) =>
+      let stamped = switch chainIdStamp {
+      | Some((field, chainId)) =>
         changes->Array.map(change =>
           switch change {
           | Change.Set(set) =>
@@ -1190,7 +1182,7 @@ let make = (
           | Delete(_) => change
           }
         )
-      | _ => changes
+      | None => changes
       }
 
       // The rollback-diff change is written to the entity table only, never the
@@ -1285,10 +1277,7 @@ let make = (
 
     {
       table: table.handle,
-      chainId: ?switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
-      | (Some(_), Some(chainId)) => Some(chainId)
-      | _ => None
-      },
+      chainId: ?(chainIdStamp->Option.map(((_, chainId)) => chainId)),
       postgres: ?(table.postgres->Option.map(_ => postgresWrite())),
       clickhouse: ?switch (table.clickhouse, changes) {
       | (_, []) | (None, _) => None

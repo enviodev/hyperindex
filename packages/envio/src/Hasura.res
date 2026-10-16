@@ -294,18 +294,31 @@ let makeColumnMapping = (~relationalKey, ~isDerivedFrom, ~chainIdColumn) => {
   `{${pairs->Array.joinUnsafe(", ")}}`
 }
 
+type relationship = {
+  tableName: string,
+  relationshipType: string,
+  isDerivedFrom: bool,
+  objectName: string,
+  relationalKey: string,
+  mappedEntity: string,
+  chainIdColumn: option<string>,
+  comment: option<string>,
+}
+
 let createEntityRelationship = async (
   ~endpoint,
   ~auth,
   ~pgSchema,
-  ~tableName: string,
-  ~relationshipType: string,
-  ~relationalKey: string,
-  ~objectName: string,
-  ~mappedEntity: string,
-  ~isDerivedFrom: bool,
-  ~chainIdColumn: option<string>,
-  ~comment: option<string>=?,
+  {
+    tableName,
+    relationshipType,
+    relationalKey,
+    objectName,
+    mappedEntity,
+    isDerivedFrom,
+    chainIdColumn,
+    comment,
+  }: relationship,
 ) => {
   let tableJson = {
     "schema": pgSchema,
@@ -371,17 +384,6 @@ let makeTableConfigs = (~userEntities: array<Internal.entityConfig>) => {
       columnConfigs: entity.table->makeColumnConfigs,
     })
   [exposedInternalTableConfigs, userTableConfigs]->Array.flat
-}
-
-type relationship = {
-  tableName: string,
-  relationshipType: string,
-  isDerivedFrom: bool,
-  objectName: string,
-  relationalKey: string,
-  mappedEntity: string,
-  chainIdColumn: option<string>,
-  comment: option<string>,
 }
 
 // The relationships between the entities Hasura tracks. Relationships to an
@@ -482,23 +484,9 @@ let trackDatabase = async (
     )
   }
 
-  let relationships = makeRelationships(~userEntities, ~schema)
-  for i in 0 to relationships->Array.length - 1 {
-    let relationship = relationships->Array.getUnsafe(i)
-    await createEntityRelationship(
-      ~endpoint,
-      ~auth,
-      ~pgSchema,
-      ~tableName=relationship.tableName,
-      ~relationshipType=relationship.relationshipType,
-      ~isDerivedFrom=relationship.isDerivedFrom,
-      ~objectName=relationship.objectName,
-      ~relationalKey=relationship.relationalKey,
-      ~mappedEntity=relationship.mappedEntity,
-      ~chainIdColumn=relationship.chainIdColumn,
-      ~comment=?relationship.comment,
-    )
-  }
+  await makeRelationships(~userEntities, ~schema)->Utils.Array.awaitEach(relationship =>
+    createEntityRelationship(~endpoint, ~auth, ~pgSchema, relationship)
+  )
 
   Logging.info("Hasura configuration completed")
 }

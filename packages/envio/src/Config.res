@@ -1420,7 +1420,6 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 let resume = "resume indexing where it left off"
 let startOver = "delete all indexed data and start over"
 
-// Each way forward with what it does, the comments lined up.
 let pickOne = (ways: array<(string, string)>) => {
   let col = ways->Array.reduce(0, (col, (way, _)) => Math.Int.max(col, way->String.length)) + 2
   ways
@@ -1455,14 +1454,14 @@ let incompatibleMessage = (
     ])}${option3}`
 }
 
-let keepBoth = "keep the existing data and index from scratch"
-
 let strandedMessage = (~resetCommand) =>
   `ClickHouse holds indexed data that Postgres has none of: ENVIO_PG_SCHEMA names another schema than the one it was indexed alongside, or that schema was dropped.\n\nPick one:\n${pickOne([
       ("Point ENVIO_PG_SCHEMA at the schema it was indexed alongside", resume),
-      // The ClickHouse may be another indexer's, still running.
       (resetCommand, "delete what ClickHouse holds, whichever indexer wrote it, and start over"),
-      ("Point ENVIO_CLICKHOUSE_DATABASE at a new database", keepBoth),
+      (
+        "Point ENVIO_CLICKHOUSE_DATABASE at a new database",
+        "keep the existing data and index from scratch",
+      ),
     ])}`
 
 let setUpMeanwhileMessage = `Another indexer set up this storage while this one waited on an RPC for a "latest" start block, so this one stops rather than build over it. Stop that indexer before starting this one, or point ENVIO_PG_SCHEMA (and ENVIO_CLICKHOUSE_DATABASE) at storage of this one's own.`

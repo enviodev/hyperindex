@@ -1,6 +1,3 @@
-// Rows read back keyed by their Postgres column names, so one set of row
-// schemas parses what either store returns.
-
 let logger = Logging.createChild(~params={"storage": "clickhouse"})
 
 let fieldTypeName = (fieldType: Table.fieldType) =>
@@ -282,25 +279,6 @@ let makeTable = (~handle, ~name, {names, kinds, nullable}: StorageClient.clickHo
   }
 )
 
-%%private(
-  let stageOrThrow = (arena, table, ~rows, ~fill) => {
-    let stage = arena->Staging.begin(~table=table.handle, ~rows, ~columns=table.columns)
-    try {
-      fill(stage)
-      stage->Staging.commit
-    } catch {
-    | exn =>
-      stage->Staging.abort
-      throw(
-        Persistence.StorageError({
-          message: `Failed to convert items for ClickHouse table "${table.name}"`,
-          reason: exn->Utils.prettifyExn,
-        }),
-      )
-    }
-  }
-)
-
 // Every change as a row of the entity's history: a deletion keeps only the
 // columns that say which entity it removed.
 let stageChangesOrThrow = (
@@ -309,8 +287,10 @@ let stageChangesOrThrow = (
   ~entityConfig: Internal.entityConfig,
   ~scope: Internal.chainScope,
   ~changes: array<Change.t<Internal.entity>>,
-) =>
-  arena->stageOrThrow(table, ~rows=changes->Array.length, ~fill=stage => {
+) => {
+  let stage =
+    arena->Staging.begin(~table=table.handle, ~rows=changes->Array.length, ~columns=table.columns)
+  try {
     let cacheKey = scope->Internal.chainScopeToString
     let cells = switch table.historyCells->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
     | Some(cached) => cached
@@ -329,7 +309,18 @@ let stageChangesOrThrow = (
         stage->write(~column, ~row, (cells->Array.getUnsafe(column))(change))
       }
     })
-  })
+    stage->Staging.commit
+  } catch {
+  | exn =>
+    stage->Staging.abort
+    throw(
+      Persistence.StorageError({
+        message: `Failed to convert items for ClickHouse table "${table.name}"`,
+        reason: exn->Utils.prettifyExn,
+      }),
+    )
+  }
+}
 
 // Every connection setting has to be there: an unset one would otherwise reach
 // the server as an empty value and fail there, for a reason naming neither.

@@ -45,7 +45,6 @@ type pgColumnInput = {
 }
 
 type pgTableInput = {
-  tableName: string,
   // In the order the table declares them.
   columns: array<pgColumnInput>,
   // The columns a batch's rows carry, in the order they are laid out.

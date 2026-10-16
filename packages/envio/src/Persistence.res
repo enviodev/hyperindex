@@ -61,9 +61,7 @@ type rollback = {
   // The id each chain's diff rows are stamped with: the first after what that
   // chain has committed.
   diffFrontier: Frontier.t,
-  // The same ids as checkpoint rows, which map ClickHouse's diff rows to the
-  // block they restore. Postgres writes the diff to the entity table and
-  // ignores these.
+  // The same ids as checkpoint rows. Postgres ignores these.
   diffCheckpoints: array<InternalTable.Checkpoints.diffCheckpoint>,
   // How far back the deletes reach on each chain, travelling with the diff so
   // the write leaves an untouched sibling's rows alone.
@@ -360,6 +358,9 @@ let init = {
               : `Found existing indexer storage.`,
           )
           let stored = await persistence.storage.readStoredConfig()
+          let incompatible = paths => Refused(
+            ResumePlan.incompatibleMessage(paths, ~envioInfo, ~resetCommand, ~runCommand),
+          )
           switch ResumePlan.make(
             ~stored,
             ~envioInfo,
@@ -368,30 +369,10 @@ let init = {
             ~lowercaseAddresses,
             ~isolated,
           ) {
-          | Incompatible(changedPaths) =>
-            throw(
-              Refused(
-                ResumePlan.incompatibleMessage(
-                  changedPaths,
-                  ~envioInfo,
-                  ~resetCommand,
-                  ~runCommand,
-                ),
-              ),
-            )
-          // Behind a config change, which names what to revert.
+          | Incompatible(changedPaths) => throw(incompatible(changedPaths))
+          // After Incompatible: a config change is reported first, since its message names what to revert.
           | _ if holding === Diverged => throw(Refused(Config.divergedMessage(~resetCommand)))
-          | _ if holding === Outdated =>
-            throw(
-              Refused(
-                ResumePlan.incompatibleMessage(
-                  [ResumePlan.olderEnvio],
-                  ~envioInfo,
-                  ~resetCommand,
-                  ~runCommand,
-                ),
-              ),
-            )
+          | _ if holding === Outdated => throw(incompatible([ResumePlan.olderEnvio]))
           | Resume => ()
           | AddChain(chainConfig) =>
             Logging.info({
