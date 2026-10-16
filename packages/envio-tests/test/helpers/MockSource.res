@@ -180,7 +180,8 @@ type itemMock = {
   transactionFields?: dict<unknown>,
 }
 
-type toBlock = Bounded(int) | Unbounded
+// Unboxed so a failed `toEqual` prints `100` or `"unbounded"`, not a tagged object.
+@unboxed type toBlock = Bounded(int) | @as("unbounded") Unbounded
 
 // What a test can tell one pending item query from another by.
 type pendingItemsQuery = {
@@ -290,6 +291,8 @@ type t = {
   // fails at once naming what was asked. A rollback only looks up hashes when
   // the chain has a stored block between its threshold and the reorged block.
   expectBlockHashLookup: expectedBlockHashLookup => promise<unit>,
+  // What the source has been asked and not answered, for a failure report.
+  describeState: unit => string,
   // Throws if a height answer given before its call arrived is still waiting
   // for one, naming the call sites. Run at the end of a passing scenario.
   validateAnswersClaimed: unit => unit,
@@ -1021,6 +1024,20 @@ let make = (
           unclaimed->Array.map(entry => `  ${entry}`)->Array.join("\n"),
         )
       },
+    describeState: () =>
+      `Mock source for chain ${chainId->ChainId.toString} at the failure:\n` ++
+      "  pending item queries:" ++
+      switch pendingItemsQueries {
+      | [] => " none"
+      | queries => queries->Array.map(query => `\n    ${query->describeQuery}`)->Array.join("")
+      } ++
+      "\n  pending block-hash lookups: " ++
+      switch pendingBlockHashLookups {
+      | [] => "none"
+      | lookups =>
+        lookups->Array.map(lookup => lookup["blockNumbers"]->describeBlockNumbers)->Array.join(", ")
+      } ++
+      `\n  height calls taken: ${getHeightOrThrowCalls->Array.length->Int.toString}`,
     dropPendingCalls: () => {
       pendingItemsQueries->Utils.Array.clearInPlace
       keptPendingQueries->Utils.Array.clearInPlace

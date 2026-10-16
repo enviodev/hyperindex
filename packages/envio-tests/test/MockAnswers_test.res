@@ -292,6 +292,22 @@ Pending:
     await indexer.getBatchWritePromise()
   })
 
+  // What vitest prints for a pending query in a failed whole-value assert.
+  scenario->Scenario.it("serializes a pending query the way a test writes it", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    mock.resolveGetHeightOrThrow(300)
+    await mock.expectItemsQueries([{reply: LeavePending}])
+    t.expect(mock.pendingItemsQueries->JSON.stringifyAny).toEqual(
+      Some(`[{"partitionId":"0","fromBlock":1,"toBlock":100,"retryCount":0}]`),
+    )
+    await mock.respondEmptyUpTo(300)
+    await indexer.getBatchWritePromise()
+  })
+
   scenario->Scenario.it("fails a query, and waits for the chain to retry it", ~sources, async (
     ~t,
     ~indexer,

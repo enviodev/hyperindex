@@ -722,7 +722,12 @@ let run = async (
   | (Some(exn), _, _)
   | (None, Some(exn), _)
   | (None, None, Some(exn)) =>
-    throw(exn)
+    switch exn {
+    // Rethrown as caught, so vitest gets the AssertionError itself and can diff
+    // it, not a ReScript wrapper it prints as a plain object.
+    | JsExn(error) => JsExn.throw(error)
+    | exn => throw(exn)
+    }
   | (None, None, None) => ()
   }
 }

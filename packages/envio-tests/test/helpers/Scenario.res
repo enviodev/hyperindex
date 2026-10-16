@@ -174,6 +174,8 @@ let withInternalOverrides = (
   ),
 }
 
+@set external setErrorMessage: (JsExn.t, string) => unit = "message"
+
 let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
@@ -264,7 +266,19 @@ let run = async (
     ~captureLogs?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
-      await body(~indexer, ~source)
+      switch await body(~indexer, ~source) {
+      | () => ()
+      // A failure says what the mocks were left holding, so finding out what
+      // the indexer asked for doesn't take a probe of its own.
+      | exception JsExn(error) if mocks->Array.length > 0 =>
+        error->setErrorMessage(
+          [
+            error->JsExn.message->Option.getOr(""),
+            ...mocks->Array.map(((_, mock)) => mock.describeState()),
+          ]->Array.join("\n\n"),
+        )
+        JsExn.throw(error)
+      }
       // Only after the body passed: a failing body has its own error to report,
       // and answers it never got to were never going to be claimed anyway.
       mocks->Array.forEach(((_, mock)) => mock.validateAnswersClaimed())
