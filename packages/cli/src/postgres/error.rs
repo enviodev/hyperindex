@@ -12,7 +12,11 @@
 pub fn message_of(error: &anyhow::Error) -> String {
     match database_error(error) {
         Some(database) => {
-            let mut message = database.message().to_string();
+            let mut message = match error.downcast_ref::<Explained>() {
+                Some(Explained(explanation)) => format!("{explanation}\n"),
+                None => String::new(),
+            };
+            message.push_str(database.message());
             if let Some(detail) = database.detail() {
                 message.push_str(&format!("\nDETAIL:  {detail}"));
             }
@@ -51,6 +55,17 @@ fn database_error(error: &anyhow::Error) -> Option<&tokio_postgres::error::DbErr
             .downcast_ref::<tokio_postgres::Error>()
             .and_then(tokio_postgres::Error::as_db_error)
     })
+}
+
+/// What a server failure means for the indexer's schema, where that is known.
+/// Attached as context, it leads the message with the server's own below it.
+#[derive(Debug)]
+pub struct Explained(pub String);
+
+impl std::fmt::Display for Explained {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
 /// A transaction that can no longer commit: a statement in it failed, or it
