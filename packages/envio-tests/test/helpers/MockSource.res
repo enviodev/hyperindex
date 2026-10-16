@@ -307,8 +307,6 @@ type t = {
   unsubscribeHeightSubscription: unit => unit,
 }
 
-@val external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
-
 let describeBlockNumbers = blockNumbers =>
   `[${blockNumbers->Array.map(blockNumber => blockNumber->Int.toString)->Array.join(", ")}]`
 
@@ -333,6 +331,8 @@ let realSetTimeout: (
   int,
 ) => timeoutId = %raw(`globalThis.setTimeout.bind(globalThis)`)
 let realClearTimeout: timeoutId => unit = %raw(`globalThis.clearTimeout.bind(globalThis)`)
+@val external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
+
 let realNow: unit => float = %raw(`Date.now.bind(Date)`)
 
 let queryCoversBlock = (query: pendingItemsQuery, blockNumber) =>
@@ -594,19 +594,35 @@ let make = (
   // have to name them again to account for them.
   let keptPendingQueries: array<pendingItemsQuery> = []
   let arrivalListeners: array<unit => unit> = []
-  let arrivalScheduled = ref(false)
-  // A chain issues one query per partition in a single synchronous loop, so
-  // listeners are told after a microtask, once the whole fan-out has landed.
-  let notifyArrival = () =>
-    if !arrivalScheduled.contents {
-      arrivalScheduled := true
-      queueMicrotask(() => {
-        arrivalScheduled := false
-        let listeners = arrivalListeners->Array.copy
-        arrivalListeners->Utils.Array.clearInPlace
-        listeners->Array.forEach(listener => listener())
-      })
+  // A chain fans out one query per partition, and each await on the way to the
+  // source spreads the fan-out over one more microtask. Listeners are told once
+  // `quietMicrotasks` turns pass with nothing new arriving, so they see the
+  // fan-out as one wave. Waiting on microtasks rather than a timer keeps I/O
+  // from completing in between, which would make what the indexer does next
+  // depend on how fast the database answered.
+  let quietMicrotasks = 20
+  let arrivalGeneration = ref(0)
+  let settling = ref(false)
+  let notifyArrival = () => {
+    arrivalGeneration := arrivalGeneration.contents + 1
+    if !settling.contents {
+      settling := true
+      let rec settle = (~generation, ~quiet) =>
+        queueMicrotask(() =>
+          if arrivalGeneration.contents !== generation {
+            settle(~generation=arrivalGeneration.contents, ~quiet=0)
+          } else if quiet < quietMicrotasks {
+            settle(~generation, ~quiet=quiet + 1)
+          } else {
+            settling := false
+            let listeners = arrivalListeners->Array.copy
+            arrivalListeners->Utils.Array.clearInPlace
+            listeners->Array.forEach(listener => listener())
+          }
+        )
+      settle(~generation=arrivalGeneration.contents, ~quiet=0)
     }
+  }
   let nextArrival = (~deadline) =>
     Promise.make((resolve, _reject) => {
       let timer = realSetTimeout(

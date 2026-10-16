@@ -1464,13 +1464,19 @@ describe("SourceManager.executeQuery", () => {
   // wait out a backoff on a fake clock, so step the clock until the manager's
   // next attempt reaches the source.
   let advanceUntilQueried = async (mock: MockSource.t) => {
+    // A real turn of the event loop lets the attempt a timer starts reach the
+    // source, however many awaits sit on its way there.
+    let settle = () =>
+      Promise.make((resolve, _reject) => MockSource.realSetTimeout(() => resolve(), 0)->ignore)
+    await settle()
     let steps = ref(0)
     while mock.pendingItemsQueries->Utils.Array.isEmpty {
-      if steps.contents === 10_000 {
-        JsError.throwWithMessage("The source wasn't queried within 100s of fake time")
+      if steps.contents === 1000 {
+        JsError.throwWithMessage("The source wasn't queried after 1000 fake timers")
       }
       steps := steps.contents + 1
-      await Vi.advanceTimersByTimeAsync(10)
+      await Vi.advanceTimersToNextTimerAsync()
+      await settle()
     }
   }
 

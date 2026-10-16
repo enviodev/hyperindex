@@ -89,7 +89,7 @@ for (const path of resFiles(testRoot)) {
     if (pollStart.test(code)) {
       const condition = `${code} ${nextCodeLine(lines, index + 1) ?? ""}`;
       const body = lines.slice(index, index + 8).join("\n");
-      if (/\bpendingItemsQueries\b/.test(condition) && !/\badvanceTimersByTime/.test(body)) {
+      if (/\bpendingItemsQueries\b/.test(condition) && !/\badvanceTimers/.test(body)) {
         violations.push({
           file,
           line: index + 1,

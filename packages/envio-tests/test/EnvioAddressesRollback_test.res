@@ -91,7 +91,11 @@ describe("A rollback of an address registration", () => {
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
         // The registered address catches up to the config's addresses.
-        {partitionId: "2", fromBlock: 50, toBlock: Bounded(100), reply: Respond({items: []})},
+        {
+          partitionId: "2",
+          fromBlock: 50,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
         {
           // The partition the config's addresses are fetched in.
           partitionId: "0",
@@ -163,7 +167,11 @@ describe("An address registered again for the same contract", () => {
       ])
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
-        {partitionId: "2", fromBlock: 50, toBlock: Bounded(100), reply: Respond({items: []})},
+        {
+          partitionId: "2",
+          fromBlock: 50,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
         {
           partitionId: "0",
           fromBlock: 101,
