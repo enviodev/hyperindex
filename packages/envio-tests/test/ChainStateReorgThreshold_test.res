@@ -9,6 +9,7 @@ describe("ChainState reorg threshold", () => {
   let makeChainState = (~knownHeight, ~maxReorgDepth, ~scannedHashes) => {
     let addressStore = AddressStore.make(~ecosystem=Evm, ~contracts=[])
     let base = FetchState.make(
+      ~logger=Logging.capture(),
       ~onEventRegistrations=[],
       ~addressStore,
       ~addressRows=AddressRows.emptySeedRows(),
@@ -50,12 +51,16 @@ describe("ChainState reorg threshold", () => {
       ~chainConfig=baseChainConfig,
       ~fetchState,
       ~addressStore,
-      ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+      ~sourceManager=SourceManager.make(
+        ~logger=Logging.capture(),
+        ~sources=[mockSource.source],
+        ~isRealtime=false,
+      ),
       ~shouldRollbackOnReorg=true,
       ~maxReorgDepth,
       ~committedProgressBlockNumber=-1,
       ~blockStore,
-      ~logger=Logging.getLogger(),
+      ~logger=Logging.capture(),
     )
     (cs, fetchState)
   }

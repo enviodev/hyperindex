@@ -36,7 +36,6 @@ describe("Announcing a resume", () => {
   scenario->Scenario.it(
     "is quiet for a forked worker, and not for anyone else",
     ~sources=[{chain: 1337}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       source(1337).setAutoHeight(100)
       let beforeResuming = indexer->resumeLines

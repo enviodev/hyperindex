@@ -9,96 +9,88 @@ let formatSeconds = seconds => (Math.round(seconds *. 100.) /. 100.)->Float.toSt
 // stalled-looking indexer is explainable from the logs alone.
 let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
-let logIndexEvent = (~pgSchema, event: PgClient.indexEvent) =>
+let logIndexEvent = (~logger, ~pgSchema, event: PgClient.indexEvent) =>
   switch event {
   | Invalid({names}) =>
-    Logging.warn({
-      "storage": storageName,
-      "msg": `Ignoring invalid PostgreSQL indexes in schema "${pgSchema}". They can't serve queries, so the indexer builds its own alongside them.`,
-      "indexes": names,
-    })
+    logger->Logging.warn(
+      `Ignoring invalid PostgreSQL indexes in schema "${pgSchema}". They can't serve queries, so the indexer builds its own alongside them.`,
+      ~params={"storage": storageName, "indexes": names},
+    )
   | Planned({declared, missing, rebuilt}) =>
     if rebuilt->Utils.Array.notEmpty {
-      Logging.warn({
-        "storage": storageName,
-        "msg": `PostgreSQL reports ${rebuilt
+      logger->Logging.warn(
+        `PostgreSQL reports ${rebuilt
           ->Array.length
           ->Int.toString} of the indexer's own indexes as invalid, so they can't serve queries. Rebuilding them.`,
-        "indexes": rebuilt,
-      })
+        ~params={"storage": storageName, "indexes": rebuilt},
+      )
     }
     switch missing {
     // The line that matters next is the indexer reporting itself ready, which
     // finalization logs.
     | [] =>
-      Logging.info({
-        "storage": storageName,
-        "msg": `All ${declared->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
-      })
+      logger->Logging.info(
+        `All ${declared->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
+        ~params={"storage": storageName},
+      )
     | _ =>
-      Logging.info({
-        "storage": storageName,
-        "msg": `Creating the ${missing
+      logger->Logging.info(
+        `Creating the ${missing
           ->Array.length
           ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
-        "indexes": missing,
-      })
+        ~params={"storage": storageName, "indexes": missing},
+      )
     }
   | Building({purpose: Query, name, tableName, isRebuild}) =>
-    Logging.info({
-      "storage": storageName,
-      "msg": `${isRebuild
+    logger->Logging.info(
+      `${isRebuild
           ? "Rebuilding unusable index"
           : "Creating index"} "${name}" to serve a getWhere query on "${tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
-    })
+      ~params={"storage": storageName},
+    )
   | Building({purpose: Schema, name, isRebuild}) =>
-    Logging.info({
-      "storage": storageName,
-      "msg": `${isRebuild
+    logger->Logging.info(
+      `${isRebuild
           ? "Rebuilding unusable index"
           : "Creating missing index"} "${name}" the schema promises but the database no longer has. Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
-    })
+      ~params={"storage": storageName},
+    )
   | Built({purpose, name, seconds}) =>
-    Logging.info({
-      "storage": storageName,
-      "msg": `Index "${name}" is ready after ${seconds->formatSeconds}s.${switch purpose {
+    logger->Logging.info(
+      `Index "${name}" is ready after ${seconds->formatSeconds}s.${switch purpose {
         | Query => " Resuming indexing."
         | Schema => ""
         }}`,
-    })
+      ~params={"storage": storageName},
+    )
   | Failed({purpose: Query, tableName, columns, error, ?code}) =>
-    Logging.warn({
-      "storage": storageName,
-      "msg": `Failed to create an index on "${tableName}"(${columns
+    logger->Logging.warn(
+      `Failed to create an index on "${tableName}"(${columns
         ->Array.map(column => `"${column}"`)
         ->Array.joinUnsafe(", ")}) for a getWhere query. The query runs without it.`,
-      "err": error,
-      "code": code,
-    })
+      ~params={"storage": storageName, "err": error, "code": code},
+    )
   | Failed({purpose: Schema, name, error, ?code}) =>
-    Logging.warn({
-      "storage": storageName,
-      "msg": `Failed to restore the schema index "${name}". Queries relying on it run unindexed until the next restart.`,
-      "err": error,
-      "code": code,
-    })
+    logger->Logging.warn(
+      `Failed to restore the schema index "${name}". Queries relying on it run unindexed until the next restart.`,
+      ~params={"storage": storageName, "err": error, "code": code},
+    )
   | ResyncFailed({name, error, ?code}) =>
-    Logging.trace({
-      "storage": storageName,
-      "msg": `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
-      "err": error,
-      "code": code,
-    })
+    logger->Logging.trace(
+      `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
+      ~params={"storage": storageName, "err": error, "code": code},
+    )
   | Committed({count, seconds}) =>
-    Logging.info({
-      "storage": storageName,
-      "msg": `Committed ${count->Int.toString} schema indexes and the ready timestamp in ${seconds->formatSeconds}s.`,
-    })
+    logger->Logging.info(
+      `Committed ${count->Int.toString} schema indexes and the ready timestamp in ${seconds->formatSeconds}s.`,
+      ~params={"storage": storageName},
+    )
   }
 
 // One client per storage: the schema and the chain-id mode it was created
 // with decide every statement the addon builds.
 let makeClient = (
+  ~logger,
   ~pgSchema=Env.Db.publicSchema,
   ~chainIdMode: ChainId.mode=Int32,
   ~isHasuraEnabled=false,
@@ -120,7 +112,7 @@ let makeClient = (
       chainIdMode: (chainIdMode :> string),
       isHasuraEnabled,
     },
-    ~onIndexEvent=event => logIndexEvent(~pgSchema, event),
+    ~onIndexEvent=event => logIndexEvent(~logger, ~pgSchema, event),
   )
 
 // A per-chain entity's rows are partitioned by the chain that owns them, so a
@@ -558,6 +550,7 @@ let rollbackRemovedIdSchema: Table.table => S.t<EntityId.t> = Utils.WeakMap.memo
 
 let make = (
   ~pgSchema,
+  ~logger: Logging.t,
   ~chainIdMode: ChainId.mode=Int32,
   // Hasura cannot read a `numeric[]`, so a schema it tracks stores those as
   // `text[]` (issue #788).
@@ -579,7 +572,7 @@ let make = (
 ): Persistence.storage => {
   let sql = switch sql {
   | Some(sql) => sql
-  | None => makeClient(~pgSchema, ~chainIdMode, ~isHasuraEnabled, ~maxConnections?)
+  | None => makeClient(~logger, ~pgSchema, ~chainIdMode, ~isHasuraEnabled, ~maxConnections?)
   }
   let cacheDirPath = switch cacheDir {
   | Some(cacheDir) => cacheDir
@@ -685,7 +678,7 @@ let make = (
   let restoreEffectCache = async (~withUpload) => {
     if withUpload {
       switch await scanCacheDir() {
-      | [] => Logging.info("No saved effect cache to load from .envio/cache.")
+      | [] => logger->Logging.info("No saved effect cache to load from .envio/cache.")
       | entries =>
         try {
           await sql->PgClient.uploadEffectCache(
@@ -694,13 +687,9 @@ let make = (
               path,
             }),
           )
-          Logging.info("Successfully uploaded cache.")
+          logger->Logging.info("Successfully uploaded cache.")
         } catch {
-        | exn =>
-          Logging.errorWithExn(
-            exn->Utils.prettifyExn,
-            "Failed to upload cache, continuing without it.",
-          )
+        | exn => logger->Logging.errorWithExn("Failed to upload cache, continuing without it.", exn)
         }
       }
     }
@@ -892,7 +881,7 @@ let make = (
     try {
       let tables = (await sql->PgClient.effectCacheTables)->Array.filter(({rows}) => rows > 0)
       if tables->Utils.Array.notEmpty {
-        Logging.info(
+        logger->Logging.info(
           `Dumping cache: ${tables
             ->Array.map(({tableName, rows}) => tableName ++ " (" ++ rows->Int.toString ++ " rows)")
             ->Array.joinUnsafe(", ")}`,
@@ -912,10 +901,10 @@ let make = (
             })
           ),
         )
-        Logging.info(`Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`)
+        logger->Logging.info(`Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`)
       }
     } catch {
-    | exn => Logging.errorWithExn(exn->Utils.prettifyExn, `Failed to dump cache.`)
+    | exn => logger->Logging.errorWithExn(`Failed to dump cache.`, exn)
     }
   }
 
@@ -1482,6 +1471,7 @@ let make = (
 
 let makeStorageFromEnv = (
   ~config: Config.t,
+  ~logger,
   ~pgSchema=Env.Db.publicSchema,
   ~isHasuraEnabled=Env.Hasura.enabled,
   ~maxConnections=?,
@@ -1489,6 +1479,7 @@ let makeStorageFromEnv = (
 ) => {
   make(
     ~pgSchema,
+    ~logger,
     ~chainIdMode=config.chainIdMode,
     ~isHasuraEnabled,
     ~maxConnections?,
@@ -1529,6 +1520,7 @@ let makeStorageFromEnv = (
             ~password=password->Option.getUnsafe,
             ~sequence=config.checkpointSequence,
             ~chainIdMode=config.chainIdMode,
+            ~logger,
           ),
         )
       } else {
@@ -1540,6 +1532,7 @@ let makeStorageFromEnv = (
         Some(
           () => {
             Hasura.trackDatabase(
+              ~logger,
               ~endpoint=Env.Hasura.graphqlEndpoint,
               ~auth={
                 role: Env.Hasura.role,
@@ -1551,7 +1544,7 @@ let makeStorageFromEnv = (
               ~schema=Schema.make(config.userEntities->Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
-              Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
+              logger->Logging.errorWithExn(`Error tracking tables`, err)->Promise.resolve
             })
           },
         )
@@ -1562,6 +1555,10 @@ let makeStorageFromEnv = (
   )
 }
 
-let makePersistenceFromConfig = (~config: Config.t, ~storage=makeStorageFromEnv(~config)) => {
-  Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage)
+let makePersistenceFromConfig = (
+  ~config: Config.t,
+  ~logger,
+  ~storage=makeStorageFromEnv(~config, ~logger),
+) => {
+  Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage, ~logger)
 }

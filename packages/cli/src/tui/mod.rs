@@ -220,6 +220,20 @@ fn print_log(
         })
 }
 
+/// Sends a line meant for stdout above the display when there is one and stdout
+/// is the terminal it draws on. Returns whether it did.
+pub fn print_above_stdout(line: &str) -> bool {
+    let display = DISPLAY
+        .lock()
+        .map(|display| display.clone())
+        .unwrap_or(None);
+    print_log(
+        line.as_bytes(),
+        display.as_ref(),
+        io::stdout().is_terminal(),
+    )
+}
+
 /// Where Rust loggers write: above the display while one is running, since a
 /// direct write to the terminal would land in the middle of its frame, and to
 /// stderr otherwise.

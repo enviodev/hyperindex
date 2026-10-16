@@ -111,7 +111,7 @@ let drive = (tui: t, ~getMetrics: unit => Metrics.t) => {
   }
 }
 
-let start = (~config: Config.t, ~getMetrics: unit => Metrics.t) => {
+let start = (~config: Config.t, ~logger, ~getMetrics: unit => Metrics.t) => {
   let metrics = getMetrics()
   let info = {
     ecosystem: (config.ecosystem.name :> string),
@@ -128,10 +128,10 @@ let start = (~config: Config.t, ~getMetrics: unit => Metrics.t) => {
   }
   switch Core.getAddon().tui->make(info) {
   | exception exn =>
-    Logging.warn({
-      "msg": "Failed to start the TUI. Continuing without it.",
-      "err": exn->Utils.prettifyExn,
-    })
+    logger->Logging.warn(
+      "Failed to start the TUI. Continuing without it.",
+      ~params={"err": exn->Utils.prettifyExn},
+    )
   | tui =>
     let restoreConsole = redirectConsole(consoleClass, writableClass, text => tui->print(text))
     let stop = tui->drive(~getMetrics)
@@ -157,10 +157,10 @@ let start = (~config: Config.t, ~getMetrics: unit => Metrics.t) => {
       switch result {
       | Ok(messages) => tui->setMessages(Null.Value(messages))
       | Error(exn) =>
-        Logging.error({
-          "msg": "Failed to load messages from envio server",
-          "err": exn->Utils.prettifyExn,
-        })
+        logger->Logging.error(
+          "Failed to load messages from envio server",
+          ~params={"err": exn->Utils.prettifyExn},
+        )
         tui->setMessages(Null.Null)
       }
     )

@@ -31,17 +31,14 @@ type t = {
       `LogSelection.res`. SVM parses its own `where` (including the
       `block.slot` chunk), so its schema always surfaces `None`. */
   onEventBlockFilterSchema: S.t<option<unknown>>,
-  /** Base logger injected at construction. Used to build per-item child
-      loggers (see `getItemLogger`). */
-  logger: Pino.t,
   /** Materialise the user-facing event handed to handlers and contract
       registration from an item's opaque payload. `event.transaction` is written
       onto the payload at batch prep (HyperSync) or inline (RPC/simulate). */
   toEvent: Internal.eventItem => Internal.event,
   /** Build the per-item child logger for an event item, with
       ecosystem-specific log fields (EVM/Fuel: contract/event/address; SVM:
-      program/instruction/programId). Closes over the injected logger. */
-  toEventLogger: Internal.eventItem => Pino.t,
+      program/instruction/programId), on top of the logger it's given. */
+  toEventLogger: (Internal.eventItem, ~logger: Logging.t) => Logging.t,
   /** Build a raw event row for the `raw_events` table. Unsupported on SVM,
       where the implementation throws. */
   toRawEvent: Internal.eventItem => Internal.rawEvent,
@@ -66,22 +63,19 @@ let getItemEvent = {
 
 let getItemLogger = {
   let cacheKey = "_logger"
-  (item: Internal.item, ~ecosystem: t): Pino.t => {
-    let cache = item->(Utils.magic: Internal.item => dict<Pino.t>)
+  (item: Internal.item, ~ecosystem: t, ~logger: Logging.t): Logging.t => {
+    let cache = item->(Utils.magic: Internal.item => dict<Logging.t>)
     switch cache->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
     | Some(logger) => logger
     | None =>
       let logger = switch item {
-      | Internal.Event(_) => ecosystem.toEventLogger(item->Internal.castUnsafeEventItem)
+      | Internal.Event(_) => ecosystem.toEventLogger(item->Internal.castUnsafeEventItem, ~logger)
       | Block({blockNumber, onBlockRegistration}) =>
-        Logging.createChildFrom(
-          ~logger=ecosystem.logger,
-          ~params={
-            "onBlock": onBlockRegistration.name,
-            "chainId": onBlockRegistration.chainId,
-            "block": blockNumber,
-          },
-        )
+        logger->Logging.child({
+          "onBlock": onBlockRegistration.name,
+          "chainId": onBlockRegistration.chainId,
+          "block": blockNumber,
+        })
       }
       cache->Dict.set(cacheKey, logger)
       logger
@@ -89,8 +83,8 @@ let getItemLogger = {
   }
 }
 
-let getItemUserLogger = (item: Internal.item, ~ecosystem: t): Envio.logger =>
-  getItemLogger(item, ~ecosystem)->Logging.userLogger
+let getItemUserLogger = (item: Internal.item, ~ecosystem: t, ~logger): Envio.logger =>
+  getItemLogger(item, ~ecosystem, ~logger)->Logging.userLogger
 
 let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {
   switch ecosystem.name {

@@ -41,7 +41,7 @@ let serverPort =
 
 let tuiEnvVar = envSafe->EnvSafe.get("ENVIO_TUI", S.option(S.bool))
 
-let logLevelSchema = S.enum([
+let logLevelSchema: S.t<Logging.level> = S.enum([
   #trace,
   #debug,
   #info,
@@ -92,14 +92,15 @@ let logStrategy =
     ~fallback=ConsolePretty,
   )
 
-Logging.setLogger(
-  Logging.makeLogger(
-    ~logStrategy,
-    ~logFilePath,
-    ~defaultFileLogLevel,
-    ~userLogLevel=userLogLevel->Option.getOr(#info),
-  ),
-)
+// The process's root logger. Built by whoever starts the process and handed
+// down from there, never kept here.
+let makeLogger = () =>
+  Logging.make(
+    ~strategy=logStrategy,
+    ~logFile=logFilePath,
+    ~level=userLogLevel->Option.getOr(#info),
+    ~fileLevel=defaultFileLogLevel,
+  )
 
 module Db = {
   let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")

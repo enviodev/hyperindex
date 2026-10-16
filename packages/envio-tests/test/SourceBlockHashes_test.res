@@ -15,8 +15,7 @@ let pairCreatedEventId = pairCreatedTopic0 ++ "_3"
 
 // Lowercase address so routing lookups match regardless of whether the
 // source returns checksummed or lowercase addresses.
-let uniswapV2FactoryAddress =
-  "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"->Address.unsafeFromString
+let uniswapV2FactoryAddress = "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"->Address.unsafeFromString
 
 // Build the event config by hand so topic0 stays the bare sighash. MockIndexer's
 // evmEventConfig embeds its `id` (sighash_topicCount) directly as topic0, which
@@ -111,6 +110,7 @@ let makeHyperSyncSource = () =>
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
     addressStore,
+    logger: Logging.capture(),
   })
 
 let makeRpcSource = () =>
@@ -137,7 +137,7 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     ~selection=makeSelection(),
     ~itemsTarget=Some(5000),
     ~retry=0,
-    ~logger=Logging.createChild(~params={"test": "SourceBlockHashes"}),
+    ~logger=Logging.capture()->Logging.child({"test": "SourceBlockHashes"}),
   ) catch {
   | Source.GetItemsError(err) =>
     let detail = switch err {
@@ -224,10 +224,8 @@ describe("Source.blockHashes integration - single-log range", () => {
   // the Uniswap V2 Factory. Confirmed by hand against eth.rpc.hypersync.xyz.
   let fromBlock = 17915919
   let toBlock = 17915919
-  let expectedBlockHash =
-    "0xfae821f07390dab171f9487d9c25e7289c5d363fcc24f03b98de295aa621dca5"
-  let expectedParentHash =
-    "0x12a7ac0591fa50c8ee7e77cd38cac302286bdc57392a63ebb01b2859478f5752"
+  let expectedBlockHash = "0xfae821f07390dab171f9487d9c25e7289c5d363fcc24f03b98de295aa621dca5"
+  let expectedParentHash = "0x12a7ac0591fa50c8ee7e77cd38cac302286bdc57392a63ebb01b2859478f5752"
 
   Async.itWithOptions(
     "HyperSync: returns exactly one parsed item and a block-page entry for the matching block",

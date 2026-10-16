@@ -1,13 +1,13 @@
-type t = {logger: Pino.t, exn: exn, msg: option<string>}
+type t = {logger: Logging.t, exn: exn, msg: option<string>}
 
-let make = (exn, ~logger=Logging.getLogger(), ~msg=?) => {
+let make = (exn, ~logger, ~msg=?) => {
   {logger, msg, exn}
 }
 
 let log = (self: t) => {
   switch self {
-  | {exn, msg: Some(msg), logger} => logger->Logging.childErrorWithExn(exn->Utils.prettifyExn, msg)
-  | {exn, msg: None, logger} => logger->Logging.childError(exn->Utils.prettifyExn)
+  | {exn, msg: Some(msg), logger} => logger->Logging.errorWithExn(msg, exn)
+  | {exn, msg: None, logger} => logger->Logging.errorWithExn("Unexpected error", exn)
   }
 }
 
@@ -26,16 +26,16 @@ let raiseExn = (self: t) => {
   self->toExn->throw
 }
 
-let mkLogAndRaise = (~logger=?, ~msg=?, exn) => {
-  let self = exn->Utils.prettifyExn->make(~logger?, ~msg?)
+let mkLogAndRaise = (~logger, ~msg=?, exn) => {
+  let self = exn->Utils.prettifyExn->make(~logger, ~msg?)
   self->log
   self->raiseExn
 }
 
-let unwrapLogAndRaise = (~logger=?, ~msg=?, result) => {
+let unwrapLogAndRaise = (~logger, ~msg=?, result) => {
   switch result {
   | Ok(v) => v
-  | Error(exn) => exn->mkLogAndRaise(~logger?, ~msg?)
+  | Error(exn) => exn->mkLogAndRaise(~logger, ~msg?)
   }
 }
 

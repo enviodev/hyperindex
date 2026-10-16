@@ -48,7 +48,6 @@ describe("Index logs", () => {
   noIndexes->Scenario.it(
     "say nothing for a schema that declares no indexes",
     ~sources=[{chain: 1337}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)
@@ -74,7 +73,6 @@ describe("Index logs", () => {
   indexed->Scenario.it(
     "carry the server's code when a build fails",
     ~sources=[{chain: 1337}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)

@@ -4,7 +4,7 @@ let nextImmediate = () => Promise.make((resolve, _) => NodeJs.setImmediate(() =>
 
 describe("Throttler", () => {
   Async.itWithOptions("Schedules and throttles functions as expected", {retry: 3}, async t => {
-    let throttler = Throttler.make(~intervalMillis=100, ~logger=Logging.getLogger())
+    let throttler = Throttler.make(~intervalMillis=100, ~logger=Logging.capture())
     let actionsCalled = []
 
     throttler->Throttler.schedule(async () => actionsCalled->Array.push(1)->ignore)
@@ -16,7 +16,10 @@ describe("Throttler", () => {
     )
     throttler->Throttler.schedule(async () => actionsCalled->Array.push(3)->ignore)
 
-    t.expect(actionsCalled, ~message="Should defer the scheduled fn off the schedule call").toEqual([])
+    t.expect(
+      actionsCalled,
+      ~message="Should defer the scheduled fn off the schedule call",
+    ).toEqual([])
     await nextImmediate()
     t.expect(actionsCalled, ~message="Should call the scheduled fn on the next immediate").toEqual([
       1,
@@ -35,7 +38,7 @@ describe("Throttler", () => {
   })
 
   Async.itWithOptions("Does not continuously increase schedule time", {retry: 3}, async t => {
-    let throttler = Throttler.make(~intervalMillis=100, ~logger=Logging.getLogger())
+    let throttler = Throttler.make(~intervalMillis=100, ~logger=Logging.capture())
     let actionsCalled = []
     throttler->Throttler.schedule(async () => actionsCalled->Array.push(1)->ignore)
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=50)
@@ -49,7 +52,7 @@ describe("Throttler", () => {
   })
 
   Async.itWithOptions("Does not run until previous task is finished", {retry: 3}, async t => {
-    let throttler = Throttler.make(~intervalMillis=50, ~logger=Logging.getLogger())
+    let throttler = Throttler.make(~intervalMillis=50, ~logger=Logging.capture())
     let actionsCalled = []
     throttler->Throttler.schedule(
       async () => {
@@ -85,7 +88,7 @@ describe("Throttler", () => {
     "Does not immediately execute after a task has finished if below the interval",
     {retry: 3},
     async t => {
-      let throttler = Throttler.make(~intervalMillis=100, ~logger=Logging.getLogger())
+      let throttler = Throttler.make(~intervalMillis=100, ~logger=Logging.capture())
       let actionsCalled = []
       throttler->Throttler.schedule(
         async () => {

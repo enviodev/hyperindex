@@ -53,7 +53,7 @@ describe("An indexer failing under a test that passes no onError", () => {
       },
     ) {
     | () => None
-    | exception JsExn(e) => e->JsExn.message
+    | exception JsExn(e) => e->JsExn.message->Option.map(IndexerRunner.withoutLogsLink)
     }
 
     t.expect(failure).toEqual(Some("handler blew up"))
@@ -99,7 +99,7 @@ describe("An indexer failing under a test that passes no onError", () => {
       },
     ) {
     | () => None
-    | exception JsExn(e) => e->JsExn.message
+    | exception JsExn(e) => e->JsExn.message->Option.map(IndexerRunner.withoutLogsLink)
     }
     resumeBody.contents->Option.forEach(resume => resume())
 

@@ -37,17 +37,21 @@ let contract = (~address, ~contractName, ~registrationBlock=-1): Internal.indexi
   registrationBlock,
 }
 
-let item = (~registration: Internal.onEventRegistration, ~blockNumber, ~srcAddress, ~params=?) =>
-  Internal.Event({
-    chainId,
-    blockNumber,
-    logIndex: 0,
-    transactionIndex: 0,
-    onEventRegistration: registration,
-    payload: {"srcAddress": srcAddress, "params": params->Option.getOr(Dict.make())}->(
-      Utils.magic: {"srcAddress": Address.t, "params": dict<Address.t>} => Internal.eventPayload
-    ),
-  })
+let item = (
+  ~registration: Internal.onEventRegistration,
+  ~blockNumber,
+  ~srcAddress,
+  ~params=?,
+) => Internal.Event({
+  chainId,
+  blockNumber,
+  logIndex: 0,
+  transactionIndex: 0,
+  onEventRegistration: registration,
+  payload: {"srcAddress": srcAddress, "params": params->Option.getOr(Dict.make())}->(
+    Utils.magic: {"srcAddress": Address.t, "params": dict<Address.t>} => Internal.eventPayload
+  ),
+})
 
 let getItems = async (
   ~items,
@@ -68,7 +72,7 @@ let getItems = async (
     ~selection,
     ~itemsTarget=None,
     ~retry=0,
-    ~logger=Logging.getLogger(),
+    ~logger=Logging.capture(),
   )
   response.parsedQueueItems->Array.map(item => {
     let eventItem = item->Internal.castUnsafeEventItem

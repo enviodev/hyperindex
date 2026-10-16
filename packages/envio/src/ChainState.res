@@ -3,7 +3,8 @@
 // change them through the sanctioned mutators.
 
 type t = {
-  logger: Pino.t,
+  // Names the chain on every line.
+  logger: Logging.t,
   // The registrations used to build this chain's sources and route native items.
   onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
@@ -150,7 +151,7 @@ let make = (
   ~shouldChecksum=false,
   ~reorgThresholdReadyTolerance=100,
   ~perChainEntities: array<Internal.entityConfig>=[],
-  ~logger: Pino.t,
+  ~logger: Logging.t,
 ): t => {
   validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
   {
@@ -254,6 +255,7 @@ let makeInternal = (
     ~maxOnBlockBufferSize=2 * config.batchSize,
     ~knownHeight,
     ~chainId=chainConfig.id,
+    ~logger,
     // FIXME: Shouldn't set with full history
     // The resumed depth, not the config one: the pre-threshold lag must match
     // the window reorg detection compares, or a reduced config depth would let
@@ -296,6 +298,7 @@ let makeInternal = (
     ~lowercaseAddresses,
     ~blockStore,
     ~transactionStore,
+    ~logger,
   )
 
   // Seed the stored reorg checkpoints (hash-only rows) so detection resumes
@@ -328,6 +331,7 @@ let makeInternal = (
     ~addressStore,
     ~sourceManager=SourceManager.make(
       ~sources,
+      ~logger,
       ~isRealtime,
       ~reducedPollingInterval?,
       ~newBlockStallTimeoutRealtime?,
@@ -366,11 +370,12 @@ let makeFromDbState = (
   ~config,
   ~contractMapping,
   ~registrationsByChainId,
+  // The indexer's logger, which this chain's adds the chain id to.
+  ~logger,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
 ) => {
-  let chainId = chainConfig.id
-  let logger = Logging.createChild(~params={"chainId": chainId})
+  let logger = logger->Logging.forChain(chainConfig.id)
 
   let progressBlockNumber =
     // Can be -1 when not set
@@ -941,6 +946,7 @@ let handleQueryResult = (
   | _ =>
     cs.fetchState->FetchState.registerDynamicContracts(
       ~addressStore=cs.addressStore,
+      ~logger=cs.logger,
       // This response is applied below, after the addresses land. It was routed
       // before they existed, so whatever it claims has to be inside the
       // catch-up range - and an unbounded query can reach past the height that

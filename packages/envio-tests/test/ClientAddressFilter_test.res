@@ -15,7 +15,7 @@ let parseEvm = (~eventFilters: option<JSON.t>, ~chainId=1->ChainId.fromInt) =>
     ~params=["from", "to"],
     ~contractName="ERC20",
     ~chainId,
-    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+    ~onEventBlockFilterSchema=Evm.make().onEventBlockFilterSchema,
   )
 
 describe("parseWhereOrThrow — address-param detection", () => {
@@ -51,21 +51,23 @@ describe("parseWhereOrThrow — address-param detection", () => {
   })
 
   it("throws when the addresses are transformed instead of passed directly", t => {
-    t->toThrowErrorEqual(() =>
-      parseEvm(
-        ~eventFilters=Some(%raw(`({chain}) => ({params: {to: [...chain.ERC20.addresses]}})`)),
-      )->ignore
-    , 
+    t->toThrowErrorEqual(
+      () =>
+        parseEvm(
+          ~eventFilters=Some(%raw(`({chain}) => ({params: {to: [...chain.ERC20.addresses]}})`)),
+        )->ignore,
       "Invalid where configuration for \"ERC20\": chain.ERC20.addresses must be passed directly as an indexed-param filter value (e.g. { params: { to: chain.ERC20.addresses } }). It cannot be spread, mapped, indexed, or otherwise transformed.",
     )
   })
 
   it("throws when addresses are read but not used as a param filter", t => {
-    t->toThrowErrorEqual(() =>
-      parseEvm(
-        ~eventFilters=Some(%raw(`({chain}) => { const _a = chain.ERC20.addresses; return true }`)),
-      )->ignore
-    , 
+    t->toThrowErrorEqual(
+      () =>
+        parseEvm(
+          ~eventFilters=Some(
+            %raw(`({chain}) => { const _a = chain.ERC20.addresses; return true }`),
+          ),
+        )->ignore,
       "Invalid where configuration for ERC20. The callback reads `chain.ERC20.addresses` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.ERC20.addresses } }.",
     )
   })
@@ -91,7 +93,7 @@ describe("the registration carries its address-param groups", () => {
       ~contractRegister=None,
       ~where=Some(eventFilters),
       ~chainId=1->ChainId.fromInt,
-      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+      ~onEventBlockFilterSchema=Evm.make().onEventBlockFilterSchema,
     )
 
   it("carries the DNF for filtered events and nothing for the rest", t => {

@@ -33,11 +33,9 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
   })
 }
 
-let logger = Logging.createChild(~params={"context": "ClickHouse"})
-
-let makeSink = (~host, ~username, ~password, ~database, ~chainIdMode) =>
+let makeSink = (~host, ~username, ~password, ~database, ~chainIdMode, ~logger) =>
   ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~chainIdMode, ~onWarning=msg =>
-    logger->Logging.childWarn({"msg": msg})
+    logger->Logging.warn(msg)
   )
 
 let makeColumnSpec = (
@@ -391,7 +389,7 @@ let writeStagedOrThrow = async (sink, ~entities, ~checkpoints) =>
 
 // Tables are not registered here: an indexer that finds an existing storage
 // never runs this, so the write path registers them on first use either way.
-let initialize = async (sink, ~entities: array<Internal.entityConfig>) => {
+let initialize = async (sink, ~logger, ~entities: array<Internal.entityConfig>) => {
   try {
     await sink->ClickHouseSink.initialize({
       entities: entities->Array.map(entityConfig => entitySpec(~entityConfig)),
@@ -400,10 +398,10 @@ let initialize = async (sink, ~entities: array<Internal.entityConfig>) => {
       databaseEngine: ?Env.ClickHouse.databaseEngine(),
     })
 
-    Logging.trace("ClickHouse storage initialization completed successfully")
+    logger->Logging.trace("ClickHouse storage initialization completed successfully")
   } catch {
   | exn => {
-      Logging.errorWithExn(exn, "Failed to initialize ClickHouse storage")
+      logger->Logging.errorWithExn("Failed to initialize ClickHouse storage", exn)
       throw(
         Persistence.StorageError({
           message: "Failed to initialize ClickHouse storage",
@@ -416,6 +414,7 @@ let initialize = async (sink, ~entities: array<Internal.entityConfig>) => {
 
 let resume = async (
   sink,
+  ~logger,
   ~sequence: CheckpointSequence.t,
   ~frontier: Frontier.t,
   ~chains: array<Persistence.initialChainState>,
@@ -438,7 +437,7 @@ let resume = async (
     }),
   }) catch {
   | exn => {
-      Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")
+      logger->Logging.errorWithExn("Failed to resume ClickHouse storage", exn)
       throw(
         Persistence.StorageError({
           message: "Failed to resume ClickHouse storage",

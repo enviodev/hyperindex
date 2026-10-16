@@ -18,7 +18,7 @@ open Vitest
 //   production budget formula must produce a query (no silent freeze)
 // - at quiescence every pending query has cleared
 
-let mulberry32: int => (unit => float) = %raw(`(seed) => {
+let mulberry32: int => unit => float = %raw(`(seed) => {
   let a = seed >>> 0;
   return () => {
     a |= 0; a = (a + 0x6D2B79F5) | 0;
@@ -55,8 +55,7 @@ let log = (run, op) => {
   }
 }
 
-let partitions = (run: run) =>
-  run.fetchState.optimizedPartitions.entities->Dict.valuesToArray
+let partitions = (run: run) => run.fetchState.optimizedPartitions.entities->Dict.valuesToArray
 
 let minFrontier = (run: run) =>
   run
@@ -74,7 +73,9 @@ let describePartitions = (run: run) =>
       | None => "-"
       }} dyn:${p.dynamicContract->Option.getOr("-")} addrs:${p.addresses
       ->AddressSet.size
-      ->Int.toString} depAddrs:${p.selection.dependsOnAddresses ? "y" : "n"} selStart:${switch p.selection.startBlock {
+      ->Int.toString} depAddrs:${p.selection.dependsOnAddresses
+        ? "y"
+        : "n"} selStart:${switch p.selection.startBlock {
       | Some(s) => s->Int.toString
       | None => "-"
       }} cap:${p.sourceRangeCapacity->Int.toString}/${p.prevSourceRangeCapacity->Int.toString} dens:${switch p.eventDensity {
@@ -138,15 +139,16 @@ let respond = (run: run, ~rng, ~index) => {
   let upper = Pervasives.max(upper, q.fromBlock)
   let latest = q.fromBlock + (rng() *. (upper - q.fromBlock + 1)->Int.toFloat)->Float.toInt
   let latest = Pervasives.min(latest, upper)
+
   // A response occasionally registers dynamic contracts, applied before the
   // response the way ChainState.handleQueryResult does.
   if rng() < 0.15 {
-    let contractName =
-      contractNames->Array.getUnsafe((rng() *. 2.)->Float.toInt)
+    let contractName = contractNames->Array.getUnsafe((rng() *. 2.)->Float.toInt)
     let registrationBlock =
       q.fromBlock + (rng() *. (latest - q.fromBlock + 1)->Int.toFloat)->Float.toInt
     run.fetchState =
       run.fetchState->FetchState.registerDynamicContracts(
+        ~logger=Logging.capture(),
         ~addressStore=run.addressStore,
         ~claimCeiling=Pervasives.max(run.knownHeight, latest),
         [
@@ -160,11 +162,7 @@ let respond = (run: run, ~rng, ~index) => {
     run->log(`reg ${contractName}@${registrationBlock->Int.toString}`)
   }
   run.fetchState =
-    run.fetchState->FetchState.handleQueryResult(
-      ~query=q,
-      ~latestFetchedBlock=latest,
-      ~newItems=[],
-    )
+    run.fetchState->FetchState.handleQueryResult(~query=q, ~latestFetchedBlock=latest, ~newItems=[])
   run.pendingBudget = Pervasives.max(0., run.pendingBudget -. q.itemsEst->Int.toFloat)
   run->log(`r p${q.partitionId}@${q.fromBlock->Int.toString}->${latest->Int.toString}`)
 }
@@ -184,6 +182,7 @@ let checkInvariants = (run: run, ~seed, ~rng) => {
       seen->Utils.Set.add(pq.fromBlock)->ignore
     })
   })
+
   // With nothing in flight and a partition behind the head, a production tick
   // must dispatch. Land whatever the probe started so the check leaves the run
   // with an empty in-flight set and later ops keep their intended coverage.
@@ -200,8 +199,14 @@ let checkInvariants = (run: run, ~seed, ~rng) => {
 let runSeed = (~seed, ~ops) => {
   let rng = mulberry32(seed)
   let onEventRegistrations = [
-    (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="Gravatar") :> Internal.onEventRegistration),
-    (EventRegistration.evmOnEventRegistration(~id="1", ~contractName="NftFactory") :> Internal.onEventRegistration),
+    (EventRegistration.evmOnEventRegistration(
+      ~id="0",
+      ~contractName="Gravatar",
+    ) :> Internal.onEventRegistration),
+    (EventRegistration.evmOnEventRegistration(
+      ~id="1",
+      ~contractName="NftFactory",
+    ) :> Internal.onEventRegistration),
   ]
   let addresses = [
     {
@@ -213,6 +218,7 @@ let runSeed = (~seed, ~ops) => {
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   let run = {
     fetchState: FetchState.make(
+      ~logger=Logging.capture(),
       ~onEventRegistrations,
       ~addressStore,
       ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
@@ -257,13 +263,12 @@ let runSeed = (~seed, ~ops) => {
       run.fetchState = run.fetchState->FetchState.resetPendingQueries
       let upper = Pervasives.max(run->minFrontier, 1)
       let target = (rng() *. upper->Int.toFloat)->Float.toInt
-      run.fetchState =
-        (
-          run.fetchState->FetchState.rollback(
-            ~rolledBackAddressStore=run.addressStore,
-            ~targetBlockNumber=target,
-          )
-        ).fetchState
+      run.fetchState = (
+        run.fetchState->FetchState.rollback(
+          ~rolledBackAddressStore=run.addressStore,
+          ~targetBlockNumber=target,
+        )
+      ).fetchState
       run->log(`rollback->${target->Int.toString}`)
     }
     run->checkInvariants(~seed, ~rng)
@@ -314,9 +319,12 @@ let runSeed = (~seed, ~ops) => {
 }
 
 describe("FetchState state-machine fuzz", () => {
-  it("keeps every partition fetchable through random ticks, responses, registrations and rollbacks", _t => {
-    for seed in 1 to 300 {
-      runSeed(~seed, ~ops=250)
-    }
-  })
+  it(
+    "keeps every partition fetchable through random ticks, responses, registrations and rollbacks",
+    _t => {
+      for seed in 1 to 300 {
+        runSeed(~seed, ~ops=250)
+      }
+    },
+  )
 })

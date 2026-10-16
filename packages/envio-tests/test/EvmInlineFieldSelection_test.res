@@ -218,9 +218,9 @@ let selections = (registrations: HandlerRegister.registrationsByChainId, ~chain=
 // asserted above have to be read first.
 let register = (~config, fn) => {
   HandlerRegister.resetOnEventRegistrations()
-  HandlerRegister.startRegistration(~config)
+  HandlerRegister.startRegistration(~logger=Logging.capture(), ~config)
   fn()
-  HandlerRegister.finishRegistration(~config)
+  HandlerRegister.finishRegistration(~logger=Logging.capture(), ~config)
 }
 
 let setHandler = (~fields: option<Internal.evmFieldsSelection>=?, ~where=?, ()) =>
@@ -229,7 +229,7 @@ let setHandler = (~fields: option<Internal.evmFieldsSelection>=?, ~where=?, ()) 
     ~eventName="Transfer",
     %raw(`() => Promise.resolve()`),
     ~eventOptions=Some({
-      fields: ?fields->Option.map(f => f->(Utils.magic: Internal.evmFieldsSelection => unknown)),
+      fields: ?(fields->Option.map(f => f->(Utils.magic: Internal.evmFieldsSelection => unknown))),
       ?where,
     }),
   )
@@ -240,14 +240,16 @@ let setContractRegister = (~fields: option<Internal.evmFieldsSelection>=?, ~wher
     ~eventName="Transfer",
     %raw(`() => Promise.resolve()`),
     ~eventOptions=Some({
-      fields: ?fields->Option.map(f => f->(Utils.magic: Internal.evmFieldsSelection => unknown)),
+      fields: ?(fields->Option.map(f => f->(Utils.magic: Internal.evmFieldsSelection => unknown))),
       ?where,
     }),
   )
 
 describe("EVM inline field selection", () => {
   it("carries each registration's own selection from the handler module", t => {
-    t.expect(HandlerRegister.finishRegistration(~config)->selections).toEqual([
+    t.expect(
+      HandlerRegister.finishRegistration(~logger=Logging.capture(), ~config)->selections,
+    ).toEqual([
       (["number", "parentHash"], ["to"]),
       (["hash", "miner", "number", "timestamp"], ["hash"]),
       (["number", "stateRoot"], ["gasUsed"]),
@@ -256,7 +258,7 @@ describe("EVM inline field selection", () => {
 
   it("passes each registration's own selection to the source query input", t => {
     let chainRegistrations: HandlerRegister.chainRegistrations =
-      HandlerRegister.finishRegistration(~config)
+      HandlerRegister.finishRegistration(~logger=Logging.capture(), ~config)
       ->Utils.Dict.dangerouslyGetNonOption("1")
       ->Option.getOrThrow
     let inputs =
@@ -296,9 +298,7 @@ describe("EVM inline field selection", () => {
       ~config=rpcConfig,
       () => setHandler(~fields={transaction: ["accessList", "authorizationList"]}, ()),
     )
-    t.expect(registrations->selections).toEqual([
-      (["number"], ["accessList", "authorizationList"]),
-    ])
+    t.expect(registrations->selections).toEqual([(["number"], ["accessList", "authorizationList"])])
   })
 
   // A registration resolves for every chain that configures the event, so one
@@ -312,10 +312,10 @@ describe("EVM inline field selection", () => {
         setHandler(~fields={block: ["miner"]}, ())
       },
     )
-    t.expect((
-      registrations->selections,
-      registrations->selections(~chain="137"),
-    )).toEqual(([(["number"], ["to"]), (["miner", "number"], [])], [(["miner", "number"], [])]))
+    t.expect((registrations->selections, registrations->selections(~chain="137"))).toEqual((
+      [(["number"], ["to"]), (["miner", "number"], [])],
+      [(["miner", "number"], [])],
+    ))
   })
 
   // The inline selection resolves once per `onEvent` call and every chain's
@@ -333,10 +333,7 @@ describe("EVM inline field selection", () => {
         )
       },
     )
-    t.expect((
-      registrations->selections,
-      registrations->selections(~chain="137"),
-    )).toEqual((
+    t.expect((registrations->selections, registrations->selections(~chain="137"))).toEqual((
       [(["number", "parentHash"], ["gasUsed"])],
       [(["number", "parentHash"], [])],
     ))

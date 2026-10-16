@@ -1198,7 +1198,7 @@ let updateInternal = (
 let addClientFilteredContract = (
   clientFilteredContracts: Utils.Set.t<string>,
   ~contractName,
-  ~chainId,
+  ~logger,
   ~addressCount,
   ~threshold,
   // A resumed fetch state re-derives the switch from the persisted addresses,
@@ -1208,14 +1208,13 @@ let addClientFilteredContract = (
 ) => {
   clientFilteredContracts->Utils.Set.add(contractName)->ignore
   if shouldLog {
-    Logging.createChild(
-      ~params={
-        "chainId": chainId,
-        "contractName": contractName,
-        "addressCount": addressCount,
-        "threshold": threshold,
-      },
-    )->Logging.childTrace(
+    logger
+    ->Logging.child({
+      "contractName": contractName,
+      "addressCount": addressCount,
+      "threshold": threshold,
+    })
+    ->Logging.trace(
       "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
     )
   }
@@ -1482,25 +1481,19 @@ let collapseClientFilteredContracts = (
   }
 }
 
-let warnAddressRegistration = (
-  ~chainId: ChainId.t,
-  ~contractAddress: Address.t,
-  ~params,
-  message,
-) =>
-  Logging.createChild(
-    ~params={
-      "chainId": chainId,
-      "contractAddress": contractAddress->Address.toString,
-      "details": params,
-    },
-  )->Logging.childWarn(message)
+let warnAddressRegistration = (~logger, ~contractAddress: Address.t, ~params, message) =>
+  logger
+  ->Logging.child({
+    "contractAddress": contractAddress->Address.toString,
+    "details": params,
+  })
+  ->Logging.warn(message)
 
 // A rejected registration is simply absent from every partition, so without a
 // warning the user sees a contract that never indexes and nothing saying why.
 let warnRejectedRegistration = (
   verdict: AddressStore.verdict,
-  ~chainId: ChainId.t,
+  ~logger,
   ~contractAddress: Address.t,
   ~contractName: string,
 ) =>
@@ -1508,7 +1501,7 @@ let warnRejectedRegistration = (
   | Duplicate({effectiveStartBlock, existingEffectiveStartBlock}) =>
     if existingEffectiveStartBlock > effectiveStartBlock {
       warnAddressRegistration(
-        ~chainId,
+        ~logger,
         ~contractAddress,
         ~params={
           "existingBlockNumber": existingEffectiveStartBlock,
@@ -1519,7 +1512,7 @@ let warnRejectedRegistration = (
     }
   | Invalid =>
     warnAddressRegistration(
-      ~chainId,
+      ~logger,
       ~contractAddress,
       ~params={"contractName": contractName},
       `Skipping contract registration: Not a valid address for this chain's ecosystem.`,
@@ -1716,6 +1709,7 @@ OptimizedPartitions.t => {
 let registerDynamicContracts = (
   fetchState: t,
   ~addressStore: AddressStore.t,
+  ~logger: Logging.t,
   // How far an in-flight open-ended query may end up claiming. These
   // registrations usually come out of a response that is applied right after
   // this call, and an unbounded query can reach past the height known when it
@@ -1759,7 +1753,7 @@ let registerDynamicContracts = (
     | Added({fetchable: false}) => ()
     | Duplicate(_) | Invalid =>
       verdict->warnRejectedRegistration(
-        ~chainId=fetchState.chainId,
+        ~logger,
         ~contractAddress=registration.address,
         ~contractName=registration.contractName,
       )
@@ -1870,7 +1864,7 @@ let registerDynamicContracts = (
           if !(clientFilteredContracts->Utils.Set.has(contractName)) && addressCount > threshold {
             clientFilteredContracts->addClientFilteredContract(
               ~contractName,
-              ~chainId=fetchState.chainId,
+              ~logger,
               ~addressCount,
               ~threshold,
             )
@@ -2630,6 +2624,7 @@ let make = (
   ~addressRows: AddressRows.seedRows,
   ~maxAddrInPartition,
   ~chainId: ChainId.t,
+  ~logger: Logging.t,
   ~maxOnBlockBufferSize,
   ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
@@ -2691,7 +2686,7 @@ let make = (
   ->AddressStore.seedRows(addressRows)
   ->Array.forEach(rejected => {
     warnAddressRegistration(
-      ~chainId,
+      ~logger,
       ~contractAddress=rejected.address,
       ~params={
         "contractName": rejected.contractName,
@@ -2737,7 +2732,7 @@ let make = (
       if addressCount > threshold {
         clientFilteredContracts->addClientFilteredContract(
           ~contractName,
-          ~chainId,
+          ~logger,
           ~addressCount,
           ~threshold,
           ~shouldLog=!isResumed,

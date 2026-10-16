@@ -27,25 +27,19 @@ const runWithStrategy = (strategy: string): string => {
       ...process.env,
       LOG_STRATEGY: strategy,
       ENVIO_TEST_LOGGING_FORMAT: "1",
+      // Pins the pretty format's colors, which otherwise follow the terminal.
+      FORCE_COLOR: "1",
     },
     cwd: process.cwd(),
   });
 };
-
-// pino writes through worker threads, so the order in which two statements
-// reach stdout isn't guaranteed once the machine is busy — both the pretty and
-// the ECS transport have been seen interleaving under load. Compare the lines
-// as a multiset instead: a missing, extra or altered line still fails, only
-// their relative order is allowed to differ.
-const sortLines = (s: string) => s.split("\n").sort().join("\n");
-const compare = (s: string) => sortLines(normalize(s));
 
 const testLogStrategy = (strategy: string) => {
   it(`LOG_STRATEGY=${strategy}`, () => {
     const output = runWithStrategy(strategy);
     const snapshotPath = path.join(SNAPSHOTS_DIR, `Logging.${strategy}.snap`);
     const expected = readFileSync(snapshotPath, "utf-8");
-    assert.equal(compare(output), compare(expected));
+    assert.equal(normalize(output), normalize(expected));
   });
 };
 
@@ -75,6 +69,6 @@ describe("Logging Output (file strategies)", () => {
       "Logging.both-prettyconsole.snap"
     );
     const expected = readFileSync(snapshotPath, "utf-8");
-    assert.equal(compare(output), compare(expected));
+    assert.equal(normalize(output), normalize(expected));
   });
 });

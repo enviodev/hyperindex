@@ -1,5 +1,3 @@
-open Pino
-
 type logStrategyType =
   | @as("ecs-file") EcsFile
   | @as("ecs-console") EcsConsole
@@ -9,160 +7,134 @@ type logStrategyType =
   | @as("console-pretty") ConsolePretty
   | @as("both-prettyconsole") Both
 
-let logLevels = [
-  // custom levels
-  ("udebug", 32),
-  ("uinfo", 34),
-  ("uwarn", 36),
-  ("uerror", 38),
-  // Default levels
-  ("trace", 10),
-  ("debug", 20),
-  ("info", 30),
-  ("warn", 40),
-  ("error", 50),
-  ("fatal", 60),
-]->Dict.fromArray
+type level = [
+  | #trace
+  | #debug
+  | #info
+  | #udebug
+  | #uinfo
+  | #uwarn
+  | #uerror
+  | #warn
+  | #error
+  | #fatal
+  | #silent
+]
 
-%%private(let logger = ref(None))
-
-let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel) => {
-  // Currently unused - useful if using multiple transports.
-  // let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}
-  let pinoFile: Transport.transportTarget = {
-    target: "pino/file",
-    options: {
-      "destination": logFilePath,
-      "append": true,
-      "mkdir": true,
-    }->Transport.makeTransportOptions,
-    level: defaultFileLogLevel,
+// Mirrors the Rust `Level` values, so the level check happens on this side.
+let levelValue = (level: level) =>
+  switch level {
+  | #trace => 10
+  | #debug => 20
+  | #info => 30
+  | #udebug => 32
+  | #uinfo => 34
+  | #uwarn => 36
+  | #uerror => 38
+  | #warn => 40
+  | #error => 50
+  | #fatal => 60
+  | #silent => 2147483647
   }
 
-  let makeMultiStreamLogger = MultiStreamLogger.make(
-    ~userLogLevel,
-    ~defaultFileLogLevel,
-    ~customLevels=logLevels,
-    ...
-  )
+type native
+type options = {
+  strategy: string,
+  logFile: string,
+  level: level,
+  fileLevel: level,
+}
+@send external makeNative: (Core.loggerCtor, options) => native = "make"
+@send external nativeChild: (native, string) => native = "child"
+@send external nativeLog: (native, int, string, Null.t<string>) => unit = "log"
+@send external nativeSetLevel: (native, level) => unit = "setLevel"
+@send external nativeMinLevel: native => int = "minLevel"
+@send external nativeCaptured: native => array<dict<JSON.t>> = "captured"
+@send external nativeWriteCaptured: (native, string) => unit = "writeCaptured"
 
-  // Empty base disables pid and hostname in logs
-  let base: JSON.t = %raw("{}")
+// Shared by a logger and every child of it, the way their sinks are, so a line
+// no sink takes is dropped before its params are serialized.
+type threshold = {mutable minLevel: int}
 
-  switch logStrategy {
-  | EcsFile =>
-    makeWithOptionsAndTransport(
-      {
-        ...Pino.ECS.make(),
-        customLevels: logLevels,
-        base,
+type t = {native: native, threshold: threshold}
+
+let fromNative = native => {native, threshold: {minLevel: native->nativeMinLevel}}
+
+let make = (~strategy: logStrategyType, ~logFile, ~level, ~fileLevel) =>
+  Core.getAddon().logger
+  ->makeNative({strategy: (strategy :> string), logFile, level, fileLevel})
+  ->fromNative
+
+// Keeps every line in memory for a test to read back as JSON, instead of
+// writing it anywhere.
+let capture = (~level=#trace) =>
+  Core.getAddon().logger
+  ->makeNative({strategy: "capture", logFile: "", level, fileLevel: #silent})
+  ->fromNative
+
+// Errors serialize to their name, message and stack (and whatever else they
+// carry), which `JSON.stringify` alone would drop as `{}`. Params come from
+// anywhere, so a value JSON can't hold says so rather than losing the line.
+let serialize: 'a => string = %raw(`function (value) {
+  function replacer(_key, value) {
+    if (typeof value === "bigint") return value.toString();
+    if (value instanceof Error) {
+      var out = {type: value.name, message: value.message, stack: value.stack};
+      for (var key of Object.keys(value)) out[key] = value[key];
+      if (value.cause !== undefined) out.cause = value.cause;
+      return out;
+    }
+    return value;
+  }
+  try {
+    return JSON.stringify(value, replacer);
+  } catch (error) {
+    return JSON.stringify({unserializable: String(error)});
+  }
+}`)
+
+let child = (logger: t, params: 'a) => {
+  native: logger.native->nativeChild(params->serialize),
+  threshold: logger.threshold,
+}
+
+// Every line about one chain names it, so the run's lines can be told apart.
+let forChain = (logger: t, chainId: ChainId.t) => logger->child({"chainId": chainId})
+
+let setLevel = (logger: t, level: level) => {
+  logger.native->nativeSetLevel(level)
+  logger.threshold.minLevel = logger.native->nativeMinLevel
+}
+
+let isEnabled = (logger: t, level: level) => levelValue(level) >= logger.threshold.minLevel
+
+let log = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
+  if logger->isEnabled(level) {
+    logger.native->nativeLog(
+      levelValue(level),
+      message,
+      switch params {
+      | Some(params) => Null.Value(params->serialize)
+      | None => Null.Null
       },
-      Transport.make(pinoFile),
     )
-  | EcsConsoleMultistream =>
-    makeMultiStreamLogger(~logFile=None, ~options=Some({...Pino.ECS.make(), base}))
-  | EcsConsole =>
-    make({
-      ...Pino.ECS.make(),
-      level: userLogLevel,
-      customLevels: logLevels,
-      base,
-    })
-  | FileOnly =>
-    makeWithOptionsAndTransport(
-      {
-        customLevels: logLevels,
-        level: defaultFileLogLevel,
-        base,
-      },
-      Transport.make(pinoFile),
-    )
-  | ConsoleRaw => makeMultiStreamLogger(~logFile=None, ~options=Some({base: base}))
-  | ConsolePretty => makeMultiStreamLogger(~logFile=None, ~options=Some({base: base}))
-  | Both => makeMultiStreamLogger(~logFile=Some(logFilePath), ~options=Some({base: base}))
   }
-}
 
-let setLogger = l => {
-  logger := Some(l)
-}
+let trace = (logger, message, ~params=?) => logger->log(#trace, message, ~params?)
+let debug = (logger, message, ~params=?) => logger->log(#debug, message, ~params?)
+let info = (logger, message, ~params=?) => logger->log(#info, message, ~params?)
+let warn = (logger, message, ~params=?) => logger->log(#warn, message, ~params?)
+let error = (logger, message, ~params=?) => logger->log(#error, message, ~params?)
+let fatal = (logger, message, ~params=?) => logger->log(#fatal, message, ~params?)
 
-let getLogger = () => {
-  switch logger.contents {
-  | Some(logger) => logger
-  | None => JsError.throwWithMessage("Unreachable code. Logger not initialized")
-  }
-}
+let errorWithExn = (logger, message, exn) =>
+  logger->log(#error, message, ~params={"err": exn->Utils.prettifyExn})
 
-let setLogLevel = (level: Pino.logLevel) => {
-  getLogger()->setLevel(level)
-}
+// Every line a `capture` logger has taken, oldest first: `level` and `msg`,
+// then the fields the logger and the call added.
+let captured = (logger: t) => logger.native->nativeCaptured
 
-let trace = message => {
-  getLogger().trace(message->createPinoMessage)
-}
-
-let debug = message => {
-  getLogger().debug(message->createPinoMessage)
-}
-
-let info = message => {
-  getLogger().info(message->createPinoMessage)
-}
-
-let warn = message => {
-  getLogger().warn(message->createPinoMessage)
-}
-
-let error = message => {
-  getLogger().error(message->createPinoMessage)
-}
-let errorWithExn = (error, message) => {
-  getLogger()->Pino.errorExn(message->createPinoMessageWithError(error))
-}
-
-let fatal = message => {
-  getLogger().fatal(message->createPinoMessage)
-}
-
-let childTrace = (logger, params: 'a) => {
-  logger.trace(params->createPinoMessage)
-}
-let childDebug = (logger, params: 'a) => {
-  logger.debug(params->createPinoMessage)
-}
-let childInfo = (logger, params: 'a) => {
-  logger.info(params->createPinoMessage)
-}
-let childWarn = (logger, params: 'a) => {
-  logger.warn(params->createPinoMessage)
-}
-let childError = (logger, params: 'a) => {
-  logger.error(params->createPinoMessage)
-}
-let childErrorWithExn = (logger, error, params: 'a) => {
-  logger->Pino.errorExn(params->createPinoMessageWithError(error))
-}
-
-let childFatal = (logger, params: 'a) => {
-  logger.fatal(params->createPinoMessage)
-}
-
-let createChild = (~params: 'a) => {
-  getLogger()->child(params->createChildParams)
-}
-let createChildFrom = (~logger: t, ~params: 'a) => {
-  logger->child(params->createChildParams)
-}
-
-@inline
-let logAtLevel = (logger: t, level: Pino.logLevel, message: string, ~params=?) => {
-  (
-    logger
-    ->(Utils.magic: t => dict<(option<'a>, string) => unit>)
-    ->Dict.getUnsafe((level :> string))
-  )(params, message)
-}
+let writeCaptured = (logger: t, ~path) => logger.native->nativeWriteCaptured(path)
 
 let noopLogger: Envio.logger = {
   info: (_message: string, ~params as _=?) => (),
@@ -172,13 +144,13 @@ let noopLogger: Envio.logger = {
   errorWithExn: (_message: string, _exn) => (),
 }
 
-// Wrap a (child) logger as the user-facing `context.log`, routing through the
-// custom `u*` levels. The caller builds the per-item logger via the ecosystem.
+// The user-facing `context.log`, on the `u*` levels a user's log level filters
+// separately from the indexer's own.
 let userLogger = (logger: t): Envio.logger => {
-  info: (message: string, ~params=?) => logger->logAtLevel(#uinfo, message, ~params?),
-  debug: (message: string, ~params=?) => logger->logAtLevel(#udebug, message, ~params?),
-  warn: (message: string, ~params=?) => logger->logAtLevel(#uwarn, message, ~params?),
-  error: (message: string, ~params=?) => logger->logAtLevel(#uerror, message, ~params?),
+  info: (message: string, ~params=?) => logger->log(#uinfo, message, ~params?),
+  debug: (message: string, ~params=?) => logger->log(#udebug, message, ~params?),
+  warn: (message: string, ~params=?) => logger->log(#uwarn, message, ~params?),
+  error: (message: string, ~params=?) => logger->log(#uerror, message, ~params?),
   errorWithExn: (message: string, exn) =>
-    logger->logAtLevel(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
+    logger->log(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
 }

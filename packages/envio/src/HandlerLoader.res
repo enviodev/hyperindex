@@ -34,7 +34,7 @@ let importHandler = async file => {
   await Utils.importPath(toAbsolutePath(file)->NodeJs.Url.pathToFileURL->NodeJs.Url.toString)
 }
 
-let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
+let registerContractHandlers = async (~logger, ~contractName, ~handler: option<string>) => {
   switch handler {
   | None => ()
   | Some(handlerPath) =>
@@ -43,9 +43,9 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
     } catch {
     | exn =>
       let cause = exn->Utils.prettifyExn->Obj.magic
-      Logging.errorWithExn(
-        exn,
+      logger->Logging.errorWithExn(
         `Failed to load handler file for contract ${contractName}: ${handlerPath}`,
+        exn,
       )
       JsError.throwWithMessage(
         `Failed to load handler file for contract ${contractName}: ${handlerPath}. Cause: ${cause}`,
@@ -77,7 +77,7 @@ let getAutoLoadFiles = async (~config: Config.t) => {
   }
 }
 
-let typeCheck = async (~config: Config.t, ~autoLoadFiles) => {
+let typeCheck = async (~config: Config.t, ~logger, ~autoLoadFiles) => {
   // A contract's `handler:` may also be an auto-loaded file.
   let files =
     autoLoadFiles
@@ -92,7 +92,7 @@ let typeCheck = async (~config: Config.t, ~autoLoadFiles) => {
       JsError.throwWithMessage(
         `The handler type check found errors. Fix them to start the indexer:\n\n${errors}`,
       )
-    | Skipped(warning) => Logging.warn(warning)
+    | Skipped(warning) => logger->Logging.warn(warning)
     | Passed => ()
     }
   }
@@ -105,16 +105,17 @@ let typeCheck = async (~config: Config.t, ~autoLoadFiles) => {
 // returns the resulting per-chain registrations.
 let registerAllHandlers = async (
   ~config: Config.t,
+  ~logger,
   ~autoLoadFiles,
 ): HandlerRegister.registrationsByChainId => {
-  HandlerRegister.startRegistration(~config)
+  HandlerRegister.startRegistration(~config, ~logger)
   registerTsHooks()
 
   let _ = await autoLoadFiles
   ->Array.map(file => {
     importHandler(file)->Promise.catch(exn => {
       let cause = exn->Utils.prettifyExn->Obj.magic
-      Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
+      logger->Logging.errorWithExn(`Failed to auto-load handler file: ${file}`, exn)
       JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
     })
   })
@@ -122,9 +123,9 @@ let registerAllHandlers = async (
 
   let _ = await config.contractHandlers
   ->Array.map(({name, handler}) => {
-    registerContractHandlers(~contractName=name, ~handler)
+    registerContractHandlers(~logger, ~contractName=name, ~handler)
   })
   ->Promise.all
 
-  HandlerRegister.finishRegistration(~config)
+  HandlerRegister.finishRegistration(~config, ~logger)
 }

@@ -392,6 +392,7 @@ describe("Per-chain ClickHouse writes", () => {
   let registryFor = (entityConfig: Internal.entityConfig) => {
     let registry = ClickHouse.makeRegistry()
     let sink = ClickHouse.makeSink(
+      ~logger=Logging.capture(),
       ~host="http://127.0.0.1:1",
       ~username="default",
       ~password="",

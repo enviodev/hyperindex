@@ -17,6 +17,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
     let addresses = []
     let addressStore = TestAddresses.makeStore(~onEventRegistrations)
     let fetchState = FetchState.make(
+      ~logger=Logging.capture(),
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~onEventRegistrations,
@@ -32,7 +33,11 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~chainConfig,
       ~fetchState,
       ~addressStore,
-      ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+      ~sourceManager=SourceManager.make(
+        ~logger=Logging.capture(),
+        ~sources=[mockSource.source],
+        ~isRealtime=false,
+      ),
       ~maxReorgDepth=200,
       // Being in the threshold avoids triggering a fetch on the mock source
       // (which implements no methods) when the processing loop runs to its
@@ -40,12 +45,13 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~shouldRollbackOnReorg=true,
       ~isInReorgThreshold=true,
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.getLogger(),
+      ~logger=Logging.capture(),
     )
     chainStates->ChainId.Dict.set(chainConfig.id, chainState)
   })
 
   IndexerState.make(
+    ~logger=Logging.capture(),
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
@@ -102,7 +108,9 @@ describe("Indexer loop", () => {
     let reportedErrors = ref(0)
     let state = makeState(~onError=_ => reportedErrors := reportedErrors.contents + 1, ())
 
-    state->IndexerState.errorExit(ErrorHandling.make(Utils.Error.make("boom")))
+    state->IndexerState.errorExit(
+      ErrorHandling.make(~logger=Logging.capture(), Utils.Error.make("boom")),
+    )
 
     t.expect(
       {"isStopped": state->IndexerState.isStopped, "reportedErrors": reportedErrors.contents},

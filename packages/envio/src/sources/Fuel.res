@@ -34,7 +34,7 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.time
   }`)
 
-let make = (~logger: Pino.t): Ecosystem.t => {
+let make = (): Ecosystem.t => {
   name: Fuel,
   blockNumberName: "height",
   blockTimestampName: "time",
@@ -56,20 +56,16 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   onEventBlockFilterSchema: S.object(s =>
     s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))->S.strict))
   ),
-  logger,
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
-  toEventLogger: eventItem =>
-    Logging.createChildFrom(
-      ~logger,
-      ~params={
-        "contract": eventItem.onEventRegistration.eventConfig.contractName,
-        "event": eventItem.onEventRegistration.eventConfig.name,
-        "chainId": eventItem.chainId,
-        "block": eventItem.blockNumber,
-        "logIndex": eventItem.logIndex,
-        "address": (eventItem.payload->toPayload).srcAddress,
-      },
-    ),
+  toEventLogger: (eventItem, ~logger) =>
+    logger->Logging.child({
+      "contract": eventItem.onEventRegistration.eventConfig.contractName,
+      "event": eventItem.onEventRegistration.eventConfig.name,
+      "chainId": eventItem.chainId,
+      "block": eventItem.blockNumber,
+      "logIndex": eventItem.logIndex,
+      "address": (eventItem.payload->toPayload).srcAddress,
+    }),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
     // Store-backed payloads get `block` written at batch prep and simulate

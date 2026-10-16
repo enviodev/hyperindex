@@ -7,54 +7,40 @@ switch NodeJs.Process.process.env->Dict.get("ENVIO_TEST_LOGGING_FORMAT") {
 | Some(_) => ()
 }
 
-open Pino
 open Logging
 
-// For Logging.setLogger call
-let _ = Env.logStrategy
+let logger = Env.makeLogger()
 
 // Per-item loggers are built by the ecosystem (the runtime gets it from
 // `config.ecosystem`); this standalone fixture constructs one directly.
-let ecosystem = Evm.make(~logger=Logging.getLogger())
+let ecosystem = Evm.make()
 
 // Testing usage:
-trace("By default - This trace message should only be seen in the log file.")
-debug("By default - This debug message should only be seen in the log file.")
+logger->trace("By default - This trace message should only be seen in the log file.")
+logger->debug("By default - This debug message should only be seen in the log file.")
 
 exception SomethingWrong({myMessage: string})
 
-info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
-trace("This is an trace message.")
-debug("This is a debug message.")
-info("This is an info message.")
-warn("This is a warning message.")
-errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
-fatal(("This is a fatal message.", "another"))
+let logAtEveryLevel = (~shown) => {
+  logger->info(`##Current log level: ${shown}`)
+  logger->trace("This is an trace message. (printed at trace only)")
+  logger->debug("This is a debug message. (printed at debug and below)")
+  logger->info("This is an info message.")
+  logger->warn("This is a warning message.")
+  logger->errorWithExn(
+    "This is an error message.",
+    SomethingWrong({myMessage: "example exception"}),
+  )
+  logger->fatal("This is a fatal message.", ~params={"extra": "another"})
+}
 
-setLogLevel(#debug)
-info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
-trace("This is an trace message. (should not be printed)")
-debug("This is a debug message.")
-info("This is an info message.")
-warn("This is a warning message.")
-errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
-fatal("This is a fatal message.")
+logAtEveryLevel(~shown="info")
 
-setLogLevel(#info)
-info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
-trace("This is an trace message. (should not be printed)")
-debug("This is a debug message. (should not be printed)")
-info("This is an info message.")
-warn("This is a warning message.")
-errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
-fatal("This is a fatal message.")
+logger->setLevel(#debug)
+logAtEveryLevel(~shown="debug")
 
-@send external udebug: (Pino.t, 'a) => unit = "udebug"
-@send external uinfo: (Pino.t, 'a) => unit = "uinfo"
-@send external uwarn: (Pino.t, 'a) => unit = "uwarn"
-@send external uerror: (Pino.t, 'a) => unit = "uerror"
-setLogLevel(#udebug)
-info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
+logger->setLevel(#info)
+logAtEveryLevel(~shown="info")
 
 // The per-item logger reads the contract and event names off the registration
 // and the address off the payload; nothing else about the item is logged.
@@ -71,66 +57,52 @@ let item = Internal.Event({
   }->(Utils.magic: {..} => Internal.eventPayload),
 })
 
-let userLogger = Ecosystem.getItemUserLogger(item, ~ecosystem)
-userLogger.debug("This is a user debug message.", ~params={"child": "userLogs debug"})
-userLogger.info("This is a user info message.", ~params={"child": "userLogs debug"})
-userLogger.warn("This is a user warn message.", ~params={"child": "userLogs debug"})
-userLogger.error("This is a user error message.", ~params={"child": "userLogs debug"})
+let userLogger = Ecosystem.getItemUserLogger(item, ~ecosystem, ~logger)
 
-setLogLevel(#uinfo)
-info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
+let logUserLevels = (~shown, ~child) => {
+  logger->info(`##Current log level: ${shown}`)
+  userLogger.debug("This is a user debug message.", ~params={"child": child})
+  userLogger.info("This is a user info message.", ~params={"child": child})
+  userLogger.warn(
+    "This is a user warn message.",
+    ~params={"child": child, "type": "warn", "data": {"blockHash": "0x123"}},
+  )
+  userLogger.error("This is a user error message.", ~params={"child": child})
+  userLogger.errorWithExn(
+    "This is a user error with exception.",
+    SomethingWrong({myMessage: "example exception"}),
+  )
+}
 
-userLogger.debug("This is a user debug message.", ~params={"child": "userLogs info"})
-userLogger.info("This is a user info message.", ~params={"child": "userLogs info"})
-userLogger.warn(
-  "This is a user warn message.",
-  ~params={"child": "userLogs info", "type": "warn", "data": {"blockHash": "0x123"}},
-)
-userLogger.error("This is a user error message.", ~params={"child": "userLogs info"})
-userLogger.errorWithExn(
-  "This is a user error with exception.",
-  SomethingWrong({myMessage: "example exception"}),
-)
-setLogLevel(#uwarn)
-info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
-userLogger.debug("This is a user debug message.", ~params={"child": "userLogs warn"})
-userLogger.info("This is a user info message.", ~params={"child": "userLogs warn"})
-userLogger.warn("This is a user warn message.", ~params={"child": "userLogs warn"})
-userLogger.error("This is a user error message.", ~params={"child": "userLogs warn"})
+logger->setLevel(#udebug)
+logUserLevels(~shown="udebug", ~child="userLogs debug")
 
-setLogLevel(#uerror)
-info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
-userLogger.debug("This is a user debug message.", ~params={"child": "userLogs error"})
-userLogger.info("This is a user info message.", ~params={"child": "userLogs error"})
-userLogger.warn("This is a user warn message.", ~params={"child": "userLogs error"})
-userLogger.error("This is a user error message.", ~params={"child": "userLogs error"})
+logger->setLevel(#uinfo)
+logUserLevels(~shown="uinfo", ~child="userLogs info")
 
-setLogLevel(#warn)
-info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
-trace("This is an trace message. (should not be printed)")
-debug("This is a debug message. (should not be printed)")
-info("This is an info message. (should not be printed)")
-warn("This is a warning message.")
-errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
-fatal("This is a fatal message.")
+logger->setLevel(#uwarn)
+logUserLevels(~shown="uwarn", ~child="userLogs warn")
 
-setLogLevel(#error)
-info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
-trace("This is an trace message. (should not be printed)")
-debug("This is a debug message. (should not be printed)")
-info("This is an info message. (should not be printed)")
-warn("This is a warning message. (should not be printed)")
-errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
-fatal("This is a fatal message.")
+logger->setLevel(#uerror)
+logUserLevels(~shown="uerror", ~child="userLogs error")
 
-// Logging also works with objects of all shapes and sizes
-fatal({
-  "this": "is",
-  "a": "fatal",
-  "message": "object",
-  "with": {
-    "nested": "objects",
-    "and": {"arrays": ["of", "things"]},
-    "additionally": {"numbers": 0.5654},
+logger->setLevel(#warn)
+logAtEveryLevel(~shown="warn")
+
+logger->setLevel(#error)
+logAtEveryLevel(~shown="error")
+
+// Logging also works with params of all shapes and sizes
+logger->fatal(
+  "A fatal message with nested params.",
+  ~params={
+    "this": "is",
+    "a": "fatal",
+    "message": "object",
+    "with": {
+      "nested": "objects",
+      "and": {"arrays": ["of", "things"]},
+      "additionally": {"numbers": 0.5654},
+    },
   },
-})
+)

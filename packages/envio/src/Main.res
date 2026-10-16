@@ -411,9 +411,9 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let migrate = async (~reset) => {
+let migrate = async (~logger, ~reset) => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger)
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -429,9 +429,9 @@ let migrate = async (~reset) => {
   await persistence.storage.close()
 }
 
-let dropSchema = async () => {
+let dropSchema = async (~logger) => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger)
   await persistence.storage.reset()
   await persistence.storage.close()
 }
@@ -443,6 +443,7 @@ exception FatalError(exn)
 %%private(
   let startIndexer = async (
     ~config: Config.t,
+    ~logger,
     ~persistence: option<Persistence.t>=?,
     ~reset=false,
     ~isTest=false,
@@ -461,7 +462,7 @@ exception FatalError(exn)
     // module top level).
     let persistence = switch persistence {
     | Some(p) => p
-    | None => PgStorage.makePersistenceFromConfig(~config)
+    | None => PgStorage.makePersistenceFromConfig(~config, ~logger)
     }
     setGlobalPersistence(persistence)
     let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
@@ -470,7 +471,7 @@ exception FatalError(exn)
     let typeCheck =
       isTest || Worker.isEnabled
         ? Promise.resolve()
-        : HandlerLoader.typeCheck(~config, ~autoLoadFiles)
+        : HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles)
     let _ = await Promise.all2((
       persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode),
       typeCheck,
@@ -480,7 +481,11 @@ exception FatalError(exn)
     // state into the global `HandlerRegister` registry as a side effect; this
     // returns that state resolved into per-chain registrations. `config` itself
     // is never mutated by registration — it holds only event definitions.
-    let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config, ~autoLoadFiles)
+    let registrationsByChainId = await HandlerLoader.registerAllHandlers(
+      ~config,
+      ~logger,
+      ~autoLoadFiles,
+    )
     let config = if isTest {
       {...config, shouldRollbackOnReorg: false}
     } else {
@@ -518,6 +523,7 @@ exception FatalError(exn)
     if !isTest && !Worker.isEnabled {
       Metrics.startRuntimeCollectors()
       Server.startServer(
+        ~logger,
         ~onSyncCache=() => dumpEffectCache()->Promise.thenResolve(ignore),
         ~collectRuntime=Metrics.collectRuntime,
         ~isDevelopmentMode,
@@ -528,6 +534,7 @@ exception FatalError(exn)
 
     let state = IndexerState.makeFromDbState(
       ~config,
+      ~logger,
       ~persistence,
       ~initialState=persistence->Persistence.getInitializedState,
       ~registrationsByChainId,
@@ -538,7 +545,7 @@ exception FatalError(exn)
       ~onError,
     )
     if shouldUseTui {
-      Tui.start(~config, ~getMetrics=() => state->IndexerState.toMetrics)
+      Tui.start(~config, ~logger, ~getMetrics=() => state->IndexerState.toMetrics)
     }
     Worker.bindRun(
       ~getMetrics=() => state->IndexerState.toMetrics,
@@ -555,6 +562,7 @@ exception FatalError(exn)
 // itself otherwise. A worker is already one process's part, so it never splits
 // again — `planForRun` refuses an isolated config.
 let start = async (
+  ~logger,
   ~persistence: option<Persistence.t>=?,
   ~reset=false,
   ~isTest=false,
@@ -572,10 +580,11 @@ let start = async (
   HandlerLoader.registerTsHooks()
   let config = Config.load()
   switch isTest ? None : Supervisor.planForRun(~config) {
-  | Some(workers) => await Supervisor.run(~config, ~workers, ~reset)
+  | Some(workers) => await Supervisor.run(~config, ~logger, ~workers, ~reset)
   | None =>
     await startIndexer(
       ~config,
+      ~logger,
       ~persistence?,
       ~reset,
       ~isTest,

@@ -68,7 +68,6 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~entityId,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~shouldGroup=true,
       )
 
@@ -97,7 +96,6 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~entityId,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~shouldGroup=true,
       )
 
@@ -133,7 +131,6 @@ describe("LoadLayer", () => {
           ~indexerState,
           ~entityId,
           ~item,
-          ~ecosystem=config.ecosystem,
           ~shouldGroup=true,
         )
 
@@ -164,7 +161,6 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~entityId,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~shouldGroup=true,
       )
 
@@ -210,7 +206,6 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~entityId,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~shouldGroup=true,
       )
 
@@ -251,7 +246,6 @@ describe("LoadLayer", () => {
           ~indexerState,
           ~entityId,
           ~item,
-          ~ecosystem=config.ecosystem,
           ~shouldGroup=true,
         )
 
@@ -293,7 +287,6 @@ describe("LoadLayer", () => {
           ~indexerState,
           ~entityId,
           ~item,
-          ~ecosystem=config.ecosystem,
           ~shouldGroup=true,
         )
 
@@ -350,7 +343,6 @@ describe("LoadLayer", () => {
           ~indexerState,
           ~entityId,
           ~item,
-          ~ecosystem=config.ecosystem,
           ~shouldGroup=true,
         )
 
@@ -394,7 +386,6 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter=dict{"id": dict{"_eq": fieldValue->(Utils.magic: string => unknown)}},
         ~shouldGroup=true,
       )
@@ -406,7 +397,6 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter=dict{
           "updatesCountOnUserForTesting": dict{"_gt": fieldValue->(Utils.magic: int => unknown)},
         },
@@ -424,7 +414,9 @@ describe("LoadLayer", () => {
         "tableName": "User",
       },
       {
-        "filter": dict{"updatesCountOnUserForTesting": dict{"_gt": 0->(Utils.magic: int => unknown)}},
+        "filter": dict{
+          "updatesCountOnUserForTesting": dict{"_gt": 0->(Utils.magic: int => unknown)},
+        },
         "tableName": "User",
       },
     ])
@@ -438,7 +430,6 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter=dict{
           "updatesCountOnUserForTesting": dict{"_lt": fieldValue->(Utils.magic: int => unknown)},
         },
@@ -453,7 +444,9 @@ describe("LoadLayer", () => {
     ).toEqual(3)
     t.expect(storageMock.loadOrThrowCalls->Array.get(2)).toEqual(
       Some({
-        "filter": dict{"updatesCountOnUserForTesting": dict{"_lt": 5->(Utils.magic: int => unknown)}},
+        "filter": dict{
+          "updatesCountOnUserForTesting": dict{"_lt": 5->(Utils.magic: int => unknown)},
+        },
         "tableName": "User",
       }),
     )
@@ -482,7 +475,6 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter=dict{"address": dict{"_eq": fieldValue->(Utils.magic: string => unknown)}},
         ~shouldGroup=true,
       )
@@ -493,7 +485,9 @@ describe("LoadLayer", () => {
       [[user1->(Utils.magic: user => Internal.entity)], []],
       [
         {
-          "filter": dict{"address": dict{"_in": ["0x1", "0x2"]->(Utils.magic: array<string> => unknown)}},
+          "filter": dict{
+            "address": dict{"_in": ["0x1", "0x2"]->(Utils.magic: array<string> => unknown)},
+          },
           "tableName": "User",
         },
       ],
@@ -527,7 +521,6 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter=dict{"address": dict{"_eq": fieldValue->(Utils.magic: string => unknown)}},
         ~shouldGroup=true,
       )
@@ -541,7 +534,9 @@ describe("LoadLayer", () => {
       ],
       [
         {
-          "filter": dict{"address": dict{"_in": ["0x1", "0x2"]->(Utils.magic: array<string> => unknown)}},
+          "filter": dict{
+            "address": dict{"_in": ["0x1", "0x2"]->(Utils.magic: array<string> => unknown)},
+          },
           "tableName": "User",
         },
       ],
@@ -562,7 +557,6 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter=dict{"address": dict{"_in": fieldValues->(Utils.magic: array<string> => unknown)}},
         ~shouldGroup=true,
       )
@@ -576,7 +570,9 @@ describe("LoadLayer", () => {
       [[], []],
       [
         {
-          "filter": dict{"address": dict{"_in": ["0x1", "0x2", "0x3"]->(Utils.magic: array<string> => unknown)}},
+          "filter": dict{
+            "address": dict{"_in": ["0x1", "0x2", "0x3"]->(Utils.magic: array<string> => unknown)},
+          },
           "tableName": "User",
         },
       ],
@@ -597,7 +593,6 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter=dict{
           "updatesCountOnUserForTesting": dict{"_gt": fieldValue->(Utils.magic: int => unknown)},
         },
@@ -610,11 +605,15 @@ describe("LoadLayer", () => {
       [[], []],
       [
         {
-          "filter": dict{"updatesCountOnUserForTesting": dict{"_gt": 0->(Utils.magic: int => unknown)}},
+          "filter": dict{
+            "updatesCountOnUserForTesting": dict{"_gt": 0->(Utils.magic: int => unknown)},
+          },
           "tableName": "User",
         },
         {
-          "filter": dict{"updatesCountOnUserForTesting": dict{"_gt": 5->(Utils.magic: int => unknown)}},
+          "filter": dict{
+            "updatesCountOnUserForTesting": dict{"_gt": 5->(Utils.magic: int => unknown)},
+          },
           "tableName": "User",
         },
       ],
@@ -654,7 +653,6 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter=dict{"id": dict{"_eq": fieldValue->(Utils.magic: string => unknown)}},
         ~shouldGroup=true,
       )
@@ -667,7 +665,6 @@ describe("LoadLayer", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter=dict{
           "updatesCountOnUserForTesting": dict{"_gt": fieldValue->(Utils.magic: int => unknown)},
         },
@@ -684,7 +681,9 @@ describe("LoadLayer", () => {
         "tableName": "User",
       },
       {
-        "filter": dict{"updatesCountOnUserForTesting": dict{"_gt": 0->(Utils.magic: int => unknown)}},
+        "filter": dict{
+          "updatesCountOnUserForTesting": dict{"_gt": 0->(Utils.magic: int => unknown)},
+        },
         "tableName": "User",
       },
     ])
@@ -739,7 +738,6 @@ describe("LoadLayer", () => {
           ~scope=Internal.CrossChain,
           ~indexerState,
           ~item,
-          ~ecosystem=config.ecosystem,
           ~filter=dict{"id": dict{"_eq": fieldValue->(Utils.magic: string => unknown)}},
           ~shouldGroup=true,
         )
@@ -814,7 +812,6 @@ describe("LoadLayer effect cache", () => {
           ~indexerState,
           ~shouldGroup=true,
           ~item,
-          ~ecosystem=config.ecosystem,
         )->(Utils.magic: promise<Internal.effectOutput> => promise<option<bigint>>)
 
       // Cache miss: runs the handler and seeds the in-memory cache.
@@ -845,7 +842,6 @@ describe("LoadLayer effect scope isolation", () => {
         ~indexerState,
         ~shouldGroup=true,
         ~item,
-        ~ecosystem=config.ecosystem,
       )->(Utils.magic: promise<Internal.effectOutput> => promise<string>)
 
   Async.it("Deduplicates the same input within a chain but re-runs it across chains", async t => {
@@ -1043,7 +1039,6 @@ chains:
       ~indexerState,
       ~shouldGroup=true,
       ~item,
-      ~ecosystem=config.ecosystem,
     )
     let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope=CrossChain)
     let before = inMemTable.changesCount
@@ -1139,7 +1134,6 @@ describe("LoadLayer getWhere index reuse", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter,
         ~shouldGroup=true,
       )
@@ -1177,13 +1171,14 @@ describe("LoadLayer getWhere index reuse", () => {
         ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
-        ~ecosystem=config.ecosystem,
         ~filter,
         ~shouldGroup=true,
       )
 
     let _ = await getUsers(
-      dict{"updatesCountOnUserForTesting": dict{"_in": [1, 2]->(Utils.magic: array<int> => unknown)}},
+      dict{
+        "updatesCountOnUserForTesting": dict{"_in": [1, 2]->(Utils.magic: array<int> => unknown)},
+      },
     )
     let _ = await getUsers(
       dict{"updatesCountOnUserForTesting": dict{"_gt": 1->(Utils.magic: int => unknown)}},

@@ -50,6 +50,7 @@ type historyPruneStat = {
 
 type t = {
   config: Config.t,
+  logger: Logging.t,
   persistence: Persistence.t,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   allEntities: array<Internal.entityConfig>,
@@ -141,6 +142,7 @@ type t = {
 
 let make = (
   ~config: Config.t,
+  ~logger: Logging.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
@@ -157,17 +159,16 @@ let make = (
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
     Throttler.make(
       ~intervalMillis,
-      ~logger=Logging.createChild(
-        ~params={
-          "context": "Throttler for chain metadata writes",
-          "intervalMillis": intervalMillis,
-        },
-      ),
+      ~logger=logger->Logging.child({
+        "context": "Throttler for chain metadata writes",
+        "intervalMillis": intervalMillis,
+      }),
     )
   }
 
   {
     config,
+    logger,
     persistence,
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities->EntityTables.crossChain),
@@ -230,6 +231,7 @@ let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~max
 
 let makeFromDbState = (
   ~config: Config.t,
+  ~logger: Logging.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
   ~registrationsByChainId,
@@ -278,6 +280,7 @@ let makeFromDbState = (
         ~config,
         ~contractMapping=initialState.contractMapping,
         ~registrationsByChainId,
+        ~logger,
         ~reducedPollingInterval?,
         ~newBlockStallTimeoutRealtime?,
       ),
@@ -286,6 +289,7 @@ let makeFromDbState = (
 
   let state = make(
     ~config,
+    ~logger,
     ~persistence,
     ~chainStates,
     ~isRealtime,
@@ -364,6 +368,13 @@ let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>
       "No chain with id " ++ chainId->ChainId.toString ++ " found in chain states",
     )
   }
+
+// Built on the item's chain logger, so the chain id leads every item's line.
+let itemLogger = (state: t, item: Internal.item) =>
+  item->Ecosystem.getItemLogger(
+    ~ecosystem=state.config.ecosystem,
+    ~logger=state->getChainState(~chainId=item->Internal.getItemChainId)->ChainState.logger,
+  )
 
 let getSafeCheckpointIdByChain = (state: t) =>
   state.crossChainState->CrossChainState.getSafeCheckpointIdByChain(
@@ -454,6 +465,7 @@ let recordProcessedBatch = (state: t) =>
 // the container in place (eg insert an entity table). ---
 
 let config = (state: t) => state.config
+let logger = (state: t) => state.logger
 let persistence = (state: t) => state.persistence
 let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities
@@ -942,7 +954,9 @@ let beginRollbackDiff = (
 // Stop the write loop and surface the failure; the error itself goes to onError.
 let recordWriteFailure = (state: t, exn) => {
   state.hasFailedWrite = true
-  state.onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database"))
+  state.onError(
+    exn->ErrorHandling.make(~logger=state.logger, ~msg="Failed writing batch to the database"),
+  )
 }
 
 let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)

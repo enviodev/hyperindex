@@ -40,7 +40,7 @@ pub async fn run_init_args(
     //
     // Writing straight to stderr + `process::exit` keeps the prompt pristine:
     // routing it through `anyhow::bail!` would pass it through the JS host's
-    // `Logging.error`, which wraps the message in pino's JSON envelope and
+    // `Logging.error`, which wraps the message in a log line's envelope and
     // buries the steps the agent needs to read.
     let is_non_interactive = is_agentic_init_mode(&AgenticEnv::from_process());
     if init_args.init_commands.is_none() && is_non_interactive {

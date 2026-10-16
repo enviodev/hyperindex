@@ -4,14 +4,14 @@ type chainRegistrations = {
 }
 type registrationsByChainId = dict<chainRegistrations>
 
-let startRegistration: (~config: Config.t) => unit
+let startRegistration: (~config: Config.t, ~logger: Logging.t) => unit
 
 type registration
-let makeRegistration: (~config: Config.t) => registration
+let makeRegistration: (~config: Config.t, ~logger: Logging.t) => registration
 let useRegistration: (registration, unit => promise<'a>) => promise<'a>
 let resetOnEventRegistrations: unit => unit
 let isPendingRegistration: unit => bool
-let finishRegistration: (~config: Config.t) => registrationsByChainId
+let finishRegistration: (~config: Config.t, ~logger: Logging.t) => registrationsByChainId
 let throwIfFinishedRegistration: (~methodName: string) => unit
 
 let setHandler: (

@@ -8,6 +8,7 @@ let make = (
   ~lowercaseAddresses: bool,
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
+  ~logger: Logging.t,
 ): array<Source.t> => {
   let chainId = chainConfig.id
   switch chainConfig.sourceConfig {
@@ -35,6 +36,7 @@ let make = (
       ~addressStore,
       ~blockStore,
       ~transactionStore,
+      ~logger,
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({
@@ -43,6 +45,7 @@ let make = (
         apiToken: Env.envioApiToken,
         onEventRegistrations,
         addressStore,
+        logger,
       }),
     ]
   | Config.SvmSourceConfig({hypersync}) => [
@@ -51,9 +54,7 @@ let make = (
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
         onEventRegistrations: onEventRegistrations->(
-          Utils.magic: array<Internal.onEventRegistration> => array<
-            Internal.svmOnEventRegistration,
-          >
+          Utils.magic: array<Internal.onEventRegistration> => array<Internal.svmOnEventRegistration>
         ),
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         addressStore,

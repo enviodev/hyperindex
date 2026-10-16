@@ -59,6 +59,7 @@ describe("Durably caught up", () => {
     // run that has processed nothing carries clear it.
     let chainConfig = {...baseChainConfig, blockLag: 10}
     let cs = ChainState.makeFromDbState(
+      ~logger=Logging.capture(),
       chainConfig,
       ~resumedChainState={
         ...makeResumedChainState(
@@ -88,6 +89,7 @@ let makeChainState = (
   ~isInReorgThreshold=false,
 ) =>
   ChainState.makeFromDbState(
+    ~logger=Logging.capture(),
     baseChainConfig,
     ~resumedChainState,
     ~reorgCheckpoints,
@@ -182,6 +184,7 @@ describe("ChainState chain density EMA (per batch)", () => {
   // under test.
   let dummyFetchState = () =>
     FetchState.make(
+      ~logger=Logging.capture(),
       ~onEventRegistrations=[],
       ~addressStore=TestAddresses.makeStore(),
       ~addressRows=AddressRows.emptySeedRows(),

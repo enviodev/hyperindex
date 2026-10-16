@@ -40,8 +40,7 @@ type addressRow = {
   registrationBlock: int,
 }
 
-// A logged line as a test reads it: what was said, and the fields said with it
-// — without the ones pino adds to every line, which no test is about.
+// A logged line as a test reads it: what was said, and the fields said with it.
 type logEntry = {msg: string, params: dict<JSON.t>}
 
 type rec t = {
@@ -79,15 +78,18 @@ type rec t = {
     unit,
   ) => promise<t>,
   // Another process on the same schema, started while this one keeps running,
-  // the way the workers of a split run share one. The global persistence and
-  // logger are the last one started's, so a handler can't tell siblings apart.
+  // the way the workers of a split run share one. The global persistence is the
+  // last one started's, so a handler can't tell siblings apart.
   sibling: (~chains: array<ChainId.t>) => promise<t>,
   // Writes the effect cache out to this run's own cache directory, where the
   // next initialize uploads it from.
   dumpEffectCache: unit => promise<unit>,
-  // Every line this run has logged so far, in order — the run's own and its
-  // chains'. Only for a run started with `~captureLogs`.
+  // What an operator sees by default: every line at info and above this run has
+  // logged so far, in order — the run's own and its chains'.
   logs: unit => array<logEntry>,
+  // Every line this run has logged so far, trace included, as the JSON objects
+  // the logger wrote: `level` and `msg`, then the fields.
+  jsonLogs: unit => array<dict<JSON.t>>,
   // Stands in for the supervisor's go-ahead in a run started with
   // `~holdRealtime`.
   releaseRealtime: unit => unit,
@@ -101,39 +103,62 @@ type rec t = {
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
 
-let parseLogLine = line =>
-  switch line->JSON.parseOrThrow->JSON.Decode.object {
-  | Some(fields) =>
-    fields
-    ->Dict.get("msg")
-    ->Option.flatMap(JSON.Decode.string)
-    ->Option.map(msg => {
+let toLogEntry = (line: dict<JSON.t>) =>
+  switch (line->Dict.get("level"), line->Dict.get("msg")) {
+  | (Some(String(level)), Some(String(msg)))
+    if level->(Utils.magic: string => Logging.level)->Logging.levelValue >=
+      Logging.levelValue(#info) =>
+    Some({
       msg,
-      params: fields
+      params: line
       ->Dict.toArray
-      ->Array.filter(((key, _)) => key !== "msg" && key !== "level" && key !== "time")
+      ->Array.filter(((key, _)) => key !== "msg" && key !== "level")
       ->Dict.fromArray,
     })
-  | None => None
+  | _ => None
   }
 
-// A logger writing into an array in this process, rather than through pino's
-// file transport: that one writes on a thread of its own, so a test would have
-// to wait for the line it has already logged to land.
-let makeLogCapture = () => {
-  let lines = []
-  let logger = Pino.MultiStreamLogger.makeWithMultiStream(
-    {
-      customLevels: Logging.logLevels,
-      level: #info,
-      // Empty base disables pid and hostname, as `Logging.makeLogger` does.
-      base: JSON.Encode.object(Dict.make()),
-    },
-    Pino.MultiStreamLogger.multistream([
-      {stream: {write: line => lines->Array.push(line)->ignore}, level: #info},
-    ]),
-  )
-  (logger, () => lines->Array.filterMap(parseLogLine))
+@set external setErrorMessage: (JsExn.t, string) => unit = "message"
+type rescriptExn = {@as("RE_EXN_ID") id: string, mutable message?: string}
+
+// Adds to what a failure says without replacing it: vitest still gets the
+// AssertionError itself to diff, and a ReScript exception still matches as the
+// same exception.
+let appendToMessage = (exn, text) =>
+  switch exn {
+  | JsExn(error) => error->setErrorMessage(error->JsExn.message->Option.getOr("") ++ text)
+  | exn =>
+    let raw = exn->(Utils.magic: exn => rescriptExn)
+    raw.message = Some(raw.message->Option.getOr(raw.id) ++ text)
+  }
+
+let logsLinkPrefix = "\n\nLogs: "
+
+// What a failure said before the link to its run's logs, which differs per run.
+let withoutLogsLink = message =>
+  switch message->String.lastIndexOf(logsLinkPrefix) {
+  | -1 => message
+  | index => message->String.slice(~start=0, ~end=index)
+  }
+
+@module("vitest") @scope("expect")
+external vitestState: unit => {"currentTestName": Nullable.t<string>} = "getState"
+
+// A failed run's logs go to a file its failure names, rather than into the test
+// output: most failures don't need them, and the ones that do need all of them.
+let writeFailureLogs = (logger, ~pgSchema) => {
+  let testName =
+    vitestState()["currentTestName"]
+    ->Nullable.toOption
+    ->Option.mapOr("", name => name->String.replaceRegExp(/[^A-Za-z0-9]+/g, "-") ++ "-")
+  let path =
+    NodeJs.Path.resolve([
+      NodeJs.Process.cwd(),
+      ".test-logs",
+      `${testName->String.slice(~start=0, ~end=120)}${pgSchema}.jsonl`,
+    ])->NodeJs.Path.toString
+  logger->Logging.writeCaptured(~path)
+  path
 }
 
 // Runs `body` against a fresh indexer in a Postgres schema of its own, then
@@ -145,7 +170,10 @@ let makeLogCapture = () => {
 // configs and every knob the yaml owns are decided by the caller.
 let run = async (
   ~config: Config.t,
-  ~resolveRegistrations: (~config: Config.t) => promise<HandlerRegister.registrationsByChainId>,
+  ~resolveRegistrations: (
+    ~config: Config.t,
+    ~logger: Logging.t,
+  ) => promise<HandlerRegister.registrationsByChainId>,
   ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
@@ -165,11 +193,6 @@ let run = async (
   // Runs after `restart` has stopped the previous indexer and before the next
   // one starts, so mocked sources can void what the stopped one left in flight.
   ~onIndexerStopped: unit => unit=() => (),
-  // Logs what the run says instead of silencing it, for a test about the
-  // reporting itself. A chain's logger is a child of whichever logger was
-  // installed when its chain state was built, so this has to be in place
-  // before the indexer starts rather than set from the body.
-  ~captureLogs=false,
   body: t => promise<unit>,
 ) => {
   // Postgres resources this run owns: one schema, plus every client and
@@ -180,10 +203,9 @@ let run = async (
   let storages: array<Persistence.storage> = []
   let stops = []
 
-  // One capture for the whole run, `restart` included, so a test reads the
-  // resumed indexer's lines after the ones that led to them.
-  let capture = captureLogs ? Some(makeLogCapture()) : None
-  let installedLogger = Logging.getLogger()
+  // One capture for the whole run, `restart` and siblings included, so a test
+  // reads the resumed indexer's lines after the ones that led to them.
+  let logger = Logging.capture()
 
   // Unless the test handles indexer errors itself, the first one fails the run
   // with its own message. Exiting the process instead kills the vitest worker
@@ -221,28 +243,18 @@ let run = async (
     | Some(chainIds) => baseConfig->Config.isolate(~chainIds)
     | None => baseConfig
     }
-    switch capture {
-    | Some((logger, _)) => Logging.setLogger(logger)
-    | None =>
-      // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
-      switch Env.userLogLevel {
-      | None => Logging.setLogLevel(#silent)
-      | Some(_) => ()
-      }
-    }
-
     switch clickHouseDatabase {
     | Some(database) => TestClickHouse.use(~database)
     | None => ()
     }
-    let sql = PgStorage.makeClient()
+    let sql = PgStorage.makeClient(~logger)
     clients->Array.push(sql)->ignore
     let storage = mapStorage(
       // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-      PgStorage.makeStorageFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir),
+      PgStorage.makeStorageFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir),
     )
     storages->Array.push(storage)
-    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+    let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger, ~storage)
     // `Main.start` does this before handler modules load, so the exported
     // indexer can expose persisted state. Without it every `indexer.chains[N]`
     // getter silently falls back to static config.
@@ -264,7 +276,7 @@ let run = async (
     // Same order as `Main.start`: storage is initialized - which is where a
     // `start_block: latest` chain reads its head - before handler modules load,
     // so a registration-time `chain.startBlock` sees the resolved block.
-    let registrationsByChainId = await resolveRegistrations(~config)
+    let registrationsByChainId = await resolveRegistrations(~config, ~logger)
     // The client above is already in `clients`, so teardown still closes it;
     // only the loop must not start, since teardown may have passed `stops`.
     throwIfClosing()
@@ -273,6 +285,7 @@ let run = async (
     let state = IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
+      ~logger,
       ~persistence,
       ~registrationsByChainId,
       ~reducedPollingInterval?,
@@ -617,14 +630,8 @@ let run = async (
       },
       pg,
       stop,
-      logs: () =>
-        switch capture {
-        | Some((_, entries)) => entries()
-        | None =>
-          JsError.throwWithMessage(
-            "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",
-          )
-        },
+      logs: () => logger->Logging.captured->Array.filterMap(toLogEntry),
+      jsonLogs: () => logger->Logging.captured,
       sibling: (~chains) => make(~reset=false, ~config=baseConfig, ~chains),
       restart: async (~config=baseConfig, ~chains=?, ~reset=false, ~asWorker=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
@@ -712,16 +719,12 @@ let run = async (
     }
   }
 
-  // The logger is process-global, so a capturing run gives it back — after its
-  // teardown, which is still this run's to log.
-  if captureLogs {
-    Logging.setLogger(installedLogger)
-  }
-
   switch (outcome, indexerFailure.contents, teardownFailure.contents) {
   | (Some(exn), _, _)
   | (None, Some(exn), _)
   | (None, None, Some(exn)) =>
+    // Written after the teardown, which is still this run's to log.
+    exn->appendToMessage(logsLinkPrefix ++ logger->writeFailureLogs(~pgSchema))
     switch exn {
     // Rethrown as caught, so vitest gets the AssertionError itself and can diff
     // it, not a ReScript wrapper it prints as a plain object.

@@ -239,6 +239,7 @@ type t = {
   allEnums: array<Table.enumConfig<Table.enum>>,
   mutable storageStatus: storageStatus,
   mutable storage: storage,
+  logger: Logging.t,
 }
 
 exception StorageError({message: string, reason: exn})
@@ -247,7 +248,7 @@ exception StorageError({message: string, reason: exn})
 // need, so it's printed once, without a stack trace.
 exception Refused(string)
 
-let make = (~userEntities, ~allEnums, ~storage) => {
+let make = (~userEntities, ~allEnums, ~storage, ~logger) => {
   let allEntities = userEntities
   {
     userEntities,
@@ -255,6 +256,7 @@ let make = (~userEntities, ~allEnums, ~storage) => {
     allEnums,
     storageStatus: Unknown,
     storage,
+    logger,
   }
 }
 
@@ -279,6 +281,7 @@ let init = {
     ~announceResume=true,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
   ) => {
+    let logger = persistence.logger
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -302,12 +305,13 @@ let init = {
               ),
             )
           }
-          Logging.info(`Initializing the indexer storage...`)
+          logger->Logging.info(`Initializing the indexer storage...`)
           // Only runs once per schema (this branch is the "first deploy or
           // reset" gate), which is exactly when a `latest` start block must be
           // resolved: every later resume reads `envio_chains.start_block` back
           // verbatim instead of re-running this.
           let chainConfigs = await chainConfigs->StartBlockResolver.resolveAllOrThrow(
+            ~logger,
             ~lowercaseAddresses,
             ~retry=startBlockRetry,
           )
@@ -318,7 +322,7 @@ let init = {
             ~contractMapping,
             ~envioInfo,
           )
-          Logging.info(`The indexer storage is ready. Starting indexing!`)
+          logger->Logging.info(`The indexer storage is ready. Starting indexing!`)
           persistence.storageStatus = Ready(initialState)
         } else if (
           // In case of a race condition,
@@ -328,8 +332,11 @@ let init = {
           | _ => false
           }
         ) {
-          let logResume = announceResume ? Logging.info : Logging.trace
-          logResume(`Found existing indexer storage. Resuming indexing state...`)
+          let resumeLevel = announceResume ? #info : #trace
+          logger->Logging.log(
+            resumeLevel,
+            `Found existing indexer storage. Resuming indexing state...`,
+          )
           let stored = await persistence.storage.readStoredConfig()
           switch ResumePlan.make(
             ~stored,
@@ -352,15 +359,15 @@ let init = {
               ),
             )
           | AddChain(chainConfig) =>
-            Logging.info({
-              "msg": `Adding the chain to the existing indexer storage...`,
-              "chainId": chainConfig.id,
-            })
+            logger
+            ->Logging.forChain(chainConfig.id)
+            ->Logging.info(`Adding the chain to the existing indexer storage...`)
             // The same resolution `initialize` runs, and for the same reason:
             // this is the one time the chain's row is written.
             let chainConfig =
               (
                 await [chainConfig]->StartBlockResolver.resolveAllOrThrow(
+                  ~logger,
                   ~lowercaseAddresses,
                   ~retry=startBlockRetry,
                 )
@@ -381,16 +388,18 @@ let init = {
           initialState.chains->Array.forEach(c => {
             progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
           })
-          logResume({
-            "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
-            "progress": progress,
-          })
+          logger->Logging.log(
+            resumeLevel,
+            `Successfully resumed indexing state! Continuing from the last checkpoint.`,
+            ~params={"progress": progress},
+          )
         }
         resolveRef.contents()
       }
     } catch {
     | Refused(message) => JsError.throwWithMessage(message)
-    | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to initialize the indexer storage.`)
     }
   }
 }

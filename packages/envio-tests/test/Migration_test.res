@@ -245,7 +245,6 @@ describe("What a refused restart tells the operator", () => {
     "Names every change and the ways forward, and logs nothing else about it",
     ~sources=[{chain: 1}],
     ~supervised=false,
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(100)

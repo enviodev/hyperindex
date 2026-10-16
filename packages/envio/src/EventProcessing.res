@@ -278,12 +278,14 @@ let registerProcessEventBatchMetrics = (
   ~handlerDuration,
 ) => {
   batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
-    logger->Logging.childTrace({
-      "msg": "Finished processing",
-      "chainId": chainId,
-      "batchSize": chainAfterBatch.batchSize,
-      "progress": chainAfterBatch.progressBlockNumber,
-    })
+    logger->Logging.trace(
+      "Finished processing",
+      ~params={
+        "chainId": chainId,
+        "batchSize": chainAfterBatch.batchSize,
+        "progress": chainAfterBatch.progressBlockNumber,
+      },
+    )
   })
 
   indexerState->IndexerState.recordBatchDurations(~loadDuration, ~handlerDuration)
@@ -336,14 +338,13 @@ let processEventBatch = async (
   // Compute chains state for this batch
   let chains: Internal.chains = chainStates->computeChainsState
 
-  let logger = Logging.getLogger()
+  let logger = indexerState->IndexerState.logger
 
   batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
-    logger->Logging.childTrace({
-      "msg": "Started processing",
-      "chainId": chainId,
-      "batchSize": chainAfterBatch.batchSize,
-    })
+    logger->Logging.trace(
+      "Started processing",
+      ~params={"chainId": chainId, "batchSize": chainAfterBatch.batchSize},
+    )
   })
 
   try {
@@ -390,10 +391,7 @@ let processEventBatch = async (
     reason->ErrorHandling.make(~msg=message, ~logger)->Error
   | ProcessingError({message, exn, item}) =>
     exn
-    ->ErrorHandling.make(
-      ~msg=message,
-      ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
-    )
+    ->ErrorHandling.make(~msg=message, ~logger=indexerState->IndexerState.itemLogger(item))
     ->Error
   | exn => exn->ErrorHandling.make(~msg="Failed processing batch", ~logger)->Error
   }

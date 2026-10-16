@@ -132,7 +132,6 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
   deployed->Scenario.it(
     "Adds the chain and indexes it, leaving the deployed chain as it was",
     ~sources=[{chain: 1}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])
 

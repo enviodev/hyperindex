@@ -10,3 +10,6 @@ test/.tmp/
 
 # Log files the file-writing LOG_STRATEGY cases emit
 logs/
+
+# A failed run's logs, which its failure message links to
+.test-logs/

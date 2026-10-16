@@ -174,9 +174,6 @@ let withInternalOverrides = (
   ),
 }
 
-@set external setErrorMessage: (JsExn.t, string) => unit = "message"
-type rescriptExn = {@as("RE_EXN_ID") id: string, mutable message?: string}
-
 let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
@@ -191,7 +188,6 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  ~captureLogs=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
@@ -238,13 +234,21 @@ let run = async (
 
   // One registration for the whole run, so a restart reuses the handlers the
   // first pass imported rather than re-importing a module the loader has
-  // already cached.
-  let registration = HandlerRegister.makeRegistration(~config)
+  // already cached. Made with the first pass's logger, the one registering
+  // logs to.
+  let registration = ref(None)
   let imported = ref(false)
 
   await IndexerRunner.run(
     ~config,
-    ~resolveRegistrations=(~config) =>
+    ~resolveRegistrations=(~config, ~logger) => {
+      let registration = switch registration.contents {
+      | Some(registration) => registration
+      | None =>
+        let made = HandlerRegister.makeRegistration(~config, ~logger)
+        registration := Some(made)
+        made
+      }
       registration->HandlerRegister.useRegistration(async () => {
         switch (scenario.handlers, imported.contents) {
         | (Some(source), false) =>
@@ -254,8 +258,9 @@ let run = async (
           )
         | _ => ()
         }
-        HandlerRegister.finishRegistration(~config)
-      }),
+        HandlerRegister.finishRegistration(~config, ~logger)
+      })
+    },
     ~reducedPollingInterval?,
     ~newBlockStallTimeoutRealtime?,
     ~targetBufferSize?,
@@ -264,7 +269,6 @@ let run = async (
     ~onError?,
     ~onExit?,
     ~mapStorage?,
-    ~captureLogs?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
       switch await body(~indexer, ~source) {
@@ -272,18 +276,14 @@ let run = async (
       // A failure says what the mocks were left holding, so finding out what
       // the indexer asked for doesn't take a probe of its own.
       | exception exn if mocks->Array.length > 0 =>
-        let report = message =>
-          [message, ...mocks->Array.map(((_, mock)) => mock.describeState())]->Array.join("\n\n")
+        exn->IndexerRunner.appendToMessage(
+          mocks
+          ->Array.map(((_, mock)) => "\n\n" ++ mock.describeState())
+          ->Array.join(""),
+        )
         switch exn {
-        | JsExn(error) =>
-          error->setErrorMessage(report(error->JsExn.message->Option.getOr("")))
-          JsExn.throw(error)
-        | exn =>
-          // A ReScript exception is thrown as a plain object, so the report goes
-          // on it directly and it still matches as the same exception.
-          let raw = exn->(Utils.magic: exn => rescriptExn)
-          raw.message = Some(report(raw.id))
-          throw(exn)
+        | JsExn(error) => JsExn.throw(error)
+        | exn => throw(exn)
         }
       }
       // Only after the body passed: a failing body has its own error to report,
@@ -319,7 +319,6 @@ let it = (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  ~captureLogs=?,
   ~timeout=?,
   ~retry=?,
   body: (
@@ -350,7 +349,6 @@ let it = (
           ~onError?,
           ~onExit?,
           ~mapStorage?,
-          ~captureLogs?,
           (~indexer, ~source) => body(~t, ~indexer, ~source),
         )
     let register = (name, ~superviseRun) =>

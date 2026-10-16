@@ -108,7 +108,11 @@ describe("native request failures", () => {
 describe("SourceManager creation", () => {
   it("Successfully creates with a sync source", t => {
     let source = MockSource.make([]).source
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[source],
+    )
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(source)
   })
 
@@ -116,14 +120,22 @@ describe("SourceManager creation", () => {
     let fallback = MockSource.make([], ~sourceFor=Fallback).source
     let sync0 = MockSource.make([]).source
     let sync1 = MockSource.make([]).source
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[fallback, sync0, sync1])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[fallback, sync0, sync1],
+    )
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(sync0)
   })
 
   it("Prefers sync source over live source as initial active source", t => {
     let live = MockSource.make([], ~sourceFor=Realtime).source
     let sync = MockSource.make([]).source
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[live, sync])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[live, sync],
+    )
     // Sync is always preferred as initial active source (backfill mode)
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(sync)
   })
@@ -131,20 +143,25 @@ describe("SourceManager creation", () => {
   it("Prefers live source over sync source as initial active source in live mode", t => {
     let sync = MockSource.make([]).source
     let live = MockSource.make([], ~sourceFor=Realtime).source
-    let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[sync, live])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=true,
+      ~sources=[sync, live],
+    )
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(live)
   })
 
   it("Fails to create without primary sources", t => {
     t->toThrowErrorEqual(
       () => {
-        SourceManager.make(~isRealtime=false, ~sources=[])
+        SourceManager.make(~logger=Logging.capture(), ~isRealtime=false, ~sources=[])
       },
       "Invalid configuration, no data-source for historical sync provided",
     )
     t->toThrowErrorEqual(
       () => {
         SourceManager.make(
+          ~logger=Logging.capture(),
           ~isRealtime=false,
           ~sources=[MockSource.make([], ~sourceFor=Fallback).source],
         )
@@ -219,6 +236,7 @@ describe("SourceManager source priority with Live sources", () => {
       let fallbackMock = MockSource.make([#getHeightOrThrow], ~sourceFor=Fallback)
       let newBlockStallTimeoutRealtime = 5
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
         ~newBlockStallTimeoutRealtime,
@@ -261,6 +279,7 @@ describe("SourceManager source priority with Live sources", () => {
       let fallbackMock = MockSource.make([#getHeightOrThrow], ~sourceFor=Fallback)
       let newBlockStallTimeoutRealtime = 5
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
         ~newBlockStallTimeoutRealtime,
@@ -304,6 +323,7 @@ describe("SourceManager source priority with Live sources", () => {
       let fallbackMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let newBlockStallTimeoutRealtime = 0
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~newBlockStallTimeoutRealtime,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
@@ -352,6 +372,7 @@ describe("SourceManager source priority with Live sources", () => {
       let syncMock = MockSource.make([#getHeightOrThrow])
       let fallbackMock = MockSource.make([#getHeightOrThrow], ~sourceFor=Fallback)
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock.source, fallbackMock.source],
       )
@@ -534,7 +555,11 @@ describe("SourceManager fetchNext", () => {
   Async.it(
     "Executes full partitions in any order when we didn't reach concurency limit",
     async t => {
-      let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
+      let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
+        ~isRealtime=false,
+        ~sources=[source],
+      )
 
       let partition0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
       let partition1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -606,7 +631,11 @@ describe("SourceManager fetchNext", () => {
   Async.it(
     "Skips full partitions at the chain last block and the ones at the mergeBlock",
     async t => {
-      let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
+      let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
+        ~isRealtime=false,
+        ~sources=[source],
+      )
 
       let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
       let p1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -638,7 +667,11 @@ describe("SourceManager fetchNext", () => {
   )
 
   Async.it("Starts indexing from the initial state", async t => {
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[source],
+    )
 
     let waitForNewBlockMock = waitForNewBlockMock()
     let onNewBlockMock = onNewBlockMock()
@@ -684,7 +717,11 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Waits for new block with knownHeight=0 even when all partitions are done", async t => {
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[source],
+    )
 
     let waitForNewBlockMock = waitForNewBlockMock()
     let onNewBlockMock = onNewBlockMock()
@@ -711,7 +748,11 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Waits for new block when all partitions are at the knownHeight", async t => {
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[source],
+    )
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
     let p1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
@@ -752,7 +793,11 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Restarts waiting for new block after a rollback", async t => {
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[source],
+    )
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
 
@@ -809,7 +854,11 @@ describe("SourceManager fetchNext", () => {
   })
 
   Async.it("Filters out partitions at the endBlock and at the head", async t => {
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[source],
+    )
 
     let executeQueryMock = executeQueryMock()
 
@@ -855,7 +904,11 @@ describe("SourceManager wait for new blocks", () => {
       let {source, getHeightOrThrowCalls, resolveGetHeightOrThrow} = MockSource.make([
         #getHeightOrThrow,
       ])
-      let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
+      let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
+        ~isRealtime=false,
+        ~sources=[source],
+      )
 
       let p =
         sourceManager->SourceManager.waitForNewBlock(
@@ -877,6 +930,7 @@ describe("SourceManager wait for new blocks", () => {
       let mock0 = MockSource.make([#getHeightOrThrow])
       let mock1 = MockSource.make([#getHeightOrThrow])
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[mock0.source, mock1.source],
       )
@@ -917,6 +971,7 @@ describe("SourceManager wait for new blocks", () => {
     let syncMock = MockSource.make([#getHeightOrThrow])
     let liveMock = MockSource.make([#getHeightOrThrow], ~sourceFor=Realtime)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=false,
       ~sources=[syncMock.source, liveMock.source],
     )
@@ -949,6 +1004,7 @@ describe("SourceManager wait for new blocks", () => {
     let syncMock = MockSource.make([#getHeightOrThrow])
     let liveMock = MockSource.make([#getHeightOrThrow], ~sourceFor=Realtime)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=false,
       ~sources=[syncMock.source, liveMock.source],
     )
@@ -986,6 +1042,7 @@ describe("SourceManager wait for new blocks", () => {
       let mock0 = MockSource.make([#getHeightOrThrow], ~pollingInterval=pollingInterval0)
       let mock1 = MockSource.make([#getHeightOrThrow], ~pollingInterval=pollingInterval1)
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[mock0.source, mock1.source],
       )
@@ -1072,6 +1129,7 @@ describe("SourceManager wait for new blocks", () => {
       let mock0 = MockSource.make([#getHeightOrThrow], ~pollingInterval=pollingInterval0)
       let mock1 = MockSource.make([#getHeightOrThrow], ~pollingInterval=pollingInterval1)
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[mock0.source, mock1.source],
         ~getHeightRetryInterval=SourceManager.makeGetHeightRetryInterval(
@@ -1195,6 +1253,7 @@ describe("SourceManager wait for new blocks", () => {
       let sync = MockSource.make([#getHeightOrThrow], ~pollingInterval)
       let fallback = MockSource.make(~sourceFor=Fallback, [#getHeightOrThrow], ~pollingInterval)
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[sync.source, fallback.source],
         ~newBlockStallTimeout,
@@ -1321,6 +1380,7 @@ describe("SourceManager wait for new blocks", () => {
       let sync = MockSource.make([#getHeightOrThrow], ~pollingInterval)
 
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[sync.source],
         ~newBlockStallTimeout,
@@ -1377,6 +1437,7 @@ describe("SourceManager wait for new blocks", () => {
       let sync = MockSource.make([#getHeightOrThrow], ~pollingInterval)
 
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[sync.source],
         ~stalledPollingInterval,
@@ -1434,7 +1495,11 @@ describe("SourceManager.executeQuery", () => {
   // the whole fan-out, not match whichever query happened to arrive first.
   Async.it("Matches a fan-out only once it has fully arrived", async t => {
     let mock = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[mock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[mock.source],
+    )
     let execute = partitionId =>
       sourceManager
       ->SourceManager.executeQuery(
@@ -1480,7 +1545,7 @@ Give each query its own entry, told apart by partitionId:
     let lookUp = blockNumbers =>
       mock.source.getBlockHashes(
         ~blockNumbers,
-        ~logger=Logging.createChild(~params={"test": "block hashes"}),
+        ~logger=Logging.capture()->Logging.child({"test": "block hashes"}),
       )->ignore
     lookUp([10])
     let expectation = mock.expectBlockHashLookup({blockNumbers: [10], reply: []})
@@ -1516,7 +1581,11 @@ Give each query its own entry, told apart by partitionId:
 
   Async.it("Successfully executes the query", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[sourceMock.source],
+    )
     let p =
       sourceManager->SourceManager.executeQuery(
         ~query=mockQuery(),
@@ -1537,7 +1606,11 @@ Give each query its own entry, told apart by partitionId:
 
   Async.it("calls source.onReorg before retrying an inconsistent response", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[sourceMock.source],
+    )
     let p =
       sourceManager->SourceManager.executeQuery(
         ~query={...mockQuery(), fromBlock: 10},
@@ -1564,7 +1637,11 @@ Give each query its own entry, told apart by partitionId:
 
   Async.it("Retries a source that hasn't reached the queried block yet", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[sourceMock.source],
+    )
     let p =
       sourceManager->SourceManager.executeQuery(
         ~query={...mockQuery(), fromBlock: 10},
@@ -1594,6 +1671,7 @@ Give each query its own entry, told apart by partitionId:
       let syncMock = MockSource.make([#getItemsOrThrow])
       let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock.source, fallbackMock.source],
       )
@@ -1628,7 +1706,11 @@ Give each query its own entry, told apart by partitionId:
     async t => {
       Vi.useFakeTimers()
       let sourceMock = MockSource.make([#getItemsOrThrow])
-      let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+      let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
+        ~isRealtime=false,
+        ~sources=[sourceMock.source],
+      )
       let p =
         sourceManager->SourceManager.executeQuery(
           ~query={...mockQuery(), fromBlock: 10},
@@ -1664,7 +1746,11 @@ Give each query its own entry, told apart by partitionId:
 
   Async.it("counts the requests a failed getItems still made", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[sourceMock.source],
+    )
     let p =
       sourceManager->SourceManager.executeQuery(
         ~query={...mockQuery(), fromBlock: 10},
@@ -1697,7 +1783,11 @@ Give each query its own entry, told apart by partitionId:
 
   Async.it("Sums the blocks a source returned and counts its empty responses", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[sourceMock.source],
+    )
     let query = (~fromBlock) =>
       sourceManager->SourceManager.executeQuery(
         ~query={...mockQuery(), fromBlock},
@@ -1747,7 +1837,11 @@ Give each query its own entry, told apart by partitionId:
 
   Async.it("Rethrows unknown errors", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[sourceMock.source],
+    )
     let p =
       sourceManager->SourceManager.executeQuery(
         ~query=mockQuery(),
@@ -1774,6 +1868,7 @@ Give each query its own entry, told apart by partitionId:
     Vi.useFakeTimers()
     let sourceMock = MockSource.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=false,
       ~sources=[
         sourceMock.source,
@@ -1817,136 +1912,109 @@ Give each query its own entry, told apart by partitionId:
     Vi.useRealTimers()
   })
 
-  // A stall is reported by the level it is logged at, so pinning it means
-  // holding the logger the manager writes to. Captures every line, in order, as
-  // its level and the fields it was logged with.
-  let captureLogs = async (body: unit => promise<unit>) => {
-    let lines: array<(string, dict<unknown>)> = []
-    let capture = (level, blob: Pino.pinoMessageBlob) =>
-      lines->Array.push((level, blob->(Utils.magic: Pino.pinoMessageBlob => dict<unknown>)))
-    // `child` is a method rather than a field of `Pino.t`, and every child logs
-    // to the same array, so it answers with another one of these.
-    let rec capturing = (): Pino.t =>
-      {
-        "trace": blob => capture("trace", blob),
-        "debug": blob => capture("debug", blob),
-        "info": blob => capture("info", blob),
-        "warn": blob => capture("warn", blob),
-        "error": blob => capture("error", blob),
-        "fatal": blob => capture("fatal", blob),
-        "child": _ => capturing(),
-      }->(Utils.magic: {..} => Pino.t)
-
-    let previous = Logging.getLogger()
-    Logging.setLogger(capturing())
-    let failure = try {
-      await body()
-      None
-    } catch {
-    | exn => Some(exn)
-    }
-    Logging.setLogger(previous)
-    switch failure {
-    | Some(exn) => throw(exn)
-    | None => lines
-    }
-  }
-
-  let captureErrorLogs = async body =>
-    (await captureLogs(body))->Array.filterMap(((level, fields)) =>
-      level === "error"
-        ? Some(fields->Dict.getUnsafe("msg")->(Utils.magic: unknown => string))
-        : None
+  // A stall is reported by the level it is logged at, so the manager logs to a
+  // logger the test reads back.
+  let errorMessages = logger =>
+    logger
+    ->Logging.captured
+    ->Array.filterMap(line =>
+      switch (line->Dict.get("level"), line->Dict.get("msg")) {
+      | (Some(String("error")), Some(String(msg))) => Some(msg)
+      | _ => None
+      }
     )
 
   Async.it("Tells the user a source behind the head is catching up, not failing", async t => {
     Vi.useFakeTimers()
     let sourceMock = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let logger = Logging.capture()
+    let sourceManager = SourceManager.make(~logger, ~isRealtime=false, ~sources=[sourceMock.source])
 
-    let lines = await captureLogs(
-      async () => {
-        let p =
-          sourceManager->SourceManager.executeQuery(
-            ~query={...mockQuery(), fromBlock: 10},
-            ~isRealtime=false,
-            ~knownHeight=100,
-          )
-        // Retries 0 to 12: the quiet window, then the first attempt past it.
-        for retryCount in 0 to 13 {
-          await advanceUntilQueried(sourceMock)
-          await sourceMock.expectItemsQueries([
-            {
-              retryCount,
-              reply: retryCount < 13
-                ? Fail(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
-                : Respond({items: []}),
-            },
-          ])
-        }
-        let _ = await p
-      },
-    )
+    let p =
+      sourceManager->SourceManager.executeQuery(
+        ~query={...mockQuery(), fromBlock: 10},
+        ~isRealtime=false,
+        ~knownHeight=100,
+      )
+    // Retries 0 to 12: the quiet window, then the first attempt past it.
+    for retryCount in 0 to 13 {
+      await advanceUntilQueried(sourceMock)
+      await sourceMock.expectItemsQueries([
+        {
+          retryCount,
+          reply: retryCount < 13
+            ? Fail(Source.SourceBehindHead({blockNumber: 10, requestStats: []}))
+            : Respond({items: []}),
+        },
+      ])
+    }
+    let _ = await p
 
-    let behindHead = lines->Array.filter(((_, fields)) => fields->Dict.get("retry")->Option.isSome)
+    let behindHead =
+      logger
+      ->Logging.captured
+      ->Array.filter(line => line->Dict.get("backOffMilliseconds")->Option.isSome)
     t.expect((behindHead->Array.get(0), behindHead->Array.get(12))).toEqual((
-      Some((
-        "trace",
-        dict{
-          "msg": "MockSource hasn't reached block 10 on all of its servers yet. This is normal near the latest block and resolves by itself - retrying shortly."->(
-            Utils.magic: string => unknown
-          ),
-          "retry": 0->(Utils.magic: int => unknown),
-          "backOffMilliseconds": 100->(Utils.magic: int => unknown),
-        },
-      )),
-      Some((
-        "warn",
-        dict{
-          "msg": "MockSource is still catching up to block 10. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured."->(
-            Utils.magic: string => unknown
-          ),
-          "retry": 12->(Utils.magic: int => unknown),
-          "backOffMilliseconds": 1000->(Utils.magic: int => unknown),
-        },
-      )),
+      Some(
+        JSON.parseOrThrow(`{
+          "level": "trace",
+          "msg": "MockSource hasn't reached block 10 on all of its servers yet. This is normal near the latest block and resolves by itself - retrying shortly.",
+          "logType": "Block Range Query",
+          "partitionId": "0",
+          "source": "MockSource",
+          "fromBlock": 10,
+          "addresses": 0,
+          "retry": 0,
+          "backOffMilliseconds": 100
+        }`)->(Utils.magic: JSON.t => dict<JSON.t>),
+      ),
+      Some(
+        JSON.parseOrThrow(`{
+          "level": "warn",
+          "msg": "MockSource is still catching up to block 10. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured.",
+          "logType": "Block Range Query",
+          "partitionId": "0",
+          "source": "MockSource",
+          "fromBlock": 10,
+          "addresses": 0,
+          "retry": 12,
+          "backOffMilliseconds": 1000
+        }`)->(Utils.magic: JSON.t => dict<JSON.t>),
+      ),
     ))
   })
 
   Async.it("Reports a query every source has failed for minutes as an error", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let logger = Logging.capture()
+    let sourceManager = SourceManager.make(~logger, ~isRealtime=false, ~sources=[sourceMock.source])
 
-    let errors = await captureErrorLogs(
-      async () => {
-        let p =
-          sourceManager->SourceManager.executeQuery(
-            ~query=mockQuery(),
-            ~isRealtime=false,
-            ~knownHeight=100,
-          )
-        let withBackoff = Source.GetItemsError(
-          FailedGettingItems({
-            requestStats: [],
-            attemptedToBlock: 100,
-            retry: WithBackoff({
-              message: "Failed getting data for the block range.",
-              backoffMillis: 0,
-            }),
-          }),
-        )
-        // Every attempt up to and including the one that crosses the threshold.
-        for retryCount in 0 to SourceManager.stallRetries {
-          await sourceMock.expectItemsQueries([{retryCount, reply: Fail(withBackoff)}])
-        }
-        await sourceMock.expectItemsQueries([
-          {retryCount: SourceManager.stallRetries + 1, reply: Respond({items: []})},
-        ])
-        let _ = await p
-      },
+    let p =
+      sourceManager->SourceManager.executeQuery(
+        ~query=mockQuery(),
+        ~isRealtime=false,
+        ~knownHeight=100,
+      )
+    let withBackoff = Source.GetItemsError(
+      FailedGettingItems({
+        requestStats: [],
+        attemptedToBlock: 100,
+        retry: WithBackoff({
+          message: "Failed getting data for the block range.",
+          backoffMillis: 0,
+        }),
+      }),
     )
+    // Every attempt up to and including the one that crosses the threshold.
+    for retryCount in 0 to SourceManager.stallRetries {
+      await sourceMock.expectItemsQueries([{retryCount, reply: Fail(withBackoff)}])
+    }
+    await sourceMock.expectItemsQueries([
+      {retryCount: SourceManager.stallRetries + 1, reply: Respond({items: []})},
+    ])
+    let _ = await p
 
-    t.expect(errors).toEqual([
+    t.expect(logger->errorMessages).toEqual([
       "Failed getting data for the block range. No source available to this chain has served this query on any attempt since, so indexing has stopped making progress.",
     ])
   })
@@ -1955,7 +2023,11 @@ Give each query its own entry, told apart by partitionId:
     "Waits and counts a suggested toBlock that doesn't narrow the attempted range",
     async t => {
       let sourceMock = MockSource.make([#getItemsOrThrow])
-      let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+      let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
+        ~isRealtime=false,
+        ~sources=[sourceMock.source],
+      )
       let p =
         sourceManager->SourceManager.executeQuery(
           ~query=mockQuery(),
@@ -2007,6 +2079,7 @@ Give each query its own entry, told apart by partitionId:
       let syncMock = MockSource.make([#getItemsOrThrow])
       let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock.source, fallbackMock.source],
       )
@@ -2057,6 +2130,7 @@ Give each query its own entry, told apart by partitionId:
       let fallbackMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let newBlockStallTimeout = 0
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~newBlockStallTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
@@ -2109,6 +2183,7 @@ Give each query its own entry, told apart by partitionId:
       let fallbackMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let recoveryTimeout = 200.0
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~recoveryTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
@@ -2195,6 +2270,7 @@ Give each query its own entry, told apart by partitionId:
     let syncMock = MockSource.make([#getItemsOrThrow])
     let recoveryTimeout = 0.0
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=false,
       ~sources=[syncMock.source],
       ~recoveryTimeout,
@@ -2224,6 +2300,7 @@ Give each query its own entry, told apart by partitionId:
       let liveMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Realtime)
       let recoveryTimeout = 0.0
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=true,
         ~sources=[liveMock.source],
         ~recoveryTimeout,
@@ -2256,6 +2333,7 @@ Give each query its own entry, told apart by partitionId:
       let fallbackMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let newBlockStallTimeoutRealtime = 0
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~newBlockStallTimeoutRealtime,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
@@ -2307,6 +2385,7 @@ Give each query its own entry, told apart by partitionId:
       let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
       let recoveryTimeout = 200.0
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~recoveryTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
@@ -2426,6 +2505,7 @@ Give each query its own entry, told apart by partitionId:
       let liveMock0 = MockSource.make([#getItemsOrThrow], ~sourceFor=Realtime)
       let liveMock1 = MockSource.make([#getItemsOrThrow], ~sourceFor=Realtime)
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock.source, liveMock0.source, liveMock1.source],
       )
@@ -2476,6 +2556,7 @@ Give each query its own entry, told apart by partitionId:
     let syncMock1 = MockSource.make([#getHeightOrThrow, #getItemsOrThrow])
     let newBlockStallTimeout = 0
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=false,
       ~newBlockStallTimeout,
       ~sources=[syncMock0.source, syncMock1.source],
@@ -2525,6 +2606,7 @@ Give each query its own entry, told apart by partitionId:
       let syncMock0 = MockSource.make([#getItemsOrThrow])
       let syncMock1 = MockSource.make([#getItemsOrThrow])
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock0.source, syncMock1.source],
       )
@@ -2599,6 +2681,7 @@ Give each query its own entry, told apart by partitionId:
       let syncMock1 = MockSource.make([#getItemsOrThrow])
       let syncMock2 = MockSource.make([#getItemsOrThrow])
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock0.source, syncMock1.source, syncMock2.source],
       )
@@ -2661,6 +2744,7 @@ Give each query its own entry, told apart by partitionId:
       let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
       let recoveryTimeout = 50.0
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock.source, fallbackMock.source],
         ~recoveryTimeout,
@@ -2733,6 +2817,7 @@ Give each query its own entry, told apart by partitionId:
     let syncMock1 = MockSource.make([#getItemsOrThrow])
     let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=false,
       ~sources=[syncMock0.source, syncMock1.source, fallbackMock.source],
     )
@@ -2786,7 +2871,11 @@ Give each query its own entry, told apart by partitionId:
 
   Async.it("WithBackoff with single source retries with delay, no crash", async t => {
     let syncMock = MockSource.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[syncMock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=false,
+      ~sources=[syncMock.source],
+    )
 
     let p =
       sourceManager->SourceManager.executeQuery(
@@ -2823,6 +2912,7 @@ Give each query its own entry, told apart by partitionId:
       let syncMock0 = MockSource.make([#getItemsOrThrow])
       let syncMock1 = MockSource.make([#getItemsOrThrow])
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock0.source, syncMock1.source],
       )
@@ -2893,6 +2983,7 @@ Give each query its own entry, told apart by partitionId:
     let liveMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Realtime)
     let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=false,
       ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
     )
@@ -2947,6 +3038,7 @@ Give each query its own entry, told apart by partitionId:
       let liveMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Realtime)
       let newBlockStallTimeoutRealtime = 5
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=false,
         ~sources=[syncMock.source, liveMock.source],
         ~newBlockStallTimeoutRealtime,
@@ -3001,7 +3093,11 @@ describe("SourceManager height subscription", () => {
     "Creates subscription when getHeightOrThrow returns same height as knownHeight",
     async t => {
       let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
-      let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[mock.source])
+      let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
+        ~isRealtime=true,
+        ~sources=[mock.source],
+      )
 
       let p =
         sourceManager->SourceManager.waitForNewBlock(
@@ -3032,7 +3128,11 @@ describe("SourceManager height subscription", () => {
 
   Async.it("Uses cached height from subscription if higher than knownHeight", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
-    let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[mock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=true,
+      ~sources=[mock.source],
+    )
 
     // First call - create subscription
     let p1 =
@@ -3063,7 +3163,11 @@ describe("SourceManager height subscription", () => {
     "Waits for next height event when subscription exists but height <= knownHeight",
     async t => {
       let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
-      let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[mock.source])
+      let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
+        ~isRealtime=true,
+        ~sources=[mock.source],
+      )
 
       // First call - create subscription and set initial height
       let p1 =
@@ -3100,7 +3204,11 @@ describe("SourceManager height subscription", () => {
     async t => {
       let pollingInterval = 1
       let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval)
-      let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[mock.source])
+      let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
+        ~isRealtime=false,
+        ~sources=[mock.source],
+      )
 
       let p =
         sourceManager->SourceManager.waitForNewBlock(
@@ -3129,6 +3237,7 @@ describe("SourceManager height subscription", () => {
       let stallTimeout = 20
       let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
       let sourceManager = SourceManager.make(
+        ~logger=Logging.capture(),
         ~isRealtime=true,
         ~sources=[mock.source],
         ~newBlockStallTimeoutRealtime=stallTimeout,
@@ -3185,6 +3294,7 @@ describe("SourceManager height subscription", () => {
       ~pollingInterval=10_000,
     )
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source, fallback.source],
       ~newBlockStallTimeoutRealtime=stallTimeout,
@@ -3251,6 +3361,7 @@ describe("SourceManager height subscription", () => {
     let pollingInterval = 100
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=stallTimeout,
@@ -3313,6 +3424,7 @@ describe("SourceManager height subscription", () => {
     let mock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow, #createHeightSubscription])
     let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source, fallbackMock.source],
     )
@@ -3401,7 +3513,11 @@ describe("SourceManager height subscription", () => {
 
   Async.it("Subscribes once when two waits are in flight for the same source", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
-    let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[mock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=true,
+      ~sources=[mock.source],
+    )
 
     // What a rollback leaves behind: dispatch starts a wait for the new stateId
     // without cancelling the one it superseded, so both run the poll that
@@ -3434,6 +3550,7 @@ describe("SourceManager height subscription", () => {
     let stallTimeout = 2_000
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=stallTimeout,
@@ -3465,6 +3582,7 @@ describe("SourceManager height subscription", () => {
     let pollingInterval = 10
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
@@ -3498,6 +3616,7 @@ describe("SourceManager height subscription", () => {
     let pollingInterval = 10_000
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
@@ -3529,6 +3648,7 @@ describe("SourceManager height subscription", () => {
     let pollingInterval = 10
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=20_000,
@@ -3569,6 +3689,7 @@ describe("SourceManager height subscription", () => {
     let retryInterval = 300
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=5_000,
@@ -3604,6 +3725,7 @@ describe("SourceManager height subscription", () => {
   Async.it("Polls once on reconnect to pick up a height missed while down", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
@@ -3632,7 +3754,11 @@ describe("SourceManager height subscription", () => {
 
   Async.it("Catches up on the subscription's first connect too", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
-    let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[mock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=true,
+      ~sources=[mock.source],
+    )
 
     let waiting =
       sourceManager->SourceManager.waitForNewBlock(
@@ -3661,6 +3787,7 @@ describe("SourceManager height subscription", () => {
       ~pollingInterval=5_000,
     )
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~reducedPollingInterval,
@@ -3695,6 +3822,7 @@ describe("SourceManager height subscription", () => {
   Async.it("Catches up on reconnect even with nobody waiting", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
@@ -3724,6 +3852,7 @@ describe("SourceManager height subscription", () => {
   Async.it("Keeps waiting when the reconnect catch-up brings no new height", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
@@ -3755,6 +3884,7 @@ describe("SourceManager height subscription", () => {
     let pollingInterval = 20
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=5_000,
@@ -3796,6 +3926,7 @@ describe("SourceManager height subscription", () => {
   Async.it("Takes a head the catch-up recorded while the race was settling", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=5_000,
@@ -3827,6 +3958,7 @@ describe("SourceManager height subscription", () => {
     let pollingInterval = 20
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=5_000,
@@ -3880,6 +4012,7 @@ describe("SourceManager height subscription", () => {
       ~pollingInterval=10_000,
     )
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=false,
       ~sources=[sync.source, fallback.source],
       ~newBlockStallTimeout=stallTimeout,
@@ -3937,6 +4070,7 @@ describe("SourceManager height subscription", () => {
       ~pollingInterval=10_000,
     )
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=stallTimeout,
@@ -3997,6 +4131,7 @@ describe("SourceManager height subscription", () => {
       ~pollingInterval=10_000,
     )
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[sync.source, fallback.source],
       ~newBlockStallTimeoutRealtime=stallTimeout,
@@ -4024,6 +4159,7 @@ describe("SourceManager height subscription", () => {
   Async.it("Reports height stream connects and disconnects as metrics", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
@@ -4089,6 +4225,7 @@ describe("SourceManager height subscription", () => {
   Async.it("Reports a stream that has never connected as zero connects", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
@@ -4152,6 +4289,7 @@ describe("SourceManager height subscription", () => {
     )
     let fastMock = MockSource.make([#getHeightOrThrow], ~chainId=1, ~pollingInterval)
     let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
       ~isRealtime=true,
       ~sources=[stuckMock.source, fastMock.source],
       ~newBlockStallTimeoutRealtime=stallTimeout,
@@ -4184,7 +4322,11 @@ describe("SourceManager height subscription", () => {
 
   Async.it("Ignores subscription heights lower than or equal to knownHeight", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
-    let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[mock.source])
+    let sourceManager = SourceManager.make(
+      ~logger=Logging.capture(),
+      ~isRealtime=true,
+      ~sources=[mock.source],
+    )
 
     // First call - create subscription
     let p1 =

@@ -13,6 +13,7 @@ type options = {
   logLevel: HyperSyncClient.logLevel,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
+  logger: Logging.t,
 }
 
 let make = (
@@ -27,6 +28,7 @@ let make = (
     enableQueryCaching,
     logLevel,
     addressStore,
+    logger,
   }: options,
 ): t => {
   let name = "HyperSync"
@@ -51,6 +53,7 @@ let make = (
   | client => client
   | exception exn =>
     exn->ErrorHandling.mkLogAndRaise(
+      ~logger,
       ~msg="Failed to instantiate the hypersync client, please double check your ABI",
     )
   }
@@ -163,8 +166,8 @@ let make = (
 
   // Called through the client rather than passed as a value: the client is a
   // napi class, so a detached method reference loses the instance it belongs to.
-  let getBlockHashes = HyperSync.makeGetBlockHashes(
-    ~query=(~blockNumbers) => client.getBlockHashes(~blockNumbers),
+  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=(~blockNumbers) =>
+    client.getBlockHashes(~blockNumbers)
   )
 
   {
@@ -181,6 +184,7 @@ let make = (
       } catch {
       | exn =>
         exn->HyperSync.rethrowLoggingUnauthorized(
+          ~logger,
           ~warned=unauthorizedWarned,
           ~product="HyperSync",
         )

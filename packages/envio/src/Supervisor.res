@@ -73,7 +73,7 @@ let name = (worker: worker) => worker.chainIds->Array.map(ChainId.toString)->Arr
 
 let label = (worker: worker) => `[chain ${worker->name}]`
 
-// Workers append to files of their own. Pino writes a line per call, and
+// Workers append to files of their own. The logger writes a line per call, and
 // several processes appending to one file can still tear a long line apart.
 let logFilePath = (~workerIndex, ~path=Env.logFilePath) => {
   let suffix = `.worker-${workerIndex->Int.toString}`
@@ -126,8 +126,8 @@ let memoryBudgets = (~workerCount) =>
     Pervasives.max(1, budget / workerCount)->Int.toString,
   ))
 
-// `pino-pretty` colorizes on this test, and a piped worker would fail it for a
-// run the operator is watching in colour.
+// The pretty log format colorizes on this test, and a piped worker would fail it
+// for a run the operator is watching in colour.
 @val external stdoutIsTty: Nullable.t<bool> = "process.stdout.isTTY"
 
 let fork = (
@@ -250,8 +250,8 @@ let syncCache = {
 // its own and puts the run one connection over its budget — deliberately: only
 // `envio dev` asks for a dump, and the alternative is pausing the indexing to
 // free one.
-let dumpCache = (~config) => {
-  let storage = PgStorage.makeStorageFromEnv(~config, ~maxConnections=1)
+let dumpCache = (~config, ~logger) => {
+  let storage = PgStorage.makeStorageFromEnv(~config, ~logger, ~maxConnections=1)
   storage.dumpEffectCache()->Promise.finally(() => storage.close()->Promise.ignore)
 }
 
@@ -294,7 +294,7 @@ let classifyExit = (~code: Null.t<int>, ~signal: Null.t<string>, ~stopping) =>
 // the supervisor didn't ask for, having first taken the rest down: one worker
 // short leaves its chains unindexed, and a run that kept the others going would
 // look healthy while falling behind.
-let awaitExit = async (group): outcome => {
+let awaitExit = async (group, ~logger): outcome => {
   let failed = ref(false)
   let alive = ref(group.running->Array.length)
 
@@ -324,7 +324,7 @@ let awaitExit = async (group): outcome => {
       )
       r.child->NodeJs.ChildProcess.Child.onError(
         exn => {
-          Logging.errorWithExn(exn, `${r.worker->label} failed to start`)
+          logger->Logging.errorWithExn(`${r.worker->label} failed to start`, exn)
           r->onGone(~ending=Failed)
         },
       )
@@ -438,18 +438,18 @@ let displayedSnapshots = (running: array<running>, ~config, ~empty: Metrics.t) =
 // Runs the group: creates the schema for every chain, forks a worker per plan
 // entry, and serves the run's metrics, console and display from what they
 // report. Returns once every worker has exited; throws if any of them failed.
-let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
+let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) => {
   // Every chain's state has to exist before a worker resumes it: an isolated
   // run refuses to initialize, precisely so it can't create rows for its own
   // chains and leave the chains it skipped with nothing to resume. It is the
   // same initialization an unsplit run does, and the supervisor hands the
   // connections it used to its workers.
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger)
   // Checked here once, so the workers don't each check the same handlers.
   let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
   let _ = await Promise.all2((
     persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=config.isDev),
-    HandlerLoader.typeCheck(~config, ~autoLoadFiles),
+    HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles),
   ))
   await persistence.storage.close()
 
@@ -459,12 +459,14 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // The counts ride as fields rather than in the sentence: the connection limit
   // is the only setting that decides any of this, and a reader who wants to
   // change it has nothing else to go on.
-  Logging.info({
-    "msg": "Indexing will be split across multiple processes for faster and more reliable indexing.",
-    "chains": config.chainMap->ChainMap.values->Array.length,
-    "processes": workers->Array.length,
-    "maxConnections": Env.Db.maxConnections,
-  })
+  logger->Logging.info(
+    "Indexing will be split across multiple processes for faster and more reliable indexing.",
+    ~params={
+      "chains": config.chainMap->ChainMap.values->Array.length,
+      "processes": workers->Array.length,
+      "maxConnections": Env.Db.maxConnections,
+    },
+  )
 
   // Decided before the first fork: it is what makes a worker's output the
   // supervisor's to print.
@@ -502,6 +504,7 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     )
 
   Server.startServer(
+    ~logger,
     // Nothing to report until a worker has: the run reads as initializing
     // rather than as an indexer with no chains.
     ~getMetrics=() =>
@@ -519,11 +522,11 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
         ),
       ),
     ~isDevelopmentMode=config.isDev,
-    ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config)),
+    ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config, ~logger)),
   )
 
   if shouldUseTui {
-    Tui.start(~config, ~getMetrics=() =>
+    Tui.start(~config, ~logger, ~getMetrics=() =>
       group.running->displayedSnapshots(~config, ~empty=[]->merge)->merge
     )
   }
@@ -538,12 +541,12 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // last worker is gone, so the group's end has to end the process. A display
   // is the exception, as it is for a single process: it keeps the final state
   // on screen until the terminal closes it.
-  let outcome = await group->awaitExit
+  let outcome = await group->awaitExit(~logger)
 
   switch outcome {
   | Stopped => NodeJs.process->NodeJs.exitWithCode(Success)
   | Finished if !shouldUseTui =>
-    Logging.info("Exiting with success")
+    logger->Logging.info("Exiting with success")
     NodeJs.process->NodeJs.exitWithCode(Success)
   | Finished =>
     // With nothing left to stop, the stop signals end the display instead.

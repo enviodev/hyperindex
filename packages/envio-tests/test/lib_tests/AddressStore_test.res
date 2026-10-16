@@ -11,8 +11,14 @@ let contract = (~address, ~contractName, ~registrationBlock): Internal.indexingA
 // One event per contract so the store knows both contract names; an address
 // registered for anything else is tracked but never fetched.
 let onEventRegistrations = [
-  (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="A") :> Internal.onEventRegistration),
-  (EventRegistration.evmOnEventRegistration(~id="1", ~contractName="B") :> Internal.onEventRegistration),
+  (EventRegistration.evmOnEventRegistration(
+    ~id="0",
+    ~contractName="A",
+  ) :> Internal.onEventRegistration),
+  (EventRegistration.evmOnEventRegistration(
+    ~id="1",
+    ~contractName="B",
+  ) :> Internal.onEventRegistration),
 ]
 
 describe("AddressStore", () => {
@@ -178,28 +184,25 @@ describe("AddressStore", () => {
   })
 
   it("gives a batch's additions their own set, ordered independently of arrival", t => {
-    let store = TestAddresses.makeStore(
-      ~onEventRegistrations,
-      ~configContractNames=["NoEvents"],
-    )
+    let store = TestAddresses.makeStore(~onEventRegistrations, ~configContractNames=["NoEvents"])
     let cursor = store->AddressStore.nextId
-    let verdicts =
-      store->AddressStore.registerBatch(
-        [
-          {address: addr(3), contractName: "B", registrationBlock: 30},
-          {address: addr(4), contractName: "B", registrationBlock: 10},
-          // Same address again: a duplicate, not a second registration.
-          {address: addr(3), contractName: "B", registrationBlock: 30},
-          // A contract with no events: registered like any other, the fetch
-          // state is what decides nothing is queried for it.
-          {address: addr(5), contractName: "NoEvents", registrationBlock: 40},
-        ],
-      )
+    let verdicts = store->AddressStore.registerBatch([
+      {address: addr(3), contractName: "B", registrationBlock: 30},
+      {address: addr(4), contractName: "B", registrationBlock: 10},
+      // Same address again: a duplicate, not a second registration.
+      {address: addr(3), contractName: "B", registrationBlock: 30},
+      // A contract with no events: registered like any other, the fetch
+      // state is what decides nothing is queried for it.
+      {address: addr(5), contractName: "NoEvents", registrationBlock: 40},
+    ])
     let added = store->AddressStore.makeSet(~contractName="B", ~options={minId: cursor})
     t.expect({
       "verdicts": verdicts,
       "added": added->AddressSet.addressesForTest,
-      "noEventsIsStillReported": store->AddressStore.contractAddresses("NoEvents", ~shouldChecksum=true),
+      "noEventsIsStillReported": store->AddressStore.contractAddresses(
+        "NoEvents",
+        ~shouldChecksum=true,
+      ),
       "size": store->AddressStore.size,
     }).toEqual({
       "verdicts": [
@@ -220,9 +223,9 @@ describe("AddressStore", () => {
     let store = TestAddresses.makeStore(~onEventRegistrations)
     t.expect(
       () =>
-        store->AddressStore.registerBatch(
-          [{address: addr(3), contractName: "Missing", registrationBlock: 7}],
-        ),
+        store->AddressStore.registerBatch([
+          {address: addr(3), contractName: "Missing", registrationBlock: 7},
+        ]),
     ).toThrow()
   })
 
@@ -321,6 +324,7 @@ describe("AddressStore", () => {
       ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
     )
     let fetchState = FetchState.make(
+      ~logger=Logging.capture(),
       ~onEventRegistrations,
       ~addressStore=store,
       ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),

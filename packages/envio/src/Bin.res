@@ -3,8 +3,10 @@ let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; 
 
 // Crash on unhandled promise rejections with a readable error.
 // ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
+let logger = Env.makeLogger()
+
 NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
-  Logging.errorWithExn(reason->Utils.prettifyExn, "Unhandled promise rejection")
+  logger->Logging.errorWithExn("Unhandled promise rejection", reason)
   NodeJs.process->NodeJs.exitWithCode(Failure)
 })
 
@@ -52,10 +54,10 @@ let applyEnv = (env: dict<JSON.t>) =>
 let run = async args => {
   try {
     if Worker.isEnabled {
-      Worker.bindToSupervisor()
+      Worker.bindToSupervisor(~logger)
       // Its working directory, its environment and the chains it drives all came
       // with the fork, so a worker starts the same way every other process does.
-      await Main.start()
+      await Main.start(~logger)
     } else {
       switch (await Core.runCli(args))->Null.toOption {
       // Rust-only command (codegen / init / stop / docker / metrics / help /
@@ -67,13 +69,13 @@ let run = async args => {
           Config.prime(config)
           processChdir(cwd)
           applyEnv(env)
-          await Main.start(~reset)
+          await Main.start(~logger, ~reset)
         | Migrate({reset, config}) =>
           Config.prime(config)
-          await Main.migrate(~reset)
+          await Main.migrate(~logger, ~reset)
         | DropSchema({config}) =>
           Config.prime(config)
-          await Main.dropSchema()
+          await Main.dropSchema(~logger)
         }
       }
     }
@@ -83,13 +85,13 @@ let run = async args => {
     NodeJs.process->NodeJs.exitWithCode(Failure)
   | exn =>
     // Log just the exception's own message — wrapping it in "Failed at
-    // initialization" and pino's err serializer buries the real cause under
-    // a nested `err: { type, message, stack, ... }` block.
+    // initialization" and an `err` field buries the real cause under a nested
+    // `err: { type, message, stack, ... }` block.
     let message = switch exn->JsExn.anyToExnInternal {
     | JsExn(e) => e->JsExn.message->Option.getOr("Failed at initialization")
     | _ => "Failed at initialization"
     }
-    Logging.error(message)
+    logger->Logging.error(message)
     NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }

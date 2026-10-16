@@ -37,7 +37,7 @@ let make: (
   ~shouldChecksum: bool=?,
   ~reorgThresholdReadyTolerance: int=?,
   ~perChainEntities: array<Internal.entityConfig>=?,
-  ~logger: Pino.t,
+  ~logger: Logging.t,
 ) => t
 
 let makeFromDbState: (
@@ -49,12 +49,13 @@ let makeFromDbState: (
   ~config: Config.t,
   ~contractMapping: ContractMapping.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
+  ~logger: Logging.t,
   ~reducedPollingInterval: int=?,
   ~newBlockStallTimeoutRealtime: int=?,
 ) => t
 
 // Accessors.
-let logger: t => Pino.t
+let logger: t => Logging.t
 let blockStore: t => BlockStore.t
 let transactionStore: t => TransactionStore.t
 let shouldChecksum: t => bool

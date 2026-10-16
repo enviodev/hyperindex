@@ -12,6 +12,7 @@ type t
 
 let make: (
   ~config: Config.t,
+  ~logger: Logging.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
@@ -27,6 +28,7 @@ let make: (
 
 let makeFromDbState: (
   ~config: Config.t,
+  ~logger: Logging.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
@@ -49,6 +51,7 @@ let isResolvingReorg: t => bool
 let errorExit: (t, ErrorHandling.t) => unit
 let stop: t => unit
 let getChainState: (t, ~chainId: ChainId.t) => ChainState.t
+let itemLogger: (t, Internal.item) => Logging.t
 let enterReorgThreshold: t => unit
 let beginReorg: (t, ~chainId: ChainId.t, ~blockNumber: int) => unit
 let enterFindingReorgDepth: t => unit
@@ -67,6 +70,7 @@ let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpoin
 
 // Accessors.
 let config: t => Config.t
+let logger: t => Logging.t
 let persistence: t => Persistence.t
 let allEntities: t => array<Internal.entityConfig>
 let entities: t => EntityTables.t

@@ -10,6 +10,7 @@ let getSourceRole: (
 
 let make: (
   ~sources: array<Source.t>,
+  ~logger: Logging.t,
   ~isRealtime: bool,
   ~newBlockStallTimeout: int=?,
   ~newBlockStallTimeoutRealtime: int=?,

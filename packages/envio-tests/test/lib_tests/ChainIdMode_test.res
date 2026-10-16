@@ -127,6 +127,7 @@ describe("ChainIdMode ClickHouse schema", () => {
   it("maps the checkpoints chain_id column from the mode", t => {
     let chainIdKind = (config: Config.t) => {
       let sink = ClickHouse.makeSink(
+        ~logger=Logging.capture(),
         ~host="http://127.0.0.1:1",
         ~username="default",
         ~password="",

@@ -4,7 +4,7 @@ type t = {
   mutable isAwaitingInterval: bool,
   mutable scheduled: option<unit => promise<unit>>,
   intervalMillis: float,
-  logger: Pino.t,
+  logger: Logging.t,
 }
 
 let make = (~intervalMillis: int, ~logger) => {
@@ -33,12 +33,7 @@ let rec startInternal = (throttler: t) => {
           async () => {
             switch await fn() {
             | exception exn =>
-              throttler.logger->Pino.errorExn(
-                Pino.createPinoMessageWithError(
-                  "Scheduled action failed in throttler",
-                  exn->Utils.prettifyExn,
-                ),
-              )
+              throttler.logger->Logging.errorWithExn("Scheduled action failed in throttler", exn)
             | _ => ()
             }
             throttler.isRunning = false

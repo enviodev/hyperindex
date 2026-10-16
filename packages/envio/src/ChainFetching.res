@@ -54,6 +54,7 @@ let runContractRegistersOrThrow = async (
         item,
         onRegister,
         config,
+        logger: chainState->ChainState.logger,
         isResolved: false,
       }
       let result = contractRegister(ContractRegisterContext.getContractRegisterArgs(params))
@@ -71,7 +72,11 @@ let runContractRegistersOrThrow = async (
             params.isResolved = true
             exn->ErrorHandling.mkLogAndRaise(
               ~msg=errorMessage,
-              ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+              ~logger=Ecosystem.getItemLogger(
+                item,
+                ~ecosystem=config.ecosystem,
+                ~logger=chainState->ChainState.logger,
+              ),
             )
           }),
         )
@@ -82,7 +87,11 @@ let runContractRegistersOrThrow = async (
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~msg=errorMessage,
-        ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+        ~logger=Ecosystem.getItemLogger(
+          item,
+          ~ecosystem=config.ecosystem,
+          ~logger=chainState->ChainState.logger,
+        ),
       )
     }
   }
@@ -127,24 +136,30 @@ let rec onQueryResponse = async (
       eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
     })
     if numContractRegisterEvents === 0 {
-      Logging.trace({
-        "msg": "Finished querying",
-        "chainId": chainId,
-        "partitionId": query.partitionId,
-        "fromBlock": query.fromBlock,
-        "toBlock": latestFetchedBlockNumber,
-        "numEvents": parsedQueueItems->Array.length,
-      })
+      chainState
+      ->ChainState.logger
+      ->Logging.trace(
+        "Finished querying",
+        ~params={
+          "partitionId": query.partitionId,
+          "fromBlock": query.fromBlock,
+          "toBlock": latestFetchedBlockNumber,
+          "numEvents": parsedQueueItems->Array.length,
+        },
+      )
     } else {
-      Logging.trace({
-        "msg": "Finished querying",
-        "chainId": chainId,
-        "partitionId": query.partitionId,
-        "fromBlock": query.fromBlock,
-        "toBlock": latestFetchedBlockNumber,
-        "numEvents": parsedQueueItems->Array.length,
-        "numContractRegisterEvents": numContractRegisterEvents,
-      })
+      chainState
+      ->ChainState.logger
+      ->Logging.trace(
+        "Finished querying",
+        ~params={
+          "partitionId": query.partitionId,
+          "fromBlock": query.fromBlock,
+          "toBlock": latestFetchedBlockNumber,
+          "numEvents": parsedQueueItems->Array.length,
+          "numContractRegisterEvents": numContractRegisterEvents,
+        },
+      )
     }
 
     let reorgResult = chainState->ChainState.registerReorgGuard(~blockStore, ~knownHeight)
@@ -153,10 +168,9 @@ let rec onQueryResponse = async (
     | ReorgDetected(reorgDetected) => {
         chainState
         ->ChainState.logger
-        ->Logging.childInfo(
-          reorgDetected->ReorgDetection.reorgDetectedToLogParams(
-            ~shouldRollbackOnReorg=chainState->ChainState.shouldRollbackOnReorg,
-          ),
+        ->ReorgDetection.logReorgDetected(
+          reorgDetected,
+          ~shouldRollbackOnReorg=chainState->ChainState.shouldRollbackOnReorg,
         )
         chainState->ChainState.recordReorgDetected(
           ~blockNumber=reorgDetected.scannedBlock.blockNumber,
@@ -252,7 +266,11 @@ let rec onQueryResponse = async (
           ~config=state->IndexerState.config,
           ~chainState,
         ) {
-        | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
+        | exception exn =>
+          IndexerState.errorExit(
+            state,
+            exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
+          )
         | newRegistrations => proceed(~newRegistrations)
         }
       }
@@ -362,7 +380,11 @@ let fetchChain = async (
               ~scheduleRollback,
             )
           } catch {
-          | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
+          | exn =>
+            IndexerState.errorExit(
+              state,
+              exn->ErrorHandling.make(~logger=state->IndexerState.logger),
+            )
           }
         },
         ~action,
@@ -370,7 +392,13 @@ let fetchChain = async (
       )
     } catch {
     | exn =>
-      IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
+      IndexerState.errorExit(
+        state,
+        exn->ErrorHandling.make(
+          ~logger=state->IndexerState.logger,
+          ~msg=IndexerState.unexpectedErrorMsg,
+        ),
+      )
     }
   }
 }

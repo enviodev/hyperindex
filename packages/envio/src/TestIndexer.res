@@ -664,13 +664,13 @@ let cloneRegistrations = (
 // module-cached anyway) and reuse them across every createTestIndexer run, so
 // the global registration cycle runs a single time and never races.
 let registrationsRef: ref<option<promise<HandlerRegister.registrationsByChainId>>> = ref(None)
-let getRegistrations = (~config) =>
+let getRegistrations = (~config, ~logger) =>
   switch registrationsRef.contents {
   | Some(promise) => promise
   | None =>
     let promise =
       HandlerLoader.getAutoLoadFiles(~config)->Promise.then(autoLoadFiles =>
-        HandlerLoader.registerAllHandlers(~config, ~autoLoadFiles)
+        HandlerLoader.registerAllHandlers(~config, ~logger, ~autoLoadFiles)
       )
     registrationsRef := Some(promise)
     promise
@@ -678,6 +678,12 @@ let getRegistrations = (~config) =>
 
 let createTestIndexer = (): t<'processConfig> => {
   let config = Config.load()
+  let logger = Env.makeLogger()
+  // Silent unless LOG_LEVEL asks otherwise: a test's output is its assertions.
+  switch Env.userLogLevel {
+  | None => logger->Logging.setLevel(#silent)
+  | Some(_) => ()
+  }
   let allEntities = config.userEntities
   let entities = Dict.make()
   let entityConfigs = Dict.make()
@@ -710,13 +716,8 @@ let createTestIndexer = (): t<'processConfig> => {
     ~userEntities=config.userEntities,
     ~allEnums=config.allEnums,
     ~storage,
+    ~logger,
   )
-
-  // Silence logs by default in test mode unless LOG_LEVEL is explicitly set.
-  switch Env.userLogLevel {
-  | None => Logging.setLogLevel(#silent)
-  | Some(_) => ()
-  }
 
   // Build entity operations for each user entity
   let entityOpsDict: dict<entityOperations> = Dict.make()
@@ -911,7 +912,7 @@ let createTestIndexer = (): t<'processConfig> => {
 
           // Each run gets its own copy of the shared base registration so the
           // simulate-source registration it appends stays isolated.
-          let registrationsByChainId = cloneRegistrations(await getRegistrations(~config))
+          let registrationsByChainId = cloneRegistrations(await getRegistrations(~config, ~logger))
           let patchedConfig: Config.t = SimulateItems.patchConfig(
             ~config,
             ~processConfig=processConfigJson,
@@ -950,6 +951,7 @@ let createTestIndexer = (): t<'processConfig> => {
             await Promise.make((resolve, reject) => {
               let indexerState = IndexerState.makeFromDbState(
                 ~config=runConfig,
+                ~logger,
                 ~persistence,
                 ~initialState,
                 ~registrationsByChainId,

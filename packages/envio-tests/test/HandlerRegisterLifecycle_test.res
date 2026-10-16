@@ -52,7 +52,7 @@ HandlerRegister.setHandler(
     ~where=%raw(`({chain: _chain}) => ({params: {from: "0x0000000000000000000000000000000000000000"}})`),
   ),
 )
-HandlerRegister.startRegistration(~config)
+HandlerRegister.startRegistration(~logger=Logging.capture(), ~config)
 
 describe("HandlerRegister — every onEvent registers separately", () => {
   it("a second handler with an equal resolution registers without composing or throwing", t => {
