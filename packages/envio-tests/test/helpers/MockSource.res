@@ -114,7 +114,12 @@ type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
 // `isWildcard` decides whether the chain's mock registration depends on
 // addresses, and so whether its partition is an address partition or a wildcard
 // one — the two take different paths through a rollback.
-type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef, isWildcard: bool}
+type mockSourceState = {
+  onEventRegistrationRef: mockSourceRegistrationRef,
+  // The chain's own registrations, for items that name the event they are.
+  chainRegistrationsRef: ref<array<Internal.onEventRegistration>>,
+  isWildcard: bool,
+}
 
 @get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
 
@@ -158,8 +163,12 @@ let installMockSourceRegistrations = (
         | None => "MockContract"
         },
       )
+      let chainRegistrations = registrations.onEventRegistrations->Array.copy
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
-      sourceStates->Array.forEach(state => state.onEventRegistrationRef := Some(mockRegistration))
+      sourceStates->Array.forEach(state => {
+        state.onEventRegistrationRef := Some(mockRegistration)
+        state.chainRegistrationsRef := chainRegistrations
+      })
     }
   })
 
@@ -175,6 +184,11 @@ type itemMock = {
   logIndex: int,
   handler?: mockSourceHandler,
   contractRegister?: mockSourceContractRegister,
+  // "Contract.Event": the item runs the handler and contract register the
+  // scenario's own handlers registered for it, with `params` as its params,
+  // instead of `handler` and `contractRegister`.
+  event?: string,
+  params?: dict<unknown>,
   // Laid over the number, timestamp and hash every item's block carries.
   blockFields?: dict<unknown>,
   transactionFields?: dict<unknown>,
@@ -616,7 +630,11 @@ let make = (
     heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
   }
   let autoHeight = ref(autoHeight)
-  let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
+  let state: mockSourceState = {
+    onEventRegistrationRef: ref(None),
+    chainRegistrationsRef: ref([]),
+    isWildcard,
+  }
 
   // Height answers registered before their call arrived, consumed in order by
   // `getHeightOrThrow`. `site` is only carried for the end-of-run report.
@@ -786,14 +804,32 @@ let make = (
     {
       knownHeight: response.knownHeight->Option.getOr(knownHeight),
       parsedQueueItems: items->Array.map(item => {
-        let onEventRegistration =
+        let onEventRegistration = switch item.event {
+        | None =>
           state.onEventRegistrationRef.contents->Option.getOrThrow(
             ~message="MockSource on-event registration was not installed before resolving items",
           )
+        | Some(event) =>
+          let name = (registration: Internal.onEventRegistration) =>
+            `${registration.eventConfig.contractName}.${registration.eventConfig.name}`
+          switch state.chainRegistrationsRef.contents->Array.find(registration =>
+            registration->name === event
+          ) {
+          | Some(registration) => registration
+          | None =>
+            JsError.throwWithMessage(
+              `An item names event "${event}", but chain ${chainId->ChainId.toString} has no handler registered for it. Registered: ${state.chainRegistrationsRef.contents
+                ->Array.map(registration => `"${registration->name}"`)
+                ->Array.join(", ")}`,
+            )
+          }
+        }
         let payload: Evm.payload = {
           contractName: onEventRegistration.eventConfig.contractName,
           eventName: onEventRegistration.eventConfig.name,
-          params: %raw(`{}`),
+          params: item.params
+          ->Option.getOr(Dict.make())
+          ->(Utils.magic: dict<unknown> => Internal.eventParams),
           chainId,
           srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
           logIndex: item.logIndex,
@@ -1191,8 +1227,10 @@ let make = (
             }
             let queryControl = {
               respond: response => {
+                // Built first, so a reply that can't be built leaves the query pending.
+                let built = makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight)
                 settle()
-                resolve(makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight))
+                resolve(built)
               },
               fail: exn => {
                 settle()

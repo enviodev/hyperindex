@@ -546,6 +546,98 @@ Pending:
   })
 })
 
+let handlersScenario = Scenario.make(
+  ~configYaml=`
+name: mock-answers-handlers
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(uint256 value)
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+`,
+  ~schema=`
+type Counter {
+  id: ID!
+  total: BigInt!
+}
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  const existing = await context.Counter.get("c");
+  context.Counter.set({ id: "c", total: (existing?.total ?? 0n) + event.params.value });
+});
+`,
+)
+
+type counterTotal = {id: string, total: bigint}
+
+describe("MockSource items naming an event", () => {
+  handlersScenario->Scenario.it(
+    "run the handler the scenario registered for it, with the params given",
+    ~sources,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                event: "Token.Transfer",
+                blockNumber: 5,
+                logIndex: 0,
+                params: dict{"value": 7n->(Utils.magic: bigint => unknown)},
+              },
+              {
+                event: "Token.Transfer",
+                blockNumber: 6,
+                logIndex: 0,
+                params: dict{"value": 5n->(Utils.magic: bigint => unknown)},
+              },
+            ],
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+      t.expect(await (indexer.query("Counter"): promise<array<counterTotal>>)).toEqual([
+        {id: "c", total: 12n},
+      ])
+    },
+  )
+
+  handlersScenario->Scenario.it(
+    "refuse an event the scenario has no handler for, naming the ones it has",
+    ~sources,
+    async (~t, ~indexer as _, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      t.expect(
+        await failureOf(
+          mock.expectItemsQueries([
+            {
+              fromBlock: 1,
+              reply: Respond({items: [{event: "Token.Approval", blockNumber: 5, logIndex: 0}]}),
+            },
+          ]),
+        ),
+      ).toEqual(
+        Some(`An item names event "Token.Approval", but chain 1 has no handler registered for it. Registered: "Token.Transfer"`),
+      )
+    },
+  )
+})
+
 describe("MockSource.expectHeightCalls", () => {
   scenario->Scenario.it("waits for the chain's first height call", ~sources, async (
     ~t,
