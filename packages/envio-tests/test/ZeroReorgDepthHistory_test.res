@@ -90,7 +90,7 @@ describe("A chain with no reorg depth keeps no history", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let source100 = source(100)
-      await Scenario.resolveInitialHeight(~t, ~source=source100, ~head=120)
+      await Scenario.resolveInitialHeight(~source=source100, ~head=120)
 
       await source100.expectItemsQueries([
         {
@@ -123,10 +123,9 @@ describe("A chain with no reorg depth keeps no history", () => {
     async (~t, ~indexer, ~source) => {
       let source100 = source(100)
       let source1337 = source(1337)
-      await Utils.delay(0)
       let _ = await Promise.all2((
-        Scenario.resolveInitialHeight(~t, ~source=source100, ~head=300),
-        Scenario.resolveInitialHeight(~t, ~source=source1337, ~head=300),
+        Scenario.resolveInitialHeight(~source=source100, ~head=300),
+        Scenario.resolveInitialHeight(~source=source1337, ~head=300),
       ))
 
       // Chain 100 is held 200 blocks below the head until it reaches block 100,

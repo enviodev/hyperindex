@@ -94,8 +94,7 @@ describe("A reset", () => {
     async (~t, ~indexer, ~source) => {
       calls := 0
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
 
       await sourceMock.expectItemsQueries([
         {fromBlock: 1, toBlock: Unbounded, reply: Respond({items: [callEffects]})},

@@ -128,10 +128,9 @@ describe("A batch keeps the history decision it was created with", () => {
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
       // max_reorg_depth holds the chain 200 blocks below the head of 300, so
       // everything up to block 100 is fetched and processed below the threshold.
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=300)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=300)
 
       // Stall the first write so the batches behind it stay queued.
       let resolveStall = ref(() => ())

@@ -133,14 +133,10 @@ describe("E2E tests", () => {
   startBlock100Scenario->Scenario.it(
     "Currectly starts indexing from a non-zero start block",
     ~sources=[{chain: 1337, methods}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getHeightOrThrowCalls->Array.length,
-        ~message="should have called getHeightOrThrow to get initial height",
-      ).toEqual(1)
+      // The initial height comes from a single getHeightOrThrow call.
+      await sourceMock.expectHeightCalls(1)
       sourceMock.resolveGetHeightOrThrow(400)
 
       // Items from start block to reorg threshold.
@@ -171,7 +167,7 @@ describe("E2E tests", () => {
       {value: "0", labels: Dict.make()},
     ])
 
-    await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+    await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
     t.expect(await indexer.metric("envio_reorg_threshold")).toEqual([
       {value: "1", labels: Dict.make()},
@@ -198,12 +194,10 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       // Enter reorg threshold for both chains
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       // Only the most-behind chain (100 — the progress tie breaks by ascending
@@ -567,7 +561,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let probeEffect = Envio.createEffect(
         {
@@ -621,7 +614,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let chainScopedEffect = Envio.createEffect(
         {
@@ -726,13 +718,8 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMockPrimary = source(1337)
       let sourceMockFallback = source(1337, ~index=1)
-      await Utils.delay(0)
-
       // Resolve initial height request from primary source
-      t.expect(
-        sourceMockPrimary.getHeightOrThrowCalls->Array.length,
-        ~message="should have called getHeightOrThrow on primary source",
-      ).toEqual(1)
+      await sourceMockPrimary.expectHeightCalls(1)
       sourceMockPrimary.resolveGetHeightOrThrow(300)
 
       await sourceMockPrimary.expectItemsQueries([
@@ -778,7 +765,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let queueMetricDuringExecution = ref(None)
       let activeMetricDuringExecution = ref(None)
@@ -896,7 +882,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let executionOrder = []
       let queueMetricDuringExecution = ref(None)
@@ -1025,7 +1010,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let callCount = ref(0)
       let testEffectWithCacheControl = Envio.createEffect(
@@ -1097,7 +1081,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       let throwingEffect = Envio.createEffect(
         {
@@ -1169,19 +1152,12 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let syncSource = source(1337)
       let liveSource = source(1337, ~index=1)
-      await Utils.delay(0)
 
       // During initial height fetch (knownHeight === 0),
       // only the Sync source should be queried, not the Live source.
       // This is important to allow HyperSync's smart block detection to work.
-      t.expect(
-        syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should be called for initial height",
-      ).toEqual(1)
-      t.expect(
-        liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should NOT be called during initial height fetch",
-      ).toEqual(0)
+      await syncSource.expectHeightCalls(1)
+      await liveSource.expectHeightCalls(0)
 
       // Resolve the initial height and let the indexer start syncing
       syncSource.resolveGetHeightOrThrow(300)
@@ -1208,20 +1184,9 @@ describe("E2E tests", () => {
       // On catch-up the chain flips to realtime (Live=Primary). The backfill
       // waiter had already parked on the Sync source, so it polls Sync once more
       // before the realtime transition bumps the epoch and a fresh Live-source
-      // waiter supersedes it. Wait for the Live source to be polled.
-      let waitLiveHeightCalls = async n =>
-        while liveSource.getHeightOrThrowCalls->Array.length < n {
-          await Utils.delay(0)
-        }
-      await waitLiveHeightCalls(1)
-      t.expect(
-        liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should participate in the first waitForNewBlock (realtime)",
-      ).toEqual(1)
-      t.expect(
-        syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync polled once more at the realtime transition, then superseded by Live",
-      ).toEqual(2)
+      // waiter supersedes it. Live participates in the first waitForNewBlock.
+      await liveSource.expectHeightCalls(1)
+      await syncSource.expectHeightCalls(2)
 
       // Resolve the first waitForNewBlock via the Live (Primary) source
       liveSource.resolveGetHeightOrThrow(301)
@@ -1238,15 +1203,8 @@ describe("E2E tests", () => {
 
       // Second waitForNewBlock: Live=Primary races again, Sync=Secondary (stays
       // at its post-transition count of 2, the superseded backfill poll).
-      await waitLiveHeightCalls(2)
-      t.expect(
-        syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should not be polled again (Secondary, not racing)",
-      ).toEqual(2)
-      t.expect(
-        liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should keep racing in realtime mode",
-      ).toEqual(2)
+      await liveSource.expectHeightCalls(2)
+      await syncSource.expectHeightCalls(2)
     },
   )
 
@@ -1620,10 +1578,8 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       // Chain 1337 catches up first
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337)
 
       // System should NOT be in reorg threshold yet (chain 100 still backfilling)
       t.expect(
@@ -1632,7 +1588,7 @@ describe("E2E tests", () => {
       ).toEqual([{value: "0", labels: Dict.make()}])
 
       // Now chain 100 catches up
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100)
 
       // System should now be in reorg threshold
       t.expect(
@@ -1665,11 +1621,10 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
 
       // Without reorg, chains don't use blockLag so they fetch from startBlock to knownHeight
       // Chain 1337 catches up first
-      t.expect(sourceMock1337.getHeightOrThrowCalls->Array.length).toEqual(1)
+      await sourceMock1337.expectHeightCalls(1)
       sourceMock1337.resolveGetHeightOrThrow(300)
 
       await sourceMock1337.expectItemsQueries([
@@ -1691,7 +1646,7 @@ describe("E2E tests", () => {
       ).toEqual([{value: "0", labels: Dict.make()}])
 
       // Chain 100 catches up
-      t.expect(sourceMock100.getHeightOrThrowCalls->Array.length).toEqual(1)
+      await sourceMock100.expectHeightCalls(1)
       sourceMock100.resolveGetHeightOrThrow(300)
 
       await sourceMock100.expectItemsQueries([
@@ -1797,15 +1752,10 @@ describe("E2E tests", () => {
       await followerSource.expectItemsQueries([
         {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 105})},
       ])
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // ...and once at head it goes back to polling for new blocks rather
-      // than going silent.
-      t.expect(
-        followerSource.getHeightOrThrowCalls->Array.length > followerPollsBefore,
-        ~message="follower keeps polling getHeightOrThrow while the leader backfills a large range",
-      ).toBe(true)
+      // than going silent, while the leader backfills a large range.
+      await followerSource.expectHeightCalls(followerPollsBefore + 1)
     },
   )
 })

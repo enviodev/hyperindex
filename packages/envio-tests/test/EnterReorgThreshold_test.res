@@ -74,19 +74,6 @@ chains:
   ~schema,
 )
 
-// Queries are serialized by the cross-chain budget waterfall, so a chain's
-// height re-poll only lands after the other chain releases the budget.
-let waitNewHeightPoll = async (sourceMock: MockSource.t, ~after) => {
-  let attempts = ref(0)
-  while sourceMock.getHeightOrThrowCalls->Array.length <= after && attempts.contents < 1000 {
-    attempts := attempts.contents + 1
-    await Utils.delay(0)
-  }
-  if sourceMock.getHeightOrThrowCalls->Array.length <= after {
-    JsError.throwWithMessage("Timed out waiting for a new getHeightOrThrow poll")
-  }
-}
-
 let waitKnownHeight = async (indexer: IndexerRunner.t, ~chainId, ~height) => {
   let deadline = Date.now() +. 2000.
   let isKnown = async () =>
@@ -114,8 +101,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
     async (~t, ~indexer, ~source) => {
       let chainA = source(100)
       let chainB = source(1337)
-      await Utils.delay(0)
-      let initialHeightPolls = chainA.getHeightOrThrowCalls->Array.length
+      await chainA.expectHeightCalls(1)
       chainA.resolveGetHeightOrThrow(1000)
       chainB.resolveGetHeightOrThrow(1000)
 
@@ -147,7 +133,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
       // (800) now trails the lagged head (801). Without a tolerance this would
       // un-ready chain A and defer entry; the 100-block tolerance keeps it ready.
       // (Chain A cannot re-query 801 yet — chain B holds the shared fetch budget.)
-      await waitNewHeightPoll(chainA, ~after=initialHeightPolls)
+      await chainA.expectHeightCalls(2)
       chainA.resolveGetHeightOrThrow(1001)
       await waitKnownHeight(indexer, ~chainId="100", ~height="1001")
 

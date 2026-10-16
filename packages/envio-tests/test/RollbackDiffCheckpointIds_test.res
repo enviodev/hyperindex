@@ -116,10 +116,9 @@ describe("Rollback diff checkpoint ids", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await Utils.delay(0)
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source100),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=source100),
+        Scenario.enterReorgThreshold(~indexer, ~source=source1337),
       ))
 
       // Chain 100 leads (the progress tie breaks by ascending chain id), so the

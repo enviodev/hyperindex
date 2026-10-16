@@ -60,8 +60,7 @@ describe("A getWhere by a document holding text Postgres can't", () => {
       ->ignore,
     async (~t, ~indexer, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
 
       await source.expectItemsQueries([
         {

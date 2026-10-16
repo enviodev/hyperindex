@@ -176,10 +176,10 @@ let checkpointsByChain = async (indexer: IndexerRunner.t) =>
 // lagging chain's reorg depth reaches below its own head, so it never has a safe
 // checkpoint at all. Chain 100's head then runs on to 130, which leaves its
 // blocks 111 and 112 below its own safe block and its block 120 above it.
-let driveChain100Ahead = async (~t, ~indexer: IndexerRunner.t, ~source100, ~lagging) => {
+let driveChain100Ahead = async (~indexer: IndexerRunner.t, ~source100, ~lagging) => {
   let _ = await Promise.all2((
-    Scenario.resolveInitialHeight(~t, ~source=source100, ~head=120),
-    Scenario.resolveInitialHeight(~t, ~source=lagging, ~head=110),
+    Scenario.resolveInitialHeight(~source=source100, ~head=120),
+    Scenario.resolveInitialHeight(~source=lagging, ~head=110),
   ))
 
   let _ = await Promise.all2((
@@ -224,7 +224,7 @@ describe("Per-chain history pruning", () => {
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
-      await driveChain100Ahead(~t, ~indexer, ~source100=source(100), ~lagging=source(1337))
+      await driveChain100Ahead(~indexer, ~source100=source(100), ~lagging=source(1337))
 
       t.expect(
         await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
@@ -249,7 +249,7 @@ describe("Per-chain history pruning", () => {
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
-      await driveChain100Ahead(~t, ~indexer, ~source100=source(100), ~lagging=source(1337))
+      await driveChain100Ahead(~indexer, ~source100=source(100), ~lagging=source(1337))
 
       t.expect(
         await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
@@ -271,7 +271,7 @@ describe("Per-chain history pruning", () => {
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
-      await driveChain100Ahead(~t, ~indexer, ~source100=source(100), ~lagging=source(1337))
+      await driveChain100Ahead(~indexer, ~source100=source(100), ~lagging=source(1337))
 
       t.expect(
         await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
@@ -305,8 +305,7 @@ describe("Per-chain history pruning", () => {
 
       let _ = await chains
       ->Array.map(
-        ((chain, _, _)) =>
-          Scenario.resolveInitialHeight(~t, ~source=source(chain), ~head=chain + 20),
+        ((chain, _, _)) => Scenario.resolveInitialHeight(~source=source(chain), ~head=chain + 20),
       )
       ->Promise.all
 
@@ -388,7 +387,7 @@ describe("Per-chain history pruning", () => {
     async (~t, ~indexer, ~source) => {
       let source100 = source(100)
       let source1337 = source(1337)
-      await driveChain100Ahead(~t, ~indexer, ~source100, ~lagging=source1337)
+      await driveChain100Ahead(~indexer, ~source100, ~lagging=source1337)
 
       source1337.setAutoHeight(115)
       await source1337.expectItemsQueries([
@@ -439,7 +438,7 @@ describe("Per-chain history pruning", () => {
     ~sources=[{chain: 5, methods}, {chain: 100, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
-      await driveChain100Ahead(~t, ~indexer, ~source100=source(100), ~lagging=source(5))
+      await driveChain100Ahead(~indexer, ~source100=source(100), ~lagging=source(5))
 
       t.expect(
         await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),

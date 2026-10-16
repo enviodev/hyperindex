@@ -35,10 +35,9 @@ describe("E2E blockLag tests", () => {
     ~reducedPollingInterval=1,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
       // Enter reorg threshold the standard way:
       // knownHeight=300, maxReorgDepth=200, so initial fetch is blocks 1-100
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       t.expect(
         await indexer.metric("envio_reorg_threshold"),

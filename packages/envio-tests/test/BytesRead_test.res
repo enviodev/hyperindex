@@ -51,8 +51,7 @@ describe("Bytes read back into a handler", () => {
     ~source,
   ) => {
     let source = source(1)
-    await Utils.delay(0)
-    await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
+    await Scenario.resolveInitialHeight(~source, ~head=100)
     await source.expectItemsQueries([
       {
         coversBlock: 1,

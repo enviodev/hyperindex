@@ -1008,11 +1008,8 @@ describe("SourceManager wait for new blocks", () => {
               mock0.getHeightOrThrowCalls->Array.length,
               ~message="Shouldn't immediately call getHeightOrThrow again",
             ).toEqual(1)
-            await Utils.delay(0)
-            t.expect(
-              mock0.getHeightOrThrowCalls->Array.length,
-              ~message="Should call after a polling interval",
-            ).toEqual(2)
+            // Should call after a polling interval
+            await mock0.expectHeightCalls(2)
 
             mock0.resolveGetHeightOrThrow(100)
             await Utils.delay(pollingInterval0 + 1)
@@ -1032,11 +1029,8 @@ describe("SourceManager wait for new blocks", () => {
               mock1.getHeightOrThrowCalls->Array.length,
               ~message="Shouldn't immediately call getHeightOrThrow again",
             ).toEqual(1)
-            await Utils.delay(0)
-            t.expect(
-              mock1.getHeightOrThrowCalls->Array.length,
-              ~message="Should call after a polling interval",
-            ).toEqual(2)
+            // Should call after a polling interval
+            await mock1.expectHeightCalls(2)
 
             mock1.resolveGetHeightOrThrow(100)
             await Utils.delay(pollingInterval1 + 1)
@@ -1106,11 +1100,8 @@ describe("SourceManager wait for new blocks", () => {
               mock0.getHeightOrThrowCalls->Array.length,
               ~message="Shouldn't immediately call getHeightOrThrow again",
             ).toEqual(1)
-            await Utils.delay(0)
-            t.expect(
-              mock0.getHeightOrThrowCalls->Array.length,
-              ~message="Should call after a retry",
-            ).toEqual(2)
+            // Should call after a retry
+            await mock0.expectHeightCalls(2)
 
             mock0.rejectGetHeightOrThrow("ERROR")
 
@@ -1119,11 +1110,8 @@ describe("SourceManager wait for new blocks", () => {
               mock0.getHeightOrThrowCalls->Array.length,
               ~message="Should increase the retry interval",
             ).toEqual(2)
-            await Utils.delay(0)
-            t.expect(
-              mock0.getHeightOrThrowCalls->Array.length,
-              ~message="Should call after a longer retry",
-            ).toEqual(3)
+            // Should call after a longer retry
+            await mock0.expectHeightCalls(3)
 
             mock0.rejectGetHeightOrThrow("ERROR")
 
@@ -1132,11 +1120,8 @@ describe("SourceManager wait for new blocks", () => {
               mock0.getHeightOrThrowCalls->Array.length,
               ~message="Should increase the retry interval but not exceed the max",
             ).toEqual(3)
-            await Utils.delay(0)
-            t.expect(
-              mock0.getHeightOrThrowCalls->Array.length,
-              ~message="Should call after the max retry interval",
-            ).toEqual(4)
+            // Should call after the max retry interval
+            await mock0.expectHeightCalls(4)
 
             mock0.resolveGetHeightOrThrow(100)
             await Utils.delay(pollingInterval0 + 1)
@@ -1151,11 +1136,8 @@ describe("SourceManager wait for new blocks", () => {
               mock0.getHeightOrThrowCalls->Array.length,
               ~message="Retry interval resets after a successful resolve",
             ).toEqual(5)
-            await Utils.delay(0)
-            t.expect(
-              mock0.getHeightOrThrowCalls->Array.length,
-              ~message="Should call after a retry for error3",
-            ).toEqual(6)
+            // Should call after a retry for error3
+            await mock0.expectHeightCalls(6)
           }
         )(),
         // This is not affected by the source0 and done in parallel
@@ -1170,11 +1152,8 @@ describe("SourceManager wait for new blocks", () => {
               mock1.getHeightOrThrowCalls->Array.length,
               ~message="Shouldn't immediately call getHeightOrThrow again",
             ).toEqual(1)
-            await Utils.delay(0)
-            t.expect(
-              mock1.getHeightOrThrowCalls->Array.length,
-              ~message="Should call after a polling interval",
-            ).toEqual(2)
+            // Should call after a polling interval
+            await mock1.expectHeightCalls(2)
 
             mock1.resolveGetHeightOrThrow(100)
             await Utils.delay(pollingInterval1 + 1)
@@ -1267,15 +1246,9 @@ describe("SourceManager wait for new blocks", () => {
         fallback.getHeightOrThrowCalls->Array.length,
         ~message="Fallback source should still wait for the polling interval",
       ).toEqual(1)
-      await Utils.delay(0)
-      t.expect(
-        sync.getHeightOrThrowCalls->Array.length,
-        ~message="Should call after stalledPollingInterval",
-      ).toEqual(3)
-      t.expect(
-        fallback.getHeightOrThrowCalls->Array.length,
-        ~message="Should call after stalledPollingInterval",
-      ).toEqual(2)
+      // Both call after stalledPollingInterval
+      await sync.expectHeightCalls(3)
+      await fallback.expectHeightCalls(2)
 
       fallback.resolveGetHeightOrThrow(101)
 
@@ -1385,11 +1358,8 @@ describe("SourceManager wait for new blocks", () => {
         sync.getHeightOrThrowCalls->Array.length,
         ~message="Sync source should still wait for the polling interval",
       ).toEqual(2)
-      await Utils.delay(0)
-      t.expect(
-        sync.getHeightOrThrowCalls->Array.length,
-        ~message="Should call after stalledPollingInterval",
-      ).toEqual(3)
+      // Should call after stalledPollingInterval
+      await sync.expectHeightCalls(3)
 
       sync.resolveGetHeightOrThrow(101)
 
@@ -3417,7 +3387,7 @@ describe("SourceManager height subscription", () => {
     let pollsWhileLive = mock.getHeightOrThrowCalls->Array.length - pollsBefore
 
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-    await Utils.delay(0)
+    await mock.expectHeightCalls(pollsBefore + 1)
     let pollsAfterDown = mock.getHeightOrThrowCalls->Array.length - pollsBefore
 
     mock.resolveGetHeightOrThrow(102)
@@ -3610,7 +3580,7 @@ describe("SourceManager height subscription", () => {
     await Utils.delay(0)
     let pollsBeforeLive = mock.getHeightOrThrowCalls->Array.length
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
+    await mock.expectHeightCalls(pollsBeforeLive + 1)
     let pollsAfterLive = mock.getHeightOrThrowCalls->Array.length
     mock.resolveGetHeightOrThrow(101)
 
@@ -3643,7 +3613,7 @@ describe("SourceManager height subscription", () => {
       )
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-    await Utils.delay(0)
+    await mock.expectHeightCalls(pollsBefore + 1)
     let pollsAfterDown = mock.getHeightOrThrowCalls->Array.length - pollsBefore
 
     mock.resolveGetHeightOrThrow(101)

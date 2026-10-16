@@ -64,7 +64,7 @@ describe("Wildcard contract with a far-ahead start block", () => {
           Utils.magic: (Internal.handlerArgs => promise<unit>) => MockSource.mockSourceHandler
         )
 
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100_000)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100_000)
 
       // Partition "0" is the wildcard, "1" holds Ledger from the chain start and
       // "2" holds Router from 50,000. Only "1" is within the cold target range;
@@ -106,9 +106,9 @@ describe("Wildcard contract with a far-ahead start block", () => {
     "waits at a start block the chain has not reached instead of scanning up to it",
     ~sources=[{chain: 1337}],
     ~targetBufferSize=100,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=30_000)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=30_000)
 
       // Only the chain-start partition has anything below the head. Its
       // response also carries a head past the later start blocks.

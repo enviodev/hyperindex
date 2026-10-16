@@ -197,8 +197,8 @@ describe("A run whose chains have a reorg depth", () => {
     "Enters the reorg threshold once every chain is at its safe block",
     ~sources=[{chain: 1}, {chain: 137}],
     async (~t, ~indexer, ~source) => {
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=source(1))
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=source(137))
+      await Scenario.enterReorgThreshold(~indexer, ~source=source(1))
+      await Scenario.enterReorgThreshold(~indexer, ~source=source(137))
 
       t.expect(
         await indexer.metric("envio_reorg_threshold"),

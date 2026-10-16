@@ -166,11 +166,9 @@ describe("Chain-scoped rollback", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source137),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source1),
+        Scenario.enterReorgThreshold(~indexer, ~source=source137),
+        Scenario.enterReorgThreshold(~indexer, ~source=source1),
       ))
 
       // Chain 137 writes the shared id first, then chain 1 — so chain 137's row
@@ -358,11 +356,9 @@ describe("Per-chain history and removal", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source137),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source1),
+        Scenario.enterReorgThreshold(~indexer, ~source=source137),
+        Scenario.enterReorgThreshold(~indexer, ~source=source1),
       ))
 
       // Both chains hold "shared"; only chain 1 deletes it.

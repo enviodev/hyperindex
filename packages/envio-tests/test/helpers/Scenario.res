@@ -350,7 +350,7 @@ let it = (
   }
 }
 
-let resolveInitialHeight = async (~t as _: Vitest.testContext, ~source: MockSource.t, ~head) => {
+let resolveInitialHeight = async (~source: MockSource.t, ~head) => {
   await source.expectHeightCalls(1)
   source.resolveGetHeightOrThrow(head)
 }
@@ -360,14 +360,13 @@ let resolveInitialHeight = async (~t as _: Vitest.testContext, ~source: MockSour
 // post-threshold range opens up. Several scenarios need to be past this point
 // before the behaviour they test is reachable.
 let enterReorgThreshold = async (
-  ~t: Vitest.testContext,
   ~indexer: IndexerRunner.t,
   ~source: MockSource.t,
   ~head=300,
   ~preThresholdTo=100,
   ~fromBlock=1,
 ) => {
-  await resolveInitialHeight(~t, ~source, ~head)
+  await resolveInitialHeight(~source, ~head)
   await source.expectItemsQueries([
     {
       partitionId: "0",

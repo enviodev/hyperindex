@@ -240,8 +240,7 @@ describe("A getWhere over committed rows", () => {
     ~timeout=60_000,
     async (~t, ~indexer, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
       let running = ref(indexer)
       let mismatches = []
       let overLoads = []

@@ -65,7 +65,7 @@ describe("A reset run", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
       await source.expectItemsQueries([
         {
           fromBlock: 1,

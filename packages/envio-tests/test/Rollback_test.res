@@ -424,11 +424,9 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       // Only the most-behind chain (100 — the progress tie breaks by ascending
@@ -521,9 +519,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
       await testSingleChainRollback(~t, ~sourceMock, ~indexer)
     },
   )
@@ -546,8 +542,7 @@ describe("E2E rollback tests", () => {
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       await sourceMock.expectItemsQueries([
         {
@@ -710,10 +705,9 @@ describe("E2E rollback tests", () => {
     "Parks a reorg detected while a batch is still processing",
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       // Hold the block-101 batch open inside its handler so a reorg can be detected
       // while the batch is still in flight.
@@ -796,9 +790,7 @@ describe("E2E rollback tests", () => {
       )
 
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
       await testSingleChainRollback(~t, ~sourceMock, ~indexer)
       unregister()
 
@@ -815,9 +807,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       await sourceMock.expectItemsQueries([
         {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 102})},
@@ -846,9 +836,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       await sourceMock.expectItemsQueries([
         {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 102})},
@@ -917,11 +905,9 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1 = source(1337)
       let sourceMock2 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock2),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock2),
       ))
 
       // The most-behind chain (100 — the progress tie breaks by ascending
@@ -944,9 +930,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       let calls = []
       let handler = async (args: Internal.handlerArgs) => {
@@ -1193,11 +1177,9 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -1707,11 +1689,9 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -2151,9 +2131,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       await sourceMock.expectItemsQueries([{fromBlock: 101, reply: Respond({items: []})}])
       await indexer.getBatchWritePromise()
@@ -2252,9 +2230,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       await sourceMock.expectItemsQueries([{fromBlock: 101, reply: Respond({items: []})}])
       await indexer.getBatchWritePromise()
@@ -2396,12 +2372,10 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       // Both chains enter reorg threshold (blocks 1-100 fetched, knownHeight=300)
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       // Both chains process events at blocks 102-103
@@ -2594,13 +2568,11 @@ describe("E2E rollback tests", () => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
       let sourceMock137 = source(137)
-      await Utils.delay(0)
-
       // All three chains enter reorg threshold
       let _ = await Promise.all3((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock137),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock137),
       ))
 
       // Queries are serialized by the budget waterfall in ascending-chain-id
@@ -2804,9 +2776,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       // 3. Process 2 queries to build chunk history (3+ block ranges each)
       // Query 1: 101-103 (range=3) -> enables sourceRangeCapacity=3
@@ -2919,11 +2889,9 @@ describe("E2E rollback tests", () => {
     "Should efficiently refetch only blocks after rollback target with chunked partitions",
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       // Query 1: 101-103 (range=3) -> enables sourceRangeCapacity=3
       await sourceMock.expectItemsQueries([
@@ -3040,11 +3008,9 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1 = source(1337)
       let sourceMock2 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock2),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock2),
       ))
 
       // The most-behind chain (100 — the progress tie breaks by ascending
@@ -3226,11 +3192,9 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       // Chain 100 progresses first so its checkpoint lands below the future

@@ -57,8 +57,7 @@ describe("A NUL byte in what a handler stores", () => {
       ->ignore,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
 
       await sourceMock.expectItemsQueries([
         {
@@ -112,8 +111,7 @@ describe("A NUL byte in what a handler stores", () => {
     ~onError=surrogate.onError,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
       let lone = String.fromCharCode(0xd800)
 
       await sourceMock.expectItemsQueries([
@@ -169,8 +167,7 @@ describe("A NUL byte in what a handler stores", () => {
       ->ignore,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
 
       await sourceMock.expectItemsQueries([
         {

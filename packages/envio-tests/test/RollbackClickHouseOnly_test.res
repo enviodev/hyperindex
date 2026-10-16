@@ -96,8 +96,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       await sourceMock.expectItemsQueries([
         {
