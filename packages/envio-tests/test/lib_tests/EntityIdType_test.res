@@ -123,6 +123,10 @@ chains:
       backend: #clickhouse,
       reason: "BigThing's unbounded BigInt id has no ClickHouse precision",
     },
+    {
+      backend: #both,
+      reason: "BigThing's unbounded BigInt id has no ClickHouse precision",
+    },
   ],
 )
 

@@ -147,7 +147,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
         [("1", 100), ("137", 100)],
         // An entity kept in ClickHouse alone has no Postgres table to partition.
         switch IndexerRunner.selectedBackend {
-        | #postgres => ["Counter$1", "Counter$137"]
+        | #postgres | #both => ["Counter$1", "Counter$137"]
         | #clickhouse => []
         },
         [("1", "Token"), ("137", "Token")],
@@ -234,7 +234,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       let {sql, pgSchema} = indexer.pg
       let _ = await sql->Sql.queryForTests(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
       switch IndexerRunner.selectedBackend {
-      | #clickhouse => await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
+      | #clickhouse | #both => await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
       | #postgres => ()
       }
 

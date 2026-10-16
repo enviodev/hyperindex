@@ -351,7 +351,8 @@ describe("What a refused restart tells the operator", () => {
 
       let storageLines = switch IndexerRunner.selectedBackend {
       | #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\"
-      | #clickhouse => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
+      | #clickhouse
+      | #both => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
       }
       t.expect(
         (refusal, indexer.logs()->Array.slice(~start=logged)),
@@ -409,7 +410,8 @@ ${storageLines}
 
       let storageLines = switch IndexerRunner.selectedBackend {
       | #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\"
-      | #clickhouse => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
+      | #clickhouse
+      | #both => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
       }
       t.expect(refusal).toEqual(
         Some(

@@ -10,10 +10,12 @@ type pg = {sql: StorageClient.t, pgSchema: string}
 
 let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
 
-// Which persistence a run is exercised against: Postgres alone, or with every
-// entity kept in ClickHouse alone instead. A scenario whose config sets its own storage
-// keeps it on both. CI runs the suite once per backend.
-type backend = [#postgres | #clickhouse]
+// Which persistence a run is exercised against: Postgres alone, every entity
+// kept in ClickHouse alone instead, or every entity kept in both, where a batch
+// writes each store and a read checks the two copies agree. A scenario whose
+// config sets its own storage keeps it on every leg. CI runs the suite once per
+// backend.
+type backend = [#postgres | #clickhouse | #both]
 
 @module("node:os") external tmpdir: unit => string = "tmpdir"
 @module("node:fs") external rmSync: (string, {"recursive": bool, "force": bool}) => unit = "rmSync"
@@ -22,14 +24,16 @@ let backendName = (backend: backend) =>
   switch backend {
   | #postgres => "postgres"
   | #clickhouse => "clickhouse"
+  | #both => "both"
   }
 
 let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nullable.toOption {
 | None | Some("") | Some("postgres") => #postgres
 | Some("clickhouse") => #clickhouse
+| Some("both") => #both
 | Some(other) =>
   JsError.throwWithMessage(
-    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres or clickhouse.`,
+    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres, clickhouse or both.`,
   )
 }
 
@@ -355,15 +359,21 @@ let run = async (
       }
     stops->Array.push(stop)->ignore
 
-    // An entity Postgres doesn't keep is read from ClickHouse through the run's
-    // own client, which sees what the indexer has committed. Registered once
-    // per client: the handle is what a read names the table by.
+    // An entity's ClickHouse copy is read through the run's own client, which
+    // sees what the indexer has committed. A read goes to Postgres whenever it
+    // keeps the entity, so the table is registered as ClickHouse's alone.
+    // Registered once per client: the handle is what a read names the table by.
     let clickHouseTables = Dict.make()
     let clickHouseRows = (entityConfig: Internal.entityConfig) => {
       let handle = switch clickHouseTables->Dict.get(entityConfig.name) {
       | Some(handle) => handle
       | None =>
-        let handle = (client->Storage.registerEntity(entityConfig)).handle
+        let handle = (
+          client->Storage.registerEntity({
+            ...entityConfig,
+            storage: {...entityConfig.storage, postgres: false},
+          })
+        ).handle
         clickHouseTables->Dict.set(entityConfig.name, handle)
         handle
       }
@@ -371,15 +381,64 @@ let run = async (
       ->StorageClient.loadWhere(~table=handle, ~conditions=[])
       ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<unknown>>)
     }
+    let postgresRows = (entityConfig: Internal.entityConfig) =>
+      sql->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
 
     // Rows come back decoded: both stores' rows parse with the table's field
     // schemas.
-    let queryEntity = (entityConfig: Internal.entityConfig) =>
-      if entityConfig.storage.postgres {
-        sql->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
-      } else {
-        clickHouseRows(entityConfig)
-      }->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
+    let parseRows = (entityConfig: Internal.entityConfig, rows): array<unknown> =>
+      rows->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
+
+    // Two chains can keep an entity under the same id, so the chain is part of
+    // what orders the rows.
+    let sortedRows = (entityConfig: Internal.entityConfig, rows: array<unknown>) => {
+      let chainField =
+        entityConfig.table->Table.getChainIdField->Option.map(field => field.fieldName)
+      let keyOf = row => {
+        let row = row->(Utils.magic: unknown => dict<unknown>)
+        let id = row->Dict.getUnsafe("id")->Utils.Hash.makeOrThrow
+        switch chainField {
+        | Some(field) => `${id}|${row->Dict.getUnsafe(field)->Utils.Hash.makeOrThrow}`
+        | None => id
+        }
+      }
+      rows->Array.toSorted((a, b) => String.compare(keyOf(a), keyOf(b)))
+    }
+
+    // An entity kept in both stores is read from Postgres, and its ClickHouse
+    // copy is held to the same rows: each store is written apart, and this is
+    // where a copy that drifted shows up. ClickHouse publishes a batch just
+    // after Postgres commits it, so a read right behind a commit can find the
+    // copy a batch short for a moment.
+    let rec clickHouseAgrees = async (entityConfig, ~expected, ~attempts) => {
+      let copy = sortedRows(
+        entityConfig,
+        parseRows(entityConfig, await clickHouseRows(entityConfig)),
+      )
+      let agrees = try {
+        Vitest.expect(
+          copy,
+          ~message=`ClickHouse's copy of ${entityConfig.name} holds what Postgres does`,
+        ).toEqual(expected)
+        true
+      } catch {
+      | _ if attempts > 1 => false
+      }
+      if !agrees {
+        await Utils.delay(50)
+        await clickHouseAgrees(entityConfig, ~expected, ~attempts=attempts - 1)
+      }
+    }
+
+    let queryEntity = async (entityConfig: Internal.entityConfig) =>
+      switch entityConfig.storage {
+      | {postgres: false} => parseRows(entityConfig, await clickHouseRows(entityConfig))
+      | {clickhouse: false} => parseRows(entityConfig, await postgresRows(entityConfig))
+      | _ =>
+        let rows = parseRows(entityConfig, await postgresRows(entityConfig))
+        await clickHouseAgrees(entityConfig, ~expected=sortedRows(entityConfig, rows), ~attempts=40)
+        rows
+      }
 
     // Which chain a stored row belongs to, for a table that has chains at all.
     // Read off the row rather than the change decoded from it: a delete keeps

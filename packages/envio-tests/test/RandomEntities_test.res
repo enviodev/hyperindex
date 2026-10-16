@@ -329,8 +329,11 @@ let rootSeed = seedEnv->Option.flatMap(text => Int.fromString(text))->Option.get
 describe("Entities a handler sets", () => {
   let name = "come back as they went in, for any entity the generator builds"
   switch IndexerRunner.selectedBackend {
-  | #clickhouse =>
-    Async.it_skip(`${name} [no clickhouse: it refuses the nullable lists generated]`, async _ => ())
+  | (#clickhouse | #both) as backend =>
+    Async.it_skip(
+      `${name} [no ${backend->IndexerRunner.backendName}: ClickHouse refuses the nullable lists generated]`,
+      async _ => (),
+    )
   | #postgres =>
     Async.it(
       name,

@@ -110,7 +110,7 @@ describe("Two processes indexing one schema", () => {
         // Each built the owner index on its own chain's partition only. An
         // entity kept in ClickHouse alone has no Postgres table to index.
         switch IndexerRunner.selectedBackend {
-        | #postgres => [("Item$1", true), ("Item$137", true)]
+        | #postgres | #both => [("Item$1", true), ("Item$137", true)]
         | #clickhouse => []
         },
       ))

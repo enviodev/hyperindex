@@ -259,7 +259,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        storage: [postgres, clickhouse]
+        storage: [postgres, clickhouse, both]
 
     services:
       postgres:

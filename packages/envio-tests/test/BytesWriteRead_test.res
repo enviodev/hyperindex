@@ -107,39 +107,54 @@ describe("Bytes as Uint8Array", () => {
       )
       await indexer.getBatchWritePromise()
 
-      let stored = switch IndexerRunner.selectedBackend {
-      | #postgres => History(await indexer.queryHistory("Blob"))
-      | #clickhouse =>
+      let postgresStored = switch IndexerRunner.selectedBackend {
+      | #postgres | #both => Some(History(await indexer.queryHistory("Blob")))
+      | #clickhouse => None
+      }
+      let clickHouseStored = switch IndexerRunner.selectedBackend {
+      | #clickhouse | #both =>
         let database = TestClickHouse.currentDatabase()
         let rows = await TestClickHouse.query(
           `SELECT id, hex(data) AS data, hex(optData) AS optData, arrayMap(x -> hex(x), chunks) AS chunks, hex(tag) AS tag FROM \`${database}\`.\`Blob\` ORDER BY id FORMAT JSONEachRow`,
         )
-        ClickHouseRows(
-          rows->String.trim->String.split("\n")->Array.map(row => row->JSON.parseOrThrow),
+        Some(
+          ClickHouseRows(
+            rows->String.trim->String.split("\n")->Array.map(row => row->JSON.parseOrThrow),
+          ),
         )
+      | #postgres => None
       }
 
       let blobs: array<blob> = await indexer.query("Blob")
       t.expect((
         blobs->Array.toSorted((a, b) => String.compare(a.id, b.id)),
         queried,
-        stored,
+        postgresStored,
+        clickHouseStored,
       )).toEqual((
         [first, second],
         dict{"eq": [first], "in": [second]},
         switch IndexerRunner.selectedBackend {
-        | #postgres =>
-          History([
-            Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
-            Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
-          ])
-        | #clickhouse =>
-          ClickHouseRows(
-            %raw(`[
-              { id: "1", data: "0001FEFF", optData: "5C782722", chunks: ["0102", "", "03"], tag: "AA" },
-              { id: "2", data: "", optData: null, chunks: [], tag: "BB" },
-            ]`),
+        | #postgres | #both =>
+          Some(
+            History([
+              Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
+              Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
+            ]),
           )
+        | #clickhouse => None
+        },
+        switch IndexerRunner.selectedBackend {
+        | #clickhouse | #both =>
+          Some(
+            ClickHouseRows(
+              %raw(`[
+                { id: "1", data: "0001FEFF", optData: "5C782722", chunks: ["0102", "", "03"], tag: "AA" },
+                { id: "2", data: "", optData: null, chunks: [], tag: "BB" },
+              ]`),
+            ),
+          )
+        | #postgres => None
         },
       ))
     },
