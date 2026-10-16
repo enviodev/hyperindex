@@ -12,7 +12,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures_util::future::try_join_all;
 
 use super::ch_type::{ChType, FieldSpec};
-use super::client::{error_code, Client, Connection, Tuning, Warn};
+use super::client::{error_code, insert_tag_prefix, Client, Connection, Tuning, Warn};
 use super::ddl::{self, Topology, CHAIN_ID_COLUMN, ID_COLUMN};
 use super::row_binary::{self, encode_values, EncodedRows, Value};
 use super::select::{self, Frontier};
@@ -23,8 +23,7 @@ use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
 use crate::storage::rows::{self, Cell, ColumnRead, ReadKind, ResultSet};
 use crate::storage::types::{
-    Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE,
-    CHECKPOINT_ID_COLUMN, INFO_TABLE,
+    Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, INFO_TABLE,
 };
 use crate::storage::{Batch, Failure, Handoff, Initialize, Resume, WriteError};
 
@@ -64,11 +63,16 @@ pub struct Storage {
     chains: Mutex<Chains>,
 }
 
-/// A Replicated database engine only replicates data when its tables use the
-/// ReplicatedMergeTree engine, so it implies replicated DDL even when
-/// ENVIO_CLICKHOUSE_REPLICATED is unset.
-fn has_replicated_engine(database_engine: Option<&str>) -> bool {
-    database_engine.map(ddl::database_engine_name) == Some("Replicated")
+impl Settings {
+    /// A Replicated database engine only replicates data when its tables use
+    /// the ReplicatedMergeTree engine, so it implies replicated DDL even when
+    /// ENVIO_CLICKHOUSE_REPLICATED is unset.
+    fn has_replicated_engine(&self) -> bool {
+        self.database_engine
+            .as_deref()
+            .map(ddl::database_engine_name)
+            == Some("Replicated")
+    }
 }
 
 impl Storage {
@@ -107,7 +111,7 @@ impl Storage {
     }
 
     fn topology(&self) -> Topology {
-        let has_replicated_engine = has_replicated_engine(self.settings.database_engine.as_deref());
+        let has_replicated_engine = self.settings.has_replicated_engine();
         let replicated = self.settings.replicated || has_replicated_engine;
         Topology {
             replicated,
@@ -126,6 +130,24 @@ impl Storage {
             .with_context(|| format!("Failed inserting into ClickHouse table `{table}`"))
     }
 
+    /// The rows of one of the indexer's own tables, and the insert that sends
+    /// them.
+    fn encode_rows(
+        &self,
+        table: &str,
+        columns: &[(String, ChType)],
+        rows: &[Vec<Value>],
+    ) -> Result<(String, EncodedRows)> {
+        let types = columns
+            .iter()
+            .map(|(_, ch_type)| ch_type.clone())
+            .collect::<Vec<_>>();
+        let encoded = encode_values(&types, rows)
+            .with_context(|| format!("Failed encoding rows for ClickHouse table `{table}`"))?;
+        let query = ddl::insert_query(self.database(), table, columns.iter().map(|(name, _)| name));
+        Ok((query, encoded))
+    }
+
     async fn insert_values(
         &self,
         table: &str,
@@ -135,13 +157,7 @@ impl Storage {
         if rows.is_empty() {
             return Ok(());
         }
-        let types = columns
-            .iter()
-            .map(|(_, ch_type)| ch_type.clone())
-            .collect::<Vec<_>>();
-        let encoded = encode_values(&types, rows)
-            .with_context(|| format!("Failed encoding rows for ClickHouse table `{table}`"))?;
-        let query = ddl::insert_query(self.database(), table, columns.iter().map(|(name, _)| name));
+        let (query, encoded) = self.encode_rows(table, columns, rows)?;
         self.insert(table, &query, &encoded).await
     }
 
@@ -159,8 +175,8 @@ impl Storage {
                     .iter()
                     .zip(arena.columns())
                     .map(|((name, ch_type), values)| row_binary::Column {
-                        name: std::borrow::Cow::Borrowed(name),
-                        ch_type: std::borrow::Cow::Borrowed(ch_type),
+                        name,
+                        ch_type,
                         values,
                     })
                     .collect();
@@ -200,12 +216,7 @@ impl Storage {
         if moved.is_empty() {
             return Ok(());
         }
-        let columns = ddl::chain_columns(&self.chain_id_type());
-        let types = columns
-            .iter()
-            .map(|(_, ch_type)| ch_type.clone())
-            .collect::<Vec<_>>();
-        let values = moved
+        let rows = moved
             .iter()
             .map(|(chain_id, checkpoint_id)| {
                 vec![
@@ -215,13 +226,11 @@ impl Storage {
                 ]
             })
             .collect::<Vec<_>>();
-        let encoded = encode_values(&types, &values)
-            .context("Failed encoding rows for ClickHouse table `envio_chains`")?;
-        let query = ddl::insert_query(
-            self.database(),
+        let (query, encoded) = self.encode_rows(
             CHAINS_TABLE,
-            columns.iter().map(|(name, _)| name),
-        );
+            &ddl::chain_columns(&self.chain_id_type()),
+            &rows,
+        )?;
         self.client
             .insert_whole(CHAINS_TABLE, &query, &encoded)
             .await
@@ -306,9 +315,7 @@ impl Storage {
 
     async fn initialize_inner(&self, input: &Initialize) -> Result<()> {
         let topology = self.topology();
-        let database_engine = self.settings.database_engine.as_deref();
-        let has_replicated_engine = has_replicated_engine(database_engine);
-        if has_replicated_engine && !self.settings.replicated {
+        if self.settings.has_replicated_engine() && !self.settings.replicated {
             (self.client.warn)(
                 "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so \
                  tables use the ReplicatedMergeTree engine.",
@@ -368,7 +375,7 @@ impl Storage {
             .statement(format!(
                 "CREATE DATABASE IF NOT EXISTS {database}{}{}",
                 ddl::on_cluster_clause(topology.replicated),
-                match database_engine {
+                match &self.settings.database_engine {
                     Some(engine) => format!(" ENGINE = {engine}"),
                     None => String::new(),
                 }
@@ -490,8 +497,10 @@ impl Storage {
     /// next batches reuse the checkpoints of. Stopping one is best effort: a
     /// server that refuses is warned about, and the run goes on.
     async fn stop_inserts_left_running(&self, chain_ids: Option<&[i64]>) {
-        let prefix = format!("envio:{}:", self.database());
-        let mut filter = format!("startsWith(query_id, {})", literal(&prefix));
+        let mut filter = format!(
+            "startsWith(query_id, {})",
+            literal(&insert_tag_prefix(self.database()))
+        );
         if let Some(chain_ids) = chain_ids {
             self.client.tag_inserts(chain_ids);
             let needles = chain_ids
@@ -520,7 +529,7 @@ impl Storage {
     /// keeps its engine and grants — except where emptying is not an option.
     async fn reset_database(&self) -> Result<()> {
         let database = quoted(self.database());
-        let statement = if has_replicated_engine(self.settings.database_engine.as_deref()) {
+        let statement = if self.settings.has_replicated_engine() {
             // TRUNCATE DATABASE is unsupported on Replicated databases, so a
             // reset has to DROP and recreate instead. ON CLUSTER removes the
             // database from every node — the engine's own log can't replicate
@@ -584,11 +593,7 @@ impl Storage {
             .map(|table| {
                 Ok((
                     table.entity.history_table.clone(),
-                    select::above(
-                        &bounds,
-                        table.entity.chain_id_column.as_deref(),
-                        CHECKPOINT_ID_COLUMN,
-                    )?,
+                    select::history_above(table, &bounds)?,
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -852,24 +857,13 @@ impl Storage {
         bounds: &Bounds,
     ) -> Result<(ResultSet, ResultSet)> {
         let table = table.clickhouse()?;
+        let key = table.key_columns()?;
         let (removed, restored) = futures_util::try_join!(
             self.client
                 .read(select::rollback_removed(self.database(), table, bounds)?),
             self.client
                 .read(select::rollback_restored(self.database(), table, bounds)?),
         )?;
-        let key = table
-            .entity
-            .key()
-            .iter()
-            .map(|name| {
-                table
-                    .columns
-                    .iter()
-                    .find(|column| &column.name == name)
-                    .ok_or_else(|| anyhow!("\"{}\" has no column `{name}`", table.entity.name))
-            })
-            .collect::<Result<Vec<_>>>()?;
         let removed = rows::lay_out(
             &row_binary::decode(
                 &removed,

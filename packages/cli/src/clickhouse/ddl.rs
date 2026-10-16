@@ -7,7 +7,7 @@ use napi_derive::napi;
 use regex::{Captures, Regex};
 
 use super::ch_type::{ChType, FieldSpec};
-use super::{literal, quoted, table_ref};
+use super::{literal, quoted, quoted_list, table_ref};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::storage::types::{
     CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN, DELETE, INFO_TABLE, SET,
@@ -403,18 +403,8 @@ pub fn create_info_table(database: &str, topology: Topology) -> String {
 /// costs one comparison and leaves the predicate free to run as PREWHERE. A
 /// chain the frontier doesn't name reads as 0, so its rows stay hidden.
 pub fn create_view(entity: &EntitySpec, database: &str, topology: Topology) -> String {
-    let dedup_key = entity
-        .key()
-        .iter()
-        .map(|column| quoted(column))
-        .collect::<Vec<_>>();
-
-    let entity_fields = entity
-        .columns
-        .iter()
-        .map(|column| quoted(&column.name))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let dedup_key = quoted_list(entity.key());
+    let entity_fields = quoted_list(entity.columns.iter().map(|column| &column.name));
 
     let chains = format!("{} FINAL", table_ref(database, CHAINS_TABLE));
     let checkpoint_id = quoted(FRONTIER_COLUMN);
@@ -438,20 +428,15 @@ pub fn create_view(entity: &EntitySpec, database: &str, topology: Topology) -> S
     // a `LIMIT n` over the view stops after n groups instead of sorting every
     // version in the table first. The checkpoint stays last and descending,
     // which is what makes the surviving row per key the latest one.
-    let dedup_sort = format!(
-        "{}, {} DESC",
-        dedup_key.join(", "),
-        quoted(CHECKPOINT_ID_COLUMN)
-    );
+    let dedup_sort = format!("{dedup_key}, {} DESC", quoted(CHECKPOINT_ID_COLUMN));
 
     format!(
-        "CREATE VIEW IF NOT EXISTS {}{} AS\n{with}SELECT {entity_fields}\nFROM (\n  SELECT {entity_fields}, {}\n  FROM {}\n  WHERE {} <= {marker}\n  ORDER BY {dedup_sort}\n  LIMIT 1 BY {}\n)\nWHERE {} = {}",
+        "CREATE VIEW IF NOT EXISTS {}{} AS\n{with}SELECT {entity_fields}\nFROM (\n  SELECT {entity_fields}, {}\n  FROM {}\n  WHERE {} <= {marker}\n  ORDER BY {dedup_sort}\n  LIMIT 1 BY {dedup_key}\n)\nWHERE {} = {}",
         table_ref(database, &entity.name),
         topology.on_cluster(),
         quoted(CHANGE_COLUMN),
         table_ref(database, &entity.history_table),
         quoted(CHECKPOINT_ID_COLUMN),
-        dedup_key.join(", "),
         quoted(CHANGE_COLUMN),
         literal(SET),
     )
@@ -460,13 +445,12 @@ pub fn create_view(entity: &EntitySpec, database: &str, topology: Topology) -> S
 pub fn insert_query(
     database: &str,
     table: &str,
-    columns: impl Iterator<Item = impl AsRef<str>>,
+    columns: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> String {
-    let names: Vec<String> = columns.map(|name| quoted(name.as_ref())).collect();
     format!(
         "INSERT INTO {} ({}) FORMAT RowBinary",
         table_ref(database, table),
-        names.join(", ")
+        quoted_list(columns)
     )
 }
 
@@ -515,25 +499,26 @@ pub fn trim_table(database: &str, table: &str, above: &str) -> String {
 }
 
 #[cfg(test)]
-pub(crate) mod test_support {
+mod tests {
     use super::*;
     use crate::clickhouse::ch_type::test_support::field;
+    use pretty_assertions::assert_eq;
 
-    pub fn plain() -> Topology {
+    fn plain() -> Topology {
         Topology {
             replicated: false,
             ddl_on_cluster: false,
         }
     }
 
-    pub fn replicated() -> Topology {
+    fn replicated() -> Topology {
         Topology {
             replicated: true,
             ddl_on_cluster: true,
         }
     }
 
-    pub fn column(name: &str, field_type: &str) -> ColumnSpec {
+    fn column(name: &str, field_type: &str) -> ColumnSpec {
         ColumnSpec {
             name: name.to_string(),
             field_name: name.to_string(),
@@ -541,7 +526,7 @@ pub(crate) mod test_support {
         }
     }
 
-    pub fn entity(name: &str, columns: Vec<ColumnSpec>) -> EntitySpec {
+    fn entity(name: &str, columns: Vec<ColumnSpec>) -> EntitySpec {
         EntitySpec {
             name: name.to_string(),
             history_table: format!("envio_history_{name}"),
@@ -553,14 +538,6 @@ pub(crate) mod test_support {
             skipping_indexes: Vec::new(),
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::test_support::*;
-    use super::*;
-    use crate::clickhouse::ch_type::test_support::field;
-    use pretty_assertions::assert_eq;
 
     fn render(entity: &EntitySpec, topology: Topology) -> String {
         create_history_table(entity, "test_db", topology, ChainIdMode::Int32).unwrap()

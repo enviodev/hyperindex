@@ -272,36 +272,19 @@ impl Client {
             if let Some(content_type) = &content_type {
                 request = request.header(reqwest::header::CONTENT_TYPE, content_type);
             }
-            let sent = request.send().await;
-            let failure = match sent {
-                Ok(response) => {
-                    self.check_served_by(&response)?;
-                    self.learn_keep_alive(&response);
-                    let status = response.status();
-                    if status.is_success() {
-                        return Ok(response);
-                    }
-                    let text = response.text().await.unwrap_or_default();
-                    let failure = anyhow!("ClickHouse returned {status}: {text}");
-                    if retry_for(status, &text) != Retry::SameRows {
-                        return Err(failure);
-                    }
-                    failure
-                }
-                Err(error) => {
-                    let spent = error.is_timeout() && !error.is_connect();
-                    let failure = anyhow::Error::new(error).context("ClickHouse request failed");
-                    if spent {
-                        return Err(failure);
-                    }
-                    failure
-                }
+            let failure = match request.send().await {
+                Ok(response) => match self.answer(response).await {
+                    Ok(response) => return Ok(response),
+                    Err(failure) => failure,
+                },
+                Err(error) => Failure::of_send(error, "ClickHouse request failed"),
             };
-            if retries_left == 0 {
-                return Err(failure);
+            if failure.retry != Retry::SameRows || retries_left == 0 {
+                return Err(failure.error);
             }
             (self.warn)(&format!(
-                "ClickHouse request failed, {retries_left} retries left: {failure:#}"
+                "ClickHouse request failed, {retries_left} retries left: {:#}",
+                failure.error
             ));
             tokio::time::sleep(self.tuning.delay(retries_left)).await;
             retries_left -= 1;
@@ -404,7 +387,7 @@ impl Client {
         Ok(())
     }
 
-    async fn post_rows(&self, query: &str, body: Bytes) -> std::result::Result<(), InsertFailure> {
+    async fn post_rows(&self, query: &str, body: Bytes) -> std::result::Result<(), Failure> {
         // Synchronous whatever the server's profile says: an asynchronous
         // insert can be acknowledged before its rows are written, and a write
         // is only committed once every row it covers has landed. A token of its
@@ -432,37 +415,57 @@ impl Client {
             .basic_auth(&self.username, Some(&self.password))
             .header("Content-Type", "application/octet-stream")
             .body(body);
-        let response = match request.send().await {
-            Ok(response) => response,
-            Err(err) => {
-                return Err(InsertFailure {
-                    retry: retry_for_send_error(&err),
-                    error: anyhow::Error::new(err).context("ClickHouse insert request failed"),
-                });
-            }
-        };
+        let response = request
+            .send()
+            .await
+            .map_err(|error| Failure::of_send(error, "ClickHouse insert request failed"))?;
+        self.answer(response).await.map(drop)
+    }
+
+    /// A response that succeeded, or what its failure was.
+    async fn answer(
+        &self,
+        response: reqwest::Response,
+    ) -> std::result::Result<reqwest::Response, Failure> {
         self.learn_keep_alive(&response);
         if let Err(error) = self.check_served_by(&response) {
-            return Err(InsertFailure {
+            return Err(Failure {
                 retry: Retry::Never,
                 error,
             });
         }
         let status = response.status();
         if status.is_success() {
-            return Ok(());
+            return Ok(response);
         }
         let text = response.text().await.unwrap_or_default();
-        Err(InsertFailure {
+        Err(Failure {
             retry: retry_for(status, &text),
             error: anyhow!("ClickHouse returned {status}: {text}"),
         })
     }
 }
 
-struct InsertFailure {
+struct Failure {
     error: anyhow::Error,
     retry: Retry,
+}
+
+impl Failure {
+    /// A timeout is resent smaller: the deadline is the one thing a halved
+    /// batch meets differently, whether it ran out mid-upload or waiting on the
+    /// server to finish. A connect timeout never reached the server, so it is
+    /// resent whole.
+    fn of_send(error: reqwest::Error, context: &'static str) -> Self {
+        Self {
+            retry: if error.is_timeout() && !error.is_connect() {
+                Retry::Halved
+            } else {
+                Retry::SameRows
+            },
+            error: anyhow::Error::new(error).context(context),
+        }
+    }
 }
 
 /// What sending a failed insert again can change. Whether the server already
@@ -573,7 +576,12 @@ pub fn insert_tag(database: &str, chain_ids: &[i64]) -> String {
         .map(i64::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    format!("envio:{database}:,{chains},:")
+    format!("{},{chains},:", insert_tag_prefix(database))
+}
+
+/// What every [`insert_tag`] in `database` starts with, whatever its chains.
+pub fn insert_tag_prefix(database: &str) -> String {
+    format!("envio:{database}:")
 }
 
 /// Unique to this insert among every process writing to the database.
@@ -590,17 +598,6 @@ fn insert_token() -> String {
         std::process::id(),
         SENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )
-}
-
-/// A timeout is resent smaller: the deadline is the one thing a halved batch
-/// meets differently, whether it ran out mid-upload or waiting on the server to
-/// finish. A connect timeout never reached the server, so it is resent whole.
-fn retry_for_send_error(err: &reqwest::Error) -> Retry {
-    if err.is_timeout() && !err.is_connect() {
-        Retry::Halved
-    } else {
-        Retry::SameRows
-    }
 }
 
 /// A code nobody has classified is retried rather than surfaced: an overloaded
@@ -712,6 +709,20 @@ mod tests {
         )
     }
 
+    /// A client that gives up on any request after 150ms, retrying three times.
+    fn client_timing_out(server: &MockClickHouse) -> TestClient {
+        client_at(
+            server.url.clone(),
+            Tuning {
+                retries: 3,
+                max_retry_delay: Duration::ZERO,
+                request_timeout: Duration::from_millis(150),
+                statement_timeout: Duration::from_millis(150),
+                ..Tuning::default()
+            },
+        )
+    }
+
     /// Rows of a single `String` column, as RowBinary carries them.
     fn strings(values: &[&str]) -> EncodedRows {
         encode_values(
@@ -736,6 +747,10 @@ mod tests {
 
     fn reason(error: anyhow::Error) -> String {
         format!("{error:#}")
+    }
+
+    fn owned(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -922,16 +937,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_read_that_times_out_is_not_sent_again() {
         let server = MockClickHouse::start_unresponsive().await;
-        let client = client_at(
-            server.url.clone(),
-            Tuning {
-                retries: 3,
-                max_retry_delay: Duration::ZERO,
-                request_timeout: Duration::from_millis(150),
-                statement_timeout: Duration::from_millis(150),
-                ..Tuning::default()
-            },
-        );
+        let client = client_timing_out(&server);
         let started = std::time::Instant::now();
 
         let err = reason(client.statement("SELECT 1".to_string()).await.unwrap_err());
@@ -978,16 +984,7 @@ mod tests {
                 server.inserts_seen(),
                 client.warnings().len()
             ),
-            (
-                vec![
-                    "a".to_string(),
-                    "b".to_string(),
-                    "c".to_string(),
-                    "d".to_string()
-                ],
-                3,
-                1
-            )
+            (owned(&["a", "b", "c", "d"]), 3, 1)
         );
     }
 
@@ -1009,15 +1006,7 @@ mod tests {
 
         assert_eq!(
             (server.accepted_batches(), server.inserts_seen()),
-            (
-                vec![vec![
-                    "a".to_string(),
-                    "b".to_string(),
-                    "c".to_string(),
-                    "d".to_string()
-                ]],
-                2
-            )
+            (vec![owned(&["a", "b", "c", "d"])], 2)
         );
     }
 
@@ -1034,15 +1023,7 @@ mod tests {
 
         assert_eq!(
             (server.accepted_batches(), server.inserts_seen()),
-            (
-                vec![vec![
-                    "a".to_string(),
-                    "b".to_string(),
-                    "c".to_string(),
-                    "d".to_string()
-                ]],
-                3
-            )
+            (vec![owned(&["a", "b", "c", "d"])], 3)
         );
     }
 
@@ -1060,13 +1041,7 @@ mod tests {
 
         assert_eq!(
             (server.accepted_batches(), server.inserts_seen()),
-            (
-                vec![
-                    vec!["a".to_string(), "b".to_string()],
-                    vec!["c".to_string(), "d".to_string()]
-                ],
-                3
-            )
+            (vec![owned(&["a", "b"]), owned(&["c", "d"])], 3)
         );
     }
 
@@ -1084,15 +1059,7 @@ mod tests {
 
         assert_eq!(
             (server.accepted_batches(), server.inserts_seen()),
-            (
-                vec![vec![
-                    "a".to_string(),
-                    "b".to_string(),
-                    "c".to_string(),
-                    "d".to_string()
-                ]],
-                3
-            )
+            (vec![owned(&["a", "b", "c", "d"])], 3)
         );
     }
 
@@ -1238,7 +1205,7 @@ mod tests {
 
         let sent = insert(&client, &["a", "b", "c", "d"]).await;
 
-        let rows = ["a", "b", "c", "d"].map(str::to_string).to_vec();
+        let rows = owned(&["a", "b", "c", "d"]);
         assert_eq!(
             (
                 sent.map_err(reason),
@@ -1266,16 +1233,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_request_that_times_out_is_retried_as_halves() {
         let server = MockClickHouse::start_unresponsive().await;
-        let client = client_at(
-            server.url.clone(),
-            Tuning {
-                retries: 3,
-                max_retry_delay: Duration::ZERO,
-                request_timeout: Duration::from_millis(150),
-                statement_timeout: Duration::from_millis(150),
-                ..Tuning::default()
-            },
-        );
+        let client = client_timing_out(&server);
 
         let err = reason(insert(&client, &["a", "b", "c", "d"]).await.unwrap_err());
 

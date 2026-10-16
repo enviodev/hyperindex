@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use napi_derive::napi;
 
 use super::ch_type::{ChType, FieldSpec};
@@ -144,6 +144,19 @@ impl Table {
         self.columns
             .iter()
             .find(|column| column.row_name == row_name)
+    }
+
+    pub fn key_columns(&self) -> Result<Vec<&Column>> {
+        self.entity
+            .key()
+            .iter()
+            .map(|name| {
+                self.columns
+                    .iter()
+                    .find(|column| &column.name == name)
+                    .with_context(|| format!("\"{}\" has no column `{name}`", self.entity.name))
+            })
+            .collect()
     }
 
     pub fn staged_kinds(&self) -> Vec<ColumnKind> {

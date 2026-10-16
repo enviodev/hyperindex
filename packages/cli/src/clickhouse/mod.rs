@@ -18,6 +18,14 @@ pub(crate) fn quoted(name: &str) -> String {
     format!("`{}`", name.replace('\\', "\\\\").replace('`', "``"))
 }
 
+pub(crate) fn quoted_list(names: impl IntoIterator<Item = impl AsRef<str>>) -> String {
+    names
+        .into_iter()
+        .map(|name| quoted(name.as_ref()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub(crate) fn table_ref(database: &str, table: &str) -> String {
     format!("{}.{}", quoted(database), quoted(table))
 }

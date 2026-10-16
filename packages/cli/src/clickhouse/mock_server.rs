@@ -194,43 +194,35 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
         state.lock().unwrap().heads.push(request.head);
 
         let (status, body) = if request.path.contains("INSERT") {
-            let outcome = {
-                let mut state = state.lock().unwrap();
-                state.seen += 1;
-                if state.reject_next > 0 {
-                    state.reject_next -= 1;
-                    Some((state.rejection_status, state.rejection.clone()))
+            let mut state = state.lock().unwrap();
+            state.seen += 1;
+            if state.reject_next > 0 {
+                state.reject_next -= 1;
+                (state.rejection_status, state.rejection.clone())
+            } else {
+                state.accepted.push(request.body);
+                if state.accept_then_error > 0 {
+                    state.accept_then_error -= 1;
+                    (state.rejection_status, state.rejection.clone())
                 } else {
-                    state.accepted.push(request.body);
-                    if state.accept_then_error > 0 {
-                        state.accept_then_error -= 1;
-                        Some((state.rejection_status, state.rejection.clone()))
-                    } else {
-                        None
-                    }
+                    (200, String::new())
                 }
-            };
-            outcome.unwrap_or((200, String::new()))
+            }
         } else {
-            let rejection = {
+            let statement = String::from_utf8_lossy(&request.body).to_string();
+            let (rejection, answer) = {
                 let mut state = state.lock().unwrap();
                 if state.drop_next_reads > 0 {
                     state.drop_next_reads -= 1;
                     return Ok(());
                 }
-                if state.reject_next_reads > 0 {
-                    state.reject_next_reads -= 1;
-                    Some((state.rejection_status, state.rejection.clone()))
-                } else {
-                    None
-                }
-            };
-            let statement = String::from_utf8_lossy(&request.body).to_string();
-            let answer = {
-                let mut state = state.lock().unwrap();
                 state.queries += 1;
                 state.statements_seen.push(statement.clone());
-                state.statements.clone()
+                let rejection = (state.reject_next_reads > 0).then(|| {
+                    state.reject_next_reads -= 1;
+                    (state.rejection_status, state.rejection.clone())
+                });
+                (rejection, state.statements.clone())
             };
             match (rejection, answer) {
                 (Some(rejection), _) => rejection,

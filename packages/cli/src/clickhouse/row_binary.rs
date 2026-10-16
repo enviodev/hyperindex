@@ -9,8 +9,8 @@ use crate::storage::rows::{Cell, ReadKind};
 
 /// One staged column, read straight out of the arena JavaScript filled.
 pub struct Column<'a> {
-    pub name: Cow<'a, str>,
-    pub ch_type: Cow<'a, ChType>,
+    pub name: &'a str,
+    pub ch_type: &'a ChType,
     pub values: &'a columnar::Column,
 }
 
@@ -346,7 +346,7 @@ fn put_default(out: &mut Vec<u8>, ch_type: &ChType) -> Result<()> {
 }
 
 fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
-    let (ch_type, is_nullable) = match column.ch_type.as_ref() {
+    let (ch_type, is_nullable) = match column.ch_type {
         ChType::Nullable(inner) => {
             if column.values.is_null(row) {
                 out.push(1);
@@ -566,7 +566,7 @@ impl<'a> Reader<'a> {
 
 /// A Decimal's integer at its scale, rendered the way Postgres renders a
 /// `numeric(P, S)`: every one of its `scale` places written out.
-pub fn decimal_text(value: i128, scale: u32) -> String {
+fn decimal_text(value: i128, scale: u32) -> String {
     let negative = value < 0;
     let digits = value.unsigned_abs().to_string();
     let scale = scale as usize;
@@ -735,8 +735,8 @@ mod tests {
         let borrowed: Vec<Column> = columns
             .iter()
             .map(|column| Column {
-                name: Cow::Borrowed(&column.name),
-                ch_type: Cow::Borrowed(&column.ch_type),
+                name: &column.name,
+                ch_type: &column.ch_type,
                 values: &column.arena.columns()[0],
             })
             .collect();

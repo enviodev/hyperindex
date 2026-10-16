@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 
 use super::ch_type::ChType;
 use super::table::{Column, Table};
-use super::{literal, quoted, table_ref};
+use super::{literal, quoted, quoted_list, table_ref};
 use crate::entity_filter::{Condition, Operator, ValueKind};
 use crate::storage::types::{Bounds, Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, SET};
 
@@ -303,7 +303,7 @@ fn external_list(
 
 /// A condition as the statement spells it. Given somewhere to put them, a list
 /// of text goes beside the statement instead.
-pub fn condition(
+fn condition(
     table: &Table,
     condition: &Condition,
     external: Option<&mut Vec<External>>,
@@ -368,27 +368,18 @@ fn conjunction(parts: &[String]) -> String {
     }
 }
 
-fn joined(columns: &[String]) -> String {
-    columns
-        .iter()
-        .map(|column| quoted(column))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// A key tuple for `IN`, which ClickHouse spells without parentheses for one
 /// column.
 fn key_tuple(key: &[String]) -> String {
     match key {
         [column] => quoted(column),
-        columns => format!("({})", joined(columns)),
+        columns => format!("({})", quoted_list(columns)),
     }
 }
 
-fn as_row_names(table: &Table) -> String {
-    table
-        .columns
-        .iter()
+fn as_row_names<'a>(columns: impl IntoIterator<Item = &'a Column>) -> String {
+    columns
+        .into_iter()
         .map(|column| format!("{} AS {}", quoted(&column.name), quoted(&column.row_name)))
         .collect::<Vec<_>>()
         .join(", ")
@@ -458,12 +449,7 @@ fn load_sql(
         let mut matching = on_key.clone();
         matching.extend(on_values.iter().cloned());
         matching.push(committed);
-        narrowing.push(format!(
-            "{} IN (SELECT {} FROM {source} WHERE {})",
-            key_tuple(&key),
-            joined(&key),
-            conjunction(&matching)
-        ));
+        narrowing.push(key_in(&key, &source, &conjunction(&matching)));
     }
     // Every column the latest row carries besides the key, taken in one tuple
     // so they all come from the same row. Grouping on the key outruns sorting
@@ -486,16 +472,12 @@ fn load_sql(
     Ok(format!(
         "SELECT {} FROM (SELECT {key}, {untupled} FROM (SELECT {key}, argMax(tuple({}), {}) AS \
          {LATEST} FROM {source} WHERE {} GROUP BY {key})) WHERE {} FORMAT RowBinary",
-        as_row_names(table),
-        latest
-            .iter()
-            .map(|name| quoted(name))
-            .collect::<Vec<_>>()
-            .join(", "),
+        as_row_names(&table.columns),
+        quoted_list(&latest),
         quoted(CHECKPOINT_ID_COLUMN),
         conjunction(&narrowing),
         conjunction(&current),
-        key = joined(&key),
+        key = quoted_list(&key),
     ))
 }
 
@@ -503,73 +485,51 @@ fn load_sql(
 /// entity field can't start with `envio_`.
 const LATEST: &str = "envio_latest";
 
-/// The entities a rollback reaches: any with a row above its bound.
-fn changed(database: &str, table: &Table, above: &str) -> String {
-    let key = table.entity.key();
+/// The entities with a row in `source` that `filter` holds for.
+fn key_in(key: &[String], source: &str, filter: &str) -> String {
     format!(
-        "{} IN (SELECT {} FROM {} WHERE {above})",
-        key_tuple(&key),
-        joined(&key),
-        table_ref(database, &table.entity.history_table)
+        "{} IN (SELECT {} FROM {source} WHERE {filter})",
+        key_tuple(key),
+        quoted_list(key)
+    )
+}
+
+/// The history rows a bound puts above it.
+pub fn history_above(table: &Table, bounds: &Bounds) -> Result<String> {
+    above(
+        bounds,
+        table.entity.chain_id_column.as_deref(),
+        CHECKPOINT_ID_COLUMN,
     )
 }
 
 /// The entities a rollback removes: every row they have is above the bound, so
 /// nothing of them existed at the target.
 pub fn rollback_removed(database: &str, table: &Table, bounds: &Bounds) -> Result<String> {
-    let entity = &table.entity;
-    let above = above(
-        bounds,
-        entity.chain_id_column.as_deref(),
-        CHECKPOINT_ID_COLUMN,
-    )?;
-    let key = entity.key();
-    let as_row_names = key
-        .iter()
-        .map(|column| {
-            let row_name = table
-                .columns
-                .iter()
-                .find(|candidate| &candidate.name == column)
-                .map_or(column.as_str(), |candidate| candidate.row_name.as_str());
-            format!("{} AS {}", quoted(column), quoted(row_name))
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+    let above = history_above(table, bounds)?;
+    let key = table.entity.key();
+    let source = table_ref(database, &table.entity.history_table);
     Ok(format!(
-        "SELECT {as_row_names} FROM {} WHERE {} GROUP BY {} HAVING countIf(NOT ({above})) = 0 \
+        "SELECT {} FROM {source} WHERE {} GROUP BY {} HAVING countIf(NOT ({above})) = 0 \
          FORMAT RowBinary",
-        table_ref(database, &entity.history_table),
-        changed(database, table, &above),
-        joined(&key)
+        as_row_names(table.key_columns()?),
+        key_in(&key, &source, &above),
+        quoted_list(&key)
     ))
 }
 
 /// The row each entity a rollback reaches held at the target — set or deleted.
 pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Result<String> {
-    let entity = &table.entity;
-    let above = above(
-        bounds,
-        entity.chain_id_column.as_deref(),
-        CHECKPOINT_ID_COLUMN,
-    )?;
-    let key = entity.key();
-    let columns = joined(
-        &table
-            .columns
-            .iter()
-            .map(|column| column.name.clone())
-            .collect::<Vec<_>>(),
-    );
+    let above = history_above(table, bounds)?;
+    let key = quoted_list(table.entity.key());
+    let source = table_ref(database, &table.entity.history_table);
     Ok(format!(
-        "SELECT {}, {change} FROM (SELECT {columns}, {change} FROM {} WHERE {} AND NOT ({above}) \
-         ORDER BY {}, {} DESC LIMIT 1 BY {}) FORMAT RowBinary",
-        as_row_names(table),
-        table_ref(database, &entity.history_table),
-        changed(database, table, &above),
-        joined(&key),
+        "SELECT {}, {change} FROM (SELECT {}, {change} FROM {source} WHERE {} AND NOT ({above}) \
+         ORDER BY {key}, {} DESC LIMIT 1 BY {key}) FORMAT RowBinary",
+        as_row_names(&table.columns),
+        quoted_list(table.columns.iter().map(|column| &column.name)),
+        key_in(&table.entity.key(), &source, &above),
         quoted(CHECKPOINT_ID_COLUMN),
-        joined(&key),
         change = quoted(CHANGE_COLUMN),
     ))
 }

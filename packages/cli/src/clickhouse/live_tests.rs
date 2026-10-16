@@ -37,13 +37,17 @@ pub(crate) fn connection(database: &str) -> Connection {
 }
 
 fn store(database: &str) -> Storage {
+    store_on(connection(database), false)
+}
+
+fn store_on(connection: Connection, replicated: bool) -> Storage {
     Storage::new(
-        connection(database),
+        connection,
         Tuning::default(),
         Arc::new(|_: &str| {}),
         Settings {
             chain_id_mode: ChainIdMode::Int32,
-            replicated: false,
+            replicated,
             database_engine: None,
         },
     )
@@ -1131,20 +1135,13 @@ async fn a_rollback_restores_the_target_at_its_diff_checkpoint() {
 }
 
 fn replica(url: &str, database: &str) -> Storage {
-    Storage::new(
+    store_on(
         Connection {
             url: url.to_string(),
             ..connection(database)
         },
-        Tuning::default(),
-        Arc::new(|_: &str| {}),
-        Settings {
-            chain_id_mode: ChainIdMode::Int32,
-            replicated: true,
-            database_engine: None,
-        },
+        true,
     )
-    .unwrap()
 }
 
 /// A process resuming on a replica other than the one that took the writes,
