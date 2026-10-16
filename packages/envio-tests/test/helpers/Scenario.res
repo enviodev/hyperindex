@@ -350,12 +350,8 @@ let it = (
   }
 }
 
-let resolveInitialHeight = async (~t: Vitest.testContext, ~source: MockSource.t, ~head) => {
-  await Utils.delay(0)
-  t.expect(
-    source.getHeightOrThrowCalls->Array.length,
-    ~message="should have called getHeightOrThrow to get initial height",
-  ).toEqual(1)
+let resolveInitialHeight = async (~t as _: Vitest.testContext, ~source: MockSource.t, ~head) => {
+  await source.expectHeightCalls(1)
   source.resolveGetHeightOrThrow(head)
 }
 

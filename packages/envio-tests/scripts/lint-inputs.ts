@@ -17,7 +17,7 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 const delay = /^\s*(?:await\s+)?Utils\.delay\(0\)\s*$/;
 const mockStep =
-  /^\s*(?:await\s+)?(?:let\s+\S+\s*=\s*)?\S*\b(expectItemsQueries|expectBlockHashLookup|respondEmptyUpTo|drainPendingItemsQueries|pendingItemsQueries|resolveGetHeightOrThrow)\b/;
+  /^\s*(?:await\s+)?(?:let\s+\S+\s*=\s*)?\S*\b(expectItemsQueries|expectBlockHashLookup|expectHeightCalls|respondEmptyUpTo|drainPendingItemsQueries|pendingItemsQueries|resolveGetHeightOrThrow|resolveInitialHeight|enterReorgThreshold)\b/;
 const pollStart = /\b(while\b|waitUntil\()/;
 
 // The scan has to reach the next statement past whatever sits between it and

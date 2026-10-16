@@ -255,6 +255,9 @@ type t = {
   // settled does nothing. An index for a call the source never took throws.
   resolveGetHeightOrThrowAt: (~index: int, int) => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
+  // Waits until the source has taken `count` height calls in all, then fails
+  // if it has taken more. Answering them is still up to the resolvers above.
+  expectHeightCalls: int => promise<unit>,
   // Answer every height call with `height` from now on, one answer covering any
   // number of polls. A restarted indexer learns the head on its own this way,
   // before the test body gets a chance to resolve anything.
@@ -877,6 +880,26 @@ let make = (
       pendingHeightCallIndices()->Array.forEach(index =>
         index->settleHeightCall(pending => pending["reject"](exn->Obj.magic))
       ),
+    expectHeightCalls: async count => {
+      let deadline = realNow() +. 2000.
+      let rec awaitCount = async () => {
+        let taken = getHeightOrThrowCalls->Array.length
+        if taken > count {
+          JsError.throwWithMessage(
+            `expectHeightCalls expected ${count->Int.toString} height calls, but the source has taken ${taken->Int.toString}`,
+          )
+        } else if taken < count {
+          if await nextArrival(~deadline) {
+            await awaitCount()
+          } else {
+            JsError.throwWithMessage(
+              `expectHeightCalls timed out waiting for ${count->Int.toString} height calls; the source has taken ${taken->Int.toString}`,
+            )
+          }
+        }
+      }
+      await awaitCount()
+    },
     reorgCallCount: () => reorgCalls.contents,
     pendingItemsQueries,
     expectItemsQueries,
@@ -1022,6 +1045,7 @@ let make = (
         }),
         getHeightOrThrow: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore
+          notifyArrival()
           // Pushed for every call, answered or not, so the two arrays stay the
           // same length and an index means the same thing in both.
           let answered = height => {

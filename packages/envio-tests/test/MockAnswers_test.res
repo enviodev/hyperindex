@@ -378,6 +378,38 @@ Pending:
   })
 })
 
+describe("MockSource.expectHeightCalls", () => {
+  scenario->Scenario.it("waits for the chain's first height call", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    await mock.expectHeightCalls(1)
+    t.expect(await failureOf(mock.expectHeightCalls(0))).toEqual(
+      Some("expectHeightCalls expected 0 height calls, but the source has taken 1"),
+    )
+    mock.resolveGetHeightOrThrow(300)
+    await mock.respondEmptyUpTo(300)
+    await indexer.getBatchWritePromise()
+  })
+
+  scenario->Scenario.it("times out naming the count it waited for", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    await mock.expectHeightCalls(1)
+    t.expect(await failureOf(mock.expectHeightCalls(2))).toEqual(
+      Some("expectHeightCalls timed out waiting for 2 height calls; the source has taken 1"),
+    )
+    mock.resolveGetHeightOrThrow(300)
+    await mock.respondEmptyUpTo(300)
+    await indexer.getBatchWritePromise()
+  })
+})
+
 describe("MockSource.expectBlockHashLookup", () => {
   reorgScenario->Scenario.it(
     "waits for the rollback's lookup and replies with the hashes it gives",
