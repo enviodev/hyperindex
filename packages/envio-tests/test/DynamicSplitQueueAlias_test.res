@@ -108,19 +108,13 @@ describe("Dynamic-registration partition split queue aliasing", () => {
         )
       }
       // The items depend on the addresses the query carries, so the reply is
-      // built from the pending query itself.
+      // built from the query it matches.
       let respondTo = (partitionId, ~fromBlock, ~toBlock): MockSource.expectedItemsQuery => {
-        let query =
-          sourceMock.pendingItemsQueries
-          ->Array.find(query => query.partitionId === partitionId && query.fromBlock === fromBlock)
-          ->Option.getOrThrow(
-            ~message=`Expected a pending query for partition ${partitionId} from block ${fromBlock->Int.toString}`,
-          )
-        {
-          partitionId,
-          fromBlock,
-          reply: Respond({items: query->itemsFor(~toBlock), latestFetchedBlockNumber: toBlock}),
-        }
+        partitionId,
+        fromBlock,
+        reply: RespondWith(
+          query => {items: query->itemsFor(~toBlock), latestFetchedBlockNumber: toBlock},
+        ),
       }
 
       sourceMock.resolveGetHeightOrThrow(100_000)
@@ -267,25 +261,14 @@ describe("Dynamic-registration partition split queue aliasing", () => {
       // world events it legitimately covers. NftFactory's range from 40,001 is
       // queried with its own addresses.
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 40_001, reply: LeavePending},
-        {partitionId: "3", fromBlock: 50_801, reply: LeavePending},
-      ])
-      await sourceMock.expectItemsQueries([
         respondTo("0", ~fromBlock=60_001, ~toBlock=88_800),
         respondTo("0", ~fromBlock=88_801, ~toBlock=99_800),
         respondTo("3", ~fromBlock=40_001, ~toBlock=50_800),
         respondTo("3", ~fromBlock=50_801, ~toBlock=61_600),
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 61_601, reply: LeavePending},
-        {partitionId: "3", fromBlock: 79_601, reply: LeavePending},
-      ])
-      await sourceMock.expectItemsQueries([
         respondTo("3", ~fromBlock=61_601, ~toBlock=79_600),
         respondTo("3", ~fromBlock=79_601, ~toBlock=97_600),
-      ])
-      await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 97_601, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([respondTo("3", ~fromBlock=97_601, ~toBlock=99_800)])
       await indexer.getBatchWritePromise()
